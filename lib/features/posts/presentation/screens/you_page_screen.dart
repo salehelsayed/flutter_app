@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/you_tags_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
@@ -78,14 +80,56 @@ class YouWroteBack {
   final bool hasUnread;
 }
 
-const _ground = Color(0xFF040605);
-const _ink = Color(0xFFE8ECE9);
-const _muted = Color(0xFF9AA59F);
-const _accent = Color(0xFF1DB954);
-const _friendsBlue = Color(0xFF5FB3C9);
-const _hairline = Color(0x14E8ECE9);
-const _soft = Color(0xFF8C968F);
-const _faint = Color(0xFF59625D);
+/// The You page's colours on the Orbit background: the page's own light
+/// tones on the dark backgrounds, the readable ones on the light Lagoon.
+class _Palette {
+  const _Palette({
+    required this.ink,
+    required this.muted,
+    required this.accent,
+    required this.friendsBlue,
+    required this.hairline,
+    required this.soft,
+    required this.faint,
+    required this.ground,
+  });
+
+  static const dark = _Palette(
+    ink: Color(0xFFE8ECE9),
+    muted: Color(0xFF9AA59F),
+    accent: Color(0xFF1DB954),
+    friendsBlue: Color(0xFF5FB3C9),
+    hairline: Color(0x14E8ECE9),
+    soft: Color(0xFF8C968F),
+    faint: Color(0xFF59625D),
+    ground: Color(0xFF040605),
+  );
+
+  static _Palette of(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    if (!rc.isLightSurface) return dark;
+    return _Palette(
+      ink: rc.textPrimary,
+      muted: rc.textSecondary,
+      accent: rc.accent,
+      friendsBlue: rc.ring2,
+      hairline: rc.divider,
+      soft: rc.textSecondary,
+      faint: rc.textMuted,
+      ground: rc.surfaceBase,
+    );
+  }
+
+  final Color ink;
+  final Color muted;
+  final Color accent;
+  final Color friendsBlue;
+  final Color hairline;
+  final Color soft;
+  final Color faint;
+  final Color ground;
+}
+
 const _historyPage = 20;
 const _mono = TextStyle(
   fontFamily: 'Menlo',
@@ -348,7 +392,14 @@ class _YouPageScreenState extends State<YouPageScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AmbientBackground(
+    preference: widget.backgroundPreference,
+    child: Builder(builder: _page),
+  );
+
+  /// The page, read inside the background so its colours follow it.
+  Widget _page(BuildContext context) {
+    final p = _Palette.of(context);
     final l10n = AppLocalizations.of(context)!;
     final data = _data;
     final tag = _tag;
@@ -358,10 +409,10 @@ class _YouPageScreenState extends State<YouPageScreen>
         for (final each in [?thought, ...data.past])
           if (_hasTag(each)) each,
     ];
-    final empty = _mono.copyWith(color: _muted, fontSize: 12);
+    final empty = _mono.copyWith(color: p.muted, fontSize: 12);
     return Scaffold(
       key: const ValueKey('you'),
-      backgroundColor: _ground,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(
@@ -373,7 +424,7 @@ class _YouPageScreenState extends State<YouPageScreen>
                 !widget.tagsNoteSeen &&
                 !_tagsNoteGone)
               YouTagsNote(text: l10n.you_tags_note),
-            const Divider(height: 1, color: _hairline),
+            Divider(height: 1, color: p.hairline),
             if (tag != null)
               _TagBar(
                 label: _tagLabel,
@@ -434,74 +485,77 @@ class _YouPageScreenState extends State<YouPageScreen>
     BuildContext context,
     AppLocalizations l10n,
     YouPageData? data,
-  ) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 6, 8, 10),
-    child: Row(
-      children: [
-        IconButton(
-          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-          onPressed: widget.onBack,
-          icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: _ink),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0x991DB954), width: 2),
+  ) {
+    final p = _Palette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 8, 10),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: widget.onBack,
+            icon: Icon(Icons.arrow_back_ios_new, size: 18, color: p.ink),
           ),
-          child: UserAvatar(
-            avatarBytes: data?.avatarBytes,
-            size: 28,
-            showGlow: false,
-          ),
-        ),
-        const SizedBox(width: 12),
-        if (data != null)
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      const TextSpan(
-                        text: 'you/',
-                        style: TextStyle(color: _accent),
-                      ),
-                      TextSpan(text: ' @${data.username}'),
-                    ],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _mono.copyWith(
-                    color: _ink,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    const _ColourDot(color: _friendsBlue, size: 7),
-                    const SizedBox(width: 6),
-                    Text(
-                      l10n.you_page_friends(data.friendCount),
-                      style: _mono.copyWith(color: _muted, fontSize: 11.5),
-                    ),
-                  ],
-                ),
-              ],
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0x991DB954), width: 2),
+            ),
+            child: UserAvatar(
+              avatarBytes: data?.avatarBytes,
+              size: 28,
+              showGlow: false,
             ),
           ),
-        // Appears with the first tag: every tag you have used, to find one.
-        if (data != null && data.tags.isNotEmpty)
-          IconButton(
-            tooltip: l10n.you_tags_open,
-            onPressed: () => unawaited(_openTags(data.tags)),
-            icon: const Icon(Icons.tag_rounded, size: 22, color: _ink),
-          ),
-      ],
-    ),
-  );
+          const SizedBox(width: 12),
+          if (data != null)
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'you/',
+                          style: TextStyle(color: p.accent),
+                        ),
+                        TextSpan(text: ' @${data.username}'),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _mono.copyWith(
+                      color: p.ink,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      _ColourDot(color: p.friendsBlue, size: 7),
+                      const SizedBox(width: 6),
+                      Text(
+                        l10n.you_page_friends(data.friendCount),
+                        style: _mono.copyWith(color: p.muted, fontSize: 11.5),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          // Appears with the first tag: every tag you have used, to find one.
+          if (data != null && data.tags.isNotEmpty)
+            IconButton(
+              tooltip: l10n.you_tags_open,
+              onPressed: () => unawaited(_openTags(data.tags)),
+              icon: Icon(Icons.tag_rounded, size: 22, color: p.ink),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ThoughtCard extends StatelessWidget {
@@ -536,6 +590,7 @@ class _ThoughtCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = _Palette.of(context);
     final l10n = AppLocalizations.of(context)!;
     final post = thought.post;
     final visual = [
@@ -557,7 +612,7 @@ class _ThoughtCard extends StatelessWidget {
     }.length;
     final wrote = thought.wroteBack;
     final fresh = wrote.where((w) => w.hasUnread).length;
-    final label = _mono.copyWith(color: _muted, fontSize: 11.5);
+    final label = _mono.copyWith(color: p.muted, fontSize: 11.5);
     final created = DateTime.tryParse(post.createdAt);
     final picked = post.audience.kind == PostAudienceKind.pickPeople
         ? post.audience.selectedPeerIds.length
@@ -618,7 +673,7 @@ class _ThoughtCard extends StatelessWidget {
           for (final attachment in voice) ...[
             const SizedBox(height: 8),
             if (attachment.caption case final caption?)
-              ThoughtVoiceCaption(caption, color: _muted),
+              ThoughtVoiceCaption(caption, color: p.muted),
             AudioPlayerWidget(
               key: ValueKey('you-voice-${attachment.mediaId}'),
               attachment: attachment.toSharedMediaAttachment(),
@@ -631,8 +686,8 @@ class _ThoughtCard extends StatelessWidget {
                 Container(
                   width: 7,
                   height: 7,
-                  decoration: const BoxDecoration(
-                    color: _accent,
+                  decoration: BoxDecoration(
+                    color: p.accent,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(color: Color(0x2E1DB954), spreadRadius: 3),
@@ -683,8 +738,8 @@ class _ThoughtCard extends StatelessWidget {
                     if (fresh > 0)
                       TextSpan(
                         text: ' ${l10n.you_page_new_replies(fresh)}',
-                        style: const TextStyle(
-                          color: _accent,
+                        style: TextStyle(
+                          color: p.accent,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -736,22 +791,25 @@ class _AudienceChip extends StatelessWidget {
   final String label;
 
   @override
-  Widget build(BuildContext context) => Container(
-    height: 20,
-    padding: const EdgeInsets.only(left: 6, right: 8),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: _hairline),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const _ColourDot(color: _friendsBlue, size: 6),
-        const SizedBox(width: 6),
-        Text(label, style: _mono.copyWith(color: _muted, fontSize: 11.5)),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final p = _Palette.of(context);
+    return Container(
+      height: 20,
+      padding: const EdgeInsets.only(left: 6, right: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: p.hairline),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ColourDot(color: p.friendsBlue, size: 6),
+          const SizedBox(width: 6),
+          Text(label, style: _mono.copyWith(color: p.muted, fontSize: 11.5)),
+        ],
+      ),
+    );
+  }
 }
 
 class _ColourDot extends StatelessWidget {
@@ -782,36 +840,39 @@ class _ReactionFace extends StatelessWidget {
   final String glyph;
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: name,
-    triggerMode: TooltipTriggerMode.longPress,
-    child: Semantics(
-      label: '$name $glyph',
-      excludeSemantics: true,
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            UserAvatar(peerId: peerId, size: 28, showGlow: false),
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.all(1.5),
-                decoration: const BoxDecoration(
-                  color: _ground,
-                  shape: BoxShape.circle,
+  Widget build(BuildContext context) {
+    final p = _Palette.of(context);
+    return Tooltip(
+      message: name,
+      triggerMode: TooltipTriggerMode.longPress,
+      child: Semantics(
+        label: '$name $glyph',
+        excludeSemantics: true,
+        child: SizedBox(
+          width: 34,
+          height: 34,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              UserAvatar(peerId: peerId, size: 28, showGlow: false),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(1.5),
+                  decoration: BoxDecoration(
+                    color: p.ground,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(glyph, style: const TextStyle(fontSize: 12)),
                 ),
-                child: Text(glyph, style: const TextStyle(fontSize: 12)),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _WroteFace extends StatelessWidget {
@@ -821,45 +882,48 @@ class _WroteFace extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: person.name,
-    triggerMode: TooltipTriggerMode.longPress,
-    child: Semantics(
-      button: true,
-      label: person.name,
-      excludeSemantics: true,
-      child: GestureDetector(
-        key: ValueKey('you-wrote-${person.peerId}'),
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: SizedBox(
-          width: 30,
-          height: 30,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              UserAvatar(peerId: person.peerId, size: 28, showGlow: false),
-              if (person.hasUnread)
-                Positioned(
-                  right: -1,
-                  top: -1,
-                  child: Container(
-                    key: ValueKey('you-unread-${person.peerId}'),
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _accent,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: _ground, width: 1.5),
+  Widget build(BuildContext context) {
+    final p = _Palette.of(context);
+    return Tooltip(
+      message: person.name,
+      triggerMode: TooltipTriggerMode.longPress,
+      child: Semantics(
+        button: true,
+        label: person.name,
+        excludeSemantics: true,
+        child: GestureDetector(
+          key: ValueKey('you-wrote-${person.peerId}'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox(
+            width: 30,
+            height: 30,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                UserAvatar(peerId: person.peerId, size: 28, showGlow: false),
+                if (person.hasUnread)
+                  Positioned(
+                    right: -1,
+                    top: -1,
+                    child: Container(
+                      key: ValueKey('you-unread-${person.peerId}'),
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: p.accent,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: p.ground, width: 1.5),
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// The Thought's photos and videos, laid out as on the prototype feed.
@@ -1014,7 +1078,7 @@ class _ComposerBar extends StatelessWidget {
   final String? tag;
   final VoidCallback onTap;
 
-  TextSpan _hintWithTag() {
+  TextSpan _hintWithTag(Color soft) {
     final tag = this.tag;
     final at = tag == null ? -1 : label.indexOf(tag);
     if (tag == null || at < 0) return TextSpan(text: label);
@@ -1023,7 +1087,7 @@ class _ComposerBar extends StatelessWidget {
         TextSpan(text: label.substring(0, at)),
         TextSpan(
           text: tag,
-          style: thoughtTagStyle(const TextStyle(fontSize: 15), color: _soft),
+          style: thoughtTagStyle(const TextStyle(fontSize: 15), color: soft),
         ),
         TextSpan(text: label.substring(at + tag.length)),
       ],
@@ -1032,13 +1096,14 @@ class _ComposerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = _Palette.of(context);
     return ClipRect(
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: Color(0x2E05070C),
-            border: Border(top: BorderSide(color: _hairline)),
+            border: Border(top: BorderSide(color: p.hairline)),
           ),
           padding: EdgeInsets.fromLTRB(
             12,
@@ -1078,10 +1143,10 @@ class _ComposerBar extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: const Color(0x0DFFFFFF),
                         borderRadius: BorderRadius.circular(22),
-                        border: Border.all(color: _hairline),
+                        border: Border.all(color: p.hairline),
                       ),
                       child: Text.rich(
-                        _hintWithTag(),
+                        _hintWithTag(p.soft),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1131,13 +1196,14 @@ class _TaggedText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(
-      color: _ink,
+    final p = _Palette.of(context);
+    final style = TextStyle(
+      color: p.ink,
       fontSize: 16,
       height: 1.4,
       fontWeight: FontWeight.w500,
     );
-    final tagStyle = thoughtTagStyle(style, color: _soft);
+    final tagStyle = thoughtTagStyle(style, color: p.soft);
     final spans = <InlineSpan>[];
     var at = 0;
     for (final tag in parseThoughtTags(text)) {
@@ -1164,7 +1230,7 @@ class _TaggedText extends StatelessWidget {
                       child: Text(
                         label,
                         key: ValueKey('you-tag-${tag.key}'),
-                        style: tagStyle.copyWith(color: _ink),
+                        style: tagStyle.copyWith(color: p.ink),
                       ),
                     )
                   : Text(
@@ -1198,13 +1264,14 @@ class _TagBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = _Palette.of(context);
     final l10n = AppLocalizations.of(context)!;
     final small = _mono.copyWith(fontSize: 11.5);
     return Container(
       key: const ValueKey('you-tag-bar'),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _hairline)),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: p.hairline)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1243,7 +1310,7 @@ class _TagBar extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: _mono.copyWith(
-                                  color: _ink,
+                                  color: p.ink,
                                   fontSize: 13,
                                 ),
                               ),
@@ -1256,11 +1323,7 @@ class _TagBar extends StatelessWidget {
                                 color: Color(0x1FE8ECE9),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
-                                Icons.close,
-                                size: 14,
-                                color: _ink,
-                              ),
+                              child: Icon(Icons.close, size: 14, color: p.ink),
                             ),
                           ],
                         ),
@@ -1271,7 +1334,7 @@ class _TagBar extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   l10n.you_page_tag_count(count),
-                  style: small.copyWith(color: _muted),
+                  style: small.copyWith(color: p.muted),
                 ),
               ],
             ),
@@ -1283,7 +1346,7 @@ class _TagBar extends StatelessWidget {
               textAlign: TextAlign.end,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: small.copyWith(color: _faint),
+              style: small.copyWith(color: p.faint),
             ),
           ),
         ],

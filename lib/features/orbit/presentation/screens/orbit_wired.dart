@@ -3610,6 +3610,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             onOpenChat: _openConversationForPeerId,
             onCompose: (tag) => _composeThought(tag: tag),
             tagsNoteSeen: tagsNoteSeen,
+            backgroundPreference:
+                widget.appShellController?.backgroundPreference ??
+                BackgroundPreference.defaultBackground,
             onTagsNoteSeen: () => unawaited(
               widget.secureKeyStore
                   .write(_youTagsNoteKey, '1')

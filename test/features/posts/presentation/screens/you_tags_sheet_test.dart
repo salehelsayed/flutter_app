@@ -48,6 +48,11 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        // Orbit's background moves; held still here so frames settle.
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
