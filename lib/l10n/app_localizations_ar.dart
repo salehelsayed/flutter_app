@@ -4882,6 +4882,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voice_send_as_text_action => 'إرسال كنص';
 
   @override
+  String get voice_text_from_voice => 'من صوتك. راجع الكلمات قبل الإرسال.';
+
+  @override
+  String get voice_text_recording_kept => 'تسجيلك ما زال هنا.';
+
+  @override
+  String get thought_voice_keep => 'أبقها رسالة صوتية';
+
+  @override
   String get translator_transcribing => 'جارٍ التفريغ النصي…';
 
   @override

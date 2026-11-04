@@ -4921,6 +4921,16 @@ class AppLocalizationsDe extends AppLocalizations {
   String get voice_send_as_text_action => 'Als Text senden';
 
   @override
+  String get voice_text_from_voice =>
+      'Aus deiner Stimme. Prüfe die Wörter vor dem Senden.';
+
+  @override
+  String get voice_text_recording_kept => 'Deine Aufnahme ist noch da.';
+
+  @override
+  String get thought_voice_keep => 'Als Sprachnachricht behalten';
+
+  @override
   String get translator_transcribing => 'Wird transkribiert…';
 
   @override
