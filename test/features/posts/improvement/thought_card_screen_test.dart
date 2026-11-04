@@ -812,6 +812,36 @@ void main() {
     );
   }
 
+  testWidgets('a voice caption shows above its player', (tester) async {
+    final file = _tempFile('voice.m4a');
+    final thought = _thought(initialNow).copyWith(mediaKind: 'voice');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(
+      _attachment('voice').copyWith(caption: 'what I think so far'),
+    );
+    await openCard(
+      tester,
+      thought,
+      download: (requested) async {
+        await posts.updatePostMediaLocalPath(
+          requested.mediaId,
+          file.path,
+          postId: requested.postId,
+        );
+        return requested.copyWith(localPath: file.path, downloadStatus: 'done');
+      },
+    );
+    await tester.pumpAndSettle();
+
+    final caption = find.text('what I think so far');
+    expect(caption, findsOneWidget);
+    expect(
+      tester.getRect(caption).bottom,
+      lessThanOrEqualTo(tester.getRect(find.byType(AudioPlayerWidget)).top),
+    );
+    await finish(tester);
+  });
+
   testWidgets(
     'a portrait video thought keeps its portrait frame, up to full screen',
     (tester) async {

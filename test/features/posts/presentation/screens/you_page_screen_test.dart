@@ -580,6 +580,40 @@ void main() {
     expect(player.attachment.mediaType, 'audio');
   });
 
+  testWidgets('a voice caption shows above its player', (tester) async {
+    final original = JustAudioPlatform.instance;
+    JustAudioPlatform.instance = FakeJustAudioPlatform();
+    addTearDown(() => JustAudioPlatform.instance = original);
+    final thought = _thought();
+    await pumpPage(
+      tester,
+      () async => _data(
+        thought: YouThought(
+          post: thought.post.copyWith(
+            media: [
+              _media(
+                'voice-1',
+                'voice',
+                0,
+              ).copyWith(caption: 'what I think so far'),
+            ],
+          ),
+          reactions: thought.reactions,
+          wroteBack: thought.wroteBack,
+        ),
+      ),
+    );
+
+    final caption = find.text('what I think so far');
+    expect(caption, findsOneWidget);
+    expect(
+      tester.getRect(caption).bottom,
+      lessThanOrEqualTo(
+        tester.getRect(find.byKey(const ValueKey('you-voice-voice-1'))).top,
+      ),
+    );
+  });
+
   testWidgets('tapping the second photo opens the viewer on that photo', (
     tester,
   ) async {

@@ -143,6 +143,66 @@ void main() {
     expect(share(tester).onPressed, isNull);
   });
 
+  testWidgets('the grey line above the player takes a caption', (tester) async {
+    await open(tester);
+    await record(tester);
+    await tester.tap(find.byTooltip('Stop'));
+    await tester.pumpAndSettle();
+
+    final line = find.byKey(const ValueKey('thought-voice-caption'));
+    expect(find.descendant(of: voice(), matching: line), findsOneWidget);
+    expect(find.text('add a caption…'), findsOneWidget);
+    expect(
+      tester.getRect(line).bottom,
+      lessThanOrEqualTo(tester.getRect(find.byType(AudioPlayerWidget)).top),
+    );
+    await tester.enterText(line, '  what I think so far ');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tester.pump();
+    expect(shared.single.mediaDrafts.single.caption, 'what I think so far');
+  });
+
+  testWidgets('a reopened draft keeps its voice caption', (tester) async {
+    ComposePostResult? handedBack;
+    recorder = FakeAudioRecorderService()..fakeOutputPath = '/tmp/kept.m4a';
+    final original = JustAudioPlatform.instance;
+    JustAudioPlatform.instance = FakeJustAudioPlatform();
+    addTearDown(() => JustAudioPlatform.instance = original);
+    Widget sheet(ComposePostResult? draft) => MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: ComposePostSheet(
+          thoughtsOnly: true,
+          eligibleContacts: const [],
+          audioRecorderService: recorder,
+          initialDraft: draft,
+          onClosed: (closed) => handedBack = closed,
+          onSubmitWithOutcome: (_) async =>
+              ComposePostSubmitOutcome.keepSheetOpen,
+        ),
+      ),
+    );
+    await tester.pumpWidget(sheet(null));
+    await record(tester);
+    await tester.tap(find.byTooltip('Stop'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-voice-caption')),
+      'later',
+    );
+    await tester.pumpWidget(const SizedBox());
+    expect(handedBack?.mediaDrafts.single.caption, 'later');
+
+    await tester.pumpWidget(sheet(handedBack));
+    await tester.pumpAndSettle();
+    expect(find.text('later'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
+    await recorder.dispose();
+  });
+
   testWidgets('a thought stops recording itself at 3:00', (tester) async {
     await open(tester);
     await record(tester);

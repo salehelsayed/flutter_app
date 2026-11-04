@@ -77,6 +77,25 @@ void main() {
     await tester.pump();
   }
 
+  testWidgets('a voice caption shows above its player', (tester) async {
+    final file = File('${temp.path}/caption.m4a')..writeAsBytesSync([0, 1]);
+    final item = attachment(
+      'voice',
+      file.path,
+    ).copyWith(caption: 'what I think so far');
+    await mount(tester, (_) async => [item], (item) async => item);
+
+    final caption = find.text('what I think so far');
+    expect(caption, findsOneWidget);
+    expect(
+      tester.getRect(caption).bottom,
+      lessThanOrEqualTo(tester.getRect(find.byType(AudioPlayerWidget)).top),
+    );
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   for (final kind in ['image', 'video', 'voice']) {
     testWidgets(
       'front $kind uses real local attachment and existing renderer without downloading',
