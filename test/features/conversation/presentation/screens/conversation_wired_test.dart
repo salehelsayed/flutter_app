@@ -15475,7 +15475,15 @@ void main() {
               }
               await tester.pump();
               await tester.pump(const Duration(milliseconds: 100));
-              expect(find.text("Couldn't transcribe"), findsOneWidget);
+              final card = find.byKey(const ValueKey('voice-text-failed-card'));
+              expect(
+                find.descendant(
+                  of: card,
+                  matching: find.text("Couldn't transcribe"),
+                ),
+                findsOneWidget,
+              );
+              expect(find.byType(SnackBar), findsNothing);
               expect(
                 find.byKey(const ValueKey('voice-review-send')),
                 findsOneWidget,
@@ -15484,7 +15492,9 @@ void main() {
                 find.byKey(const ValueKey('voice-review-discard')),
                 findsOneWidget,
               );
-              expect(find.text('Send as text'), findsOneWidget);
+              expect(find.text('Send voice message'), findsOneWidget);
+              expect(find.text('Try again'), findsOneWidget);
+              expect(find.text('Send as text'), findsNothing);
               expect(voiceFile.existsSync(), isTrue);
               expect(messageRepo.store, isEmpty);
               expectNoVoiceEffects();
@@ -15601,18 +15611,96 @@ void main() {
             );
 
             ai.result = Completer<String>();
-            await convert(tester);
+            await tester.tap(find.text('Try again'));
+            await tester.pump();
+            expect(
+              find.byKey(const ValueKey('voice-text-failed-card')),
+              findsNothing,
+            );
             expect(recorder.stopCallCount, 1);
             expect(ai.paths, [voiceFile.path, voiceFile.path]);
             ai.result.completeError(StateError('still unavailable'));
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 100));
-            await (screen(tester).onReviewSend! as Future<void> Function())();
+            await tester.tap(find.text('Send voice message'));
             await tester.pump();
             expect(sendVoiceCalls, 1);
             expect(uploads, 0);
+            expect(
+              find.byKey(const ValueKey('voice-text-failed-card')),
+              findsNothing,
+            );
+            expect(recordingPhase(tester), VoiceRecordingState.idle);
           },
         );
+
+        testWidgets('discarding a failed recording removes the failure card', (
+          tester,
+        ) async {
+          await start(tester);
+          await convert(tester);
+          ai.result.completeError(StateError('local inference failed'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(
+            find.byKey(const ValueKey('voice-text-failed-card')),
+            findsOneWidget,
+          );
+          await tester.tap(find.byKey(const ValueKey('voice-review-discard')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(
+            find.byKey(const ValueKey('voice-text-failed-card')),
+            findsNothing,
+          );
+          expect(sendVoiceCalls, 0);
+          expect(voiceFile.existsSync(), isFalse);
+        });
+
+        const fromVoice = 'From your voice. Check the words before you send.';
+
+        testWidgets('the from-voice hint stays until the words are sent', (
+          tester,
+        ) async {
+          await start(tester);
+          expect(find.text(fromVoice), findsNothing);
+          await convert(tester);
+          expect(find.text(fromVoice), findsNothing);
+          ai.result.complete('spoken words');
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(find.text(fromVoice), findsOneWidget);
+          expect(messageRepo.store, isEmpty);
+          await tester.enterText(find.byType(TextField), 'spoken words, fixed');
+          await tester.pump();
+          expect(find.text(fromVoice), findsOneWidget);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(messageRepo.store.values.single.text, 'spoken words, fixed');
+          expect(find.text(fromVoice), findsNothing);
+          await tester.enterText(find.byType(TextField), 'typed later');
+          await tester.pump();
+          expect(find.text(fromVoice), findsNothing);
+        });
+
+        testWidgets('the from-voice hint leaves when the field is emptied', (
+          tester,
+        ) async {
+          await start(tester);
+          await convert(tester);
+          ai.result.complete('spoken words');
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(find.text(fromVoice), findsOneWidget);
+          await tester.enterText(find.byType(TextField), '');
+          await tester.pump();
+          expect(find.text(fromVoice), findsNothing);
+          await tester.enterText(find.byType(TextField), 'typed words');
+          await tester.pump();
+          expect(find.text(fromVoice), findsNothing);
+          expect(messageRepo.store, isEmpty);
+        });
 
         testWidgets(
           'converted text survives reopening as an ordinary local draft',

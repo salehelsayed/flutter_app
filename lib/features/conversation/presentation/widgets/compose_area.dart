@@ -30,6 +30,17 @@ extension VoiceRecordingStateX on VoiceRecordingState {
   bool get isReviewing => this == VoiceRecordingState.reviewing;
 }
 
+/// What the composer says about the last "Send as text".
+enum VoiceTextNotice {
+  none,
+
+  /// The draft holds words transcribed from a recording.
+  fromVoice,
+
+  /// Transcription failed and the recording is still held for review.
+  failed,
+}
+
 /// Compose area at the bottom of the conversation screen.
 ///
 /// Auto-growing text field with glassmorphic styling,
@@ -55,6 +66,7 @@ class ComposeArea extends StatefulWidget {
   final VoidCallback? onReviewSend;
   final VoidCallback? onReviewDiscard;
   final VoidCallback? onSendAsText;
+  final VoiceTextNotice voiceTextNotice;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final String? initialText;
@@ -108,6 +120,7 @@ class ComposeArea extends StatefulWidget {
     this.onReviewSend,
     this.onReviewDiscard,
     this.onSendAsText,
+    this.voiceTextNotice = VoiceTextNotice.none,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.initialText,

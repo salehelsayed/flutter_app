@@ -178,6 +178,7 @@ class ConversationComposerViewState {
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final VoiceTextNotice voiceTextNotice;
   final PrivateMediaEligibility privateMediaEligibility;
   final PrivateMediaPolicy privateMediaPolicy;
 
@@ -194,6 +195,7 @@ class ConversationComposerViewState {
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.voiceTextNotice = VoiceTextNotice.none,
     this.privateMediaEligibility = const PrivateMediaEligibility(
       attachmentCount: 0,
       attachmentKind: PrivateMediaAttachmentKind.unknown,
@@ -214,6 +216,7 @@ class ConversationComposerViewState {
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    VoiceTextNotice? voiceTextNotice,
     PrivateMediaEligibility? privateMediaEligibility,
     PrivateMediaPolicy? privateMediaPolicy,
   }) {
@@ -232,6 +235,7 @@ class ConversationComposerViewState {
       recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
+      voiceTextNotice: voiceTextNotice ?? this.voiceTextNotice,
       privateMediaEligibility:
           privateMediaEligibility ?? this.privateMediaEligibility,
       privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,

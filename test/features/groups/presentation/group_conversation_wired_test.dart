@@ -11465,7 +11465,15 @@ void main() {
               ai.result.completeError(StateError('local inference failed'));
             }
             await pumpFrames(tester, count: 5);
-            expect(find.text("Couldn't transcribe"), findsOneWidget);
+            final card = find.byKey(const ValueKey('voice-text-failed-card'));
+            expect(
+              find.descendant(
+                of: card,
+                matching: find.text("Couldn't transcribe"),
+              ),
+              findsOneWidget,
+            );
+            expect(find.byType(SnackBar), findsNothing);
             expect(
               find.byKey(const ValueKey('voice-review-send')),
               findsOneWidget,
@@ -11474,13 +11482,113 @@ void main() {
               find.byKey(const ValueKey('voice-review-discard')),
               findsOneWidget,
             );
-            expect(find.text('Send as text'), findsOneWidget);
+            expect(find.text('Send voice message'), findsOneWidget);
+            expect(find.text('Try again'), findsOneWidget);
+            expect(find.text('Send as text'), findsNothing);
             expect(voiceFile.existsSync(), isTrue);
             expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
             expectNoVoiceEffects();
           },
         );
       }
+
+      Future<void> failOnce(WidgetTester tester) async {
+        await open(tester);
+        await start(tester);
+        await convert(tester);
+        ai.result.completeError(StateError('local inference failed'));
+        await pumpFrames(tester, count: 5);
+        expect(
+          find.byKey(const ValueKey('voice-text-failed-card')),
+          findsOneWidget,
+        );
+      }
+
+      testWidgets('group failure card Try again retries the held audio', (
+        tester,
+      ) async {
+        await failOnce(tester);
+        ai.result = Completer<String>();
+        await tester.tap(find.text('Try again'));
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('voice-text-failed-card')),
+          findsNothing,
+        );
+        expect(recorder.stopCallCount, 1);
+        expect(ai.paths, [voiceFile.path, voiceFile.path]);
+        ai.result.complete('second try');
+        await pumpFrames(tester, count: 5);
+        expect(composerText(tester), 'second try');
+        expectNoVoiceEffects();
+      });
+
+      testWidgets('group failure card Send voice message sends the recording', (
+        tester,
+      ) async {
+        await failOnce(tester);
+        await tester.tap(find.text('Send voice message'));
+        await pumpFrames(tester, count: 20);
+        expect(uploads, 1);
+        expect(ai.paths, [voiceFile.path]);
+        expect(
+          find.byKey(const ValueKey('voice-text-failed-card')),
+          findsNothing,
+        );
+        expect(recordingPhase(tester), VoiceRecordingState.idle);
+      });
+
+      testWidgets('group discard removes the failure card', (tester) async {
+        await failOnce(tester);
+        await tester.tap(find.byKey(const ValueKey('voice-review-discard')));
+        await pumpFrames(tester, count: 5);
+        expect(
+          find.byKey(const ValueKey('voice-text-failed-card')),
+          findsNothing,
+        );
+        expect(voiceFile.existsSync(), isFalse);
+        expectNoVoiceEffects();
+      });
+
+      const fromVoice = 'From your voice. Check the words before you send.';
+
+      testWidgets('group from-voice hint stays until the words are sent', (
+        tester,
+      ) async {
+        await open(tester);
+        await start(tester);
+        await convert(tester);
+        expect(find.text(fromVoice), findsNothing);
+        ai.result.complete('group words');
+        await pumpFrames(tester, count: 5);
+        expect(find.text(fromVoice), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+        final sent = await msgRepo.getMessagesPage(chatGroup.id);
+        expect(sent.single.text, 'group words');
+        expect(find.text(fromVoice), findsNothing);
+        await tester.enterText(find.byType(TextField), 'typed later');
+        await tester.pump();
+        expect(find.text(fromVoice), findsNothing);
+      });
+
+      testWidgets('group from-voice hint leaves when the field is emptied', (
+        tester,
+      ) async {
+        await open(tester);
+        await start(tester);
+        await convert(tester);
+        ai.result.complete('group words');
+        await pumpFrames(tester, count: 5);
+        expect(find.text(fromVoice), findsOneWidget);
+        await tester.enterText(find.byType(TextField), '');
+        await tester.pump();
+        expect(find.text(fromVoice), findsNothing);
+        await tester.enterText(find.byType(TextField), 'typed words');
+        await tester.pump();
+        expect(find.text(fromVoice), findsNothing);
+        expectNoVoiceEffects();
+      });
 
       testWidgets(
         'group model not ready opens existing sheet and retains review audio',
