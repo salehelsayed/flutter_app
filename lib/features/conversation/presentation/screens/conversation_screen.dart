@@ -62,6 +62,7 @@ import 'package:flutter_app/shared/widgets/media/media_display_helpers.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 
 typedef ConversationMediaViewerBuilder =
     Widget Function({
@@ -375,6 +376,9 @@ class ConversationScreen extends StatefulWidget {
   /// Purely decorative — the row identity stays `ValueKey('msg-<id>')`.
   final String? highlightedMessageId;
 
+  /// In-chat search. While it is open its bar takes the header's place.
+  final ChatSearchController? search;
+
   /// 231: direct received-media core actions. All three are optional; when
   /// none is provided the media tiles keep their pre-231 behavior (tap-to-view
   /// only, row-level long press).
@@ -488,6 +492,7 @@ class ConversationScreen extends StatefulWidget {
     this.mediaViewerBuilder,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.highlightedMessageId,
+    this.search,
     this.onMediaEgress,
     this.onLoadMediaInfo,
     this.onLoadMediaActionDecision,
@@ -889,8 +894,10 @@ class _ConversationScreenState extends State<ConversationScreen>
           );
           final content = Column(
             children: [
-              // Header
-              if (!compactForKeyboard)
+              // Header; the search bar stays up with the keyboard.
+              if (widget.search case final search? when search.isOpen)
+                ChatSearchBar(controller: search)
+              else if (!compactForKeyboard)
                 ConversationHeader(
                   contactPeerId: widget.contactPeerId,
                   contactUsername: widget.contactUsername,
@@ -900,6 +907,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                   onAvatarTap: widget.onAvatarTap,
                   onCall: widget.onCall,
                   onCallRetry: widget.onCallRetry,
+                  onSearch: widget.search?.open,
                   showCallAction: widget.showCallAction,
                   callActionEnabled: widget.callActionEnabled,
                   callActionInFlight:
@@ -1634,6 +1642,8 @@ class _ConversationScreenState extends State<ConversationScreen>
                 text: displayText,
                 time: formatTime(message.timestamp),
                 isIncoming: message.isIncoming,
+                searchQuery: widget.search?.markedQuery,
+                isCurrentSearchHit: widget.search?.currentId == message.id,
                 // 136 Phase 3: render as a side-aligned chat balloon and group
                 // consecutive same-sender messages into one run. 1:1 NEVER
                 // shows an avatar or a sender name (showAvatar/showSenderName

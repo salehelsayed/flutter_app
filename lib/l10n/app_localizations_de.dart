@@ -2947,6 +2947,26 @@ class AppLocalizationsDe extends AppLocalizations {
   String get share_no_targets => 'Noch keine Kontakte oder Gruppen';
 
   @override
+  String get chat_search_action => 'Suchen';
+
+  @override
+  String get chat_search_hint => 'Suchen…';
+
+  @override
+  String chat_search_count(int current, int total) {
+    return '$current von $total';
+  }
+
+  @override
+  String get chat_search_previous => 'Vorheriger Treffer';
+
+  @override
+  String get chat_search_next => 'Nächster Treffer';
+
+  @override
+  String get chat_search_close => 'Suche schließen';
+
+  @override
   String get share_no_matches => 'Keine Treffer gefunden';
 
   @override

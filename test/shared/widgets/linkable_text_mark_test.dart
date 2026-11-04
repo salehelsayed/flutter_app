@@ -42,7 +42,7 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(
         home: LinkableText(
-          text: 'see dahab.com',
+          text: 'see https://dahab.com',
           markQuery: 'dahab',
           markStyle: mark,
         ),

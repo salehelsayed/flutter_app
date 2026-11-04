@@ -2913,6 +2913,26 @@ class AppLocalizationsAr extends AppLocalizations {
   String get share_no_targets => 'لا توجد جهات اتصال أو مجموعات بعد';
 
   @override
+  String get chat_search_action => 'بحث';
+
+  @override
+  String get chat_search_hint => 'بحث…';
+
+  @override
+  String chat_search_count(int current, int total) {
+    return '$current من $total';
+  }
+
+  @override
+  String get chat_search_previous => 'النتيجة السابقة';
+
+  @override
+  String get chat_search_next => 'النتيجة التالية';
+
+  @override
+  String get chat_search_close => 'إغلاق البحث';
+
+  @override
   String get share_no_matches => 'لم يتم العثور على نتائج';
 
   @override

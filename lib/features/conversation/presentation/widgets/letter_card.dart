@@ -69,6 +69,11 @@ class LetterCard extends StatelessWidget {
   /// long-presses fall through to the card-level [onLongPress].
   final void Function(int index)? onMediaLongPress;
   final List<MessageReaction> reactions;
+
+  /// In-chat search: the words to mark in the text, and whether this is the
+  /// match the search is on.
+  final String? searchQuery;
+  final bool isCurrentSearchHit;
   final String? ownPeerId;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReactionTap;
@@ -175,6 +180,8 @@ class LetterCard extends StatelessWidget {
     this.onMediaTap,
     this.onMediaLongPress,
     this.reactions = const [],
+    this.searchQuery,
+    this.isCurrentSearchHit = false,
     this.ownPeerId,
     this.onLongPress,
     this.onReactionTap,
@@ -571,6 +578,20 @@ class LetterCard extends StatelessWidget {
                   suffixSpans: metaInlined
                       ? [_buildInlineMetaSpan(context, readableColors, l10n)]
                       : null,
+                  markQuery: searchQuery,
+                  markStyle: isCurrentSearchHit
+                      ? TextStyle(
+                          backgroundColor: readableColors.accent,
+                          color: readableColors.isLightSurface
+                              ? Colors.white
+                              : const Color(0xFF04130A),
+                        )
+                      : TextStyle(
+                          backgroundColor: readableColors.accent.withValues(
+                            alpha: 0.28,
+                          ),
+                          color: readableColors.textPrimary,
+                        ),
                 ),
         )
       else if (isDeleted)

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/application/direct_chat_search.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -739,6 +741,46 @@ class _ConversationWiredState extends State<ConversationWired>
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<bool>? _outgoingCallAvailabilitySubscription;
   final _scrollController = ScrollController();
+
+  late final ChatSearchController _search = ChatSearchController(
+    search: (query) async => searchDirectChat(
+      await widget.messageRepo.getMessagesForContact(widget.contact.peerId),
+      query,
+    ),
+    onShow: (messageId) => unawaited(_goToLibraryMessage(messageId)),
+    onOpened: _rememberScrollBeforeSearch,
+    onClosed: _restoreScrollAfterSearch,
+  )..addListener(_onSearchChanged);
+
+  double? _offsetBeforeSearch;
+
+  void _rememberScrollBeforeSearch() {
+    _offsetBeforeSearch = _scrollController.hasClients
+        ? _scrollController.offset
+        : null;
+  }
+
+  /// Closing search glides back to where the chat was before searching.
+  void _restoreScrollAfterSearch() {
+    final offset = _offsetBeforeSearch;
+    _offsetBeforeSearch = null;
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      unawaited(
+        _scrollController.animateTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
 
   bool _hasMoreOlderMessages = true;
   List<ConversationCallTimelineEntry> _callEntries =
@@ -8407,6 +8449,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   void dispose() {
+    _search.dispose();
     _thoughtChanges?.cancel();
     _thoughtExpiryTimer?.cancel();
     _outgoingCallStartRequest?.cancel();
@@ -9354,6 +9397,7 @@ class _ConversationWiredState extends State<ConversationWired>
               widget.appShellController?.backgroundPreference ??
               BackgroundPreference.defaultBackground,
           highlightedMessageId: _highlightedMessageId,
+          search: _search,
         ),
       ),
     );

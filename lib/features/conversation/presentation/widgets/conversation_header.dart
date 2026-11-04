@@ -16,6 +16,9 @@ class ConversationHeader extends StatelessWidget {
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
   final VoidCallback? onCallRetry;
+
+  /// Opens in-chat search; no magnifier without it.
+  final VoidCallback? onSearch;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
@@ -34,6 +37,7 @@ class ConversationHeader extends StatelessWidget {
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
+    this.onSearch,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
@@ -152,6 +156,17 @@ class ConversationHeader extends StatelessWidget {
                     unavailableMessage: callUnavailableMessage,
                     onCall: onCall,
                     onRetry: onCallRetry,
+                  ),
+                if (onSearch != null)
+                  IconButton(
+                    tooltip: AppLocalizations.of(context)!.chat_search_action,
+                    onPressed: onSearch,
+                    icon: const Icon(Icons.search_rounded),
+                    iconSize: 22,
+                    color: readableColors.iconSecondary,
+                    style: IconButton.styleFrom(
+                      fixedSize: const Size.square(44),
+                    ),
                   ),
                 // Overflow button
                 ActionSemantics(

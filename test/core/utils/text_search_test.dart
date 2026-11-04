@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('textSearchRanges', () {
     test('finds every match, ignoring upper and lower case', () {
-      expect(
-        textSearchRanges('Dahab, then dahab again', 'DAHAB'),
-        [(start: 0, end: 5), (start: 12, end: 17)],
-      );
+      expect(textSearchRanges('Dahab, then dahab again', 'DAHAB'), [
+        (start: 0, end: 5),
+        (start: 12, end: 17),
+      ]);
     });
 
     test('trims the query and finds nothing for an empty one', () {

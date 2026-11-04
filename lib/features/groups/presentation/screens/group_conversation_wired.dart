@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
+import 'package:flutter_app/features/groups/application/group_chat_search.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
@@ -562,6 +564,68 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   _outgoingLocalMessageChangeSubscription;
   StreamSubscription<String>? _removedSubscription;
   final ScrollController _scrollController = ScrollController();
+
+  late final ChatSearchController _search = ChatSearchController(
+    search: _searchThisGroup,
+    onShow: (messageId) => unawaited(
+      _goToSharedMediaMessage(
+        GroupSharedMediaGoToMessage(groupId: _group.id, messageId: messageId),
+      ),
+    ),
+    onOpened: _rememberScrollBeforeSearch,
+    onClosed: _restoreScrollAfterSearch,
+  )..addListener(_onSearchChanged);
+
+  /// Every stored message of this group, oldest first, then the matches.
+  Future<List<String>> _searchThisGroup(String query) async {
+    const pageSize = 500;
+    final groupId = _group.id;
+    final oldestFirst = <GroupMessage>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final page = await widget.msgRepo.getMessagesPage(
+        groupId,
+        limit: pageSize,
+        offset: offset,
+      );
+      oldestFirst.insertAll(0, page.where((m) => m.groupId == groupId));
+      if (page.length < pageSize) break;
+    }
+    return searchGroupChat(
+      oldestFirst,
+      query,
+      removedIds: _locallyRemovedMessageIds,
+    );
+  }
+
+  double? _offsetBeforeSearch;
+
+  void _rememberScrollBeforeSearch() {
+    _offsetBeforeSearch = _scrollController.hasClients
+        ? _scrollController.offset
+        : null;
+  }
+
+  /// Closing search glides back to where the chat was before searching.
+  void _restoreScrollAfterSearch() {
+    final offset = _offsetBeforeSearch;
+    _offsetBeforeSearch = null;
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      unawaited(
+        _scrollController.animateTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
 
   /// Attached to the highlighted row (via the screen) so a notification-tapped
   /// message can be scrolled into view. Resolved once per open.
@@ -8498,6 +8562,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   @override
   void dispose() {
+    _search.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
     _messageSubscription?.cancel();
@@ -8604,6 +8669,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             scrollController: _scrollController,
             highlightedMessageId: _highlightedMessageId,
             highlightAnchorKey: _highlightAnchorKey,
+            search: _search,
             mediaMap: _mediaMap,
             mediaRenderedSemanticsLabels: widget.mediaRenderedSemanticsLabels,
             composerStateListenable: _composerController,

@@ -47,7 +47,10 @@ void main() {
   }
 
   IconButton button(WidgetTester tester, String tooltip) => tester.widget(
-    find.ancestor(of: find.byTooltip(tooltip), matching: find.byType(IconButton)),
+    find.ancestor(
+      of: find.byTooltip(tooltip),
+      matching: find.byType(IconButton),
+    ),
   );
 
   testWidgets('typing finds matches and shows the newest first', (
@@ -64,38 +67,39 @@ void main() {
     expect(shown, ['m3']);
   });
 
-  testWidgets('up steps to older matches, down to newer, stopping at the ends', (
-    tester,
-  ) async {
-    final search = controller()..open();
-    addTearDown(search.dispose);
-    await tester.pumpWidget(scene(search));
-    await type(tester, 'dahab');
-    expect(button(tester, 'Next match').onPressed, isNull);
+  testWidgets(
+    'up steps to older matches, down to newer, stopping at the ends',
+    (tester) async {
+      final search = controller()..open();
+      addTearDown(search.dispose);
+      await tester.pumpWidget(scene(search));
+      await type(tester, 'dahab');
+      expect(button(tester, 'Next match').onPressed, isNull);
 
-    await tester.tap(find.byTooltip('Previous match'));
-    await tester.pump();
-    expect(find.text('2 of 3'), findsOneWidget);
-    await tester.tap(find.byTooltip('Previous match'));
-    await tester.pump();
-    expect(find.text('3 of 3'), findsOneWidget);
-    expect(button(tester, 'Previous match').onPressed, isNull);
+      await tester.tap(find.byTooltip('Previous match'));
+      await tester.pump();
+      expect(find.text('2 of 3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Previous match'));
+      await tester.pump();
+      expect(find.text('3 of 3'), findsOneWidget);
+      expect(button(tester, 'Previous match').onPressed, isNull);
 
-    await tester.tap(find.byTooltip('Next match'));
-    await tester.pump();
-    expect(find.text('2 of 3'), findsOneWidget);
-    expect(shown, ['m3', 'm1', 'm0', 'm1']);
-  });
+      await tester.tap(find.byTooltip('Next match'));
+      await tester.pump();
+      expect(find.text('2 of 3'), findsOneWidget);
+      expect(shown, ['m3', 'm1', 'm0', 'm1']);
+    },
+  );
 
-  testWidgets('no matches says so and greys the arrows', (tester) async {
+  testWidgets('no matches says so in place of the arrows', (tester) async {
     final search = controller()..open();
     addTearDown(search.dispose);
     await tester.pumpWidget(scene(search));
     await type(tester, 'lighthouse tour');
 
     expect(find.text('No matches found'), findsOneWidget);
-    expect(button(tester, 'Previous match').onPressed, isNull);
-    expect(button(tester, 'Next match').onPressed, isNull);
+    expect(find.byTooltip('Previous match'), findsNothing);
+    expect(find.byTooltip('Next match'), findsNothing);
     expect(shown, isEmpty);
   });
 
@@ -116,6 +120,18 @@ void main() {
     expect(closed, 1);
   });
 
+  testWidgets('the system back gesture closes search first', (tester) async {
+    final search = controller()..open();
+    addTearDown(search.dispose);
+    await tester.pumpWidget(scene(search));
+    await type(tester, 'dahab');
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(search.isOpen, isFalse);
+    expect(closed, 1);
+  });
+
   testWidgets('a late answer for an older query is ignored', (tester) async {
     slow['dah'] = Completer<List<String>>();
     final search = controller()..open();
@@ -130,6 +146,23 @@ void main() {
     expect(find.text('1 of 3'), findsOneWidget);
     expect(search.currentId, 'm3');
   });
+
+  for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+    testWidgets('the bar fits a 360 px phone with no matches '
+        '(${locale.languageCode})', (tester) async {
+      tester.view.physicalSize = const Size(360, 740) * 3;
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final search = controller()..open();
+      addTearDown(search.dispose);
+      await tester.pumpWidget(scene(search, locale: locale));
+      await type(tester, 'lighthouse tour');
+      expect(search.noMatches, isTrue);
+      expect(tester.takeException(), isNull);
+      final field = tester.getRect(find.byType(TextField));
+      expect(field.width, greaterThan(120), reason: 'room left to type');
+    });
+  }
 
   testWidgets('Arabic shows the count in Arabic', (tester) async {
     final search = controller()..open();
