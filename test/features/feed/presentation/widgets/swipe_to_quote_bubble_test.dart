@@ -37,6 +37,65 @@ void main() {
     expect(tester.getTopLeft(find.byKey(const ValueKey('bubble'))), original);
   });
 
+  for (final direction in TextDirection.values) {
+    final rtl = direction == TextDirection.rtl;
+    testWidgets('swipe away from the start edge quotes (${direction.name})', (
+      tester,
+    ) async {
+      var quotes = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Directionality(
+            textDirection: direction,
+            child: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 300,
+                  child: SwipeToQuoteBubble(
+                    onQuoteTriggered: () => quotes++,
+                    child: const SizedBox(
+                      key: ValueKey('bubble'),
+                      width: 300,
+                      height: 60,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final bubble = find.byKey(const ValueKey('bubble'));
+      final original = tester.getTopLeft(bubble);
+      final away = Offset(rtl ? -60 : 60, 0);
+
+      final wrong = await tester.startGesture(tester.getCenter(bubble));
+      await wrong.moveBy(-away);
+      await tester.pump();
+      expect(tester.getTopLeft(bubble), original, reason: 'wrong way stays');
+      await wrong.up();
+      await tester.pumpAndSettle();
+      expect(quotes, 0);
+
+      final right = await tester.startGesture(tester.getCenter(bubble));
+      await right.moveBy(away);
+      await tester.pump();
+      final moved = tester.getTopLeft(bubble).dx - original.dx;
+      expect(rtl ? moved < 0 : moved > 0, isTrue, reason: 'slides with the finger');
+      final icon = tester.getCenter(find.byIcon(Icons.reply_rounded));
+      final slot = tester.getRect(find.byType(SwipeToQuoteBubble));
+      expect(
+        rtl ? slot.right - icon.dx : icon.dx - slot.left,
+        lessThan(40),
+        reason: 'the reply icon shows at the start edge it is uncovering',
+      );
+      await right.up();
+      await tester.pumpAndSettle();
+      expect(quotes, 1);
+      expect(tester.getTopLeft(bubble), original);
+    });
+  }
+
   group('SwipeToQuoteBubble', () {
     testWidgets('renders child widget', (tester) async {
       await tester.pumpWidget(wrap(SwipeToQuoteBubble(
