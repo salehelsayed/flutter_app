@@ -107,6 +107,7 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -119,6 +120,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart'
     show ImagePickerPlatform, MediaOptions;
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -1810,6 +1812,7 @@ void main() {
         final messages = _WroteBackMessageRepository();
         var now = thoughtNow;
         final deadline = thoughtNow.add(const Duration(minutes: 30));
+        const localPhotoPath = '/selected/you-local-photo.png';
         await posts.savePost(
           thought(
             'you-live',
@@ -1820,8 +1823,20 @@ void main() {
             authorPeerId: testIdentity.peerId,
             authorUsername: testIdentity.username,
             isIncoming: false,
+            mediaKind: 'image',
+            deliveryStatus: 'sending',
           ),
         );
+        await posts.replacePostMediaUploadRecoveryItems('you-live', [
+          PostMediaUploadRecoveryItem(
+            postId: 'you-live',
+            position: 0,
+            localFilePath: localPhotoPath,
+            mime: 'image/png',
+            kind: 'image',
+            createdAt: thoughtNow.toIso8601String(),
+          ),
+        ]);
         await posts.saveRecipientDelivery(
           PostRecipientDelivery(
             postId: 'you-live',
@@ -1849,6 +1864,16 @@ void main() {
 
         expect(find.byType(YouPageScreen), findsOneWidget);
         expect(find.text('Morning walk'), findsOneWidget);
+        final displayedPhotos = find.descendant(
+          of: find.byType(YouPageScreen),
+          matching: find.byType(MediaThumbnailImage),
+        );
+        expect(displayedPhotos, findsOneWidget);
+        expect(
+          tester.widget<MediaThumbnailImage>(displayedPhotos).mediaPath,
+          localPhotoPath,
+        );
+        expect(await posts.loadPostMediaAttachments('you-live'), isEmpty);
         expect(
           find.byKey(ValueKey('you-wrote-${testContact.peerId}')),
           findsNothing,
@@ -1911,6 +1936,11 @@ void main() {
         expect(
           find.byKey(const ValueKey('you-media-you-photo')),
           findsOneWidget,
+        );
+        expect(displayedPhotos, findsOneWidget);
+        expect(
+          tester.widget<MediaThumbnailImage>(displayedPhotos).mediaPath,
+          'missing/you-photo.jpg',
         );
 
         now = deadline.add(const Duration(seconds: 1));

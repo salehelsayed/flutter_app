@@ -349,7 +349,7 @@ void main() {
   });
 
   test(
-    'expired media recovery clears the recovery job before file or upload work',
+    'expired own media retains its source without file or upload work',
     () async {
       final now = DateTime.now().toUtc();
       await posts.savePost(
@@ -369,41 +369,43 @@ void main() {
         ),
       ]);
       var uploads = 0;
-      expect(
-        await retryPendingPostMediaUploads(
-          postRepo: posts,
-          contactRepo: contacts,
-          p2pService: service,
-          secureKeyStore: FakeSecureKeyStore(),
-          imageProcessor: ImageProcessor(),
-          bridge: bridge,
-          nowProvider: () => now,
-          uploadPostMediaFn:
-              ({
-                required postId,
-                required localFilePath,
-                required mime,
-                required allowedPeers,
-                mediaFileManager,
-                width,
-                height,
-                durationMs,
-                waveform,
-              }) async {
-                uploads++;
-                return null;
-              },
-        ),
-        0,
+      Future<int> retry() => retryPendingPostMediaUploads(
+        postRepo: posts,
+        contactRepo: contacts,
+        p2pService: service,
+        secureKeyStore: FakeSecureKeyStore(),
+        imageProcessor: ImageProcessor(),
+        bridge: bridge,
+        nowProvider: () => now,
+        uploadPostMediaFn:
+            ({
+              required postId,
+              required localFilePath,
+              required mime,
+              required allowedPeers,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+            }) async {
+              uploads++;
+              return null;
+            },
       );
+      expect(await retry(), 0);
+      expect(await retry(), 0);
       expect(uploads, 0);
-      expect(await posts.loadPostMediaUploadRecoveryItems('thought'), isEmpty);
-      expect(await posts.loadPendingMediaUploadPosts(), isEmpty);
+      final retained = await posts.loadPostMediaUploadRecoveryItems('thought');
+      expect(retained, hasLength(1));
+      expect(retained.single.localFilePath, '/missing/never-read.jpg');
       expect(
         (await posts.getRecipientDeliveries('thought')).single.lastError,
         'recipient_missing_mlkem_key',
       );
       expect(bridge.commandLog, isEmpty);
+      expect(service.sentTo, isEmpty);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 

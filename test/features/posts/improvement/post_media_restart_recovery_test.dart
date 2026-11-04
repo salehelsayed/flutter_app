@@ -105,6 +105,7 @@ void main() {
 
   for (final scenario in [
     (swept: false, fails: false),
+    (swept: false, fails: true),
     (swept: true, fails: false),
     (swept: true, fails: true),
   ]) {
@@ -209,13 +210,18 @@ void main() {
         expect(await lateFile.exists(), isFalse);
         expect(await lateFile.parent.exists(), isFalse);
         expect(network.inboxCount('peer-bob'), 0);
-        expect(
-          await posts.loadPostMediaUploadRecoveryItems('late-upload'),
-          isEmpty,
+        final retained = await posts.loadPostMediaUploadRecoveryItems(
+          'late-upload',
         );
         expect(await posts.loadPostMediaAttachments('late-upload'), isEmpty);
         if (sweptDuringUpload) {
           expect(await posts.getPost('late-upload'), isNull);
+          expect(retained, isEmpty);
+        } else {
+          expect(await posts.getPost('late-upload'), isNotNull);
+          expect(retained, hasLength(1));
+          expect(retained.single.localFilePath, source.path);
+          expect(await source.readAsString(), 'voice bytes');
         }
       },
     );

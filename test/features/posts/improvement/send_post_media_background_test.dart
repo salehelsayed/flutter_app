@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -14,6 +16,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../shared/fakes/encrypted_media_test_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -59,6 +62,196 @@ void main() {
   tearDown(() {
     posts.dispose();
   });
+
+  test(
+    'accepted photo stays readable after its picker source is removed',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp('thought-source-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final source = File('${tempDir.path}/picker/photo.jpg');
+      await source.parent.create();
+      const photoBytes = <int>[1, 2, 3, 4];
+      await source.writeAsBytes(photoBytes);
+      final files = TempPostMediaFileManager('${tempDir.path}/documents');
+      final (result, created) = await createLocalPost(
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'My photo',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: [
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: files,
+      );
+      expect(result, SendPostResult.success);
+      final postId = created!.post.id;
+      await source.parent.delete(recursive: true);
+
+      final retained = await posts.loadPostMediaUploadRecoveryItems(postId);
+      expect(retained, hasLength(1));
+      final retainedFile = File(
+        await files.resolveStoredPath(retained.single.localFilePath),
+      );
+      expect(await retainedFile.exists(), isTrue);
+      expect(await retainedFile.readAsBytes(), photoBytes);
+      expect(await posts.loadPostMediaAttachments(postId), isEmpty);
+
+      final network = FakeP2PNetwork();
+      final service = FakeP2PService(peerId: 'peer-alice', network: network);
+      addTearDown(service.dispose);
+      final replayProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async {
+              final processed = await File(path).copy('${path}_processed');
+              return XFile(processed.path);
+            },
+      );
+      List<int>? replayedBytes;
+      expect(
+        await retryPendingPostMediaUploads(
+          postRepo: posts,
+          contactRepo: contacts,
+          p2pService: service,
+          secureKeyStore: secureKeyStore,
+          imageProcessor: replayProcessor,
+          mediaFileManager: files,
+          uploadPostMediaFn:
+              ({
+                required postId,
+                required localFilePath,
+                required mime,
+                required allowedPeers,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+              }) async {
+                replayedBytes = await File(localFilePath).readAsBytes();
+                return null;
+              },
+        ),
+        1,
+      );
+      expect(replayedBytes, photoBytes);
+      expect(await retainedFile.readAsBytes(), photoBytes);
+      expect(
+        await posts.loadPostMediaUploadRecoveryItems(postId),
+        hasLength(1),
+      );
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
+
+  test(
+    'live photo retries after one upload failure and publishes the same thought once',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp('thought-retry-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final source = File('${tempDir.path}/photo.jpg');
+      await source.writeAsBytes(<int>[1, 2, 3, 4]);
+      final network = FakeP2PNetwork();
+      final service = FakeP2PService(peerId: 'peer-alice', network: network);
+      addTearDown(service.dispose);
+      final bridge = FakeBridge();
+      var uploadAttempts = 0;
+      final UploadPostMediaFn upload =
+          ({
+            required postId,
+            required localFilePath,
+            required mime,
+            required allowedPeers,
+            mediaFileManager,
+            width,
+            height,
+            durationMs,
+            waveform,
+          }) async {
+            uploadAttempts++;
+            if (uploadAttempts == 1) return null;
+            return PostMediaAttachmentModel(
+              mediaId: 'recovered-photo',
+              postId: postId,
+              blobId: 'recovered-blob',
+              kind: 'image',
+              mime: mime,
+              sizeBytes: 4,
+              localPath: 'post_media/$postId/recovered-blob.jpg',
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            );
+          };
+      final (result, pending) = await sendPost(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'Photo with a caption',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: [
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        uploadPostMediaFn: upload,
+        bridge: bridge,
+      );
+      expect(result, SendPostResult.sendFailed);
+      final postId = pending!.id;
+      expect(pending.mediaKind, 'image');
+      expect(pending.deliveryStatus, 'sending');
+      expect(await source.exists(), isTrue);
+      expect(
+        await posts.loadPostMediaUploadRecoveryItems(postId),
+        hasLength(1),
+      );
+      expect(network.storeInInboxCallCount, 0);
+
+      Future<int> retry() => retryPendingPostMediaUploads(
+        postRepo: posts,
+        contactRepo: contacts,
+        p2pService: service,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        uploadPostMediaFn: upload,
+        bridge: bridge,
+      );
+      expect(await retry(), 1);
+      expect(await retry(), 0);
+      expect(uploadAttempts, 2);
+      expect(network.storeInInboxCallCount, 1);
+      final recovered = await posts.getPost(postId);
+      expect(recovered!.eventId, pending.eventId);
+      expect(recovered.deliveryStatus, 'sent');
+      expect(recovered.media.single.blobId, 'recovered-blob');
+      expect(await posts.loadPostMediaUploadRecoveryItems(postId), isEmpty);
+      final wire =
+          network.retrieveInbox('peer-bob').single['message'] as String;
+      final outer = jsonDecode(wire) as Map<String, dynamic>;
+      expect(outer['event_id'], pending.eventId);
+      final inner =
+          jsonDecode(
+                (outer['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      final snapshot = inner['snapshot'] as Map<String, dynamic>;
+      expect(snapshot['post_id'], postId);
+      expect(snapshot['text'], 'Photo with a caption');
+      expect(snapshot['media_kind'], 'image');
+      expect(snapshot['media'], hasLength(1));
+      expect(snapshot['media'][0]['blob_id'], 'recovered-blob');
+    },
+  );
 
   test(
     'createLocalPost persists a media skeleton before upload metadata exists',

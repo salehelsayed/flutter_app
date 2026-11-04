@@ -1,19 +1,25 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
+import 'package:flutter_app/features/posts/application/post_surface_hydrator.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import '../../../../shared/fakes/fake_just_audio.dart';
+import '../../../../shared/fakes/in_memory_post_repository.dart';
 
 final _now = DateTime.utc(2026, 11, 1, 12);
 
@@ -122,6 +128,31 @@ PostMediaAttachmentModel _media(String id, String kind, int position) =>
       downloadStatus: 'done',
       createdAt: _now.toIso8601String(),
     );
+
+PostMediaUploadRecoveryItem _localPhoto(String path) =>
+    PostMediaUploadRecoveryItem(
+      postId: 'post-1',
+      position: 0,
+      localFilePath: path,
+      mime: 'image/png',
+      kind: 'image',
+      createdAt: _now.toIso8601String(),
+    );
+
+Future<YouPageData> _loadStoredThought(InMemoryPostRepository posts) async {
+  final hydrated = await hydratePostSurfaceItems(
+    postRepo: posts,
+    posts: [(await posts.getPost('post-1'))!],
+    viewerPeerId: 'me',
+  );
+  return _data(
+    thought: YouThought(
+      post: hydrated.single,
+      reactions: const [],
+      wroteBack: const [],
+    ),
+  );
+}
 
 void main() {
   late List<String> openedChats;
@@ -612,6 +643,107 @@ void main() {
         tester.getRect(find.byKey(const ValueKey('you-voice-voice-1'))).top,
       ),
     );
+  });
+
+  testWidgets(
+    'an own photo still renders from its local source after upload failure',
+    (tester) async {
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
+      final directory = Directory.systemTemp.createTempSync('you-local-photo-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final photo = File('${directory.path}/selected.png')
+        ..writeAsBytesSync(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAATklEQVR4nO3PUQkAIBTAwNfAfmY3jCH8OITBAtxm7fN1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjx2AV3NKJdv7voVAAAAAElFTkSuQmCC',
+          ),
+        );
+      await posts.savePost(
+        _post().copyWith(text: '', mediaKind: 'image', deliveryStatus: 'sending'),
+      );
+      await posts.replacePostMediaUploadRecoveryItems('post-1', [
+        _localPhoto(photo.path),
+      ]);
+      expect(await posts.loadPostMediaAttachments('post-1'), isEmpty);
+
+      // Decode the selected file before its first render in the fake clock.
+      await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+      await tester.runAsync(() async {
+        await precacheImage(
+          FileImage(photo),
+          tester.element(find.byType(Scaffold)),
+        ).timeout(const Duration(seconds: 10));
+      });
+      await pumpPage(tester, () => _loadStoredThought(posts));
+
+      final thumbnail = find.byType(MediaThumbnailImage);
+      expect(thumbnail, findsOneWidget);
+      expect(tester.widget<MediaThumbnailImage>(thumbnail).mediaPath, photo.path);
+      final rendered = tester.widget<RawImage>(
+        find.descendant(of: thumbnail, matching: find.byType(RawImage)),
+      );
+      expect(rendered.image, isNotNull);
+      expect((rendered.image!.width, rendered.image!.height), (64, 32));
+      expect((await _loadStoredThought(posts)).thought!.post.media, isEmpty);
+      expect(await posts.loadPostMediaAttachments('post-1'), isEmpty);
+    },
+  );
+
+  testWidgets('completed photo metadata takes precedence over a local source', (
+    tester,
+  ) async {
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+    await posts.savePost(_post().copyWith(mediaKind: 'image'));
+    await posts.replacePostMediaUploadRecoveryItems('post-1', [
+      _localPhoto('/pending/selected.png'),
+    ]);
+    await posts.savePostMediaAttachment(_media('completed', 'image', 0));
+
+    await pumpPage(tester, () => _loadStoredThought(posts));
+
+    final thumbnail = find.byType(MediaThumbnailImage);
+    expect(thumbnail, findsOneWidget);
+    expect(
+      tester.widget<MediaThumbnailImage>(thumbnail).mediaPath,
+      'missing/completed',
+    );
+    expect(find.byKey(const ValueKey('you-media-completed')), findsOneWidget);
+  });
+
+  testWidgets('an incoming thought never displays a local upload source', (
+    tester,
+  ) async {
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+    await posts.savePost(
+      _post().copyWith(
+        isIncoming: true,
+        authorPeerId: 'someone-else',
+        mediaKind: 'image',
+      ),
+    );
+    await posts.replacePostMediaUploadRecoveryItems('post-1', [
+      _localPhoto('/pending/private.png'),
+    ]);
+
+    await pumpPage(tester, () => _loadStoredThought(posts));
+
+    expect(find.text('first coffee on the balcony'), findsOneWidget);
+    expect(find.byType(MediaThumbnailImage), findsNothing);
+  });
+
+  testWidgets('a text-only thought does not acquire a local photo', (
+    tester,
+  ) async {
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+    await posts.savePost(_post());
+
+    await pumpPage(tester, () => _loadStoredThought(posts));
+
+    expect(find.text('first coffee on the balcony'), findsOneWidget);
+    expect(find.byType(MediaThumbnailImage), findsNothing);
   });
 
   testWidgets('tapping the second photo opens the viewer on that photo', (
