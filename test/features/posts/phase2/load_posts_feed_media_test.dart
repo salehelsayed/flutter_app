@@ -75,6 +75,7 @@ void main() {
         nowProvider: () => now,
       );
 
+      expect(posts.expiredOwnPageLimits, [20, 1]);
       expect(history.map((post) => post.id), ['own-newer', 'own-older']);
       expect(newestOnly.map((post) => post.id), ['own-newer']);
       expect(history.first.media, hasLength(1));

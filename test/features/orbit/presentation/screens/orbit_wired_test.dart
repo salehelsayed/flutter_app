@@ -110,6 +110,7 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
@@ -1767,6 +1768,22 @@ void main() {
           findsNothing,
         );
 
+        final lookups = messages.wroteBackLookups;
+        messages.debugEmitMessageChange(
+          ConversationMessage(
+            id: 'chat-1',
+            contactPeerId: testContact.peerId,
+            senderPeerId: testContact.peerId,
+            text: 'Unrelated chat',
+            timestamp: thoughtNow.toIso8601String(),
+            createdAt: thoughtNow.toIso8601String(),
+            status: 'delivered',
+            isIncoming: true,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+        expect(messages.wroteBackLookups, lookups);
+
         messages.wroteBack = [(peerId: testContact.peerId, hasUnread: true)];
         messages.debugEmitMessageChange(
           ConversationMessage(
@@ -1778,6 +1795,7 @@ void main() {
             createdAt: thoughtNow.toIso8601String(),
             status: 'delivered',
             isIncoming: true,
+            quotedMessageId: thoughtQuoteId('you-live'),
           ),
         );
         await pumpOrbitFrames(tester, count: 4);
@@ -12841,6 +12859,7 @@ Finder get _depthReplySend => find.descendant(
 class _WroteBackMessageRepository extends InMemoryMessageRepository
     implements ThoughtReactionMessageRepository {
   List<ThoughtWroteBack> wroteBack = const [];
+  int wroteBackLookups = 0;
 
   @override
   Future<List<ConversationMessage>> loadThoughtReactionMessages(
@@ -12848,8 +12867,10 @@ class _WroteBackMessageRepository extends InMemoryMessageRepository
   ) async => const [];
 
   @override
-  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
-      wroteBack;
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async {
+    wroteBackLookups++;
+    return wroteBack;
+  }
 }
 
 class _DismissalRecordingIntroductionRepository

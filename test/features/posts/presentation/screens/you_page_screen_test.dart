@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -260,6 +262,49 @@ void main() {
     expect(loads, 2);
     expect(find.text('first coffee on the balcony'), findsOneWidget);
     expect(find.text('Nothing shared right now'), findsNothing);
+  });
+
+  testWidgets('only a reply to a shown thought reloads the page', (
+    tester,
+  ) async {
+    final replies = StreamController<String>.broadcast();
+    addTearDown(replies.close);
+    var loads = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: YouPageScreen(
+          load: (_) async {
+            loads++;
+            return _data(
+              thought: _thought(),
+              past: [_past('post-old', 'older walk', const Duration(days: 2))],
+            );
+          },
+          now: () => _now,
+          onBack: () {},
+          onOpenChat: (_) async {},
+          onCompose: () async {},
+          thoughtReplies: replies.stream,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+
+    replies.add('someone-elses-thought');
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+
+    replies.add('post-old');
+    await tester.pumpAndSettle();
+    expect(loads, 2);
+
+    replies.add('post-1');
+    await tester.pumpAndSettle();
+    expect(loads, 3);
   });
 
   testWidgets('a thought with an hour or less left reads 1 h', (tester) async {

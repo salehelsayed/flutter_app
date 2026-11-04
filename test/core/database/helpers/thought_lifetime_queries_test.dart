@@ -30,8 +30,25 @@ void main() {
     );
   });
   tearDown(() => db.close());
+  final ownPageRequests = <(int?, int)>[];
+  final ownPageRowCounts = <int>[];
+  setUp(() {
+    ownPageRequests.clear();
+    ownPageRowCounts.clear();
+  });
   PostRepositoryImpl repository() {
     final posts = PostRepositoryImpl(
+      dbLoadExpiredOwnPosts: (iso, {limit, offset = 0}) async {
+        ownPageRequests.add((limit, offset));
+        final rows = await dbLoadExpiredOwnPosts(
+          db,
+          iso,
+          limit: limit,
+          offset: offset,
+        );
+        ownPageRowCounts.add(rows.length);
+        return rows;
+      },
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (id) => dbLoadPost(db, id, nowProvider: () => now),
       dbLoadPostsFeed: () => dbLoadPostsFeed(db, nowProvider: () => now),
@@ -98,6 +115,41 @@ void main() {
       );
     },
   );
+
+  test('a history page asks the database for that page only', () async {
+    for (var i = 0; i < 50; i++) {
+      await seed(
+        'own-${i.toString().padLeft(2, '0')}',
+        now.subtract(Duration(hours: 100 - i)),
+      );
+    }
+    await seed(
+      'friend-expired',
+      now.subtract(const Duration(hours: 30)),
+      incoming: true,
+    );
+    await seed('own-live', now.subtract(const Duration(hours: 1)));
+    final posts = repository();
+
+    final first = await posts.loadExpiredOwnPosts(
+      now.toIso8601String(),
+      limit: 20,
+    );
+    final older = await posts.loadExpiredOwnPosts(
+      now.toIso8601String(),
+      limit: 20,
+      offset: 20,
+    );
+
+    expect(ownPageRequests, [(20, 0), (20, 20)]);
+    expect(ownPageRowCounts, [20, 20]);
+    expect(first.map((post) => post.id), [
+      for (var i = 49; i >= 30; i--) 'own-$i',
+    ]);
+    expect(older.map((post) => post.id), [
+      for (var i = 29; i >= 10; i--) 'own-${i.toString().padLeft(2, '0')}',
+    ]);
+  });
 
   test(
     'expired own history retracts locally with its file but cannot retract friends',
