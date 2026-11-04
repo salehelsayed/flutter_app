@@ -2234,6 +2234,7 @@
   "you_page_tag_count": "{count, plural, =1{خاطرة واحدة} =2{خاطرتان} few{{count} خواطر} many{{count} خاطرة} other{{count} خاطرة}}",
   "you_page_add_to_tag": "أضف إلى {tag}",
   "you_tags_open": "وسومك",
+  "you_tags_done": "تم",
   "you_tags_title": "وسومك",
   "you_tags_find": "ابحث عن وسم…",
   "you_tags_recent": "الأخيرة",

@@ -2234,6 +2234,7 @@
   "you_page_tag_count": "{count, plural, =1{1 Gedanke} other{{count} Gedanken}}",
   "you_page_add_to_tag": "zu {tag} hinzufügen",
   "you_tags_open": "Deine Tags",
+  "you_tags_done": "Fertig",
   "you_tags_title": "deine Tags",
   "you_tags_find": "Tag finden…",
   "you_tags_recent": "zuletzt",

@@ -140,6 +140,7 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_audience.dart';
+import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
@@ -3597,6 +3598,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!mounted || identity == null || _youPageOpen) return;
     _youPageOpen = true;
     try {
+      final tagsNoteSeen = await _youTagsNoteSeen();
+      if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
@@ -3606,6 +3609,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
             onCompose: (tag) => _composeThought(tag: tag),
+            tagsNoteSeen: tagsNoteSeen,
+            onTagsNoteSeen: () => unawaited(
+              widget.secureKeyStore
+                  .write(_youTagsNoteKey, '1')
+                  .catchError((Object _) {}),
+            ),
             changes: [?_thoughtPosts?.postChanges],
             thoughtReplies: switch (widget.messageRepo) {
               final MessageRepositoryChangeSource source =>
@@ -3619,6 +3628,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
     } finally {
       _youPageOpen = false;
+    }
+  }
+
+  /// Set once the note pointing at the You page's # has been seen.
+  static const _youTagsNoteKey = 'you_tags_note_seen_v1';
+
+  Future<bool> _youTagsNoteSeen() async {
+    try {
+      return await widget.secureKeyStore.read(_youTagsNoteKey) == '1';
+    } on Object {
+      // Unreadable: skip the note rather than repeat it.
+      return true;
     }
   }
 
@@ -3727,6 +3748,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ? 0
           : tagged!.count +
                 (own != null && hasThoughtTag(own.text, tag) ? 1 : 0),
+      tags: await loadOwnThoughtTags(
+        postRepo: repository,
+        live: own,
+        nowProvider: widget.thoughtNowProvider,
+      ),
     );
   }
 

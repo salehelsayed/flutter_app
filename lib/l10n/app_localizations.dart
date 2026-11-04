@@ -8264,6 +8264,12 @@ abstract class AppLocalizations {
   /// **'Your tags'**
   String get you_tags_open;
 
+  /// No description provided for @you_tags_done.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get you_tags_done;
+
   /// No description provided for @you_tags_title.
   ///
   /// In en, this message translates to:

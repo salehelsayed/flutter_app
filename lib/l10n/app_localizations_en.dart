@@ -5002,6 +5002,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get you_tags_open => 'Your tags';
 
   @override
+  String get you_tags_done => 'Done';
+
+  @override
   String get you_tags_title => 'your tags';
 
   @override

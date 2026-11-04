@@ -5115,6 +5115,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get you_tags_open => 'Deine Tags';
 
   @override
+  String get you_tags_done => 'Fertig';
+
+  @override
   String get you_tags_title => 'deine Tags';
 
   @override

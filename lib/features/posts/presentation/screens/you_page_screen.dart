@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/presentation/widgets/you_tags_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
 import 'dart:typed_data';
@@ -148,6 +149,9 @@ class _YouPageScreenState extends State<YouPageScreen>
   Timer? _expiryTimer;
   Timer? _ageTimer;
   Route<void>? _mediaRoute;
+
+  /// The one-time note under # went away this visit.
+  bool _tagsNoteGone = false;
   String? _mediaPostId;
 
   @override
@@ -305,6 +309,20 @@ class _YouPageScreenState extends State<YouPageScreen>
     if (mounted) await _reload();
   }
 
+  Future<void> _openTags(List<OwnThoughtTag> tags) async {
+    if (!widget.tagsNoteSeen && !_tagsNoteGone) {
+      setState(() => _tagsNoteGone = true);
+      widget.onTagsNoteSeen?.call();
+    }
+    final picked = await showYouTagsSheet(
+      context,
+      tags: tags,
+      now: widget.now(),
+    );
+    if (picked == null || !mounted) return;
+    _showTag(ThoughtTag(start: 0, end: 0, key: picked.key), picked.label);
+  }
+
   void _showTag(ThoughtTag? tag, [String label = '']) {
     setState(() {
       _tag = tag;
@@ -345,6 +363,11 @@ class _YouPageScreenState extends State<YouPageScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _header(context, l10n, data),
+            if (data != null &&
+                data.tags.isNotEmpty &&
+                !widget.tagsNoteSeen &&
+                !_tagsNoteGone)
+              YouTagsNote(text: l10n.you_tags_note),
             const Divider(height: 1, color: _hairline),
             if (tag != null)
               _TagBar(
@@ -463,6 +486,13 @@ class _YouPageScreenState extends State<YouPageScreen>
                 ),
               ],
             ),
+          ),
+        // Appears with the first tag: every tag you have used, to find one.
+        if (data != null && data.tags.isNotEmpty)
+          IconButton(
+            tooltip: l10n.you_tags_open,
+            onPressed: () => unawaited(_openTags(data.tags)),
+            icon: const Icon(Icons.tag_rounded, size: 22, color: _ink),
           ),
       ],
     ),

@@ -5073,6 +5073,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get you_tags_open => 'وسومك';
 
   @override
+  String get you_tags_done => 'تم';
+
+  @override
   String get you_tags_title => 'وسومك';
 
   @override

@@ -2533,6 +2533,7 @@
   "you_page_add_to_tag": "add to {tag}",
   "@you_page_add_to_tag": {"description": "Thoughts 131 copy, owner-approved 2026-11-04", "placeholders": {"tag": {"type": "String"}}},
   "you_tags_open": "Your tags",
+  "you_tags_done": "Done",
   "you_tags_title": "your tags",
   "you_tags_find": "find a tag…",
   "you_tags_recent": "recent",
