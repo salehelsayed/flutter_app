@@ -2,7 +2,6 @@
 
 import 'dart:io';
 
-import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/128_media_attachment_sticker_id.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -72,17 +71,17 @@ void main() {
     expect(MediaAttachment.fromMap(row).stickerId, 'orbit_crew.planet.angry');
   });
 
-  test('v128 is the last create and upgrade step', () {
-    expect(currentIdentityDatabaseVersion, 128);
+  test('v128 is the create and upgrade step before v129', () {
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
       expect(registry.where((e) => e.version == 128), hasLength(1));
-      expect(registry.last.version, 128);
-      expect(registry.last.name, '128_media_attachment_sticker_id');
-      expect(registry.last.run, same(runMediaAttachmentStickerIdMigration));
-      expect(registry[registry.length - 2].version, 127);
+      final entry = registry[registry.length - 2];
+      expect(entry.version, 128);
+      expect(entry.name, '128_media_attachment_sticker_id');
+      expect(entry.run, same(runMediaAttachmentStickerIdMigration));
+      expect(registry[registry.length - 3].version, 127);
     }
   });
 }

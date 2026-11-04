@@ -5,6 +5,7 @@ class PostMediaDraft {
   final int? height;
   final int? durationMs;
   final List<double>? waveform;
+  final String? caption;
 
   const PostMediaDraft({
     required this.localFilePath,
@@ -13,6 +14,7 @@ class PostMediaDraft {
     this.height,
     this.durationMs,
     this.waveform,
+    this.caption,
   });
 
   String get kind {
