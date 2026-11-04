@@ -184,7 +184,6 @@ Future<int> retryPendingPostMediaUploads({
       DateTime.parse(post.createdAt),
       nowProvider?.call() ?? DateTime.now(),
     )) {
-      await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
       continue;
     }
     final recoveryItems = await postRepo.loadPostMediaUploadRecoveryItems(
@@ -194,7 +193,10 @@ Future<int> retryPendingPostMediaUploads({
       continue;
     }
 
-    final missingItem = await _firstMissingLocalFile(recoveryItems);
+    final missingItem = await _firstMissingLocalFile(
+      recoveryItems,
+      mediaFileManager ?? MediaFileManager(),
+    );
     if (missingItem != null) {
       retriedCount++;
       await _persistMissingLocalFileFailure(
@@ -251,7 +253,6 @@ Future<int> retryPendingPostMediaUploads({
       DateTime.parse(post.createdAt),
       nowProvider?.call() ?? DateTime.now(),
     )) {
-      await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
       continue;
     }
 
@@ -363,9 +364,11 @@ Future<List<CreatedLocalPostRecipient>> _loadRetryRecipients({
 
 Future<PostMediaUploadRecoveryItem?> _firstMissingLocalFile(
   List<PostMediaUploadRecoveryItem> items,
+  MediaFileManager mediaFileManager,
 ) async {
   for (final item in items) {
-    if (!await File(item.localFilePath).exists()) {
+    final path = await mediaFileManager.resolveStoredPath(item.localFilePath);
+    if (!await File(path).exists()) {
       return item;
     }
   }

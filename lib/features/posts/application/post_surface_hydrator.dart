@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -83,7 +84,12 @@ Future<List<PostModel>> hydratePostSurfaceItems({
       final attachments =
           mediaMap[post.id] ?? const <PostMediaAttachmentModel>[];
       if (attachments.isEmpty) {
+        final localMediaSources =
+            !post.isIncoming && post.media.isEmpty && post.mediaKind != 'none'
+            ? await postRepo.loadPostMediaUploadRecoveryItems(post.id)
+            : const <PostMediaUploadRecoveryItem>[];
         return post.copyWith(
+          localMediaSources: localMediaSources,
           commentCount: comments.length,
           heartCount: activeHeartCount,
           viewerHasHearted: viewerHasHearted,
@@ -118,6 +124,7 @@ Future<List<PostModel>> hydratePostSurfaceItems({
             ? PostMediaAttachmentModel.deriveMediaKind(resolvedAttachments)
             : post.mediaKind,
         media: resolvedAttachments,
+        localMediaSources: const <PostMediaUploadRecoveryItem>[],
         commentCount: comments.length,
         heartCount: activeHeartCount,
         viewerHasHearted: viewerHasHearted,

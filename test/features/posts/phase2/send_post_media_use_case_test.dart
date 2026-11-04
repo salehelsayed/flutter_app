@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -12,6 +13,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../shared/fakes/encrypted_media_test_bridge.dart'
+    show TempPostMediaFileManager;
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -43,6 +46,12 @@ void main() {
   test(
     'sends image posts with media metadata in the post_create payload',
     () async {
+      final fixtureDir = await Directory.systemTemp.createTemp(
+        'send-post-photo-',
+      );
+      addTearDown(() => fixtureDir.delete(recursive: true));
+      final source = File('${fixtureDir.path}/image.jpg');
+      await source.writeAsBytes(<int>[1, 2, 3, 4]);
       await secureKeyStore.write(
         ImageQualityPreference.storageKey,
         ImageQualityPreference.original.toStorageString(),
@@ -57,9 +66,9 @@ void main() {
         senderUsername: 'Alice',
         text: 'Photo post',
         audience: PostAudience.allFriends(),
-        mediaDrafts: const [
+        mediaDrafts: [
           PostMediaDraft(
-            localFilePath: '/tmp/image.jpg',
+            localFilePath: source.path,
             mime: 'image/jpeg',
             width: 1440,
             height: 1080,
@@ -78,7 +87,9 @@ void main() {
                 return XFile('${path}_processed');
               },
         ),
-        mediaFileManager: mediaFileManager,
+        mediaFileManager: TempPostMediaFileManager(
+          '${fixtureDir.path}/documents',
+        ),
         uploadPostMediaFn:
             ({
               required postId,

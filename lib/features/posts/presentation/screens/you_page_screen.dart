@@ -494,6 +494,11 @@ class _ThoughtCard extends StatelessWidget {
       for (final m in post.media)
         if (m.kind == 'image' || m.kind == 'video') m,
     ]..sort((a, b) => a.position.compareTo(b.position));
+    final localPhotos = [
+      if (!post.isIncoming && post.media.isEmpty && post.mediaKind != 'none')
+        for (final source in post.localMediaSources)
+          if (source.kind == 'image') source,
+    ]..sort((a, b) => a.position.compareTo(b.position));
     final voice = [
       for (final m in post.media)
         if (m.kind == 'voice') m,
@@ -539,8 +544,27 @@ class _ThoughtCard extends StatelessWidget {
           if (visual.isNotEmpty) ...[
             const SizedBox(height: 8),
             _MediaGrid(
-              visual: visual,
-              onTap: (index) => onOpenMedia(visual, index),
+              tiles: [
+                for (var i = 0; i < visual.length; i++)
+                  GestureDetector(
+                    key: ValueKey('you-media-${visual[i].mediaId}'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => onOpenMedia(visual, i),
+                    child: _MediaTile(
+                      path: visual[i].localPath,
+                      kind: visual[i].kind,
+                      durationMs: visual[i].durationMs,
+                    ),
+                  ),
+              ],
+            ),
+          ] else if (localPhotos.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _MediaGrid(
+              tiles: [
+                for (final source in localPhotos)
+                  _MediaTile(path: source.localFilePath, kind: source.kind),
+              ],
             ),
           ],
           for (final attachment in voice) ...[
@@ -792,28 +816,21 @@ class _WroteFace extends StatelessWidget {
 
 /// The Thought's photos and videos, laid out as on the prototype feed.
 class _MediaGrid extends StatelessWidget {
-  const _MediaGrid({required this.visual, required this.onTap});
+  const _MediaGrid({required this.tiles});
 
-  final List<PostMediaAttachmentModel> visual;
-  final ValueChanged<int> onTap;
+  final List<Widget> tiles;
 
   @override
   Widget build(BuildContext context) {
-    Widget tile(int i) => GestureDetector(
-      key: ValueKey('you-media-${visual[i].mediaId}'),
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onTap(i),
-      child: _MediaTile(media: visual[i]),
-    );
-    return switch (visual.length) {
-      1 => SizedBox(height: 170, child: tile(0)),
+    return switch (tiles.length) {
+      1 => SizedBox(height: 170, child: tiles[0]),
       2 => SizedBox(
         height: 140,
         child: Row(
           children: [
-            Expanded(child: tile(0)),
+            Expanded(child: tiles[0]),
             const SizedBox(width: 4),
-            Expanded(child: tile(1)),
+            Expanded(child: tiles[1]),
           ],
         ),
       ),
@@ -821,20 +838,20 @@ class _MediaGrid extends StatelessWidget {
         height: 180,
         child: Row(
           children: [
-            Expanded(flex: 3, child: tile(0)),
+            Expanded(flex: 3, child: tiles[0]),
             const SizedBox(width: 4),
             Expanded(
               flex: 2,
               child: Column(
                 children: [
-                  Expanded(child: tile(1)),
+                  Expanded(child: tiles[1]),
                   const SizedBox(height: 4),
                   Expanded(
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        tile(2),
-                        if (visual.length > 3)
+                        tiles[2],
+                        if (tiles.length > 3)
                           IgnorePointer(
                             child: Container(
                               alignment: Alignment.center,
@@ -843,7 +860,7 @@ class _MediaGrid extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                '+${visual.length - 3}',
+                                '+${tiles.length - 3}',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 18,
@@ -866,19 +883,20 @@ class _MediaGrid extends StatelessWidget {
 }
 
 class _MediaTile extends StatelessWidget {
-  const _MediaTile({required this.media});
+  const _MediaTile({required this.path, required this.kind, this.durationMs});
 
-  final PostMediaAttachmentModel media;
+  final String? path;
+  final String kind;
+  final int? durationMs;
 
   String _duration() {
-    final seconds = ((media.durationMs ?? 0) / 1000).round();
+    final seconds = ((durationMs ?? 0) / 1000).round();
     return '${seconds ~/ 60}:${'${seconds % 60}'.padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final video = media.kind == 'video';
-    final path = media.localPath;
+    final video = kind == 'video';
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Stack(
@@ -887,8 +905,8 @@ class _MediaTile extends StatelessWidget {
           const ColoredBox(color: Color(0xFF111614)),
           if (path != null)
             MediaThumbnailImage(
-              mediaPath: MediaFileManager.resolveStoredPathSync(path),
-              mediaType: media.kind,
+              mediaPath: MediaFileManager.resolveStoredPathSync(path!),
+              mediaType: kind,
               fit: BoxFit.cover,
             ),
           if (video) ...[

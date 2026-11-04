@@ -433,6 +433,7 @@ class _PostsWiredState extends State<PostsWired> {
             audience: result.audience,
             mediaDrafts: result.mediaDrafts,
             secureKeyStore: widget.secureKeyStore,
+            mediaFileManager: widget.mediaFileManager,
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             postsPrivacySettingsRepository:

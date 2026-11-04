@@ -143,6 +143,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/thought_audience
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
+import 'package:flutter_app/features/posts/application/post_surface_hydrator.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -3703,16 +3704,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
     }
 
-    final media = own == null
-        ? const <String, List<PostMediaAttachmentModel>>{}
-        : await repository.loadPostMediaAttachmentsForPosts([own.id]);
+    final ownSurface = own == null
+        ? null
+        : (await hydratePostSurfaceItems(
+            postRepo: repository,
+            posts: [own],
+            mediaFileManager: widget.mediaFileManager,
+            viewerPeerId: identity.peerId,
+          )).single;
     return YouPageData(
       username: identity.username,
       avatarBytes: _avatarBytes,
       friendCount: friends.length,
-      thought: own == null
-          ? null
-          : await responses(own.copyWith(media: media[own.id] ?? const [])),
+      thought: ownSurface == null ? null : await responses(ownSurface),
       // The live and expired reads take the clock separately.
       past: await Future.wait([
         for (final post in past)

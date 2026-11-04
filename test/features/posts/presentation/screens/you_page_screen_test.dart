@@ -659,7 +659,11 @@ void main() {
           ),
         );
       await posts.savePost(
-        _post().copyWith(text: '', mediaKind: 'image', deliveryStatus: 'sending'),
+        _post().copyWith(
+          text: '',
+          mediaKind: 'image',
+          deliveryStatus: 'sending',
+        ),
       );
       await posts.replacePostMediaUploadRecoveryItems('post-1', [
         _localPhoto(photo.path),
@@ -678,7 +682,10 @@ void main() {
 
       final thumbnail = find.byType(MediaThumbnailImage);
       expect(thumbnail, findsOneWidget);
-      expect(tester.widget<MediaThumbnailImage>(thumbnail).mediaPath, photo.path);
+      expect(
+        tester.widget<MediaThumbnailImage>(thumbnail).mediaPath,
+        photo.path,
+      );
       final rendered = tester.widget<RawImage>(
         find.descendant(of: thumbnail, matching: find.byType(RawImage)),
       );

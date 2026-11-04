@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 
 class PostModel {
   final String id;
@@ -18,6 +19,10 @@ class PostModel {
   final bool keepAvailable;
   final String mediaKind;
   final List<PostMediaAttachmentModel> media;
+
+  /// Own media sources for display before completed attachments are available.
+  /// Local-only projection: never serialized or used as delivery metadata.
+  final List<PostMediaUploadRecoveryItem> localMediaSources;
   final int commentCount;
   final int heartCount;
   final bool viewerHasHearted;
@@ -62,6 +67,7 @@ class PostModel {
     this.keepAvailable = false,
     this.mediaKind = 'none',
     this.media = const <PostMediaAttachmentModel>[],
+    this.localMediaSources = const <PostMediaUploadRecoveryItem>[],
     this.commentCount = 0,
     this.heartCount = 0,
     this.viewerHasHearted = false,
@@ -172,6 +178,7 @@ class PostModel {
     bool? keepAvailable,
     String? mediaKind,
     List<PostMediaAttachmentModel>? media,
+    List<PostMediaUploadRecoveryItem>? localMediaSources,
     int? commentCount,
     int? heartCount,
     bool? viewerHasHearted,
@@ -211,6 +218,7 @@ class PostModel {
       keepAvailable: keepAvailable ?? this.keepAvailable,
       mediaKind: mediaKind ?? this.mediaKind,
       media: media ?? this.media,
+      localMediaSources: localMediaSources ?? this.localMediaSources,
       commentCount: commentCount ?? this.commentCount,
       heartCount: heartCount ?? this.heartCount,
       viewerHasHearted: viewerHasHearted ?? this.viewerHasHearted,

@@ -4207,6 +4207,27 @@ retraction can fall back only to expired own rows and still applies the author
 check and real media/cascade deletion. Replacement continues reading the live
 feed, so it does not remove already-expired stored own history.
 
+Photo sources accepted by the Orbit composer (or `PostsWired` when supplied its
+optional media manager) are copied into the existing owned `post_media`
+directory before the Thought is saved. Recovery stores the portable
+path, and live retries resolve it through `MediaFileManager`. Delivery expiry
+must exclude upload work without deleting the author's retained source; late
+upload completion or failure must also preserve it when `getPost` hides the
+expired own row. Actual Thought deletion still removes its recovery rows and
+owned files. The shared hydrator projects these sources only onto own media
+Thoughts with no completed attachments; You-page thumbnails use that local-only
+projection, which is absent from persisted/wire post maps. Completed attachments
+take precedence. The repository, background-send, delivery-rule, restart,
+feed-hydration and You-page tests plus the actual Orbit-to-You regression cover
+these boundaries. On the landed history/hashtag base the 76 focused cases pass;
+the exact Orbit regression also passes, following the live card into history.
+Original causal REDs, the corrected missing-input fixture failure, and stable-source receipts
+are retained in `.codex-test-logs/thought-photo-upload-retry-131/`. These are host
+SQLite/filesystem/FakeBridge/widget results, not network-drop or signed-device
+proof. A failed live upload does not publish a text-only Thought; the ordinary
+fail-once/retry control already passed before this change. A clock jump beyond
+the fixed delivery lifetime does not authorize a later retry or publication.
+
 Move Account already exports the whole portable database and all stored post
 media paths without an expiry filter; no schema or migration production change
 is needed for own history. The sweep-before-Move regression exercises production

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -240,33 +242,43 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     isIncoming: false,
     deliveryStatus: 'sending',
   );
-  if (hasMedia) {
-    await postRepo.replacePostMediaUploadRecoveryItems(
-      post.id,
-      mediaDrafts
-          .asMap()
-          .entries
-          .map((entry) {
-            final draft = entry.value;
-            return PostMediaUploadRecoveryItem(
-              postId: post.id,
-              position: entry.key,
-              localFilePath: draft.localFilePath,
-              mime: draft.mime,
-              kind: draft.kind,
-              width: draft.width,
-              height: draft.height,
-              durationMs: draft.durationMs,
-              waveform: draft.waveform,
-              caption: PostMediaAttachmentModel.normalizeCaption(draft.caption),
-              createdAt: createdAt,
-            );
-          })
-          .toList(growable: false),
-    );
-  }
+  var storedMediaDrafts = mediaDrafts;
   var postSaved = false;
   try {
+    if (hasMedia) {
+      if (mediaFileManager != null) {
+        storedMediaDrafts = await _stagePostPhotoDrafts(
+          postId: post.id,
+          drafts: mediaDrafts,
+          mediaFileManager: mediaFileManager,
+        );
+      }
+      await postRepo.replacePostMediaUploadRecoveryItems(
+        post.id,
+        storedMediaDrafts
+            .asMap()
+            .entries
+            .map((entry) {
+              final draft = entry.value;
+              return PostMediaUploadRecoveryItem(
+                postId: post.id,
+                position: entry.key,
+                localFilePath: draft.localFilePath,
+                mime: draft.mime,
+                kind: draft.kind,
+                width: draft.width,
+                height: draft.height,
+                durationMs: draft.durationMs,
+                waveform: draft.waveform,
+                caption: PostMediaAttachmentModel.normalizeCaption(
+                  draft.caption,
+                ),
+                createdAt: createdAt,
+              );
+            })
+            .toList(growable: false),
+      );
+    }
     await inThoughtsMetricsOrder(() async {
       if (secureKeyStore != null &&
           !await loadThoughtsMetricsEnabled(secureKeyStore: secureKeyStore)) {
@@ -290,6 +302,9 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
           post.id,
           const <PostMediaUploadRecoveryItem>[],
         );
+      } catch (_) {}
+      try {
+        await mediaFileManager?.deleteMediaForPost(post.id);
       } catch (_) {}
     }
     emitFlowEvent(
@@ -353,8 +368,6 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         now: now,
       );
     }
-    // The orbit's composer passes no media manager; the default one reaches
-    // the same post_media folders.
     await deleteReplacedThoughts(
       postRepo: postRepo,
       mediaFileManager: mediaFileManager ?? MediaFileManager(),
@@ -402,9 +415,51 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     CreatedLocalPost(
       post: post,
       resolvedRecipients: resolvedRecipients,
-      mediaDrafts: mediaDrafts,
+      mediaDrafts: storedMediaDrafts,
     ),
   );
+}
+
+Future<List<PostMediaDraft>> _stagePostPhotoDrafts({
+  required String postId,
+  required List<PostMediaDraft> drafts,
+  required MediaFileManager mediaFileManager,
+}) async {
+  final staged = <PostMediaDraft>[];
+  for (var index = 0; index < drafts.length; index++) {
+    final draft = drafts[index];
+    if (draft.kind != 'image') {
+      staged.add(draft);
+      continue;
+    }
+    // This source belongs to the Thought before any upload succeeds. The
+    // existing post directory cleanup also owns it after deletion or a crash.
+    final sourcePath = await mediaFileManager.resolveStoredPath(
+      draft.localFilePath,
+    );
+    final draftId = 'draft_$index';
+    final stagedPath = await mediaFileManager.localPathForPostAttachment(
+      postId: postId,
+      blobId: draftId,
+      mime: draft.mime,
+    );
+    await File(sourcePath).copy(stagedPath);
+    staged.add(
+      PostMediaDraft(
+        localFilePath: mediaFileManager.relativePathForPostAttachment(
+          postId: postId,
+          blobId: draftId,
+          mime: draft.mime,
+        ),
+        mime: draft.mime,
+        width: draft.width,
+        height: draft.height,
+        durationMs: draft.durationMs,
+        waveform: draft.waveform,
+      ),
+    );
+  }
+  return staged;
 }
 
 Future<void> _savePendingRecipientDeliveries({

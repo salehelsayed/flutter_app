@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
@@ -163,32 +164,32 @@ void main() {
       addTearDown(service.dispose);
       final bridge = FakeBridge();
       var uploadAttempts = 0;
-      final UploadPostMediaFn upload =
-          ({
-            required postId,
-            required localFilePath,
-            required mime,
-            required allowedPeers,
-            mediaFileManager,
-            width,
-            height,
-            durationMs,
-            waveform,
-          }) async {
-            uploadAttempts++;
-            if (uploadAttempts == 1) return null;
-            return PostMediaAttachmentModel(
-              mediaId: 'recovered-photo',
-              postId: postId,
-              blobId: 'recovered-blob',
-              kind: 'image',
-              mime: mime,
-              sizeBytes: 4,
-              localPath: 'post_media/$postId/recovered-blob.jpg',
-              downloadStatus: 'done',
-              createdAt: DateTime.now().toUtc().toIso8601String(),
-            );
-          };
+      Future<PostMediaAttachmentModel?> upload({
+        required String postId,
+        required String localFilePath,
+        required String mime,
+        required List<String> allowedPeers,
+        MediaFileManager? mediaFileManager,
+        int? width,
+        int? height,
+        int? durationMs,
+        List<double>? waveform,
+      }) async {
+        uploadAttempts++;
+        if (uploadAttempts == 1) return null;
+        return PostMediaAttachmentModel(
+          mediaId: 'recovered-photo',
+          postId: postId,
+          blobId: 'recovered-blob',
+          kind: 'image',
+          mime: mime,
+          sizeBytes: 4,
+          localPath: 'post_media/$postId/recovered-blob.jpg',
+          downloadStatus: 'done',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        );
+      }
+
       final (result, pending) = await sendPost(
         p2pService: service,
         postRepo: posts,

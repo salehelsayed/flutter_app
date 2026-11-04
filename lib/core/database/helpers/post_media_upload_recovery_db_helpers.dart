@@ -44,11 +44,8 @@ Future<List<Map<String, Object?>>> dbLoadPendingPostMediaUploadPosts(
       .toUtc()
       .subtract(ThoughtLifetime.duration)
       .toIso8601String();
-  // Recovery work is terminal after the thought's delivery deadline.
-  await db.rawDelete(
-    'DELETE FROM post_media_upload_recovery WHERE post_id IN (SELECT post_id FROM posts WHERE julianday(post_created_at) <= julianday(?))',
-    <Object?>[cutoff],
-  );
+  // Expired Thoughts cannot upload, but their local sources still belong to
+  // the author's history. Only select live work; do not discard those paths.
   return db.rawQuery(
     '''
       SELECT p.*

@@ -71,7 +71,11 @@ attachPostMedia({
     nowProvider?.call() ?? DateTime.now(),
   );
   if (isExpired()) {
-    await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
+      postId,
+      nowProvider: nowProvider,
+    );
     return (AttachPostMediaResult.expired, const <PostMediaAttachmentModel>[]);
   }
   if (drafts.isEmpty) {
@@ -142,19 +146,26 @@ attachPostMedia({
 
   final attachments = <PostMediaAttachmentModel>[];
   for (var index = 0; index < drafts.length; index++) {
+    final sourcePath = await (mediaFileManager ?? MediaFileManager())
+        .resolveStoredPath(drafts[index].localFilePath);
     final prepared = await _prepareDraft(
       draft: drafts[index],
+      localFilePath: sourcePath,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
     );
     if (isExpired()) {
-      if (prepared.localFilePath != drafts[index].localFilePath) {
+      if (prepared.localFilePath != sourcePath) {
         await _removeLateMediaFile(prepared.localFilePath, mediaFileManager);
       }
       for (final attachment in attachments) {
         await _removeLateMediaFile(attachment.localPath, mediaFileManager);
       }
-      await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+      await _clearRecoveryUnlessOwnPostExists(
+        postRepo,
+        postId,
+        nowProvider: nowProvider,
+      );
       return (
         AttachPostMediaResult.expired,
         const <PostMediaAttachmentModel>[],
@@ -181,7 +192,7 @@ attachPostMedia({
     // Temp hygiene (doc-112 parity): the processed plaintext temp is only
     // an upload input — the draft SOURCE stays (recovery replay re-reads
     // it). Voice passes through _prepareDraft unchanged, hence the guard.
-    if (prepared.localFilePath != drafts[index].localFilePath) {
+    if (prepared.localFilePath != sourcePath) {
       try {
         final processedTemp = File(prepared.localFilePath);
         if (processedTemp.existsSync()) {
@@ -208,7 +219,11 @@ attachPostMedia({
     for (final attachment in attachments) {
       await _removeLateMediaFile(attachment.localPath, mediaFileManager);
     }
-    await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
+      postId,
+      nowProvider: nowProvider,
+    );
     return (AttachPostMediaResult.expired, const <PostMediaAttachmentModel>[]);
   }
   await postRepo.replacePostMediaAttachments(postId, attachments);
@@ -230,9 +245,10 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     DateTime.parse(created.post.createdAt),
     nowProvider?.call() ?? DateTime.now(),
   )) {
-    await postRepo.replacePostMediaUploadRecoveryItems(
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
       created.post.id,
-      const [],
+      nowProvider: nowProvider,
     );
     return (SendPostResult.sendFailed, created);
   }
@@ -290,9 +306,11 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     for (final attachment in attachments) {
       await _removeLateMediaFile(attachment.localPath, mediaFileManager);
     }
-    await postRepo.replacePostMediaUploadRecoveryItems(
+    await postRepo.replacePostMediaAttachments(created.post.id, const []);
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
       created.post.id,
-      const [],
+      nowProvider: nowProvider,
     );
     return (SendPostResult.sendFailed, created);
   }
@@ -308,7 +326,11 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
   // source fails the post permanently.
   for (final draft in drafts) {
     try {
-      final source = File(draft.localFilePath);
+      final source = File(
+        await (mediaFileManager ?? MediaFileManager()).resolveStoredPath(
+          draft.localFilePath,
+        ),
+      );
       if (source.existsSync()) {
         source.deleteSync();
       }
@@ -451,18 +473,50 @@ Future<PostModel> _persistPendingMediaPreparationPost({
       ) &&
       await postRepo.getPost(post.id) != null;
   if (!await isLive()) {
-    await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
+      post.id,
+      nowProvider: nowProvider,
+    );
     return post;
   }
   await postRepo.replacePostMediaAttachments(post.id, const []);
   if (!await isLive()) {
-    await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+    await _clearRecoveryUnlessOwnPostExists(
+      postRepo,
+      post.id,
+      nowProvider: nowProvider,
+    );
     return post;
   }
   // Keep main's durable retry state after the second expiry/existence fence.
   final pendingPost = post.copyWith(deliveryStatus: 'sending', media: const []);
   await postRepo.savePost(pendingPost);
   return pendingPost;
+}
+
+Future<void> _clearRecoveryUnlessOwnPostExists(
+  PostRepository postRepo,
+  String postId, {
+  DateTime Function()? nowProvider,
+}) async {
+  // Delivery expiry leaves the author's local history intact. A deleted
+  // Thought still loses recovery rows, including any written by late work.
+  var stored = await postRepo.getPost(postId);
+  if (stored == null) {
+    final now = (nowProvider ?? DateTime.now)().toUtc();
+    for (final candidate in await postRepo.loadExpiredOwnPosts(
+      now.toIso8601String(),
+    )) {
+      if (candidate.id == postId) {
+        stored = candidate;
+        break;
+      }
+    }
+  }
+  if (stored == null || stored.isIncoming) {
+    await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+  }
 }
 
 String _draftMime(_PreparedPostMediaDraft prepared, PostMediaDraft original) {
@@ -493,6 +547,7 @@ class _PreparedPostMediaDraft {
 
 Future<_PreparedPostMediaDraft> _prepareDraft({
   required PostMediaDraft draft,
+  required String localFilePath,
   required SecureKeyStore secureKeyStore,
   required ImageProcessor imageProcessor,
 }) async {
@@ -502,7 +557,7 @@ Future<_PreparedPostMediaDraft> _prepareDraft({
         secureKeyStore: secureKeyStore,
       );
       final processedPath = await imageProcessor.processImage(
-        inputPath: draft.localFilePath,
+        inputPath: localFilePath,
         quality: quality,
       );
       return _PreparedPostMediaDraft(
@@ -515,7 +570,7 @@ Future<_PreparedPostMediaDraft> _prepareDraft({
         secureKeyStore: secureKeyStore,
       );
       final processed = await imageProcessor.processVideo(
-        inputPath: draft.localFilePath,
+        inputPath: localFilePath,
         quality: quality,
       );
       return _PreparedPostMediaDraft(
@@ -526,12 +581,12 @@ Future<_PreparedPostMediaDraft> _prepareDraft({
       );
     case 'voice':
       return _PreparedPostMediaDraft(
-        localFilePath: draft.localFilePath,
+        localFilePath: localFilePath,
         durationMs: draft.durationMs,
         waveform: draft.waveform,
       );
     default:
-      return _PreparedPostMediaDraft(localFilePath: draft.localFilePath);
+      return _PreparedPostMediaDraft(localFilePath: localFilePath);
   }
 }
 

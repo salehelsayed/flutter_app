@@ -12,12 +12,14 @@ import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
 import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -56,13 +58,8 @@ void main() {
     final now = nowProvider ?? () => DateTime.utc(2026, 3, 15, 12);
     return PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
-      dbLoadPost: (postId) => dbLoadPost(
-        db,
-        postId,
-        nowProvider: now,
-      ),
-      dbLoadPostsFeed: () =>
-          dbLoadPostsFeed(db, nowProvider: now),
+      dbLoadPost: (postId) => dbLoadPost(db, postId, nowProvider: now),
+      dbLoadPostsFeed: () => dbLoadPostsFeed(db, nowProvider: now),
       dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),
       dbLoadExpiredOwnPosts: (String nowIso, {int? limit, int offset = 0}) =>
           dbLoadExpiredOwnPosts(db, nowIso, limit: limit, offset: offset),
@@ -78,10 +75,8 @@ void main() {
           dbReplacePostMediaUploadRecoveryItems(db, postId, rows),
       dbLoadPostMediaUploadRecoveryItems: (postId) =>
           dbLoadPostMediaUploadRecoveryItems(db, postId),
-      dbLoadPendingMediaUploadPosts: () => dbLoadPendingPostMediaUploadPosts(
-        db,
-        nowProvider: now,
-      ),
+      dbLoadPendingMediaUploadPosts: () =>
+          dbLoadPendingPostMediaUploadPosts(db, nowProvider: now),
     );
   }
 
@@ -162,21 +157,21 @@ void main() {
             }) async => XFile('${path}_processed'),
       );
       var uploadAttempts = 0;
-      final UploadPostMediaFn upload =
-          ({
-            required postId,
-            required localFilePath,
-            required mime,
-            required allowedPeers,
-            mediaFileManager,
-            width,
-            height,
-            durationMs,
-            waveform,
-          }) async {
-            uploadAttempts++;
-            return null;
-          };
+      Future<PostMediaAttachmentModel?> upload({
+        required String postId,
+        required String localFilePath,
+        required String mime,
+        required List<String> allowedPeers,
+        MediaFileManager? mediaFileManager,
+        int? width,
+        int? height,
+        int? durationMs,
+        List<double>? waveform,
+      }) async {
+        uploadAttempts++;
+        return null;
+      }
+
       final (result, prepared) = await prepareCreatedLocalPostMedia(
         created: CreatedLocalPost(
           post: post,
@@ -238,6 +233,131 @@ void main() {
         sourceBytes,
       );
       expect(await recreated.loadPendingMediaUploadPosts(), isEmpty);
+    },
+  );
+
+  test(
+    'photo upload failing after expiry keeps source when live lookup hides own history',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp('late-own-photo-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final source = File('${tempDir.path}/photo.jpg');
+      const sourceBytes = <int>[1, 2, 3, 4];
+      await source.writeAsBytes(sourceBytes);
+      final createdAt = DateTime.utc(2026, 3, 15, 12);
+      var now = createdAt;
+      final repository = buildRepository(nowProvider: () => now);
+      addTearDown(repository.dispose);
+      final post = PostModel(
+        id: 'late-own-photo',
+        eventId: 'event-late-own-photo',
+        senderPeerId: 'peer-alice',
+        authorPeerId: 'peer-alice',
+        authorUsername: 'Alice',
+        text: 'My local photo',
+        audience: PostAudience.allFriends(),
+        createdAt: createdAt.toIso8601String(),
+        visibleAt: createdAt.toIso8601String(),
+        expiresAt: ThoughtLifetime.expiresAt(createdAt).toIso8601String(),
+        mediaKind: 'image',
+        isIncoming: false,
+        deliveryStatus: 'sending',
+      );
+      await repository.savePost(post);
+      await repository.saveRecipientDelivery(
+        PostRecipientDelivery(
+          postId: post.id,
+          recipientPeerId: 'peer-bob',
+          deliveryStatus: 'pending',
+          lastAttemptAt: post.createdAt,
+          deliveryPath: 'pending',
+          createdAt: post.createdAt,
+          updatedAt: post.createdAt,
+        ),
+      );
+      await repository.replacePostMediaUploadRecoveryItems(post.id, [
+        PostMediaUploadRecoveryItem(
+          postId: post.id,
+          position: 0,
+          localFilePath: source.path,
+          mime: 'image/jpeg',
+          kind: 'image',
+          createdAt: post.createdAt,
+        ),
+      ]);
+      final secureKeyStore = FakeSecureKeyStore();
+      final imageProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => XFile('${path}_processed'),
+      );
+      var uploadAttempts = 0;
+      Future<PostMediaAttachmentModel?> upload({
+        required String postId,
+        required String localFilePath,
+        required String mime,
+        required List<String> allowedPeers,
+        MediaFileManager? mediaFileManager,
+        int? width,
+        int? height,
+        int? durationMs,
+        List<double>? waveform,
+      }) async {
+        uploadAttempts++;
+        now = createdAt.add(const Duration(hours: 48, minutes: 1));
+        return null;
+      }
+
+      final (result, _) = await prepareCreatedLocalPostMedia(
+        created: CreatedLocalPost(post: post, resolvedRecipients: const []),
+        postRepo: repository,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        uploadPostMediaFn: upload,
+        nowProvider: () => now,
+      );
+      expect(result, SendPostResult.sendFailed);
+      expect(uploadAttempts, 1);
+      expect(await repository.getPost(post.id), isNull);
+      final history = await repository.loadExpiredOwnPosts(
+        now.toIso8601String(),
+      );
+      expect(history.map((entry) => entry.id), [post.id]);
+      expect(history.single.expiresAt, post.expiresAt);
+
+      final network = FakeP2PNetwork();
+      final service = FakeP2PService(peerId: 'peer-alice', network: network);
+      addTearDown(service.dispose);
+      final bridge = FakeBridge();
+      expect(
+        await retryPendingPostMediaUploads(
+          postRepo: repository,
+          contactRepo: InMemoryContactRepository(),
+          p2pService: service,
+          secureKeyStore: secureKeyStore,
+          imageProcessor: imageProcessor,
+          uploadPostMediaFn: upload,
+          bridge: bridge,
+          nowProvider: () => now,
+        ),
+        0,
+      );
+      expect(uploadAttempts, 1);
+      expect(bridge.commandLog, isEmpty);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(await repository.loadPostMediaAttachments(post.id), isEmpty);
+      final retained = await repository.loadPostMediaUploadRecoveryItems(
+        post.id,
+      );
+      expect(retained, hasLength(1));
+      expect(retained.single.localFilePath, source.path);
+      expect(await source.readAsBytes(), sourceBytes);
     },
   );
 
