@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/you_tags_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
@@ -106,7 +107,11 @@ class YouPageScreen extends StatefulWidget {
     this.thoughtReplies = const Stream.empty(),
     this.tagsNoteSeen = true,
     this.onTagsNoteSeen,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
+
+  /// The background the user chose for Orbit; the You page sits on it too.
+  final BackgroundPreference backgroundPreference;
 
   /// Whether the one-time note pointing at "your tags" was already shown.
   final bool tagsNoteSeen;
