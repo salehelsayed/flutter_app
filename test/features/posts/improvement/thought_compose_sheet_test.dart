@@ -535,6 +535,65 @@ void main() {
     });
   }
 
+  testWidgets('on a short phone with the keyboard up and double-size text, '
+      'the replaces hint never pushes the toolbar under the keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568) * 3;
+    tester.view.devicePixelRatio = 3;
+    tester.view.padding = const FakeViewPadding(top: 20 * 3);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300 * 3);
+    addTearDown(tester.view.reset);
+    const keyboardTop = 568.0 - 300;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => ComposePostSheet(
+                    thoughtsOnly: true,
+                    replacesCurrentThought: true,
+                    eligibleContacts: const [],
+                    onSubmitWithOutcome: (_) async =>
+                        ComposePostSubmitOutcome.keepSheetOpen,
+                  ),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    // Other rows of the sheet are not part of this check.
+    tester.takeException();
+
+    final toolbar = tester.getRect(
+      find.byKey(const ValueKey('thought-composer-toolbar')),
+    );
+    expect(toolbar.bottom, lessThanOrEqualTo(keyboardTop + 0.5));
+    expect(
+      find.byKey(const ValueKey('thought-composer-replaces')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('a mixed photo and video pick keeps photos and says so', (
     tester,
   ) async {
