@@ -114,6 +114,8 @@ class ChatSearchController extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    // A query still awaiting its answer finds the search closed and stops.
+    _open = false;
     super.dispose();
   }
 }
