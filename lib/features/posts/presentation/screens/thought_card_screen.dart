@@ -700,7 +700,10 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               text: _post.text,
               textDirection: detectTextDirection(_post.text),
               style: _centeredStyle,
-              tagStyle: thoughtTagStyle(_centeredStyle),
+              // A friend's tags are plain words; only your own read as tags.
+              tagStyle: _post.isIncoming
+                  ? null
+                  : thoughtTagStyle(_centeredStyle),
             ),
           ),
         ),
@@ -849,7 +852,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                     text: _post.text,
                     textDirection: detectTextDirection(_post.text),
                     style: _chromeStyle,
-                    tagStyle: thoughtTagStyle(_chromeStyle),
+                    tagStyle: _post.isIncoming
+                        ? null
+                        : thoughtTagStyle(_chromeStyle),
                   ),
                   stretch: true,
                 ),

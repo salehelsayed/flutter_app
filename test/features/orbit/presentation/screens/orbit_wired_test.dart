@@ -1901,6 +1901,224 @@ void main() {
     );
 
     testWidgets(
+      'your tags: # on the You page lists the tags of your own Thoughts, '
+      'and its first-time note shows once',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        PostModel own(String id, String text, DateTime created) =>
+            thought(
+              id,
+              text: text,
+              expiresAt: created.add(const Duration(hours: 24)),
+            ).copyWith(
+              senderPeerId: testIdentity.peerId,
+              authorPeerId: testIdentity.peerId,
+              authorUsername: testIdentity.username,
+              isIncoming: false,
+              createdAt: created.toIso8601String(),
+              visibleAt: created.toIso8601String(),
+            );
+        await posts.savePost(
+          own(
+            'old',
+            'frost #walks',
+            thoughtNow.subtract(const Duration(days: 3)),
+          ),
+        );
+        await posts.savePost(
+          own(
+            'live',
+            'reef #sea',
+            thoughtNow.subtract(const Duration(hours: 1)),
+          ),
+        );
+        await posts.savePost(thought('friend', text: 'their #secret'));
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.text('All your tags live here.'), findsOneWidget);
+        await tester.tap(find.byTooltip('Your tags'));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byKey(const ValueKey('you-tags-row-sea')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('you-tags-row-walks')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('you-tags-row-secret')),
+          findsNothing,
+          reason: "a friend's tags are not yours",
+        );
+        expect(await secureKeyStore.read('you_tags_note_seen_v1'), '1');
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'a tag scan that finishes after a newer one never brings back the old '
+      'tags',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        PostModel own(String id, String text, DateTime created) =>
+            thought(
+              id,
+              text: text,
+              expiresAt: created.add(const Duration(hours: 24)),
+            ).copyWith(
+              senderPeerId: testIdentity.peerId,
+              authorPeerId: testIdentity.peerId,
+              authorUsername: testIdentity.username,
+              isIncoming: false,
+              createdAt: created.toIso8601String(),
+              visibleAt: created.toIso8601String(),
+            );
+        for (var i = 0; i < 3; i++) {
+          await posts.savePost(
+            own(
+              'old-$i',
+              'day $i #walks',
+              thoughtNow.subtract(Duration(days: 2 + i)),
+            ),
+          );
+        }
+        posts.holdTagScans = true;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(posts.heldTagScans, hasLength(1));
+
+        // A new Thought arrives while the first scan is still out.
+        await posts.savePost(
+          own(
+            'live',
+            'reef #sea',
+            thoughtNow.subtract(const Duration(hours: 1)),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(posts.heldTagScans, hasLength(2));
+
+        // The newer scan answers first, the obsolete one last.
+        posts.holdTagScans = false;
+        posts.heldTagScans[1].complete();
+        await pumpOrbitFrames(tester, count: 8);
+        posts.heldTagScans[0].complete();
+        await pumpOrbitFrames(tester, count: 8);
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byTooltip('Your tags'));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byKey(const ValueKey('you-tags-row-sea')), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'an ordinary You-page reload reads one history page, not the whole '
+      'archive again; a changed Thought still refreshes your tags',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        PostModel own(String id, String text, DateTime created) =>
+            thought(
+              id,
+              text: text,
+              expiresAt: created.add(const Duration(hours: 24)),
+            ).copyWith(
+              senderPeerId: testIdentity.peerId,
+              authorPeerId: testIdentity.peerId,
+              authorUsername: testIdentity.username,
+              isIncoming: false,
+              createdAt: created.toIso8601String(),
+              visibleAt: created.toIso8601String(),
+            );
+        // More expired own Thoughts than one archive page holds.
+        for (var i = 0; i < 230; i++) {
+          await posts.savePost(
+            own(
+              'old-$i',
+              'day $i #walks',
+              thoughtNow.subtract(Duration(days: 2 + i)),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byTooltip('Your tags'), findsOneWidget);
+        final opened = posts.expiredOwnPageLimits.length;
+
+        // Coming back to the app reloads the page: one history page, no
+        // second walk through the whole archive.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(posts.expiredOwnPageLimits.length, opened + 1);
+
+        await posts.savePost(
+          own(
+            'live',
+            'reef #sea',
+            thoughtNow.subtract(const Duration(hours: 1)),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byTooltip('Your tags'));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byKey(const ValueKey('you-tags-row-sea')), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
       'the open You page follows a late reply, a late photo and the expiry '
       'into history',
       (tester) async {
@@ -13331,6 +13549,24 @@ class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
 
 class _OrbitThoughtPostRepository extends InMemoryPostRepository {
   final focusedIds = <String>[];
+
+  /// While set, the first page of each full tag scan (200 rows) waits here.
+  bool holdTagScans = false;
+  final heldTagScans = <Completer<void>>[];
+
+  @override
+  Future<List<PostModel>> loadExpiredOwnPosts(
+    String nowIso, {
+    int? limit,
+    int offset = 0,
+  }) async {
+    if (holdTagScans && limit == 200 && offset == 0) {
+      final gate = Completer<void>();
+      heldTagScans.add(gate);
+      await gate.future;
+    }
+    return super.loadExpiredOwnPosts(nowIso, limit: limit, offset: offset);
+  }
 
   @override
   Future<void> markFocused(String postId) async {

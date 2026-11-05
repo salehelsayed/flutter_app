@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
+import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_surface_hydrator.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -98,6 +99,7 @@ YouPageData _data({
   List<YouThought> past = const [],
   String? tag,
   int tagCount = 0,
+  List<OwnThoughtTag> tags = const [],
 }) => YouPageData(
   username: 'Saleh',
   avatarBytes: null,
@@ -106,6 +108,7 @@ YouPageData _data({
   past: past,
   tag: tag,
   tagCount: tagCount,
+  tags: tags,
 );
 
 Finder _keysStartingWith(String prefix) => find.byWidgetPredicate(
@@ -177,6 +180,11 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        // Orbit's background moves; held still here so frames settle.
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
@@ -337,6 +345,11 @@ void main() {
     var loads = 0;
     await tester.pumpWidget(
       MaterialApp(
+        // Orbit's background moves; held still here so frames settle.
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
@@ -814,6 +827,29 @@ void main() {
     expect(find.text('first coffee on the balcony'), findsOneWidget);
     expect(find.textContaining('still up for'), findsNothing);
     expect(find.text('Nothing shared right now'), findsOneWidget);
+  });
+
+  testWidgets('at expiry the # keeps your tags while the reload is out', (
+    tester,
+  ) async {
+    var clock = _now;
+    var loads = 0;
+    await pumpPage(tester, () async {
+      if (loads++ > 0) throw StateError('store unavailable');
+      return _data(
+        thought: _thought(left: const Duration(minutes: 30)),
+        tags: [OwnThoughtTag(key: 'walks', label: '#walks', lastUsed: _now)],
+      );
+    }, now: () => clock);
+    expect(find.byTooltip('Your tags'), findsOneWidget);
+
+    clock = _now.add(const Duration(minutes: 30, seconds: 1));
+    await tester.pump(const Duration(minutes: 30, seconds: 1));
+    await tester.pump();
+
+    expect(loads, greaterThan(1));
+    expect(find.text('Nothing shared right now'), findsOneWidget);
+    expect(find.byTooltip('Your tags'), findsOneWidget);
   });
 
   testWidgets(

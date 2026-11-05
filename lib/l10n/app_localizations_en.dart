@@ -5007,6 +5007,43 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get you_tags_open => 'Your tags';
+
+  @override
+  String get you_tags_done => 'Done';
+
+  @override
+  String get you_tags_title => 'your tags';
+
+  @override
+  String get you_tags_find => 'find a tag…';
+
+  @override
+  String get you_tags_recent => 'recent';
+
+  @override
+  String get you_tags_all => 'all tags';
+
+  @override
+  String you_tags_none(String tag) {
+    return 'no tag like $tag';
+  }
+
+  @override
+  String get you_tags_none_hint => 'tags come from your own Thoughts';
+
+  @override
+  String you_tags_used(int days) {
+    return '$days d ago';
+  }
+
+  @override
+  String get you_tags_used_today => 'today';
+
+  @override
+  String get you_tags_note => 'All your tags live here.';
+
+  @override
   String get stickers_title => 'Stickers';
 
   @override

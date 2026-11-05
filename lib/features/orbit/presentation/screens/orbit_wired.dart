@@ -143,6 +143,7 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_audience.dart';
+import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
@@ -1055,10 +1056,41 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _bindThoughtChanges() {
     _thoughtSubscription?.cancel();
-    _thoughtSubscription = _thoughtPosts?.postChanges.listen(
-      (_) => unawaited(_reloadThoughts()),
-      onError: (Object error) => _reportThoughtFailure(error),
+    _forgetYouTags();
+    _thoughtSubscription = _thoughtPosts?.postChanges.listen((_) {
+      _forgetYouTags();
+      unawaited(_reloadThoughts());
+    }, onError: (Object error) => _reportThoughtFailure(error));
+  }
+
+  /// Every tag on the author's own Thoughts, kept between You page reloads.
+  /// Gathering them walks the whole archive, so it happens once and again
+  /// only after a Thought changed.
+  List<OwnThoughtTag>? _youTags;
+
+  /// Bumped whenever [_youTags] is cleared, so a scan that started earlier
+  /// does not store its now outdated tags.
+  int _youTagsGeneration = 0;
+
+  void _forgetYouTags() {
+    _youTags = null;
+    _youTagsGeneration++;
+  }
+
+  Future<List<OwnThoughtTag>> _youTagsFor(
+    PostRepository repository,
+    PostModel? own,
+  ) async {
+    final cached = _youTags;
+    if (cached != null) return cached;
+    final generation = _youTagsGeneration;
+    final tags = await loadOwnThoughtTags(
+      postRepo: repository,
+      live: own,
+      nowProvider: widget.thoughtNowProvider,
     );
+    if (generation == _youTagsGeneration) _youTags = tags;
+    return tags;
   }
 
   bool _composingThought = false;
@@ -3669,6 +3701,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!mounted || identity == null || _youPageOpen) return;
     _youPageOpen = true;
     try {
+      final tagsNoteSeen = await _youTagsNoteSeen();
+      if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
@@ -3678,6 +3712,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
             onCompose: (tag) => _composeThought(tag: tag),
+            tagsNoteSeen: tagsNoteSeen,
+            backgroundPreference:
+                widget.appShellController?.backgroundPreference ??
+                BackgroundPreference.defaultBackground,
+            onTagsNoteSeen: () => unawaited(
+              widget.secureKeyStore
+                  .write(_youTagsNoteKey, '1')
+                  .catchError((Object _) {}),
+            ),
             changes: [?_thoughtPosts?.postChanges],
             thoughtReplies: switch (widget.messageRepo) {
               final MessageRepositoryChangeSource source =>
@@ -3738,6 +3781,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
       ],
     );
+  }
+
+  /// Set once the note pointing at the You page's # has been seen.
+  static const _youTagsNoteKey = 'you_tags_note_seen_v1';
+
+  Future<bool> _youTagsNoteSeen() async {
+    try {
+      return await widget.secureKeyStore.read(_youTagsNoteKey) == '1';
+    } on Object {
+      // Unreadable: skip the note rather than repeat it.
+      return true;
+    }
   }
 
   Future<YouPageData> _loadYouPage(
@@ -3808,6 +3863,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ? 0
           : tagged!.count +
                 (own != null && hasThoughtTag(own.text, tag) ? 1 : 0),
+      tags: await _youTagsFor(repository, own),
     );
   }
 

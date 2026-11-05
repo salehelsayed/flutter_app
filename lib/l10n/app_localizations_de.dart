@@ -5120,6 +5120,43 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get you_tags_open => 'Deine Tags';
+
+  @override
+  String get you_tags_done => 'Fertig';
+
+  @override
+  String get you_tags_title => 'deine Tags';
+
+  @override
+  String get you_tags_find => 'Tag finden…';
+
+  @override
+  String get you_tags_recent => 'zuletzt';
+
+  @override
+  String get you_tags_all => 'alle Tags';
+
+  @override
+  String you_tags_none(String tag) {
+    return 'kein Tag wie $tag';
+  }
+
+  @override
+  String get you_tags_none_hint => 'Tags kommen aus deinen eigenen Gedanken';
+
+  @override
+  String you_tags_used(int days) {
+    return 'vor $days T.';
+  }
+
+  @override
+  String get you_tags_used_today => 'heute';
+
+  @override
+  String get you_tags_note => 'Hier wohnen alle deine Tags.';
+
+  @override
   String get stickers_title => 'Sticker';
 
   @override
