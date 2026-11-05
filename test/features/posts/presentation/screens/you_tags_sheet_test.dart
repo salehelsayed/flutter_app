@@ -4,6 +4,7 @@ import 'package:flutter_app/features/posts/application/load_own_thought_tags_use
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/you_tags_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 final _now = DateTime.utc(2026, 11, 4, 12);
@@ -217,5 +218,33 @@ void main() {
     ]);
     await open(tester);
     expect(find.byKey(const ValueKey('you-tags-rail')), findsOneWidget);
+  });
+
+  testWidgets('a rail letter brings its first tag to the top of the list, '
+      'however far down it sits', (tester) async {
+    await pump(tester, [
+      for (var i = 0; i < 30; i++)
+        _tag('${String.fromCharCode(97 + i % 26)}tag$i', i),
+    ]);
+    await open(tester);
+    final list = tester.getRect(
+      find.descendant(
+        of: find.byType(YouTagsSheet),
+        matching: find.byType(ListView),
+      ),
+    );
+
+    await tester.tap(find.text('M'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(row('mtag12')).dy,
+      moreOrLessEquals(list.top, epsilon: 1),
+    );
+
+    await tester.tap(find.text('Z'));
+    await tester.pumpAndSettle();
+    final last = tester.getRect(row('ztag25'));
+    expect(last.top, greaterThanOrEqualTo(list.top));
+    expect(last.bottom, lessThanOrEqualTo(list.bottom));
   });
 }
