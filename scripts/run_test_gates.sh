@@ -9,6 +9,7 @@ readonly BASELINE_TESTS=(
   # 293 DTR-14: stable application bootstrap seam and production phase owners.
   "test/core/bootstrap/main_bootstrap_boundary_test.dart"
   "test/core/bootstrap/application_bootstrap_test.dart"
+  "test/core/storage/app_data_backup_exclusion_test.dart"
   "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart"
   "test/core/bootstrap/production_headless_canonical_recovery_test.dart"
   "test/core/bootstrap/production_headless_call_admission_test.dart"
@@ -92,6 +93,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/diagnostics/app_diagnostic_error_handlers_test.dart"
   "test/core/diagnostics/app_diagnostic_transport_test.dart"
   "test/core/diagnostics/production_app_diagnostics_test.dart"
+  "test/core/diagnostics/incident_diagnostics_schema_test.dart"
+  "test/core/diagnostics/sticker_usage_diagnostics_test.dart"
   "test/core/database/db_write_transaction_guard_test.dart"
   "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart"
   "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart"
@@ -202,6 +205,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/contact_request/application/send_contact_request_use_case_test.dart"
   "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
   "test/features/contact_request/application/contact_request_listener_test.dart"
+  "test/features/contact_request/data/repositories/contact_request_notification_retirement_test.dart"
   # 171: one-scan mutual contact add (auto-add v2 + deferred-ack + staged inbox
   # replay). Two-party convergence lock (INV-4: A issues zero reciprocals).
   "test/features/contact_request/integration/contact_request_one_scan_mutual_test.dart"
@@ -678,6 +682,7 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_refresh_ordering_test.dart"
+  "test/core/config/thoughts_feature_flags_test.dart"
   # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
   # active-Leave/dissolved-Delete swipe semantics.
   "test/features/groups/application/group_exit_policy_test.dart"
