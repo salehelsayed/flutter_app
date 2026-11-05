@@ -5700,6 +5700,7 @@
         "assets/*",
         "lib/core/config/*",
         "lib/core/permissions/*",
+        "test/core/permissions/mic_permission_prompt_test.dart",
         "lib/core/constants/*",
         "lib/shared/*",
         "pubspec.*",
