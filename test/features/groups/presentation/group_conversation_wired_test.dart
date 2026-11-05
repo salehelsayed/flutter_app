@@ -780,6 +780,23 @@ class GatedSearchPageGroupMessageRepository
   }
 }
 
+/// Parks single-message reads (a search jump's anchor) behind gates.
+class GatedAnchorReadGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  bool gateReads = false;
+  final List<Completer<void>> readGates = [];
+
+  @override
+  Future<GroupMessage?> getMessage(String id) async {
+    if (gateReads) {
+      final gate = Completer<void>();
+      readGates.add(gate);
+      await gate.future;
+    }
+    return super.getMessage(id);
+  }
+}
+
 class _WriteCountingGroupMessageRepository
     extends CountingGroupMessageRepository {
   int saveMessageCalls = 0;
@@ -2234,6 +2251,36 @@ void main() {
       repo.searchPageGates.single.complete();
       await pumpFrames(tester);
       expect(repo.searchPageOffsets, [0]);
+    });
+
+    testWidgets('in-chat search: a jump still loading when the bar closes '
+        'leaves the highlight alone', (tester) async {
+      final repo = GatedAnchorReadGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await repo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      await searchGroup(tester, 'dahab');
+      expect(highlightedGroupMessage(tester), 'g-new');
+
+      repo.gateReads = true;
+      await tester.tap(find.byTooltip('Previous match'));
+      await pumpFrames(tester, count: 2);
+      expect(repo.readGates, hasLength(1));
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      repo.readGates.single.complete();
+      await pumpFrames(tester);
+      expect(highlightedGroupMessage(tester), 'g-new');
     });
 
     Future<void> pumpStickerComposer(

@@ -230,4 +230,54 @@ void main() {
     expect(list.contains(tester.getCenter(row)), isTrue);
   });
 
+  testWidgets(
+    'closing search while a far match is still loading leaves the chat where '
+    'it was',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final messageRepo = GatedPageMessageRepository();
+      for (var i = 0; i < 120; i++) {
+        await messageRepo.saveMessage(makeMessage(i));
+      }
+      await pumpWired(
+        tester,
+        messageRepo: messageRepo,
+        revealed: [],
+        realReveal: true,
+      );
+      await search(tester, 'dahab');
+      expect(find.text('1 of 3'), findsOneWidget);
+
+      messageRepo.gatePageRequests = true;
+      await tester.tap(find.byTooltip('Previous match'));
+      await settle(tester);
+      expect(find.text('2 of 3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Previous match'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(messageRepo.pageGates, hasLength(1));
+
+      await tester.tap(find.byTooltip('Close search'));
+      await settle(tester);
+      expect(find.byType(ChatSearchBar), findsNothing);
+      for (var i = 0; i < messageRepo.pageGates.length; i++) {
+        messageRepo.pageGates[i].complete();
+        await settle(tester);
+      }
+
+      // The abandoned jump asks for no further page, moves nothing and
+      // highlights nothing; the chat is back at its live edge.
+      expect(messageRepo.pageGates, hasLength(1));
+      expect(find.byKey(const ValueKey('msg-msg-goto-119')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('conversation-highlight-msg-goto-5')),
+        findsNothing,
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
