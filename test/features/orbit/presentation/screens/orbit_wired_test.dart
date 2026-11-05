@@ -1869,6 +1869,78 @@ void main() {
     );
 
     testWidgets(
+      'an ordinary You-page reload reads one history page, not the whole '
+      'archive again; a changed Thought still refreshes your tags',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        PostModel own(String id, String text, DateTime created) =>
+            thought(
+              id,
+              text: text,
+              expiresAt: created.add(const Duration(hours: 24)),
+            ).copyWith(
+              senderPeerId: testIdentity.peerId,
+              authorPeerId: testIdentity.peerId,
+              authorUsername: testIdentity.username,
+              isIncoming: false,
+              createdAt: created.toIso8601String(),
+              visibleAt: created.toIso8601String(),
+            );
+        // More expired own Thoughts than one archive page holds.
+        for (var i = 0; i < 230; i++) {
+          await posts.savePost(
+            own(
+              'old-$i',
+              'day $i #walks',
+              thoughtNow.subtract(Duration(days: 2 + i)),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byTooltip('Your tags'), findsOneWidget);
+        final opened = posts.expiredOwnPageLimits.length;
+
+        // Coming back to the app reloads the page: one history page, no
+        // second walk through the whole archive.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(posts.expiredOwnPageLimits.length, opened + 1);
+
+        await posts.savePost(
+          own(
+            'live',
+            'reef #sea',
+            thoughtNow.subtract(const Duration(hours: 1)),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byTooltip('Your tags'));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byKey(const ValueKey('you-tags-row-sea')), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
       'the open You page follows a late reply, a late photo and the expiry '
       'into history',
       (tester) async {
