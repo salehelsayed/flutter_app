@@ -2253,6 +2253,39 @@ void main() {
       expect(repo.searchPageOffsets, [0]);
     });
 
+    testWidgets('in-chat search: the same words typed again stop the older '
+        'scan before its next page', (tester) async {
+      final repo = GatedSearchPageGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: 'note $i',
+            timestamp: base.add(Duration(seconds: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      repo.gateSearchPages = true;
+      await searchGroup(tester, 'dahab');
+      expect(repo.searchPageOffsets, [0]);
+
+      final field = find.descendant(
+        of: find.byType(ChatSearchBar),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(field, 'dahab x');
+      await tester.enterText(field, 'dahab');
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0, 0]);
+
+      repo.searchPageGates.first.complete();
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0, 0], reason: 'the older scan stops');
+    });
+
     testWidgets('in-chat search: a jump still loading when the bar closes '
         'leaves the highlight alone', (tester) async {
       final repo = GatedAnchorReadGroupMessageRepository();
