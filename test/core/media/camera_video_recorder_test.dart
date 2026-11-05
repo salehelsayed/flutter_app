@@ -251,6 +251,31 @@ void main() {
     );
   }
 
+  testWidgets(
+    'a failed preview switch closes the released camera and allows a fresh retry',
+    (tester) async {
+      await open(tester);
+      platform.createError = PlatformException(code: 'camera-in-use');
+      await doubleTap(tester);
+      expect(find.byType(CameraVideoRecorder), findsNothing);
+      expect(platform.captures, isEmpty);
+      expect(platform.disposed, contains(1));
+      expect(result, isNull);
+      expect(error, isA<PlatformException>());
+
+      platform.createError = null;
+      error = null;
+      await open(tester);
+      await start(tester);
+      expect(platform.created, [_back, _back]);
+      expect(platform.captures.single.cameraId, 2);
+      await tester.tap(find.byKey(const ValueKey('camera-video-record')));
+      await frames(tester);
+      expect(result?.path, platform.file.path);
+      expect(error, isNull);
+    },
+  );
+
   testWidgets('a failed flip keeps the recording stoppable and retryable', (
     tester,
   ) async {

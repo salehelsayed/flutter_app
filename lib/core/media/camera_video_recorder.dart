@@ -128,9 +128,12 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
     final camera = _camera;
     final other = _otherCamera;
     if (camera == null || !camera.value.isInitialized || other == null) return;
-    // setDescription switches the input of the existing recording; it never
-    // stops/restarts recording or assembles separate files.
-    _run(() => camera.setDescription(other), switching: true);
+    // Recording switches preserve one clip. Preview replacement releases the
+    // old camera first, so a failed replacement must exit for a fresh retry.
+    _run(
+      () => camera.setDescription(other),
+      switching: camera.value.isRecordingVideo,
+    );
   }
 
   void _startRecording() {
