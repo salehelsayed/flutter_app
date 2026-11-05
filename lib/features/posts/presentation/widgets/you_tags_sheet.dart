@@ -20,6 +20,10 @@ const _railFrom = 30;
 /// The last few tags, shown as one-tap pills above the list.
 const _recentCount = 3;
 
+/// Every tag row is this tall, so a letter can be reached by index before
+/// its row is built.
+const _rowHeight = 48.0;
+
 /// The author's own tags: search, the last few as pills, then all of them
 /// A to Z. Pops with the tag picked, or null.
 Future<OwnThoughtTag?> showYouTagsSheet(
@@ -75,13 +79,19 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
   }
 
   void _jumpTo(String letter) {
-    for (final tag in _alphabetical) {
-      if (foldTag(tag.key).startsWith(letter)) {
-        final row = _rows[tag.key]?.currentContext;
-        if (row != null) Scrollable.ensureVisible(row);
-        return;
-      }
-    }
+    final index = _alphabetical.indexWhere(
+      (tag) => foldTag(tag.key).startsWith(letter),
+    );
+    if (index < 0 || !_list.hasClients) return;
+    // The list builds rows lazily: land near the row first so it exists,
+    // then line it up once it is laid out.
+    _list.jumpTo(
+      (index * _rowHeight).clamp(0.0, _list.position.maxScrollExtent),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final row = _rows[_alphabetical[index].key]?.currentContext;
+      if (row != null) Scrollable.ensureVisible(row);
+    });
   }
 
   @override
@@ -330,7 +340,7 @@ class _Row extends StatelessWidget {
       key: ValueKey('you-tags-row-${tag.key}'),
       onTap: onTap,
       child: Container(
-        height: 48,
+        height: _rowHeight,
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: _hairline)),
         ),
