@@ -62,10 +62,20 @@ class ShareIntentService {
 
   /// Captures and buffers the initial intent before app routing starts.
   Future<ShareIntent?> captureInitialIntent() async {
-    final intent = await getInitialIntent().timeout(
-      _initialIntentProbeTimeout,
-      onTimeout: () => null,
-    );
+    List<SharedMediaFile> media;
+    try {
+      media = await _getInitialMedia().timeout(
+        _initialIntentProbeTimeout,
+        onTimeout: () => const <SharedMediaFile>[],
+      );
+    } catch (_) {
+      // This optional pre-routing plugin probe can fail while decoding native
+      // media (for example, a missing path). It must not prevent normal boot.
+      // Leave pending shares intact; do not reset or log external share data.
+      return null;
+    }
+    // App conversion and cache failures are outside the plugin failure guard.
+    final intent = _convertMediaList(media);
     if (intent != null) {
       await bufferIntent(intent);
     }

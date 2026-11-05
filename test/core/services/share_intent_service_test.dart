@@ -430,7 +430,7 @@ void main() {
       },
     );
 
-    test('1s: captureInitialIntent preserves prompt plugin errors', () async {
+    test('1s: strict reads propagate errors; capture fails open', () async {
       final service = ShareIntentService(
         getCacheDirectory: () async => tempDir,
         getInitialMedia: () => Future<List<SharedMediaFile>>.error(
@@ -442,7 +442,7 @@ void main() {
       );
 
       await expectLater(
-        service.captureInitialIntent(),
+        service.getInitialIntent(),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -451,6 +451,7 @@ void main() {
           ),
         ),
       );
+      expect(await service.captureInitialIntent(), isNull);
       expect(service.hasPendingIntent, isFalse);
     });
   });
