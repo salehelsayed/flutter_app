@@ -935,6 +935,18 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('tapping your lifted face opens your thought, not a chat', (
+      tester,
+    ) async {
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-depth-face-me')));
+      await rest(tester);
+      expect(opened, ['own-post']);
+      expect(chats, isEmpty);
+      await finish(tester);
+    });
+
     testWidgets('shows alone when no friend has a thought up', (tester) async {
       thoughts = {};
       await mount(tester, ownSeat: seat(), ownActivity: activity);
