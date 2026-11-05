@@ -405,6 +405,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
+  StreamSubscription<DirectMessageRemoval>? _contactRemovalSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
   StreamSubscription<String>? _groupRemovedInviteSubscription;
@@ -668,6 +669,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadIntroductions();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
+    _startListeningForContactRemovals();
     _startListeningForReadEvents();
     _startListeningForGroupReadEvents();
     _startListeningForContactRequests();
@@ -3123,6 +3125,41 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  /// Contact-wide purges can come from routes without Orbit's pop refresh.
+  void _startListeningForContactRemovals() {
+    final repo = widget.messageRepo;
+    if (repo is! MessageRepositoryRemovalSource) {
+      return;
+    }
+    final source = repo as MessageRepositoryRemovalSource;
+    _contactRemovalSubscription = source.messageRemovals
+        .where((removal) => removal.messageId == null)
+        .listen(
+          (removal) {
+            final peerId = removal.contactPeerId;
+            if (!_isOrbitActive) {
+              _dirtyFriendPeerIds.add(peerId);
+              return;
+            }
+            unawaited(_refreshOrbitFriend(peerId));
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_REMOVAL_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+          onDone: () {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_REMOVAL_STREAM_DONE',
+              details: {},
+            );
+          },
+        );
+  }
+
   /// Refreshes one group node after a real conversation read commit, including
   /// notification-owned routes that bypass Orbit's group navigation callback.
   /// Off-screen events reuse the existing dirty-group replay on the next Orbit
@@ -4025,6 +4062,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     // teardown (TC-202-09d).
     _orbitRefreshCoalesceTimer?.cancel();
     _contactUpdateSubscription?.cancel();
+    _contactRemovalSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
     _groupRemovedInviteSubscription?.cancel();
