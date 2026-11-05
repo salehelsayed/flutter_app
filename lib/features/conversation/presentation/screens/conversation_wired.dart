@@ -9205,6 +9205,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   Widget build(BuildContext context) {
+    _search.refreshFor(_messages);
     _loadQuotedThoughts();
     _sendInitialThoughtReplyWhenReady();
     final (activeQuoteText, isActiveQuoteUnavailable) =

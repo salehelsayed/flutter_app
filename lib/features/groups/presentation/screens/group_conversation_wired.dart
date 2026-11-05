@@ -8618,6 +8618,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   @override
   Widget build(BuildContext context) {
+    _search.refreshFor(_messages);
     _uploadActivityController.refreshOwnerProjection(publish: false);
     if (!_canWrite && _activeQuoteMessageId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {

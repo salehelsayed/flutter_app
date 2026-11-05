@@ -75,7 +75,24 @@ class ChatSearchController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _run(String query, int revision) async {
+  Object? _searchedOver;
+
+  /// Called from the chat's build with its message list. A new list means
+  /// the chat changed, so an open query runs again after the debounce; the
+  /// shown match stays selected while it still matches and nothing jumps.
+  void refreshFor(Object messages) {
+    if (identical(messages, _searchedOver)) return;
+    _searchedOver = messages;
+    if (!_open || _query.trim().isEmpty || (_timer?.isActive ?? false)) return;
+    final revision = ++_revision;
+    _timer = Timer(
+      debounce,
+      // A query still unanswered when the chat changed runs as a new one.
+      () => unawaited(_run(_query.trim(), revision, refresh: _searched)),
+    );
+  }
+
+  Future<void> _run(String query, int revision, {bool refresh = false}) async {
     List<String> hits;
     try {
       hits = await search(query);
@@ -90,11 +107,17 @@ class ChatSearchController extends ChangeNotifier {
       hits = const [];
     }
     if (revision != _revision || !_open) return;
+    final shown = currentId;
+    final kept = refresh && shown != null ? hits.indexOf(shown) : -1;
     _hits = hits;
-    _index = 0;
+    _index = kept >= 0
+        ? kept
+        : hits.isEmpty
+        ? 0
+        : _index.clamp(0, hits.length - 1);
     _searched = true;
     notifyListeners();
-    if (hits.isNotEmpty) onShow(hits.first);
+    if (!refresh && hits.isNotEmpty) onShow(hits.first);
   }
 
   void goOlder() {
