@@ -92,6 +92,13 @@ class _Palette {
     required this.soft,
     required this.faint,
     required this.ground,
+    required this.composerBar,
+    required this.composerPhotoFill,
+    required this.composerInputFill,
+    required this.composerHint,
+    required this.composerIcon,
+    required this.sendFill,
+    required this.sendIcon,
   });
 
   static const dark = _Palette(
@@ -103,6 +110,13 @@ class _Palette {
     soft: Color(0xFF8C968F),
     faint: Color(0xFF59625D),
     ground: Color(0xFF040605),
+    composerBar: Color(0x2E05070C),
+    composerPhotoFill: Color(0x0FFFFFFF),
+    composerInputFill: Color(0x0DFFFFFF),
+    composerHint: Color(0xFF8A8F98),
+    composerIcon: Color(0xFFC7CEC9),
+    sendFill: Color(0x401DB954),
+    sendIcon: Color(0xFF03140A),
   );
 
   static _Palette of(BuildContext context) {
@@ -117,6 +131,13 @@ class _Palette {
       soft: rc.textSecondary,
       faint: rc.textMuted,
       ground: rc.surfaceBase,
+      composerBar: rc.composerBarColor,
+      composerPhotoFill: rc.composerInputFill,
+      composerInputFill: rc.composerInputFill,
+      composerHint: rc.composerHint,
+      composerIcon: rc.iconSecondary,
+      sendFill: rc.sendBg,
+      sendIcon: rc.sendIcon,
     );
   }
 
@@ -128,6 +149,16 @@ class _Palette {
   final Color soft;
   final Color faint;
   final Color ground;
+
+  /// The bottom compose entry: its bar, the photo and text boxes, the hint,
+  /// the photo icon and the send button.
+  final Color composerBar;
+  final Color composerPhotoFill;
+  final Color composerInputFill;
+  final Color composerHint;
+  final Color composerIcon;
+  final Color sendFill;
+  final Color sendIcon;
 }
 
 const _historyPage = 20;
@@ -1103,7 +1134,7 @@ class _ComposerBar extends StatelessWidget {
         filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
           decoration: BoxDecoration(
-            color: Color(0x2E05070C),
+            color: p.composerBar,
             border: Border(top: BorderSide(color: p.hairline)),
           ),
           padding: EdgeInsets.fromLTRB(
@@ -1125,13 +1156,13 @@ class _ComposerBar extends StatelessWidget {
                   Container(
                     width: 44,
                     height: 44,
-                    decoration: const BoxDecoration(
-                      color: Color(0x0FFFFFFF),
+                    decoration: BoxDecoration(
+                      color: p.composerPhotoFill,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.image_outlined,
-                      color: Color(0xFFC7CEC9),
+                      color: p.composerIcon,
                       size: 21,
                     ),
                   ),
@@ -1142,7 +1173,7 @@ class _ComposerBar extends StatelessWidget {
                       alignment: AlignmentDirectional.centerStart,
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
-                        color: const Color(0x0DFFFFFF),
+                        color: p.composerInputFill,
                         borderRadius: BorderRadius.circular(22),
                         border: Border.all(color: p.hairline),
                       ),
@@ -1150,10 +1181,7 @@ class _ComposerBar extends StatelessWidget {
                         _hintWithTag(p.soft),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF8A8F98),
-                          fontSize: 15,
-                        ),
+                        style: TextStyle(color: p.composerHint, fontSize: 15),
                       ),
                     ),
                   ),
@@ -1161,14 +1189,11 @@ class _ComposerBar extends StatelessWidget {
                   Container(
                     width: 44,
                     height: 44,
-                    decoration: const BoxDecoration(
-                      color: Color(0x401DB954),
+                    decoration: BoxDecoration(
+                      color: p.sendFill,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.arrow_upward_rounded,
-                      color: Color(0xFF03140A),
-                    ),
+                    child: Icon(Icons.arrow_upward_rounded, color: p.sendIcon),
                   ),
                 ],
               ),
