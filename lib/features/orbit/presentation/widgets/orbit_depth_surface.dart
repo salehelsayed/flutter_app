@@ -670,7 +670,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   void _tapFace(OrbitDepthSeat seat, int index, int count, double lift) {
     if (!_enabled || _suppressTap || _pointers.length > 1) return;
     if (lift > .5) {
-      widget.onFriendTap(seat.friend);
+      if (_isOwn(seat)) {
+        widget.onThoughtTap?.call(seat.thought.id);
+      } else {
+        widget.onFriendTap(seat.friend);
+      }
       return;
     }
     final turn = _turn.value.roundToDouble();
