@@ -45,7 +45,7 @@ void main() {
       id: 'msg-goto-$i',
       contactPeerId: kContactPeerId,
       senderPeerId: kContactPeerId,
-      text: const {5, 100, 118}.contains(i)
+      text: const {5, 100, 118, 200}.contains(i)
           ? 'letter $i: back to Dahab?'
           : 'goto letter $i',
       timestamp: ts,
@@ -59,6 +59,7 @@ void main() {
     WidgetTester tester, {
     required GatedPageMessageRepository messageRepo,
     required List<String> revealed,
+    bool realReveal = false,
   }) async {
     final contactRepo = InMemoryContactRepository();
     contactRepo.addTestContact(makeContact());
@@ -79,9 +80,11 @@ void main() {
           p2pService: StubP2PService(),
           contactRepo: contactRepo,
           micPermissionGateway: FakeMicPermissionGateway(),
-          revealConversationMessageFn: (messageId) async {
-            revealed.add(messageId);
-          },
+          revealConversationMessageFn: realReveal
+              ? null
+              : (messageId) async {
+                  revealed.add(messageId);
+                },
         ),
       ),
     );
@@ -145,4 +148,51 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  Future<void> search(WidgetTester tester, String words) async {
+    await tester.tap(find.byTooltip('Search'));
+    await settle(tester);
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(ChatSearchBar),
+        matching: find.byType(TextField),
+      ),
+      words,
+    );
+    await settle(tester);
+  }
+
+  testWidgets(
+    'a message arriving or edited while searching updates the count and keeps '
+    'the shown match',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final messageRepo = GatedPageMessageRepository();
+      for (var i = 0; i < 120; i++) {
+        await messageRepo.saveMessage(makeMessage(i));
+      }
+      final revealed = <String>[];
+      await pumpWired(tester, messageRepo: messageRepo, revealed: revealed);
+      await search(tester, 'dahab');
+      expect(find.text('1 of 3'), findsOneWidget);
+
+      await messageRepo.saveMessage(makeMessage(200));
+      await settle(tester);
+      expect(find.text('2 of 4'), findsOneWidget);
+      expect(revealed, ['msg-goto-118']);
+
+      // The shown match loses its words.
+      await messageRepo.saveMessage(
+        makeMessage(118).copyWith(text: 'goto letter 118'),
+      );
+      await settle(tester);
+      expect(find.text('2 of 3'), findsOneWidget);
+      expect(revealed, ['msg-goto-118']);
+    },
+  );
+
 }

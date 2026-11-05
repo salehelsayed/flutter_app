@@ -2137,6 +2137,54 @@ void main() {
       expect(find.byKey(const ValueKey('group-header')), findsOneWidget);
     });
 
+    Future<void> searchGroup(WidgetTester tester, String words) async {
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        words,
+      );
+      await pumpFrames(tester);
+    }
+
+    String? highlightedGroupMessage(WidgetTester tester) => tester
+        .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+        .highlightedMessageId;
+
+    testWidgets('in-chat search: a message arriving while searching joins the '
+        'count without moving the shown match', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await msgRepo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+      await searchGroup(tester, 'dahab');
+      expect(find.text('1 of 2'), findsOneWidget);
+      expect(highlightedGroupMessage(tester), 'g-new');
+
+      final newer = makeMessage(
+        id: 'g-newer',
+        text: 'Dahab it is',
+        timestamp: base.add(const Duration(minutes: 2)),
+      );
+      await msgRepo.saveMessage(newer);
+      messageStreamController.add(newer);
+      await pumpFrames(tester);
+      expect(find.text('2 of 3'), findsOneWidget);
+      expect(highlightedGroupMessage(tester), 'g-new');
+    });
+
     Future<void> pumpStickerComposer(
       WidgetTester tester, {
       Locale locale = const Locale('en'),
