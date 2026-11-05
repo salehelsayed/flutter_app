@@ -755,6 +755,31 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
   }
 }
 
+/// Parks the 500-row search pages behind gates and records their offsets.
+class GatedSearchPageGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  bool gateSearchPages = false;
+  final List<int> searchPageOffsets = [];
+  final List<Completer<void>> searchPageGates = [];
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (limit == 500) {
+      searchPageOffsets.add(offset);
+      if (gateSearchPages) {
+        final gate = Completer<void>();
+        searchPageGates.add(gate);
+        await gate.future;
+      }
+    }
+    return super.getMessagesPage(groupId, limit: limit, offset: offset);
+  }
+}
+
 class _WriteCountingGroupMessageRepository
     extends CountingGroupMessageRepository {
   int saveMessageCalls = 0;
@@ -2183,6 +2208,32 @@ void main() {
       await pumpFrames(tester);
       expect(find.text('2 of 3'), findsOneWidget);
       expect(highlightedGroupMessage(tester), 'g-new');
+    });
+
+    testWidgets('in-chat search: closing the bar stops a running scan before '
+        'its next page', (tester) async {
+      final repo = GatedSearchPageGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: 'note $i',
+            timestamp: base.add(Duration(seconds: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      repo.gateSearchPages = true;
+      await searchGroup(tester, 'dahab');
+      expect(repo.searchPageOffsets, [0]);
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      repo.searchPageGates.single.complete();
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0]);
     });
 
     Future<void> pumpStickerComposer(
