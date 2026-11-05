@@ -121,7 +121,9 @@ class ChatSearchController extends ChangeNotifier {
         : _index.clamp(0, hits.length - 1);
     _searched = true;
     notifyListeners();
-    if (!refresh && hits.isNotEmpty) onShow(hits.first);
+    // A refresh that keeps the shown match stays put; when that match is gone,
+    // the one now shown in its place is brought into view.
+    if (hits.isNotEmpty && kept < 0) onShow(hits[_index]);
   }
 
   void goOlder() {
