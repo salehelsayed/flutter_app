@@ -616,6 +616,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   /// Closing search glides back to where the chat was before searching.
   void _restoreScrollAfterSearch() {
+    // A reveal already queued for a search result must not scroll any more.
+    _revealGeneration++;
     final offset = _offsetBeforeSearch;
     _offsetBeforeSearch = null;
     if (offset == null) return;
@@ -5495,12 +5497,28 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     _highlightScrollResolved = true;
-    _bringHighlightOnScreen(chronologicalIndex, attempt: 0);
+    _bringHighlightOnScreen(
+      chronologicalIndex,
+      attempt: 0,
+      generation: ++_revealGeneration,
+    );
   }
 
-  void _bringHighlightOnScreen(int chronologicalIndex, {required int attempt}) {
+  /// Bumped by each new reveal and when search closes; an older reveal's
+  /// queued frames then stop instead of scrolling.
+  int _revealGeneration = 0;
+
+  void _bringHighlightOnScreen(
+    int chronologicalIndex, {
+    required int attempt,
+    required int generation,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!mounted ||
+          generation != _revealGeneration ||
+          !_scrollController.hasClients) {
+        return;
+      }
 
       final anchorContext = _highlightAnchorKey.currentContext;
       if (anchorContext != null) {
@@ -5528,7 +5546,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           : (reversedIndex / (count - 1)) * maxExtent - viewport / 2;
       _scrollController.jumpTo(estimate.clamp(0.0, maxExtent).toDouble());
 
-      _bringHighlightOnScreen(chronologicalIndex, attempt: attempt + 1);
+      _bringHighlightOnScreen(
+        chronologicalIndex,
+        attempt: attempt + 1,
+        generation: generation,
+      );
     });
   }
 
@@ -7804,7 +7826,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _scrollToHighlightedMessage();
+      if (mounted && stillWanted()) _scrollToHighlightedMessage();
     });
   }
 
