@@ -284,6 +284,7 @@ class _YouPageScreenState extends State<YouPageScreen>
           past: [live, ...data.past],
           tag: data.tag,
           tagCount: data.tagCount,
+          tags: data.tags,
         ),
       );
     }
