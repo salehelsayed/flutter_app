@@ -92,6 +92,9 @@ dependencies:
   background_downloader: 9.6.4
   shared_preferences: 2.5.6
 dependency_overrides:
+  # Recording-switch failure preserves the active iOS capture graph.
+  camera_avfoundation:
+    path: third_party/camera_avfoundation
   # R2-4: local Android transcoder update and compression-state cleanup.
   video_compress:
     path: third_party/video_compress

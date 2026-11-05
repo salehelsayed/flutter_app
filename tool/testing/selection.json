@@ -2254,7 +2254,7 @@
     "production-notification-sound": {
       "kind": "sims",
       "capability": "production.notification_sound",
-      "boundary": "Production S1–S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
+      "boundary": "Production S1\u2013S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
       "timeout_seconds": 7200,
       "estimated_seconds": null,
       "requirements": [
@@ -5250,6 +5250,48 @@
         "assets/stickers/"
       ],
       "inspected": true
+    },
+    "camera-native-runner": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/camera_avfoundation_native_test.py"
+      ],
+      "boundary": "Exact camera native receipt adjudication rejects compiler/setup/partial/duplicate/skipped/timed-out evidence and baseline success",
+      "timeout_seconds": 120,
+      "requirements": [
+        "python3"
+      ],
+      "references": [
+        "scripts/camera_avfoundation_native.py"
+      ],
+      "limitations": "Synthetic receipts; actual native state proof is camera-ios-native."
+    },
+    "camera-ios-native": {
+      "kind": "sims",
+      "capability": "native.camera.recording_switch",
+      "boundary": "Pinned upstream DefaultCamera native switch transaction: unchanged graph on creation failure and rollback/balanced single error for three session rejections, followed by one-writer retry/stop",
+      "timeout_seconds": 5400,
+      "requirements": [
+        "dart",
+        "flutter",
+        "xcrun",
+        "python3"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Appium cannot inject CaptureDeviceInputFactory/session admission faults or inspect native configuration balance. The existing upstream XCTest host and mocks exercise real DefaultCamera; this adapter only prepares owned baseline/patched copies and runs its exact four selectors.",
+      "resources": [
+        "shared-native-build",
+        "device:ios_simulator"
+      ],
+      "references": [
+        "scripts/camera_avfoundation_native.py",
+        "third_party/camera_avfoundation/darwin/Tests/SampleBufferTests.swift",
+        "third_party/camera_avfoundation/upstream/DefaultCamera.swift.original"
+      ],
+      "limitations": "Native mocked capture graph and writer; no physical camera, actual encoded file, audio continuity or signed artifact claim. Unavailable simulator is N/A by project policy."
     }
   },
   "areas": [
@@ -7004,6 +7046,21 @@
         "affected-stickers"
       ],
       "why": "The sticker catalog, picker, Recent store and bundled art have their own host suite"
+    },
+    {
+      "id": "camera-native-switch",
+      "patterns": [
+        "third_party/camera_avfoundation/*",
+        "scripts/camera_avfoundation_native.py",
+        "scripts/test/camera_avfoundation_native_test.py",
+        "tool/sims/critical_features.json"
+      ],
+      "checks": [
+        "camera-native-runner",
+        "camera-ios-native",
+        "workflow"
+      ],
+      "why": "The pinned native camera transaction and its exact upstream XCTest host/receipt runner must preserve active recording state and distinguish expected fault RED from setup errors."
     }
   ],
   "documentation_only": [

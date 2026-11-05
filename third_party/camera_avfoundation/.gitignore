@@ -1,0 +1,17 @@
+# Only authored/upstream sources and the pinned example lock belong in this fork.
+.dart_tool/
+.packages
+.flutter-plugins*
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/Flutter/ephemeral/
+**/Runner/GeneratedPluginRegistrant.*
+**/Pods/
+**/.symlinks/
+**/build/
+**/DerivedData/
+**/xcuserdata/
+.DS_Store
+
+# Published Pigeon bindings are required runtime source, not local build output.
+!/lib/src/messages.g.dart
