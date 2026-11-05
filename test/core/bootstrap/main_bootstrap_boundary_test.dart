@@ -25,6 +25,7 @@ const _debugE2eCompositionRootPath =
 const _flutterWidgetsPath = 'package:flutter/widgets.dart';
 const _updateCheckBackgroundPath =
     'lib/app/bootstrap/update_check_background_entrypoints.dart';
+const _backupExclusionPath = 'lib/core/storage/app_data_backup_exclusion.dart';
 
 String _libraryPath(UriBasedDirective directive) {
   final uri = directive.uri.stringValue;
@@ -32,7 +33,7 @@ String _libraryPath(UriBasedDirective directive) {
   if (uri.startsWith('package:flutter_app/')) {
     return 'lib/${uri.substring('package:flutter_app/'.length)}';
   }
-  if (uri.startsWith('package:')) return uri;
+  if (uri.startsWith('package:') || uri.startsWith('dart:')) return uri;
   return 'lib/$uri';
 }
 
@@ -63,17 +64,17 @@ void main() {
     expect(body, isA<BlockFunctionBody>());
     final block = (body as BlockFunctionBody).block;
 
-    // Framework initialization remains outside the observation boundary. The
-    // one awaited wrapper contains only the original receipt preflight and
-    // production delegation, in that order. SE-41 T4a adds exactly one
-    // synchronous statement before it: the background update-check host,
-    // which must not wait for the bootstrap.
+    // Framework initialization, the background update-check host and the
+    // nonblocking backup exclusion remain outside the observation boundary,
+    // in that order. The one awaited wrapper contains only the original
+    // receipt preflight and production delegation, in that order.
     expect(
       block.statements,
-      hasLength(3),
+      hasLength(4),
       reason:
           'main() must contain only framework initialization, the update-check '
-          'background host and the awaited production diagnostics wrapper',
+          'background host, nonblocking backup exclusion and the awaited '
+          'production diagnostics wrapper',
     );
     expect(
       block.statements[0].toSource(),
@@ -83,9 +84,13 @@ void main() {
       block.statements[1].toSource(),
       'installUpdateCheckBackgroundHost();',
     );
-    expect(block.statements[2], isA<ExpressionStatement>());
+    expect(
+      block.statements[2].toSource(),
+      'unawaited(excludeAppDataFromBackup());',
+    );
+    expect(block.statements[3], isA<ExpressionStatement>());
     final wrapperExpression =
-        (block.statements[2] as ExpressionStatement).expression;
+        (block.statements[3] as ExpressionStatement).expression;
     expect(wrapperExpression, isA<AwaitExpression>());
     final wrapperCall = (wrapperExpression as AwaitExpression).expression;
     expect(wrapperCall, isA<MethodInvocation>());
@@ -187,6 +192,7 @@ void main() {
     expect(
       imports,
       equals({
+        'dart:async',
         _runnerPath,
         _productionPath,
         _diagnosticsPath,
@@ -195,6 +201,7 @@ void main() {
         _h0ProbePath,
         _plan374FixturePath,
         _headlessRecoveryPath,
+        _backupExclusionPath,
         _debugE2eCompositionRootPath,
         _flutterWidgetsPath,
         _updateCheckBackgroundPath,

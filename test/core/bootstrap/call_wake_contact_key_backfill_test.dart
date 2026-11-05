@@ -996,7 +996,7 @@ void main() {
     expect(recovery, greaterThanOrEqualTo(0));
     expect(nextOwner, greaterThan(recovery));
     final wiring = source.substring(recovery, nextOwner);
-    expect(wiring, contains('ContactRequestSendIntent.newRequest'));
+    expect(wiring, contains('ContactRequestSendIntent.keyExchangeReply'));
     expect(wiring, contains('resolveCallWakeHandle:'));
     expect(wiring, contains('requireExactCallWakeReceipt: true'));
     // Owner decision A: the legacy reciprocal is never marked, and the
