@@ -1049,9 +1049,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _bindThoughtChanges() {
     _thoughtSubscription?.cancel();
-    _youTags = null;
+    _forgetYouTags();
     _thoughtSubscription = _thoughtPosts?.postChanges.listen((_) {
-      _youTags = null;
+      _forgetYouTags();
       unawaited(_reloadThoughts());
     }, onError: (Object error) => _reportThoughtFailure(error));
   }
@@ -1060,6 +1060,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// Gathering them walks the whole archive, so it happens once and again
   /// only after a Thought changed.
   List<OwnThoughtTag>? _youTags;
+
+  /// Bumped whenever [_youTags] is cleared, so a scan that started earlier
+  /// does not store its now outdated tags.
+  int _youTagsGeneration = 0;
+
+  void _forgetYouTags() {
+    _youTags = null;
+    _youTagsGeneration++;
+  }
+
+  Future<List<OwnThoughtTag>> _youTagsFor(
+    PostRepository repository,
+    PostModel? own,
+  ) async {
+    final cached = _youTags;
+    if (cached != null) return cached;
+    final generation = _youTagsGeneration;
+    final tags = await loadOwnThoughtTags(
+      postRepo: repository,
+      live: own,
+      nowProvider: widget.thoughtNowProvider,
+    );
+    if (generation == _youTagsGeneration) _youTags = tags;
+    return tags;
+  }
 
   bool _composingThought = false;
   // Memory only: what the last closed composer left unshared.
@@ -3757,11 +3782,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ? 0
           : tagged!.count +
                 (own != null && hasThoughtTag(own.text, tag) ? 1 : 0),
-      tags: _youTags ??= await loadOwnThoughtTags(
-        postRepo: repository,
-        live: own,
-        nowProvider: widget.thoughtNowProvider,
-      ),
+      tags: await _youTagsFor(repository, own),
     );
   }
 
