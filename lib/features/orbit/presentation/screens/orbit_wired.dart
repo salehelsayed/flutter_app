@@ -1049,11 +1049,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _bindThoughtChanges() {
     _thoughtSubscription?.cancel();
-    _thoughtSubscription = _thoughtPosts?.postChanges.listen(
-      (_) => unawaited(_reloadThoughts()),
-      onError: (Object error) => _reportThoughtFailure(error),
-    );
+    _youTags = null;
+    _thoughtSubscription = _thoughtPosts?.postChanges.listen((_) {
+      _youTags = null;
+      unawaited(_reloadThoughts());
+    }, onError: (Object error) => _reportThoughtFailure(error));
   }
+
+  /// Every tag on the author's own Thoughts, kept between You page reloads.
+  /// Gathering them walks the whole archive, so it happens once and again
+  /// only after a Thought changed.
+  List<OwnThoughtTag>? _youTags;
 
   bool _composingThought = false;
   // Memory only: what the last closed composer left unshared.
@@ -3751,7 +3757,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ? 0
           : tagged!.count +
                 (own != null && hasThoughtTag(own.text, tag) ? 1 : 0),
-      tags: await loadOwnThoughtTags(
+      tags: _youTags ??= await loadOwnThoughtTags(
         postRepo: repository,
         live: own,
         nowProvider: widget.thoughtNowProvider,
