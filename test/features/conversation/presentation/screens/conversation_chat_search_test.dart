@@ -195,4 +195,39 @@ void main() {
     },
   );
 
+  testWidgets('stepping back to a newer match scrolls the list to it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2160);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final messageRepo = GatedPageMessageRepository();
+    for (var i = 0; i < 120; i++) {
+      await messageRepo.saveMessage(makeMessage(i));
+    }
+    await pumpWired(
+      tester,
+      messageRepo: messageRepo,
+      revealed: [],
+      realReveal: true,
+    );
+    await search(tester, 'dahab');
+    await tester.tap(find.byTooltip('Previous match'));
+    await settle(tester);
+    await tester.tap(find.byTooltip('Previous match'));
+    await settle(tester);
+    expect(find.text('3 of 3'), findsOneWidget);
+    expect(find.byKey(const ValueKey('msg-msg-goto-5')), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Next match'));
+    await settle(tester);
+    expect(find.text('2 of 3'), findsOneWidget);
+    final row = find.byKey(const ValueKey('msg-msg-goto-100'));
+    expect(row, findsOneWidget);
+    final list = tester.getRect(find.byKey(const ValueKey('messages')));
+    expect(list.contains(tester.getCenter(row)), isTrue);
+  });
+
 }
