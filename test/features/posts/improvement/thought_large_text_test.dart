@@ -57,7 +57,11 @@ void main() {
       await tester.pumpWidget(scene(locale));
       await tester.pumpAndSettle();
       final share = find.byKey(const ValueKey('thought-composer-share'));
-      onScreen(tester, find.byKey(const ValueKey('thought-composer-cancel')), screen);
+      onScreen(
+        tester,
+        find.byKey(const ValueKey('thought-composer-cancel')),
+        screen,
+      );
       onScreen(tester, share, screen);
       final shareSize = tester.getSize(share);
       expect(shareSize.width, greaterThanOrEqualTo(72));
@@ -67,9 +71,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('thought-audience-select')));
       await tester.pumpAndSettle();
-      onScreen(tester, find.byKey(const ValueKey('thought-pick-cancel')), screen);
+      onScreen(
+        tester,
+        find.byKey(const ValueKey('thought-pick-cancel')),
+        screen,
+      );
       onScreen(tester, find.byKey(const ValueKey('thought-pick-done')), screen);
-      onScreen(tester, find.byKey(const ValueKey('thought-pick-peer-layla')), screen);
+      onScreen(
+        tester,
+        find.byKey(const ValueKey('thought-pick-peer-layla')),
+        screen,
+      );
       expect(tester.takeException(), isNull, reason: 'no row overflows');
     });
   }
