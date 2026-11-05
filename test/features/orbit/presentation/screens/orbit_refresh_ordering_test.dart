@@ -20,6 +20,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/swipe_action_buttons.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -398,6 +399,99 @@ void main() {
       },
     );
   }
+
+  for (final fromConversation in [true, false]) {
+    testWidgets(
+      'Orbit-owned ${fromConversation ? 'conversation' : 'list'} deletion refreshes the deleted peer once',
+      (tester) async {
+        final h = _Harness(finalContactPurge: true);
+        await h.contacts.addContact(
+          _friend.copyWith(peerId: 'other', username: 'Bob'),
+        );
+        await h.messages.saveMessage(
+          _message.copyWith(
+            id: 'other-message',
+            contactPeerId: 'other',
+            senderPeerId: 'other',
+          ),
+        );
+        await h.open(tester);
+        final orbitState = tester.state(find.byType(OrbitWired));
+        h.screen(tester).onToggleView!();
+        await h.drain(tester);
+
+        if (fromConversation) {
+          await tester.tap(find.text('Alice'));
+          await h.drain(tester);
+          expect(find.byType(ConversationWired), findsOneWidget);
+          await tester.tap(find.byIcon(Icons.more_vert));
+          await h.drain(tester);
+          await tester.tap(find.text('Delete chat'));
+        } else {
+          final row = find.byKey(const ValueKey('friend'));
+          await tester.flingFrom(
+            tester.getCenter(find.text('Alice')),
+            const Offset(-350, 0),
+            1000,
+          );
+          await h.drain(tester);
+          await tester.tap(
+            find.descendant(of: row, matching: find.byType(DeleteActionButton)),
+          );
+        }
+        await h.drain(tester);
+        h.contacts.resetGetContactCounts();
+        await tester.tap(find.text('Delete').hitTestable());
+        await h.drain(tester);
+
+        expect(await h.contacts.contactExists('friend'), isFalse);
+        expect(await h.messages.getMessagesForContact('friend'), isEmpty);
+        expect(await h.contacts.contactExists('other'), isTrue);
+        expect(await h.messages.getMessagesForContact('other'), hasLength(1));
+        expect(h.messages.publishedRemovals, hasLength(1));
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(tester.state(find.byType(OrbitWired)), same(orbitState));
+        expect(h.circlePeers(tester), {'other'});
+        expect(h.active(tester).map((friend) => friend.peerId).toSet(), {
+          'other',
+        });
+        expect(
+          h
+              .screen(tester)
+              .listProjectionListenable
+              .value
+              .allFriends
+              .map((friend) => friend.peerId)
+              .toSet(),
+          {'other'},
+        );
+        expect(h.contacts.getContactCallsByPeerId, {'friend': 1});
+      },
+    );
+  }
+
+  testWidgets('Orbit-owned non-delete route return refreshes changed contact', (
+    tester,
+  ) async {
+    final h = _Harness(finalContactPurge: true);
+    await h.open(tester);
+    h.screen(tester).onToggleView!();
+    await h.drain(tester);
+    await tester.tap(find.text('Alice'));
+    await h.drain(tester);
+    expect(find.byType(ConversationWired), findsOneWidget);
+
+    await h.contacts.addContact(_friend.copyWith(username: 'Updated Alice'));
+    h.contacts.resetGetContactCounts();
+    Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+    await h.drain(tester);
+
+    expect(h.friend(tester).username, 'Updated Alice');
+    expect(h.messages.publishedRemovals, isEmpty);
+    expect(await h.contacts.contactExists('friend'), isTrue);
+    expect(await h.messages.getMessagesForContact('friend'), hasLength(1));
+    expect(h.contacts.getContactCallsByPeerId, {'friend': 1});
+  });
 
   testWidgets('FIFO completion cannot resurrect a deleted contact', (
     tester,
