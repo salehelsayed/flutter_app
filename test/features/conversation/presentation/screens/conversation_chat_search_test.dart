@@ -191,7 +191,8 @@ void main() {
       );
       await settle(tester);
       expect(find.text('2 of 3'), findsOneWidget);
-      expect(revealed, ['msg-goto-118']);
+      // The match now shown in its place is brought into view.
+      expect(revealed, ['msg-goto-118', 'msg-goto-100']);
     },
   );
 

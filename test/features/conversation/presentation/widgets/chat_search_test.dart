@@ -132,6 +132,29 @@ void main() {
     expect(closed, 1);
   });
 
+  testWidgets('when the shown match disappears, the one left is shown', (
+    tester,
+  ) async {
+    var results = ['m3', 'm1'];
+    final search = ChatSearchController(
+      search: (_) async => results,
+      onShow: shown.add,
+    )..open();
+    addTearDown(search.dispose);
+    await tester.pumpWidget(scene(search));
+    await type(tester, 'dahab');
+    expect(find.text('1 of 2'), findsOneWidget);
+    expect(shown, ['m3']);
+
+    results = ['m1'];
+    search.refreshFor(Object());
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    expect(find.text('1 of 1'), findsOneWidget);
+    expect(search.currentId, 'm1');
+    expect(shown, ['m3', 'm1']);
+  });
+
   testWidgets('a late answer for an older query is ignored', (tester) async {
     slow['dah'] = Completer<List<String>>();
     final search = controller()..open();
