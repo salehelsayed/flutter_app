@@ -947,6 +947,23 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('leaves the ring at its own deadline', (tester) async {
+      thoughts = {};
+      await mount(
+        tester,
+        ownSeat: seat(expiry: now.add(const Duration(seconds: 5))),
+        ownActivity: activity,
+      );
+      await enter(tester);
+      expect(ownCard(), findsOneWidget);
+
+      now = now.add(const Duration(seconds: 6));
+      await tester.pump(const Duration(seconds: 6));
+      await rest(tester);
+      expect(ownCard(), findsNothing);
+      await finish(tester);
+    });
+
     testWidgets('shows alone when no friend has a thought up', (tester) async {
       thoughts = {};
       await mount(tester, ownSeat: seat(), ownActivity: activity);
