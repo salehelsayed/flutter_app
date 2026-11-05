@@ -56,6 +56,8 @@ void main() {
 
   Finder sendAsText() => find.byKey(const ValueKey('thought-voice-as-text'));
   Finder voiceCard() => find.byKey(const ValueKey('thought-voice-card'));
+  Finder recordingCard() =>
+      find.byKey(const ValueKey('thought-voice-recording'));
   String text(WidgetTester tester) => tester
       .widget<TextField>(find.byKey(const ValueKey('thought-composer-text')))
       .controller!
@@ -193,4 +195,96 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('Try again tapped twice before a rebuild runs one attempt', (
+    tester,
+  ) async {
+    final pending = Completer<String?>();
+    var calls = 0;
+    await open(
+      tester,
+      transcribe: (_) async {
+        calls++;
+        if (calls == 1) throw StateError('model failed');
+        return pending.future;
+      },
+    );
+    await record(tester);
+    await tester.tap(sendAsText());
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't transcribe"), findsOneWidget);
+
+    await tester.tap(find.text('Try again'));
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(transcribed, ['/tmp/thought.m4a', '/tmp/thought.m4a']);
+    pending.complete('once');
+    await tester.pumpAndSettle();
+    expect(text(tester), 'once');
+  });
+
+  testWidgets('the mic waits while the recording is being turned into words', (
+    tester,
+  ) async {
+    final pending = Completer<String?>();
+    await open(tester, transcribe: (_) => pending.future);
+    await record(tester);
+    await tester.tap(sendAsText());
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Transcribing…'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Voice'));
+    await tester.pump();
+    await tester.pump();
+    expect(recordingCard(), findsNothing, reason: 'conversion owns the mic');
+    expect(recorder.startCallCount, 1);
+
+    pending.completeError(StateError('model failed'));
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't transcribe"), findsOneWidget);
+    await tester.tap(find.byTooltip('Voice'));
+    await tester.pumpAndSettle();
+    expect(recordingCard(), findsNothing, reason: 'the kept recording waits');
+    expect(recorder.startCallCount, 1);
+
+    await tester.tap(find.text('Keep as voice'));
+    await tester.pumpAndSettle();
+    expect(voiceCard(), findsOneWidget);
+    await record(tester);
+    expect(recordingCard(), findsOneWidget);
+    expect(recorder.startCallCount, 2);
+  });
+
+  testWidgets(
+    'Keep as voice beside a Try again wins; the late words are dropped',
+    (tester) async {
+      final lateWords = Completer<String?>();
+      var calls = 0;
+      await open(
+        tester,
+        transcribe: (_) async {
+          calls++;
+          if (calls == 1) throw StateError('model failed');
+          return lateWords.future;
+        },
+      );
+      await record(tester);
+      await tester.tap(sendAsText());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Try again'));
+      await tester.tap(find.text('Keep as voice'));
+      await tester.pumpAndSettle();
+      expect(voiceCard(), findsOneWidget);
+
+      lateWords.complete('late words');
+      await tester.pumpAndSettle();
+      expect(text(tester), '');
+      expect(voiceCard(), findsOneWidget);
+      expect(find.text(_hint), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    },
+  );
 }
