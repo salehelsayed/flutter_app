@@ -407,6 +407,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   @override
   void dispose() {
     final text = _textController.text;
+    // A recording still waiting on its words, or on a choice after a
+    // failure, goes back with the draft as voice.
+    if (_keptRecording case final kept?) {
+      _mediaDrafts = <PostMediaDraft>[_voiceDraft(kept, _keptWaveform)];
+    }
     final keep =
         !_shared && (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
     widget.onClosed?.call(
@@ -636,16 +641,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() {
       _resetRecordingState();
       if (recording == null) return;
-      _mediaDrafts = <PostMediaDraft>[
-        PostMediaDraft(
-          localFilePath: recording.filePath,
-          mime: recording.mime,
-          durationMs: recording.durationMs,
-          waveform: waveform,
-        ),
-      ];
+      _mediaDrafts = <PostMediaDraft>[_voiceDraft(recording, waveform)];
     });
   }
+
+  PostMediaDraft _voiceDraft(AudioRecording recording, List<double> waveform) =>
+      PostMediaDraft(
+        localFilePath: recording.filePath,
+        mime: recording.mime,
+        durationMs: recording.durationMs,
+        waveform: waveform,
+      );
 
   /// Stops the recording and turns it into the Thought's words.
   Future<void> _sendAsText() async {
