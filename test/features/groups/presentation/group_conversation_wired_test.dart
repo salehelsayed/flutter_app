@@ -2286,6 +2286,44 @@ void main() {
       expect(repo.searchPageOffsets, [0, 0], reason: 'the older scan stops');
     });
 
+    testWidgets('in-chat search: closing right after a jump starts keeps the '
+        'chat where it was', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 120; i++) {
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: i == 0 ? 'Dahab trip' : 'note $i',
+            timestamp: base.add(Duration(minutes: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+      ScrollController list() => tester
+          .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+          .scrollController!;
+      final before = list().offset;
+
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        'dahab',
+      );
+      for (var i = 0; i < 60 && highlightedGroupMessage(tester) != 'g-0'; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(highlightedGroupMessage(tester), 'g-0');
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 20);
+      expect(list().offset, moreOrLessEquals(before, epsilon: 1));
+    });
+
     testWidgets('in-chat search: a jump still loading when the bar closes '
         'leaves the highlight alone', (tester) async {
       final repo = GatedAnchorReadGroupMessageRepository();
