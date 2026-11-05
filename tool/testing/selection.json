@@ -5701,6 +5701,8 @@
         "lib/core/config/*",
         "lib/core/permissions/*",
         "lib/core/constants/*",
+        "lib/core/utils/text_search.dart",
+        "test/core/utils/text_search_test.dart",
         "lib/shared/*",
         "pubspec.*",
         "package*.json",
@@ -6984,6 +6986,8 @@
         "lib/features/posts/presentation/screens/thought_card_screen.dart",
         "lib/features/conversation/presentation/screens/conversation_screen.dart",
         "lib/features/conversation/presentation/widgets/letter_card.dart",
+        "lib/core/utils/text_search.dart",
+        "test/core/utils/text_search_test.dart",
         "lib/features/orbit/presentation/widgets/orbit_depth_surface.dart",
         "lib/app/bootstrap/production_application_bootstrap.dart"
       ],
