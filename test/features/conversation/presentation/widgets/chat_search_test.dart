@@ -147,6 +147,19 @@ void main() {
     expect(search.currentId, 'm3');
   });
 
+  testWidgets('an answer arriving after dispose is dropped', (tester) async {
+    slow['dahab'] = Completer<List<String>>();
+    final search = controller()..open();
+    search.setQuery('dahab');
+    await tester.pump(const Duration(milliseconds: 250));
+
+    search.dispose();
+    slow['dahab']!.complete(['m3']);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(shown, isEmpty);
+  });
+
   for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
     testWidgets('the bar fits a 360 px phone with no matches '
         '(${locale.languageCode})', (tester) async {
