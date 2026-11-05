@@ -154,6 +154,18 @@ void main() {
     }
   }
 
+  Future<void> finishDiscard(WidgetTester tester) async {
+    // Cancellation deletes a real temporary file. Bridge only that OS work,
+    // pumping queued capture continuations without advancing the fake clock.
+    // The test's existing timeout still bounds completion and all cleanup
+    // assertions below remain required.
+    await tester.runAsync(() async {
+      while (await platform.file.exists()) {
+        await tester.pump();
+      }
+    });
+  }
+
   Future<void> open(
     WidgetTester tester, {
     Locale locale = const Locale('en'),
@@ -216,7 +228,7 @@ void main() {
       expect(platform.stops, 1);
       expect(platform.disposed, [1]);
       expect(result?.path, platform.file.path);
-      expect(await platform.file.exists(), isTrue);
+      expect(platform.file.existsSync(), isTrue);
       expect(error, isNull);
     },
   );
@@ -240,12 +252,13 @@ void main() {
         expect(platform.stops, 0);
         expect(platform.disposed, isEmpty);
         platform.switchGate!.complete();
+        if (!keep) await finishDiscard(tester);
         await frames(tester);
         expect(platform.captures, hasLength(1));
         expect(platform.stops, 1);
         expect(platform.disposed, [1]);
         expect(result?.path, keep ? platform.file.path : null);
-        expect(await platform.file.exists(), keep);
+        expect(platform.file.existsSync(), keep);
         expect(error, isNull);
       },
     );
@@ -319,11 +332,12 @@ void main() {
       await frames(tester);
       expect(platform.stops, 0);
       platform.startGate!.complete();
+      await finishDiscard(tester);
       await frames(tester);
       expect(platform.stops, 1);
       expect(platform.disposed, [1]);
       expect(result, isNull);
-      expect(await platform.file.exists(), isFalse);
+      expect(platform.file.existsSync(), isFalse);
     },
   );
 
@@ -333,11 +347,12 @@ void main() {
     await open(tester);
     await start(tester);
     await tester.binding.handlePopRoute();
+    await finishDiscard(tester);
     await frames(tester);
     expect(platform.stops, 1);
     expect(platform.disposed, [1]);
     expect(result, isNull);
-    expect(await platform.file.exists(), isFalse);
+    expect(platform.file.existsSync(), isFalse);
     expect(find.byType(CameraVideoRecorder), findsNothing);
   });
 
@@ -371,7 +386,7 @@ void main() {
     expect(platform.stops, 1);
     expect(platform.disposed, [1]);
     expect(result?.path, platform.file.path);
-    expect(await platform.file.exists(), isTrue);
+    expect(platform.file.existsSync(), isTrue);
   });
 
   testWidgets(
