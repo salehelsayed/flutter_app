@@ -35,8 +35,15 @@ void main() {
     ValueChanged<ComposePostResult?>? onClosed,
     List<ContactModel>? contacts,
     Locale locale = const Locale('en'),
+    double textScale = 1,
   }) => MaterialApp(
     locale: locale,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
@@ -295,6 +302,34 @@ void main() {
     await write(tester, 'for everyone');
     await tapShare(tester);
     expect(shared.last.audience.kind, PostAudienceKind.allFriends);
+  });
+
+  testWidgets('German, three picked and double-size text at 360 px: the chip '
+      'and the 24 h line stay on screen', (tester) async {
+    tester.view.physicalSize = const Size(360, 780) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      scene(
+        locale: const Locale('de'),
+        textScale: 2,
+        initialDraft: ComposePostResult(
+          text: '',
+          audience: PostAudience.pickPeople([
+            for (final friend in _friends) friend.peerId,
+          ]),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Other rows of the sheet are not part of this check.
+    tester.takeException();
+    final screen = tester.getRect(find.byType(ComposePostSheet));
+    for (final part in [chip(), rule()]) {
+      final rect = tester.getRect(part);
+      expect(rect.left, greaterThanOrEqualTo(screen.left - 0.5));
+      expect(rect.right, lessThanOrEqualTo(screen.right + 0.5));
+    }
   });
 
   testWidgets('in Arabic at 390 px the chip and the rule share one row', (
