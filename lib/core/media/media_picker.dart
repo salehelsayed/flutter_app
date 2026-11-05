@@ -15,8 +15,13 @@ abstract class MediaPicker {
 
 class SystemMediaPicker implements MediaPicker {
   final ImagePicker _picker;
+  final Future<XFile?> Function()? _cameraVideoCapture;
 
-  SystemMediaPicker({ImagePicker? picker}) : _picker = picker ?? ImagePicker();
+  SystemMediaPicker({
+    ImagePicker? picker,
+    Future<XFile?> Function()? cameraVideoCapture,
+  }) : _picker = picker ?? ImagePicker(),
+       _cameraVideoCapture = cameraVideoCapture;
 
   @override
   Future<List<XFile>> pickMultipleMedia() => _picker.pickMultipleMedia();
@@ -26,8 +31,12 @@ class SystemMediaPicker implements MediaPicker {
       _picker.pickImage(source: source);
 
   @override
-  Future<XFile?> pickVideo({required ImageSource source}) =>
-      _picker.pickVideo(source: source);
+  Future<XFile?> pickVideo({required ImageSource source}) {
+    if (source == ImageSource.camera && _cameraVideoCapture != null) {
+      return _cameraVideoCapture();
+    }
+    return _picker.pickVideo(source: source);
+  }
 
   @override
   Future<List<XFile>> pickDocuments() async {

@@ -39,6 +39,37 @@ class _PlatformPicker extends ImagePickerPlatform {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'camera video uses the recorder while photos and gallery keep their picker',
+    () async {
+      final previous = ImagePickerPlatform.instance;
+      final platform = _PlatformPicker();
+      ImagePickerPlatform.instance = platform;
+      addTearDown(() => ImagePickerPlatform.instance = previous);
+      XFile? clip;
+      var captures = 0;
+      final picker = SystemMediaPicker(
+        cameraVideoCapture: () async {
+          captures++;
+          return clip;
+        },
+      );
+      expect(await picker.pickVideo(source: ImageSource.camera), isNull);
+      clip = XFile('/fixture/recorded.mp4');
+      expect(
+        (await picker.pickVideo(source: ImageSource.camera))?.path,
+      '/fixture/recorded.mp4',
+      );
+      clip = null;
+      expect(await picker.pickVideo(source: ImageSource.camera), isNull);
+      await picker.pickVideo(source: ImageSource.gallery);
+      await picker.pickImage(source: ImageSource.camera);
+      await picker.pickMultipleMedia();
+      expect(captures, 3);
+      expect(platform.calls, ['video-gallery', 'image-camera', 'gallery']);
+    },
+  );
+
+  test(
     'MEDIA-009 system adapter carries native cancellation then fresh results without cached picks',
     () async {
       final previous = ImagePickerPlatform.instance;

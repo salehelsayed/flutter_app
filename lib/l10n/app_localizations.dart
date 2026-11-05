@@ -4106,6 +4106,36 @@ abstract class AppLocalizations {
   /// **'Record Video'**
   String get picker_record_video;
 
+  /// No description provided for @camera_switch.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch camera'**
+  String get camera_switch;
+
+  /// No description provided for @camera_double_tap_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Double-tap to switch cameras'**
+  String get camera_double_tap_hint;
+
+  /// No description provided for @camera_stop_recording.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop recording'**
+  String get camera_stop_recording;
+
+  /// No description provided for @camera_switch_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t switch cameras.'**
+  String get camera_switch_failed;
+
+  /// No description provided for @camera_microphone_permission.
+  ///
+  /// In en, this message translates to:
+  /// **'To record a video with sound, turn on microphone access in your phone’s settings.'**
+  String get camera_microphone_permission;
+
   /// No description provided for @perm_microphone_record.
   ///
   /// In en, this message translates to:

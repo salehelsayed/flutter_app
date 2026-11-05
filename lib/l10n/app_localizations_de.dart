@@ -2522,6 +2522,23 @@ class AppLocalizationsDe extends AppLocalizations {
   String get picker_record_video => 'Video aufnehmen';
 
   @override
+  String get camera_switch => 'Kamera wechseln';
+
+  @override
+  String get camera_double_tap_hint => 'Zum Kamerawechsel doppeltippen';
+
+  @override
+  String get camera_stop_recording => 'Aufnahme beenden';
+
+  @override
+  String get camera_switch_failed =>
+      'Die Kamera konnte nicht gewechselt werden.';
+
+  @override
+  String get camera_microphone_permission =>
+      'Erlaube in den Einstellungen den Mikrofonzugriff, um Videos mit Ton aufzunehmen.';
+
+  @override
   String get perm_microphone_record =>
       'Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.';
 

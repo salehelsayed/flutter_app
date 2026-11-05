@@ -522,6 +522,55 @@
       "declaredBuildException": false
     },
     {
+      "id": "native.camera.recording_switch",
+      "owner": "camera-media",
+      "proofBoundary": "host.ios.camera-recording-switch-transaction",
+      "assertions": [
+        "camera.switch.input_creation_preserves_graph",
+        "camera.switch.input_rejection_restores_graph",
+        "camera.switch.output_rejection_restores_graph",
+        "camera.switch.connection_rejection_restores_graph"
+      ],
+      "lane": "native-ios",
+      "modes": [
+        "major"
+      ],
+      "families": [
+        "media"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "scripts/camera_avfoundation_native.py",
+        "--variant",
+        "both"
+      ],
+      "buildProfile": "host.process",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "host.cpu",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-simulator-a",
+          "access": "exclusive"
+        },
+        {
+          "name": "build:shared-native",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "host.xcode",
+        "ios.simulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": false,
+      "active": true,
+      "declaredBuildException": true
+    },
+    {
       "id": "nested.background_push_crypto",
       "owner": "background-push-crypto",
       "proofBoundary": "host.nested-package.background-push-crypto",

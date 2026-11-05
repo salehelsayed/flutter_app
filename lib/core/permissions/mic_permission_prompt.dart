@@ -18,6 +18,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 Future<void> showMicPermissionDeniedPrompt(
   BuildContext context, {
   required MicPermissionGateway gateway,
+  String? body,
 }) {
   final l10n = AppLocalizations.of(context)!;
   return _showPermissionDeniedPrompt(
@@ -26,13 +27,16 @@ Future<void> showMicPermissionDeniedPrompt(
     keyPrefix: 'mic-perm',
     icon: Icons.mic_rounded,
     title: l10n.mic_perm_dialog_title,
-    body: l10n.mic_perm_dialog_body,
+    body: body ?? l10n.mic_perm_dialog_body,
   );
 }
 
 /// image_picker's error when the OS refuses camera access.
 bool isCameraAccessDenied(Object error) =>
     error is PlatformException && error.code == 'camera_access_denied';
+
+bool isMicrophoneAccessDenied(Object error) =>
+    error is PlatformException && error.code == 'audio_access_denied';
 
 /// The same recovery as the microphone sheet, for a refused camera.
 Future<void> showCameraPermissionDeniedPrompt(
