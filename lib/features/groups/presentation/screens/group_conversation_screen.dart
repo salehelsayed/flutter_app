@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
@@ -74,6 +75,9 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueChanged<String> onSend;
   final VoidCallback onBack;
   final VoidCallback? onInfo;
+
+  /// In-chat search. While it is open its bar takes the header's place.
+  final ChatSearchController? search;
   final bool canWrite;
   final bool isSending;
   final UploadProgressViewState? uploadProgress;
@@ -182,6 +186,7 @@ class GroupConversationScreen extends StatelessWidget {
     required this.onSend,
     required this.onBack,
     this.onInfo,
+    this.search,
     this.canWrite = true,
     this.isSending = false,
     this.uploadProgress,
@@ -281,7 +286,10 @@ class GroupConversationScreen extends StatelessWidget {
             final compactForKeyboard = constraints.maxHeight < 260;
             final content = Column(
               children: [
-                if (!compactForKeyboard) _buildHeader(context),
+                if (search case final search? when search.isOpen)
+                  ChatSearchBar(controller: search)
+                else if (!compactForKeyboard)
+                  _buildHeader(context),
                 if (!compactForKeyboard && backlogRetentionNotice != null)
                   _buildBacklogRetentionBanner(
                     context,
@@ -451,6 +459,14 @@ class GroupConversationScreen extends StatelessWidget {
                 ],
               ),
             ),
+            if (search case final search?)
+              IconButton(
+                tooltip: AppLocalizations.of(context)!.chat_search_action,
+                icon: const Icon(Icons.search_rounded),
+                color: readableColors.iconSecondary,
+                iconSize: 22,
+                onPressed: search.open,
+              ),
             if (onInfo != null)
               // One explicit node for the label, tap and automation id:
               // Android 8.1 exposed the tooltip-only label as
@@ -919,6 +935,8 @@ class GroupConversationScreen extends StatelessWidget {
           text: displayText,
           time: timeFormat.format(message.timestamp.toLocal()),
           isIncoming: !isSent,
+          searchQuery: search?.markedQuery,
+          isCurrentSearchHit: search?.currentId == message.id,
           // 236: origin-minimizing durable marker — the label says only
           // "Forwarded"; no source sender/group/message identity exists on
           // the row at all.

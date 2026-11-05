@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/media/group_upload_retry_signal.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -751,6 +752,48 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
       );
     }
     return true;
+  }
+}
+
+/// Parks the 500-row search pages behind gates and records their offsets.
+class GatedSearchPageGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  bool gateSearchPages = false;
+  final List<int> searchPageOffsets = [];
+  final List<Completer<void>> searchPageGates = [];
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (limit == 500) {
+      searchPageOffsets.add(offset);
+      if (gateSearchPages) {
+        final gate = Completer<void>();
+        searchPageGates.add(gate);
+        await gate.future;
+      }
+    }
+    return super.getMessagesPage(groupId, limit: limit, offset: offset);
+  }
+}
+
+/// Parks single-message reads (a search jump's anchor) behind gates.
+class GatedAnchorReadGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  bool gateReads = false;
+  final List<Completer<void>> readGates = [];
+
+  @override
+  Future<GroupMessage?> getMessage(String id) async {
+    if (gateReads) {
+      final gate = Completer<void>();
+      readGates.add(gate);
+      await gate.future;
+    }
+    return super.getMessage(id);
   }
 }
 
@@ -2071,6 +2114,245 @@ void main() {
         ),
       );
     }
+
+    testWidgets('in-chat search: the magnifier opens the bar, matches step '
+        'newest first and the bar closes back to the header', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await msgRepo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-mid',
+          text: 'Me! Bus on Thursday',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-private',
+          text: 'dahab',
+          privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+          timestamp: base.add(const Duration(minutes: 2)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          isIncoming: false,
+          senderPeerId: 'me',
+          timestamp: base.add(const Duration(minutes: 3)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+
+      String? highlighted() => tester
+          .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+          .highlightedMessageId;
+
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      expect(find.byType(ChatSearchBar), findsOneWidget);
+      expect(find.byKey(const ValueKey('group-header')), findsNothing);
+
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        'dahab',
+      );
+      await pumpFrames(tester);
+      expect(find.text('1 of 2'), findsOneWidget);
+      expect(highlighted(), 'g-new');
+
+      await tester.tap(find.byTooltip('Previous match'));
+      await pumpFrames(tester);
+      expect(find.text('2 of 2'), findsOneWidget);
+      expect(highlighted(), 'g-old');
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      expect(find.byType(ChatSearchBar), findsNothing);
+      expect(find.byKey(const ValueKey('group-header')), findsOneWidget);
+    });
+
+    Future<void> searchGroup(WidgetTester tester, String words) async {
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        words,
+      );
+      await pumpFrames(tester);
+    }
+
+    String? highlightedGroupMessage(WidgetTester tester) => tester
+        .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+        .highlightedMessageId;
+
+    testWidgets('in-chat search: a message arriving while searching joins the '
+        'count without moving the shown match', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await msgRepo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+      await searchGroup(tester, 'dahab');
+      expect(find.text('1 of 2'), findsOneWidget);
+      expect(highlightedGroupMessage(tester), 'g-new');
+
+      final newer = makeMessage(
+        id: 'g-newer',
+        text: 'Dahab it is',
+        timestamp: base.add(const Duration(minutes: 2)),
+      );
+      await msgRepo.saveMessage(newer);
+      messageStreamController.add(newer);
+      await pumpFrames(tester);
+      expect(find.text('2 of 3'), findsOneWidget);
+      expect(highlightedGroupMessage(tester), 'g-new');
+    });
+
+    testWidgets('in-chat search: closing the bar stops a running scan before '
+        'its next page', (tester) async {
+      final repo = GatedSearchPageGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: 'note $i',
+            timestamp: base.add(Duration(seconds: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      repo.gateSearchPages = true;
+      await searchGroup(tester, 'dahab');
+      expect(repo.searchPageOffsets, [0]);
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      repo.searchPageGates.single.complete();
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0]);
+    });
+
+    testWidgets('in-chat search: the same words typed again stop the older '
+        'scan before its next page', (tester) async {
+      final repo = GatedSearchPageGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 501; i++) {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: 'note $i',
+            timestamp: base.add(Duration(seconds: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      repo.gateSearchPages = true;
+      await searchGroup(tester, 'dahab');
+      expect(repo.searchPageOffsets, [0]);
+
+      final field = find.descendant(
+        of: find.byType(ChatSearchBar),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(field, 'dahab x');
+      await tester.enterText(field, 'dahab');
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0, 0]);
+
+      repo.searchPageGates.first.complete();
+      await pumpFrames(tester);
+      expect(repo.searchPageOffsets, [0, 0], reason: 'the older scan stops');
+    });
+
+    testWidgets('in-chat search: closing right after a jump starts keeps the '
+        'chat where it was', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      for (var i = 0; i < 120; i++) {
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'g-$i',
+            text: i == 0 ? 'Dahab trip' : 'note $i',
+            timestamp: base.add(Duration(minutes: i)),
+          ),
+        );
+      }
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+      ScrollController list() => tester
+          .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+          .scrollController!;
+      final before = list().offset;
+
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        'dahab',
+      );
+      for (var i = 0; i < 60 && highlightedGroupMessage(tester) != 'g-0'; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(highlightedGroupMessage(tester), 'g-0');
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 20);
+      expect(list().offset, moreOrLessEquals(before, epsilon: 1));
+    });
+
+    testWidgets('in-chat search: a jump still loading when the bar closes '
+        'leaves the highlight alone', (tester) async {
+      final repo = GatedAnchorReadGroupMessageRepository();
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await repo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget(messageRepo: repo));
+      await pumpFrames(tester);
+      await searchGroup(tester, 'dahab');
+      expect(highlightedGroupMessage(tester), 'g-new');
+
+      repo.gateReads = true;
+      await tester.tap(find.byTooltip('Previous match'));
+      await pumpFrames(tester, count: 2);
+      expect(repo.readGates, hasLength(1));
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      repo.readGates.single.complete();
+      await pumpFrames(tester);
+      expect(highlightedGroupMessage(tester), 'g-new');
+    });
 
     Future<void> pumpStickerComposer(
       WidgetTester tester, {

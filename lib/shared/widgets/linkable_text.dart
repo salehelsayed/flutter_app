@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/core/utils/text_search.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,6 +27,11 @@ class LinkableText extends StatefulWidget {
   final List<InlineSpan>? suffixSpans;
   final TextDirection? textDirection;
 
+  /// When set with [markStyle], every match of these words (any case) is
+  /// drawn in [markStyle] on top of its usual style.
+  final String? markQuery;
+  final TextStyle? markStyle;
+
   const LinkableText({
     super.key,
     required this.text,
@@ -38,6 +44,8 @@ class LinkableText extends StatefulWidget {
     this.prefixSpans,
     this.suffixSpans,
     this.textDirection,
+    this.markQuery,
+    this.markStyle,
   });
 
   @override
@@ -47,6 +55,10 @@ class LinkableText extends StatefulWidget {
 class _LinkableTextState extends State<LinkableText> {
   List<InlineSpan> _spans = [];
   final List<TapGestureRecognizer> _recognizers = [];
+
+  /// Where [LinkableText.markQuery] occurs in the whole text, so a phrase
+  /// crossing a link boundary is marked on both sides.
+  List<({int start, int end})> _marks = const [];
 
   @override
   void initState() {
@@ -58,7 +70,9 @@ class _LinkableTextState extends State<LinkableText> {
   void didUpdateWidget(LinkableText oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.text != widget.text ||
-        oldWidget.onLinkTap != widget.onLinkTap) {
+        oldWidget.onLinkTap != widget.onLinkTap ||
+        oldWidget.markQuery != widget.markQuery ||
+        oldWidget.markStyle != widget.markStyle) {
       _disposeRecognizers();
       _parse();
     }
@@ -80,6 +94,9 @@ class _LinkableTextState extends State<LinkableText> {
   void _parse() {
     final segments = parseUrls(widget.text);
     final spans = <InlineSpan>[];
+    _marks = widget.markStyle == null
+        ? const []
+        : textSearchRanges(widget.text, widget.markQuery ?? '');
 
     final defaultLinkStyle = TextStyle(
       color: FeedColors.accentTeal,
@@ -87,28 +104,31 @@ class _LinkableTextState extends State<LinkableText> {
       decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
     );
 
+    var offset = 0;
     for (final segment in segments) {
       if (segment.isUrl) {
         final recognizer = TapGestureRecognizer()
           ..onTap = () => _handleTap(segment.text);
         _recognizers.add(recognizer);
 
-        spans.add(
-          TextSpan(
-            text: segment.text,
-            style: widget.linkStyle ?? defaultLinkStyle,
+        spans.addAll(
+          _mark(
+            segment.text,
+            offset,
+            widget.linkStyle ?? defaultLinkStyle,
             recognizer: recognizer,
           ),
         );
       } else {
-        spans.addAll(_withTags(segment.text));
+        spans.addAll(_withTags(segment.text, offset));
       }
+      offset += segment.text.length;
     }
 
     _spans = spans;
   }
 
-  Iterable<InlineSpan> _withTags(String text) sync* {
+  Iterable<InlineSpan> _withTags(String text, int offset) sync* {
     final tagStyle = widget.tagStyle;
     final tags = tagStyle == null
         ? const <ThoughtTag>[]
@@ -116,16 +136,64 @@ class _LinkableTextState extends State<LinkableText> {
     var at = 0;
     for (final tag in tags) {
       if (tag.start > at) {
-        yield TextSpan(
-          text: text.substring(at, tag.start),
-          style: widget.style,
-        );
+        yield* _mark(text.substring(at, tag.start), offset + at, widget.style);
       }
-      yield TextSpan(text: text.substring(tag.start, tag.end), style: tagStyle);
+      yield* _mark(
+        text.substring(tag.start, tag.end),
+        offset + tag.start,
+        tagStyle,
+      );
       at = tag.end;
     }
     if (at < text.length || tags.isEmpty) {
-      yield TextSpan(text: text.substring(at), style: widget.style);
+      yield* _mark(text.substring(at), offset + at, widget.style);
+    }
+  }
+
+  /// [text] starts at [offset] in the whole message; it is drawn in [style]
+  /// with the parts inside [_marks] in the mark style.
+  Iterable<TextSpan> _mark(
+    String text,
+    int offset,
+    TextStyle? style, {
+    GestureRecognizer? recognizer,
+  }) sync* {
+    final markStyle = widget.markStyle;
+    final ranges = [
+      for (final mark in _marks)
+        if (mark.end > offset && mark.start < offset + text.length)
+          (
+            start: (mark.start - offset).clamp(0, text.length),
+            end: (mark.end - offset).clamp(0, text.length),
+          ),
+    ];
+    if (ranges.isEmpty) {
+      yield TextSpan(text: text, style: style, recognizer: recognizer);
+      return;
+    }
+    final marked = style?.merge(markStyle) ?? markStyle;
+    var at = 0;
+    for (final range in ranges) {
+      if (range.start > at) {
+        yield TextSpan(
+          text: text.substring(at, range.start),
+          style: style,
+          recognizer: recognizer,
+        );
+      }
+      yield TextSpan(
+        text: text.substring(range.start, range.end),
+        style: marked,
+        recognizer: recognizer,
+      );
+      at = range.end;
+    }
+    if (at < text.length) {
+      yield TextSpan(
+        text: text.substring(at),
+        style: style,
+        recognizer: recognizer,
+      );
     }
   }
 

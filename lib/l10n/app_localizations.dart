@@ -4832,6 +4832,42 @@ abstract class AppLocalizations {
   /// **'No contacts or groups yet'**
   String get share_no_targets;
 
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get chat_search_action;
+
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'Search…'**
+  String get chat_search_hint;
+
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'{current} of {total}'**
+  String chat_search_count(int current, int total);
+
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'Previous match'**
+  String get chat_search_previous;
+
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'Next match'**
+  String get chat_search_next;
+
+  /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
+  ///
+  /// In en, this message translates to:
+  /// **'Close search'**
+  String get chat_search_close;
+
   /// No description provided for @share_no_matches.
   ///
   /// In en, this message translates to:

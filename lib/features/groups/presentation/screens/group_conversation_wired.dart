@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
+import 'package:flutter_app/features/groups/application/group_chat_search.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
@@ -317,6 +319,9 @@ final class _GroupConversationSendLane {
   preparedGroupMediaBlobCustodyCoordinator;
 }
 
+/// The default `stillWanted` of a Go to message jump: never give up.
+bool _keepGoing() => true;
+
 class GroupConversationWired extends StatefulWidget {
   /// 204 (BUG-1): the explicit Cancel row on the attach-source bottom sheet.
   /// Distinct from the 1:1 key so surface-specific tests target each
@@ -562,6 +567,76 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   _outgoingLocalMessageChangeSubscription;
   StreamSubscription<String>? _removedSubscription;
   final ScrollController _scrollController = ScrollController();
+
+  late final ChatSearchController _search = ChatSearchController(
+    search: _searchThisGroup,
+    onShow: (messageId) => unawaited(
+      _goToSharedMediaMessage(
+        GroupSharedMediaGoToMessage(groupId: _group.id, messageId: messageId),
+        stillWanted: () => _search.isOpen && _search.currentId == messageId,
+      ),
+    ),
+    onOpened: _rememberScrollBeforeSearch,
+    onClosed: _restoreScrollAfterSearch,
+  )..addListener(_onSearchChanged);
+
+  /// Every stored message of this group, newest page first, and each page's
+  /// matches. Stops between pages once the words changed or the bar closed.
+  Future<List<String>> _searchThisGroup(String query) async {
+    const pageSize = 500;
+    final groupId = _group.id;
+    final revision = _search.revision;
+    final hits = <String>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final page = await widget.msgRepo.getMessagesPage(
+        groupId,
+        limit: pageSize,
+        offset: offset,
+      );
+      if (!mounted || _search.revision != revision) break;
+      hits.addAll(
+        searchGroupChat(
+          page.where((m) => m.groupId == groupId),
+          query,
+          removedIds: _locallyRemovedMessageIds,
+        ),
+      );
+      if (page.length < pageSize) break;
+    }
+    return hits;
+  }
+
+  double? _offsetBeforeSearch;
+
+  void _rememberScrollBeforeSearch() {
+    _offsetBeforeSearch = _scrollController.hasClients
+        ? _scrollController.offset
+        : null;
+  }
+
+  /// Closing search glides back to where the chat was before searching.
+  void _restoreScrollAfterSearch() {
+    // A reveal already queued for a search result must not scroll any more.
+    _revealGeneration++;
+    final offset = _offsetBeforeSearch;
+    _offsetBeforeSearch = null;
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      unawaited(
+        _scrollController.animateTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
 
   /// Attached to the highlighted row (via the screen) so a notification-tapped
   /// message can be scrolled into view. Resolved once per open.
@@ -5429,12 +5504,28 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     _highlightScrollResolved = true;
-    _bringHighlightOnScreen(chronologicalIndex, attempt: 0);
+    _bringHighlightOnScreen(
+      chronologicalIndex,
+      attempt: 0,
+      generation: ++_revealGeneration,
+    );
   }
 
-  void _bringHighlightOnScreen(int chronologicalIndex, {required int attempt}) {
+  /// Bumped by each new reveal and when search closes; an older reveal's
+  /// queued frames then stop instead of scrolling.
+  int _revealGeneration = 0;
+
+  void _bringHighlightOnScreen(
+    int chronologicalIndex, {
+    required int attempt,
+    required int generation,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!mounted ||
+          generation != _revealGeneration ||
+          !_scrollController.hasClients) {
+        return;
+      }
 
       final anchorContext = _highlightAnchorKey.currentContext;
       if (anchorContext != null) {
@@ -5462,7 +5553,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           : (reversedIndex / (count - 1)) * maxExtent - viewport / 2;
       _scrollController.jumpTo(estimate.clamp(0.0, maxExtent).toDouble());
 
-      _bringHighlightOnScreen(chronologicalIndex, attempt: attempt + 1);
+      _bringHighlightOnScreen(
+        chronologicalIndex,
+        attempt: attempt + 1,
+        generation: generation,
+      );
     });
   }
 
@@ -7597,9 +7692,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _invalidateSharedMediaAnchorReplay();
   }
 
+  /// Gives up after either await once [stillWanted] says the jump is no
+  /// longer wanted (search closed or another match shown).
   Future<void> _goToSharedMediaMessage(
-    GroupSharedMediaGoToMessage result,
-  ) async {
+    GroupSharedMediaGoToMessage result, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
     final requestGroupId = _group.id;
     final mutationGenerationAtStart = _messageMutationGeneration;
     final window = await _sharedMediaAnchorRequests.load(
@@ -7610,6 +7708,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     if (window == null ||
         !mounted ||
+        !stillWanted() ||
         widget.group.id != requestGroupId ||
         _group.id != requestGroupId) {
       return;
@@ -7630,6 +7729,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     final hydrated = await _loadResolvedMediaMap(currentWindow);
     if (!mounted ||
+        !stillWanted() ||
         widget.group.id != requestGroupId ||
         _group.id != requestGroupId) {
       return;
@@ -7723,7 +7823,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _scrollToHighlightedMessage();
+      if (mounted && stillWanted()) _scrollToHighlightedMessage();
     });
   }
 
@@ -8495,6 +8595,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   @override
   void dispose() {
+    _search.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
     _messageSubscription?.cancel();
@@ -8550,6 +8651,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   @override
   Widget build(BuildContext context) {
+    _search.refreshFor(_messages);
     _uploadActivityController.refreshOwnerProjection(publish: false);
     if (!_canWrite && _activeQuoteMessageId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -8601,6 +8703,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             scrollController: _scrollController,
             highlightedMessageId: _highlightedMessageId,
             highlightAnchorKey: _highlightAnchorKey,
+            search: _search,
             mediaMap: _mediaMap,
             mediaRenderedSemanticsLabels: widget.mediaRenderedSemanticsLabels,
             composerStateListenable: _composerController,

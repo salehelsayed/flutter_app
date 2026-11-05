@@ -161,14 +161,20 @@ const _expectedGroupApiFingerprint = '2b594730';
 // panel, or null) and `onComposerTextTap` (closes it). Without them the
 // fingerprint is the previous c1a752e7.
 // 131: both handoffs add only onStickerToggle; Wired APIs are unchanged.
-const _expectedDirectHandoffFingerprint = 'c2e5142a';
+// In-chat search (owner, 2026-11-04): the direct handoff adds only `search`,
+// the wired-owned search controller. Wired APIs are unchanged; without it the
+// fingerprint is the previous c2e5142a.
+const _expectedDirectHandoffFingerprint = '3abca198';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
 // wired capture owner. All prior arguments and both Wired APIs are unchanged.
 // Stickers v1: the same two handoff arguments. Without them the fingerprint
 // is the previous 0e09acce.
-const _expectedGroupHandoffFingerprint = '3d456f26';
+// In-chat search (owner, 2026-11-04): the group handoff adds only `search`,
+// the wired-owned search controller; without it the fingerprint is the
+// previous 3d456f26.
+const _expectedGroupHandoffFingerprint = '0de580c4';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 

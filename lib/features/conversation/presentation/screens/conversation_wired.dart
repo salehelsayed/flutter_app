@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/application/direct_chat_search.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -430,6 +432,9 @@ Stream<void> directPictureInPictureAuthorizationChanges(
 @visibleForTesting
 PrivateMediaPolicy? debugConversationWiredInitialPrivateMediaPolicy;
 
+/// The default `stillWanted` of a Go to message jump: never give up.
+bool _keepGoing() => true;
+
 class ConversationWired extends StatefulWidget {
   static const deleteSheetKey = ValueKey('conversation-delete-message-sheet');
   static const deletePromptKey = ValueKey('conversation-delete-message-prompt');
@@ -739,6 +744,51 @@ class _ConversationWiredState extends State<ConversationWired>
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<bool>? _outgoingCallAvailabilitySubscription;
   final _scrollController = ScrollController();
+
+  late final ChatSearchController _search = ChatSearchController(
+    search: (query) async => searchDirectChat(
+      await widget.messageRepo.getMessagesForContact(widget.contact.peerId),
+      query,
+    ),
+    onShow: (messageId) => unawaited(
+      _goToLibraryMessage(
+        messageId,
+        stillWanted: () => _search.isOpen && _search.currentId == messageId,
+      ),
+    ),
+    onOpened: _rememberScrollBeforeSearch,
+    onClosed: _restoreScrollAfterSearch,
+  )..addListener(_onSearchChanged);
+
+  double? _offsetBeforeSearch;
+
+  void _rememberScrollBeforeSearch() {
+    _offsetBeforeSearch = _scrollController.hasClients
+        ? _scrollController.offset
+        : null;
+  }
+
+  /// Closing search glides back to where the chat was before searching.
+  void _restoreScrollAfterSearch() {
+    final offset = _offsetBeforeSearch;
+    _offsetBeforeSearch = null;
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      unawaited(
+        _scrollController.animateTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
 
   bool _hasMoreOlderMessages = true;
   List<ConversationCallTimelineEntry> _callEntries =
@@ -7848,10 +7898,15 @@ class _ConversationWiredState extends State<ConversationWired>
   /// history is exhausted, then reveals and transiently highlights exactly
   /// its stable `msg-<id>` key. Never replaces or resets the loaded window:
   /// pages append through the existing [_loadOlderMessages] path only.
-  Future<void> _goToLibraryMessage(String messageId) async {
+  /// Gives up after any await once [stillWanted] says the jump is no longer
+  /// wanted (search closed or another match shown).
+  Future<void> _goToLibraryMessage(
+    String messageId, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
     bool loaded() => _messages.any((m) => m.id == messageId);
 
-    while (mounted && !loaded()) {
+    while (mounted && stillWanted() && !loaded()) {
       if (_isLoadingMore) {
         // A scroll-triggered load is in flight — wait for it instead of
         // issuing a concurrent page request.
@@ -7866,7 +7921,7 @@ class _ConversationWiredState extends State<ConversationWired>
       // cursor must not spin forever.
       if (_messages.length == beforeCount) break;
     }
-    if (!mounted) return;
+    if (!mounted || !stillWanted()) return;
 
     if (!loaded()) {
       // Truthful terminal state: the message is gone (deleted/older than
@@ -7885,23 +7940,33 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     setState(() => _highlightedMessageId = messageId);
-    final reveal = widget.revealConversationMessageFn ?? _revealMessageInList;
-    await reveal(messageId);
+    final reveal = widget.revealConversationMessageFn;
+    await (reveal != null
+        ? reveal(messageId)
+        : _revealMessageInList(messageId, stillWanted: stillWanted));
     _highlightClearTimer?.cancel();
     _highlightClearTimer = Timer(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _highlightedMessageId = null);
     });
   }
 
-  /// Default reveal: walk the element tree for the row's stable key and
-  /// ensure it is visible; while the (already loaded) row is still outside
-  /// the virtualized build window, step the scroll position toward the older
-  /// end until it materializes. Bounded — never loads pages.
-  Future<void> _revealMessageInList(String messageId) async {
-    final targetKey = ValueKey('msg-$messageId');
+  /// Default reveal: find the row's stable key among the rows the list has
+  /// built and ensure it is visible; while the (already loaded) row is still
+  /// outside the virtualized build window, step the scroll position toward
+  /// it, older or newer than the built rows, until it materializes.
+  /// Bounded — never loads pages.
+  Future<void> _revealMessageInList(
+    String messageId, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
+    final indexOf = {
+      for (var i = 0; i < _messages.length; i++) _messages[i].id: i,
+    };
+    final targetAt = indexOf[messageId] ?? -1;
     for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted) return;
-      final targetContext = _findDescendantContextByKey(targetKey);
+      if (!mounted || !stillWanted()) return;
+      final rows = _builtMessageRows();
+      final targetContext = rows[messageId];
       if (targetContext != null && targetContext.mounted) {
         await Scrollable.ensureVisible(
           targetContext,
@@ -7912,30 +7977,35 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.pixels >= position.maxScrollExtent) return;
-      _scrollController.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
+      // The list is reversed: larger offsets show older messages. The target
+      // lies past the newer end only when every built row is older than it.
+      final towardOlder =
+          rows.isEmpty || rows.keys.any((id) => (indexOf[id] ?? -1) > targetAt);
+      final step = position.viewportDimension * 0.9;
+      final next =
+          (towardOlder ? position.pixels + step : position.pixels - step).clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+      if (next == position.pixels) return;
+      _scrollController.jumpTo(next);
       await Future<void>.delayed(const Duration(milliseconds: 16));
     }
   }
 
-  BuildContext? _findDescendantContextByKey(Key key) {
-    BuildContext? found;
+  /// The message rows the list has built, by message id.
+  Map<String, BuildContext> _builtMessageRows() {
+    final rows = <String, BuildContext>{};
     void visit(Element element) {
-      if (found != null) return;
-      if (element.widget.key == key) {
-        found = element;
-        return;
+      final key = element.widget.key;
+      if (key is ValueKey<String> && key.value.startsWith('msg-')) {
+        rows[key.value.substring(4)] = element;
       }
       element.visitChildElements(visit);
     }
 
     (context as Element).visitChildElements(visit);
-    return found;
+    return rows;
   }
 
   void _onOverflow() {
@@ -8409,6 +8479,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   void dispose() {
+    _search.dispose();
     _thoughtChanges?.cancel();
     _thoughtExpiryTimer?.cancel();
     _outgoingCallStartRequest?.cancel();
@@ -9164,6 +9235,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   Widget build(BuildContext context) {
+    _search.refreshFor(_messages);
     _loadQuotedThoughts();
     _sendInitialThoughtReplyWhenReady();
     final (activeQuoteText, isActiveQuoteUnavailable) =
@@ -9356,6 +9428,7 @@ class _ConversationWiredState extends State<ConversationWired>
               widget.appShellController?.backgroundPreference ??
               BackgroundPreference.defaultBackground,
           highlightedMessageId: _highlightedMessageId,
+          search: _search,
         ),
       ),
     );

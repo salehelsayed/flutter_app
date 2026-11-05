@@ -11,6 +11,8 @@ void main() {
     VoidCallback? onBack,
     VoidCallback? onOverflow,
     VoidCallback? onCall,
+    VoidCallback? onSearch,
+    Locale locale = const Locale('en'),
     bool showCallAction = false,
     bool callActionEnabled = true,
     bool callActionInFlight = false,
@@ -19,7 +21,7 @@ void main() {
     BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Theme(
@@ -32,6 +34,7 @@ void main() {
             onBack: onBack ?? () {},
             onOverflow: onOverflow,
             onCall: onCall,
+            onSearch: onSearch,
             showCallAction: showCallAction,
             callActionEnabled: callActionEnabled,
             callActionInFlight: callActionInFlight,
@@ -43,6 +46,42 @@ void main() {
   }
 
   group('ConversationHeader', () {
+    for (final locale in const [Locale('en'), Locale('ar')]) {
+      testWidgets('the magnifier sits right before ⋮ and opens search '
+          '(${locale.languageCode})', (tester) async {
+        var searches = 0;
+        await tester.pumpWidget(
+          buildTestWidget(
+            onOverflow: () {},
+            onCall: () {},
+            showCallAction: true,
+            onSearch: () => searches++,
+            locale: locale,
+          ),
+        );
+        final label = locale.languageCode == 'ar' ? 'بحث' : 'Search';
+        final magnifier = find.byTooltip(label);
+        expect(magnifier, findsOneWidget);
+        final more = tester.getCenter(find.byIcon(Icons.more_vert));
+        final call = tester.getCenter(find.byIcon(Icons.call_outlined));
+        final glass = tester.getCenter(magnifier);
+        if (locale.languageCode == 'ar') {
+          expect(glass.dx, greaterThan(more.dx));
+          expect(glass.dx, lessThan(call.dx));
+        } else {
+          expect(glass.dx, lessThan(more.dx));
+          expect(glass.dx, greaterThan(call.dx));
+        }
+        await tester.tap(magnifier);
+        expect(searches, 1);
+      });
+    }
+
+    testWidgets('no magnifier without a search handler', (tester) async {
+      await tester.pumpWidget(buildTestWidget(onOverflow: () {}));
+      expect(find.byTooltip('Search'), findsNothing);
+    });
+
     testWidgets('displays contact username', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       expect(find.text('Alice'), findsOneWidget);
