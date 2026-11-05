@@ -2492,6 +2492,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get picker_record_video => 'تسجيل فيديو';
 
   @override
+  String get camera_switch => 'تبديل الكاميرا';
+
+  @override
+  String get camera_double_tap_hint => 'اضغط مرتين لتبديل الكاميرا';
+
+  @override
+  String get camera_stop_recording => 'إيقاف التسجيل';
+
+  @override
+  String get camera_switch_failed => 'تعذّر تبديل الكاميرا.';
+
+  @override
+  String get camera_microphone_permission =>
+      'لتسجيل فيديو مع الصوت، فعّل الوصول إلى الميكروفون في إعدادات هاتفك.';
+
+  @override
   String get perm_microphone_record =>
       'يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.';
 

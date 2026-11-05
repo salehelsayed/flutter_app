@@ -28,6 +28,7 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/camera_video_recorder.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
@@ -517,7 +518,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   static const _maxAttachments = 10;
   static const _liveEdgeTolerance = 32.0;
   static const _messageLoadErrorCopy = "Couldn't load messages";
-  static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
+  late final MediaPicker _defaultMediaPicker = SystemMediaPicker(
+    cameraVideoCapture: () => captureCameraVideo(context),
+  );
 
   late GroupModel _group;
   List<GroupMessage> _messages = [];
@@ -5167,6 +5170,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_PICK_VIDEO_ERROR',
         details: {'error': e.toString()},
       );
+      if (isMicrophoneAccessDenied(e)) {
+        if (mounted) {
+          await showMicPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+            body: AppLocalizations.of(context)!.camera_microphone_permission,
+          );
+        }
+        return;
+      }
       if (isCameraAccessDenied(e)) {
         if (mounted) {
           await showCameraPermissionDeniedPrompt(

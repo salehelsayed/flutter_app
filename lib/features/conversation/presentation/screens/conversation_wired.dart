@@ -40,6 +40,7 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/camera_video_recorder.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/direct_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
@@ -702,7 +703,9 @@ class _ConversationWiredState extends State<ConversationWired>
   static const _uuid = Uuid();
   static const _pageSize = 50;
   final Set<String> _preparingVoiceMessageIds = {};
-  static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
+  late final MediaPicker _defaultMediaPicker = SystemMediaPicker(
+    cameraVideoCapture: () => captureCameraVideo(context),
+  );
 
   late AppLifecycleState _appLifecycleState;
   int _appLifecycleGeneration = 0;
@@ -6134,6 +6137,16 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_PICK_VIDEO_CAMERA_ERROR',
         details: {'error': e.toString()},
       );
+      if (isMicrophoneAccessDenied(e)) {
+        if (mounted) {
+          await showMicPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+            body: AppLocalizations.of(context)!.camera_microphone_permission,
+          );
+        }
+        return;
+      }
       if (isCameraAccessDenied(e)) {
         if (mounted) {
           await showCameraPermissionDeniedPrompt(
@@ -6142,6 +6155,12 @@ class _ConversationWiredState extends State<ConversationWired>
           );
         }
         return;
+      }
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
       }
     }
   }

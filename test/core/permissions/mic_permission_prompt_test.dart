@@ -10,8 +10,9 @@ import '../../shared/fakes/fake_mic_permission_gateway.dart';
 void main() {
   Future<void> openPrompt(
     WidgetTester tester,
-    FakeMicPermissionGateway gateway,
-  ) async {
+    FakeMicPermissionGateway gateway, {
+    String? body,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -22,8 +23,11 @@ void main() {
           body: Builder(
             builder: (context) => Center(
               child: ElevatedButton(
-                onPressed: () =>
-                    showMicPermissionDeniedPrompt(context, gateway: gateway),
+                onPressed: () => showMicPermissionDeniedPrompt(
+                  context,
+                  gateway: gateway,
+                  body: body,
+                ),
                 child: const Text('open'),
               ),
             ),
@@ -76,6 +80,24 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('mic-perm-open-settings')));
       await tester.pumpAndSettle();
 
+      expect(gateway.openAppSettingsCallCount, 1);
+    },
+  );
+
+  testWidgets(
+    'video microphone denial explains recording and keeps Settings recovery',
+    (tester) async {
+      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+      final gateway = FakeMicPermissionGateway();
+      await openPrompt(
+        tester,
+        gateway,
+        body: l10n.camera_microphone_permission,
+      );
+      expect(find.text(l10n.camera_microphone_permission), findsOneWidget);
+      expect(find.text(l10n.mic_perm_dialog_body), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('mic-perm-open-settings')));
+      await tester.pumpAndSettle();
       expect(gateway.openAppSettingsCallCount, 1);
     },
   );
