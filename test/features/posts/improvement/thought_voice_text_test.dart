@@ -14,16 +14,19 @@ const _hint = 'From your voice. Check the words before you send.';
 void main() {
   late FakeAudioRecorderService recorder;
   late List<ComposePostResult> shared;
+  late List<ComposePostResult?> closed;
   late List<String> transcribed;
 
   Future<void> open(
     WidgetTester tester, {
     Future<String?> Function(String path)? transcribe,
+    ComposePostResult? initialDraft,
   }) async {
     recorder = FakeAudioRecorderService()
       ..fakeOutputPath = '/tmp/thought.m4a'
       ..fakeDurationMs = 9000;
     shared = [];
+    closed = [];
     transcribed = [];
     final original = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
@@ -38,6 +41,8 @@ void main() {
             thoughtsOnly: true,
             eligibleContacts: const [],
             audioRecorderService: recorder,
+            initialDraft: initialDraft,
+            onClosed: closed.add,
             transcribeVoice: transcribe == null
                 ? null
                 : (path) {
@@ -287,4 +292,52 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     },
   );
+
+  testWidgets('closing while the words are pending hands the recording back', (
+    tester,
+  ) async {
+    final pending = Completer<String?>();
+    await open(tester, transcribe: (_) => pending.future);
+    await record(tester);
+    await tester.tap(sendAsText());
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Transcribing…'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    final draft = closed.single;
+    expect(draft?.mediaDrafts.map((media) => media.localFilePath), [
+      '/tmp/thought.m4a',
+    ]);
+    pending.complete('too late');
+    await tester.pump();
+
+    await open(tester, initialDraft: draft, transcribe: (_) async => null);
+    expect(voiceCard(), findsOneWidget);
+    expect(text(tester), '');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('closing the failure card hands the recording back', (
+    tester,
+  ) async {
+    await open(tester, transcribe: (_) async => throw StateError('no'));
+    await record(tester);
+    await tester.tap(sendAsText());
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't transcribe"), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    final draft = closed.single;
+    expect(draft?.mediaDrafts.map((media) => media.localFilePath), [
+      '/tmp/thought.m4a',
+    ]);
+    expect(draft?.mediaDrafts.single.durationMs, 9000);
+
+    await open(tester, initialDraft: draft);
+    expect(voiceCard(), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
