@@ -3569,16 +3569,24 @@ Contact deletion must also refresh retained Orbit when Conversation opens throug
 Feed or a notification, without Orbit's own route-pop callback. The production
 final contact purge publishes a contact-wide `MessageRepositoryRemovalSource`
 event after commit; it does not publish a contact-update or synthetic message
-row. Orbit consumes those null-message-ID removals through its existing per-peer
-refresh, or buffers the peer for the existing inactive-tab replay. Individual
-message removals remain outside that subscription. The ordinary and blocked
+row. Orbit consumes external null-message-ID removals through its existing
+per-peer refresh, or buffers the peer for the existing inactive-tab replay.
+An in-flight Orbit-owned deletion leaves its one refresh to the existing
+delete/route-return callback; a transient per-peer marker prevents the removal
+signal from starting a duplicate lookup and is cleared in `finally`. Ordinary
+non-delete route returns still refresh. Individual message removals remain
+outside that subscription. The ordinary and blocked
 contact cases in `orbit_refresh_ordering_test.dart` drive the real Conversation
 menu, verify contact/message absence and the committed removal signal, preserve
 an unrelated conversation, and check both list projections. Both fail before
 the listener and pass afterward. Their repositories model the production final
 purge contract; this is host UI/event proof, not a native transaction or device
 proof. The build-221 moved-account incident's entry route was not recorded and
-remains unattributed. Evidence: `.codex-test-logs/chat-delete-list-refresh-20261105/`.
+remains unattributed. The owned conversation/list deletion controls require
+one contact lookup instead of the two observed before ownership coordination;
+the ordinary-return control retains its lookup and refreshed contact data.
+Evidence: `.codex-test-logs/chat-delete-list-refresh-20261105/` and
+`.codex-test-logs/chat-delete-list-refresh-review-20261105/`.
 
 Consent ownership includes the decision Future after the dialog route pops.
 Otherwise gate release can present a still-pending row before Accept/Decline

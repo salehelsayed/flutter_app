@@ -448,6 +448,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Set<String> _unavailableInviteContactIds = <String>{};
   int _inviteRequestQualificationEpoch = 0;
   final Set<String> _openingFriendPeerIds = <String>{};
+  final Set<String> _deletingContactPeerIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
@@ -3137,6 +3138,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .listen(
           (removal) {
             final peerId = removal.contactPeerId;
+            // Orbit-owned delete callbacks already refresh this peer.
+            if (_deletingContactPeerIds.contains(peerId)) {
+              return;
+            }
             if (!_isOrbitActive) {
               _dirtyFriendPeerIds.add(peerId);
               return;
@@ -3794,17 +3799,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _deleteContactFromOrbit(String peerId) {
-    return deleteContactAndMessages(
-      contactRepo: widget.contactRepo,
-      messageRepo: widget.messageRepo,
-      peerId: peerId,
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-      reactionRepo: widget.reactionRepository,
-      mediaFileManager: widget.mediaFileManager,
-      contactRequestRepo: widget.contactRequestRepo,
-      introductionRepo: widget.introductionRepository,
-    );
+  Future<void> _deleteContactFromOrbit(String peerId) async {
+    _deletingContactPeerIds.add(peerId);
+    try {
+      await deleteContactAndMessages(
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        peerId: peerId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepository,
+        mediaFileManager: widget.mediaFileManager,
+        contactRequestRepo: widget.contactRequestRepo,
+        introductionRepo: widget.introductionRepository,
+      );
+    } finally {
+      _deletingContactPeerIds.remove(peerId);
+    }
   }
 
   Future<void> _markConversationReadInBackground(String peerId) async {
