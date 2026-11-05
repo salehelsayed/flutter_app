@@ -432,6 +432,9 @@ Stream<void> directPictureInPictureAuthorizationChanges(
 @visibleForTesting
 PrivateMediaPolicy? debugConversationWiredInitialPrivateMediaPolicy;
 
+/// The default `stillWanted` of a Go to message jump: never give up.
+bool _keepGoing() => true;
+
 class ConversationWired extends StatefulWidget {
   static const deleteSheetKey = ValueKey('conversation-delete-message-sheet');
   static const deletePromptKey = ValueKey('conversation-delete-message-prompt');
@@ -747,7 +750,12 @@ class _ConversationWiredState extends State<ConversationWired>
       await widget.messageRepo.getMessagesForContact(widget.contact.peerId),
       query,
     ),
-    onShow: (messageId) => unawaited(_goToLibraryMessage(messageId)),
+    onShow: (messageId) => unawaited(
+      _goToLibraryMessage(
+        messageId,
+        stillWanted: () => _search.isOpen && _search.currentId == messageId,
+      ),
+    ),
     onOpened: _rememberScrollBeforeSearch,
     onClosed: _restoreScrollAfterSearch,
   )..addListener(_onSearchChanged);
@@ -7888,10 +7896,15 @@ class _ConversationWiredState extends State<ConversationWired>
   /// history is exhausted, then reveals and transiently highlights exactly
   /// its stable `msg-<id>` key. Never replaces or resets the loaded window:
   /// pages append through the existing [_loadOlderMessages] path only.
-  Future<void> _goToLibraryMessage(String messageId) async {
+  /// Gives up after any await once [stillWanted] says the jump is no longer
+  /// wanted (search closed or another match shown).
+  Future<void> _goToLibraryMessage(
+    String messageId, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
     bool loaded() => _messages.any((m) => m.id == messageId);
 
-    while (mounted && !loaded()) {
+    while (mounted && stillWanted() && !loaded()) {
       if (_isLoadingMore) {
         // A scroll-triggered load is in flight — wait for it instead of
         // issuing a concurrent page request.
@@ -7906,7 +7919,7 @@ class _ConversationWiredState extends State<ConversationWired>
       // cursor must not spin forever.
       if (_messages.length == beforeCount) break;
     }
-    if (!mounted) return;
+    if (!mounted || !stillWanted()) return;
 
     if (!loaded()) {
       // Truthful terminal state: the message is gone (deleted/older than
@@ -7925,8 +7938,10 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     setState(() => _highlightedMessageId = messageId);
-    final reveal = widget.revealConversationMessageFn ?? _revealMessageInList;
-    await reveal(messageId);
+    final reveal = widget.revealConversationMessageFn;
+    await (reveal != null
+        ? reveal(messageId)
+        : _revealMessageInList(messageId, stillWanted: stillWanted));
     _highlightClearTimer?.cancel();
     _highlightClearTimer = Timer(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _highlightedMessageId = null);
@@ -7938,13 +7953,16 @@ class _ConversationWiredState extends State<ConversationWired>
   /// outside the virtualized build window, step the scroll position toward
   /// it, older or newer than the built rows, until it materializes.
   /// Bounded — never loads pages.
-  Future<void> _revealMessageInList(String messageId) async {
+  Future<void> _revealMessageInList(
+    String messageId, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
     final indexOf = {
       for (var i = 0; i < _messages.length; i++) _messages[i].id: i,
     };
     final targetAt = indexOf[messageId] ?? -1;
     for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted) return;
+      if (!mounted || !stillWanted()) return;
       final rows = _builtMessageRows();
       final targetContext = rows[messageId];
       if (targetContext != null && targetContext.mounted) {

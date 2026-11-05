@@ -319,6 +319,9 @@ final class _GroupConversationSendLane {
   preparedGroupMediaBlobCustodyCoordinator;
 }
 
+/// The default `stillWanted` of a Go to message jump: never give up.
+bool _keepGoing() => true;
+
 class GroupConversationWired extends StatefulWidget {
   /// 204 (BUG-1): the explicit Cancel row on the attach-source bottom sheet.
   /// Distinct from the 1:1 key so surface-specific tests target each
@@ -570,6 +573,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     onShow: (messageId) => unawaited(
       _goToSharedMediaMessage(
         GroupSharedMediaGoToMessage(groupId: _group.id, messageId: messageId),
+        stillWanted: () => _search.isOpen && _search.currentId == messageId,
       ),
     ),
     onOpened: _rememberScrollBeforeSearch,
@@ -7668,9 +7672,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _invalidateSharedMediaAnchorReplay();
   }
 
+  /// Gives up after either await once [stillWanted] says the jump is no
+  /// longer wanted (search closed or another match shown).
   Future<void> _goToSharedMediaMessage(
-    GroupSharedMediaGoToMessage result,
-  ) async {
+    GroupSharedMediaGoToMessage result, {
+    bool Function() stillWanted = _keepGoing,
+  }) async {
     final requestGroupId = _group.id;
     final mutationGenerationAtStart = _messageMutationGeneration;
     final window = await _sharedMediaAnchorRequests.load(
@@ -7681,6 +7688,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     if (window == null ||
         !mounted ||
+        !stillWanted() ||
         widget.group.id != requestGroupId ||
         _group.id != requestGroupId) {
       return;
@@ -7701,6 +7709,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     final hydrated = await _loadResolvedMediaMap(currentWindow);
     if (!mounted ||
+        !stillWanted() ||
         widget.group.id != requestGroupId ||
         _group.id != requestGroupId) {
       return;
