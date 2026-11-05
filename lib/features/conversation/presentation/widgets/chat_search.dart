@@ -35,6 +35,10 @@ class ChatSearchController extends ChangeNotifier {
   int get index => _index;
   String? get currentId => _hits.isEmpty ? null : _hits[_index];
 
+  /// Changes with every new search request and on close, so work started for
+  /// an earlier request can tell it is no longer wanted.
+  int get revision => _revision;
+
   /// The words matched in the bubbles; empty until a search has answered.
   String get markedQuery => _searched ? _query.trim() : '';
 

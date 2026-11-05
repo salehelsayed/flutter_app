@@ -585,6 +585,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<List<String>> _searchThisGroup(String query) async {
     const pageSize = 500;
     final groupId = _group.id;
+    final revision = _search.revision;
     final hits = <String>[];
     for (var offset = 0; ; offset += pageSize) {
       final page = await widget.msgRepo.getMessagesPage(
@@ -592,7 +593,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         limit: pageSize,
         offset: offset,
       );
-      if (!mounted || !_search.isOpen || _search.query.trim() != query) break;
+      if (!mounted || _search.revision != revision) break;
       hits.addAll(
         searchGroupChat(
           page.where((m) => m.groupId == groupId),
