@@ -7933,15 +7933,20 @@ class _ConversationWiredState extends State<ConversationWired>
     });
   }
 
-  /// Default reveal: walk the element tree for the row's stable key and
-  /// ensure it is visible; while the (already loaded) row is still outside
-  /// the virtualized build window, step the scroll position toward the older
-  /// end until it materializes. Bounded — never loads pages.
+  /// Default reveal: find the row's stable key among the rows the list has
+  /// built and ensure it is visible; while the (already loaded) row is still
+  /// outside the virtualized build window, step the scroll position toward
+  /// it, older or newer than the built rows, until it materializes.
+  /// Bounded — never loads pages.
   Future<void> _revealMessageInList(String messageId) async {
-    final targetKey = ValueKey('msg-$messageId');
+    final indexOf = {
+      for (var i = 0; i < _messages.length; i++) _messages[i].id: i,
+    };
+    final targetAt = indexOf[messageId] ?? -1;
     for (var attempt = 0; attempt < 80; attempt++) {
       if (!mounted) return;
-      final targetContext = _findDescendantContextByKey(targetKey);
+      final rows = _builtMessageRows();
+      final targetContext = rows[messageId];
       if (targetContext != null && targetContext.mounted) {
         await Scrollable.ensureVisible(
           targetContext,
@@ -7952,30 +7957,35 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.pixels >= position.maxScrollExtent) return;
-      _scrollController.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
+      // The list is reversed: larger offsets show older messages. The target
+      // lies past the newer end only when every built row is older than it.
+      final towardOlder =
+          rows.isEmpty || rows.keys.any((id) => (indexOf[id] ?? -1) > targetAt);
+      final step = position.viewportDimension * 0.9;
+      final next =
+          (towardOlder ? position.pixels + step : position.pixels - step).clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+      if (next == position.pixels) return;
+      _scrollController.jumpTo(next);
       await Future<void>.delayed(const Duration(milliseconds: 16));
     }
   }
 
-  BuildContext? _findDescendantContextByKey(Key key) {
-    BuildContext? found;
+  /// The message rows the list has built, by message id.
+  Map<String, BuildContext> _builtMessageRows() {
+    final rows = <String, BuildContext>{};
     void visit(Element element) {
-      if (found != null) return;
-      if (element.widget.key == key) {
-        found = element;
-        return;
+      final key = element.widget.key;
+      if (key is ValueKey<String> && key.value.startsWith('msg-')) {
+        rows[key.value.substring(4)] = element;
       }
       element.visitChildElements(visit);
     }
 
     (context as Element).visitChildElements(visit);
-    return found;
+    return rows;
   }
 
   void _onOverflow() {
