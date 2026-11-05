@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
@@ -1109,6 +1111,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             closed.complete();
           },
           audioRecorderService: widget.audioRecorderService,
+          transcribeVoice: _thoughtTranscriber(),
           onPickMedia: () async {
             try {
               return await pickPostMedia();
@@ -1170,6 +1173,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       mediaDrafts: draft?.mediaDrafts ?? const [],
       photoFramings: draft?.photoFramings ?? const {},
     );
+  }
+
+  /// Send as text for a Thought's recording: the on-device model, or none
+  /// on a phone that cannot run it. Before the model is downloaded, its
+  /// sheet opens and the recording stays a voice note.
+  Future<String?> Function(String filePath)? _thoughtTranscriber() {
+    final delivery = translatePreviewDelivery;
+    if (delivery == null || delivery.state.value is ModelUnsupported) {
+      return null;
+    }
+    return (filePath) async {
+      if (delivery.state.value is! ModelReady) {
+        if (mounted) {
+          await showPrivateTranslatorSheet(context, controller: delivery);
+        }
+        return null;
+      }
+      return translatePreviewAi.transcribe(filePath);
+    };
   }
 
   Future<void> _deliverThought(

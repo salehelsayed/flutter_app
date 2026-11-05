@@ -139,6 +139,7 @@ bool _composerStatesEqual(
       left.processingTotal == right.processingTotal &&
       left.recordingState == right.recordingState &&
       left.recordingDuration == right.recordingDuration &&
+      left.voiceTextNotice == right.voiceTextNotice &&
       left.privateMediaEligibility == right.privateMediaEligibility &&
       left.privateMediaPolicy == right.privateMediaPolicy &&
       listEquals(left.amplitudeValues, right.amplitudeValues) &&

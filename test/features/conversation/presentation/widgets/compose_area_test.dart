@@ -1,4 +1,6 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import '../../../translate_preview/fake_model_delivery_controller.dart';
@@ -313,6 +315,182 @@ void main() {
         expect(find.byType(VoiceRecordButton), findsOneWidget);
       },
     );
+
+    Widget optionO({
+      required BackgroundReadableColors colors,
+      VoiceRecordingState phase = VoiceRecordingState.reviewing,
+      VoiceTextNotice notice = VoiceTextNotice.none,
+      String? initialText,
+      VoidCallback? onText,
+      VoidCallback? onVoice,
+      VoidCallback? onDiscard,
+    }) => MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      theme: ThemeData(extensions: [colors]),
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.bottomCenter,
+          child: ComposeArea(
+            onSend: (_) {},
+            recordingState: phase,
+            voiceTextNotice: notice,
+            initialText: initialText,
+            onDraftChanged: (_) {},
+            onRecordStart: () {},
+            onRecordStop: () {},
+            onRecordCancel: () {},
+            onReviewSend: onVoice ?? () {},
+            onReviewDiscard: onDiscard ?? () {},
+            onSendAsText: onText ?? () {},
+          ),
+        ),
+      ),
+    );
+
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance();
+      final lb = b.computeLuminance();
+      return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+    }
+
+    final presets = {
+      'dark': BackgroundReadableColors.dark,
+      'light': BackgroundReadableColors.representativeLight,
+    };
+
+    for (final preset in presets.entries) {
+      for (final phase in [
+        VoiceRecordingState.recording,
+        VoiceRecordingState.reviewing,
+      ]) {
+        testWidgets(
+          '${preset.key} ${phase.name}: Send as text is a readable outlined '
+          'button centred under the row',
+          (tester) async {
+            await tester.pumpWidget(
+              optionO(colors: preset.value, phase: phase),
+            );
+            final action = find.byKey(const ValueKey('voice-send-as-text'));
+            expect(action, findsOneWidget);
+            final button = tester.widget<OutlinedButton>(action);
+            expect(
+              find.descendant(
+                of: action,
+                matching: find.byIcon(Icons.notes_rounded),
+              ),
+              findsOneWidget,
+            );
+            final size = tester.getSize(action);
+            expect(size.height, greaterThanOrEqualTo(44));
+            final bar = tester.getRect(find.byType(ComposeArea));
+            final rect = tester.getRect(action);
+            expect((rect.center.dx - bar.center.dx).abs(), lessThan(1));
+            final row = tester.getRect(
+              find
+                  .ancestor(
+                    of: find.byKey(const ValueKey('composer-attach-button')),
+                    matching: find.byType(Row),
+                  )
+                  .first,
+            );
+            expect(rect.top, greaterThanOrEqualTo(row.bottom));
+
+            final style = button.style!;
+            final side = style.side!.resolve(const {})!;
+            expect(side.width, 1.5);
+            final shape =
+                style.shape!.resolve(const {})! as RoundedRectangleBorder;
+            expect(shape.borderRadius, BorderRadius.circular(22));
+            final labelColor = style.foregroundColor!.resolve(const {})!;
+            final barColor = preset.value.composerBarColor.withValues(alpha: 1);
+            expect(labelColor, preset.value.accent);
+            expect(side.color, preset.value.accent);
+            expect(contrast(labelColor, barColor), greaterThanOrEqualTo(4.5));
+          },
+        );
+      }
+
+      testWidgets('${preset.key}: the from-voice hint sits above the row and '
+          'leaves with the words', (tester) async {
+        await tester.pumpWidget(
+          optionO(
+            colors: preset.value,
+            phase: VoiceRecordingState.idle,
+            notice: VoiceTextNotice.fromVoice,
+            initialText: 'spoken words',
+          ),
+        );
+        await tester.pump();
+        const hint = 'From your voice. Check the words before you send.';
+        expect(find.text(hint), findsOneWidget);
+        expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+        final text = tester.widget<Text>(find.text(hint));
+        expect(text.style!.fontSize, inInclusiveRange(12.5, 13));
+        expect(text.style!.color, preset.value.textMuted);
+        expect(
+          tester.getRect(find.text(hint)).bottom,
+          lessThanOrEqualTo(tester.getRect(find.byType(TextField)).top),
+        );
+        await tester.enterText(find.byType(TextField), '');
+        await tester.pump();
+        expect(find.text(hint), findsNothing);
+      });
+
+      testWidgets('${preset.key}: a failed transcription shows the inline '
+          'card with two equal choices', (tester) async {
+        var texts = 0;
+        var voices = 0;
+        var discards = 0;
+        await tester.pumpWidget(
+          optionO(
+            colors: preset.value,
+            notice: VoiceTextNotice.failed,
+            onText: () => texts++,
+            onVoice: () => voices++,
+            onDiscard: () => discards++,
+          ),
+        );
+        await tester.pump();
+        final card = find.byKey(const ValueKey('voice-text-failed-card'));
+        expect(card, findsOneWidget);
+        expect(
+          find.descendant(of: card, matching: find.text("Couldn't transcribe")),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.text('Your recording is still here.'),
+          ),
+          findsOneWidget,
+        );
+        final send = find.descendant(
+          of: card,
+          matching: find.widgetWithText(FilledButton, 'Send voice message'),
+        );
+        final retry = find.descendant(
+          of: card,
+          matching: find.widgetWithText(OutlinedButton, 'Try again'),
+        );
+        expect(send, findsOneWidget);
+        expect(retry, findsOneWidget);
+        expect(tester.getSize(send).height, 44);
+        expect(tester.getSize(retry), tester.getSize(send));
+        expect(find.byKey(const ValueKey('voice-send-as-text')), findsNothing);
+        expect(
+          tester.getRect(card).bottom,
+          lessThanOrEqualTo(
+            tester.getRect(find.byKey(const ValueKey('voice-review-send'))).top,
+          ),
+        );
+        await tester.tap(send);
+        await tester.tap(retry);
+        await tester.tap(find.byKey(const ValueKey('voice-review-discard')));
+        expect([voices, texts, discards], [1, 1, 1]);
+      });
+    }
   });
 
   group('ComposeArea', () {

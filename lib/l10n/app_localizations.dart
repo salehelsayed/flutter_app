@@ -7970,6 +7970,24 @@ abstract class AppLocalizations {
   /// **'Send as text'**
   String get voice_send_as_text_action;
 
+  /// Send as text copy, owner-approved 2026-11-04
+  ///
+  /// In en, this message translates to:
+  /// **'From your voice. Check the words before you send.'**
+  String get voice_text_from_voice;
+
+  /// Send as text copy, owner-approved 2026-11-04
+  ///
+  /// In en, this message translates to:
+  /// **'Your recording is still here.'**
+  String get voice_text_recording_kept;
+
+  /// Send as text copy, owner-approved 2026-11-04
+  ///
+  /// In en, this message translates to:
+  /// **'Keep as voice'**
+  String get thought_voice_keep;
+
   /// Shown while a voice message is turned into text.
   ///
   /// In en, this message translates to:

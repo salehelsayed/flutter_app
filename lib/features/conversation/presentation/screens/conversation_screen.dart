@@ -178,6 +178,7 @@ class ConversationComposerViewState {
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final VoiceTextNotice voiceTextNotice;
   final PrivateMediaEligibility privateMediaEligibility;
   final PrivateMediaPolicy privateMediaPolicy;
 
@@ -194,6 +195,7 @@ class ConversationComposerViewState {
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.voiceTextNotice = VoiceTextNotice.none,
     this.privateMediaEligibility = const PrivateMediaEligibility(
       attachmentCount: 0,
       attachmentKind: PrivateMediaAttachmentKind.unknown,
@@ -214,6 +216,7 @@ class ConversationComposerViewState {
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    VoiceTextNotice? voiceTextNotice,
     PrivateMediaEligibility? privateMediaEligibility,
     PrivateMediaPolicy? privateMediaPolicy,
   }) {
@@ -232,11 +235,24 @@ class ConversationComposerViewState {
       recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
+      voiceTextNotice: _voiceTextNotice(
+        voiceTextNotice ?? this.voiceTextNotice,
+        recordingState ?? this.recordingState,
+      ),
       privateMediaEligibility:
           privateMediaEligibility ?? this.privateMediaEligibility,
       privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,
     );
   }
+
+  /// A failure notice belongs to the recording held in review, so it ends
+  /// when that review ends (sent, discarded, or retried).
+  static VoiceTextNotice _voiceTextNotice(
+    VoiceTextNotice notice,
+    VoiceRecordingState recordingState,
+  ) => notice == VoiceTextNotice.failed && !recordingState.isReviewing
+      ? VoiceTextNotice.none
+      : notice;
 
   bool get isRecording => recordingState.isActive;
 
@@ -1024,6 +1040,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           isProcessing: composerState.isProcessing,
           isSending: widget.isSending,
           recordingState: composerState.recordingState,
+          voiceTextNotice: composerState.voiceTextNotice,
           onRecordStart: widget.onRecordStart,
           onRecordStop: widget.onRecordStop,
           onRecordCancel: widget.onRecordCancel,

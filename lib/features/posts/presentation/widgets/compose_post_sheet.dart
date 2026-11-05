@@ -91,6 +91,11 @@ class ComposePostSheet extends StatefulWidget {
   /// Where a Thought's "select people…" remembers its last picks.
   final ThoughtRecentPicks? recentPicks;
 
+  /// Turns a recording into words on this phone; null when it cannot.
+  /// Completes with null when there is no transcript yet (the model is
+  /// still downloading), and throws when transcribing failed.
+  final Future<String?> Function(String filePath)? transcribeVoice;
+
   /// Runs once as the sheet goes away: the unshared draft, or null after a
   /// share or when nothing was left to keep.
   final ValueChanged<ComposePostResult?>? onClosed;
@@ -100,6 +105,7 @@ class ComposePostSheet extends StatefulWidget {
     this.thoughtsOnly = false,
     this.replacesCurrentThought = false,
     this.recentPicks,
+    this.transcribeVoice,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,
@@ -143,6 +149,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   bool _pendingRecordingAbort = false;
   bool _recorderStartInFlight = false;
   bool _recordingPaused = false;
+
+  /// Send as text: the recording being turned into words, kept until the
+  /// words land or the user chooses what to do after a failure.
+  AudioRecording? _keptRecording;
+  List<double> _keptWaveform = const [];
+  bool _transcribing = false;
+  bool _voiceTextFailed = false;
+
+  /// The words came from the voice; a quiet line asks to check them.
+  bool _fromVoice = false;
   MicrophoneCaptureLease? _microphoneCaptureLease;
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
@@ -279,6 +295,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if ((_textController.text.trim().isEmpty && _mediaDrafts.isEmpty) ||
         _isSubmitting ||
         _isAttaching ||
+        _transcribing ||
         _recordingState.isActive) {
       return false;
     }
@@ -390,6 +407,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   @override
   void dispose() {
     final text = _textController.text;
+    // A recording still waiting on its words, or on a choice after a
+    // failure, goes back with the draft as voice.
+    if (_keptRecording case final kept?) {
+      _mediaDrafts = <PostMediaDraft>[_voiceDraft(kept, _keptWaveform)];
+    }
     final keep =
         !_shared && (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
     widget.onClosed?.call(
@@ -426,7 +448,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   Future<void> _attachMedia() async {
     if ((widget.onAttachMedia == null && widget.onPickMedia == null) ||
-        _isAttaching) {
+        _isAttaching ||
+        _keptRecording != null) {
       return;
     }
     setState(() {
@@ -459,7 +482,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   Future<void> _attachVoice() async {
-    if (_isAttaching || _recordingState.isActive) {
+    if (_isAttaching || _recordingState.isActive || _keptRecording != null) {
       return;
     }
     if (widget.audioRecorderService != null) {
@@ -619,15 +642,104 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() {
       _resetRecordingState();
       if (recording == null) return;
-      _mediaDrafts = <PostMediaDraft>[
-        PostMediaDraft(
-          localFilePath: recording.filePath,
-          mime: recording.mime,
-          durationMs: recording.durationMs,
-          waveform: waveform,
-        ),
-      ];
+      _mediaDrafts = <PostMediaDraft>[_voiceDraft(recording, waveform)];
     });
+  }
+
+  PostMediaDraft _voiceDraft(AudioRecording recording, List<double> waveform) =>
+      PostMediaDraft(
+        localFilePath: recording.filePath,
+        mime: recording.mime,
+        durationMs: recording.durationMs,
+        waveform: waveform,
+      );
+
+  /// Stops the recording and turns it into the Thought's words.
+  Future<void> _sendAsText() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null ||
+        widget.transcribeVoice == null ||
+        _recordingState != VoiceRecordingState.recording) {
+      return;
+    }
+    recorder.onAutoStopped = null;
+    setState(() => _recordingState = VoiceRecordingState.stopping);
+    final waveform = downsampleWaveform(_waveformSamples, 50);
+    AudioRecording? recording;
+    try {
+      recording = await recorder.stop();
+    } finally {
+      _releaseMicrophoneCaptureLease();
+    }
+    _cancelRecorderSubscriptions();
+    if (!mounted) return;
+    setState(_resetRecordingState);
+    if (recording == null) return;
+    _keptRecording = recording;
+    _keptWaveform = waveform;
+    await _transcribeKept();
+  }
+
+  Future<void> _transcribeKept() async {
+    final recording = _keptRecording;
+    final transcribe = widget.transcribeVoice;
+    if (recording == null || transcribe == null || _transcribing) return;
+    setState(() {
+      _transcribing = true;
+      _voiceTextFailed = false;
+    });
+    String? words;
+    try {
+      words = (await transcribe(recording.filePath))?.trim();
+      if (words != null && words.isEmpty) throw StateError('No words heard');
+    } on Object {
+      // Only the attempt that still owns the recording may report on it.
+      if (mounted && identical(_keptRecording, recording)) {
+        setState(() {
+          _transcribing = false;
+          _voiceTextFailed = true;
+        });
+      }
+      return;
+    }
+    if (!mounted || !identical(_keptRecording, recording)) return;
+    if (words == null) {
+      // No transcript yet (the model is still on its way): it stays voice.
+      _keepAsVoice();
+      return;
+    }
+    final before = _textController.text;
+    final gap = before.isEmpty || RegExp(r'\s$').hasMatch(before) ? '' : ' ';
+    _textController.text = '$before$gap$words';
+    _textController.selection = TextSelection.collapsed(
+      offset: _textController.text.length,
+    );
+    try {
+      final file = File(recording.filePath);
+      if (file.existsSync()) file.deleteSync();
+    } on FileSystemException {
+      // Already gone.
+    }
+    setState(() {
+      _transcribing = false;
+      _keptRecording = null;
+      _keptWaveform = const [];
+      _fromVoice = true;
+    });
+  }
+
+  /// After a failure, the kept recording becomes the voice card after all.
+  void _keepAsVoice() {
+    final recording = _keptRecording;
+    if (recording == null) return;
+    final waveform = _keptWaveform;
+    setState(() {
+      _transcribing = false;
+      _voiceTextFailed = false;
+      _keptRecording = null;
+      _keptWaveform = const [];
+    });
+    _finishRecording(recording, waveform);
   }
 
   Future<void> _togglePause() async {
@@ -859,7 +971,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ],
           ),
         SizedBox(height: thought ? 6 : 16),
+        if (thought &&
+            _fromVoice &&
+            _textController.text.trim().isNotEmpty) ...[
+          const ThoughtFromVoiceHint(),
+          const SizedBox(height: 4),
+        ],
         TextField(
+          key: const ValueKey('thought-composer-text'),
           controller: _textController,
           textDirection: _inputDirection,
           maxLines: widget.thoughtsOnly ? 6 : 5,
@@ -867,7 +986,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           maxLength: widget.thoughtsOnly ? _thoughtMaxLength : null,
           // A Thought shows its count on the toolbar instead.
           buildCounter: widget.thoughtsOnly ? _noCounter : null,
-          onChanged: (_) => setState(() {}),
+          onChanged: (value) => setState(() {
+            // Cleared words are no longer the voice's.
+            if (value.trim().isEmpty) _fromVoice = false;
+          }),
           decoration: InputDecoration(
             hintText: thought
                 ? AppLocalizations.of(context)!.thought_compose_hint
@@ -1070,6 +1192,21 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 : null,
             onCancel: () => unawaited(_cancelVoiceRecording()),
             onStop: () => unawaited(_stopVoiceRecording()),
+          ),
+          if (widget.transcribeVoice != null) ...[
+            const SizedBox(height: 10),
+            ThoughtSendAsTextButton(onPressed: () => unawaited(_sendAsText())),
+          ],
+        ],
+        if (thought && _transcribing) ...[
+          const SizedBox(height: 12),
+          const ThoughtTranscribing(),
+        ],
+        if (thought && _voiceTextFailed) ...[
+          const SizedBox(height: 12),
+          ThoughtVoiceTextFailed(
+            onKeepAsVoice: _keepAsVoice,
+            onTryAgain: () => unawaited(_transcribeKept()),
           ),
         ],
         if (thought &&
@@ -1365,7 +1502,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         onPressed:
                             (widget.onAttachMedia == null &&
                                     widget.onPickMedia == null) ||
-                                _isRecording
+                                _isRecording ||
+                                _keptRecording != null
                             ? null
                             : _attachMedia,
                       ),
@@ -1412,6 +1550,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                               label: l10n.compose_voice,
                               onPressed:
                                   _isRecording ||
+                                      _keptRecording != null ||
                                       (widget.onAttachVoice == null &&
                                           widget.audioRecorderService == null)
                                   ? null

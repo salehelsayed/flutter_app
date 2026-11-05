@@ -4809,6 +4809,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get voice_send_as_text_action => 'Send as text';
 
   @override
+  String get voice_text_from_voice =>
+      'From your voice. Check the words before you send.';
+
+  @override
+  String get voice_text_recording_kept => 'Your recording is still here.';
+
+  @override
+  String get thought_voice_keep => 'Keep as voice';
+
+  @override
   String get translator_transcribing => 'Transcribing…';
 
   @override

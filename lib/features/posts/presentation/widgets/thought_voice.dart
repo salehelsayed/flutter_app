@@ -295,3 +295,164 @@ class ThoughtVoiceCaption extends StatelessWidget {
     ),
   );
 }
+
+/// Send as text under the recording card: the recording becomes the
+/// Thought's words instead of a voice note.
+class ThoughtSendAsTextButton extends StatelessWidget {
+  const ThoughtSendAsTextButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    return Center(
+      child: OutlinedButton.icon(
+        key: const ValueKey('thought-voice-as-text'),
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: rc.accent,
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          side: BorderSide(color: rc.accent.withValues(alpha: .6), width: 1.5),
+          shape: const StadiumBorder(),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        icon: const Icon(Icons.notes_rounded, size: 18),
+        label: Text(AppLocalizations.of(context)!.voice_send_as_text_action),
+      ),
+    );
+  }
+}
+
+/// While the recording is being turned into words.
+class ThoughtTranscribing extends StatelessWidget {
+  const ThoughtTranscribing({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: rc.composerInputFill,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: rc.divider),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: rc.accent),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            AppLocalizations.of(context)!.translator_transcribing,
+            style: TextStyle(color: rc.textSecondary, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Transcribing failed; the recording is kept until one of two choices.
+class ThoughtVoiceTextFailed extends StatelessWidget {
+  const ThoughtVoiceTextFailed({
+    super.key,
+    required this.onKeepAsVoice,
+    required this.onTryAgain,
+  });
+
+  final VoidCallback onKeepAsVoice;
+  final VoidCallback onTryAgain;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final rc = context.backgroundReadableColors;
+    final onAccent = rc.accent.computeLuminance() > .3
+        ? const Color(0xFF0A0A0F)
+        : Colors.white;
+    return Container(
+      key: const ValueKey('thought-voice-text-failed'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: rc.composerInputFill,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _recordRed.withValues(alpha: .5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l10n.translator_transcribe_failed,
+            style: TextStyle(
+              color: rc.textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            l10n.voice_text_recording_kept,
+            style: TextStyle(color: rc.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: onKeepAsVoice,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: rc.accent,
+                    foregroundColor: onAccent,
+                    minimumSize: const Size(0, 44),
+                    shape: const StadiumBorder(),
+                  ),
+                  child: Text(l10n.thought_voice_keep),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: onTryAgain,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: rc.textPrimary,
+                    minimumSize: const Size(0, 44),
+                    side: BorderSide(color: rc.divider, width: 1.5),
+                    shape: const StadiumBorder(),
+                  ),
+                  child: Text(l10n.translator_try_again),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Above words that came from the voice: check them before sharing.
+class ThoughtFromVoiceHint extends StatelessWidget {
+  const ThoughtFromVoiceHint({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    return Row(
+      children: [
+        Icon(Icons.mic_none_rounded, size: 14, color: rc.textMuted),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            AppLocalizations.of(context)!.voice_text_from_voice,
+            style: TextStyle(color: rc.textMuted, fontSize: 12.5),
+          ),
+        ),
+      ],
+    );
+  }
+}

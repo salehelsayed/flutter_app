@@ -3603,6 +3603,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   void _onDraftChanged(String text) {
     if (!_canWrite) return;
     if (_draftText == text) return;
+    if (_composerController.value.voiceTextNotice ==
+            VoiceTextNotice.fromVoice &&
+        (text.trim().isEmpty || _draftText.trim().isEmpty)) {
+      _updateComposerState(voiceTextNotice: VoiceTextNotice.none);
+    }
     setState(() => _draftText = text);
     _composerDraft.changed();
     final restored = _restoredMediaContinuation;
@@ -5317,6 +5322,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    VoiceTextNotice? voiceTextNotice,
   }) {
     final current = _composerController.value;
     final effectivePendingAttachments =
@@ -5369,6 +5375,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       recordingState: recordingState,
       recordingDuration: recordingDuration,
       amplitudeValues: amplitudeValues,
+      voiceTextNotice: voiceTextNotice,
     );
     _composerController.publish(
       state: next,
@@ -6327,6 +6334,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,
         amplitudeValues: const [],
+        voiceTextNotice: VoiceTextNotice.fromVoice,
       );
       try {
         final file = File(recording.filePath);
@@ -6339,20 +6347,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           !_isCurrentVoiceTextCapture(outcome, generation, groupId)) {
         return;
       }
-      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
-      final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translator_transcribe_failed),
-          action: SnackBarAction(
-            label: l10n.translator_try_again,
-            onPressed: () {
-              if (_isCurrentVoiceTextCapture(outcome, generation, groupId)) {
-                unawaited(_onSendAsText());
-              }
-            },
-          ),
-        ),
+      _updateComposerState(
+        recordingState: VoiceRecordingState.reviewing,
+        voiceTextNotice: VoiceTextNotice.failed,
       );
     }
   }
