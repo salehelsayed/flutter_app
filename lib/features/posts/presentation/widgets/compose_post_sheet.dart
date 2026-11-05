@@ -1398,19 +1398,29 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 padding: const EdgeInsets.fromLTRB(4, 2, 16, 2),
                 child: Row(
                   children: [
-                    TextButton(
-                      key: const ValueKey('thought-composer-cancel'),
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      style: TextButton.styleFrom(
-                        foregroundColor: rc.textSecondary,
-                        textStyle: const TextStyle(fontSize: 16),
+                    ConstrainedBox(
+                      // At large text sizes the buttons stop growing and the title gives way.
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: TextButton(
+                        key: const ValueKey('thought-composer-cancel'),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: rc.textSecondary,
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        child: Text(
+                          l10n.btn_cancel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      child: Text(l10n.btn_cancel),
                     ),
                     Expanded(
                       child: Text(
                         l10n.thought_compose_header,
                         textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: rc.textPrimary,
                           fontSize: 17,
@@ -1418,23 +1428,30 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         ),
                       ),
                     ),
-                    ElevatedButton(
-                      key: const ValueKey('thought-composer-share'),
-                      onPressed: _canSubmit ? _submit : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: rc.accent,
-                        foregroundColor: onAccent,
-                        disabledBackgroundColor: rc.disabledSurface,
-                        disabledForegroundColor: rc.disabledForeground,
-                        elevation: 0,
-                        shape: const StadiumBorder(),
-                        minimumSize: const Size(72, 36),
-                        textStyle: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: ElevatedButton(
+                        key: const ValueKey('thought-composer-share'),
+                        onPressed: _canSubmit ? _submit : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: rc.accent,
+                          foregroundColor: onAccent,
+                          disabledBackgroundColor: rc.disabledSurface,
+                          disabledForegroundColor: rc.disabledForeground,
+                          elevation: 0,
+                          shape: const StadiumBorder(),
+                          minimumSize: const Size(72, 36),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        child: Text(
+                          l10n.thought_compose_share,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      child: Text(l10n.thought_compose_share),
                     ),
                   ],
                 ),

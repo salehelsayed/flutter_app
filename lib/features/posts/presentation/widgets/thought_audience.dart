@@ -81,7 +81,7 @@ class ThoughtAudienceChip extends StatelessWidget {
             alignment: AlignmentDirectional.centerStart,
             widthFactor: 1,
             child: Container(
-              height: 32,
+              constraints: const BoxConstraints(minHeight: 32),
               padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 8, 0),
               decoration: BoxDecoration(
                 color: rc.composerInputFill,
@@ -96,11 +96,17 @@ class ThoughtAudienceChip extends StatelessWidget {
                   else
                     _Faces(peerIds: [for (final c in picked) c.peerId]),
                   const SizedBox(width: 7),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: picked.isEmpty ? rc.textSecondary : rc.textPrimary,
-                      fontSize: 13,
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: picked.isEmpty
+                            ? rc.textSecondary
+                            : rc.textPrimary,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 2),
@@ -289,19 +295,29 @@ class _ThoughtPeoplePickerSheetState extends State<ThoughtPeoplePickerSheet> {
                 padding: const EdgeInsets.fromLTRB(4, 8, 16, 2),
                 child: Row(
                   children: [
-                    TextButton(
-                      key: const ValueKey('thought-pick-cancel'),
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: TextButton.styleFrom(
-                        foregroundColor: rc.textSecondary,
-                        textStyle: const TextStyle(fontSize: 16),
+                    ConstrainedBox(
+                      // At large text sizes the buttons stop growing and the title gives way.
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: TextButton(
+                        key: const ValueKey('thought-pick-cancel'),
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: rc.textSecondary,
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        child: Text(
+                          l10n.btn_cancel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      child: Text(l10n.btn_cancel),
                     ),
                     Expanded(
                       child: Text(
                         l10n.thought_pick_title,
                         textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: rc.textPrimary,
                           fontSize: 17,
@@ -309,25 +325,32 @@ class _ThoughtPeoplePickerSheetState extends State<ThoughtPeoplePickerSheet> {
                         ),
                       ),
                     ),
-                    ElevatedButton(
-                      key: const ValueKey('thought-pick-done'),
-                      onPressed: _chosen.isEmpty
-                          ? null
-                          : () => Navigator.of(context).pop(<String>{
-                              for (final contact in chosen) contact.peerId,
-                            }),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: rc.accent,
-                        foregroundColor: rc.accent.computeLuminance() > .3
-                            ? const Color(0xFF0A0A0F)
-                            : Colors.white,
-                        disabledBackgroundColor: rc.disabledSurface,
-                        disabledForegroundColor: rc.disabledForeground,
-                        elevation: 0,
-                        shape: const StadiumBorder(),
-                        minimumSize: const Size(72, 36),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: ElevatedButton(
+                        key: const ValueKey('thought-pick-done'),
+                        onPressed: _chosen.isEmpty
+                            ? null
+                            : () => Navigator.of(context).pop(<String>{
+                                for (final contact in chosen) contact.peerId,
+                              }),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: rc.accent,
+                          foregroundColor: rc.accent.computeLuminance() > .3
+                              ? const Color(0xFF0A0A0F)
+                              : Colors.white,
+                          disabledBackgroundColor: rc.disabledSurface,
+                          disabledForegroundColor: rc.disabledForeground,
+                          elevation: 0,
+                          shape: const StadiumBorder(),
+                          minimumSize: const Size(72, 36),
+                        ),
+                        child: Text(
+                          l10n.thought_pick_done(chosen.length),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      child: Text(l10n.thought_pick_done(chosen.length)),
                     ),
                   ],
                 ),
