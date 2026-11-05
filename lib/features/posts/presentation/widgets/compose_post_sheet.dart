@@ -448,7 +448,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   Future<void> _attachMedia() async {
     if ((widget.onAttachMedia == null && widget.onPickMedia == null) ||
-        _isAttaching) {
+        _isAttaching ||
+        _keptRecording != null) {
       return;
     }
     setState(() {
@@ -1488,7 +1489,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         onPressed:
                             (widget.onAttachMedia == null &&
                                     widget.onPickMedia == null) ||
-                                _isRecording
+                                _isRecording ||
+                                _keptRecording != null
                             ? null
                             : _attachMedia,
                       ),
