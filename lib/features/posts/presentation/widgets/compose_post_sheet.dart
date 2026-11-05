@@ -476,7 +476,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   Future<void> _attachVoice() async {
-    if (_isAttaching || _recordingState.isActive) {
+    if (_isAttaching || _recordingState.isActive || _keptRecording != null) {
       return;
     }
     if (widget.audioRecorderService != null) {
@@ -676,7 +676,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   Future<void> _transcribeKept() async {
     final recording = _keptRecording;
     final transcribe = widget.transcribeVoice;
-    if (recording == null || transcribe == null) return;
+    if (recording == null || transcribe == null || _transcribing) return;
     setState(() {
       _transcribing = true;
       _voiceTextFailed = false;
@@ -686,7 +686,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       words = (await transcribe(recording.filePath))?.trim();
       if (words != null && words.isEmpty) throw StateError('No words heard');
     } on Object {
-      if (mounted) {
+      // Only the attempt that still owns the recording may report on it.
+      if (mounted && identical(_keptRecording, recording)) {
         setState(() {
           _transcribing = false;
           _voiceTextFailed = true;
@@ -694,7 +695,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       }
       return;
     }
-    if (!mounted) return;
+    if (!mounted || !identical(_keptRecording, recording)) return;
     if (words == null) {
       // No transcript yet (the model is still on its way): it stays voice.
       _keepAsVoice();
@@ -1528,6 +1529,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                               label: l10n.compose_voice,
                               onPressed:
                                   _isRecording ||
+                                      _keptRecording != null ||
                                       (widget.onAttachVoice == null &&
                                           widget.audioRecorderService == null)
                                   ? null
