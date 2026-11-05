@@ -1309,25 +1309,36 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 ),
               ),
               // Pinned above the toolbar: a tall body would scroll it under.
+              // On a short screen with large text it scrolls in a fifth of
+              // the visible height instead of pushing the toolbar down.
               if (widget.replacesCurrentThought)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline_rounded,
-                        size: 16,
-                        color: rc.textMuted,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          l10n.thought_compose_replaces,
-                          key: const ValueKey('thought-composer-replaces'),
-                          style: TextStyle(color: rc.textMuted, fontSize: 13),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight:
+                        (MediaQuery.sizeOf(context).height -
+                            MediaQuery.viewInsetsOf(context).bottom -
+                            MediaQuery.paddingOf(context).top) /
+                        5,
+                  ),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          size: 16,
+                          color: rc.textMuted,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            l10n.thought_compose_replaces,
+                            key: const ValueKey('thought-composer-replaces'),
+                            style: TextStyle(color: rc.textMuted, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               // Photo and mic belong to the field: tapping them keeps the

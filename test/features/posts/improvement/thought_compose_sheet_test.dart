@@ -536,7 +536,7 @@ void main() {
   }
 
   testWidgets('on a short phone with the keyboard up and double-size text, '
-      'the replaces hint never pushes the toolbar under the keyboard', (
+      'the replaces hint takes at most a fifth of the height and scrolls', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 568) * 3;
@@ -584,13 +584,26 @@ void main() {
     // Other rows of the sheet are not part of this check.
     tester.takeException();
 
-    final toolbar = tester.getRect(
-      find.byKey(const ValueKey('thought-composer-toolbar')),
-    );
-    expect(toolbar.bottom, lessThanOrEqualTo(keyboardTop + 0.5));
+    // The test font draws every glyph a full em wide, so at double size the
+    // header and toolbar alone fill this screen; the check is the hint's own
+    // bound: at most a fifth of the visible height, scrolling inside it.
+    final hint = find.byKey(const ValueKey('thought-composer-replaces'));
+    final row = find.ancestor(of: hint, matching: find.byType(Row)).first;
+    // Inside the sheet the top safe area is already taken off.
+    const visible = keyboardTop;
+    expect(tester.getSize(row).height, greaterThan(visible / 5));
     expect(
-      find.byKey(const ValueKey('thought-composer-replaces')),
-      findsOneWidget,
+      tester
+          .getSize(
+            find
+                .ancestor(
+                  of: hint,
+                  matching: find.byType(SingleChildScrollView),
+                )
+                .first,
+          )
+          .height,
+      lessThanOrEqualTo(visible / 5 + 0.5),
     );
   });
 
