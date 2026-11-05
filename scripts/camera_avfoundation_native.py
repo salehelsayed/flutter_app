@@ -135,7 +135,7 @@ def run_variant(output, variant, files, target, flutter, version, env):
     folder.mkdir(mode=0o700)
     # Both the compilation source and DerivedData are new, internal-disk paths.
     scratch = Path(tempfile.mkdtemp(prefix='tmp-dd-camera-' + variant + '-', dir=Path.home()))
-    plugin = scratch / 'source/plugin'
+    plugin = scratch / 'source/camera_avfoundation'
     identities = prepare_variant(plugin, variant, files)
     example = plugin / 'example'
     save(folder / 'inputs.json', dict(variant=variant, head=subprocess.check_output(
