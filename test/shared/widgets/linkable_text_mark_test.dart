@@ -55,6 +55,26 @@ void main() {
     expect(marked.single.recognizer, isNotNull);
   });
 
+  testWidgets('a phrase spanning plain text and a link is marked across both', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: LinkableText(
+          text: 'see https://dahab.com',
+          markQuery: 'see https://dahab.com',
+          markStyle: mark,
+        ),
+      ),
+    );
+    final marked = spansOf(tester)
+        .where((span) => span.style?.backgroundColor == mark.backgroundColor)
+        .toList();
+    expect(marked.map((span) => span.text), ['see ', 'https://dahab.com']);
+    expect(marked.first.recognizer, isNull);
+    expect(marked.last.recognizer, isNotNull);
+  });
+
   testWidgets('without a query nothing is marked', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
