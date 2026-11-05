@@ -833,7 +833,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         ],
         if (thought)
-          Row(
+          // One row when it fits; the 24 h line wraps under the chip if not.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
             children: [
               Builder(
                 builder: (chipContext) => ThoughtAudienceChip(
@@ -843,8 +846,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 ),
               ),
               if (_audienceKind != PostAudienceKind.pickPeople ||
-                  _picked.isNotEmpty) ...[
-                const SizedBox(width: 8),
+                  _picked.isNotEmpty)
                 Text(
                   AppLocalizations.of(context)!.thought_compose_lifetime_short,
                   key: const ValueKey('thought-composer-lifetime'),
@@ -854,7 +856,6 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   ),
                   style: TextStyle(color: rc.textSecondary, fontSize: 13),
                 ),
-              ],
             ],
           ),
         SizedBox(height: thought ? 6 : 16),
