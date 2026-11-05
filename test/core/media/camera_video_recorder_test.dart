@@ -149,6 +149,10 @@ void main() {
   });
 
   Future<void> frames(WidgetTester tester) async {
+    // Flush capture/pop continuations, then establish the ticker's first frame.
+    // Keep the timed budget at the same eight 60 ms frames.
+    await tester.pump();
+    await tester.pump();
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
@@ -397,9 +401,10 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       await frames(tester);
       platform.createGate!.complete();
-      await frames(tester);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
       expect(platform.disposed, [1]);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await frames(tester);
       expect(platform.captures, isEmpty);
       expect(result, isNull);
       expect(find.byType(CameraVideoRecorder), findsNothing);
