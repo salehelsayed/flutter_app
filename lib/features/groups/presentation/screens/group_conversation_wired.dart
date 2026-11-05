@@ -576,25 +576,29 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     onClosed: _restoreScrollAfterSearch,
   )..addListener(_onSearchChanged);
 
-  /// Every stored message of this group, oldest first, then the matches.
+  /// Every stored message of this group, newest page first, and each page's
+  /// matches. Stops between pages once the words changed or the bar closed.
   Future<List<String>> _searchThisGroup(String query) async {
     const pageSize = 500;
     final groupId = _group.id;
-    final oldestFirst = <GroupMessage>[];
+    final hits = <String>[];
     for (var offset = 0; ; offset += pageSize) {
       final page = await widget.msgRepo.getMessagesPage(
         groupId,
         limit: pageSize,
         offset: offset,
       );
-      oldestFirst.insertAll(0, page.where((m) => m.groupId == groupId));
+      if (!mounted || !_search.isOpen || _search.query.trim() != query) break;
+      hits.addAll(
+        searchGroupChat(
+          page.where((m) => m.groupId == groupId),
+          query,
+          removedIds: _locallyRemovedMessageIds,
+        ),
+      );
       if (page.length < pageSize) break;
     }
-    return searchGroupChat(
-      oldestFirst,
-      query,
-      removedIds: _locallyRemovedMessageIds,
-    );
+    return hits;
   }
 
   double? _offsetBeforeSearch;
