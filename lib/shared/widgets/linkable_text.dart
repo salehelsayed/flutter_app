@@ -56,6 +56,10 @@ class _LinkableTextState extends State<LinkableText> {
   List<InlineSpan> _spans = [];
   final List<TapGestureRecognizer> _recognizers = [];
 
+  /// Where [LinkableText.markQuery] occurs in the whole text, so a phrase
+  /// crossing a link boundary is marked on both sides.
+  List<({int start, int end})> _marks = const [];
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +94,9 @@ class _LinkableTextState extends State<LinkableText> {
   void _parse() {
     final segments = parseUrls(widget.text);
     final spans = <InlineSpan>[];
+    _marks = widget.markStyle == null
+        ? const []
+        : textSearchRanges(widget.text, widget.markQuery ?? '');
 
     final defaultLinkStyle = TextStyle(
       color: FeedColors.accentTeal,
@@ -97,6 +104,7 @@ class _LinkableTextState extends State<LinkableText> {
       decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
     );
 
+    var offset = 0;
     for (final segment in segments) {
       if (segment.isUrl) {
         final recognizer = TapGestureRecognizer()
@@ -106,19 +114,21 @@ class _LinkableTextState extends State<LinkableText> {
         spans.addAll(
           _mark(
             segment.text,
+            offset,
             widget.linkStyle ?? defaultLinkStyle,
             recognizer: recognizer,
           ),
         );
       } else {
-        spans.addAll(_withTags(segment.text));
+        spans.addAll(_withTags(segment.text, offset));
       }
+      offset += segment.text.length;
     }
 
     _spans = spans;
   }
 
-  Iterable<InlineSpan> _withTags(String text) sync* {
+  Iterable<InlineSpan> _withTags(String text, int offset) sync* {
     final tagStyle = widget.tagStyle;
     final tags = tagStyle == null
         ? const <ThoughtTag>[]
@@ -126,25 +136,37 @@ class _LinkableTextState extends State<LinkableText> {
     var at = 0;
     for (final tag in tags) {
       if (tag.start > at) {
-        yield* _mark(text.substring(at, tag.start), widget.style);
+        yield* _mark(text.substring(at, tag.start), offset + at, widget.style);
       }
-      yield* _mark(text.substring(tag.start, tag.end), tagStyle);
+      yield* _mark(
+        text.substring(tag.start, tag.end),
+        offset + tag.start,
+        tagStyle,
+      );
       at = tag.end;
     }
     if (at < text.length || tags.isEmpty) {
-      yield* _mark(text.substring(at), widget.style);
+      yield* _mark(text.substring(at), offset + at, widget.style);
     }
   }
 
+  /// [text] starts at [offset] in the whole message; it is drawn in [style]
+  /// with the parts inside [_marks] in the mark style.
   Iterable<TextSpan> _mark(
     String text,
+    int offset,
     TextStyle? style, {
     GestureRecognizer? recognizer,
   }) sync* {
     final markStyle = widget.markStyle;
-    final ranges = markStyle == null
-        ? const <({int start, int end})>[]
-        : textSearchRanges(text, widget.markQuery ?? '');
+    final ranges = [
+      for (final mark in _marks)
+        if (mark.end > offset && mark.start < offset + text.length)
+          (
+            start: (mark.start - offset).clamp(0, text.length),
+            end: (mark.end - offset).clamp(0, text.length),
+          ),
+    ];
     if (ranges.isEmpty) {
       yield TextSpan(text: text, style: style, recognizer: recognizer);
       return;
