@@ -38,6 +38,8 @@ METHODS = (
 CASE = re.compile(r"Test Case '-\[(?:\w+\.)*CameraSampleBufferTests (\w+)\]' (passed|failed|skipped)")
 FAULT = re.compile(r"error: -\[(?:\w+\.)*CameraSampleBufferTests (\w+)\] : [^\n]*CAMERA_SWITCH_RECOVERY")
 NA = 'target_unavailable_by_project_policy'
+CAPABILITY = 'native.camera.recording_switch'
+ARTIFACT_VALIDATOR = 'validateCameraRecordingSwitchComparison'
 
 
 class SetupError(RuntimeError):
@@ -269,6 +271,63 @@ def execute(args, output):
     return dict(status='PASS', assertionsAttempted=4, variants=results), 0
 
 
+def write_comparison_evidence(output, result):
+    """Bind only this invocation's complete native comparison to durable proof."""
+    manifest = json.loads((ROOT / 'tool/sims/critical_features.json').read_text())
+    row = next(row for row in manifest['capabilities'] if row['id'] == CAPABILITY)
+    if (row.get('artifactRequired') is not True
+            or row.get('artifactValidator') != ARTIFACT_VALIDATOR
+            or row.get('artifactValidators', [ARTIFACT_VALIDATOR]) != [ARTIFACT_VALIDATOR]):
+        raise SetupError('Camera comparison artifact declaration differs from its producer')
+    comparison_path = output / 'comparison.json'
+    comparison = json.loads(comparison_path.read_text())
+    variants = result.get('variants', {})
+    if (set(variants) != {'baseline', 'patched'} or comparison.get('variants') != variants
+            or comparison.get('same_fixture') is not True
+            or comparison.get('runtime_only_delta') != str(RUNTIME)):
+        raise SetupError('Durable camera comparison is missing or incomplete')
+    sources = comparison['source_identities']
+    if (set(sources) != {'baseline', 'patched'}
+            or sources['baseline'].keys() != sources['patched'].keys()
+            or [p for p in sources['baseline']
+                if sources['baseline'][p] != sources['patched'][p]] != [str(RUNTIME)]):
+        raise SetupError('Camera proof must retain the same fixture and only runtime delta')
+
+    def reference(path):
+        return dict(path=str(path.resolve(strict=True)), sha256=sha(path))
+
+    receipts = {}
+    for variant, proof in variants.items():
+        folder = output / variant
+        inputs = json.loads((folder / 'inputs.json').read_text())
+        step = json.loads((folder / 'xctest.json').read_text())
+        observed = adjudicate((folder / 'xctest.raw.log').read_text(),
+                              step['exit_status'], step['timed_out'], variant)
+        expected = 'EXPECTED_RED' if variant == 'baseline' else 'PASS'
+        bundle = folder / 'native.xcresult'
+        if (proof.get('status') != expected or observed['status'] != expected
+                or any(proof.get(key) != value for key, value in observed.items())
+                or json.loads((folder / 'result.json').read_text()) != proof
+                or proof.get('input_identity_sha256') != sha(folder / 'inputs.json')
+                or proof.get('build_inputs_sha256') != sha(folder / 'build-inputs.json')
+                or step.get('raw_sha256') != sha(folder / 'xctest.raw.log')
+                or inputs.get('variant') != variant
+                or inputs.get('fixture_selectors') != list(METHODS)
+                or inputs.get('source_sha256') != sources[variant]
+                or not bundle.is_dir() or not any(bundle.iterdir())):
+            raise SetupError('Camera ' + variant + ' proof lacks complete native receipts')
+        receipts[variant] = {name: reference(folder / name) for name in (
+            'result.json', 'inputs.json', 'build-inputs.json', 'xctest.json', 'xctest.raw.log')}
+        receipts[variant]['xcresult'] = dict(path=str(bundle.resolve(strict=True)))
+    payload = dict(schema='mknoon.sims.proof.v1', capabilityId=CAPABILITY,
+                   validatorIds=[ARTIFACT_VALIDATOR], comparison=reference(comparison_path),
+                   variants=receipts)
+    temporary, artifact = output / 'comparison-proof.json.tmp', output / 'comparison-proof.json'
+    save(temporary, payload)
+    temporary.replace(artifact)
+    return dict(**reference(artifact), validatorIds=[ARTIFACT_VALIDATOR])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--variant', choices=['baseline', 'patched', 'both'], default='both')
@@ -281,16 +340,22 @@ def main(argv=None):
     output = args.output or capture / ('camera-native-' + time.strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8])
     output.mkdir(parents=True, mode=0o700, exist_ok=False)
     checks._LAUNCH_CONTEXT.capture_budget = checks.CaptureBudget()
+    result = {}
     try:
         result, code = execute(args, output)
+        if result['status'] == 'PASS' and code == 0 and args.variant == 'both':
+            result['artifactEvidence'] = write_comparison_evidence(output, result)
     except (SetupError, pre.DeviceLeaseBusy, OSError, ValueError, KeyError, StopIteration) as error:
         result, code = dict(status='BLOCKED', assertionsAttempted=0, blocker='harness',
-                            detail=str(error)), 2
+                            detail=str(error), variants=result.get('variants', {})), 2
     save(output / 'result.json', result)
     if result['status'] not in ('SETUP_READY', 'EXPECTED_RED'):
         wire = {k: result[k] for k in ('status', 'assertionsAttempted', 'blocker',
                 'targetCapabilityAvailable', 'reason', 'detail') if k in result}
-        wire.update(artifactPresent=False, printOnly=False, exitCode=code)
+        evidence = result.get('artifactEvidence')
+        wire.update(artifactPresent=evidence is not None, printOnly=False, exitCode=code)
+        if evidence is not None:
+            wire['artifactEvidence'] = evidence
         print('SIMS_RESULT_JSON=' + json.dumps(wire, sort_keys=True))
     print('Camera native receipt: ' + str(output / 'result.json'))
     return code

@@ -566,7 +566,8 @@
         "ios.simulator"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
-      "artifactRequired": false,
+      "artifactRequired": true,
+      "artifactValidator": "validateCameraRecordingSwitchComparison",
       "active": true,
       "declaredBuildException": true
     },

@@ -217,4 +217,74 @@ run_case missing-artifact FAIL no
 run_case exit-78 BLOCKED no
 run_case device-loss FAIL no
 
+# Exercise the camera producer itself through the unchanged command executor,
+# report artifact audit and outer wrapper. Only native execution is substituted
+# with fresh synthetic receipts; no SDK/native/device action occurs in that stub.
+run_camera_case() {
+  local fixture_case="$1"
+  local report_path="$tmp_dir/camera-$fixture_case.report.json"
+  local manifest_path="$tmp_dir/camera-$fixture_case.manifest.json"
+  local process_status
+  python3 - "$fixture_case" "$tmp_dir" "$manifest_path" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+case, temporary, destination = sys.argv[1:]
+manifest = json.loads(Path('tool/sims/critical_features.json').read_text())
+camera = next(row for row in manifest['capabilities'] if row['id'] == 'native.camera.recording_switch')
+profile = next(row for row in manifest['buildProfiles'] if row['id'] == camera['buildProfile'])
+camera['command'] = [sys.executable, str(Path('scripts/test/camera_avfoundation_native_test.py').resolve()),
+                     '--sims-fixture', case, str(Path(temporary) / ('camera-' + case + '-native'))]
+camera['targetCapabilities'] = []
+camera['resources'] = [{'name': 'host.cpu', 'access': 'read'}]
+manifest.update(buildProfiles=[profile], capabilities=[camera], ownership=[])
+Path(destination).write_text(json.dumps(manifest))
+PY
+  set +e
+  SIMS_MANIFEST="$manifest_path" \
+    SIMS_REPORT_PATH="$report_path" \
+    SIMS_CHECKPOINT_PATH="$tmp_dir/camera-$fixture_case.checkpoint.json" \
+    ./scripts/run_test_gates.sh sims major --format json \
+      >"$tmp_dir/camera-$fixture_case.stdout" \
+      2>"$tmp_dir/camera-$fixture_case.stderr"
+  process_status=$?
+  set -e
+  [ -f "$report_path" ] || fail "camera '$fixture_case' omitted its typed process report"
+  python3 - "$report_path" "$fixture_case" "$process_status" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path('scripts').resolve()))
+import mknoon_checks as checks
+
+path, case, code = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+report = json.loads(path.read_text())
+capability = 'native.camera.recording_switch'
+assert report['selectedIds'] == [capability], report
+assert report['attemptedIds'] == [capability], report
+assert report['terminalIds'] == [capability], report
+assert len(report['verdicts']) == 1, report
+verdict = report['verdicts'][0]
+outer = checks.inspect_sims(path, capability, code, False)
+if case == 'pass':
+    assert code == 0 and verdict['status'] == 'PASS', report
+    assert verdict['assertionsAttempted'] == 4 and report['validationErrors'] == [], report
+    assert verdict['artifactEvidence']['validatorIds'] == ['validateCameraRecordingSwitchComparison'], report
+    assert outer['status'] == 'PASS' and outer['checkpoint'] == 'sims_assertions_and_artifact_observed', outer
+else:
+    assert code != 0 and verdict['status'] != 'PASS', report
+    assert outer['status'] != 'PASS', outer
+    assert not verdict.get('artifactPresent') and not verdict.get('artifactEvidence'), report
+    if case in ('missing-artifact', 'tampered-artifact', 'wrong-validator'):
+        assert verdict['status'] == 'FAIL' and verdict['blocker'] == 'harness', report
+        assert 'Invalid structured result' in verdict['detail'], report
+PY
+}
+
+for camera_case in pass missing-comparison incomplete-comparison partial-native missing-artifact tampered-artifact wrong-validator; do
+  run_camera_case "$camera_case"
+done
+
 printf 'PASS: sims typed verdict process contract\n'
