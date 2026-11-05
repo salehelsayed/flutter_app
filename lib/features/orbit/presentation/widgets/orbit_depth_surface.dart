@@ -357,7 +357,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _age?.cancel();
     if (!_active || !_depth) return;
     final expiries =
-        widget.thoughts.values
+        [...widget.thoughts.values, ?widget.ownSeat?.thought]
             .map((post) => DateTime.tryParse(post.expiresAt)?.toUtc())
             .whereType<DateTime>()
             .where((expiry) => expiry.isAfter(_now))
