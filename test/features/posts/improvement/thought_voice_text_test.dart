@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/posts/application/post_media_draft.dart';
+import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
@@ -21,6 +23,7 @@ void main() {
     WidgetTester tester, {
     Future<String?> Function(String path)? transcribe,
     ComposePostResult? initialDraft,
+    Future<PostMediaPick> Function()? pick,
   }) async {
     recorder = FakeAudioRecorderService()
       ..fakeOutputPath = '/tmp/thought.m4a'
@@ -43,6 +46,7 @@ void main() {
             audioRecorderService: recorder,
             initialDraft: initialDraft,
             onClosed: closed.add,
+            onPickMedia: pick,
             transcribeVoice: transcribe == null
                 ? null
                 : (path) {
@@ -315,6 +319,48 @@ void main() {
     await open(tester, initialDraft: draft, transcribe: (_) async => null);
     expect(voiceCard(), findsOneWidget);
     expect(text(tester), '');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('photos wait while a recording is becoming words, so closing '
+      'never swaps your pick for the older voice', (tester) async {
+    final pending = Completer<String?>();
+    var picks = 0;
+    await open(
+      tester,
+      transcribe: (_) => pending.future,
+      pick: () async {
+        picks++;
+        return (
+          drafts: const [
+            PostMediaDraft(localFilePath: '/tmp/beach.jpg', mime: 'image/jpeg'),
+          ],
+          leftOut: false,
+        );
+      },
+    );
+    await record(tester);
+    await tester.tap(sendAsText());
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Transcribing…'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+    await tester.pump();
+    await tester.pump();
+    expect(picks, 0, reason: 'no photo is taken while the voice is held');
+
+    await tester.pumpWidget(const SizedBox());
+    final draft = closed.single;
+    expect(draft?.mediaDrafts.map((media) => media.localFilePath), [
+      '/tmp/thought.m4a',
+    ]);
+    pending.complete('too late');
+    await tester.pump();
+
+    await open(tester, initialDraft: draft, transcribe: (_) async => null);
+    expect(voiceCard(), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 5));
   });
