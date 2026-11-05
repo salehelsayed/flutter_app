@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,14 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/swipe_action_buttons.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -26,6 +33,26 @@ import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
+
+Future<void> _loadOrbitMenuFont() async {
+  final config = File('.dart_tool/package_config.json').absolute;
+  final packages =
+      (jsonDecode(await config.readAsString())
+              as Map<String, dynamic>)['packages']
+          as List<dynamic>;
+  final flutter = packages.cast<Map<String, dynamic>>().singleWhere(
+    (package) => package['name'] == 'flutter',
+  );
+  final sdk = Directory.fromUri(
+    config.uri.resolve(flutter['rootUri'] as String),
+  ).parent.parent;
+  await (FontLoader('Roboto')..addFont(
+        File(
+          '${sdk.path}/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
+        ).readAsBytes().then(ByteData.sublistView),
+      ))
+      .load();
+}
 
 final _friend = ContactModel(
   peerId: 'friend',
@@ -86,9 +113,53 @@ class _Contacts extends FakeContactRepository {
       queries.run(() => super.getContact(peerId));
 }
 
-class _Messages extends InMemoryMessageRepository {
+class _PurgeContacts extends _Contacts
+    implements DirectContactConversationPurgeCapability {
+  _PurgeContacts(super.queries, this.messages);
+  final _Messages messages;
+
+  @override
+  bool get supportsDirectContactConversationPurge => true;
+
+  @override
+  Future<DirectContactConversationPurgeSummary>
+  purgeDirectContactConversationAndContact(String peerId) async {
+    final existed = await contactExists(peerId);
+    final deletedMessages = await messages.deleteMessagesForContact(peerId);
+    await deleteContact(peerId);
+    return DirectContactConversationPurgeSummary(
+      deletedTextCustodyRows: 0,
+      deletedEventCustodyRows: 0,
+      deletedReactions: 0,
+      deletedMessages: deletedMessages,
+      deletedContact: existed,
+    );
+  }
+}
+
+class _Messages extends InMemoryMessageRepository
+    implements
+        MessageRepositoryRemovalSource,
+        DirectContactPurgeReconciliation {
   _Messages(this.queries);
   final _SerialQueries queries;
+  final removals = StreamController<DirectMessageRemoval>.broadcast();
+  final publishedRemovals = <DirectMessageRemoval>[];
+
+  @override
+  Stream<DirectMessageRemoval> get messageRemovals => removals.stream;
+
+  @override
+  Future<void> reconcileDirectContactConversationPurge(String peerId) async {
+    // The real use case calls this only after the final contact purge commits.
+    final removal = DirectMessageRemoval(
+      contactPeerId: peerId,
+      messageId: null,
+    );
+    publishedRemovals.add(removal);
+    removals.add(removal);
+  }
+
   @override
   Future<ConversationThreadSummary> getConversationThreadSummary(
     String peerId,
@@ -128,8 +199,15 @@ class _Calls implements OrbitCallActivitySource {
 }
 
 class _Harness {
+  _Harness({this.finalContactPurge = false});
+
+  final bool finalContactPurge;
   final queries = _SerialQueries();
-  late final contacts = _Contacts(queries)..seed([_friend]);
+  late final contacts =
+      (finalContactPurge
+            ? _PurgeContacts(queries, messages)
+            : _Contacts(queries))
+        ..seed([_friend]);
   late final messages = _Messages(queries);
   late final calls = _Calls(queries);
   late final listener = _Listener(messageRepo: messages, contactRepo: contacts);
@@ -199,6 +277,7 @@ class _Harness {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 1));
       await listener.incoming.close();
+      await messages.removals.close();
       await calls.events.close();
       listener.dispose();
       requestListener.dispose();
@@ -213,16 +292,207 @@ class _Harness {
     }
   }
 
+  Future<void> openExternalConversation(WidgetTester tester) async {
+    final orbit = tester.widget<OrbitWired>(find.byType(OrbitWired));
+    final navigator = Navigator.of(tester.element(find.byType(OrbitWired)));
+    final contact = (await contacts.getContact('friend'))!;
+    unawaited(
+      navigator.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ConversationWired(
+            contact: contact,
+            identityRepo: orbit.identityRepo,
+            messageRepo: messages,
+            chatMessageListener: listener,
+            p2pService: p2p,
+            bridge: bridge,
+            contactRepo: contacts,
+            mediaAttachmentRepo: orbit.mediaAttachmentRepo,
+            mediaFileManager: orbit.mediaFileManager,
+          ),
+        ),
+      ),
+    );
+    // Settle the route and its initial read events before deleting the chat.
+    await drain(tester);
+  }
+
   OrbitScreen screen(WidgetTester tester) =>
       tester.widget(find.byType(OrbitScreen));
   List<OrbitFriend> active(WidgetTester tester) =>
       screen(tester).headerProjectionListenable.value.allFriends;
+  Set<String> circlePeers(WidgetTester tester) => screen(tester)
+      .headerProjectionListenable
+      .value
+      .innerItems
+      .whereType<OrbitFriendItem>()
+      .map((item) => item.friend.peerId)
+      .toSet();
   OrbitFriend friend(WidgetTester tester, [String peerId = 'friend']) =>
       active(tester).singleWhere((entry) => entry.peerId == peerId);
   void fullRefresh() => calls.events.add(null);
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(_loadOrbitMenuFont);
+
+  for (final blocked in [false, true]) {
+    testWidgets(
+      'external conversation deletion removes ${blocked ? 'blocked control' : 'ordinary contact'} from retained Orbit projections',
+      (tester) async {
+        final h = _Harness(finalContactPurge: true);
+        if (blocked) {
+          await h.contacts.blockContact('friend');
+        }
+        await h.contacts.addContact(
+          _friend.copyWith(peerId: 'other', username: 'Bob'),
+        );
+        await h.messages.saveMessage(
+          _message.copyWith(
+            id: 'other-message',
+            contactPeerId: 'other',
+            senderPeerId: 'other',
+          ),
+        );
+        await h.open(tester);
+        expect(h.circlePeers(tester), {if (!blocked) 'friend', 'other'});
+        expect(h.active(tester).map((friend) => friend.peerId).toSet(), {
+          'friend',
+          'other',
+        });
+
+        // Notification/Feed-owned routes do not have Orbit's pop-refresh hook.
+        await h.openExternalConversation(tester);
+        expect(find.byType(ConversationWired), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.more_vert));
+        await h.drain(tester);
+        await tester.tap(find.text('Delete chat'));
+        await h.drain(tester);
+        await tester.tap(find.text('Delete'));
+        await h.drain(tester);
+
+        expect(await h.contacts.getContact('friend'), isNull);
+        expect(await h.messages.getMessagesForContact('friend'), isEmpty);
+        expect(h.messages.publishedRemovals, hasLength(1));
+        expect(h.messages.publishedRemovals.single.contactPeerId, 'friend');
+        expect(h.messages.publishedRemovals.single.messageId, isNull);
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(await h.contacts.getContact('other'), isNotNull);
+        expect(await h.messages.getMessagesForContact('other'), hasLength(1));
+        expect(
+          {
+            'circle': h.circlePeers(tester),
+            'allChats': h
+                .screen(tester)
+                .listProjectionListenable
+                .value
+                .allFriends
+                .map((friend) => friend.peerId)
+                .toSet(),
+          },
+          {
+            'circle': {'other'},
+            'allChats': {'other'},
+          },
+        );
+      },
+    );
+  }
+
+  for (final fromConversation in [true, false]) {
+    testWidgets(
+      'Orbit-owned ${fromConversation ? 'conversation' : 'list'} deletion refreshes the deleted peer once',
+      (tester) async {
+        final h = _Harness(finalContactPurge: true);
+        await h.contacts.addContact(
+          _friend.copyWith(peerId: 'other', username: 'Bob'),
+        );
+        await h.messages.saveMessage(
+          _message.copyWith(
+            id: 'other-message',
+            contactPeerId: 'other',
+            senderPeerId: 'other',
+          ),
+        );
+        await h.open(tester);
+        final orbitState = tester.state(find.byType(OrbitWired));
+        h.screen(tester).onToggleView!();
+        await h.drain(tester);
+
+        if (fromConversation) {
+          await tester.tap(find.text('Alice'));
+          await h.drain(tester);
+          expect(find.byType(ConversationWired), findsOneWidget);
+          await tester.tap(find.byIcon(Icons.more_vert));
+          await h.drain(tester);
+          await tester.tap(find.text('Delete chat'));
+        } else {
+          final row = find.byKey(const ValueKey('friend'));
+          await tester.flingFrom(
+            tester.getCenter(find.text('Alice')),
+            const Offset(-350, 0),
+            1000,
+          );
+          await h.drain(tester);
+          await tester.tap(
+            find.descendant(of: row, matching: find.byType(DeleteActionButton)),
+          );
+        }
+        await h.drain(tester);
+        h.contacts.resetGetContactCounts();
+        await tester.tap(find.text('Delete').hitTestable());
+        await h.drain(tester);
+
+        expect(await h.contacts.contactExists('friend'), isFalse);
+        expect(await h.messages.getMessagesForContact('friend'), isEmpty);
+        expect(await h.contacts.contactExists('other'), isTrue);
+        expect(await h.messages.getMessagesForContact('other'), hasLength(1));
+        expect(h.messages.publishedRemovals, hasLength(1));
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(tester.state(find.byType(OrbitWired)), same(orbitState));
+        expect(h.circlePeers(tester), {'other'});
+        expect(h.active(tester).map((friend) => friend.peerId).toSet(), {
+          'other',
+        });
+        expect(
+          h
+              .screen(tester)
+              .listProjectionListenable
+              .value
+              .allFriends
+              .map((friend) => friend.peerId)
+              .toSet(),
+          {'other'},
+        );
+        expect(h.contacts.getContactCallsByPeerId, {'friend': 1});
+      },
+    );
+  }
+
+  testWidgets('Orbit-owned non-delete route return refreshes changed contact', (
+    tester,
+  ) async {
+    final h = _Harness(finalContactPurge: true);
+    await h.open(tester);
+    h.screen(tester).onToggleView!();
+    await h.drain(tester);
+    await tester.tap(find.text('Alice'));
+    await h.drain(tester);
+    expect(find.byType(ConversationWired), findsOneWidget);
+
+    await h.contacts.addContact(_friend.copyWith(username: 'Updated Alice'));
+    h.contacts.resetGetContactCounts();
+    Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+    await h.drain(tester);
+
+    expect(h.friend(tester).username, 'Updated Alice');
+    expect(h.messages.publishedRemovals, isEmpty);
+    expect(await h.contacts.contactExists('friend'), isTrue);
+    expect(await h.messages.getMessagesForContact('friend'), hasLength(1));
+    expect(h.contacts.getContactCallsByPeerId, {'friend': 1});
+  });
+
   testWidgets('FIFO completion cannot resurrect a deleted contact', (
     tester,
   ) async {

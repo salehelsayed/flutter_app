@@ -413,6 +413,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
+  StreamSubscription<DirectMessageRemoval>? _contactRemovalSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
   StreamSubscription<String>? _groupRemovedInviteSubscription;
@@ -455,6 +456,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Set<String> _unavailableInviteContactIds = <String>{};
   int _inviteRequestQualificationEpoch = 0;
   final Set<String> _openingFriendPeerIds = <String>{};
+  final Set<String> _deletingContactPeerIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
@@ -676,6 +678,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadIntroductions();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
+    _startListeningForContactRemovals();
     _startListeningForReadEvents();
     _startListeningForGroupReadEvents();
     _startListeningForContactRequests();
@@ -3227,6 +3230,45 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  /// Contact-wide purges can come from routes without Orbit's pop refresh.
+  void _startListeningForContactRemovals() {
+    final repo = widget.messageRepo;
+    if (repo is! MessageRepositoryRemovalSource) {
+      return;
+    }
+    final source = repo as MessageRepositoryRemovalSource;
+    _contactRemovalSubscription = source.messageRemovals
+        .where((removal) => removal.messageId == null)
+        .listen(
+          (removal) {
+            final peerId = removal.contactPeerId;
+            // Orbit-owned delete callbacks already refresh this peer.
+            if (_deletingContactPeerIds.contains(peerId)) {
+              return;
+            }
+            if (!_isOrbitActive) {
+              _dirtyFriendPeerIds.add(peerId);
+              return;
+            }
+            unawaited(_refreshOrbitFriend(peerId));
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_REMOVAL_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+          onDone: () {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_REMOVAL_STREAM_DONE',
+              details: {},
+            );
+          },
+        );
+  }
+
   /// Refreshes one group node after a real conversation read commit, including
   /// notification-owned routes that bypass Orbit's group navigation callback.
   /// Off-screen events reuse the existing dirty-group replay on the next Orbit
@@ -3894,17 +3936,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _deleteContactFromOrbit(String peerId) {
-    return deleteContactAndMessages(
-      contactRepo: widget.contactRepo,
-      messageRepo: widget.messageRepo,
-      peerId: peerId,
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-      reactionRepo: widget.reactionRepository,
-      mediaFileManager: widget.mediaFileManager,
-      contactRequestRepo: widget.contactRequestRepo,
-      introductionRepo: widget.introductionRepository,
-    );
+  Future<void> _deleteContactFromOrbit(String peerId) async {
+    _deletingContactPeerIds.add(peerId);
+    try {
+      await deleteContactAndMessages(
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        peerId: peerId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepository,
+        mediaFileManager: widget.mediaFileManager,
+        contactRequestRepo: widget.contactRequestRepo,
+        introductionRepo: widget.introductionRepository,
+      );
+    } finally {
+      _deletingContactPeerIds.remove(peerId);
+    }
   }
 
   Future<void> _markConversationReadInBackground(String peerId) async {
@@ -4162,6 +4209,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     // teardown (TC-202-09d).
     _orbitRefreshCoalesceTimer?.cancel();
     _contactUpdateSubscription?.cancel();
+    _contactRemovalSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
     _groupRemovedInviteSubscription?.cancel();
