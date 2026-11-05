@@ -225,6 +225,11 @@ void main() {
       expect(history!.map((post) => post.id), ['expired-own-history']);
       await tester.pumpWidget(
         MaterialApp(
+          // Hold the repeating background still so this fixture can settle.
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
           locale: const Locale('en'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
