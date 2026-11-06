@@ -30,6 +30,9 @@ replace github.com/multiformats/go-multiaddr => ./third_party/go-multiaddr
 // the SELinux audit spam (callers already degrade gracefully on that error).
 replace github.com/libp2p/go-netroute => ./third_party/go-netroute
 
+// Host fixtures use the same circuit relay implementation as the local server.
+replace github.com/mknoon/relay-server => ../go-relay-server
+
 require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/cloudflare/circl v1.6.3
@@ -43,6 +46,7 @@ require (
 	github.com/libp2p/go-libp2p-pubsub v0.18.0
 	github.com/libp2p/go-msgio v0.3.0
 	github.com/libp2p/go-netroute v0.4.0
+	github.com/mknoon/relay-server v0.0.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multistream v0.6.1
 	github.com/quic-go/quic-go v0.62.0

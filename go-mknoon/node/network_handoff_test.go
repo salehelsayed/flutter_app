@@ -25,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/libp2p/go-libp2p/p2p/transport/quicreuse"
+	relayfixture "github.com/mknoon/relay-server/testutil/circuitrelay"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -54,7 +55,6 @@ func startHandoffRelayFixtureOn(t *testing.T, ip net.IP) (host.Host, *udpBlackho
 	relayHost, err := libp2p.New(
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/udp/0/quic-v1", ip)),
-		libp2p.EnableRelayService(),
 		libp2p.ForceReachabilityPublic(),
 		libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
 			if a := advertised.Load(); a != nil {
@@ -67,6 +67,11 @@ func startHandoffRelayFixtureOn(t *testing.T, ip net.IP) (host.Host, *udpBlackho
 		t.Fatalf("relay host: %v", err)
 	}
 	t.Cleanup(func() { _ = relayHost.Close() })
+	relayService, err := relayfixture.New(relayHost)
+	if err != nil {
+		t.Fatalf("production relay service: %v", err)
+	}
+	t.Cleanup(func() { _ = relayService.Close() })
 	proxy := newUDPBlackholeProxyOn(t, ip, quicListenUDPAddrOn(t, relayHost, ip))
 	proxied := ma.StringCast(fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", ip, proxy.Addr().Port))
 	advertised.Store(&proxied)
