@@ -251,7 +251,7 @@ Future<Directory> _prepareRealFixtureTools() async {
           module: 'go-relay-server',
           binary: 'relay.test',
           test: fixtureCase,
-          timeout: '120m',
+          timeout: '45m',
         ),
         (
           module: 'tool/call_audio_oracle',
