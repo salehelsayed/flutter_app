@@ -1560,6 +1560,10 @@ void main() {
     test(
       'blocks admin-only group actions until replayed membership removal settles',
       () async {
+        addTearDown(() {
+          debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait;
+        });
+        debugGroupRecoveryEditWait = Duration.zero;
         final now = DateTime.utc(2026, 4, 5, 12);
         final removalEventAt = now.add(const Duration(minutes: 1));
         const groupId = 'group-stale-admin';
@@ -1684,8 +1688,15 @@ void main() {
           groupRepo: groupRepo,
           groupMsgRepo: groupMsgRepo,
           groupMessageListener: listener,
+          awaitCanonicalInboxDrains: true,
         );
 
+        addTearDown(() async {
+          if (!bridge.allowDrain.isCompleted) {
+            bridge.allowDrain.complete();
+          }
+          await resumeFuture;
+        });
         await bridge.drainStarted.future;
         expect(isGroupRecoveryInProgress(), isTrue);
 
@@ -1704,6 +1715,7 @@ void main() {
             ),
           ),
         );
+        expect(isGroupRecoveryInProgress(), isTrue);
         expect(bridge.commandLog, isNot(contains('group:updateConfig')));
 
         bridge.allowDrain.complete();
