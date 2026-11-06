@@ -21,6 +21,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	relayproto "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/proto"
+	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/libp2p/go-libp2p/p2p/transport/quicreuse"
 	ma "github.com/multiformats/go-multiaddr"
@@ -251,7 +253,7 @@ func TestDefaultNetworkChange_ReplacesStalledRelayBeforeIdleTimeout(t *testing.T
 	if testing.Short() {
 		t.Skip("real relay + proxy fixture; skipped in -short")
 	}
-	_, proxy, relayAddr := startHandoffRelayFixture(t)
+	relayHost, proxy, relayAddr := startHandoffRelayFixture(t)
 	relay := relayPeerOf(t, relayAddr)
 	n, collector := startHandoffNode(t, relayAddr)
 	waitForEpoch1Reservation(t, n, relay)
@@ -388,6 +390,63 @@ func TestDefaultNetworkChange_ReplacesStalledRelayBeforeIdleTimeout(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := prober.Connect(ctx, peer.AddrInfo{ID: id0, Addrs: []ma.Multiaddr{circuit}}); err != nil {
+		// Snapshot current local state only; do not wait for or repair a route.
+		proberEndpointBlackholed := false
+		proberQUICListeners := 0
+		for _, addr := range prober.Network().ListenAddresses() {
+			endpoint, _, parseErr := quicreuse.FromQuicMultiaddr(addr)
+			if parseErr != nil {
+				continue
+			}
+			proberQUICListeners++
+			for _, key := range blackholed {
+				if endpoint.String() == key {
+					proberEndpointBlackholed = true
+				}
+			}
+		}
+		proberOpen, proberClosed := 0, 0
+		for _, conn := range prober.Network().ConnsToPeer(relay) {
+			if conn.IsClosed() {
+				proberClosed++
+			} else {
+				proberOpen++
+			}
+		}
+		t.Logf("handoff failure snapshot: prober_quic_listeners=%d listener_endpoint_blackholed=%t prober_to_relay_open=%d closed=%d", proberQUICListeners, proberEndpointBlackholed, proberOpen, proberClosed)
+		newBack := proxy.BackAddrForClientPort(udpPortOf(fresh.LocalMultiaddr()))
+		relayConns := relayHost.Network().ConnsToPeer(id0)
+		t.Logf("handoff failure snapshot: relay_to_node_connections=%d truncated=%t", len(relayConns), len(relayConns) > 8)
+		for i, conn := range relayConns {
+			if i == 8 {
+				break
+			}
+			label := "unmatched"
+			endpoint, _, parseErr := quicreuse.FromQuicMultiaddr(conn.RemoteMultiaddr())
+			if parseErr == nil {
+				for port := range oldPorts {
+					if back := proxy.BackAddrForClientPort(port); back != nil && endpoint.String() == back.String() {
+						label = "old-proxy"
+						break
+					}
+				}
+				if newBack != nil && endpoint.String() == newBack.String() {
+					label = "new-proxy"
+				}
+			}
+			stopStreams, identifyStreams, pingStreams := 0, 0, 0
+			for _, stream := range conn.GetStreams() {
+				switch stream.Protocol() {
+				case relayproto.ProtoIDv2Stop:
+					stopStreams++
+				case identify.ID, identify.IDPush:
+					identifyStreams++
+				case ping.ID:
+					pingStreams++
+				}
+			}
+			t.Logf("handoff failure snapshot: relay_to_node=%s closed=%t stop=%d identify=%d ping=%d", label, conn.IsClosed(), stopStreams, identifyStreams, pingStreams)
+		}
 		t.Fatalf("circuit dial through the new reservation failed: %v", err)
 	}
 
