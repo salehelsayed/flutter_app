@@ -950,6 +950,26 @@ verified before replacing the original cache path with a symlink; SDK source,
 Dart SDK and the shared Gradle daemon's source-directory watchers stayed in
 place. Flutter 3.47.2 / Go 1.25.0 and the notification/recovery host checks passed
 afterward (`flutter-engine-artifacts-relocation.json` in the retained directory).
+Flutter 3.47.2 simulator integration tests need three output paths aligned: the
+explicit Xcode `BUILD_DIR`, the Pod pre-action's `dirname(dirname(BUILD_DIR))`,
+and Flutter's `app.simulatorBundlePath`. Redirecting Xcode alone does not move the
+bundle Flutter later installs. Clone the existing normal Flutter settings into
+a task-owned, invocation-only `XDG_CONFIG_HOME`, preserving every other setting,
+and set only a valid relative `build-dir` resolving to the owned internal
+DerivedData's `Build` directory. The verified routing gives explicit `BUILD_DIR`
+as `Build/ios`, the Pod pre-action the owned DerivedData root, and Flutter the
+bundle under `Build/ios/iphonesimulator`, all relative to that root. Verify
+`flutter config --list` and `xcodebuild -showBuildSettings`, including the actual
+explicit `BUILD_DIR`, before launching the integration test. Preserve global
+Flutter settings, DerivedData preferences/symlink and SDK; restore the ignored
+workspace user settings to their original state afterward. This procedure was
+verified on the pinned SDK by all three iOS SQLCipher cases, including import of
+the real Android encrypted fixture; Android's three cases also passed without
+skips. It is not a routing guarantee for other SDKs or a device proof. Evidence:
+the e999 native SQL packet's `sqlcipher/ios-supported-routing-plan.json`,
+`sqlcipher/ios-attempt2/result.json` and `final-handoff.json`, accepted in
+`e999-SQL-native-cross-platform-final-acceptance.json`. Retain the first
+interrupted iOS attempt separately.
 When resuming after a host restart, revalidate saved network environment settings.
 The retained run environment contained an expired localhost `https_proxy`; Xcode
 package resolution failed before compilation. Removing that stale setting and
@@ -11923,6 +11943,21 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   change the normal check wrapper's global-lock policy, and a successful build
   does not certify the audio scenarios. Source/output audit and exact APK
   binding: `.codex-test-logs/plan407-three-fixes/audio-independent-setup-proof/`.
+  Binding preservation must account for the actual helper writes:
+  `scripts/ensure_go_android_bindings.sh` and `ensure_go_ios_bindings.sh` call
+  `go-mknoon/Makefile`'s `gomobile-tools` target before checking the input digest,
+  then rewrite the digest stamp through a temporary file and `mv`. In the
+  verified e999 native SQL run, reinstalling the exact pinned cached public tools
+  and rewriting unchanged stamps refreshed only the mtimes of
+  `android/app/libs/GoMknoon.inputs.sha256`, `ios/Runner/GoMknoon.inputs.sha256`,
+  `go-mknoon/bin/tools/gomobile` and `go-mknoon/bin/tools/gobind`. Their bytes,
+  modes, input digests and complete framework manifests remained unchanged.
+  Classify those four expected metadata writes only after those integrity checks;
+  do not waive unexplained mtime or content changes. Retain the original failed
+  copy-time mtime audit and its causal adjudication rather than restoring
+  timestamps or relabeling the first outcome. Evidence: the same packet's
+  `final-preservation-adjudication.json` and
+  `e999-SQL-native-cross-platform-final-acceptance.json`.
 - **Historical product counterexample:**
   `artifacts/phantom-notification-20260910/predeployment_reproduction.md` records
   an intentionally failing old-notification-history Go overlay and a passing
