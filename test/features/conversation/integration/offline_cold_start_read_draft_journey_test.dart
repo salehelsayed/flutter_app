@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -55,10 +56,8 @@ void main() {
   );
 
   testWidgets(
-    'KNOWN GAP [TRANSPORT-005/DC-022]: ConversationWired has no persisted '
-    'ComposerDraft schema/repository or cold restore; _draftText is widget '
-    'State initialized only from initialText. Typed draft must restore after '
-    'offline cold SQL reopen and send once',
+    'TRANSPORT-005/DC-022 typed unsent draft survives offline cold SQL and '
+    'file-store reopen and sends once',
     (tester) async {
       installFakeJustAudioPlatform();
       await tester.runAsync(() async {
@@ -75,11 +74,17 @@ void main() {
             await journey.db.messageRepo.getMessagesForContact(_peer.peerId),
             hasLength(1),
           );
+          expect(
+            (await journey.drafts.load(
+              ComposerDraftKey.direct(_peer.peerId),
+            ))?.text,
+            _savedDraft,
+          );
           await journey.reopen(tester);
           await journey.mount(tester);
           expect(find.text(_history), findsOneWidget);
-          // Do not pass initialText or inject a test-only draft store: the
-          // application must own persistence and restore for this assertion.
+          // A new production file store and screen must read the saved draft;
+          // no initialText or cached draft is supplied to the reopened screen.
           expect(
             tester.widget<TextField>(find.byType(TextField)).controller!.text,
             _savedDraft,
@@ -95,10 +100,6 @@ void main() {
         }
       });
     },
-    // KNOWN GAP [TRANSPORT-005/DC-022]: ConversationWired has no persisted
-    // ComposerDraft schema/repository or cold restore; _draftText is widget
-    // State initialized only from initialText.
-    skip: true,
   );
 }
 
@@ -230,9 +231,11 @@ void _expectAutomaticPending(WidgetTester tester, String id) {
 }
 
 class _OfflineJourney {
-  _OfflineJourney(this.root, this.db);
+  _OfflineJourney(this.root, this.db)
+    : drafts = FileComposerDraftStore(documentsDirectory: () async => root);
   final Directory root;
   MediaRepositoryRealDbFixture db;
+  FileComposerDraftStore drafts;
   final bridge = PassthroughCryptoBridge();
   final p2p = FakeP2PService();
   final storedEnvelopes = <String>[];
@@ -300,6 +303,7 @@ class _OfflineJourney {
           p2pService: p2p,
           bridge: bridge,
           contactRepo: contacts,
+          composerDraftStore: drafts,
           micPermissionGateway: FakeMicPermissionGateway(),
           sendChatMessageFn:
               ({
@@ -359,6 +363,8 @@ class _OfflineJourney {
         ),
       ),
     );
+    // Queue behind the screen's initial load before typing or asserting restore.
+    await drafts.load(ComposerDraftKey.direct(_peer.peerId));
     await _until(
       tester,
       () =>
@@ -369,13 +375,17 @@ class _OfflineJourney {
 
   Future<void> reopen(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
+    // Disposal queues the final autosave; drain it before discarding this store.
+    await drafts.load(ComposerDraftKey.direct(_peer.peerId));
     listener?.dispose();
     listener = null;
     db = await db.reopen();
+    drafts = FileComposerDraftStore(documentsDirectory: () async => root);
   }
 
   Future<void> close(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
+    await drafts.load(ComposerDraftKey.direct(_peer.peerId));
     listener?.dispose();
     p2p.dispose();
     bridge.dispose();
