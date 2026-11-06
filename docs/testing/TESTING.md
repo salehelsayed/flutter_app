@@ -6952,6 +6952,19 @@ visible and cannot become an ordinary first-attempt PASS.
   Evidence: `.codex-test-logs/ll24-20261031/` in the
   `ll24-relay-stop-binding-20261031` worktree. Upstream provenance and the narrow
   fork delta are documented in `go-relay-server/internal/circuitrelay/UPSTREAM.md`.
+  Shared node handoff fixtures must use the production forwarding factory
+  `go-relay-server/testutil/circuitrelay` on the same host; upstream
+  `EnableRelayService` lacks this binding. A controlled five-second inbound
+  timeout showed STOP on the old connection despite a fresh reservation.
+  The snapshot is non-atomic and has no per-stream source nonce; it does not
+  establish the original full-run failure's trace or a production outage.
+  All eight shared cases passed after correction with the original independent
+  circuit dial, deadlines, socket, identity, unrelated-peer and no-restart
+  controls; the [node-fixture receipt](../../.codex-test-logs/ui131-production-relay-fixture-20261106/verified-node-fixture-receipt.json)
+  retains the verified outcomes. The local test dependency's `go-mknoon/go.mod`
+  changes native binding input identity despite unchanged production package
+  closures in all 13 contexts. Normal verification of bindings for the new
+  inputs remains required; copying an old stamp cannot certify them.
 - **Integrated dual-stack evidence boundaries:** the production relay address
   plan retains IPv4, requires an explicit assigned public native IPv6 address,
   and refuses startup after an incomplete opted-in bind. DNS IPv6 advertisement
