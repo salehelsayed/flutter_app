@@ -40,12 +40,21 @@ therefore insufficient.
   Its newly generated `pubspec.lock` pins this separate native test host; it does
   not upgrade the app's dependencies. The initial offline missing-generator exit69
   and corrected offline exit0 are retained in the owner handoff artifacts.
+- `lib/src/messages.g.dart`: remove the broad `unused_import, unused_shown_name`
+  file suppression and the dead `dart:typed_data` and `package:meta/meta.dart`
+  imports. None of their six shown names is referenced in the body. This is local
+  header/import normalization, not Pigeon regeneration: retain the Pigeon v27.3.2
+  marker, `type=lint`, other imports and every generated API/codec/wire/body byte.
+  `UPSTREAM.json.files` retains the published hash; the patch allowlist identifies
+  the normalized local file. No Pigeon schema is included in the published files.
 - `.gitignore`: exclude generated Flutter/SPM/build/IDE inputs from the local fork.
   No generated registrants, caches, Pods, DerivedData or private inputs are tracked.
 
 The app's pubspec/lock only path-pin this same iOS package. Android, Web, camera,
-camera_platform_interface, production Dart and translations are unchanged from
-camera candidate `c284cf1c7`. No store version, signing or deployment changes.
+camera_platform_interface, app production Dart and translations are unchanged from
+camera candidate `c284cf1c7`. Vendored production Dart changes only by the generated
+header/import normalization above; its executable body is unchanged. No store
+version, signing or deployment changes.
 
 ## Native proof boundary and execution
 

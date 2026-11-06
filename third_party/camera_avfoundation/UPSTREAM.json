@@ -133,7 +133,8 @@
     "darwin/Tests/SampleBufferTests.swift",
     "darwin/Tests/Mocks/MockCaptureDeviceInputFactory.swift",
     "darwin/Tests/Mocks/MockCaptureSession.swift",
-    "example/pubspec.yaml"
+    "example/pubspec.yaml",
+    "lib/src/messages.g.dart"
   ],
   "local_metadata": [
     ".gitignore",
