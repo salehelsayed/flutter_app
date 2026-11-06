@@ -3128,7 +3128,7 @@ void main() {
       'old-repo-first',
       'reactions-held',
     ]) {
-      testWidgets('normal Orbit first-paint stays at live edge: ' + variant, (
+      testWidgets('normal Orbit first-paint stays at live edge: $variant', (
         tester,
       ) async {
         tester.view.physicalSize = const Size(1080, 2400);
@@ -3150,7 +3150,7 @@ void main() {
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
         );
         for (var i = 0; i < count; i++) {
-          final id = 'entry-' + i.toString();
+          final id = 'entry-${i.toString()}';
           final timestamp = thoughtNow
               .subtract(Duration(minutes: count - i))
               .toIso8601String();
@@ -3160,10 +3160,8 @@ void main() {
               contactPeerId: testContact.peerId,
               senderPeerId: i.isEven ? testContact.peerId : testIdentity.peerId,
               text:
-                  'Entry message ' +
-                  i.toString() +
-                  ' ' +
-                  ('mixed history ' * (i % 6)),
+                  'Entry message ${i.toString()} '
+                  '${'mixed history ' * (i % 6)}',
               timestamp: timestamp,
               createdAt: timestamp,
               status: 'delivered',
@@ -3172,11 +3170,11 @@ void main() {
           );
           if (i % 7 == 0 || i == count - 1) {
             final image = File(
-              directory.path + '/photo-' + i.toString() + '.png',
+              '${directory.path}/photo-${i.toString()}.png',
             )..writeAsBytesSync(png);
             await mediaAttachmentRepo.saveAttachment(
               MediaAttachment(
-                id: 'image-' + i.toString(),
+                id: 'image-${i.toString()}',
                 messageId: id,
                 mime: 'image/png',
                 size: png.length,
@@ -3262,11 +3260,11 @@ void main() {
           await tester.pump(const Duration(milliseconds: 16));
         }
         recording = false;
-        debugPrint('FIRST-PAINT ' + variant + ': ' + paints.toString());
+        debugPrint('FIRST-PAINT $variant: ${paints.toString()}');
         expect(paints, isNotEmpty);
         expect(
           paints.map((p) => p.newest),
-          everyElement('entry-' + (count - 1).toString()),
+          everyElement('entry-${(count - 1).toString()}'),
           reason:
               'the first painted timeline must contain the actual newest message',
         );
@@ -3289,7 +3287,7 @@ void main() {
         );
         expect(
           find
-              .byKey(ValueKey('msg-entry-' + (count - 1).toString()))
+              .byKey(ValueKey('msg-entry-${(count - 1).toString()}'))
               .hitTestable(),
           findsOneWidget,
         );
@@ -3393,7 +3391,7 @@ void main() {
     }
 
     for (final resolution in ['live', 'missing', 'expired']) {
-      testWidgets('a pending thought quote stays neutral before ' + resolution, (
+      testWidgets('a pending thought quote stays neutral before $resolution', (
         tester,
       ) async {
         setLargeTestSurface(tester);

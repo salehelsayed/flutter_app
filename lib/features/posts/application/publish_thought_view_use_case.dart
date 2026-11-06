@@ -33,20 +33,23 @@ Future<void> publishThoughtView({
       post.authorPeerId == viewerPeerId ||
       expiry == null ||
       !expiry.isAfter(now) ||
-      created == null)
+      created == null) {
     return;
+  }
   final contact = await contactRepo.getContact(post.authorPeerId);
   final key = contact?.mlKemPublicKey;
   if (contact == null ||
       contact.isBlocked ||
       contact.isArchived ||
       key == null ||
-      key.isEmpty)
+      key.isEmpty) {
     return;
+  }
   if ((await views.loadThoughtViews(
     postId,
-  )).any((view) => view.viewerPeerId == viewerPeerId))
+  )).any((view) => view.viewerPeerId == viewerPeerId)) {
     return;
+  }
   final viewedAt = now.toIso8601String();
   final receipt = ThoughtViewReceipt(
     postId: postId,
@@ -66,8 +69,9 @@ Future<void> publishThoughtView({
   final currentContact = await contactRepo.getContact(post.authorPeerId);
   if (currentContact == null ||
       currentContact.isBlocked ||
-      currentContact.isArchived)
+      currentContact.isArchived) {
     return;
+  }
   final delivery = PostFollowOnOutboxRecipientDelivery(
     eventId: envelope.eventId,
     recipientPeerId: post.authorPeerId,

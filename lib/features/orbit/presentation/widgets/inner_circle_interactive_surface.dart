@@ -214,8 +214,9 @@ class _InnerCircleInteractiveSurfaceState
 
   void _onThoughtRevealStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed &&
-        status != AnimationStatus.dismissed)
+        status != AnimationStatus.dismissed) {
       return;
+    }
     // Motion rebuilds only the visualization; refresh the saved canvas box when
     // it settles so a later size-control session seats its handles correctly.
     _canvasMeasurement = null;
@@ -537,8 +538,9 @@ class _InnerCircleInteractiveSurfaceState
   void _enterEdit() {
     if (_editing ||
         _notesOut ||
-        (_thoughtReveal.isAnimating && _liveThoughts.isNotEmpty))
+        (_thoughtReveal.isAnimating && _liveThoughts.isNotEmpty)) {
       return;
+    }
     HapticFeedback.mediumImpact();
     setState(() => _setEditing(true));
   }

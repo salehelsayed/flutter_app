@@ -766,12 +766,8 @@ void main() {
       for (final scale in [1.0, 1.4, 2.0]) {
         for (final language in ['en', 'ar']) {
           testWidgets(
-            'a pending quote keeps its resolved height: ' +
-                mediaKind +
-                ' ' +
-                scale.toString() +
-                ' ' +
-                language,
+            'a pending quote keeps its resolved height: '
+                '$mediaKind ${scale.toString()} $language',
             (tester) async {
               // Keep the causal 140% case at Pixel width. At 200%, use a
               // wider viewport: the separate inline timestamp currently
@@ -787,7 +783,7 @@ void main() {
                 'quote-height-',
               );
               addTearDown(() => directory.deleteSync(recursive: true));
-              final photo = File(directory.path + '/photo.png')
+              final photo = File('${directory.path}/photo.png')
                 ..writeAsBytesSync(
                   base64Decode(
                     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
@@ -836,20 +832,11 @@ void main() {
               final resolvedQuoteHeight = tester.getSize(quote).height;
               final resolvedRowHeight = tester.getSize(row).height;
               debugPrint(
-                'QUOTE-HEIGHT ' +
-                    mediaKind +
-                    ' ' +
-                    scale.toString() +
-                    ' ' +
-                    language +
-                    ': quote ' +
-                    pendingQuoteHeight.toString() +
-                    ' -> ' +
-                    resolvedQuoteHeight.toString() +
-                    '; row ' +
-                    pendingRowHeight.toString() +
-                    ' -> ' +
-                    resolvedRowHeight.toString(),
+                'QUOTE-HEIGHT $mediaKind ${scale.toString()} $language: quote '
+                    '${pendingQuoteHeight.toString()} -> '
+                    '${resolvedQuoteHeight.toString()}; row '
+                    '${pendingRowHeight.toString()} -> '
+                    '${resolvedRowHeight.toString()}',
               );
               expect(
                 pendingQuoteHeight,

@@ -117,16 +117,19 @@ class PostViewEnvelope {
         'created_at',
         'post_created_at',
       ]) {
-        if (outer[field] is! String || (outer[field] as String).isEmpty)
+        if (outer[field] is! String || (outer[field] as String).isEmpty) {
           return null;
+        }
       }
       if (DateTime.tryParse(outer['created_at'] as String) == null ||
-          DateTime.tryParse(outer['post_created_at'] as String) == null)
+          DateTime.tryParse(outer['post_created_at'] as String) == null) {
         return null;
+      }
       final encrypted = outer['encrypted'] as Map<String, dynamic>;
       for (final field in ['kem', 'ciphertext', 'nonce']) {
-        if (encrypted[field] is! String || (encrypted[field] as String).isEmpty)
+        if (encrypted[field] is! String || (encrypted[field] as String).isEmpty) {
           return null;
+        }
       }
       return outer;
     } catch (_) {

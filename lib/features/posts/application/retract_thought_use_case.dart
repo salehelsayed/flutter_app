@@ -106,8 +106,9 @@ queueThoughtRetraction({
     postId: post.id,
     postCreatedAt: DateTime.tryParse(post.createdAt)?.toUtc() ?? now,
   );
-  if (recipientPeerIds.isEmpty)
+  if (recipientPeerIds.isEmpty) {
     return (envelope, const <PostFollowOnOutboxRecipientDelivery>[]);
+  }
   final queued = await queuePostFollowOn(
     postRepo: postRepo,
     eventId: envelope.eventId,

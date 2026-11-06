@@ -140,8 +140,9 @@ Future<int> retryPendingPostFollowOns({
     DateTime? expiry;
     if (job.event.eventType == PostRetractEnvelope.type) {
       final retraction = PostRetractEnvelope.fromJson(job.event.rawEnvelope);
-      if (retraction != null)
+      if (retraction != null) {
         expiry = ThoughtLifetime.expiresAt(retraction.postCreatedAt);
+      }
     } else if (job.event.eventType == PostViewEnvelope.type) {
       expiry = PostViewEnvelope.queuedExpiry(job.event.rawEnvelope);
     } else {
