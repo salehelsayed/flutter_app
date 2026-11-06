@@ -382,7 +382,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.42.command.2",
+          "keyPath": "capabilities.43.command.2",
           "value": "integration_test/scripts/run_1to1_reaction_notification_sims.dart"
         }
       ]
@@ -397,7 +397,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.32.command.2",
+          "keyPath": "capabilities.33.command.2",
           "value": "integration_test/scripts/run_android_notification_recovery_completion.dart"
         }
       ]
@@ -481,7 +481,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.41.command.2",
+          "keyPath": "capabilities.42.command.2",
           "value": "integration_test/scripts/run_group_muted_notification_android.dart"
         }
       ]
@@ -496,7 +496,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.35.command.2",
+          "keyPath": "capabilities.36.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -524,7 +524,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.command.2",
+          "keyPath": "capabilities.35.command.2",
           "value": "integration_test/scripts/run_group_reaction_notification_sims.dart"
         }
       ]
@@ -539,7 +539,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.37.command.1",
+          "keyPath": "capabilities.38.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]
@@ -580,7 +580,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.artifactValidator",
+          "keyPath": "capabilities.35.artifactValidator",
           "value": "integration_test/scripts/validate_group_reaction_notification_artifacts.dart"
         }
       ]
@@ -675,7 +675,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.43.command.2",
+          "keyPath": "capabilities.44.command.2",
           "value": "integration_test/scripts/run_group_strict_notification_sims.dart"
         }
       ]
@@ -690,7 +690,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.49.command.2",
+          "keyPath": "capabilities.50.command.2",
           "value": "integration_test/scripts/run_production_foreground_group_push.dart"
         }
       ]
@@ -705,7 +705,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.50.command.2",
+          "keyPath": "capabilities.51.command.2",
           "value": "integration_test/scripts/run_production_notification_open.dart"
         }
       ]
@@ -720,7 +720,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.51.command.2",
+          "keyPath": "capabilities.52.command.2",
           "value": "integration_test/scripts/run_production_notification_sound.dart"
         }
       ]
@@ -735,7 +735,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.52.command.2",
+          "keyPath": "capabilities.53.command.2",
           "value": "integration_test/scripts/run_production_routing.dart"
         }
       ]
@@ -750,7 +750,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.116.command.2",
+          "keyPath": "capabilities.117.command.2",
           "value": "integration_test/scripts/run_production_message_latency.dart"
         }
       ]
@@ -765,7 +765,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.115.command.2",
+          "keyPath": "capabilities.116.command.2",
           "value": "integration_test/scripts/run_production_shared_xctest.dart"
         }
       ]
@@ -780,7 +780,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.114.command.2",
+          "keyPath": "capabilities.115.command.2",
           "value": "integration_test/scripts/run_production_transport_census.dart"
         }
       ]
@@ -795,7 +795,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.53.command.2",
+          "keyPath": "capabilities.54.command.2",
           "value": "integration_test/scripts/run_production_private_media_local.dart"
         }
       ]
@@ -810,7 +810,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.54.command.2",
+          "keyPath": "capabilities.55.command.2",
           "value": "integration_test/scripts/run_production_group_invite_reliability.dart"
         }
       ]
@@ -825,7 +825,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.62.command.2",
+          "keyPath": "capabilities.63.command.2",
           "value": "integration_test/scripts/run_production_group_invite_status_matrix.dart"
         }
       ]
@@ -840,7 +840,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.63.command.2",
+          "keyPath": "capabilities.64.command.2",
           "value": "integration_test/scripts/run_production_group_delete_preserves_friends.dart"
         }
       ]
@@ -855,7 +855,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.64.command.2",
+          "keyPath": "capabilities.65.command.2",
           "value": "integration_test/scripts/run_production_group_invite_accept_spinner.dart"
         }
       ]
@@ -870,7 +870,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.65.command.2",
+          "keyPath": "capabilities.66.command.2",
           "value": "integration_test/scripts/run_production_group_new_member_media.dart"
         }
       ]
@@ -885,7 +885,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.66.command.2",
+          "keyPath": "capabilities.67.command.2",
           "value": "integration_test/scripts/run_production_group_online_remove.dart"
         }
       ]
@@ -900,7 +900,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.67.command.2",
+          "keyPath": "capabilities.68.command.2",
           "value": "integration_test/scripts/run_production_group_relay_only.dart"
         }
       ]
@@ -915,7 +915,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.68.command.2",
+          "keyPath": "capabilities.69.command.2",
           "value": "integration_test/scripts/run_production_group_process_death.dart"
         }
       ]
@@ -930,7 +930,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.69.command.2",
+          "keyPath": "capabilities.70.command.2",
           "value": "integration_test/scripts/run_production_group_gm004.dart"
         }
       ]
@@ -945,7 +945,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.70.command.2",
+          "keyPath": "capabilities.71.command.2",
           "value": "integration_test/scripts/run_production_group_gm005.dart"
         }
       ]
@@ -960,7 +960,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.71.command.2",
+          "keyPath": "capabilities.72.command.2",
           "value": "integration_test/scripts/run_production_group_offline_remove.dart"
         }
       ]
@@ -975,7 +975,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.72.command.2",
+          "keyPath": "capabilities.73.command.2",
           "value": "integration_test/scripts/run_production_group_gm006.dart"
         }
       ]
@@ -990,7 +990,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.73.command.2",
+          "keyPath": "capabilities.74.command.2",
           "value": "integration_test/scripts/run_production_group_offline_readd.dart"
         }
       ]
@@ -1005,7 +1005,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.74.command.2",
+          "keyPath": "capabilities.75.command.2",
           "value": "integration_test/scripts/run_production_group_gm001.dart"
         }
       ]
@@ -1020,7 +1020,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.75.command.2",
+          "keyPath": "capabilities.76.command.2",
           "value": "integration_test/scripts/run_production_group_ge001.dart"
         }
       ]
@@ -1035,7 +1035,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.76.command.2",
+          "keyPath": "capabilities.77.command.2",
           "value": "integration_test/scripts/run_production_group_de003.dart"
         }
       ]
@@ -1050,7 +1050,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.77.command.2",
+          "keyPath": "capabilities.78.command.2",
           "value": "integration_test/scripts/run_production_group_ge002.dart"
         }
       ]
@@ -1065,7 +1065,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.78.command.2",
+          "keyPath": "capabilities.79.command.2",
           "value": "integration_test/scripts/run_production_group_ge003.dart"
         }
       ]
@@ -1080,7 +1080,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.79.command.2",
+          "keyPath": "capabilities.80.command.2",
           "value": "integration_test/scripts/run_production_group_gm020.dart"
         }
       ]
@@ -1095,7 +1095,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.80.command.2",
+          "keyPath": "capabilities.81.command.2",
           "value": "integration_test/scripts/run_production_group_gm034.dart"
         }
       ]
@@ -1110,7 +1110,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.81.command.2",
+          "keyPath": "capabilities.82.command.2",
           "value": "integration_test/scripts/run_production_group_gm016.dart"
         }
       ]
@@ -1125,7 +1125,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.82.command.2",
+          "keyPath": "capabilities.83.command.2",
           "value": "integration_test/scripts/run_production_group_ge004.dart"
         }
       ]
@@ -1140,7 +1140,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.83.command.2",
+          "keyPath": "capabilities.84.command.2",
           "value": "integration_test/scripts/run_production_group_gm007.dart"
         }
       ]
@@ -1155,7 +1155,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.84.command.2",
+          "keyPath": "capabilities.85.command.2",
           "value": "integration_test/scripts/run_production_group_gm019.dart"
         }
       ]
@@ -1170,7 +1170,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.85.command.2",
+          "keyPath": "capabilities.86.command.2",
           "value": "integration_test/scripts/run_production_group_ge009.dart"
         }
       ]
@@ -1185,7 +1185,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.86.command.2",
+          "keyPath": "capabilities.87.command.2",
           "value": "integration_test/scripts/run_production_group_rapid_readd.dart"
         }
       ]
@@ -1200,7 +1200,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.87.command.2",
+          "keyPath": "capabilities.88.command.2",
           "value": "integration_test/scripts/run_production_group_ir001.dart"
         }
       ]
@@ -1215,7 +1215,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.88.command.2",
+          "keyPath": "capabilities.89.command.2",
           "value": "integration_test/scripts/run_production_group_gm008.dart"
         }
       ]
@@ -1230,7 +1230,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.89.command.2",
+          "keyPath": "capabilities.90.command.2",
           "value": "integration_test/scripts/run_production_group_ge007.dart"
         }
       ]
@@ -1245,7 +1245,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.90.command.2",
+          "keyPath": "capabilities.91.command.2",
           "value": "integration_test/scripts/run_production_group_ge008.dart"
         }
       ]
@@ -1260,7 +1260,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.91.command.2",
+          "keyPath": "capabilities.92.command.2",
           "value": "integration_test/scripts/run_production_group_ge005.dart"
         }
       ]
@@ -1275,7 +1275,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.92.command.2",
+          "keyPath": "capabilities.93.command.2",
           "value": "integration_test/scripts/run_production_group_readd_cycles.dart"
         }
       ]
@@ -1290,7 +1290,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.93.command.2",
+          "keyPath": "capabilities.94.command.2",
           "value": "integration_test/scripts/run_production_group_ge010.dart"
         }
       ]
@@ -1305,7 +1305,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.94.command.2",
+          "keyPath": "capabilities.95.command.2",
           "value": "integration_test/scripts/run_production_group_go001.dart"
         }
       ]
@@ -1320,7 +1320,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.95.command.2",
+          "keyPath": "capabilities.96.command.2",
           "value": "integration_test/scripts/run_production_group_ge011.dart"
         }
       ]
@@ -1335,7 +1335,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.96.command.2",
+          "keyPath": "capabilities.97.command.2",
           "value": "integration_test/scripts/run_production_group_full_mesh.dart"
         }
       ]
@@ -1350,7 +1350,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.97.command.2",
+          "keyPath": "capabilities.98.command.2",
           "value": "integration_test/scripts/run_production_group_de002.dart"
         }
       ]
@@ -1365,7 +1365,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.98.command.2",
+          "keyPath": "capabilities.99.command.2",
           "value": "integration_test/scripts/run_production_group_ge006.dart"
         }
       ]
@@ -1380,7 +1380,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.99.command.2",
+          "keyPath": "capabilities.100.command.2",
           "value": "integration_test/scripts/run_production_group_de007.dart"
         }
       ]
@@ -1395,7 +1395,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.100.command.2",
+          "keyPath": "capabilities.101.command.2",
           "value": "integration_test/scripts/run_production_group_voluntary_leave.dart"
         }
       ]
@@ -1410,7 +1410,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.101.command.2",
+          "keyPath": "capabilities.102.command.2",
           "value": "integration_test/scripts/run_production_group_gm015.dart"
         }
       ]
@@ -1425,7 +1425,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.102.command.2",
+          "keyPath": "capabilities.103.command.2",
           "value": "integration_test/scripts/run_production_group_ge024.dart"
         }
       ]
@@ -1440,7 +1440,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.103.command.2",
+          "keyPath": "capabilities.104.command.2",
           "value": "integration_test/scripts/run_production_group_media_reaction.dart"
         }
       ]
@@ -1455,7 +1455,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.104.command.2",
+          "keyPath": "capabilities.105.command.2",
           "value": "integration_test/scripts/run_production_group_gm002.dart"
         }
       ]
@@ -1470,7 +1470,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.105.command.2",
+          "keyPath": "capabilities.106.command.2",
           "value": "integration_test/scripts/run_production_group_ml002.dart"
         }
       ]
@@ -1485,7 +1485,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.106.command.2",
+          "keyPath": "capabilities.107.command.2",
           "value": "integration_test/scripts/run_production_group_gm003.dart"
         }
       ]
@@ -1500,7 +1500,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.107.command.2",
+          "keyPath": "capabilities.108.command.2",
           "value": "integration_test/scripts/run_production_group_ml003.dart"
         }
       ]
@@ -1515,7 +1515,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.109.command.2",
+          "keyPath": "capabilities.110.command.2",
           "value": "integration_test/scripts/run_production_group_nw006.dart"
         }
       ]
@@ -1530,7 +1530,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.110.command.2",
+          "keyPath": "capabilities.111.command.2",
           "value": "integration_test/scripts/run_production_group_ml020.dart"
         }
       ]
@@ -1545,7 +1545,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.111.command.2",
+          "keyPath": "capabilities.112.command.2",
           "value": "integration_test/scripts/run_production_group_nw003.dart"
         }
       ]
@@ -1560,7 +1560,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.112.command.2",
+          "keyPath": "capabilities.113.command.2",
           "value": "integration_test/scripts/run_production_group_nw010.dart"
         }
       ]
@@ -1575,7 +1575,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.113.command.2",
+          "keyPath": "capabilities.114.command.2",
           "value": "integration_test/scripts/run_production_group_up012.dart"
         }
       ]
@@ -1590,7 +1590,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.55.command.2",
+          "keyPath": "capabilities.56.command.2",
           "value": "integration_test/scripts/run_production_startup_resume_performance.dart"
         }
       ]
@@ -1605,7 +1605,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.57.command.2",
+          "keyPath": "capabilities.58.command.2",
           "value": "integration_test/scripts/run_production_group_create.dart"
         }
       ]
@@ -1620,7 +1620,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.58.command.2",
+          "keyPath": "capabilities.59.command.2",
           "value": "integration_test/scripts/run_production_group_reaction.dart"
         }
       ]
@@ -1635,7 +1635,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.59.command.2",
+          "keyPath": "capabilities.60.command.2",
           "value": "integration_test/scripts/run_production_group_reaction_toggle.dart"
         }
       ]
@@ -1650,7 +1650,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.60.command.2",
+          "keyPath": "capabilities.61.command.2",
           "value": "integration_test/scripts/run_production_group_removed_reaction.dart"
         }
       ]
@@ -1665,7 +1665,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.138.command.2",
+          "keyPath": "capabilities.139.command.2",
           "value": "integration_test/scripts/run_production_call_back.dart"
         }
       ]
@@ -1680,7 +1680,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.142.command.2",
+          "keyPath": "capabilities.143.command.2",
           "value": "integration_test/scripts/run_production_call_regression.dart"
         }
       ]
@@ -1695,7 +1695,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.133.command.2",
+          "keyPath": "capabilities.134.command.2",
           "value": "integration_test/scripts/run_production_contact_delete.dart"
         }
       ]
@@ -1710,7 +1710,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.124.command.2",
+          "keyPath": "capabilities.125.command.2",
           "value": "integration_test/scripts/run_production_update_check.dart"
         }
       ]
@@ -1738,7 +1738,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.150.command.2",
+          "keyPath": "capabilities.151.command.2",
           "value": "integration_test/scripts/run_production_direct_ordered_replay.dart"
         }
       ]
@@ -1753,7 +1753,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.151.command.2",
+          "keyPath": "capabilities.152.command.2",
           "value": "integration_test/scripts/run_production_group_ordered_recovery.dart"
         }
       ]
@@ -1768,7 +1768,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.152.command.2",
+          "keyPath": "capabilities.153.command.2",
           "value": "integration_test/scripts/run_production_direct_send_cut.dart"
         }
       ]
@@ -1783,7 +1783,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.153.command.2",
+          "keyPath": "capabilities.154.command.2",
           "value": "integration_test/scripts/run_production_direct_actions.dart"
         }
       ]
@@ -1798,7 +1798,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.154.command.2",
+          "keyPath": "capabilities.155.command.2",
           "value": "integration_test/scripts/run_production_direct_sender_offline.dart"
         }
       ]
@@ -1813,7 +1813,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.155.command.2",
+          "keyPath": "capabilities.156.command.2",
           "value": "integration_test/scripts/run_production_introduction_mutual.dart"
         }
       ]
@@ -1828,7 +1828,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.156.command.2",
+          "keyPath": "capabilities.157.command.2",
           "value": "integration_test/scripts/run_production_introduction_offline.dart"
         }
       ]
@@ -1843,7 +1843,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.157.command.2",
+          "keyPath": "capabilities.158.command.2",
           "value": "integration_test/scripts/run_production_group_local_media_delete.dart"
         }
       ]
@@ -3803,7 +3803,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.32.command.2",
+          "keyPath": "capabilities.33.command.2",
           "value": "integration_test/scripts/run_android_notification_recovery_completion.dart"
         }
       ]
@@ -3819,7 +3819,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.43.command.2",
+          "keyPath": "capabilities.44.command.2",
           "value": "integration_test/scripts/run_group_strict_notification_sims.dart"
         }
       ]
@@ -3835,7 +3835,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.41.command.2",
+          "keyPath": "capabilities.42.command.2",
           "value": "integration_test/scripts/run_group_muted_notification_android.dart"
         }
       ]
@@ -3851,7 +3851,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.35.command.2",
+          "keyPath": "capabilities.36.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -3867,7 +3867,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.37.command.1",
+          "keyPath": "capabilities.38.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]
