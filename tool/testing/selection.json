@@ -6967,7 +6967,8 @@
       "id": "analyzer-configuration",
       "patterns": [
         "analysis_options.yaml",
-        "third_party/video_compress/analysis_options.yaml"
+        "third_party/video_compress/analysis_options.yaml",
+        "test/unit/analyzer_suppression_ratchet_test.dart"
       ],
       "checks": [
         "analysis"
