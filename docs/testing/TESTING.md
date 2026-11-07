@@ -5927,6 +5927,19 @@ visible and cannot become an ordinary first-attempt PASS.
   `StateError` before the publication guard; all 25 listener and seven view
   delivery cases pass afterward. Red/green receipts are retained in
   `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+- **Thought relay replay before persistence:** the composed `Thought reconnect`
+  cases in `test/core/services/p2p_service_inbox_ack_ordering_test.dart` use
+  real P2PServiceImpl, IncomingMessageRouter and PostListener with a gated
+  in-memory post write and fake relay custody. A failed pending fetch retains
+  the relay copy. After reconnect, a failed first post write leaves no post,
+  no recoverable staging row and no relay copy; a later drain cannot recover
+  the live Thought. The successful-write control passes. The failure case is
+  deliberately RED on base `416fa15d6`; no production fix is included. It proves
+  the Dart completion/custody gap, not a real network fault, SQLite crash,
+  encryption failure or tester incident. Preserve the first result under
+  `.codex-test-logs/thought-poor-connection-20261107/` in the delivering
+  `astra/thought-poor-connection-red-20261107` worktree. The existing manifest
+  selects this file; broader mapped checks remain unrun for this RED-only task.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
