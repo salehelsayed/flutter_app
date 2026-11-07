@@ -732,6 +732,12 @@ class P2PServiceImpl
     _inboxCoordinator.setProtectedGroupReplayHandler(handler);
   }
 
+  /// The router binds its active Thought listener after services are composed.
+  /// Unregister only this binding so stopping an older router is harmless.
+  VoidCallback registerPostCreateReplayHandler(
+    ReplayRecoveredInboxChatMessage handler,
+  ) => _inboxCoordinator.registerPostCreateReplayHandler(handler);
+
   @override
   NodeState get currentState => _currentState;
 

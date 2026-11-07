@@ -232,6 +232,7 @@ class PostCreateEnvelope {
     required String jsonString,
     required Bridge bridge,
     required String ownMlKemSecretKey,
+    bool throwOnBridgeUnavailable = false,
   }) async {
     final envelope = parseEncryptedEnvelope(jsonString);
     if (envelope == null) {
@@ -244,6 +245,7 @@ class PostCreateEnvelope {
       kem: encrypted['kem'] as String,
       ciphertext: encrypted['ciphertext'] as String,
       nonce: encrypted['nonce'] as String,
+      throwOnBridgeUnavailable: throwOnBridgeUnavailable,
     );
     if (decryptResult['ok'] != true) {
       return null;

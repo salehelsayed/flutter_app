@@ -5934,12 +5934,26 @@ visible and cannot become an ordinary first-attempt PASS.
   the relay copy. After reconnect, a failed first post write leaves no post,
   no recoverable staging row and no relay copy; a later drain cannot recover
   the live Thought. The successful-write control passes. The failure case is
-  deliberately RED on base `416fa15d6`; no production fix is included. It proves
+  deliberately RED on base `416fa15d6` (RED commit `7c9ac52d6`). It proves
   the Dart completion/custody gap, not a real network fault, SQLite crash,
   encryption failure or tester incident. Preserve the first result under
   `.codex-test-logs/thought-poor-connection-20261107/` in the delivering
-  `astra/thought-poor-connection-red-20261107` worktree. The existing manifest
-  selects this file; broader mapped checks remain unrun for this RED-only task.
+  `astra/thought-poor-connection-red-20261107` worktree. The fix routes relay
+  replay through the active PostListener's typed completion and allows relay
+  ACK only after durable Thought/media/key rows or a terminal rejection.
+  Partial media-row saves must be completed on duplicate replay; matching saved
+  keys stay intact. Missing listener/key/bridge prerequisites retain custody.
+  Media downloads do not delay the durable outcome. Both original reconnect
+  cases pass unchanged, and seven cases in `p2p_service_thought_replay_test.dart`
+  cover media-row gating/retry, missing listener/key/bridge, permanent decrypt
+  rejection, failed ACK/duplicate handling, and exact-envelope terminal ACK
+  recovery. These use fake transport/crypto and in-memory repositories; OS
+  process death, real SQLite faults and signed-device delivery remain separate.
+  The existing `affected-transport` directory selector includes both files;
+  `affected-surfaces` retains the existing direct-ACK and media-ingest cases.
+  GREEN receipts and full affected-selection results belong under
+  `.codex-test-logs/thought-poor-connection-green-20261107/`. Initial new-fixture
+  compile and media-kind errors are retained alongside their corrected runs.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
