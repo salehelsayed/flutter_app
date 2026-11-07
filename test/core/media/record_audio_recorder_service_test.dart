@@ -309,13 +309,15 @@ void main() {
       expect(deactivations, 0);
     });
 
-    test('stop() hands the session back even when the plugin stop throws',
-        () async {
-      await service.start(outputPath: testOutputPath);
-      fakeRecorder.throwOnStop = true;
-      await expectLater(service.stop(), throwsA(anything));
-      expect(deactivations, 1);
-    });
+    test(
+      'stop() hands the session back even when the plugin stop throws',
+      () async {
+        await service.start(outputPath: testOutputPath);
+        fakeRecorder.throwOnStop = true;
+        await expectLater(service.stop(), throwsA(anything));
+        expect(deactivations, 1);
+      },
+    );
   });
 
   group('wake lock on auto-stop', () {

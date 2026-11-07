@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'm4a_duration.dart';
+import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -207,7 +208,14 @@ class RecordAudioRecorderService
     _startTime = null;
     // Release before the plugin call: a throwing stop() must not leak a hold.
     await _releaseWakeLock();
-    final path = await _recorder.stop();
+    final String? path;
+    try {
+      path = await _recorder.stop();
+    } finally {
+      // The plugin activates the shared session to record and never releases
+      // it; hand it back even if its stop throws.
+      await MediaAudioSession.release();
+    }
     final encodedDuration = path == null ? null : await readM4aDurationMs(path);
     final duration = encodedDuration ?? elapsed;
 
@@ -251,7 +259,11 @@ class RecordAudioRecorderService
     _pausedAt = null;
     await _releaseWakeLock();
 
-    await _recorder.stop();
+    try {
+      await _recorder.stop();
+    } finally {
+      await MediaAudioSession.release();
+    }
 
     if (_currentOutputPath != null) {
       final file = File(_currentOutputPath!);
@@ -262,6 +274,7 @@ class RecordAudioRecorderService
 
   @override
   Future<void> dispose() async {
+    final wasRecording = _isRecording;
     await _releaseWakeLock();
     _ticker?.cancel();
     _maxDurationTimer?.cancel();
@@ -275,6 +288,7 @@ class RecordAudioRecorderService
     await _durationController.close();
     await _amplitudeController.close();
     _recorder.dispose();
+    if (wasRecording) await MediaAudioSession.release();
   }
 
   Future<void> _acquireWakeLock() async {
