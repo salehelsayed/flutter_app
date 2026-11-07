@@ -171,31 +171,35 @@ func (missingRouteServerError) RedisError()       {}
 
 type missingRoutePipelineFailureHook struct {
 	absenceKey string
+	routeKey   string
 	mode       string
 	fired      int
-	after      func()
 }
 
 func (*missingRoutePipelineFailureHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-func (*missingRoutePipelineFailureHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return next
+func (hook *missingRoutePipelineFailureHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, command redis.Cmder) error {
+		args := command.Args()
+		if hook.mode == "diagnostic" && len(args) >= 2 && args[1] == hook.absenceKey {
+			hook.fired++
+			return missingRouteServerError("ERR private diagnostic command failure")
+		}
+		return next(ctx, command)
+	}
 }
 func (hook *missingRoutePipelineFailureHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, commands []redis.Cmder) error {
-		var diagnostic redis.Cmder
+		if hook.mode == "diagnostic" || (hook.fired > 0 && hook.mode != "watch") {
+			return next(ctx, commands)
+		}
 		var primary redis.Cmder
 		for _, command := range commands {
 			args := command.Args()
-			if len(args) < 2 {
-				continue
-			}
-			if args[1] == hook.absenceKey {
-				diagnostic = command
-			} else if command.Name() == "set" || command.Name() == "del" {
+			if len(args) >= 2 && args[1] == hook.routeKey {
 				primary = command
 			}
 		}
-		if diagnostic == nil || (hook.fired > 0 && hook.mode != "watch") {
+		if primary == nil {
 			return next(ctx, commands)
 		}
 		hook.fired++
@@ -205,20 +209,14 @@ func (hook *missingRoutePipelineFailureHook) ProcessPipelineHook(next redis.Proc
 		if err := next(ctx, commands); err != nil {
 			return err
 		}
-		if hook.after != nil {
-			hook.after()
-		}
-		var failure error = missingRouteServerError("ERR private diagnostic command failure")
+		var failure error = missingRouteServerError("ERR private primary command failure")
 		switch hook.mode {
-		case "primary":
-			primary.SetErr(failure)
-			return failure
 		case "execabort":
 			failure = missingRouteServerError("EXECABORT private transaction failure")
 		case "network":
 			failure = io.EOF
 		}
-		diagnostic.SetErr(failure)
+		primary.SetErr(failure)
 		return failure
 	}
 }
@@ -232,10 +230,7 @@ func TestPushMissingRouteDiagnosticMutationIsolation(t *testing.T) {
 					t.Fatal(err)
 				}
 				lease := plan367Route(t, backend, "route-peer")
-				hook := &missingRoutePipelineFailureHook{absenceKey: backend.absenceKey("route-peer"), mode: "diagnostic"}
-				if operation != "register" {
-					hook.after = func() { _ = backend.client.Del(context.Background(), hook.absenceKey).Err() }
-				}
+				hook := &missingRoutePipelineFailureHook{absenceKey: backend.absenceKey("route-peer"), routeKey: lease.lookupKey, mode: "diagnostic"}
 				backend.client.AddHook(hook)
 				var err error
 				switch operation {
@@ -268,7 +263,8 @@ func TestPushMissingRouteDiagnosticMutationIsolation(t *testing.T) {
 				if err := backend.RegisterToken("route-peer", "token-a", "ios"); err != nil {
 					t.Fatal(err)
 				}
-				hook := &missingRoutePipelineFailureHook{absenceKey: backend.absenceKey("route-peer"), mode: mode}
+				lease := plan367Route(t, backend, "route-peer")
+				hook := &missingRoutePipelineFailureHook{absenceKey: backend.absenceKey("route-peer"), routeKey: lease.lookupKey, mode: mode}
 				backend.client.AddHook(hook)
 				if err := backend.UnregisterToken("route-peer"); err == nil {
 					t.Fatal("primary or uncertain transaction failure was hidden")

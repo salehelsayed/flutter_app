@@ -11401,15 +11401,20 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   Memory and Redis tests cover expiry, backend recreation, re-registration,
   stale revocation, repeated absent unregister, corrupt/unavailable history,
   and active-registration preservation beyond the diagnostic TTL. Redis
-  metadata commands share the route mutation transaction, but an isolated
-  optional-command server error does not turn successful primary writes into
-  a failure; primary, WATCH, EXECABORT and uncertain network errors retain their
-  existing behavior. Best-effort metadata can be incomplete and is not a
-  guarantee of the latest mutation. The behavioral baseline fails all 18
-  reason/backend/direct-group cases; focused host verification passes 106 Go
-  test events with no failures/skips, including the exact 15 preservation
-  sentinels and privacy census. The first malformed-platform failure and
-  corrected checks remain under `.codex-test-logs/relay-missing-route-20261107/`
+  marker commands run separately after successful primary mutations. An
+  optional command inside `MULTI` can be rejected while queuing and abort the
+  entire primary transaction; a real fake-server invalid-arity probe reproduced
+  `EXECABORT` and prevented all six legacy/encrypted register/unregister/revoke
+  mutations before separation. The unchanged cases now reject only the marker
+  while all six primary mutations succeed. This proves queue-error isolation,
+  not actual ACL configuration. Primary, WATCH, EXECABORT and uncertain network
+  errors retain their existing behavior. Best-effort metadata can be incomplete
+  or race with a successor; the active-route guard and historical-observation
+  contract remain necessary. The behavioral baseline fails all 18
+  reason/backend/direct-group cases; corrected focused verification passes 113
+  Go test events with no failures/skips, including the exact 15 preservation
+  sentinels and privacy census. The first malformed-platform failure, queue-time
+  rejection and corrected checks remain under `.codex-test-logs/relay-missing-route-20261107/`
   in the `codex-relay-missing-route-20261107T1950Z` worktree. These are local
   host/fake-provider results, not deployed relay or phone delivery evidence.
 
