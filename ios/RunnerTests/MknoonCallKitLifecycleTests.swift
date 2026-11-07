@@ -281,6 +281,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   func testCoalescedPushWaitsForBothReportCallbacksAndCompletesExactlyOnce() {
     let rig = makeRig()
+    rig.provider.audioSessionGeneration = 1
     rig.provider.delayedReportCompletion = { _ in }
     var pushResults: [MknoonCallPresentationResult] = []
     rig.controller.presentAuthenticated(
@@ -302,6 +303,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(pushResults, [.duplicate])
     rig.provider.delayedReportCompletions[1](alreadyReported)
     XCTAssertEqual(pushResults, [.duplicate])
+    XCTAssertEqual(rig.provider.reportedAudioSessionGenerations.map(\.1), [1, 1])
   }
 
   func testSuccessfulCoalescedPushAfterTerminalClosesItsNewCallKitReport() {
@@ -386,6 +388,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   func testSuccessfulLegacyDuplicateReportPreservesPresentedIncomingCall() {
     let rig = makeRig()
+    rig.provider.audioSessionGeneration = 1
     XCTAssertEqual(present(rig, payload(callA)), .presented)
 
     XCTAssertEqual(present(rig, payload(callA), reportPolicy: .legacyRequired), .duplicate)
@@ -394,6 +397,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertTrue(rig.provider.endReports.isEmpty)
     XCTAssertNil(rig.store.snapshot()?.terminalEvent)
     XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
+    XCTAssertEqual(rig.provider.reportedAudioSessionGenerations.map(\.1), [1, 1])
   }
 
   func testLegacyDuplicateReportSuccessAfterTerminalDoesNotReopenIncomingCall() {
@@ -497,6 +501,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   func testMetadataRequiredBusyPushReportsAndEndsDistinctUuidPreservingActiveCall() {
     let rig = makeRig()
+    rig.provider.audioSessionGeneration = 1
     XCTAssertEqual(present(rig, payload(callA)), .presented)
 
     XCTAssertEqual(present(rig, payload(callB), reportPolicy: .metadataRequired), .busy)
@@ -507,6 +512,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.provider.endReports.map(\.1), [.failed])
     XCTAssertEqual(rig.store.snapshot()?.nativeCallId, callA)
     XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertEqual(rig.provider.reportedAudioSessionGenerations.map(\.1), [1, 1])
   }
 
   func testRequiredInvalidComplianceReportIsEphemeralAndWaitsToEndUntilSuccess() {
@@ -1456,6 +1462,58 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   // MARK: - Call audio session configuration
 
+  // This fake models Apple's documented stale callservicesd registration. It
+  // is not an OS reproduction: only a real CallKit callback authorizes media.
+  func testNewCallRefreshesStaleAudioRegistrationWithoutReplacingProvider() throws {
+    let rig = makeRig()
+    let provider = rig.provider
+    let systemProvider = CXProvider(configuration: CXProviderConfiguration())
+    let session = AVAudioSession.sharedInstance()
+    for callId in [callA, callB] {
+      XCTAssertEqual(present(rig, payload(callId)), .presented)
+      XCTAssertTrue(rig.controller.handleAnswer(callId))
+      let through = try XCTUnwrap(rig.store.snapshot()).highestSequence
+      XCTAssertTrue(rig.controller.acknowledge(callId, through: through, disposition: .adopted))
+      XCTAssertTrue(provider.deliverAudioActivation(for: callId, from: systemProvider, session: session))
+      XCTAssertTrue(rig.controller.activateAudio(callId))
+      XCTAssertTrue(provider.delegate === rig.controller)
+      XCTAssertTrue(rig.controller.endFromDart(callId))
+      let terminal = try XCTUnwrap(rig.store.snapshot()).highestSequence
+      XCTAssertTrue(rig.controller.acknowledge(callId, through: terminal, disposition: .terminal))
+      rig.controller.provider(systemProvider, didDeactivate: session)
+      provider.audioSessionGeneration += 1
+    }
+    XCTAssertTrue(rig.provider === provider)
+    XCTAssertEqual(provider.reportedAudioSessionGenerations.map(\.1), [0, 1])
+    XCTAssertEqual(provider.incomingReports.map(\.0), [callA, callB])
+  }
+
+  func testFreshProviderRegistrationStillRequiresRealActivationCallback() throws {
+    let rig = makeRig()
+    rig.provider.audioSessionGeneration = 1
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    let through = try XCTUnwrap(rig.store.snapshot()).highestSequence
+    XCTAssertTrue(rig.controller.acknowledge(callA, through: through, disposition: .adopted))
+    XCTAssertEqual(rig.provider.registeredAudioSessionGeneration, 1)
+    XCTAssertFalse(rig.controller.activateAudio(callA))
+    XCTAssertEqual(rig.audio.prepareCount, 1, "registration must not activate or reconfigure ringing audio")
+    XCTAssertTrue(rig.webRTCAudioSession.events.isEmpty)
+  }
+
+  func testOutgoingRefreshesRegistrationBeforeStartTransaction() {
+    let rig = makeRig()
+    rig.provider.audioSessionGeneration = 1
+    rig.transactions.beforeRequest = {
+      XCTAssertEqual(rig.provider.registeredAudioSessionGeneration, 1)
+      XCTAssertTrue(rig.provider.delegate === rig.controller)
+    }
+    registerOutgoing(rig)
+    XCTAssertEqual(rig.transactions.transactions.count, 1)
+    XCTAssertEqual(rig.audio.prepareCount, 0)
+    XCTAssertTrue(rig.webRTCAudioSession.events.isEmpty)
+  }
+
   func testProductionAudioNotifierBalancesRealWebRTCActivationCount() {
     let rig = makeRig()
     let controller = MknoonCallKitController(
@@ -1888,6 +1946,23 @@ final class FakeCallProvider: MknoonCallProviding {
   var delayedReportCompletion: ((Error?) -> Void)?
   var delayedReportCompletions: [(Error?) -> Void] = []
 
+  // Synthetic registration generation, deliberately independent of app audio.
+  var audioSessionGeneration = 0
+  var registeredAudioSessionGeneration = 0
+  var reportedAudioSessionGenerations: [(UUID, Int)] = []
+
+  func refreshConfiguration() {
+    registeredAudioSessionGeneration = audioSessionGeneration
+  }
+
+  func deliverAudioActivation(for callId: UUID, from provider: CXProvider, session: AVAudioSession) -> Bool {
+    guard reportedAudioSessionGenerations.last(where: { $0.0 == callId })?.1 == audioSessionGeneration,
+          let delegate else { return false }
+    delegate.provider?(provider, didActivate: session)
+    return true
+  }
+
+
   func setDelegate(_ delegate: CXProviderDelegate?, queue: DispatchQueue?) {
     self.delegate = delegate
   }
@@ -1898,6 +1973,7 @@ final class FakeCallProvider: MknoonCallProviding {
     completion: @escaping (Error?) -> Void
   ) {
     incomingReports.append((UUID, update))
+    reportedAudioSessionGenerations.append((UUID, registeredAudioSessionGeneration))
     if delayedReportCompletion == nil {
       completion(nextReportError)
     } else {
@@ -1943,9 +2019,11 @@ final class FakeCallTransactions: MknoonCallTransactionRequesting {
   var transactions: [CXTransaction] = []
   var nextError: Error?
   var delayRequests = false
+  var beforeRequest: (() -> Void)?
   var delayedCompletion: ((Error?) -> Void)?
 
   func request(_ transaction: CXTransaction, completion: @escaping (Error?) -> Void) {
+    beforeRequest?()
     transactions.append(transaction)
     if delayRequests { delayedCompletion = completion }
     else { completion(nextError) }

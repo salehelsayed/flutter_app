@@ -1567,6 +1567,7 @@
       "paths": [
         "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart",
         "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart",
+        "test/features/call/infrastructure/ios_callkit_provider_registration_contract_test.dart",
         "test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart"
       ],
       "boundary": "VoIP token rotation/invalidation and native journal adoption, exact retired predecessor acknowledgement, cancellation/expiry/duplicate and successor ownership preservation",
@@ -6260,6 +6261,18 @@
         "production-audio-harness-contract"
       ],
       "why": "The diagnostic must preserve datagram/control boundaries and honest loss accounting. Existing conservative fixture mappings and mandatory native/signed evidence remain."
+    },
+    {
+      "id": "ios-callkit-audio-registration",
+      "patterns": [
+        "ios/Runner/MknoonCallKitController.swift",
+        "ios/RunnerTests/MknoonCallKitLifecycleTests.swift",
+        "test/features/call/infrastructure/ios_callkit_provider_registration_contract_test.dart"
+      ],
+      "checks": [
+        "ios-incoming-call-host"
+      ],
+      "why": "Provider/audio-session registration boundaries retain native journal, adoption, activation and successor guards. Host source checks do not replace RunnerTests or physical CallKit audio proof. Existing conservative platform and signed-evidence selections remain."
     },
     {
       "id": "apns-incoming-call-evidence",

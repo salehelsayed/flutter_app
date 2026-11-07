@@ -93,6 +93,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   # VC2-05: iOS CallKit journal adoption/audio activation plus typed PushKit
   # token publication, rotation and refresh-epoch-scoped invalidation.
   "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart"
+  "test/features/call/infrastructure/ios_callkit_provider_registration_contract_test.dart"
   "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart"
   # Plan 400 (b): PushKit call wake channel.
   "test/features/call/infrastructure/ios_call_wake_channel_test.dart"
