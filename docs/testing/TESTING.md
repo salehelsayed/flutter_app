@@ -10816,6 +10816,32 @@ visible and cannot become an ordinary first-attempt PASS.
   and [summary](../../.codex-test-logs/audio-fixes-20261010/ios-test-summary.json).
   These prove native integration and ownership, not a locked physical-device
   call or audible interruption recovery.
+  **CallKit provider audio-session registration:** Apple documents that
+  callservicesd can retain an invalid app AudioSession ID after the audio system
+  changes; assigning the existing provider configuration before each new call
+  report re-registers the current ID without replacing its provider/delegate
+  ([Apple DTS guidance](https://developer.apple.com/forums/thread/783870?answerId=852684022),
+  [mechanism](https://developer.apple.com/forums/thread/837211)). The saved
+  iPhone 17 build130 capture contains `createProxySession` lookup failures for
+  SessionID0x0 and no app `didActivate` latch diagnostics (flutter_app evidence
+  `m-9092efe9`; redacted
+  `.codex-test-logs/ip17-call-20261107/codex_grep.txt`, SHA256
+  `f3aeae4585240f55b5857dfe73780bc1c079512ec8c658f52749a481d0fe4232`).
+  This supports the invalid-registration mechanism; the initial trigger and
+  candidate recovery still require runtime evidence. The host source-boundary
+  regression failed all three checks before refresh and passes all three after:
+  incoming reports (including required duplicate/busy reports), outgoing start
+  transaction order, and reassigning configuration on the same provider. These
+  source checks do not reproduce the OS failure. The existing native lifecycle
+  rig additionally models a session generation changing between calls and keeps
+  activation contingent on a real delegate callback; its new tests are pending
+  RunnerTests execution. Native compilation, signed-device calls, actual daemon
+  registration recovery and audible two-way media remain unverified by this
+  host run. Keep the existing activation/adoption guards and bounded failure;
+  no manual `setActive`, provider recreation or timeout extension is included.
+  Host RED/GREEN receipts are under
+  `.codex-test-logs/callkit-provider-registration-20261107/` in the
+  `codex-call-audio-activation-20261107T1918Z` worktree.
   A reconnect episode has its own local generation: timestamps and native ICE
   generation can remain unchanged across separate interruptions. Scope restart
   deduplication to that episode, and carry it through queued media readiness,

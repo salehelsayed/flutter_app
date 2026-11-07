@@ -38,6 +38,7 @@ internal struct MknoonCallAudioState: Equatable {
 }
 
 internal protocol MknoonCallProviding: AnyObject {
+  func refreshConfiguration()
   func setDelegate(_ delegate: CXProviderDelegate?, queue: DispatchQueue?)
   func reportNewIncomingCall(
     with UUID: UUID,
@@ -50,7 +51,15 @@ internal protocol MknoonCallProviding: AnyObject {
   func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?)
 }
 
-extension CXProvider: MknoonCallProviding {}
+extension CXProvider: MknoonCallProviding {
+  func refreshConfiguration() {
+    // Re-register the current AudioSession ID with callservicesd before a new
+    // call. Keep this provider/delegate and all existing call configuration.
+    // https://developer.apple.com/forums/thread/783870?answerId=852684022
+    let currentConfiguration = configuration
+    configuration = currentConfiguration
+  }
+}
 
 internal protocol MknoonCallTransactionRequesting: AnyObject {
   func request(_ transaction: CXTransaction, completion: @escaping @Sendable (Error?) -> Void)
@@ -853,6 +862,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         handle: CXHandle(type: .generic, value: callHandle)
       )
       action.isVideo = false
+      provider.refreshConfiguration()
       transactionRequester.request(CXTransaction(action: action)) { [weak self] error in
         guard let self else { completion(false); return }
         let succeeded: Bool = self.synchronized {
@@ -1594,6 +1604,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           + (reportRequired ? "pushkit" : "none")
       )
       guard reportRequired else { return }
+      provider.refreshConfiguration()
       provider.reportNewIncomingCall(with: payload.nativeCallId, update: update) {
         [weak self] error in
         pushCompletion?.reportCompleted {
@@ -1616,6 +1627,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       return
     }
 
+    provider.refreshConfiguration()
     provider.reportNewIncomingCall(with: payload.nativeCallId, update: update) {
       [weak self] error in
       guard let self else {
@@ -1701,6 +1713,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     let reportingProvider = provider
     let delivery = CoalescedPushReportCompletion(completion)
     delivery.resolve(result)
+    provider.refreshConfiguration()
     provider.reportNewIncomingCall(
       with: descriptor.nativeCallId,
       update: incomingUpdate(for: descriptor)
@@ -1727,6 +1740,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     failMatchingActiveDescriptor: Bool,
     completion: @escaping () -> Void
   ) {
+    provider.refreshConfiguration()
     provider.reportNewIncomingCall(with: callId, update: update) { [weak self] error in
       guard let self else {
         completion()
