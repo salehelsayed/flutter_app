@@ -433,6 +433,11 @@ var pushSentCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Push notifications attempted.",
 }, []string{"result"})
 
+var pushMissingRouteCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_push_missing_route_total",
+	Help: "Missing push routes by retained removal evidence and closed platform class; unknown includes unavailable or expired history.",
+}, []string{"reason", "platform"})
+
 var pushFallbackCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "relay_push_fallback_total",
 	Help: "Push routing fallbacks constructed by reason.",

@@ -273,7 +273,7 @@ func TestRelayNotificationClosure_ProviderWakeLogsOmitPrivateValues(t *testing.T
 		"[PUSH] outcome=unregistered":                                1,
 		"[PUSH] outcome=opaque_route_invalid":                        1,
 		"[PUSH] outcome=unsupported_platform":                        1,
-		"[PUSH] outcome=missing_route":                               2,
+		"[PUSH] outcome=missing_route missing_route_reason=%s":       2,
 		"[PUSH] provider unavailable outcome=provider_unavailable":   1,
 		"[PUSH] outcome=invalid_payload":                             1,
 		"[PUSH] outcome=success attempt=%d total_attempts=%d":        1,

@@ -1526,6 +1526,49 @@ func (b *redisPushTokenBackend) key(peerId string) string {
 	return b.prefix + "push:" + encodeRedisComponent(peerId)
 }
 
+func (b *redisPushTokenBackend) absenceKey(peerID string) string {
+	return b.prefix + "push-route-absence:" + encodeRedisComponent(peerID)
+}
+
+func (b *redisPushTokenBackend) ObserveMissingRoute(peerID string) missingPushRouteObservation {
+	values, err := b.client.MGet(context.Background(), b.key(peerID), b.directoryKey(peerID), b.absenceKey(peerID)).Result()
+	if err != nil || len(values) != 3 || values[0] != nil || values[1] != nil {
+		return missingPushRouteObservation{}.normalized()
+	}
+	raw, ok := values[2].(string)
+	if !ok {
+		return missingPushRouteObservation{}.normalized()
+	}
+	return decodeMissingPushRouteObservation(raw)
+}
+
+// MULTI does not roll back successful primary commands when only the optional
+// diagnostic command receives a server error. Preserve all uncertain/primary
+// failures, including WATCH, EXECABORT and connection failures.
+func pushRouteDiagnosticMutationResult(commands []redis.Cmder, diagnostic redis.Cmder, err error) error {
+	if err == nil {
+		return nil
+	}
+	var serverError redis.Error
+	if diagnostic == nil || !errors.Is(err, diagnostic.Err()) || !errors.As(err, &serverError) ||
+		redis.HasErrorPrefix(err, "EXECABORT") {
+		return err
+	}
+	primaryCount := 0
+	for _, command := range commands {
+		if command != diagnostic {
+			primaryCount++
+			if command.Err() != nil {
+				return err
+			}
+		}
+	}
+	if primaryCount == 0 {
+		return err
+	}
+	return nil
+}
+
 func (b *redisPushTokenBackend) allPattern() string {
 	return escapeRedisMatchLiteral(b.prefix+"push:") + "*"
 }
@@ -1828,14 +1871,16 @@ func (b *redisPushTokenBackend) registerLegacy(peerID string, payload []byte) er
 					return err
 				}
 			}
-			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+			var diagnostic redis.Cmder
+			commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 				pipe.Set(context.Background(), legacyKey, payload, 0)
 				if markerPayload != nil {
 					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
 				}
+				diagnostic = pipe.Del(context.Background(), b.absenceKey(peerID))
 				return nil
 			})
-			return err
+			return pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 		},
 	)
 	if err != nil {
@@ -1881,6 +1926,10 @@ func (b *redisPushTokenBackend) unregisterLegacy(peerID string) error {
 			if marker.State == pushTokenStateEncrypted {
 				return errPushTokenStateChanged
 			}
+			// This read supplies optional removal evidence only. A read/decode
+			// failure must not make a previously valid DEL fail.
+			payload, _ := optionalRedisBytes(tx, legacyKey)
+			entry, _ := decodeLegacyPushTokenRecord(payload)
 			var markerPayload []byte
 			if marker.State == pushTokenStateMigrating {
 				_, markerPayload, err = nextPushTokenMarkerRevision(marker)
@@ -1893,14 +1942,19 @@ func (b *redisPushTokenBackend) unregisterLegacy(peerID string) error {
 					return err
 				}
 			}
-			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+			var diagnostic redis.Cmder
+			commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 				pipe.Del(context.Background(), legacyKey)
 				if markerPayload != nil {
 					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
 				}
+				if payload != nil {
+					observation := missingPushRouteObservation{reason: pushMissingRouteUnregistered, platform: entry.Platform}
+					diagnostic = pipe.Set(context.Background(), b.absenceKey(peerID), observation.encode(), pushRouteAbsenceTTL)
+				}
 				return nil
 			})
-			return err
+			return pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 		},
 	)
 	if err != nil {
@@ -2381,15 +2435,17 @@ func (b *redisPushTokenBackend) registerEncrypted(
 						return errPushTokenRetrySnapshot
 					}
 				}
-				_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				var diagnostic redis.Cmder
+				commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 					pipe.Set(context.Background(), newVaultKey, vaultPayload, 0)
 					pipe.Set(context.Background(), directoryKey, directoryPayload, 0)
 					if currentVaultKey != "" && currentVaultKey != newVaultKey {
 						pipe.Del(context.Background(), currentVaultKey)
 					}
+					diagnostic = pipe.Del(context.Background(), b.absenceKey(peerID))
 					return nil
 				})
-				return err
+				return pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 			},
 		)
 		if errors.Is(err, errPushTokenRetrySnapshot) ||
@@ -2449,11 +2505,14 @@ func (b *redisPushTokenBackend) unregisterEncrypted(peerID string) error {
 						return err
 					}
 				}
-				_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				var diagnostic redis.Cmder
+				commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 					pipe.Del(context.Background(), directoryKey, vaultKey)
+					observation := missingPushRouteObservation{reason: pushMissingRouteUnregistered, platform: directory.Platform}
+					diagnostic = pipe.Set(context.Background(), b.absenceKey(peerID), observation.encode(), pushRouteAbsenceTTL)
 					return nil
 				})
-				return err
+				return pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 			},
 		)
 		if errors.Is(err, errPushTokenRetrySnapshot) || errors.Is(err, redis.TxFailedErr) {
@@ -2529,10 +2588,14 @@ func (b *redisPushTokenBackend) revokeEncrypted(route pushRouteLease) (bool, err
 			if actualVaultKey != vaultKey {
 				return nil
 			}
-			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+			var diagnostic redis.Cmder
+			commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 				pipe.Del(context.Background(), directoryKey, vaultKey)
+				observation := missingPushRouteObservation{reason: pushMissingRouteRevoked, platform: actual.Platform}
+				diagnostic = pipe.Set(context.Background(), b.absenceKey(peerID), observation.encode(), pushRouteAbsenceTTL)
 				return nil
 			})
+			err = pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 			if err == nil {
 				revoked = true
 			}
@@ -2563,7 +2626,8 @@ func (b *redisPushTokenBackend) revokeLegacy(route pushRouteLease) (bool, error)
 	if route.lookupKey == "" || route.legacyDigest == ([32]byte{}) {
 		return false, nil
 	}
-	if _, err := b.peerFromLegacyKey(route.lookupKey); err != nil {
+	peerID, peerErr := b.peerFromLegacyKey(route.lookupKey)
+	if peerErr != nil {
 		return false, nil
 	}
 	revoked := false
@@ -2586,6 +2650,7 @@ func (b *redisPushTokenBackend) revokeLegacy(route pushRouteLease) (bool, error)
 			if payload == nil || pushRouteLegacyDigestBytes(payload) != route.legacyDigest {
 				return nil
 			}
+			entry, _ := decodeLegacyPushTokenRecord(payload)
 			var markerPayload []byte
 			if marker.State == pushTokenStateMigrating {
 				_, markerPayload, err = nextPushTokenMarkerRevision(marker)
@@ -2598,13 +2663,17 @@ func (b *redisPushTokenBackend) revokeLegacy(route pushRouteLease) (bool, error)
 					return err
 				}
 			}
-			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+			var diagnostic redis.Cmder
+			commands, err := tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
 				pipe.Del(context.Background(), route.lookupKey)
 				if markerPayload != nil {
 					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
 				}
+				observation := missingPushRouteObservation{reason: pushMissingRouteRevoked, platform: entry.Platform}
+				diagnostic = pipe.Set(context.Background(), b.absenceKey(peerID), observation.encode(), pushRouteAbsenceTTL)
 				return nil
 			})
+			err = pushRouteDiagnosticMutationResult(commands, diagnostic, err)
 			if err == nil {
 				revoked = true
 			}

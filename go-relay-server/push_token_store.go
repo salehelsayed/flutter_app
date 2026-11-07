@@ -14,9 +14,12 @@ import (
 
 // memoryPushTokenStore is the default in-memory push token backend.
 type memoryPushTokenStore struct {
-	mu      sync.RWMutex
-	tokens  map[string]memoryPushTokenRecord // peerId -> private provider record
-	entropy io.Reader
+	mu       sync.RWMutex
+	tokens   map[string]memoryPushTokenRecord // peerId -> private provider record
+	entropy  io.Reader
+	absences map[string]memoryPushRouteAbsence
+	// Test-only marker clock; token UpdatedAt retains its existing clock.
+	absenceNow func() time.Time
 }
 
 type memoryPushTokenRecord struct {
@@ -25,10 +28,16 @@ type memoryPushTokenRecord struct {
 	generation uint64
 }
 
+type memoryPushRouteAbsence struct {
+	observation missingPushRouteObservation
+	expiresAt   time.Time
+}
+
 func newMemoryPushTokenStore() *memoryPushTokenStore {
 	return &memoryPushTokenStore{
-		tokens:  make(map[string]memoryPushTokenRecord),
-		entropy: rand.Reader,
+		tokens:   make(map[string]memoryPushTokenRecord),
+		entropy:  rand.Reader,
+		absences: make(map[string]memoryPushRouteAbsence),
 	}
 }
 
@@ -99,12 +108,19 @@ func (s *memoryPushTokenStore) registerToken(
 		handle:     handle,
 		generation: generation,
 	}
+	s.pruneAbsencesLocked()
+	delete(s.absences, peerId)
 	return nil
 }
 
 func (s *memoryPushTokenStore) UnregisterToken(peerId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if record, exists := s.tokens[peerId]; exists {
+		s.recordAbsenceLocked(peerId, pushMissingRouteUnregistered, record.entry.Platform)
+	} else {
+		s.pruneAbsencesLocked()
+	}
 	delete(s.tokens, peerId)
 	return nil
 }
@@ -153,7 +169,45 @@ func (s *memoryPushTokenStore) RevokeIfCurrent(route pushRouteLease) (bool, erro
 		return false, nil
 	}
 	delete(s.tokens, route.lookupKey)
+	s.recordAbsenceLocked(route.lookupKey, pushMissingRouteRevoked, record.entry.Platform)
 	return true, nil
+}
+
+func (s *memoryPushTokenStore) absenceTime() time.Time {
+	if s.absenceNow != nil {
+		return s.absenceNow()
+	}
+	return time.Now()
+}
+
+func (s *memoryPushTokenStore) pruneAbsencesLocked() {
+	now := s.absenceTime()
+	for peerID, marker := range s.absences {
+		if !now.Before(marker.expiresAt) {
+			delete(s.absences, peerID)
+		}
+	}
+}
+
+func (s *memoryPushTokenStore) recordAbsenceLocked(peerID string, reason pushMissingRouteReason, platform string) {
+	s.pruneAbsencesLocked()
+	if s.absences == nil {
+		s.absences = make(map[string]memoryPushRouteAbsence)
+	}
+	s.absences[peerID] = memoryPushRouteAbsence{
+		observation: (missingPushRouteObservation{reason: reason, platform: platform}).normalized(),
+		expiresAt:   s.absenceTime().Add(pushRouteAbsenceTTL),
+	}
+}
+
+func (s *memoryPushTokenStore) ObserveMissingRoute(peerID string) missingPushRouteObservation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneAbsencesLocked()
+	if _, exists := s.tokens[peerID]; exists {
+		return missingPushRouteObservation{}.normalized()
+	}
+	return s.absences[peerID].observation.normalized()
 }
 
 func (s *memoryPushTokenStore) TokenCount() int {

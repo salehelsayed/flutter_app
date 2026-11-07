@@ -989,14 +989,18 @@ func wakeOutcomeRequiredCapability(policy wakeOutcomeRoutePolicy) (string, bool)
 	}
 }
 
-func recordDirectMissingPushRoute() {
+func recordDirectMissingPushRoute(observation missingPushRouteObservation) {
+	observation = observation.normalized()
 	pushSentCounter.WithLabelValues("missing_token").Inc()
-	log.Printf("[PUSH] outcome=missing_route")
+	pushMissingRouteCounter.WithLabelValues(string(observation.reason), observation.platform).Inc()
+	log.Printf("[PUSH] outcome=missing_route missing_route_reason=%s", observation.reason)
 }
 
-func recordGroupMissingPushRoute() {
+func recordGroupMissingPushRoute(observation missingPushRouteObservation) {
+	observation = observation.normalized()
 	pushSentCounter.WithLabelValues("missing_token").Inc()
-	log.Printf("[PUSH] outcome=missing_route")
+	pushMissingRouteCounter.WithLabelValues(string(observation.reason), observation.platform).Inc()
+	log.Printf("[PUSH] outcome=missing_route missing_route_reason=%s", observation.reason)
 }
 
 func (ps *PushService) SendNotification(
@@ -1047,7 +1051,7 @@ func (ps *PushService) sendRichNotification(
 			return
 		}
 		if route == nil {
-			recordDirectMissingPushRoute()
+			recordDirectMissingPushRoute(ps.observeMissingRoute(toPeerID))
 			return
 		}
 	}
@@ -1176,7 +1180,7 @@ func (ps *PushService) SendGroupNotification(
 			return
 		}
 		if route == nil {
-			recordGroupMissingPushRoute()
+			recordGroupMissingPushRoute(ps.observeMissingRoute(toPeerId))
 			return
 		}
 	}
@@ -2758,6 +2762,7 @@ type wakeOutcomePreflightFallback struct {
 	kind     wakeOutcomePreflightFallbackKind
 	producer wakeOutcomeProducerKind
 	route    pushRouteLease
+	absence  missingPushRouteObservation
 }
 
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
@@ -2931,6 +2936,7 @@ func (is *InboxStore) preflightDirectWakeOutcome(
 	}
 	if route == nil {
 		fallback.kind = wakeOutcomePreflightNoRoute
+		fallback.absence = is.push.observeMissingRoute(toPeerID)
 		return fallback, wakeOutcomeAdmission{}, false
 	}
 	fallback.kind = wakeOutcomePreflightSelectedRoute
@@ -3261,7 +3267,7 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 		if producer == wakeOutcomeProducerDirectReaction {
 			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
 		} else {
-			recordDirectMissingPushRoute()
+			recordDirectMissingPushRoute(fallback.absence)
 		}
 	case wakeOutcomePreflightSelectedRoute:
 		route := copyPushRouteLease(fallback.route)
@@ -3748,6 +3754,7 @@ func (s *GroupInboxStore) groupWakeOutcomeAdmissions(
 		}
 		if route == nil {
 			fallback.kind = wakeOutcomePreflightNoRoute
+			fallback.absence = s.push.observeMissingRoute(recipientPeerID)
 			dispatches[recipientPeerID] = groupWakeOutcomeDispatch{preflight: fallback}
 			continue
 		}
@@ -4009,7 +4016,7 @@ func (s *GroupInboxStore) fanOutPush(
 				pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
 				continue
 			case wakeOutcomePreflightNoRoute:
-				recordGroupMissingPushRoute()
+				recordGroupMissingPushRoute(dispatch.preflight.absence)
 				continue
 			case wakeOutcomePreflightSelectedRoute:
 				go s.push.SendGroupNotification(

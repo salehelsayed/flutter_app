@@ -11383,6 +11383,36 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   receipt-time windows and detail limits. Finals still require schema validation;
   accepting the Go representation does not establish a missing start or duration.
 
+- **Relay missing-route removal evidence:** the two existing direct/group
+  provider records retain their `missing_route` outcome and add only a closed
+  `missing_route_reason`. Successful client removal and exact current-lease
+  provider revocation retain an anonymous reason/platform marker for 24 hours;
+  this TTL applies only to diagnostic history, not active push registration.
+  Unknown, expired, malformed, unavailable or unsupported history is `unknown`;
+  it cannot establish `never_registered` or another transport key. The marker
+  describes retained successful removal evidence while the route is absent,
+  not a complete history or proof of the earlier lookup's exact cause. New
+  deployment cannot retroactively classify the 41 historical missing-route
+  opportunities. The metric permits only three reasons and the classes
+  `ios|android|unknown`; platform and route/provider material stay out of logs.
+  The existing exact 40-site provider census and old `missing_token` accounting
+  remain intact. Deferred direct/group paths freeze the observation before
+  persistence, so later removal history cannot relabel that decision.
+  Memory and Redis tests cover expiry, backend recreation, re-registration,
+  stale revocation, repeated absent unregister, corrupt/unavailable history,
+  and active-registration preservation beyond the diagnostic TTL. Redis
+  metadata commands share the route mutation transaction, but an isolated
+  optional-command server error does not turn successful primary writes into
+  a failure; primary, WATCH, EXECABORT and uncertain network errors retain their
+  existing behavior. Best-effort metadata can be incomplete and is not a
+  guarantee of the latest mutation. The behavioral baseline fails all 18
+  reason/backend/direct-group cases; focused host verification passes 106 Go
+  test events with no failures/skips, including the exact 15 preservation
+  sentinels and privacy census. The first malformed-platform failure and
+  corrected checks remain under `.codex-test-logs/relay-missing-route-20261107/`
+  in the `codex-relay-missing-route-20261107T1950Z` worktree. These are local
+  host/fake-provider results, not deployed relay or phone delivery evidence.
+
 - **Queued relay diagnostic publication:** accepted contexts carry both actor
   privacy generation and exact admitted trace lifetime. Clear, participant erase,
   disable/re-enable, successful expiry and same-ID recreation must invalidate old
