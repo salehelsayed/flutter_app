@@ -347,6 +347,9 @@ class OrbitScreen extends StatefulWidget {
   final Stream<({String messageId, ThoughtReplyStatus status})>?
   depthReplyStatusChanges;
   final ValueChanged<String>? onThoughtTap;
+
+  /// A Thought video started playing straight from the 3D ring card.
+  final ValueChanged<String>? onThoughtVideoPlay;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
 
@@ -440,6 +443,7 @@ class OrbitScreen extends StatefulWidget {
     this.onDepthReply,
     this.depthReplyStatusChanges,
     this.onThoughtTap,
+    this.onThoughtVideoPlay,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
     this.onOpenSettings,
@@ -569,6 +573,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onDepthReply: widget.onDepthReply,
     depthReplyStatusChanges: widget.depthReplyStatusChanges,
     onThoughtTap: widget.onThoughtTap,
+    onThoughtVideoPlay: widget.onThoughtVideoPlay,
     onThoughtsExpired: widget.onThoughtsExpired,
     thoughtNowProvider: widget.thoughtNowProvider,
     onOpenSettings: widget.onOpenSettings,
@@ -668,6 +673,9 @@ class _OrbitScreenView extends StatelessWidget {
   final Stream<({String messageId, ThoughtReplyStatus status})>?
   depthReplyStatusChanges;
   final ValueChanged<String>? onThoughtTap;
+
+  /// A Thought video started playing straight from the 3D ring card.
+  final ValueChanged<String>? onThoughtVideoPlay;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
   final VoidCallback? onOpenSettings;
@@ -771,6 +779,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.onDepthReply,
     this.depthReplyStatusChanges,
     this.onThoughtTap,
+    this.onThoughtVideoPlay,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
     this.onOpenSettings,
@@ -1320,6 +1329,7 @@ class _OrbitScreenView extends StatelessWidget {
             nowProvider: thoughtNowProvider,
             onFriendTap: onFriendTap,
             onThoughtTap: onThoughtTap,
+            onThoughtVideoPlay: onThoughtVideoPlay,
             onOwnsHostGestureChanged: onDepthOwnsHostGestureChanged,
             onBackActionChanged: onDepthBackActionChanged,
             onThoughtDeparted: onDepthThoughtDeparted,

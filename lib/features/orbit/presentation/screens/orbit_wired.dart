@@ -1444,6 +1444,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
+    bool playVideoAtOnce = false,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1504,69 +1505,77 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       opened = true;
       final authorName =
           contact?.username ?? AppLocalizations.of(context)!.feed_you;
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ThoughtCardScreen(
-            initialPost: current,
-            authorName: authorName,
-            postRepo: repository,
-            loadCurrentThought: loadCurrent,
-            nowProvider: widget.thoughtNowProvider,
-            eligibilityChanges: _thoughtEligibilityChanges.stream,
-            downloadMedia: (attachment) => downloadPostMedia(
-              bridge: widget.bridge,
-              postRepo: repository,
-              mediaFileManager: widget.mediaFileManager,
-              attachment: attachment,
-            ),
-            replyChanges: widget.messageRepo is MessageRepositoryChangeSource
-                ? (widget.messageRepo as MessageRepositoryChangeSource)
-                      .messageChanges
-                : null,
-            retryPosting: isOwn ? widget.retryThoughtPosting : null,
-            onShown: isOwn
-                ? null
-                : (shownId) => publishThoughtView(
-                    postId: shownId,
-                    viewerPeerId: identity.peerId,
-                    postRepo: repository,
-                    contactRepo: widget.contactRepo,
-                    p2pService: widget.p2pService,
-                    bridge: widget.bridge,
-                    nowProvider: widget.thoughtNowProvider,
-                  ),
-            loadActivity: !isOwn
-                ? null
-                : (ownId) => loadThoughtActivity(
-                    postId: ownId,
-                    localPeerId: identity.peerId,
-                    postRepo: repository,
-                    messageRepo: widget.messageRepo,
-                    contactRepo: widget.contactRepo,
-                    nowProvider: widget.thoughtNowProvider,
-                  ),
-            onDelete: !isOwn
-                ? null
-                : (postId) async {
-                    final retraction = await retractThought(
-                      postRepo: repository,
-                      p2pService: widget.p2pService,
-                      mediaFileManager: widget.mediaFileManager,
-                      postId: postId,
-                      senderPeerId: identity.peerId,
-                      nowProvider: widget.thoughtNowProvider,
-                    );
-                    // Friends are told after the card has closed; anyone not
-                    // reached stays queued for the follow-on retrier.
-                    unawaited(
-                      retraction.delivery?.then(
-                        (_) {},
-                        onError: (Object error) => _reportThoughtFailure(error),
-                      ),
-                    );
-                  },
-          ),
+      Widget card(BuildContext _) => ThoughtCardScreen(
+        playVideoAtOnce: playVideoAtOnce,
+        initialPost: current,
+        authorName: authorName,
+        postRepo: repository,
+        loadCurrentThought: loadCurrent,
+        nowProvider: widget.thoughtNowProvider,
+        eligibilityChanges: _thoughtEligibilityChanges.stream,
+        downloadMedia: (attachment) => downloadPostMedia(
+          bridge: widget.bridge,
+          postRepo: repository,
+          mediaFileManager: widget.mediaFileManager,
+          attachment: attachment,
         ),
+        replyChanges: widget.messageRepo is MessageRepositoryChangeSource
+            ? (widget.messageRepo as MessageRepositoryChangeSource)
+                  .messageChanges
+            : null,
+        retryPosting: isOwn ? widget.retryThoughtPosting : null,
+        onShown: isOwn
+            ? null
+            : (shownId) => publishThoughtView(
+                postId: shownId,
+                viewerPeerId: identity.peerId,
+                postRepo: repository,
+                contactRepo: widget.contactRepo,
+                p2pService: widget.p2pService,
+                bridge: widget.bridge,
+                nowProvider: widget.thoughtNowProvider,
+              ),
+        loadActivity: !isOwn
+            ? null
+            : (ownId) => loadThoughtActivity(
+                postId: ownId,
+                localPeerId: identity.peerId,
+                postRepo: repository,
+                messageRepo: widget.messageRepo,
+                contactRepo: widget.contactRepo,
+                nowProvider: widget.thoughtNowProvider,
+              ),
+        onDelete: !isOwn
+            ? null
+            : (postId) async {
+                final retraction = await retractThought(
+                  postRepo: repository,
+                  p2pService: widget.p2pService,
+                  mediaFileManager: widget.mediaFileManager,
+                  postId: postId,
+                  senderPeerId: identity.peerId,
+                  nowProvider: widget.thoughtNowProvider,
+                );
+                // Friends are told after the card has closed; anyone not
+                // reached stays queued for the follow-on retrier.
+                unawaited(
+                  retraction.delivery?.then(
+                    (_) {},
+                    onError: (Object error) => _reportThoughtFailure(error),
+                  ),
+                );
+              },
+      );
+      // Played from the ring, the card stays blank and only carries the
+      // video, so it neither slides in nor out.
+      await Navigator.of(context).push<void>(
+        playVideoAtOnce
+            ? PageRouteBuilder<void>(
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                pageBuilder: (context, _, _) => card(context),
+              )
+            : MaterialPageRoute<void>(builder: card),
       );
     } catch (error) {
       if (mounted) _reportThoughtFailure(error);
@@ -4289,6 +4298,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onThoughtVideoPlay: (postId) =>
+          unawaited(_openThought(postId, playVideoAtOnce: true)),
       onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
       depthReplyStatusChanges: _depthReplyStatuses,
       onComposeThought: _thoughtPosts == null || _identity == null

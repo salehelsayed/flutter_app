@@ -68,6 +68,7 @@ class ThoughtCardScreen extends StatefulWidget {
     this.loadActivity,
     this.eligibilityChanges,
     this.nowProvider,
+    this.playVideoAtOnce = false,
   });
 
   final PostModel initialPost;
@@ -91,6 +92,10 @@ class ThoughtCardScreen extends StatefulWidget {
   final Stream<void>? eligibilityChanges;
   final DateTime Function()? nowProvider;
 
+  /// The card stays blank, opens its video in the viewer at once and closes
+  /// with it, so deletion and expiry still close the viewer through the card.
+  final bool playVideoAtOnce;
+
   @override
   State<ThoughtCardScreen> createState() => _ThoughtCardScreenState();
 }
@@ -98,6 +103,7 @@ class ThoughtCardScreen extends StatefulWidget {
 class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     with WidgetsBindingObserver {
   late PostModel _post;
+  bool _videoStarted = false;
   List<PostMediaAttachmentModel> _media = const [];
   StreamSubscription<String>? _postSubscription;
   StreamSubscription<void>? _eligibilitySubscription;
@@ -381,6 +387,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         _mediaLoading = false;
       });
       _markWhenShown();
+      _playVideoOnce();
       for (final attachment in media) {
         final localPath = attachment.localPath;
         final isLocal =
@@ -470,6 +477,17 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           navigator.removeRoute(route);
         }
       }
+    });
+  }
+
+  void _playVideoOnce() {
+    if (!widget.playVideoAtOnce || _videoStarted) return;
+    _videoStarted = true;
+    // After the frame's seen marking, which needs this card on top.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _closing) return;
+      await _openMedia(0);
+      _close();
     });
   }
 
@@ -571,7 +589,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       key: const ValueKey('thought-card-screen'),
       backgroundColor: Colors.black,
       resizeToAvoidBottomInset: true,
-      body: _closing
+      body: _closing || widget.playVideoAtOnce
           ? const SizedBox.shrink()
           : _loadFailed
           ? _failure(l10n)

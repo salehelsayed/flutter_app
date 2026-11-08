@@ -53,6 +53,7 @@ void main() {
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
     download, {
     VoidCallback? open,
+    VoidCallback? play,
     double? height,
   }) async {
     await tester.pumpWidget(
@@ -68,6 +69,7 @@ void main() {
               load: load,
               download: download,
               onOpen: open ?? () {},
+              onPlayVideo: play,
             ),
           ),
         ),
@@ -365,6 +367,45 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('a downloaded video plays at once, not via the thought', (
+    tester,
+  ) async {
+    final file = File('${temp.path}/clip.mp4')..writeAsBytesSync([0, 1, 2, 3]);
+    final item = attachment('video', file.path);
+    var opens = 0;
+    var plays = 0;
+    await mount(
+      tester,
+      (_) async => [item],
+      (item) async => item,
+      open: () => opens++,
+      play: () => plays++,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('orbit-depth-photo-frame')));
+    await tester.pump();
+
+    expect((opens, plays), (0, 1));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a video not downloaded yet never plays at once', (tester) async {
+    final item = attachment('video', null);
+    var plays = 0;
+    await mount(
+      tester,
+      (_) async => [item],
+      (item) async => item,
+      play: () => plays++,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('orbit-depth-photo-frame')));
+    await tester.pump();
+
+    expect(plays, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('dispose fences pending load before any download is started', (
     tester,
   ) async {
