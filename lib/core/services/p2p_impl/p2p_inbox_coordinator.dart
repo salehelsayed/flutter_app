@@ -1534,7 +1534,8 @@ class _P2PInboxCoordinator {
         );
         return true;
       case RecoveredInboxChatDisposition.retryable:
-        if (entry.attemptCount >= maxInboxReplayAttempts) {
+        if (entry.messageType != 'post_create' &&
+            entry.attemptCount >= maxInboxReplayAttempts) {
           await _quarantineRecoveredInboxEntry(
             repo: repo,
             entry: entry,

@@ -5944,7 +5944,7 @@ visible and cannot become an ordinary first-attempt PASS.
   Partial media-row saves must be completed on duplicate replay; matching saved
   keys stay intact. Missing listener/key/bridge prerequisites retain custody.
   Media downloads do not delay the durable outcome. Both original reconnect
-  cases pass unchanged, and seven cases in `p2p_service_thought_replay_test.dart`
+  cases pass unchanged, and ten cases in `p2p_service_thought_replay_test.dart`
   cover media-row gating/retry, missing listener/key/bridge, permanent decrypt
   rejection, failed ACK/duplicate handling, and exact-envelope terminal ACK
   recovery. These use fake transport/crypto and in-memory repositories; OS
@@ -5954,6 +5954,16 @@ visible and cannot become an ordinary first-attempt PASS.
   GREEN receipts and full affected-selection results belong under
   `.codex-test-logs/thought-poor-connection-green-20261107/`. Initial new-fixture
   compile and media-kind errors are retained alongside their corrected runs.
+  The three beyond-cap recovery cases first failed after prolonged missing-key,
+  bridge and storage failures: restoring the prerequisite still left the post
+  absent because the shared attempt cap had quarantined its staging row.
+  Retryable `post_create` outcomes now retain custody beyond that cap and can
+  commit and ACK on a later drain. The existing non-Thought attempt-cap controls
+  still quarantine as before; no new retry timing or backoff is introduced.
+  All 14 focused Thought and non-Thought cap controls pass, including the
+  unchanged original reconnect cases. Preserve the three initial failures and
+  the passing follow-up under `.codex-test-logs/thought-retry-cap-20261108/`;
+  these remain host fake proofs, not process-restart or signed-device evidence.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
