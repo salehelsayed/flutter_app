@@ -134,13 +134,16 @@ class _MediaRepository extends InMemoryPostRepository {
   Completer<void>? releaseSecondRow;
   bool failSecondRowOnce = false;
   bool failPostWrites = false;
+  final failingPostIds = <String>{};
   final rowWrites = <String, int>{};
   int postWrites = 0;
 
   @override
   Future<void> savePost(PostModel post) async {
     postWrites++;
-    if (failPostWrites) throw StateError('synthetic post write failure');
+    if (failPostWrites || failingPostIds.contains(post.id)) {
+      throw StateError('synthetic post write failure');
+    }
     await super.savePost(post);
   }
 
@@ -436,91 +439,115 @@ void main() {
     },
   );
 
-  test(
-    'Thought without a listener releases custody at readable authored expiry',
-    () async {
-      final f = _Fixture()
-        ..now = _now.add(const Duration(hours: 24, seconds: -1));
-      await withClock(Clock(() => f.now), () async {
-        await f.start(withListener: false);
-        try {
-          await f.service.drainOfflineInbox();
-          expect(f.staging.entry(_entryId)?.status, 'retryable');
-          expect(f.bridge.ackCalls, 0);
+  for (final authoredOffset in [
+    const Duration(days: -2),
+    const Duration(days: 3),
+  ]) {
+    test(
+      'Thought readable ${authoredOffset.isNegative ? 'past' : 'future'} expiry uses local staged lifetime',
+      () async {
+        final f = _Fixture();
+        f.bridge.wire = _wire(authoredAt: _now.add(authoredOffset));
+        await withClock(Clock(() => f.now), () async {
+          await f.start(withListener: false);
+          try {
+            await f.service.drainOfflineInbox();
+            expect(f.staging.entry(_entryId)?.status, 'retryable');
+            expect(f.bridge.ackCalls, 0);
 
-          f.now = _now.add(const Duration(hours: 24));
-          await f.service.drainOfflineInbox();
-          expect(f.bridge.ackCalls, 1);
-          expect(f.bridge.hasCopy, isFalse);
-          expect(f.staging.entry(_entryId), isNull);
-          expect(f.posts.postWrites, 0);
-        } finally {
-          await f.dispose();
-        }
-      });
-    },
-  );
+            final stagedAt = DateTime.parse(
+              f.staging.entry(_entryId)!.stagedAt,
+            );
+            f.now = stagedAt.add(const Duration(hours: 24, seconds: -1));
+            await f.service.drainOfflineInbox();
+            expect(f.staging.entry(_entryId)?.status, 'retryable');
+            expect(f.bridge.ackCalls, 0);
 
-  test(
-    'Thought expired oldest batch releases the later healthy staged row',
-    () async {
-      final f = _Fixture()
-        ..secret = null
-        ..now = _now.add(const Duration(hours: 24, seconds: -1));
-      f.bridge.hasCopy = false;
-      await withClock(Clock(() => f.now), () async {
-        await f.start();
-        try {
-          for (var i = 0; i < 500; i++) {
+            f.now = stagedAt.add(const Duration(hours: 24));
+            await f.service.drainOfflineInbox();
+            expect(f.bridge.ackCalls, 1);
+            expect(f.bridge.hasCopy, isFalse);
+            expect(f.staging.entry(_entryId), isNull);
+            expect(f.posts.postWrites, 0);
+          } finally {
+            await f.dispose();
+          }
+        });
+      },
+    );
+  }
+
+  for (final readableFutureExpiry in [false, true]) {
+    test(
+      'Thought expired oldest ${readableFutureExpiry ? 'readable future' : 'encrypted'} batch releases the later healthy staged row',
+      () async {
+        final f = _Fixture()
+          ..secret = null
+          ..now = _now.add(const Duration(hours: 24, seconds: -1));
+        f.bridge.hasCopy = false;
+        await withClock(Clock(() => f.now), () async {
+          await f.start();
+          try {
+            for (var i = 0; i < 500; i++) {
+              if (readableFutureExpiry) {
+                f.posts.failingPostIds.add('expired-post-$i');
+              }
+              f.staging.seed(
+                InboxStagingEntry(
+                  entryId: 'expired-entry-$i',
+                  ownerPeerId: 'synthetic-self',
+                  senderPeerId: _author,
+                  messageType: 'post_create',
+                  relayTimestamp: _now
+                      .add(Duration(milliseconds: i))
+                      .toIso8601String(),
+                  envelope: _wire(
+                    encrypted: !readableFutureExpiry,
+                    authoredAt: readableFutureExpiry
+                        ? _now.add(const Duration(days: 3))
+                        : null,
+                  ).replaceAll(_postId, 'expired-post-$i'),
+                  stagedAt: _now.toIso8601String(),
+                  status: 'retryable',
+                  attemptCount: 12,
+                  rejectReasonCode: readableFutureExpiry
+                      ? 'post_processing_failed'
+                      : 'crypto_unavailable',
+                ),
+              );
+            }
             f.staging.seed(
               InboxStagingEntry(
-                entryId: 'expired-entry-$i',
+                entryId: _entryId,
                 ownerPeerId: 'synthetic-self',
                 senderPeerId: _author,
                 messageType: 'post_create',
-                relayTimestamp: _now
-                    .add(Duration(milliseconds: i))
-                    .toIso8601String(),
-                envelope: _wire(
-                  encrypted: true,
-                ).replaceAll(_postId, 'expired-post-$i'),
-                stagedAt: _now.toIso8601String(),
-                status: 'retryable',
-                attemptCount: 12,
-                rejectReasonCode: 'crypto_unavailable',
+                relayTimestamp: f.now.toIso8601String(),
+                envelope: _wire(authoredAt: f.now),
+                stagedAt: f.now.toIso8601String(),
               ),
             );
-          }
-          f.staging.seed(
-            InboxStagingEntry(
-              entryId: _entryId,
-              ownerPeerId: 'synthetic-self',
-              senderPeerId: _author,
-              messageType: 'post_create',
-              relayTimestamp: f.now.toIso8601String(),
-              envelope: _wire(authoredAt: f.now),
-              stagedAt: f.now.toIso8601String(),
-            ),
-          );
-          await f.service.drainOfflineInbox();
-          expect(await f.posts.getPost(_postId), isNull);
-          expect(f.staging.entry('expired-entry-0')?.status, 'retryable');
+            await f.service.drainOfflineInbox();
+            expect(await f.posts.getPost(_postId), isNull);
+            expect(f.staging.entry('expired-entry-0')?.status, 'retryable');
 
-          f.now = _now.add(const Duration(hours: 24));
-          await f.service.drainOfflineInbox();
-          await f.service.drainOfflineInbox();
-          expect(await f.posts.getPost(_postId), isNotNull);
-          expect(f.posts.postWrites, 1);
-          expect(await f.staging.getRecoverableEntries(), isEmpty);
-          for (var i = 0; i < 500; i++) {
-            expect(f.staging.entry('expired-entry-$i')?.status, 'rejected');
+            f.now = _now.add(const Duration(hours: 24));
+            await f.service.drainOfflineInbox();
+            await f.service.drainOfflineInbox();
+            expect(await f.posts.getPost(_postId), isNotNull);
+            if (!readableFutureExpiry) expect(f.posts.postWrites, 1);
+            expect(await f.staging.getRecoverableEntries(), isEmpty);
+            for (var i = 0; i < 500; i++) {
+              expect(f.staging.entry('expired-entry-$i')?.status, 'rejected');
+              expect(await f.posts.getPost('expired-post-$i'), isNull);
+            }
+          } finally {
+            await f.dispose();
           }
-        } finally {
-          await f.dispose();
-        }
-      });
-    },
-  );
+        });
+      },
+    );
+  }
 
   test('Thought permanent decrypt rejection releases relay custody', () async {
     final f = _Fixture(encrypted: true);
