@@ -1406,6 +1406,27 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(restored.store.snapshot()?.nativeCallId, callB)
   }
 
+  // MARK: - Media audio session release
+
+  func testMediaReleaseDeactivatesWhenNoCallExists() {
+    let rig = makeRig()
+    XCTAssertTrue(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 1)
+  }
+
+  func testMediaReleaseLeavesAnotherAppsCallItsSession() {
+    let rig = makeRig(liveCallIds: { [self.callB] })
+    XCTAssertFalse(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 0)
+  }
+
+  func testMediaReleaseLeavesAPresentedMknoonCallItsSession() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertFalse(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 0)
+  }
+
   private func makeRig(
     backend: MemoryPendingCallBackend = MemoryPendingCallBackend(),
     nowMs: Int64? = nil,
@@ -1437,7 +1458,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       notificationCenter: notificationCenter,
       ringback: ringback,
       webRTCAudioSession: webRTCAudioSession,
-      isCallKitCallLive: { liveCallIds().contains($0) }
+      isCallKitCallLive: { liveCallIds().contains($0) },
+      isAnyCallKitCallLive: { !liveCallIds().isEmpty }
     )
     return CallKitRig(
       controller: controller,
@@ -1975,6 +1997,8 @@ final class FakeCallAudio: MknoonCallAudioManaging {
     if let prepareError { throw prepareError }
   }
   func releaseAfterCallKitDeactivation() { releaseCount += 1 }
+  var mediaDeactivationCount = 0
+  func deactivateForMedia() throws { mediaDeactivationCount += 1 }
   func routeState() -> (route: String, available: [String]) { state }
   func requestRoute(_ route: String) -> Bool {
     guard state.available.contains(route) else { return false }

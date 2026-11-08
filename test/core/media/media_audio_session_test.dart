@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -57,6 +58,33 @@ void main() {
     callLive = false;
     await MediaAudioSession.release();
     expect(platformCalls, ['getConfiguration', 'setConfiguration']);
+  });
+
+  test('on iOS only the native call layer may hand the session back', () async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final platformCalls = <String>[];
+    for (final name in [
+      'mknoon/ios_call_lifecycle',
+      'com.ryanheise.audio_session',
+      'com.ryanheise.av_audio_session',
+    ]) {
+      final channel = MethodChannel(name);
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        platformCalls.add('$name ${call.method}');
+        return true;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    }
+    MediaAudioSession.debugDeactivate = null;
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    await MediaAudioSession.release();
+
+    expect(platformCalls, [
+      'mknoon/ios_call_lifecycle releaseMediaAudioSessionIfIdle',
+    ]);
   });
 
   test('a refused hand-back is logged, never thrown', () async {
