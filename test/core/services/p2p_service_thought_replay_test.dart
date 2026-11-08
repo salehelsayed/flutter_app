@@ -126,12 +126,14 @@ class _MediaRepository extends InMemoryPostRepository {
   final secondRowStarted = Completer<void>();
   Completer<void>? releaseSecondRow;
   bool failSecondRowOnce = false;
+  bool failPostWrites = false;
   final rowWrites = <String, int>{};
   int postWrites = 0;
 
   @override
   Future<void> savePost(PostModel post) async {
     postWrites++;
+    if (failPostWrites) throw StateError('synthetic post write failure');
     await super.savePost(post);
   }
 
@@ -349,6 +351,47 @@ void main() {
       }
     },
   );
+
+  for (final prerequisite in ['local key', 'bridge', 'post storage']) {
+    test(
+      'Thought recovers after more than 10 failed $prerequisite attempts',
+      () async {
+        final f = _Fixture(encrypted: true);
+        await f.start();
+        try {
+          if (prerequisite == 'local key') {
+            f.secret = null;
+          } else if (prerequisite == 'bridge') {
+            f.bridge.responses['message.decrypt'] = {
+              'ok': false,
+              'errorCode': 'BRIDGE_UNAVAILABLE',
+            };
+          } else {
+            f.posts.failPostWrites = true;
+          }
+          for (var attempt = 0; attempt < 12; attempt++) {
+            await f.service.drainOfflineInbox();
+          }
+          expect(await f.posts.getPost(_postId), isNull);
+          expect(f.staging.entry(_entryId), isNotNull);
+          expect(f.bridge.hasCopy, isTrue);
+          expect(f.bridge.ackCalls, 0);
+
+          f.secret = 'synthetic-secret';
+          f.bridge.responses.remove('message.decrypt');
+          f.posts.failPostWrites = false;
+          await f.service.drainOfflineInbox();
+
+          expect(await f.posts.getPost(_postId), isNotNull);
+          expect(f.bridge.ackCalls, 1);
+          expect(f.bridge.hasCopy, isFalse);
+          expect(f.staging.entry(_entryId), isNull);
+        } finally {
+          await f.dispose();
+        }
+      },
+    );
+  }
 
   test('Thought permanent decrypt rejection releases relay custody', () async {
     final f = _Fixture(encrypted: true);
