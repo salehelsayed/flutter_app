@@ -285,7 +285,7 @@ class _GatedThoughtRepository extends InMemoryPostRepository {
 }
 
 Future<void> _exerciseThoughtReconnect({required bool failFirstWrite}) async {
-  final now = DateTime.utc(2026, 11, 7, 12);
+  final now = DateTime.now().toUtc();
   const postId = 'synthetic-reconnect-thought';
   const sender = 'synthetic-thought-author';
   const entryId = 'synthetic-thought-entry';

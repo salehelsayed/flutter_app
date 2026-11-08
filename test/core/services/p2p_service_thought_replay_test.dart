@@ -409,12 +409,13 @@ void main() {
         await f.start();
         try {
           await f.service.drainOfflineInbox();
-          f.now = _now.add(const Duration(hours: 24, seconds: -1));
+          final stagedAt = DateTime.parse(f.staging.entry(_entryId)!.stagedAt);
+          f.now = stagedAt.add(const Duration(hours: 24, seconds: -1));
           await f.service.drainOfflineInbox();
           expect(f.staging.entry(_entryId)?.status, 'retryable');
           expect(f.bridge.ackCalls, 0);
 
-          f.now = _now.add(const Duration(hours: 24));
+          f.now = stagedAt.add(const Duration(hours: 24));
           f.bridge.failAck = true;
           await f.service.drainOfflineInbox();
           expect(f.staging.entry(_entryId)?.status, 'rejected');
