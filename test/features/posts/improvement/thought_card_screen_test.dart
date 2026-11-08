@@ -84,6 +84,7 @@ void main() {
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
+    bool playVideoAtOnce = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -115,6 +116,7 @@ void main() {
                 (_) async => throw StateError('Unexpected media download'),
             eligibilityChanges: eligibility.stream,
             nowProvider: () => now,
+            playVideoAtOnce: playVideoAtOnce,
           ),
         ),
       ),
@@ -1181,6 +1183,86 @@ void main() {
     );
     expect(paragraph.textDirection, TextDirection.rtl);
     await finish(tester);
+  });
+
+  group('a video played at once from the ring', () {
+    Future<PostModel> videoThought({Duration? lifetime}) async {
+      final video = _tempFile('ring.mp4');
+      final thought = _thought(initialNow).copyWith(
+        text: 'card caption',
+        mediaKind: 'video',
+        expiresAt: lifetime == null
+            ? null
+            : initialNow.add(lifetime).toIso8601String(),
+      );
+      await posts.savePost(thought);
+      await posts.savePostMediaAttachment(
+        _attachment(
+          'video',
+        ).copyWith(localPath: video.path, downloadStatus: 'done'),
+      );
+      return thought;
+    }
+
+    final viewer = find.byType(FullScreenTypedMediaViewer, skipOffstage: false);
+    final card = find.byType(ThoughtCardScreen, skipOffstage: false);
+
+    testWidgets('opens the player with the card never shown', (tester) async {
+      final thought = await videoThought();
+      final shown = <String>[];
+      await openCard(
+        tester,
+        thought,
+        playVideoAtOnce: true,
+        onShown: (id) async => shown.add(id),
+      );
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsOneWidget);
+      expect(find.text('card caption', skipOffstage: false), findsNothing);
+      expect(shown, [thought.id]);
+
+      navigator.currentState!.pop();
+      await pumpMediaFrames(tester);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      expect(shown, [thought.id]);
+      await finish(tester);
+    });
+
+    testWidgets('deleting the thought closes the player', (tester) async {
+      final thought = await videoThought();
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsOneWidget);
+
+      await posts.deletePostCascade(thought.id);
+      await pumpMediaFrames(tester);
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('expiry closes the player', (tester) async {
+      final thought = await videoThought(lifetime: const Duration(seconds: 10));
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsOneWidget);
+
+      now = initialNow.add(const Duration(seconds: 10));
+      await tester.pump(const Duration(seconds: 10));
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      await finish(tester);
+    });
   });
 
   testWidgets('expiry closes its owned media viewer and the card together', (

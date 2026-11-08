@@ -9,8 +9,6 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_medi
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
-import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
-import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -55,6 +53,7 @@ void main() {
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
     download, {
     VoidCallback? open,
+    VoidCallback? play,
     double? height,
   }) async {
     await tester.pumpWidget(
@@ -70,6 +69,7 @@ void main() {
               load: load,
               download: download,
               onOpen: open ?? () {},
+              onPlayVideo: play,
             ),
           ),
         ),
@@ -139,8 +139,7 @@ void main() {
           expect(grid.media.single.mediaType, kind);
           await tester.tap(find.byType(MediaGrid));
           await tester.pump();
-          // A video plays full screen in place of opening the thought.
-          expect(opens, kind == 'video' ? 0 : 1);
+          expect(opens, 1);
         }
         expect(downloads, 0);
         await tester.pump(const Duration(seconds: 1));
@@ -368,41 +367,42 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
-  testWidgets('a downloaded video plays full screen at once, not via the '
-      'thought', (tester) async {
+  testWidgets('a downloaded video plays at once, not via the thought', (
+    tester,
+  ) async {
     final file = File('${temp.path}/clip.mp4')..writeAsBytesSync([0, 1, 2, 3]);
     final item = attachment('video', file.path);
     var opens = 0;
+    var plays = 0;
     await mount(
       tester,
       (_) async => [item],
       (item) async => item,
       open: () => opens++,
+      play: () => plays++,
     );
 
     await tester.tap(find.byKey(const ValueKey('orbit-depth-photo-frame')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
 
-    expect(opens, 0);
-    final viewer = tester.widget<FullScreenTypedMediaViewer>(
-      find.byType(FullScreenTypedMediaViewer),
-    );
-    expect(viewer.items.single.kind, MediaViewerKind.video);
-    expect(viewer.items.single.localPath, file.path);
+    expect((opens, plays), (0, 1));
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('a video not downloaded yet never opens the player', (
-    tester,
-  ) async {
+  testWidgets('a video not downloaded yet never plays at once', (tester) async {
     final item = attachment('video', null);
-    await mount(tester, (_) async => [item], (item) async => item);
+    var plays = 0;
+    await mount(
+      tester,
+      (_) async => [item],
+      (item) async => item,
+      play: () => plays++,
+    );
 
     await tester.tap(find.byKey(const ValueKey('orbit-depth-photo-frame')));
     await tester.pump();
 
-    expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+    expect(plays, 0);
     await tester.pumpWidget(const SizedBox());
   });
 
