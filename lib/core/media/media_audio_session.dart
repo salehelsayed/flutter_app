@@ -1,6 +1,6 @@
-import 'dart:io';
-
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// Hands the shared iOS audio session back when a voice note stops playing
@@ -11,6 +11,8 @@ abstract final class MediaAudioSession {
   static bool Function() callOwnsSession = noCall;
 
   static bool noCall() => false;
+
+  static const _iosCallLifecycle = MethodChannel('mknoon/ios_call_lifecycle');
 
   /// Test seam replacing the platform deactivation.
   static Future<void> Function()? debugDeactivate;
@@ -23,12 +25,11 @@ abstract final class MediaAudioSession {
         await deactivate();
         return;
       }
-      if (Platform.isIOS) {
-        // No await between the call check and this send, so a call starting
-        // now cannot lose its session.
-        await AVAudioSession().setActive(
-          false,
-          avOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        // CallKit can activate a call before Dart hears of it, so the native
+        // call layer makes the decision and the deactivation under one lock.
+        await _iosCallLifecycle.invokeMethod<bool>(
+          'releaseMediaAudioSessionIfIdle',
         );
         return;
       }
