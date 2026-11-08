@@ -1,0 +1,86 @@
+Relay 1.11.4 deployment receipt — 2026-11-08
+Task m-7d3e8017; owner-approved Hetzner then AWS; final result: BOTH HOST DEPLOYS PASS.
+Binary source: 2f4d3a01cf18b803e54aa171eada1f7dd7454966
+Binary SHA256: b81b1af2a81f2a61a7aa6711743605c100811f2fa9d6b67ec6278962c715e79f
+Binary bytes: 52,988,009; Linux amd64; exact existing approved artifact, not rebuilt.
+
+Parity: f70b4ea84 -> 2f4d3a01c retains every pre-existing relay production change.
+One extra pre-existing test helper accepted by Kayan m-1fba461b after go list -deps . exited0 with812 dependencies and zero testutil/circuitrelay matches.
+
+Hetzner: PASS
+Restart requested UTC: 2026-11-08T11:01:19.004370+00:00
+Restart completed UTC: 2026-11-08T11:01:19.059880+00:00
+Live AND current-process SHA256: b81b1af2a81f2a61a7aa6711743605c100811f2fa9d6b67ec6278962c715e79f
+Backup: /usr/local/bin/relay-server.pre-1.11.4-20261108T110118Z
+Version banner1.11.4; backend=redis durable=true; relay_backend_durable1; Thoughts snapshot healthy1.
+Samples (target seconds / observed seconds / NRestarts): 12/12.122/0, 52/52.119/0, 92/92.133/0
+Ready/metrics verified at observed 92.24s, within120s; active state alone was not used as readiness proof.
+Protected configuration byte hashes: identical before/after.
+Environment files: /etc/mknoon/relay-server.env
+Real client: secured libp2p QUIC connection with strict host identity PASS, 114ms.
+relay_thought_posters_weekly_estimated{week="2026-W44"}: 9 -> 9
+relay_thought_posters_weekly_estimated{week="2026-W45"}: 5 -> 5
+relay_thought_returning_posters_weekly_estimated{week="2026-W44"}: 0 -> 0
+relay_thought_returning_posters_weekly_estimated{week="2026-W45"}: 2 -> 2
+relay_thoughts_weekly_estimated{week="2026-W44"}: 17 -> 17
+relay_thoughts_weekly_estimated{week="2026-W45"}: 54 -> 54
+
+AWS: PASS
+Restart requested UTC: 2026-11-08T11:15:15.108784+00:00
+Restart completed UTC: 2026-11-08T11:15:15.195497+00:00
+Live AND current-process SHA256: b81b1af2a81f2a61a7aa6711743605c100811f2fa9d6b67ec6278962c715e79f
+Backup: /usr/local/bin/relay-server.pre-1.11.4-20261108T111514Z
+Version banner1.11.4; backend=redis durable=true; relay_backend_durable1; Thoughts snapshot healthy1.
+Samples (target seconds / observed seconds / NRestarts): 12/12.53/0, 52/52.31/0, 92/92.457/0
+Ready/metrics verified at observed 92.766s, within120s; active state alone was not used as readiness proof.
+Protected configuration byte hashes: identical before/after.
+Environment files: /etc/mknoon/relay-ipv6.env, /etc/mknoon/relay-server.env
+Real client: secured libp2p QUIC connection with strict host identity PASS, 87ms.
+relay_thought_posters_weekly_estimated{week="2026-W44"}: 14 -> 14
+relay_thought_posters_weekly_estimated{week="2026-W45"}: 11 -> 11
+relay_thought_returning_posters_weekly_estimated{week="2026-W44"}: 0 -> 0
+relay_thought_returning_posters_weekly_estimated{week="2026-W45"}: 7 -> 7
+relay_thoughts_weekly_estimated{week="2026-W44"}: 27 -> 27
+relay_thoughts_weekly_estimated{week="2026-W45"}: 32 -> 32
+
+Failed attempts retained:
+- First Hetzner restart10:57:40Z was rolled back at the premature t+12 metrics check.
+  Old verified d81f6f59 backup was reinstalled and restarted10:57:52Z; startup ready10:58:18Z, NR0, durable1, unchanged Thoughts/config and strict client PASS188ms.
+  This was a check-timing error, not proof of a relay defect. Kayan m-ff3d790f authorized one corrected retry; it passed above.
+- First strict Hetzner baseline dial used the AWS identity and correctly failed; actual Hetzner identity was independently confirmed from current-PID startup journal before the successful baseline/retry.
+- First AWS SSH attempt timed out; no remote command or AWS change occurred. Owner later repaired access; Kayan m-4261def9 authorized retry and fresh flutter clearance m-29f4d6b4 preceded it.
+- First local workflow:329pass/1failure/0skip, provider-schema5pass. Fresh checkout lacked its package config; offline enforce-lockfile pub get exited0, then the exact failed fake-boundary orchestration fixture passed1/1 in28.612s.
+  Full workflow diagnostic then passed330/330 with0fail/0skip (166.326s test time). Original failed run remains unchanged.
+
+Local validation:
+bash -n docker-ws/deploy_relay_v1.11.4.sh: PASS; embedded Python ast.parse: PASS.
+python3 scripts/mknoon_checks.py validate: PASS.
+python3 scripts/mknoon_checks.py plan --mode change --base 2f4d3a01cf18b803e54aa171eada1f7dd7454966 --local selected35checks with unmapped operational file impact.
+Original --only workflow,provider-schema wrapper exit1; workflow diagnostic --only workflow wrapper exit2/BLOCKED from omitted checks, not a workflow test failure.
+Actual commands: python3 scripts/mknoon_checks.py run --mode change --base 2f4d3a01cf18b803e54aa171eada1f7dd7454966 --local --jobs 1 --only workflow,provider-schema --output .codex-test-logs/relay-missing-route-20261107/deployment-curated (with MKNOON_REVIEW_DART_PACKAGES pointing at the earlier call worktree package config).
+Diagnostic: python3 scripts/mknoon_checks.py run --mode change --base 2f4d3a01cf18b803e54aa171eada1f7dd7454966 --local --jobs 1 --only workflow --output .codex-test-logs/relay-missing-route-20261107/deployment-workflow-diagnostic (own package setup ready).
+33 checks remain NOT RUN across the separate passing workflow/provider evidence: affected-calls, affected-conversation, affected-feed, affected-groups, affected-identity, affected-media, affected-push, affected-storage, affected-surfaces, affected-translate-preview, affected-transport, bootstrap, bridge, call-signaling, contacts, diagnostics, direct-chat, go-core, go-relay, media-bytes, media-viewer, migration, notifications, offline-recovery, small-group, startup, device-audio, device-group-media, device-group-mute, device-media, device-notifications-android, device-notifications-ios, device-reconnect
+No full app-release, signed-device, provider-delivery or reason-telemetry acceptance claim.
+
+Commands and evidence:
+GOTOOLCHAIN=go1.27.1 GOMAXPROCS=4 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOFLAGS=-p=4 go list -deps .
+docker exec hardcore_varahamihira python3 /workspace/docker-ws/hetzner_ssh.py --put <approved mounted binary> /tmp/relay-server.v1.11.4-b81b1af2-m7d3e8017 0755
+docker exec -i hardcore_varahamihira python3 /workspace/docker-ws/hetzner_ssh.py < hetzner-retry-input.sh
+docker exec -e RELAY_SSH_HOST=<approved AWS host> hardcore_varahamihira python3 /workspace/docker-ws/relay_sftp_put.py <approved mounted binary> /tmp/relay-server.v1.11.4-b81b1af2-m7d3e8017
+docker exec -i -e RELAY_SSH_HOST=<approved AWS host> hardcore_varahamihira python3 /workspace/docker-ws/relay_ssh.py < aws-deploy-input.sh
+GOTOOLCHAIN=go1.27.1 GOMAXPROCS=4 GOFLAGS=-p=4 go run ../.codex-test-logs/relay-missing-route-20261107/deploy-client-dial.go -address "$(cat <host>-client-address.txt)"
+FLUTTER_SUPPRESS_ANALYTICS=true flutter pub get --offline --enforce-lockfile
+python3 -m unittest scripts.test.mknoon_full_legacy_binding_test.LegacyBindingTest.test_real_protected_full_and_reliability_cli_launch_every_configured_route -v
+Addresses/identities redacted in this shareable receipt; exact per-host inputs and all raw outputs are retained privately.
+Evidence directory: /Users/I560101/.codex/investigations/relay-v1.11.4-deploy-20261108-m7d3e8017
+Regression reports: /Volumes/CrucialX9/flutter_app/.audit/wt/codex-relay-missing-route-20261107T1950Z/.codex-test-logs/relay-missing-route-20261107/deployment-curated and deployment-workflow-diagnostic/.
+
+Files:
+docker-ws/deploy_relay_v1.11.4.sh: guarded binary-only upload verification/install/restart/check/rollback procedure.
+docker-ws/deploy_relay_v1.11.4_result.txt: this receipt.
+docker-ws/group-reaction-staging-manifest-315.json: ONLY candidateRelayRevision and candidateRelaySha256 updated; other fields preserved.
+docs/testing/TESTING.md: verified readiness-delay lesson in the existing relay entry.
+
+Integration: origin/main=1602a6e993507cc5c081acb81153cb01c37454fc; 2f4d3a01c is NOT its ancestor, so the approved relay source still needs to land after the required review/green condition under standing push approval. No push performed by this deployment task.
+Both lane holds released to their owners. No env/coturn/nginx/systemd/security-group changes by Codex.
+Independent inherited-model read-only script review PASS; cross-model review unavailable under configured inheritance-only policy.

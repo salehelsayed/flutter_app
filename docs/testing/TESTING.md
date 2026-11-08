@@ -11417,6 +11417,15 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   rejection and corrected checks remain under `.codex-test-logs/relay-missing-route-20261107/`
   in the `codex-relay-missing-route-20261107T1950Z` worktree. These are local
   host/fake-provider results, not deployed relay or phone delivery evidence.
+  The later approved v1.11.4 deployment verified the exact binary, durable Redis,
+  retained Thoughts gauges, unchanged protected configuration and a secured
+  libp2p client dial on both hosts; see `docker-ws/deploy_relay_v1.11.4_result.txt`.
+  Service `active/running` can precede metrics readiness: the first premature
+  12-second metrics check triggered rollback, and the old relay became ready
+  26 seconds after its restart. Keep crash/PID checks separate from readiness,
+  allowing the bounded 120-second startup window. The failed attempt and recovery
+  remain in the receipt; these deployment checks do not prove phone or provider
+  delivery, nor retroactively classify older missing-route observations.
 
 - **Queued relay diagnostic publication:** accepted contexts carry both actor
   privacy generation and exact admitted trace lifetime. Clear, participant erase,
