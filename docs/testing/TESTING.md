@@ -5927,6 +5927,60 @@ visible and cannot become an ordinary first-attempt PASS.
   `StateError` before the publication guard; all 25 listener and seven view
   delivery cases pass afterward. Red/green receipts are retained in
   `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+- **Thought relay replay before persistence:** the composed `Thought reconnect`
+  cases in `test/core/services/p2p_service_inbox_ack_ordering_test.dart` use
+  real P2PServiceImpl, IncomingMessageRouter and PostListener with a gated
+  in-memory post write and fake relay custody. A failed pending fetch retains
+  the relay copy. After reconnect, a failed first post write leaves no post,
+  no recoverable staging row and no relay copy; a later drain cannot recover
+  the live Thought. The successful-write control passes. The failure case is
+  deliberately RED on base `416fa15d6` (RED commit `7c9ac52d6`). It proves
+  the Dart completion/custody gap, not a real network fault, SQLite crash,
+  encryption failure or tester incident. Preserve the first result under
+  `.codex-test-logs/thought-poor-connection-20261107/` in the delivering
+  `astra/thought-poor-connection-red-20261107` worktree. The fix routes relay
+  replay through the active PostListener's typed completion and allows relay
+  ACK only after durable Thought/media/key rows or a terminal rejection.
+  Partial media-row saves must be completed on duplicate replay; matching saved
+  keys stay intact. Missing listener/key/bridge prerequisites retain custody.
+  Media downloads do not delay the durable outcome. Both original reconnect
+  cases pass unchanged, and ten cases in `p2p_service_thought_replay_test.dart`
+  cover media-row gating/retry, missing listener/key/bridge, permanent decrypt
+  rejection, failed ACK/duplicate handling, and exact-envelope terminal ACK
+  recovery. These use fake transport/crypto and in-memory repositories; OS
+  process death, real SQLite faults and signed-device delivery remain separate.
+  The existing `affected-transport` directory selector includes both files;
+  `affected-surfaces` retains the existing direct-ACK and media-ingest cases.
+  GREEN receipts and full affected-selection results belong under
+  `.codex-test-logs/thought-poor-connection-green-20261107/`. Initial new-fixture
+  compile and media-kind errors are retained alongside their corrected runs.
+  The three beyond-cap recovery cases first failed after prolonged missing-key,
+  bridge and storage failures: restoring the prerequisite still left the post
+  absent because the shared attempt cap had quarantined its staging row.
+  Retryable `post_create` outcomes now retain custody beyond that cap and can
+  commit and ACK on a later drain. The existing non-Thought attempt-cap controls
+  still quarantine as before; no new retry timing or backoff is introduced.
+  All 14 focused Thought and non-Thought cap controls pass, including the
+  unchanged original reconnect cases. Preserve the three initial failures and
+  the passing follow-up under `.codex-test-logs/thought-retry-cap-20261108/`;
+  these remain host fake proofs, not process-restart or signed-device evidence.
+  The exemption is bounded by local staging age: a still-retryable row becomes
+  terminal 24 hours after its local `stagedAt`, using the existing rejection/
+  exact-envelope ACK retry path. The earlier readable-authored-expiry rule is
+  superseded: a sender timestamp in the past released custody too early, while
+  one far in the future could keep the oldest batch indefinitely. Sender wire
+  expiry is never used for this retry-retention decision. Causal regressions
+  cover missing crypto/listener, readable past/future expiries, and 500 expired
+  oldest encrypted or readable-future rows preceding a healthy staged Thought;
+  the shared query ordering is unchanged. All 19 focused checks pass. Preserve
+  the three clock-skew RED failures and passing GREEN under
+  `.codex-test-logs/thought-staging-lifetime-20261108/` in the same worktree.
+  The live reconnect fixture must use a current authored time, and the staged
+  lifetime boundary must derive from the actual staging timestamp; the listener
+  clock alone does not freeze transport staging time. Initial RED, the first
+  GREEN attempt's clock-fixture failures, corrected RED and passing GREEN are
+  retained under `.codex-test-logs/thought-retry-expiry-20261108/` in the same
+  delivering worktree. These are host fake custody/fairness proofs only.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file

@@ -20,7 +20,7 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 /// The returned thought is null unless it was stored ([postCreated],
-/// [duplicate] after a merge) or parsed and then not kept ([expired],
+/// [duplicate] after a merge or media-row recovery) or parsed and not kept ([expired],
 /// [superseded], [retracted]), so a card a push already showed for it can go.
 enum HandleIncomingPostResult {
   postCreated,
@@ -60,6 +60,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   DateTime Function()? nowProvider,
   OnPostDurablyStoredFn? onDurablyStored,
   EarlyThoughtRetractions? earlyRetractions,
+  bool throwOnBridgeUnavailable = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -79,6 +80,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       jsonString: message.content,
       bridge: bridge,
       ownMlKemSecretKey: ownMlKemSecretKey,
+      throwOnBridgeUnavailable: throwOnBridgeUnavailable,
     );
   } else {
     envelope = PostCreateEnvelope.fromJson(message.content);
@@ -152,7 +154,15 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
             existingPost.senderPeerId != existingPost.authorPeerId ||
             origin?.originKind == PostOriginKind.pass;
         if (!canMergeExistingRepost) {
-          return (HandleIncomingPostResult.duplicate, null, null);
+          // A prior receive may have saved the Thought but failed on one of
+          // its media/key rows. Finish those rows before acknowledging replay;
+          // a colliding id from a different author/event cannot repair it.
+          if (existingPost.eventId != incomingPost.eventId ||
+              existingPost.senderPeerId != incomingPost.senderPeerId ||
+              existingPost.authorPeerId != incomingPost.authorPeerId) {
+            return (HandleIncomingPostResult.duplicate, null, null);
+          }
+          return (HandleIncomingPostResult.duplicate, existingPost, origin);
         }
         final mergedPost = _mergeExistingRepostedCopy(
           existingPost: existingPost,

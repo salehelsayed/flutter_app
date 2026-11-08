@@ -142,6 +142,7 @@ class _P2PInboxCoordinator {
   _replayRecoveredInboxContactRequest;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxReaction;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxMessageDeletion;
+  ReplayRecoveredInboxChatMessage? _replayRecoveredInboxPostCreate;
   ReplayRecoveredProtectedGroupEnvelope? _replayRecoveredProtectedGroupEnvelope;
   final Future<String?> Function(ChatMessage message)?
   _predecryptInboxChatEntry;
@@ -406,6 +407,17 @@ class _P2PInboxCoordinator {
     ReplayRecoveredProtectedGroupEnvelope? handler,
   ) {
     _replayRecoveredProtectedGroupEnvelope = handler;
+  }
+
+  VoidCallback registerPostCreateReplayHandler(
+    ReplayRecoveredInboxChatMessage handler,
+  ) {
+    _replayRecoveredInboxPostCreate = handler;
+    return () {
+      if (identical(_replayRecoveredInboxPostCreate, handler)) {
+        _replayRecoveredInboxPostCreate = null;
+      }
+    };
   }
 
   void resumeProtectedGroupContentAdmission() {
@@ -1030,6 +1042,7 @@ class _P2PInboxCoordinator {
   Future<int> _replayStagedInboxEntries({
     List<String>? entryIds,
     Set<String>? protectedRelayAckableEntryIds,
+    Set<String>? postRelayAckableEntryIds,
   }) async {
     final repo = _inboxStagingRepository;
 
@@ -1336,6 +1349,55 @@ class _P2PInboxCoordinator {
           continue;
         }
 
+        if (entry.messageType == 'post_create') {
+          final replay = _replayRecoveredInboxPostCreate;
+          var outcome = replay == null
+              ? (
+                  disposition: RecoveredInboxChatDisposition.retryable,
+                  reasonCode: 'typed_handler_unavailable',
+                  reasonDetail: null,
+                )
+              : await replay(message, stagedEntryId: entry.entryId);
+          if (outcome.disposition == RecoveredInboxChatDisposition.retryable) {
+            // Use one local clock for retry retention: sender clock skew must
+            // neither release custody early nor keep the oldest batch forever.
+            final expiresAt = DateTime.tryParse(
+              entry.stagedAt,
+            )?.add(ThoughtLifetime.duration);
+            if (expiresAt != null && !clock.now().isBefore(expiresAt)) {
+              outcome = (
+                disposition: RecoveredInboxChatDisposition.rejected,
+                reasonCode: 'post_expired',
+                reasonDetail: null,
+              );
+            }
+          }
+          if (outcome.reasonCode == 'typed_handler_unavailable') {
+            await repo.markRetryable(
+              entry.entryId,
+              reasonCode: outcome.reasonCode,
+              reasonDetail: entry.messageType,
+            );
+            continue;
+          }
+          if (await _applyRecoveredInboxOutcome(
+            repo: repo,
+            entry: entry,
+            outcome: outcome,
+            committedEvent: 'P2P_SERVICE_INBOX_STAGED_POST_COMMITTED',
+            retryableEvent: 'P2P_SERVICE_INBOX_STAGED_POST_RETRYABLE',
+            rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_POST_REJECTED',
+            quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_POST_QUARANTINED',
+          )) {
+            replayed++;
+          }
+          if (outcome.disposition == RecoveredInboxChatDisposition.committed ||
+              outcome.disposition == RecoveredInboxChatDisposition.rejected) {
+            postRelayAckableEntryIds?.add(entry.entryId);
+          }
+          continue;
+        }
+
         if (_recoveryOnly) {
           await repo.markRetryable(
             entry.entryId,
@@ -1486,7 +1548,8 @@ class _P2PInboxCoordinator {
         );
         return true;
       case RecoveredInboxChatDisposition.retryable:
-        if (entry.attemptCount >= maxInboxReplayAttempts) {
+        if (entry.messageType != 'post_create' &&
+            entry.attemptCount >= maxInboxReplayAttempts) {
           await _quarantineRecoveredInboxEntry(
             repo: repo,
             entry: entry,
@@ -1707,11 +1770,19 @@ class _P2PInboxCoordinator {
 
     final ackableEntryIds = (await repo.stageEntries(entries)).toList();
     final protectedRelayAckableEntryIds = <String>{};
+    final postRelayAckableEntryIds = <String>{};
     final confirmedDuplicateRelayAckableEntryIds = <String>{};
     for (final entry in entries) {
       if (ackableEntryIds.contains(entry.entryId)) continue;
       final existing = await repo.getEntry(entry.entryId);
       if (existing == null || !_sameRelayEntry(existing, entry)) continue;
+      if (entry.messageType == 'post_create' && existing.status == 'rejected') {
+        // A previous terminal rejection may have outlived a failed relay ACK.
+        // Only the exact envelope can inherit that outcome.
+        ackableEntryIds.add(entry.entryId);
+        postRelayAckableEntryIds.add(entry.entryId);
+        continue;
+      }
       if (_isProtectedGroupEnvelopeType(entry.messageType) &&
           existing.status == 'protected_ack_pending') {
         ackableEntryIds.add(entry.entryId);
@@ -1764,6 +1835,7 @@ class _P2PInboxCoordinator {
         : await _replayStagedInboxEntries(
             entryIds: ackableEntryIds,
             protectedRelayAckableEntryIds: protectedRelayAckableEntryIds,
+            postRelayAckableEntryIds: postRelayAckableEntryIds,
           );
     replaySw.stop();
 
@@ -1773,6 +1845,9 @@ class _P2PInboxCoordinator {
               .where((value) => value.entryId == entryId)
               .first;
           final protected = _isProtectedGroupEnvelopeType(entry.messageType);
+          if (entry.messageType == 'post_create') {
+            return postRelayAckableEntryIds.contains(entryId);
+          }
           return !protected || protectedRelayAckableEntryIds.contains(entryId);
         })
         .toList(growable: false);
@@ -1830,6 +1905,7 @@ class _P2PInboxCoordinator {
     if (ackFailureReason == null && relayAckableEntryIds.isNotEmpty) {
       for (final entryId in <String>{
         ...protectedRelayAckableEntryIds,
+        ...postRelayAckableEntryIds,
         ...confirmedDuplicateRelayAckableEntryIds,
       }) {
         if (relayAckableEntryIds.contains(entryId)) {
@@ -1839,18 +1915,21 @@ class _P2PInboxCoordinator {
     }
 
     var protectedPending = false;
+    var postPending = false;
     for (final entry in entries) {
       final isProtected = _isProtectedGroupEnvelopeType(entry.messageType);
-      if (isProtected &&
+      final isPost = entry.messageType == 'post_create';
+      if ((isProtected || isPost) &&
           !relayAckableEntryIds.contains(entry.entryId) &&
           await repo.getEntry(entry.entryId) != null) {
-        protectedPending = true;
-        break;
+        protectedPending |= isProtected;
+        postPending |= isPost;
       }
     }
     final pageFailureReason =
         ackFailureReason ??
         (protectedPending ? 'protected_group_handler_not_terminal' : null) ??
+        (postPending ? 'post_handler_not_terminal' : null) ??
         (skippedMalformed > 0
             ? 'malformed_inbox_rows:$skippedMalformed'
             : null);
