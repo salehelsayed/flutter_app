@@ -38,7 +38,11 @@ final class AnonymousStickerCounter {
   Future<void> initialize() async {
     try {
       if (await _file.exists() && await _file.length() <= 65536) {
-        final raw = jsonDecode(await _file.readAsString());
+        final state = jsonDecode(await _file.readAsString());
+        final raw = state is Map ? state['days'] : state;
+        if (state is Map && state['retryAt'] is String) {
+          _retryAt = DateTime.tryParse(state['retryAt'] as String);
+        }
         if (raw is List && raw.length <= 4) {
           for (final entry in raw) {
             if (entry is! Map ||
@@ -74,12 +78,16 @@ final class AnonymousStickerCounter {
       }
       _ready = true;
       _prune();
-      if (!enabled()) _days.clear();
+      if (!enabled() || _days.isEmpty) {
+        _days.clear();
+        _retryAt = null;
+      }
       await _persist();
     } catch (_) {
       // Optional counts must never affect a sticker send or app readiness.
       _ready = false;
       _days.clear();
+      _retryAt = null;
     }
   }
 
@@ -153,6 +161,7 @@ final class AnonymousStickerCounter {
       if (_disposed || epoch != _epoch || !enabled()) return;
       if (!accepted) {
         _retryAt = now().add(const Duration(hours: 1));
+        await _persist();
         return;
       }
       _days.remove(day);
@@ -160,11 +169,15 @@ final class AnonymousStickerCounter {
       if (!_ready) return;
     }
     _retryAt = null;
+    await _persist();
   }
 
   Future<void> _persist() {
     // Serialize snapshots, including opt-out behind an in-flight write.
-    final raw = jsonEncode(_days.values.toList());
+    final raw = jsonEncode({
+      'days': _days.values.toList(),
+      'retryAt': _retryAt?.toUtc().toIso8601String(),
+    });
     return _writes = _writes.then((_) async {
       if (raw == _lastPersisted) return;
       try {

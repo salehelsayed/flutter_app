@@ -11357,10 +11357,17 @@ The separate anonymous sticker counter uses completed UTC dates, not the legacy
 diagnostic tally's local-midnight timestamps. `anonymous_sticker_counter_test.dart`
 proves bounded local batches, real-file restart with the same random retry nonce,
 opt-out/in-flight-reply fencing, and the production recorder's separate native
-payload. Its five cases plus the 21 legacy sticker diagnostics cases pass with
+payload. Its six cases plus the 21 legacy sticker diagnostics cases pass with
 `TZ=Europe/Berlin`. Parse persisted date-only keys explicitly as UTC: the first
 GREEN attempt lost restored batches when local midnight was converted to UTC.
 Keep that failure and the corrected run in `.codex-test-logs/sticker-counter/`.
+The local archive commits the failed-upload UTC retry deadline with pending
+batches. Restart cannot bypass the one-hour delay, and an old list-only archive
+still preserves its nonce/counts. The restart regression snapshots the state
+durable before graceful disposal, sends nothing through 59:59 after failure,
+then retries the same batch once at the hour. The behavioral RED and 27-case
+GREEN are in that evidence root's `retry-deadline/` directory. Clearing consent
+also clears the retry deadline; it never enters the uploaded payload.
 
 `sticker_metrics_test.go` has eight focused cases covering exact Redis totals,
 72-hour nonce deduplication, relay-process restart, retention, closed IDs/caps,

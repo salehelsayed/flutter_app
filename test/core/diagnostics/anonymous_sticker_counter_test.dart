@@ -65,7 +65,7 @@ void main() {
   );
 
   test(
-    'failure retries the identical nonce and counts after restart',
+    'failure preserves hourly retry pacing and batch ownership across restart',
     () async {
       final reports = <Map<String, Object?>>[];
       var c = counter((r) async {
@@ -76,15 +76,51 @@ void main() {
       c.record(sticker);
       now = now.add(const Duration(days: 1));
       await c.flush();
+      expect(reports, hasLength(1));
+      // Restore the state durable at failure, before graceful disposal writes.
+      final stateFile = File('${directory.path}/counts.json');
+      final durableState = await stateFile.readAsBytes();
       await c.dispose();
+      await stateFile.writeAsBytes(durableState, flush: true);
       c = counter((r) async {
         reports.add(r);
         return true;
       });
       await c.initialize();
       await c.flush();
+      expect(reports, hasLength(1));
+      now = now.add(const Duration(minutes: 59, seconds: 59));
+      await c.flush();
+      expect(reports, hasLength(1));
+      now = now.add(const Duration(seconds: 1));
+      await c.flush();
       expect(reports, hasLength(2));
       expect(reports.first, reports.last);
+      await c.flush();
+      expect(reports, hasLength(2));
+      await c.dispose();
+    },
+  );
+
+  test(
+    'legacy count archive keeps its batch without a retry deadline',
+    () async {
+      final batch = {
+        'day': '2026-11-07',
+        'nonce': '00000000-0000-4000-8000-000000000001',
+        'counts': {sticker: 2},
+      };
+      await File(
+        '${directory.path}/counts.json',
+      ).writeAsString(jsonEncode([batch]));
+      final reports = <Map<String, Object?>>[];
+      final c = counter((report) async {
+        reports.add(report);
+        return true;
+      });
+      await c.initialize();
+      await c.flush();
+      expect(reports, [batch]);
       await c.dispose();
     },
   );
