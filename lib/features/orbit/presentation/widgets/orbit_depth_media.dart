@@ -6,8 +6,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 /// A front-card-only view. Removing it also disposes any voice player. Its
@@ -19,6 +21,7 @@ class OrbitDepthMedia extends StatefulWidget {
     required this.load,
     required this.download,
     required this.onOpen,
+    this.onPlayVideo,
     this.onActivate,
     this.lastLoaded,
   });
@@ -27,6 +30,10 @@ class OrbitDepthMedia extends StatefulWidget {
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   download;
   final VoidCallback onOpen;
+
+  /// Asked before a lone downloaded video plays full screen in place of
+  /// [onOpen]; false leaves the tap unanswered.
+  final bool Function()? onPlayVideo;
 
   /// The screen reader's open, when it must differ from a finger's [onOpen].
   final VoidCallback? onActivate;
@@ -45,6 +52,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   bool _loading = true;
   bool _failed = false;
   int _generation = 0;
+  bool _playing = false;
   @override
   void initState() {
     super.initState();
@@ -129,6 +137,35 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     super.dispose();
   }
 
+  void _tap(List<PostMediaAttachmentModel> visual) {
+    final video = visual.length == 1 && visual.single.kind == 'video'
+        ? visual.single
+        : null;
+    final local = video?.localPath;
+    if (video == null ||
+        video.downloadStatus != 'done' ||
+        local == null ||
+        !File(MediaFileManager.resolveStoredPathSync(local)).existsSync()) {
+      widget.onOpen();
+      return;
+    }
+    if (_playing || !(widget.onPlayVideo?.call() ?? true)) return;
+    _playing = true;
+    unawaited(
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute<void>(
+              builder: (_) => FullScreenTypedMediaViewer(
+                key: const ValueKey('thought-media-viewer'),
+                items: [thoughtMediaViewerItem(video)],
+                initialIndex: 0,
+              ),
+            ),
+          )
+          .whenComplete(() => _playing = false),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final visual = _media.where((item) => item.kind != 'voice').toList();
@@ -162,7 +199,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
               onTap: widget.onActivate ?? widget.onOpen,
               child: GestureDetector(
                 key: const ValueKey('orbit-depth-photo-frame'),
-                onTap: widget.onOpen,
+                onTap: () => _tap(visual),
                 excludeFromSemantics: true,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(22),

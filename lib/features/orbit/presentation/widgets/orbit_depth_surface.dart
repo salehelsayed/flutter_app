@@ -39,6 +39,7 @@ class OrbitDepthSurface extends StatefulWidget {
     required this.thoughts,
     required this.onFriendTap,
     required this.onThoughtTap,
+    this.onThoughtVideoPlay,
     this.ownSeat,
     this.ownActivity,
     this.active = true,
@@ -87,6 +88,9 @@ class OrbitDepthSurface extends StatefulWidget {
   final VoidCallback? onThoughtsExpired;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<String>? onThoughtTap;
+
+  /// A lone downloaded video played full screen from the front card.
+  final ValueChanged<String>? onThoughtVideoPlay;
 
   /// The author's own live thought, seated first on the ring.
   final OrbitDepthSeat? ownSeat;
@@ -1418,12 +1422,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         : age.inMinutes < 60
         ? l10n.time_min_ago(age.inMinutes)
         : l10n.time_hour_ago(age.inHours);
+    bool openable() =>
+        _enabled && !_suppressTap && liveOrbitDepthThought(post, _now) != null;
     void open() {
-      if (_enabled &&
-          !_suppressTap &&
-          liveOrbitDepthThought(post, _now) != null) {
-        widget.onThoughtTap?.call(post.id);
-      }
+      if (openable()) widget.onThoughtTap?.call(post.id);
+    }
+
+    bool play() {
+      if (!openable()) return false;
+      widget.onThoughtVideoPlay?.call(post.id);
+      return true;
     }
 
     final media =
@@ -1436,6 +1444,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             load: widget.loadMedia!,
             download: widget.downloadMedia!,
             onOpen: open,
+            onPlayVideo: play,
             onActivate: _bySemantics(open),
             lastLoaded: _lastLoadedMedia,
           )

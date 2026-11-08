@@ -1441,6 +1441,34 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   /// A friend's card only shows the thought: reactions and replies are sent
   /// from the 3D ring's action bar, or from the chat itself.
+  /// A video played straight from the ring is seen as the Thought card's open
+  /// would mark it: focused here, and the author told once.
+  Future<void> _markThoughtVideoWatched(String postId) async {
+    final repository = _thoughtPosts;
+    final identity = _identity;
+    if (repository == null || identity == null) return;
+    try {
+      final post = await repository.getPost(postId);
+      if (post == null ||
+          !post.isIncoming ||
+          post.authorPeerId == identity.peerId) {
+        return;
+      }
+      await repository.markFocused(postId);
+      await publishThoughtView(
+        postId: postId,
+        viewerPeerId: identity.peerId,
+        postRepo: repository,
+        contactRepo: widget.contactRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        nowProvider: widget.thoughtNowProvider,
+      );
+    } catch (_) {
+      // As on the card: it stays unseen and is marked on the next open.
+    }
+  }
+
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
@@ -4289,6 +4317,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onThoughtVideoPlay: (postId) =>
+          unawaited(_markThoughtVideoWatched(postId)),
       onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
       depthReplyStatusChanges: _depthReplyStatuses,
       onComposeThought: _thoughtPosts == null || _identity == null

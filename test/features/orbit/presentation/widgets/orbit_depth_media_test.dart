@@ -139,7 +139,8 @@ void main() {
           expect(grid.media.single.mediaType, kind);
           await tester.tap(find.byType(MediaGrid));
           await tester.pump();
-          expect(opens, 1);
+          // A video plays full screen in place of opening the thought.
+          expect(opens, kind == 'video' ? 0 : 1);
         }
         expect(downloads, 0);
         await tester.pump(const Duration(seconds: 1));
