@@ -1359,20 +1359,9 @@ class _P2PInboxCoordinator {
                 )
               : await replay(message, stagedEntryId: entry.entryId);
           if (outcome.disposition == RecoveredInboxChatDisposition.retryable) {
-            DateTime? expiresAt;
-            try {
-              if (jsonDecode(entry.envelope) case {
-                'version': '1',
-                'payload': {
-                  'snapshot': {'expires_at': final String authoredExpiry},
-                },
-              }) {
-                expiresAt = DateTime.tryParse(authoredExpiry);
-              }
-            } catch (_) {}
-            // If crypto or the listener is unavailable, local staging age
-            // still bounds how long a Thought can occupy the oldest batch.
-            expiresAt ??= DateTime.tryParse(
+            // Use one local clock for retry retention: sender clock skew must
+            // neither release custody early nor keep the oldest batch forever.
+            final expiresAt = DateTime.tryParse(
               entry.stagedAt,
             )?.add(ThoughtLifetime.duration);
             if (expiresAt != null && !clock.now().isBefore(expiresAt)) {

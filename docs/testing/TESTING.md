@@ -5964,12 +5964,17 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged original reconnect cases. Preserve the three initial failures and
   the passing follow-up under `.codex-test-logs/thought-retry-cap-20261108/`;
   these remain host fake proofs, not process-restart or signed-device evidence.
-  The exemption is bounded by Thought lifetime: a still-retryable row becomes
-  terminal at readable authored expiry, or 24 hours after local staging when
-  its expiry is unreadable. It uses the existing rejection/exact-envelope ACK
-  retry path. Three causal regressions cover missing crypto, missing listener
-  and 500 expired oldest rows preceding a healthy staged Thought; the shared
-  query ordering is unchanged. All 17 focused checks pass after the fix.
+  The exemption is bounded by local staging age: a still-retryable row becomes
+  terminal 24 hours after its local `stagedAt`, using the existing rejection/
+  exact-envelope ACK retry path. The earlier readable-authored-expiry rule is
+  superseded: a sender timestamp in the past released custody too early, while
+  one far in the future could keep the oldest batch indefinitely. Sender wire
+  expiry is never used for this retry-retention decision. Causal regressions
+  cover missing crypto/listener, readable past/future expiries, and 500 expired
+  oldest encrypted or readable-future rows preceding a healthy staged Thought;
+  the shared query ordering is unchanged. All 19 focused checks pass. Preserve
+  the three clock-skew RED failures and passing GREEN under
+  `.codex-test-logs/thought-staging-lifetime-20261108/` in the same worktree.
   The live reconnect fixture must use a current authored time, and the staged
   lifetime boundary must derive from the actual staging timestamp; the listener
   clock alone does not freeze transport staging time. Initial RED, the first
