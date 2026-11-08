@@ -1351,13 +1351,38 @@ class _P2PInboxCoordinator {
 
         if (entry.messageType == 'post_create') {
           final replay = _replayRecoveredInboxPostCreate;
-          final outcome = replay == null
+          var outcome = replay == null
               ? (
                   disposition: RecoveredInboxChatDisposition.retryable,
                   reasonCode: 'typed_handler_unavailable',
                   reasonDetail: null,
                 )
               : await replay(message, stagedEntryId: entry.entryId);
+          if (outcome.disposition == RecoveredInboxChatDisposition.retryable) {
+            DateTime? expiresAt;
+            try {
+              if (jsonDecode(entry.envelope) case {
+                'version': '1',
+                'payload': {
+                  'snapshot': {'expires_at': final String authoredExpiry},
+                },
+              }) {
+                expiresAt = DateTime.tryParse(authoredExpiry);
+              }
+            } catch (_) {}
+            // If crypto or the listener is unavailable, local staging age
+            // still bounds how long a Thought can occupy the oldest batch.
+            expiresAt ??= DateTime.tryParse(
+              entry.stagedAt,
+            )?.add(ThoughtLifetime.duration);
+            if (expiresAt != null && !clock.now().isBefore(expiresAt)) {
+              outcome = (
+                disposition: RecoveredInboxChatDisposition.rejected,
+                reasonCode: 'post_expired',
+                reasonDetail: null,
+              );
+            }
+          }
           if (outcome.reasonCode == 'typed_handler_unavailable') {
             await repo.markRetryable(
               entry.entryId,

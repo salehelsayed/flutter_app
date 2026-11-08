@@ -5964,6 +5964,18 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged original reconnect cases. Preserve the three initial failures and
   the passing follow-up under `.codex-test-logs/thought-retry-cap-20261108/`;
   these remain host fake proofs, not process-restart or signed-device evidence.
+  The exemption is bounded by Thought lifetime: a still-retryable row becomes
+  terminal at readable authored expiry, or 24 hours after local staging when
+  its expiry is unreadable. It uses the existing rejection/exact-envelope ACK
+  retry path. Three causal regressions cover missing crypto, missing listener
+  and 500 expired oldest rows preceding a healthy staged Thought; the shared
+  query ordering is unchanged. All 17 focused checks pass after the fix.
+  The live reconnect fixture must use a current authored time, and the staged
+  lifetime boundary must derive from the actual staging timestamp; the listener
+  clock alone does not freeze transport staging time. Initial RED, the first
+  GREEN attempt's clock-fixture failures, corrected RED and passing GREEN are
+  retained under `.codex-test-logs/thought-retry-expiry-20261108/` in the same
+  delivering worktree. These are host fake custody/fairness proofs only.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
