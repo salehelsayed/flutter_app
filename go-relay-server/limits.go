@@ -113,7 +113,7 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (
 	messages := b.inner.pruneExpiredForPeerLocked(toPeerId)
 
 	// Extract the direct-inbox custody identity for dedup.
-	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	dedupeKey := extractDirectInboxEntryDedupeKey(entry)
 	if dedupeKey != "" {
 		if keys, ok := b.inner.dedupeKeys[toPeerId]; ok && keys[dedupeKey] {
 			return InboxStoreResultDuplicate, nil

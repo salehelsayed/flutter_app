@@ -121,7 +121,7 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 	messages := b.pruneExpiredForPeerLocked(toPeerId)
 
 	// Extract the direct-inbox custody identity for dedup.
-	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	dedupeKey := extractDirectInboxEntryDedupeKey(entry)
 	if dedupeKey != "" {
 		if keys, ok := b.dedupeKeys[toPeerId]; ok && keys[dedupeKey] {
 			// Keep the immutable custody while updating exact sender policy.
@@ -287,7 +287,7 @@ func (b *memoryInboxBackend) Ack(peerId string, entryIDs []string) (int, error) 
 func (b *memoryInboxBackend) rebuildDedupeKeys(peerId string, messages []inboxMessage) {
 	keys := make(map[string]bool, len(messages))
 	for _, m := range messages {
-		if dedupeKey := extractDirectInboxDedupeKey(m.Message); dedupeKey != "" {
+		if dedupeKey := extractDirectInboxEntryDedupeKey(m); dedupeKey != "" {
 			keys[dedupeKey] = true
 		}
 	}

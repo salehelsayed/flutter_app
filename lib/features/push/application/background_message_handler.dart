@@ -1067,6 +1067,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
       return;
     }
+    if (isThoughtNotification &&
+        fallback.thoughtExpiresAt?.isAfter(DateTime.now()) == false) {
+      return;
+    }
     try {
       await storageDeadline.run(
         'resolved_stage',
@@ -1469,6 +1473,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             plugin: _backgroundNotificationsPlugin,
           );
       if (isThoughtNotification && !await mayPresentThought()) return;
+      final thoughtRemaining = fallback.thoughtExpiresAt?.difference(
+        DateTime.now(),
+      );
+      if (isThoughtNotification &&
+          thoughtRemaining != null &&
+          thoughtRemaining <= Duration.zero) {
+        return;
+      }
       publishedSilently = effectiveSilent;
       await _backgroundNotificationsPlugin.show(
         notificationId,
@@ -1479,7 +1491,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                 androidTag: groupInviteAndroidTag,
               )
             : routeTarget?.kind == NotificationRouteTargetKind.post
-            ? mknoonThoughtsNotificationDetails
+            ? thoughtRemaining == null
+                  ? mknoonThoughtsNotificationDetails
+                  : mknoonThoughtNotificationDetails(
+                      remaining: thoughtRemaining,
+                    )
             : mknoonConversationNotificationDetails(
                 conversationKey: conversationKey,
                 silent: effectiveSilent,
@@ -1769,7 +1785,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
     }
 
-    // A late OFF read skipped native entry. It owns no shown/dedupe marker.
+    // A late OFF or expiry check skipped native entry. It owns no shown marker.
     if (isThoughtNotification && publishedSilently == null) return;
 
     final durableReceipt = durableEffectResult?.receipt;

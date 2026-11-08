@@ -2431,7 +2431,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
     content.threadIdentifier = "FORGED_THREAD"
     content.summaryArgument = "FORGED SUMMARY"
     content.summaryArgumentCount = 7
-    content.launchImageName = "forged.png"
+    #if os(iOS)
+      content.launchImageName = "forged.png"
+    #endif
     content.userInfo = [
       "type": "new_message",
       "sender_id": "peer-alice",
@@ -2461,7 +2463,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(content.threadIdentifier, "")
     XCTAssertEqual(content.summaryArgument, "")
     XCTAssertEqual(content.summaryArgumentCount, 0)
-    XCTAssertEqual(content.launchImageName, "")
+    #if os(iOS)
+      XCTAssertEqual(content.launchImageName, "")
+    #endif
     XCTAssertEqual(content.userInfo["type"] as? String, "new_message")
     XCTAssertEqual(content.userInfo["sender_id"] as? String, "peer-alice")
     XCTAssertEqual(
@@ -2634,7 +2638,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
       content.threadIdentifier = "FORGED_THREAD"
       content.summaryArgument = "FORGED SUMMARY"
       content.summaryArgumentCount = 7
-      content.launchImageName = "forged.png"
+      #if os(iOS)
+        content.launchImageName = "forged.png"
+      #endif
       content.userInfo = ["message_id": "route-must-remain"]
       if #available(iOS 15.0, *) {
         content.targetContentIdentifier = "FORGED_TARGET"
@@ -2663,7 +2669,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
       XCTAssertEqual(content.threadIdentifier, "", item.0)
       XCTAssertEqual(content.summaryArgument, "", item.0)
       XCTAssertEqual(content.summaryArgumentCount, 0, item.0)
-      XCTAssertEqual(content.launchImageName, "", item.0)
+      #if os(iOS)
+        XCTAssertEqual(content.launchImageName, "", item.0)
+      #endif
       XCTAssertEqual(
         content.userInfo["message_id"] as? String,
         "route-must-remain",
@@ -3528,8 +3536,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
         item.name
       )
       if item.expired {
-        XCTAssertTrue(content.title.isEmpty, item.name)
-        XCTAssertTrue(content.body.isEmpty, item.name)
+        XCTAssertEqual(content.title, "Mknoon", item.name)
+        XCTAssertEqual(content.body, "Open the app to view updates.", item.name)
         XCTAssertNil(content.sound, item.name)
       }
     }

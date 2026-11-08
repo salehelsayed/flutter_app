@@ -5948,8 +5948,12 @@ visible and cannot become an ordinary first-attempt PASS.
   within seven days of switch-off and verify deletion. Build 129 admission counts
   only outer `post_create` envelopes with `thoughts_metrics_opt_out` absent or
   explicitly false. True, null, strings, numbers, objects and arrays skip both
-  sketches before hashing; both accepted retry copies still reach each recipient
-  unchanged. No per-person exclusion history is retained: an already-submitted
+  sketches before hashing. Pending `post_create` custody now deduplicates by
+  authenticated sender and stable envelope `event_id`, separately per recipient:
+  an ambiguous store retry returns `Duplicate` and retains the first immutable
+  row. ACK removes that custody identity, so a later submission may be stored
+  again. This supersedes the earlier fixture expectation of two pending copies.
+  No per-person exclusion history is retained: an already-submitted
   eligible copy arriving after an opted-out copy can still count, and a later
   opted-out retry cannot subtract it. Actual InboxStore cases prove that boundary.
   Keep custody timestamps on the relay's current clock when authored metric
@@ -8323,6 +8327,39 @@ visible and cannot become an ordinary first-attempt PASS.
   Nearby action assertions failed with the ordinal selector; all three cases in
   `settings_wired_posts_nearby_test.dart` pass with the row-scoped selector.
 
+- **Thought notification expiry and duplicate alerts:** delayed pushes use the
+  decrypted snapshot expiry, with optional routing `expires_at` as the fallback
+  for compact or routing-only payloads. Android checks expiry before staging and
+  again immediately before native presentation; expired attempts own no shown
+  marker. A live card uses the remaining lifetime, bounded to 24 hours. Missing
+  or malformed legacy expiry retains the existing bounded fallback. The shared
+  Thought-only Android notification details set `onlyAlertOnce`, so an inbox
+  card and later rich push reuse the same ID without requesting another alert;
+  ordinary message details remain unchanged. The focused handler regressions
+  use the actual PostListener and notification service, and verify plugin
+  arguments, not OS audibility. NSE expiry suppression precedes the dedupe claim
+  and preserves the existing silent backup sanitizer contract.
+  Relay regressions use the actual dispatch gateway and memory, limited-memory
+  and Redis custody backends. Existing outer `created_at` supplies the 24-hour
+  deadline; future timestamps are clamped and malformed/missing legacy values
+  retain prior behavior. Android TTL and APNs expiration are set before payload
+  budget selection, and retries retain the absolute deadline. Expired Thoughts
+  do not reach the recording provider; independent mixed mailbox wakes remain
+  eligible. Oversized Android fallbacks with a nonblank `post_id` are data-only
+  and carry authenticated sender routing so archived contacts cannot bypass
+  the app's presentation policy. Legacy envelopes without a usable `post_id`
+  retain the existing provider-owned copy and channel because the app cannot
+  route them. iOS dispatch uses the existing memory/Redis admission backend and
+  lifetime with recipient, authenticated sender and stable Thought `event_id`:
+  recipient ACK permits fresh custody for the same ciphertext without another
+  provider alert while that admission remains live. Gateway regressions observe
+  the provider and completed admission outcome, including a reopened Redis
+  layer; distinct recipient/sender/event identities and chat-only policy remain
+  covered. iOS generic payload projection and canonical inbox ciphertext remain
+  unchanged. Preserve the original and review REDs plus corrected receipts in
+  `.codex-test-logs/notification-fixes-20261108/`; host assertions do not certify
+  provider delivery, native tray behavior or a signed candidate.
+
 - **Photo Thought push size fallback:** photo-only Thoughts may carry optional
   `push_encrypted` metadata encrypted separately for the same recipient through
   the existing message-encryption API. Its plaintext contains only the snapshot
@@ -8338,7 +8375,7 @@ visible and cannot become an ordinary first-attempt PASS.
   focused Thought resolver XCTests exercise trusted-name/Photo presentation,
   policy and post/author parity; the minimal schema needs no NSE production
   change. Host fixtures and simulator XCTest remain separate from signed-device
-  APNs delivery. Generic alerts have no mutable-content flag, so absent NSE
+  APNs delivery. Generic iOS alerts have no mutable-content flag, so absent NSE
   activity alone cannot establish a missing or delayed visible alert. Preserve
   causal REDs, source identities, byte counts and focused results under
   `.codex-test-logs/photo-thought-compact-push-20261103/`.

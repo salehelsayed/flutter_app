@@ -12,6 +12,7 @@ import (
 
 	"firebase.google.com/go/v4/messaging"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func thoughtDeliveryEnvelope(t *testing.T, envelope string, fields map[string]interface{}) string {
@@ -176,6 +177,11 @@ func TestThoughtNotificationLegacyTimestampAndFutureClockCompatibility(t *testin
 
 func TestThoughtNotificationAndroidFallbackRetainsRecipientPolicyAuthority(t *testing.T) {
 	for _, fixture := range thoughtNotificationPushCases()[1:] {
+		if fixture.name == "fallback_without_post_id" {
+			// Covered separately below: supported clients cannot render this
+			// legacy shape locally, so it must retain provider-owned display.
+			continue
+		}
 		t.Run(fixture.name, func(t *testing.T) {
 			push, recorder := ordinaryPushService("android")
 			envelope := thoughtDeliveryEnvelope(t, fixture.envelope, map[string]interface{}{"created_at": nil})
@@ -184,6 +190,9 @@ func TestThoughtNotificationAndroidFallbackRetainsRecipientPolicyAuthority(t *te
 				t.Fatalf("routing fallback provider attempts = %d, want 1", got)
 			}
 			sent := recorder.LastMessage()
+			if strings.TrimSpace(sent.Data["post_id"]) == "" {
+				t.Fatal("data-only Thought fallback has no post_id for the app's route parser")
+			}
 			if sent.Notification != nil || sent.Android == nil || sent.Android.Notification != nil {
 				t.Errorf("Thought fallback can bypass archived-contact policy through provider auto-display: %#v", sent)
 			}
@@ -192,6 +201,77 @@ func TestThoughtNotificationAndroidFallbackRetainsRecipientPolicyAuthority(t *te
 			}
 			if sent.Data["message_id"] == "" || sent.Data["ciphertext"] != "" {
 				t.Errorf("generic fallback lost event identity or retained oversized ciphertext: %#v", sent.Data)
+			}
+		})
+	}
+}
+
+func TestThoughtNotificationAndroidLegacyFallbackHasDisplayOwner(t *testing.T) {
+	for _, postID := range []interface{}{nil, "", " \t "} {
+		t.Run(fmt.Sprintf("post_id_%v", postID), func(t *testing.T) {
+			push, recorder := ordinaryPushService("android")
+			push.now = postCreatePushFixtureNow
+			envelope := thoughtDeliveryEnvelope(t, postCreatePushFixture, map[string]interface{}{"post_id": postID})
+			push.SendNotification(context.Background(), "recipient", "authenticated-sender", envelope)
+			if recorder.SendCallCount() != 1 {
+				t.Fatal("legacy Thought must retain its provider dispatch")
+			}
+			sent := recorder.LastMessage()
+			// NotificationRouteTarget.fromRemoteMessageData rejects post_create
+			// without a nonblank post_id, and the background fallback then declines
+			// display. A legacy envelope therefore needs the provider display owner.
+			appCanRender := sent.Data["type"] == "post_create" && strings.TrimSpace(sent.Data["post_id"]) != ""
+			providerCanRender := sent.Notification != nil || (sent.Android != nil && sent.Android.Notification != nil)
+			if appCanRender || !providerCanRender {
+				t.Fatalf("legacy Thought display ownership: app=%t provider=%t, want provider-owned delivery", appCanRender, providerCanRender)
+			}
+			if sent.Android == nil || sent.Android.Notification == nil ||
+				sent.Android.Notification.ChannelID != postCreatePushChannelID ||
+				sent.Android.Notification.Title != postCreatePushTitle ||
+				sent.Android.Notification.Body != postCreatePushBody {
+				t.Fatal("legacy fallback changed the existing Thought channel or visible copy")
+			}
+		})
+	}
+}
+
+func TestThoughtNotificationExpiryMetadataPreservesProviderBudget(t *testing.T) {
+	// Find a full block close enough to the existing budget that the additive
+	// deadline must trigger the same full/compact/generic selection as ciphertext.
+	var envelope string
+	for size := 16; size <= maxProviderPayloadBytes; size += 16 {
+		candidate := thoughtPhotoPushEnvelope(size, thoughtPhotoCompactEncryptedJSON(thoughtPhotoCompactCiphertext))
+		full := thoughtPhotoFullCandidate(t, candidate)
+		if !messageFitsProviderBudgets(full) || pushDataSize(full.Data) > maxPushDataBytes {
+			break
+		}
+		envelope = candidate
+	}
+	if envelope == "" {
+		t.Fatal("fixture did not find a fitting full ciphertext")
+	}
+	now := time.Date(2026, 11, 8, 12, 0, 0, 123456789, time.UTC)
+	envelope = thoughtDeliveryEnvelope(t, envelope, map[string]interface{}{
+		"created_at": now.Add(-23 * time.Hour).Format(time.RFC3339Nano),
+	})
+	for _, platform := range []string{"android", "ios"} {
+		t.Run(platform, func(t *testing.T) {
+			push, recorder := ordinaryPushService(platform)
+			push.now = func() time.Time { return now }
+			push.SendNotification(context.Background(), "recipient", "peer-sender", envelope)
+			if recorder.SendCallCount() != 1 {
+				t.Fatal("budget fallback must retain one provider attempt")
+			}
+			sent := recorder.LastMessage()
+			wantCiphertext := ""
+			if platform == "ios" {
+				wantCiphertext = thoughtPhotoCompactCiphertext
+			}
+			if got := sentRoutingString(sent, "ciphertext"); got != wantCiphertext {
+				t.Fatalf("expiry was omitted from ciphertext budget selection: ciphertext bytes=%d, want %d", len(got), len(wantCiphertext))
+			}
+			if !messageFitsProviderBudgets(sent) || sentRoutingString(sent, "expires_at") == "" {
+				t.Fatal("selected fallback must retain expiry inside the provider budget")
 			}
 		})
 	}
@@ -217,31 +297,109 @@ func TestThoughtCustodyAmbiguousStoreRetryUsesStableEventIdentity(t *testing.T) 
 	for _, kind := range []string{"memory", "limited_memory", "redis"} {
 		t.Run(kind, func(t *testing.T) {
 			backend, reopen := thoughtCustodyBackend(t, kind)
+			push, recorder := ordinaryPushService("ios")
+			newLayer := func(backend InboxBackend) *InboxStore {
+				if redisBackend, ok := backend.(*redisInboxBackend); ok {
+					tokens := newRedisPushTokenBackend(redisBackend.client, redisBackend.prefix)
+					if err := tokens.RegisterToken("recipient", "recipient-token", "ios"); err != nil {
+						t.Fatal(err)
+					}
+					push = NewPushServiceWithBackend(tokens)
+					push.directMessageDispatchAdmission = newRedisDirectMessageDispatchAdmissionBackend(
+						redisBackend.client, redisBackend.prefix, directMessageDispatchAdmissionTTL,
+					)
+				}
+				push.now = postCreatePushFixtureNow
+				push.sender = recorder.Send
+				return NewInboxStoreWithBackendAndCapacity(backend, push, 20)
+			}
+			inbox := newLayer(backend)
 			envelope := thoughtDeliveryEnvelope(t, postCreatePushFixtureWithPostID, map[string]interface{}{"event_id": "stable-thought-event"})
 			entry := inboxMessage{From: "authenticated-sender", Message: envelope, Timestamp: time.Now().UnixMilli()}
-			if result, err := backend.Store("recipient", entry); err != nil || result != InboxStoreResultStored {
+			if result, err := inbox.Store("recipient", entry); err != nil || result != InboxStoreResultStored {
 				t.Fatalf("initial store = %q, %v", result, err)
 			}
-			original, _ := backend.RetrievePending("recipient", 10)
+			select {
+			case <-recorder.sentSignal:
+			case <-time.After(2 * time.Second):
+				t.Fatal("initial Thought did not reach the provider")
+			}
+			original, _ := inbox.RetrievePendingWithMeta("recipient", 10)
 			if len(original) != 1 || original[0].Message != envelope {
 				t.Fatal("initial custody did not retain exact encrypted envelope")
 			}
 			// The sender never received the first ACK. An independently reopened
-			// Redis client must find the event in durable custody before re-alerting.
-			backend = reopen()
+			// Redis client must find both custody and provider-admission history.
+			inbox = newLayer(reopen())
 			entry.Timestamp++
-			if result, err := backend.Store("recipient", entry); err != nil || result != InboxStoreResultDuplicate {
+			if result, err := inbox.Store("recipient", entry); err != nil || result != InboxStoreResultDuplicate {
 				t.Errorf("ambiguous-store retry = %q, %v; want duplicate", result, err)
 			}
-			pending, _ := backend.RetrievePending("recipient", 10)
+			pending, _ := inbox.RetrievePendingWithMeta("recipient", 10)
 			if len(pending) != 1 || pending[0].ID != original[0].ID || pending[0].Message != envelope {
 				t.Fatalf("ambiguous-store retry changed custody: %#v", pending)
 			}
-			if removed, err := backend.Ack("recipient", []string{original[0].ID}); err != nil || removed != 1 {
+			if removed, err := inbox.Ack("recipient", []string{original[0].ID}); err != nil || removed != 1 {
 				t.Fatalf("ACK = %d, %v", removed, err)
 			}
-			if result, err := backend.Store("recipient", entry); err != nil || result != InboxStoreResultStored {
+			suppressedBefore := testutil.ToFloat64(pushSentCounter.WithLabelValues("direct_admission_suppressed"))
+			if result, err := inbox.Store("recipient", entry); err != nil || result != InboxStoreResultStored {
 				t.Fatalf("completed ACK must retain historical re-store contract: %q, %v", result, err)
+			}
+			restored, _ := inbox.RetrievePendingWithMeta("recipient", 10)
+			if len(restored) != 1 || restored[0].ID == original[0].ID || restored[0].Message != envelope {
+				t.Fatalf("post-ACK retry did not retain fresh custody for the original ciphertext: %#v", restored)
+			}
+			// Wait for the existing admission outcome, not a quiet timeout: the
+			// asynchronous post-ACK dispatch must actually finish suppression.
+			deadline := time.NewTimer(2 * time.Second)
+			defer deadline.Stop()
+			tick := time.NewTicker(time.Millisecond)
+			defer tick.Stop()
+			for testutil.ToFloat64(pushSentCounter.WithLabelValues("direct_admission_suppressed")) <= suppressedBefore {
+				select {
+				case <-recorder.sentSignal:
+					t.Fatalf("acknowledged Thought alerted again: provider attempts=%d", recorder.SendCallCount())
+				case <-tick.C:
+				case <-deadline.C:
+					t.Fatal("post-ACK retry did not finish provider admission")
+				}
+			}
+			if got := recorder.SendCallCount(); got != 1 {
+				t.Fatalf("provider attempts=%d, want one alert across ambiguous and post-ACK retries", got)
+			}
+		})
+	}
+}
+
+func TestThoughtNotificationReplayAdmissionPreservesIdentityBoundaries(t *testing.T) {
+	for _, useRedis := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis_%t", useRedis), func(t *testing.T) {
+			fixture := newDirectReplayProviderFixture(t, useRedis, "ios")
+			fixture.push.now = postCreatePushFixtureNow
+			envelope := thoughtDeliveryEnvelope(t, postCreatePushFixtureWithPostID, map[string]interface{}{"event_id": "shared-event"})
+			for index, tc := range []struct {
+				name, recipient, sender, message string
+				want                             int
+			}{
+				{"original", "recipient-a", "sender-a", envelope, 1},
+				{"same event retry", "recipient-a", "sender-a", envelope, 1},
+				{"same event freshly encrypted", "recipient-a", "sender-a", thoughtDeliveryEnvelope(t, envelope, map[string]interface{}{
+					"encrypted": map[string]string{"kem": "new-kem", "ciphertext": "new-ciphertext", "nonce": "new-nonce"},
+				}), 1},
+				{"different authenticated sender", "recipient-a", "sender-b", envelope, 2},
+				{"different recipient", "recipient-b", "sender-a", envelope, 3},
+				{"different Thought event", "recipient-a", "sender-a", thoughtDeliveryEnvelope(t, envelope, map[string]interface{}{"event_id": "next-event"}), 4},
+				{"chat target shares raw event id", "recipient-a", "sender-a", directChatCustodyEnvelope("shared-event", ""), 5},
+				{"chat edit shares raw event id", "recipient-a", "sender-a", directChatCustodyEnvelope("target", "shared-event"), 6},
+			} {
+				fixture.push.sendStoredNotification(context.Background(), tc.recipient, tc.sender, tc.message, fmt.Sprintf("new-custody-%d", index))
+				if got := fixture.recorder.SendCallCount(); got != tc.want {
+					t.Fatalf("%s: provider attempts=%d, want %d", tc.name, got, tc.want)
+				}
+			}
+			if directNotificationCustodyOnly("recipient-a", inboxMessage{From: "sender-a", Message: envelope, SuppressNotification: true}) {
+				t.Fatal("Thought provider admission expanded chat-only custody recovery policy")
 			}
 		})
 	}

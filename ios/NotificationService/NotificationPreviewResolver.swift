@@ -856,6 +856,11 @@ final class NotificationPreviewResolver {
           thought.postId == postId else {
       return suppress("thought_plaintext_parity_mismatch")
     }
+    if let expiresAt = thought.expiresAt
+      ?? exactISO8601Date(data.string("expires_at")),
+      expiresAt <= Date() {
+      return suppress("thought_expired")
+    }
 
     guard keyReader.readString(key: PushSharedKeyNames.thoughtNotificationsEnabled) != "0" else {
       return suppress("thought_notifications_disabled")
@@ -1732,6 +1737,7 @@ private struct DirectReactionProjectedContact {
 private struct ThoughtPreviewPlaintext {
   let postId: String
   let authorPeerId: String
+  let expiresAt: Date?
   let text: String
   let media: [[String: Any]]
 
@@ -1745,6 +1751,7 @@ private struct ThoughtPreviewPlaintext {
     }
     self.postId = postId
     self.authorPeerId = authorPeerId
+    expiresAt = exactISO8601Date(snapshot["expires_at"])
     text = trimmedString(snapshot["text"]) ?? ""
     let attachments = snapshot["media"] as? [[String: Any]] ?? []
     media = attachments.compactMap { attachment -> [String: Any]? in

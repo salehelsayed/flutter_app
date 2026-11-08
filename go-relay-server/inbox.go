@@ -1039,6 +1039,14 @@ func (ps *PushService) sendRichNotification(
 	custodyID string,
 	selectedRoute ...pushRouteLease,
 ) {
+	metadata := extractChatPushMetadata(message)
+	if metadata.RouteType == "post_create" {
+		now := ps.opaqueWakeNow()
+		metadata.ThoughtExpiresAt = thoughtNotificationDeadline(message, now)
+		if !metadata.ThoughtExpiresAt.IsZero() && !metadata.ThoughtExpiresAt.After(now) {
+			return
+		}
+	}
 	var route *pushRouteLease
 	if len(selectedRoute) > 0 {
 		copy := copyPushRouteLease(selectedRoute[0])
@@ -1064,15 +1072,17 @@ func (ps *PushService) sendRichNotification(
 	var admissionIdentity *messageDispatchAdmissionIdentity
 	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
 		admissionIdentity = &identity
+	} else if identity, valid := newThoughtMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
+		admissionIdentity = &identity
 	}
 	ps.sendSelectedPushThroughGatewayWithAdmission(
 		ctx,
 		toPeerID,
 		*route,
 		"",
-		func() *messaging.Message { return buildPushMessage("", fromPeerID, message) },
+		func() *messaging.Message { return buildPushMessageWithMetadata("", fromPeerID, message, metadata) },
 		admissionIdentity,
-		extractChatPushMetadata(message).RouteType == "post_create",
+		metadata.RouteType == "post_create",
 		projectMessage...,
 	)
 }
@@ -1248,6 +1258,10 @@ func (ps *PushService) sendWithRetry(
 	providerAttempt := 0
 
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
+		msg = ps.refreshThoughtPushLifetime(msg)
+		if msg == nil {
+			return pushDeliverySuppressed
+		}
 		providerAttempt++
 		providerResponseName, err := ps.send(ctx, msg)
 		ps.recordGroupMessageProviderAttempt(
@@ -1367,7 +1381,10 @@ func waitForRetryDelay(ctx context.Context, delay time.Duration) bool {
 }
 
 func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
-	metadata := extractChatPushMetadata(message)
+	return buildPushMessageWithMetadata(token, fromPeerId, message, extractChatPushMetadata(message))
+}
+
+func buildPushMessageWithMetadata(token, fromPeerId, message string, metadata chatPushMetadata) *messaging.Message {
 	if metadata.RouteType == "new_message" {
 		data := map[string]string{
 			"type":      "new_message",
@@ -1457,7 +1474,7 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		"title": resolvedTitle,
 		"body":  resolvedBody,
 	}
-	if metadata.RouteType == "new_message" || metadata.RouteType == "contact_request" {
+	if metadata.RouteType == "new_message" || metadata.RouteType == "contact_request" || metadata.RouteType == "post_create" {
 		data["sender_id"] = fromPeerId
 	}
 	if metadata.RouteType == "group_invite" && metadata.GroupID != "" {
@@ -1489,7 +1506,7 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		)
 	}
 
-	return &messaging.Message{
+	pushMessage := &messaging.Message{
 		Token: token,
 		Notification: &messaging.Notification{
 			Title: resolvedTitle,
@@ -1517,6 +1534,8 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			},
 		},
 	}
+	addThoughtPushLifetime(pushMessage, metadata.ThoughtExpiresAt)
+	return pushMessage
 }
 
 // groupInviteAndroidNotificationTag returns the privacy-safe native identity
@@ -1561,6 +1580,7 @@ func buildEncryptedPostCreatePushMessage(
 		Title: postCreatePushTitle,
 		Body:  postCreatePushBody,
 	})
+	addThoughtPushLifetime(pushMessage, metadata.ThoughtExpiresAt)
 	if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(pushMessage) {
 		return nil
 	}
@@ -1594,6 +1614,7 @@ func projectRichDirectPushMessageForPlatform(
 					metadata := chatPushMetadata{
 						PostID: message.Data["post_id"], MessageID: message.Data["message_id"],
 					}
+					metadata.ThoughtExpiresAt, _ = time.Parse(time.RFC3339Nano, message.Data["expires_at"])
 					if compact := buildEncryptedPostCreatePushMessage(message.Token, fromPeerID, metadata, string(compactEnvelope)); compact != nil {
 						message = compact
 					}
@@ -1978,6 +1999,17 @@ func projectPushMessageForPlatform(
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case "android":
 		projected.APNS = nil
+		if message.Data["type"] == "post_create" && strings.TrimSpace(message.Data["post_id"]) != "" {
+			// Routable Thoughts, including generic oversized fallbacks, pass the
+			// app's archived-contact policy. Legacy senders omit post_id; clients
+			// cannot render those locally, so keep their provider-owned display.
+			projected.Notification = nil
+			if projected.Android != nil {
+				android := *projected.Android
+				android.Notification = nil
+				projected.Android = &android
+			}
+		}
 	case "ios":
 		projected.Android = nil
 		if message.APNS != nil && message.APNS.Payload != nil &&
@@ -2198,6 +2230,9 @@ type chatPushMetadata struct {
 	// PostID is the thought's post id, carried in the clear on v2 post_create
 	// envelopes so the push can route before decryption. Empty for older senders.
 	PostID string
+	// Fixed once at dispatch from the existing authored timestamp. A missing
+	// or malformed legacy timestamp leaves the incumbent delivery unchanged.
+	ThoughtExpiresAt time.Time
 	// IntroAction is the VALIDATED canonical introduction action ("send",
 	// "accept", "pass"). Empty when the envelope's canonical message ID is
 	// absent, malformed, or (for v1) conflicts with the cleartext payload
@@ -2507,7 +2542,24 @@ const (
 	directInboxEditEventIDDedupePrefix     = "edit-event-id:"
 	directInboxDeletionEventIDDedupePrefix = "deletion-event-id:"
 	directInboxReactionEventIDDedupePrefix = "reaction-event-id:"
+	directInboxThoughtEventIDDedupePrefix  = "thought-event-id:"
 )
+
+// Thought retries retain event_id even when custody ACKs are lost. Scope that
+// identity to the authenticated sender and event kind; the backend separately
+// scopes it to the recipient. Other envelope kinds retain their existing keys.
+func extractDirectInboxEntryDedupeKey(entry inboxMessage) string {
+	var envelope struct {
+		Type    string `json:"type"`
+		EventID string `json:"event_id"`
+	}
+	if json.Unmarshal([]byte(entry.Message), &envelope) == nil &&
+		envelope.Type == "post_create" && strings.TrimSpace(envelope.EventID) != "" {
+		identity := sha256.Sum256([]byte(entry.From + "\x00" + envelope.EventID))
+		return fmt.Sprintf("%s%x", directInboxThoughtEventIDDedupePrefix, identity)
+	}
+	return extractDirectInboxDedupeKey(entry.Message)
+}
 
 func extractDirectDeletionCustodyDedupeKey(message string) string {
 	var envelope map[string]interface{}
