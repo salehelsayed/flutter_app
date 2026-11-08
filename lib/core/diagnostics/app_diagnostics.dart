@@ -15,6 +15,7 @@ import 'local_connection_diagnostics.dart';
 import 'app_diagnostic_events.dart';
 import 'diagnostic_archive_writer.dart';
 import 'sticker_usage_tally.dart';
+import 'anonymous_sticker_counter.dart';
 
 typedef AppDiagnosticUpload =
     Future<Set<String>> Function(List<Map<String, Object?>> events);
@@ -106,6 +107,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     stickerIds: _valueEnums['sticker']!.cast<String>(),
     retentionMs: _retentionMs,
   );
+  AnonymousStickerCounter? _anonymousStickers;
   final _random = Random.secure();
   final _enabled = ValueNotifier(false);
   final _eventsById = <String, Map<String, Object?>>{};
@@ -362,6 +364,14 @@ final class AppDiagnostics with WidgetsBindingObserver {
         }
       }
       await _persist(force: true);
+      _anonymousStickers = AnonymousStickerCounter(
+        directory: Directory('${directory.path}/anonymous_stickers'),
+        stickerIds: _valueEnums['sticker']!.cast<String>(),
+        enabled: () => enabled,
+        now: _now,
+        upload: _uploadAnonymousStickerCounts,
+      );
+      await _anonymousStickers!.initialize();
     } catch (_) {
       _storageHealthy = false;
       _lastError = 'sink_unavailable';
@@ -558,7 +568,26 @@ final class AppDiagnostics with WidgetsBindingObserver {
   void recordStickerSent(String stickerId) {
     if (!enabled || !_ready || !_storageHealthy) return;
     _stickerUsage.record(stickerId, _now());
+    _anonymousStickers?.record(stickerId);
     _schedulePersist();
+  }
+
+  Future<bool> _uploadAnonymousStickerCounts(Map<String, Object?> batch) async {
+    final epoch = _epoch;
+    final bridge = _bridge;
+    if (!enabled || bridge?.isInitialized != true) return false;
+    if (_networkAllowed != null && !await _networkAllowed!()) return false;
+    if (!enabled || epoch != _epoch) return false;
+    final response = jsonDecode(
+      await bridge!.send(
+        jsonEncode({'cmd': 'sticker_usage_v1', 'payload': batch}),
+      ),
+    );
+    return response is Map &&
+        response['ok'] == true &&
+        response['data'] is Map &&
+        response['data']['supported'] == true &&
+        response['data']['accepted'] == true;
   }
 
   void _recordCompletedStickerDays() {
@@ -721,6 +750,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     if (!value) {
       _nativeClearPending = true;
       _clearMemory();
+      await _anonymousStickers?.clear();
     }
     _retryAt = 0;
     await _persist(force: true);
@@ -737,6 +767,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _consentPending = true;
     _nativeConsentPending = true;
     _clearMemory();
+    await _anonymousStickers?.clear();
     _retryAt = 0;
     await _persist(force: true);
     await _syncNative();
@@ -820,15 +851,23 @@ final class AppDiagnostics with WidgetsBindingObserver {
 
   Future<void> flush() {
     if (_disposed || !_ready) return Future.value();
+    final anonymousFlush = _anonymousStickers?.flush() ?? Future<void>.value();
     final existing = _flushFuture;
     if (existing != null) {
       // Joining a network flush must still persist events admitted since its
       // snapshot, even when their regular write window has not elapsed yet.
-      return Future.wait<void>([existing, _persist()]).then((_) {});
+      return Future.wait<void>([
+        existing,
+        _persist(),
+        anonymousFlush,
+      ]).then((_) {});
     }
     final future = _flush();
     _flushFuture = future;
-    return future.whenComplete(() {
+    return Future.wait<void>([
+      future,
+      anonymousFlush,
+    ]).then((_) {}).whenComplete(() {
       if (identical(_flushFuture, future)) _flushFuture = null;
     });
   }
@@ -1484,6 +1523,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _notificationLocks.clear();
     if (_observing) WidgetsBinding.instance.removeObserver(this);
     await _flushFuture;
+    await _anonymousStickers?.dispose();
     await _persist();
     _disposed = true;
     await _archiveWriter?.dispose();

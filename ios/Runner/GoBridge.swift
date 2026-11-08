@@ -303,6 +303,8 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeCallDiagnosticsV1(args ?? "") }, result: result)
         case "appDiagnosticsV1":
             runOnBackground({ BridgeAppDiagnosticsV1(args ?? "") }, result: result)
+        case "stickerUsageV1":
+            runOnBackground({ BridgeStickerUsageV1(args ?? "") }, result: result)
         // Presence (FDC-08/09)
         case "relayPresenceGet":
             runOnBackground({ BridgePresenceGet(args ?? "") }, result: result)

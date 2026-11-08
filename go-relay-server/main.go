@@ -203,6 +203,9 @@ func main() {
 		biz.thoughts = thoughts
 		prometheus.MustRegister(thoughts)
 	}
+	if inbox.stickerMetrics != nil {
+		prometheus.MustRegister(inbox.stickerMetrics)
+	}
 
 	// FDC-08: shared per-peer presence store backing the additive `presence_get`
 	// read (and FDC-09's future `presence_set` write). Seeded by the
