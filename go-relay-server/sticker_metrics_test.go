@@ -245,3 +245,18 @@ func TestStickerMetricsRejectedNonceWriteDoesNotCount(t *testing.T) {
 		}
 	}
 }
+
+func TestStickerMetricsMissingACLPreflightIsUnsupported(t *testing.T) {
+	// The fake Redis lacks the ACL predicate, as pre-7 Redis does. No report
+	// may mutate totals when permission preflight is unavailable.
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	m := newStickerMetrics(client, "test:", func() time.Time { return now })
+	raw := []byte(`{"action":"sticker_usage_v1","day":"2026-11-08","nonce":"7b719404-d2bb-4d98-b3b6-b7be5d8186f1","counts":{"orbit_crew.planet.hello":2}}`)
+	result := m.report(raw, "actor")
+	if result["supported"] != false || result["accepted"] != false || len(server.Keys()) != 0 {
+		t.Fatalf("unsupported preflight changed counters: %v %v", result, server.Keys())
+	}
+}

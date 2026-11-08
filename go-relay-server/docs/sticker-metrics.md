@@ -14,7 +14,7 @@ Owner decision: Option A, anonymous counts (2026-11-08, Kayan task
 6. Redis atomically increments totals and records the random nonce for 72 hours, so a lost response/retry does not double count.
 7. Daily aggregate hashes expire at UTC day start plus 28 days; the Redis authority survives relay-process restart using the existing Redis persistence policy.
 8. No peer/device/IP/report body is stored with totals/nonces; salted abuse-budget tokens exist only in bounded hourly relay RAM, with no exported labels.
-9. Admission requires known catalog/reserved IDs, at most 32 KiB/1,000 counts, eight attempts per authenticated actor/hour and 600 globally/hour; hostile claims/Sybil identities are not verified usage.
+9. Admission requires known catalog/reserved IDs, at most 32 KiB/1,000 counts, eight attempts per authenticated actor/hour and 600 per relay/hour; hostile claims/Sybil identities are not verified usage.
 10. Operators with existing Redis/Prometheus access can read totals; no public read API or phones count exists, and old relays/native builds fail silently on the app side.
 
 ## Wire and persistence
@@ -40,8 +40,12 @@ With the normal Redis prefix `relay:`, keys are:
 - `relay:sticker:day:YYYY-MM-DD`: integer hash fields `total`, `p:PACK`, `s:STICKER`.
 - `relay:sticker:nonce:UUID`: value `1`, expires 72 hours after first acceptance; no timestamp, peer, IP, counts or body accompanies it.
 
-Both keys are updated by one Lua operation after type/numeric preflight. A
-storage failure is retryable. Redis is the authoritative aggregate snapshot:
+Both keys are updated by one Lua operation after type/numeric and write-permission
+preflight. Redis 7+ is required for `redis.acl_check_cmd`; without that capability
+reports return `supported:false` before mutation. A denied nonce write cannot
+leave already-incremented counters, since Lua errors do not roll back prior
+commands. The ACL behavior is described in the [Redis Lua API](https://redis.io/docs/latest/develop/programmability/lua-api/).
+A storage failure is retryable. Redis is the authoritative aggregate snapshot:
 there is deliberately no independently committed file counter that could diverge
 from nonce admission. Durability across a Redis-server loss follows the existing
 Redis persistence/backup configuration, as with relay custody; no stronger Redis
@@ -55,7 +59,9 @@ Opting out cannot subtract reports already accepted or recall an in-flight send.
 
 ## Mission Control / Kayan-2 readout
 
-All are Prometheus gauges on the existing protected/operator `/metrics` surface:
+All are Prometheus gauges on the existing `/metrics` listener, which defaults
+to loopback. This feature adds no HTTP authentication; access follows the
+operator's existing bind address, firewall and proxy configuration:
 
 | Family | Labels | Meaning |
 | --- | --- | --- |

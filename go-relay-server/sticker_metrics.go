@@ -63,7 +63,15 @@ const stickerReportLua = `
 local kind=redis.call('TYPE',KEYS[1]).ok
 if kind~='none' and kind~='hash' then return redis.error_reply('invalid aggregate type') end
 if redis.call('EXISTS',KEYS[2])==1 then return 1 end
+if not redis.acl_check_cmd then return 0 end
+if not redis.acl_check_cmd('SET',KEYS[2],'1','EX',ARGV[2]) or
+   not redis.acl_check_cmd('EXPIREAT',KEYS[1],ARGV[1]) then
+ return redis.error_reply('aggregate write not permitted')
+end
 for i=3,#ARGV,2 do
+ if not redis.acl_check_cmd('HINCRBY',KEYS[1],ARGV[i],ARGV[i+1]) then
+  return redis.error_reply('aggregate write not permitted')
+ end
  local old=redis.call('HGET',KEYS[1],ARGV[i])
  if old and ((old~='0' and not string.match(old,'^[1-9]%d*$')) or tonumber(old)>9007199254740991-tonumber(ARGV[i+1])) then
   return redis.error_reply('invalid aggregate count')
@@ -120,9 +128,14 @@ func (m *stickerMetrics) report(raw []byte, actor string) map[string]any {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err = stickerReportScript.Run(ctx, m.client, []string{m.prefix + "day:" + request.Day, m.prefix + "nonce:" + request.Nonce}, args...).Result()
+	accepted, err := stickerReportScript.Run(ctx, m.client, []string{m.prefix + "day:" + request.Day, m.prefix + "nonce:" + request.Nonce}, args...).Int64()
 	if err != nil {
 		result["reason"] = "storage_unavailable"
+		return result
+	}
+	if accepted != 1 {
+		delete(result, "reason")
+		result["supported"] = false
 		return result
 	}
 	delete(result, "reason")
