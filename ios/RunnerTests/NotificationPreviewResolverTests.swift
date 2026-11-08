@@ -3403,7 +3403,16 @@ final class NotificationPreviewResolverTests: XCTestCase {
 
   func testDecryptsPostCreateFixturePreviewAsUntrackedThought() throws {
     let fixture = try loadFixture("post_create_text")
-    let plaintext = try fixturePlaintextJSON(fixture)
+    var payload = try XCTUnwrap(fixture["plaintext"] as? [String: Any])
+    var snapshot = try XCTUnwrap(payload["snapshot"] as? [String: Any])
+    let formatter = ISO8601DateFormatter()
+    let createdAt = Date().addingTimeInterval(-3600)
+    snapshot["post_created_at"] = formatter.string(from: createdAt)
+    snapshot["expires_at"] = formatter.string(
+      from: createdAt.addingTimeInterval(24 * 3600)
+    )
+    payload["snapshot"] = snapshot
+    let plaintext = try jsonString(payload)
     let routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
     let decryptor = MemoryPushDecryptor(chatPlaintext: plaintext)
     let dedupe = MemoryPushDedupeStore()
@@ -3460,6 +3469,70 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertTrue(duplicate.suppress)
     XCTAssertFalse(duplicate.markAsShown)
     XCTAssertEqual(duplicate.reason, "duplicate_message")
+  }
+
+  func testThoughtExpirySuppressesBeforeClaimAndSanitizesProviderAlert() throws {
+    let formatter = ISO8601DateFormatter()
+    let now = Date()
+    let expired = formatter.string(from: now.addingTimeInterval(-3600))
+    let active = formatter.string(from: now.addingTimeInterval(3600))
+    let cases: [(name: String, plaintextExpiry: String?, routeExpiry: String?, expired: Bool)] = [
+      ("expired decrypted", expired, active, true),
+      ("active decrypted", active, expired, false),
+      ("expired compact", nil, expired, true),
+      ("active compact", nil, active, false),
+      ("malformed plaintext with expired route", "not-a-date", expired, true),
+      ("legacy missing expiry", nil, nil, false),
+    ]
+    for item in cases {
+      var snapshot: [String: Any] = [
+        "post_id": "post-expiry",
+        "author_peer_id": "peer-alice",
+        "text": "A live thought",
+        "media": [],
+      ]
+      if let expiresAt = item.plaintextExpiry {
+        snapshot["expires_at"] = expiresAt
+      }
+      var route = thoughtRoute(postId: "post-expiry")
+      if let expiresAt = item.routeExpiry {
+        route["expires_at"] = expiresAt
+      }
+      let dedupe = MemoryPushDedupeStore()
+      let result = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([
+          PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+          PushSharedKeyNames.thoughtsEnabled: "1",
+          PushSharedKeyNames.directReactionContacts: try ordinaryDirectContactsJSON(),
+        ]),
+        decryptor: MemoryPushDecryptor(
+          chatPlaintext: try jsonString(["snapshot": snapshot])
+        ),
+        dedupeStore: dedupe
+      ).resolve(
+        userInfo: route,
+        fallbackTitle: "Provider title",
+        fallbackBody: "Provider body"
+      )
+      XCTAssertEqual(result.suppress, item.expired, item.name)
+      XCTAssertEqual(result.markAsShown, !item.expired, item.name)
+      XCTAssertEqual(result.reason, item.expired ? "thought_expired" : "thought", item.name)
+      XCTAssertEqual(dedupe.claims, item.expired ? [] : ["post_create:post-expiry"], item.name)
+      let content = UNMutableNotificationContent()
+      content.title = "Provider title"
+      content.body = "Provider body"
+      content.sound = .default
+      XCTAssertEqual(
+        applyOrSanitizeNotificationPreviewResult(result, to: content),
+        !item.expired,
+        item.name
+      )
+      if item.expired {
+        XCTAssertTrue(content.title.isEmpty, item.name)
+        XCTAssertTrue(content.body.isEmpty, item.name)
+        XCTAssertNil(content.sound, item.name)
+      }
+    }
   }
 
   func testThoughtPreviewUsesTrustedNameLocalizedTitleAndMediaDescriptors() throws {
