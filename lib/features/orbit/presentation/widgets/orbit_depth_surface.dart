@@ -1428,10 +1428,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       if (openable()) widget.onThoughtTap?.call(post.id);
     }
 
-    bool play() {
-      if (!openable()) return false;
-      widget.onThoughtVideoPlay?.call(post.id);
-      return true;
+    void play() {
+      if (openable()) widget.onThoughtVideoPlay?.call(post.id);
     }
 
     final media =
@@ -1444,7 +1442,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             load: widget.loadMedia!,
             download: widget.downloadMedia!,
             onOpen: open,
-            onPlayVideo: play,
+            onPlayVideo: widget.onThoughtVideoPlay == null ? null : play,
             onActivate: _bySemantics(open),
             lastLoaded: _lastLoadedMedia,
           )
