@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -21,12 +23,18 @@ abstract final class MediaAudioSession {
         await deactivate();
         return;
       }
+      if (Platform.isIOS) {
+        // No await between the call check and this send, so a call starting
+        // now cannot lose its session.
+        await AVAudioSession().setActive(
+          false,
+          avOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
+        );
+        return;
+      }
       final session = await AudioSession.instance;
-      await session.setActive(
-        false,
-        avAudioSessionSetActiveOptions:
-            AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
-      );
+      if (callOwnsSession()) return;
+      await session.setActive(false);
     } catch (error) {
       // iOS refuses while other audio of the app still runs; the session then
       // stays with that audio, which is the right owner.
