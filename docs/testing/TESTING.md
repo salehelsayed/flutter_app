@@ -11369,6 +11369,18 @@ then retries the same batch once at the hour. The behavioral RED and 27-case
 GREEN are in that evidence root's `retry-deadline/` directory. Clearing consent
 also clears the retry deadline; it never enters the uploaded payload.
 
+The legacy flush/join/clear clock cases in `app_diagnostics_test.dart` must pump
+real and fake microtasks together while awaiting the separate real-file counter.
+Draining startup alone does not suffice: a later flush still joins its serial
+file queue. `withFakeTime` pumps microtasks without advancing virtual timers,
+awaits completion before the original persistence assertions, and disposes the
+collector before stopping that pump. Explicit elapsed-time assertions preserve
+the zero-time flush/join and one-second clear boundaries. The four causal cases
+pass in `retry-deadline/flush-startup/clock-fix-result.json`; preserve the original
+diagnostics failure, the inconclusive standalone probe, and the failed
+startup-only attempt in the same evidence root. This fixture repair does not
+change production flush, counter, or consent behavior.
+
 `sticker_metrics_test.go` has eight focused cases covering exact Redis totals,
 72-hour nonce deduplication, relay-process restart, retention, closed IDs/caps,
 abuse admission, the authenticated stream/readout, and failure atomicity. A

@@ -45,6 +45,20 @@ class DiagnosticBridge implements Bridge {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+// Real-file futures need the real event loop; only elapse advances fake timers.
+Future<void> withFakeTime(Future<void> Function(FakeAsync) body) async {
+  final clock = FakeAsync();
+  final pump = Timer.periodic(
+    const Duration(milliseconds: 1),
+    (_) => clock.flushMicrotasks(),
+  );
+  try {
+    await clock.run(body);
+  } finally {
+    pump.cancel();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
@@ -645,29 +659,37 @@ void main() {
         saved.add(jsonDecode(jsonEncode(state)) as Map<String, dynamic>);
       },
     );
+    // Settle the real-file startup flush before the clock becomes fake.
+    await diagnostics.flush();
     saved.clear();
-    fakeAsync((clock) {
-      final trace = diagnostics.traceForOperation('message-to-send');
-      diagnostics.startAttempt(feature: 'message', traceId: trace);
-      diagnostics.finishAttempt(
-        feature: 'message',
-        traceId: trace,
-        outcome: 'success',
-      );
-      var flushed = false;
-      unawaited(diagnostics.flush().then((_) => flushed = true));
-      clock.flushMicrotasks();
-      expect(flushed, true);
-      expect(saved, hasLength(1));
-      expect(saved.single['events'], hasLength(2));
-      expect(saved.single['open'], isEmpty);
-      clock.elapse(const Duration(seconds: 1));
-      expect(saved, hasLength(1));
-      for (var idleFlush = 0; idleFlush < 3; idleFlush++) {
-        unawaited(diagnostics.flush());
+    await withFakeTime((clock) async {
+      try {
+        final trace = diagnostics.traceForOperation('message-to-send');
+        diagnostics.startAttempt(feature: 'message', traceId: trace);
+        diagnostics.finishAttempt(
+          feature: 'message',
+          traceId: trace,
+          outcome: 'success',
+        );
+        var flushed = false;
+        final flushing = diagnostics.flush().then((_) => flushed = true);
         clock.flushMicrotasks();
+        await flushing;
+        expect(clock.elapsed, Duration.zero);
+        expect(flushed, true);
+        expect(saved, hasLength(1));
+        expect(saved.single['events'], hasLength(2));
+        expect(saved.single['open'], isEmpty);
+        clock.elapse(const Duration(seconds: 1));
+        expect(saved, hasLength(1));
+        for (var idleFlush = 0; idleFlush < 3; idleFlush++) {
+          await diagnostics.flush();
+          clock.flushMicrotasks();
+        }
+        expect(saved, hasLength(1));
+      } finally {
+        await diagnostics.dispose();
       }
-      expect(saved, hasLength(1));
     });
   });
 
@@ -682,8 +704,9 @@ void main() {
           if (release != null) await release!.future;
         },
       );
+      await diagnostics.flush();
       saved.clear();
-      fakeAsync((clock) {
+      await withFakeTime((clock) async {
         release = Completer<void>();
         try {
           diagnostics.record(feature: 'message', stage: 'send', outcome: 'ok');
@@ -701,11 +724,15 @@ void main() {
             true,
           );
           var joiningCompleted = false;
-          unawaited(diagnostics.flush().then((_) => joiningCompleted = true));
+          final joining = diagnostics.flush().then(
+            (_) => joiningCompleted = true,
+          );
           clock.flushMicrotasks();
           expect(joiningCompleted, false);
           release!.complete();
           clock.flushMicrotasks();
+          await joining;
+          expect(clock.elapsed, Duration.zero);
           expect(joiningCompleted, true);
           expect(saved.last['events'], hasLength(2));
           clock.elapse(const Duration(seconds: 1));
@@ -715,6 +742,7 @@ void main() {
           clock.flushMicrotasks();
           clock.elapse(const Duration(seconds: 1));
           release = null;
+          await diagnostics.dispose();
         }
       });
     },
@@ -839,9 +867,10 @@ void main() {
           saved.add(snapshot);
         },
       );
+      await diagnostics.flush();
       final originalEpoch = saved.last['consentEpoch'] as int;
       saved.clear();
-      fakeAsync((clock) {
+      await withFakeTime((clock) async {
         release = Completer<void>();
         try {
           final trace = diagnostics.traceForOperation('private-operation');
@@ -849,14 +878,15 @@ void main() {
           clock.elapse(const Duration(seconds: 1));
           expect(saved, isEmpty);
           var completed = false;
-          unawaited(
-            (disable ? diagnostics.setEnabled(false) : diagnostics.clear())
-                .then((_) => completed = true),
-          );
+          final clearing =
+              (disable ? diagnostics.setEnabled(false) : diagnostics.clear())
+                  .then((_) => completed = true);
           clock.flushMicrotasks();
           expect(diagnostics.enabled, !disable);
           release!.complete();
           clock.flushMicrotasks();
+          await clearing;
+          expect(clock.elapsed, const Duration(seconds: 1));
           expect(completed, true);
           expect(saved.last['enabled'], !disable);
           expect(saved.last['consentEpoch'], greaterThan(originalEpoch));
@@ -869,6 +899,7 @@ void main() {
           if (!release!.isCompleted) release!.complete();
           clock.flushMicrotasks();
           release = null;
+          await diagnostics.dispose();
         }
       });
     });
