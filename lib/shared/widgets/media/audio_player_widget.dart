@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -341,6 +342,14 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           _player.pause();
         }
       });
+      // just_audio activates the shared session on play and never releases
+      // it; hand it back once this voice note stops.
+      if (_isPlaying) {
+        _sessionActive = true;
+      } else if (wasPlaying && _sessionActive) {
+        _sessionActive = false;
+        unawaited(MediaAudioSession.release());
+      }
       if (_playbackObservationEnabled && _isPlaying != wasPlaying) {
         emitFlowEvent(
           layer: 'FL',
@@ -498,6 +507,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     } catch (_) {
       // A platform stop error must not close subjects under a pending load.
     }
+    if (_sessionActive) {
+      _sessionActive = false;
+      await MediaAudioSession.release();
+    }
     await Future.wait(_sourceLoads.toList());
     try {
       await _player.dispose();
@@ -518,6 +531,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       setState(() => _position = _player.position);
     });
   }
+
+  /// Whether this player's playback activated the shared audio session.
+  bool _sessionActive = false;
 
   void _stopPositionTimer() {
     _positionTimer?.cancel();

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 
+import '../../../core/media/media_audio_session.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -132,6 +133,13 @@ final class CallCoordinator {
         terminalHistoryTimeout <= Duration.zero) {
       throw ArgumentError('coordinator bounds must be positive');
     }
+    MediaAudioSession.callOwnsSession = _callOwnsAudioSession;
+  }
+
+  /// While a call is live, voice notes leave the shared audio session to it.
+  bool _callOwnsAudioSession() {
+    final active = _active;
+    return active != null && !active.isTerminal;
   }
 
   final CallReducer reducer;
@@ -1007,6 +1015,10 @@ final class CallCoordinator {
       if (deadline != null && !deadline.isCompleted) deadline.complete();
       _cancelTimers();
       _disposed = true;
+      // Tear-offs of one method on one object compare equal.
+      if (MediaAudioSession.callOwnsSession == _callOwnsAudioSession) {
+        MediaAudioSession.callOwnsSession = MediaAudioSession.noCall;
+      }
       _disposing = false;
       await _snapshots.close();
     }

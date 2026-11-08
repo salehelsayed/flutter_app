@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:fake_async/fake_async.dart';
 
+import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
@@ -318,6 +319,25 @@ void main() {
       });
     },
   );
+
+  test('while a call is live, media leaves the audio session to it', () {
+    fakeAsync((time) {
+      final coordinator = _coordinator(history: _MemoryHistoryRepository());
+      expect(MediaAudioSession.callOwnsSession(), isFalse);
+      unawaited(coordinator.dispatch(_event(CallEventType.place)));
+      time.flushMicrotasks();
+      expect(coordinator.activeSession, isNotNull);
+      expect(MediaAudioSession.callOwnsSession(), isTrue);
+
+      unawaited(coordinator.dispatch(_event(CallEventType.cancel)));
+      time.flushMicrotasks();
+      time.elapse(const Duration(seconds: 5));
+      time.flushMicrotasks();
+      expect(MediaAudioSession.callOwnsSession(), isFalse);
+      unawaited(coordinator.dispose());
+      time.flushMicrotasks();
+    });
+  });
 
   test(
     'VC-026 stalled connected refresh stays single-flight through disposal',

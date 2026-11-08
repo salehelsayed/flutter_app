@@ -155,6 +155,8 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
       withCallHandle(call.arguments, result, controller.activateAudio)
     case "deactivateAudio":
       withCallHandle(call.arguments, result, controller.deactivateAudio)
+    case "releaseMediaAudioSessionIfIdle":
+      result(controller.releaseMediaAudioSessionIfIdle())
     case "failClosed":
       failClosed(call.arguments, result)
     case "detach":

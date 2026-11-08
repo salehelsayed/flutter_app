@@ -79,6 +79,7 @@ internal struct MknoonCallAudioOutput: CustomStringConvertible {
 internal protocol MknoonCallAudioManaging: AnyObject {
   func prepareForCallKitActivation() throws
   func releaseAfterCallKitDeactivation()
+  func deactivateForMedia() throws
   func routeState() -> (route: String, available: [String])
   func requestRoute(_ route: String) -> Bool
   func outputDevices() -> [MknoonCallAudioOutput]
@@ -205,6 +206,10 @@ internal final class MknoonSystemCallAudioManager: MknoonCallAudioManaging {
   func releaseAfterCallKitDeactivation() {
     try? session.overrideOutputAudioPort(.none)
     try? session.setPreferredInput(nil)
+  }
+
+  func deactivateForMedia() throws {
+    try session.setActive(false, options: .notifyOthersOnDeactivation)
   }
 
   func routeState() -> (route: String, available: [String]) {
@@ -460,6 +465,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private let webRTCAudioSession: MknoonWebRTCAudioSessionNotifying
   private let capability: NativeCallCapabilityPersisting
   private let isCallKitCallLive: (UUID) -> Bool
+  private let isAnyCallKitCallLive: () -> Bool
   private var startupJournal: PendingNativeCallDescriptor?
   private var capabilityDisabledInProcess = false
   private let nowMs: () -> Int64
@@ -495,7 +501,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     delegateQueue: DispatchQueue? = nil,
     ringback: MknoonCallRingbackPlaying = MknoonCallRingbackTonePlayer(),
     webRTCAudioSession: MknoonWebRTCAudioSessionNotifying = RTCAudioSession.sharedInstance(),
-    isCallKitCallLive: ((UUID) -> Bool)? = nil
+    isCallKitCallLive: ((UUID) -> Bool)? = nil,
+    isAnyCallKitCallLive: (() -> Bool)? = nil
   ) {
     self.ringback = ringback
     self.provider = provider
@@ -508,6 +515,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     let observer = CXCallObserver()
     self.isCallKitCallLive = isCallKitCallLive ?? { id in
       observer.calls.contains { $0.uuid == id && !$0.hasEnded }
+    }
+    self.isAnyCallKitCallLive = isAnyCallKitCallLive ?? {
+      observer.calls.contains { !$0.hasEnded }
     }
     self.nowMs = nowMs
     self.notificationCenter = notificationCenter
@@ -993,6 +1003,25 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       silenceRingbackLocked(reason: "media")
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=claimed")
       return true
+    }
+  }
+
+  /// Voice notes hand the shared session back only while no call exists,
+  /// Mknoon's or another app's. Holding the lock didActivate takes keeps a
+  /// call from activating between the check and the deactivation.
+  func releaseMediaAudioSessionIfIdle() -> Bool {
+    synchronized {
+      let ownCallOpen = store.snapshot().map { $0.terminalEvent == nil } ?? false
+      guard !ownCallOpen, audioActivatedCallIds.isEmpty, !isAnyCallKitCallLive() else {
+        return false
+      }
+      do {
+        try audio.deactivateForMedia()
+        return true
+      } catch {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] media_audio_session=release_refused")
+        return false
+      }
     }
   }
 

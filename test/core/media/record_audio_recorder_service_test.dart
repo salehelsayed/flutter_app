@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:record/record.dart';
 
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
+import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
@@ -263,6 +264,58 @@ void main() {
 
         expect(UploadWakeLockController.debugActiveHolds, 0);
         expect(fakeDriver.disableCalls, 1);
+      },
+    );
+  });
+
+  group('audio session handed back', () {
+    late int deactivations;
+    setUp(() {
+      deactivations = 0;
+      MediaAudioSession.debugDeactivate = () async => deactivations++;
+    });
+    tearDown(() {
+      MediaAudioSession.debugDeactivate = null;
+      MediaAudioSession.callOwnsSession = MediaAudioSession.noCall;
+    });
+
+    test('stop() hands the session back', () async {
+      await service.start(outputPath: testOutputPath);
+      await service.stop();
+      expect(deactivations, 1);
+    });
+
+    test('cancel() hands the session back', () async {
+      await service.start(outputPath: testOutputPath);
+      await service.cancel();
+      expect(deactivations, 1);
+    });
+
+    test('dispose() while recording hands the session back', () async {
+      await service.start(outputPath: testOutputPath);
+      await service.dispose();
+      expect(deactivations, 1);
+    });
+
+    test('dispose() without a recording leaves the session alone', () async {
+      await service.dispose();
+      expect(deactivations, 0);
+    });
+
+    test('during a call the session is left to the call', () async {
+      MediaAudioSession.callOwnsSession = () => true;
+      await service.start(outputPath: testOutputPath);
+      await service.stop();
+      expect(deactivations, 0);
+    });
+
+    test(
+      'stop() hands the session back even when the plugin stop throws',
+      () async {
+        await service.start(outputPath: testOutputPath);
+        fakeRecorder.throwOnStop = true;
+        await expectLater(service.stop(), throwsA(anything));
+        expect(deactivations, 1);
       },
     );
   });
