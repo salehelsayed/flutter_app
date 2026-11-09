@@ -20,6 +20,8 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../../shared/bidi_layout_checks.dart';
 import '../../support/depth_fixtures.dart';
 import '../../../translate_preview/fake_model_delivery_controller.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import '../../../../shared/fake_url_launcher.dart';
 
 void main() {
   late DateTime now;
@@ -397,6 +399,75 @@ void main() {
       );
       expect(paragraph.textDirection, TextDirection.rtl);
       expect(find.text('See translation'), findsOneWidget);
+      await finish(tester);
+    });
+  });
+
+  group('a link in a thought', () {
+    late FakeUrlLauncher launcher;
+    setUp(() => launcher = FakeUrlLauncher.install());
+    final words = find.byKey(const ValueKey('orbit-depth-text-post-0'));
+
+    testWidgets('opens in the browser, and the rest still opens the thought', (
+      tester,
+    ) async {
+      thoughts['peer-0'] = depthThought(
+        0,
+        text: 'menu at https://example.com/menu?day=1. see you',
+      );
+      await mount(tester);
+      await enter(tester);
+      expect(tappableWords(tester, words), ['https://example.com/menu?day=1']);
+      await tapWords(tester, words, 'https://example.com/menu?day=1');
+      expect(launcher.launches, [
+        (
+          'https://example.com/menu?day=1',
+          PreferredLaunchMode.externalApplication,
+        ),
+      ]);
+      expect(opened, isEmpty);
+      await tapWords(tester, words, 'see you');
+      await rest(tester);
+      expect(opened, ['post-0']);
+      expect(launcher.launches, hasLength(1));
+      await finish(tester);
+    });
+
+    testWidgets('in Arabic text keeps the Arabic comma out of the link', (
+      tester,
+    ) async {
+      thoughts['peer-0'] = depthThought(
+        0,
+        text: 'شاهد https://example.com/a، رائع',
+      );
+      await mount(tester);
+      await enter(tester);
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: words, matching: find.byType(RichText)),
+      );
+      expect(paragraph.textDirection, TextDirection.rtl);
+      expect(tappableWords(tester, words), ['https://example.com/a']);
+      await tapWords(tester, words, 'https://example.com/a');
+      expect(launcher.launches, [
+        ('https://example.com/a', PreferredLaunchMode.externalApplication),
+      ]);
+      await finish(tester);
+    });
+
+    testWidgets('a mailto, tel or app link stays text that opens the thought', (
+      tester,
+    ) async {
+      thoughts['peer-0'] = depthThought(
+        0,
+        text: 'mailto:me@example.com tel:+4930123 myapp://www.example.com',
+      );
+      await mount(tester);
+      await enter(tester);
+      expect(tappableWords(tester, words), isEmpty);
+      await tapWords(tester, words, 'myapp://www.example.com');
+      await rest(tester);
+      expect(launcher.launches, isEmpty);
+      expect(opened, ['post-0']);
       await finish(tester);
     });
   });

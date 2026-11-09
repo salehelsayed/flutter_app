@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import '../fake_url_launcher.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -64,10 +66,7 @@ void main() {
       );
       expect(node.getSemanticsData().label, contains('Sent to inbox'));
       expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
-      node.owner!.performAction(
-        node.id,
-        SemanticsAction.tap,
-      );
+      node.owner!.performAction(node.id, SemanticsAction.tap);
       expect(opened, ['https://example.com']);
       semantics.dispose();
     },
@@ -282,6 +281,39 @@ void main() {
       (urlSpan.recognizer! as TapGestureRecognizer).onTap!();
 
       expect(tappedUrl, 'https://b.com');
+    });
+  });
+
+  group('LinkableText opens links', () {
+    testWidgets('a www. link opens in the browser over https', (tester) async {
+      final launcher = FakeUrlLauncher.install();
+      await tester.pumpWidget(
+        wrap(const LinkableText(text: 'see WWW.Example.com/Menu.')),
+      );
+      final text = find.byType(LinkableText);
+      expect(tappableWords(tester, text), ['WWW.Example.com/Menu']);
+      await tapWords(tester, text, 'WWW.Example.com/Menu');
+      expect(launcher.launches, [
+        (
+          'https://www.example.com/Menu',
+          PreferredLaunchMode.externalApplication,
+        ),
+      ]);
+    });
+
+    testWidgets('a link keeps the size of the words around it', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const LinkableText(
+            text: 'see https://example.com',
+            style: TextStyle(fontSize: 28, height: 1.25),
+          ),
+        ),
+      );
+      final link = findSpans(tester).singleWhere((s) => s.recognizer != null);
+      expect(link.style?.fontSize, 28);
+      expect(link.style?.height, 1.25);
+      expect(link.style?.decoration, TextDecoration.underline);
     });
   });
 }

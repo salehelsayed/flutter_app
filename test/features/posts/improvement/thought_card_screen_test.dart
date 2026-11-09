@@ -32,6 +32,9 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/bidi_layout_checks.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../translate_preview/fake_model_delivery_controller.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import '../../../shared/fake_url_launcher.dart';
 
 void main() {
   final initialNow = DateTime.utc(2026, 10, 21, 12);
@@ -210,6 +213,38 @@ void main() {
       find.text('river walk #Walks with #مشي', findRichText: true),
       findsOneWidget,
     );
+    await finish(tester);
+  });
+
+  testWidgets("a link in a friend's thought opens in the browser at the "
+      "thought's size", (tester) async {
+    final launcher = FakeUrlLauncher.install();
+    final thought = _thought(
+      initialNow,
+    ).copyWith(text: 'tickets www.example.com/t, hurry');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    final words = find.byWidgetPredicate(
+      (widget) => widget is LinkableText && widget.text == thought.text,
+    );
+    final links = <TextSpan>[];
+    for (final rich in tester.widgetList<RichText>(
+      find.descendant(of: words, matching: find.byType(RichText)),
+    )) {
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && span.recognizer != null) links.add(span);
+        return true;
+      });
+    }
+    expect([for (final link in links) link.text], ['www.example.com/t']);
+    expect(links.single.style?.fontSize, 28);
+    await tapWords(tester, words, 'www.example.com/t');
+    expect(launcher.launches, [
+      ('https://www.example.com/t', PreferredLaunchMode.externalApplication),
+    ]);
     await finish(tester);
   });
 

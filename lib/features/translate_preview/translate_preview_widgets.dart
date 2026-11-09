@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:flutter_app/features/translate_preview/language_heuristic.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 /// Opens the existing Storage section from a link's download sheet. The
 /// Orbit screen registers it because it owns the storage manager and scopes.
@@ -191,6 +193,7 @@ class TranslatePreview extends StatelessWidget {
           ? (result) => store.saveTranslation(item, text, target, result)
           : null,
       color: color,
+      linksFrom: text,
       gate: (child, restore) => _DeliveryGate(
         beforeOpen: restore,
         delivery: delivery,
@@ -455,6 +458,7 @@ class _AiAction extends StatefulWidget {
     required this.run,
     this.color,
     this.below,
+    this.linksFrom,
     this.restore,
     this.save,
     this.gate,
@@ -467,6 +471,10 @@ class _AiAction extends StatefulWidget {
   final Future<String> Function() run;
   final Color? color;
   final Widget Function(String result)? below;
+
+  /// The result links only URLs this text has, so a model never adds a link
+  /// the sender did not write. Null keeps every URL plain.
+  final String? linksFrom;
   final Future<String?> Function()? restore;
   final Future<bool> Function(String result)? save;
   final Widget Function(Widget child, Future<bool> Function() restore)? gate;
@@ -589,10 +597,14 @@ class _AiActionState extends State<_AiAction> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            text,
+          LinkableText(
+            text: text,
             textDirection: detectTextDirection(text),
             style: TextStyle(color: base, fontSize: 15, height: 1.3),
+            onlyLinks: {
+              for (final segment in parseUrls(widget.linksFrom ?? ''))
+                if (segment.isUrl) segment.text,
+            },
           ),
           if (widget.below case final below?) below(text),
         ],

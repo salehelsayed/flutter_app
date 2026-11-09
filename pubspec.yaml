@@ -141,6 +141,7 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
   path_provider_platform_interface: any
   plugin_platform_interface: any
+  url_launcher_platform_interface: any
 flutter:
   generate: true
 

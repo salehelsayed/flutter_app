@@ -1,34 +1,60 @@
 /// A segment of text that may or may not be a URL.
 class TextSegment {
   final String text;
-  final bool isUrl;
-  const TextSegment(this.text, {this.isUrl = false});
+
+  /// Where a tap on this segment goes: always http or https. Null for plain
+  /// text.
+  final Uri? uri;
+  const TextSegment(this.text, {this.uri});
+
+  bool get isUrl => uri != null;
 }
 
-/// Matches http(s):// URLs and www. URLs (case insensitive).
+/// Matches http(s):// URLs and www. URLs (case insensitive). A www. right
+/// after a scheme, an @ or a dot belongs to something else, such as
+/// `myapp://www.example.com` or `me@www.example.com`, and stays plain.
 final _urlPattern = RegExp(
-  r'(https?://[^\s<>"]+|www\.[^\s<>"]+\.[a-zA-Z]{2,}[^\s<>"]*)',
+  r'(https?://[^\s<>"]+|(?<![\w@./:-])www\.[^\s<>"]+\.[a-zA-Z]{2,}[^\s<>"]*)',
   caseSensitive: false,
 );
 
-/// Characters to trim from the end of a matched URL.
-const _trailingPunctuation = <String>{'.', ',', ';', ':', '!', '?'};
+/// Characters to trim from the end of a matched URL, Arabic ones included.
+const _trailingPunctuation = <String>{
+  '.',
+  ',',
+  ';',
+  ':',
+  '!',
+  '?',
+  '،',
+  '؛',
+  '؟',
+};
 
 /// Parses [text] into a list of [TextSegment]s, identifying URLs.
 ///
-/// URLs are detected by http(s):// scheme or www. prefix.
-/// Trailing punctuation is stripped from URL matches.
+/// URLs are detected by http(s):// scheme or www. prefix; a www. link opens
+/// over https. Trailing punctuation is stripped from URL matches.
 /// Matched parentheses are preserved (e.g. Wikipedia URLs).
 List<TextSegment> parseUrls(String text) {
   if (text.isEmpty) return [const TextSegment('')];
 
   final segments = <TextSegment>[];
+  void addPlain(String plain) {
+    final last = segments.lastOrNull;
+    if (last != null && !last.isUrl) {
+      segments[segments.length - 1] = TextSegment(last.text + plain);
+    } else {
+      segments.add(TextSegment(plain));
+    }
+  }
+
   var lastEnd = 0;
 
   for (final match in _urlPattern.allMatches(text)) {
     // Add plain text before this match
     if (match.start > lastEnd) {
-      segments.add(TextSegment(text.substring(lastEnd, match.start)));
+      addPlain(text.substring(lastEnd, match.start));
     }
 
     var url = match.group(0)!;
@@ -58,8 +84,11 @@ List<TextSegment> parseUrls(String text) {
       }
     }
 
-    if (url.isNotEmpty) {
-      segments.add(TextSegment(url, isUrl: true));
+    final uri = _linkUri(url);
+    if (uri != null) {
+      segments.add(TextSegment(url, uri: uri));
+    } else if (url.isNotEmpty) {
+      addPlain(url);
     }
 
     // Roll back lastEnd so stripped chars become part of the next plain segment
@@ -68,10 +97,18 @@ List<TextSegment> parseUrls(String text) {
 
   // Add any remaining plain text
   if (lastEnd < text.length) {
-    segments.add(TextSegment(text.substring(lastEnd)));
+    addPlain(text.substring(lastEnd));
   } else if (segments.isEmpty) {
     segments.add(TextSegment(text));
   }
 
   return segments;
+}
+
+Uri? _linkUri(String url) {
+  final uri = Uri.tryParse(
+    url.toLowerCase().startsWith('www.') ? 'https://$url' : url,
+  );
+  if (uri == null || uri.host.isEmpty) return null;
+  return uri.isScheme('http') || uri.isScheme('https') ? uri : null;
 }

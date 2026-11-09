@@ -22,6 +22,7 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:uuid/uuid.dart';
 import 'orbit_depth_media.dart';
 
@@ -1465,18 +1466,21 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       ageText,
       style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
     );
-    Text words({int? maxLines}) => Text(
-      post.text,
-      key: ValueKey('orbit-depth-text-${post.id}'),
-      textDirection: detectTextDirection(post.text),
+    // A tap on a link opens it; a tap anywhere else opens the thought.
+    Widget words({int? maxLines}) => DefaultTextStyle.merge(
       textAlign: centred ? TextAlign.center : null,
-      maxLines: maxLines,
-      overflow: maxLines == null ? null : TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: type.size * k,
-        fontWeight: type.weight,
-        height: _thoughtLineHeight,
-        color: colors.onSurface,
+      child: LinkableText(
+        key: ValueKey('orbit-depth-text-${post.id}'),
+        text: post.text,
+        textDirection: detectTextDirection(post.text),
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: type.size * k,
+          fontWeight: type.weight,
+          height: _thoughtLineHeight,
+          color: colors.onSurface,
+        ),
       ),
     );
     // As many whole lines as the space holds; the rest is cut with an
