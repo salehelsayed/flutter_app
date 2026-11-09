@@ -765,109 +765,106 @@ void main() {
     );
 
     for (final reopenBeforeRetry in [false, true]) {
-      test(
-        'fresh automatic retry preserves decline '
-        '${reopenBeforeRetry ? 'after SQL reopen' : 'in the live receiver'} '
-        'while a fresh manual request can prompt',
-        () async {
-          await attach();
-          expect(
-            await receiver!.processIncomingMessage(lateWire),
-            HandleMessageResult.contactAutoAdded,
-          );
-          final original = await firstPrompt.future;
-          expect(
-            await declineContactRequest(
-              requestRepo: requests,
-              peerId: _bobId.peerId,
-              expectedRequest: original,
-            ),
-            DeclineContactRequestResult.success,
-          );
-          final declined = (await requests.getRequest(_bobId.peerId))!;
-          expect(declined.status, ContactRequestStatus.declined);
-          final cutoffMs = await decisionTimeMs();
-          final consentBefore = await aliceDb.query(
+      test('fresh automatic retry preserves decline '
+          '${reopenBeforeRetry ? 'after SQL reopen' : 'in the live receiver'} '
+          'while a fresh manual request can prompt', () async {
+        await attach();
+        expect(
+          await receiver!.processIncomingMessage(lateWire),
+          HandleMessageResult.contactAutoAdded,
+        );
+        final original = await firstPrompt.future;
+        expect(
+          await declineContactRequest(
+            requestRepo: requests,
+            peerId: _bobId.peerId,
+            expectedRequest: original,
+          ),
+          DeclineContactRequestResult.success,
+        );
+        final declined = (await requests.getRequest(_bobId.peerId))!;
+        expect(declined.status, ContactRequestStatus.declined);
+        final cutoffMs = await decisionTimeMs();
+        final consentBefore = await aliceDb.query(
+          'contact_relationship_consent',
+          where: 'peer_id = ?',
+          whereArgs: [_bobId.peerId],
+        );
+
+        if (reopenBeforeRetry) {
+          await reopen(enableAutoAdd: true);
+        } else {
+          prompted.clear();
+          firstPrompt = Completer<ContactRequestModel>();
+        }
+        final retryTs = DateTime.fromMillisecondsSinceEpoch(
+          cutoffMs + 1,
+          isUtc: true,
+        ).toIso8601String();
+        final automaticRetry = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          intent: 'key_exchange_retry',
+          signedControl: newRequestControl(to: _aliceId.peerId),
+          ts: retryTs,
+          outerTs: retryTs,
+          mlKem: 'automatic-retry-after-decline',
+        );
+        final verifiedBefore = bridge.verifiedData.length;
+        final retryResult = await receiver!.processIncomingMessage(
+          automaticRetry,
+        );
+        await Future<void>(() {});
+
+        expect(bridge.verifiedData.length, verifiedBefore + 1);
+        expect(prompted, isEmpty);
+        expect(
+          (await requests.getRequest(_bobId.peerId))?.toMap(),
+          declined.toMap(),
+        );
+        expect(await requests.getPendingRequests(), isEmpty);
+        expect(await contacts.getContact(_bobId.peerId), isNull);
+        expect(retryResult, HandleMessageResult.invalidMessage);
+        expect(autoAddCalls, 0);
+        expect(await decisionTimeMs(), cutoffMs);
+        expect(
+          await aliceDb.query(
             'contact_relationship_consent',
             where: 'peer_id = ?',
             whereArgs: [_bobId.peerId],
-          );
+          ),
+          consentBefore,
+        );
 
-          if (reopenBeforeRetry) {
-            await reopen(enableAutoAdd: true);
-          } else {
-            prompted.clear();
-            firstPrompt = Completer<ContactRequestModel>();
-          }
-          final retryTs = DateTime.fromMillisecondsSinceEpoch(
-            cutoffMs + 1,
-            isUtc: true,
-          ).toIso8601String();
-          final automaticRetry = await buildRepairWire(
-            bus: _cryptoBus,
-            signer: _bobId,
-            recipientPublicKey: _aliceId.publicKey,
-            intent: 'key_exchange_retry',
-            signedControl: newRequestControl(to: _aliceId.peerId),
-            ts: retryTs,
-            outerTs: retryTs,
-            mlKem: 'automatic-retry-after-decline',
-          );
-          final verifiedBefore = bridge.verifiedData.length;
-          final retryResult = await receiver!.processIncomingMessage(
-            automaticRetry,
-          );
-          await Future<void>(() {});
-
-          expect(bridge.verifiedData.length, verifiedBefore + 1);
-          expect(prompted, isEmpty);
-          expect(
-            (await requests.getRequest(_bobId.peerId))?.toMap(),
-            declined.toMap(),
-          );
-          expect(await requests.getPendingRequests(), isEmpty);
-          expect(await contacts.getContact(_bobId.peerId), isNull);
-          expect(retryResult, HandleMessageResult.invalidMessage);
-          expect(autoAddCalls, 0);
-          expect(await decisionTimeMs(), cutoffMs);
-          expect(
-            await aliceDb.query(
-              'contact_relationship_consent',
-              where: 'peer_id = ?',
-              whereArgs: [_bobId.peerId],
-            ),
-            consentBefore,
-          );
-
-          final manualTs = DateTime.fromMillisecondsSinceEpoch(
-            cutoffMs + 2,
-            isUtc: true,
-          ).toIso8601String();
-          final manualRequest = await buildRepairWire(
-            bus: _cryptoBus,
-            signer: _bobId,
-            recipientPublicKey: _aliceId.publicKey,
-            intent: 'new_request',
-            signedControl: newRequestControl(to: _aliceId.peerId),
-            ts: manualTs,
-            outerTs: manualTs,
-            mlKem: 'manual-request-after-decline',
-          );
-          expect(
-            await receiver!.processIncomingMessage(manualRequest),
-            HandleMessageResult.contactRequest,
-          );
-          final manual = await firstPrompt.future;
-          expect(manual.signature, isNot(declined.signature));
-          expect(prompted, hasLength(1));
-          expect(
-            (await requests.getPendingRequests()).single.toMap(),
-            manual.toMap(),
-          );
-          expect(await contacts.getContact(_bobId.peerId), isNull);
-          expect(autoAddCalls, 0);
-        },
-      );
+        final manualTs = DateTime.fromMillisecondsSinceEpoch(
+          cutoffMs + 2,
+          isUtc: true,
+        ).toIso8601String();
+        final manualRequest = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          intent: 'new_request',
+          signedControl: newRequestControl(to: _aliceId.peerId),
+          ts: manualTs,
+          outerTs: manualTs,
+          mlKem: 'manual-request-after-decline',
+        );
+        expect(
+          await receiver!.processIncomingMessage(manualRequest),
+          HandleMessageResult.contactRequest,
+        );
+        final manual = await firstPrompt.future;
+        expect(manual.signature, isNot(declined.signature));
+        expect(prompted, hasLength(1));
+        expect(
+          (await requests.getPendingRequests()).single.toMap(),
+          manual.toMap(),
+        );
+        expect(await contacts.getContact(_bobId.peerId), isNull);
+        expect(autoAddCalls, 0);
+      });
     }
 
     test(
