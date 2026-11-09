@@ -64,3 +64,29 @@ void recordContactRequestDiagnostic({
     // Observation cannot change consent, communication, or error propagation.
   }
 }
+
+/// A completed decline decision, without inventing an admission action.
+void recordContactRequestDeclineDiagnostic({
+  required ContactRequestDisposition disposition,
+}) {
+  try {
+    final committed = disposition == ContactRequestDisposition.committed;
+    AppDiagnostics.instance.record(
+      feature: 'contact_request',
+      stage: 'commit',
+      outcome: committed
+          ? 'ok'
+          : disposition == ContactRequestDisposition.failed
+          ? 'failed'
+          : 'rejected',
+      reason: committed ? 'none' : 'unknown',
+      values: {
+        'requestSource': 'local_action',
+        'consentClass': committed ? 'declined' : 'unknown',
+        'requestDisposition': disposition.name,
+      },
+    );
+  } catch (_) {
+    // A diagnostic sink cannot change the committed decision or its result.
+  }
+}

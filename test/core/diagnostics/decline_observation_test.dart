@@ -36,7 +36,9 @@ final class _DecisionRepository extends FakeContactRequestRepository {
   }) async {
     await writeGate?.future;
     if (throwWrite) throw StateError('PRIVATE_DECLINE_WRITE_ERROR');
-    if (forced case final result?) return result;
+    if (forced case final result?) {
+      return result;
+    }
     return super.decideRequest(
       expectedRequest: expectedRequest,
       accept: accept,
@@ -176,6 +178,18 @@ void main() {
     );
   }
 
+  test('a missing lookup is a noncommit without a write', () async {
+    repository.seed([]);
+    expect(await decline(), DeclineContactRequestResult.notFound);
+    expect(repository.updateStatusCallCount, 0);
+    final event = await decisionObservation();
+    expect(event['stage'], 'commit');
+    expect(event['outcome'], 'rejected');
+    expect(event['reason'], 'unknown');
+    expect((event['values'] as Map)['consentClass'], 'unknown');
+    expect((event['values'] as Map)['requestDisposition'], 'ignored');
+  });
+
   test('decline observes a thrown write without changing its result', () async {
     repository.throwWrite = true;
     expect(await decline(), DeclineContactRequestResult.updateError);
@@ -195,10 +209,15 @@ void main() {
   });
 
   test('unavailable observer cannot change the decline decision', () async {
+    var writeAttempts = 0;
     diagnostics = await AppDiagnostics.installForTesting(
       directory: directory,
-      persist: (_, _) async => throw StateError('PRIVATE_OBSERVER_ERROR'),
+      persist: (_, _) async {
+        writeAttempts++;
+        throw StateError('PRIVATE_OBSERVER_ERROR');
+      },
     );
+    expect(writeAttempts, greaterThan(0));
     expect(
       diagnostics.record(feature: 'runtime', stage: 'snapshot', outcome: 'ok'),
       isFalse,

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 
@@ -27,6 +28,21 @@ Future<DeclineContactRequestResult> declineContactRequest({
   required String peerId,
   ContactRequestModel? expectedRequest,
 }) async {
+  DeclineContactRequestResult observe(DeclineContactRequestResult result) {
+    recordContactRequestDeclineDiagnostic(
+      disposition: switch (result) {
+        DeclineContactRequestResult.success =>
+          ContactRequestDisposition.committed,
+        DeclineContactRequestResult.notFound ||
+        DeclineContactRequestResult.notPending =>
+          ContactRequestDisposition.ignored,
+        DeclineContactRequestResult.updateError =>
+          ContactRequestDisposition.failed,
+      },
+    );
+    return result;
+  }
+
   final peerIdPrefix = peerId.length > 10 ? peerId.substring(0, 10) : peerId;
 
   emitFlowEvent(
@@ -43,7 +59,7 @@ Future<DeclineContactRequestResult> declineContactRequest({
       event: 'CONTACT_REQUEST_DECLINE_NOT_FOUND',
       details: {'peerId': peerIdPrefix},
     );
-    return DeclineContactRequestResult.notFound;
+    return observe(DeclineContactRequestResult.notFound);
   }
 
   // 2. Update status to declined
@@ -53,14 +69,14 @@ Future<DeclineContactRequestResult> declineContactRequest({
       accept: false,
     );
     if (decision == ContactRequestDecisionResult.notFound) {
-      return DeclineContactRequestResult.notFound;
+      return observe(DeclineContactRequestResult.notFound);
     }
     if (decision == ContactRequestDecisionResult.addContactError ||
         decision == ContactRequestDecisionResult.updateStatusError) {
-      return DeclineContactRequestResult.updateError;
+      return observe(DeclineContactRequestResult.updateError);
     }
     if (decision != ContactRequestDecisionResult.declined) {
-      return DeclineContactRequestResult.notPending;
+      return observe(DeclineContactRequestResult.notPending);
     }
 
     emitFlowEvent(
@@ -69,13 +85,13 @@ Future<DeclineContactRequestResult> declineContactRequest({
       details: {'peerId': peerIdPrefix},
     );
 
-    return DeclineContactRequestResult.success;
+    return observe(DeclineContactRequestResult.success);
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_DECLINE_ERROR',
       details: {'peerId': peerIdPrefix, 'error': e.toString()},
     );
-    return DeclineContactRequestResult.updateError;
+    return observe(DeclineContactRequestResult.updateError);
   }
 }
