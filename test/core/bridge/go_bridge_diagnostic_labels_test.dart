@@ -132,15 +132,39 @@ void main() {
       },
     );
 
-    test(
-      '${sample.family} null response keeps result and labels malformed',
-      () async {
-        final returned = jsonDecode(await send(sample.command, null)) as Map;
-        expect(returned['ok'], false);
-        expect(returned['errorCode'], 'NULL_RESPONSE');
-        await expectLabels(sample.command, sample.family, 'malformed_response');
-      },
-    );
+    if (sample.command == 'bg:end') {
+      test(
+        'background void release produces no failure export or upload',
+        () async {
+          expect(jsonDecode(await send(sample.command, null)), {'ok': true});
+          expect(
+            (await diagnostics.eventsForTesting()).where(
+              (event) => event['outcome'] == 'failed',
+            ),
+            isEmpty,
+          );
+          final exported = await diagnostics.exportPreview();
+          expect(exported, isNot(contains(_privateMarker)));
+          expect(exported, isNot(contains(sample.command)));
+          await diagnostics.flush();
+          expect(uploads, isEmpty);
+        },
+      );
+    } else {
+      test(
+        '${sample.family} null response keeps result and labels malformed',
+        () async {
+          final returned = jsonDecode(await send(sample.command, null)) as Map;
+          expect(returned['ok'], false);
+          expect(returned['errorCode'], 'NULL_RESPONSE');
+          await expectLabels(
+            sample.command,
+            sample.family,
+            'malformed_response',
+          );
+        },
+      );
+    }
   }
 
   for (final sample in const [

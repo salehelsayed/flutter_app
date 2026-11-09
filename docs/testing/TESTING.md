@@ -11458,6 +11458,14 @@ native-boundary results through collection, export and upload; relay/Python
 fixtures preserve old records and reject free-form enum values. Evidence is
 retained in `.codex-test-logs/bridge-labels-20261101/`.
 
+Native `bgEnd` intentionally completes with a void result. The Dart bridge
+accepts that result only for `bg:end` and returns its normal success envelope;
+it must not emit a `malformed_response` failure after a successful release.
+The bridge regression also preserves null-response failure for `bg:begin` and
+explicit native rejection for `bg:end`. The causal RED and three focused GREEN
+controls are retained in `.codex-test-logs/bg-end-diagnostics/`. These mock-channel
+tests establish the Dart contract, not actual OS background-task release.
+
 Unlike the local-only incident detail above, these two optional schema-v1 fields
 remain on relay uploads. Deployment order is required: the owner-approved relay
 update goes to Hetzner, then AWS, before an app carrying the labels reaches
