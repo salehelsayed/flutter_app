@@ -1306,6 +1306,11 @@ class GoBridgeClient extends Bridge {
       );
 
       if (result == null) {
+        // Native bgEnd releases the task and intentionally returns void.
+        if (cmd == 'bg:end') {
+          reportDiagnostic(true, 'none');
+          return jsonEncode({'ok': true});
+        }
         reportDiagnostic(
           false,
           'malformed_response',
