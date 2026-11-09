@@ -26,7 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.11.4"
+const version = "1.11.5"
 const relayMetricsBindIPEnv = "MKNOON_RELAY_METRICS_BIND_IP"
 
 // The explicit override changes all relay metrics; the port stays 2112.
