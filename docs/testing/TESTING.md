@@ -2633,6 +2633,20 @@ retains the intent. Contact/conversation/message deletion cancels pending
 intents, and Delete for me accepts the pre-custody projection. Ordinary awaited
 non-UI send callers and Share keep their existing authoring behavior.
 
+Automatic recovery defers authored intents and failed-row reconstruction while
+the recipient ML-KEM key is null, empty, or whitespace-only. It retains the
+original message rather than opening another diagnosed send attempt on every
+recovery pass. The BL-2 cases in `direct_text_restart_sqlite_test.dart` and
+`retry_failed_messages_use_case_test.dart` preserve the initial encryption
+refusal, exercise repeated recovery, then provide a key and require one send
+with the original identity, content, and timestamps. The SQLite cases also
+close and reopen the database before key arrival. Their contact/key port is
+fake and is explicitly restored after reopen; this does not prove contact-key
+persistence. Explicit manual retry still reports the normal missing-key
+refusal, and already-encrypted custody still replays its exact envelope with
+no re-encryption when the current contact key is missing. Key acquisition and
+the timing of the next existing recovery pass remain separate concerns.
+
 Conversation and Feed hold the editable draft and withhold the bubble until
 the intent commit. The UI tests positively hold that write, exercise refusal,
 preserve text typed during the write, then hold `bg:begin` after admission.

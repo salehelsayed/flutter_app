@@ -219,6 +219,9 @@ Future<int> retryFailedMessages({
           try {
             final contact = await contactRepo.getContact(intent.contactPeerId);
             if (contact == null || contact.isBlocked) continue;
+            // Keep the authored intent until encryption can be prepared.
+            final recipientKey = contact.mlKemPublicKey;
+            if (recipientKey == null || recipientKey.trim().isEmpty) continue;
             final result = await runWithAutomaticRecoveryNotificationPolicy(
               originalTimestamp: intent.timestamp,
               manualRetry: false,
@@ -235,7 +238,7 @@ Future<int> retryFailedMessages({
                 timestamp: intent.timestamp,
                 quotedMessageId: intent.quotedMessageId,
                 bridge: bridge,
-                recipientMlKemPublicKey: contact.mlKemPublicKey,
+                recipientMlKemPublicKey: recipientKey,
                 directEventFanout: directEventFanout,
               ),
             );
@@ -1192,9 +1195,17 @@ Future<bool> _retryFailedMessageCandidate({
     // A linked survivor retry is already addressed by persisted v114 facts;
     // resolving the live logical contact here would let roster drift revoke a
     // committed obligation before v108 binding.
-    final mlKemPk = linkedMediaFanout == null && privateMediaFanout == null
+    final needsRecipientKey =
+        linkedMediaFanout == null && privateMediaFanout == null;
+    final mlKemPk = needsRecipientKey
         ? (await contactRepo.getContact(msg.contactPeerId))?.mlKemPublicKey
         : null;
+    // Defer automatic reconstruction; manual retry retains normal refusal.
+    if (!manualRetry &&
+        needsRecipientKey &&
+        (mlKemPk == null || mlKemPk.trim().isEmpty)) {
+      return false;
+    }
 
     final attachments = resolution.attachments;
 

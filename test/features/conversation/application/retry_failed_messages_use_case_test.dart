@@ -633,7 +633,10 @@ void main() {
           messageRepo.seed([pending]);
           contactRepo.seed([makeContact(mlKemPublicKey: keyCase.value)]);
           final service = FakeP2PService(
-            initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id',
+            ),
             discoverPeerResult: const DiscoveredPeer(
               id: 'peer-target',
               addresses: ['/ip4/127.0.0.1/tcp/4001'],
