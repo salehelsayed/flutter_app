@@ -1,8 +1,16 @@
+import 'dart:async';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_core_platform_interface/test.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 
 // ---------------------------------------------------------------------------
@@ -264,6 +272,191 @@ void main() {
         'status': 'denied',
         'granted': false,
       });
+    });
+  });
+
+  group('default platform permission request', () {
+    const messagingChannel = MethodChannel(
+      'plugins.flutter.io/firebase_messaging',
+    );
+    late Future<Map<String, int>> Function() firebaseRequest;
+    late Future<bool> Function() androidRequest;
+    late List<String> calls;
+    var authorizationStatus = 0;
+
+    setUpAll(() async {
+      setupFirebaseCoreMocks();
+      await Firebase.initializeApp();
+    });
+
+    setUp(() {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      calls = <String>[];
+      authorizationStatus = 0;
+      firebaseRequest = () async => <String, int>{
+        'authorizationStatus': authorizationStatus,
+      };
+      androidRequest = () async => false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(messagingChannel, (call) async {
+            calls.add('firebase:${call.method}');
+            return switch (call.method) {
+              'Messaging#requestPermission' => await firebaseRequest(),
+              'Messaging#getNotificationSettings' => <String, int>{
+                'authorizationStatus': authorizationStatus,
+              },
+              _ => throw StateError('Unexpected Firebase call: ${call.method}'),
+            };
+          });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add('android:${call.method}');
+            return switch (call.method) {
+              'requestNotificationsPermission' => await androidRequest(),
+              'areNotificationsEnabled' => true,
+              'getNotificationChannels' => <Map<String, Object?>>[],
+              _ => throw StateError(
+                'Unexpected notification call: ${call.method}',
+              ),
+            };
+          });
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(messagingChannel, null);
+    });
+
+    tearDownAll(() {
+      TestFirebaseCoreHostApi.setUp(null);
+    });
+
+    test('Android startup reports denied without resume when the Firebase '
+        'permission callback is lost', () {
+      fakeAsync((async) {
+        final lostFirebaseReply = Completer<Map<String, int>>();
+        firebaseRequest = () => lostFirebaseReply.future;
+        var started = false;
+        var registrations = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: requestPushPermission,
+          registerPushToken: () async {
+            registrations++;
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+        coordinator.ensureStarted().then((_) => started = true);
+        async.flushMicrotasks();
+
+        try {
+          expect(started, isTrue);
+          expect(registrations, 0);
+          expect(
+            detailsOf(
+              eventsNamed('PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED').single,
+            ),
+            <String, Object>{'trigger': 'startup'},
+          );
+          expect(
+            detailsOf(eventsNamed('PUSH_PERMISSION_REQUEST_RESULT').single),
+            <String, Object>{'status': 'denied', 'granted': false},
+          );
+          expect(calls, <String>[
+            'android:requestNotificationsPermission',
+            'firebase:Messaging#getNotificationSettings',
+          ]);
+          expect(async.pendingTimers, isEmpty);
+        } finally {
+          coordinator.dispose();
+          lostFirebaseReply.complete(<String, int>{'authorizationStatus': 0});
+          async.flushMicrotasks();
+        }
+      });
+    });
+
+    test('Android keeps one slow permission prompt pending until grant', () {
+      fakeAsync((async) {
+        final nativeReply = Completer<bool>();
+        final lostFirebaseReply = Completer<Map<String, int>>();
+        androidRequest = () => nativeReply.future;
+        firebaseRequest = () => lostFirebaseReply.future;
+        var completions = 0;
+        var registrations = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: requestPushPermission,
+          registerPushToken: () async {
+            registrations++;
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+        coordinator.ensureStarted().then((_) => completions++);
+        async.flushMicrotasks();
+        coordinator.ensureStarted().then((_) => completions++);
+        async.flushMicrotasks();
+
+        try {
+          async.elapse(const Duration(minutes: 3));
+          async.flushMicrotasks();
+          expect(completions, 0);
+          expect(registrations, 0);
+          expect(eventsNamed('PUSH_PERMISSION_REQUEST_RESULT'), isEmpty);
+          expect(
+            eventsNamed('PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED'),
+            isEmpty,
+          );
+          expect(calls, <String>['android:requestNotificationsPermission']);
+
+          authorizationStatus = 1;
+          nativeReply.complete(true);
+          async.flushMicrotasks();
+
+          expect(completions, 2);
+          expect(registrations, 1);
+          expect(
+            detailsOf(eventsNamed('PUSH_PERMISSION_REQUEST_RESULT').single),
+            <String, Object>{
+              'status': 'authorized',
+              'granted': true,
+              'osEnabled': true,
+            },
+          );
+          expect(
+            calls.where(
+              (call) => call.endsWith('requestNotificationsPermission'),
+            ),
+            hasLength(1),
+          );
+          expect(
+            calls,
+            isNot(contains('firebase:Messaging#requestPermission')),
+          );
+          expect(async.pendingTimers, isEmpty);
+        } finally {
+          coordinator.dispose();
+          if (!nativeReply.isCompleted) nativeReply.complete(false);
+          lostFirebaseReply.complete(<String, int>{'authorizationStatus': 0});
+          async.flushMicrotasks();
+        }
+      });
+    });
+
+    test('iOS retains the Firebase permission requester', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      authorizationStatus = 1;
+
+      expect(await requestPushPermission(), isTrue);
+      expect(calls, <String>['firebase:Messaging#requestPermission']);
+      expect(
+        detailsOf(eventsNamed('PUSH_PERMISSION_REQUEST_RESULT').single),
+        <String, Object>{
+          'status': 'authorized',
+          'granted': true,
+          'osEnabled': true,
+        },
+      );
     });
   });
 }

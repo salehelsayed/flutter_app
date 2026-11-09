@@ -10425,6 +10425,28 @@ visible and cannot become an ordinary first-attempt PASS.
   no automatic re-prompt and late successful/failed initialization after
   disable, disposal or account cutover. This source repair does not replace
   the missing build input or establish successful registration on a new APK.
+  Android's default permission request now uses the existing
+  `flutter_local_notifications` requester, then reads Firebase settings and
+  retains the effective OS/channel confirmation. Firebase readiness still
+  precedes the native prompt; injected requesters and the iOS/web Firebase
+  request path are unchanged. In pinned `firebase_messaging` 15.2.10, the
+  permission manager arms its callback flag after dispatching the Android
+  request from a worker. An immediate no-requestable-permission callback can
+  arrive first and leave the request unresolved. The existing Android local
+  notifications requester arms its state before dispatch on the main thread.
+  No timeout abandons an open prompt or permits a concurrent native request.
+  The host probe copies the unchanged Firebase permission-manager class and
+  forces both callback orderings: the early denial is lost and a later denial
+  completes. The default-channel regression uses the real permission use case
+  and coordinator to require denied startup without resume, plus one held
+  three-minute prompt, coalesced callers, eventual grant, and retained iOS
+  requesting. Unchanged production fails two new cases with twelve controls
+  passing; the six-file permission/readiness/coordinator selection passes all
+  81 cases after the routing fix. Evidence is under
+  `flutter_app-astra-notification-permission-20261109/.codex-test-logs/notification-permission-20261109/`.
+  These are host class, method-channel and coordinator proofs; they do not
+  establish the exact device callback interleaving or replace a fresh G7 run
+  on the reviewed candidate.
   Foreground startup can also overlap a headless recovery lease. The retained
   143 process failed before `runApp` on typed `lease_unavailable` while native
   authority reported ACTIVE/RECOVERY; later MAIN intents did not rerun the
