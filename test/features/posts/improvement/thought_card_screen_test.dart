@@ -1263,6 +1263,32 @@ void main() {
       expect(find.text('orbit-home'), findsOneWidget);
       await finish(tester);
     });
+
+    testWidgets('a media read failure shows the card with its Retry', (
+      tester,
+    ) async {
+      final thought = await videoThought();
+      posts.mediaError = StateError('media read failed');
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+
+      expect(find.text('card caption'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(viewer, findsNothing);
+
+      // The user is on the card now: a Retry that works fills the card in
+      // rather than jumping into the player.
+      posts.mediaError = null;
+      await tester.tap(find.text('Retry'));
+      await pumpMediaFrames(tester);
+
+      expect(find.text('card caption'), findsOneWidget);
+      expect(find.text('Retry'), findsNothing);
+      expect(find.byType(MediaGrid), findsOneWidget);
+      expect(viewer, findsNothing);
+      expect(card, findsOneWidget);
+      await finish(tester);
+    });
   });
 
   testWidgets('expiry closes its owned media viewer and the card together', (
@@ -1565,6 +1591,16 @@ class _CardPostRepository extends InMemoryPostRepository {
   Future<List<PostModel>> loadFeed() async {
     await feedGate?.future;
     return super.loadFeed();
+  }
+
+  Object? mediaError;
+
+  @override
+  Future<List<PostMediaAttachmentModel>> loadPostMediaAttachments(
+    String postId,
+  ) async {
+    if (mediaError != null) throw mediaError!;
+    return super.loadPostMediaAttachments(postId);
   }
 
   Object? focusError;
