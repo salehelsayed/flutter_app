@@ -33,12 +33,7 @@ Future<bool> requestPushPermission({
   );
 
   final effectiveRequestPermission =
-      requestPermissionFn ??
-      () => FirebaseMessaging.instance.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
+      requestPermissionFn ?? _defaultRequestPermission;
 
   final settings = await effectiveRequestPermission();
 
@@ -63,6 +58,27 @@ Future<bool> requestPushPermission({
   );
 
   return granted;
+}
+
+Future<NotificationSettings> _defaultRequestPermission() async {
+  final messaging = FirebaseMessaging.instance;
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    final android = FlutterLocalNotificationsPlugin()
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android != null) {
+      // Firebase can lose an immediate Android denial before arming its
+      // callback. This requester arms first on the UI thread.
+      await android.requestNotificationsPermission();
+      return messaging.getNotificationSettings();
+    }
+  }
+  return messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 }
 
 /// Reads push permission without asking, confirmed against the OS the same

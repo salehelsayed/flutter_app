@@ -424,10 +424,15 @@ void main() {
             },
           );
           expect(
-            calls.where((call) => call.endsWith('requestNotificationsPermission')),
+            calls.where(
+              (call) => call.endsWith('requestNotificationsPermission'),
+            ),
             hasLength(1),
           );
-          expect(calls, isNot(contains('firebase:Messaging#requestPermission')));
+          expect(
+            calls,
+            isNot(contains('firebase:Messaging#requestPermission')),
+          );
           expect(async.pendingTimers, isEmpty);
         } finally {
           coordinator.dispose();
