@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/diagnostics/routine_authority_publication.dart';
@@ -126,6 +127,31 @@ void main() {
       'started',
       'ok',
     ]);
+  });
+
+  test('pause persists the final success and count before a cold reload', () async {
+    await routine(() async {
+      await client.setEndpoint(endpoint(1));
+      await client.setEndpoint(endpoint(2));
+    });
+    expect(bridge.requests, hasLength(2));
+    diagnostics.didChangeAppLifecycleState(AppLifecycleState.paused);
+    await diagnostics.eventsForTesting(); // Join the durable write barrier.
+    final coldImage = await Directory('${directory.path}/cold-image').create();
+    await for (final entry in directory.list(followLinks: false)) {
+      if (entry is File) {
+        await entry.copy('${coldImage.path}/${entry.uri.pathSegments.last}');
+      }
+    }
+    // Freeze disk before the testing helper's graceful dispose could rescue a
+    // RAM-only success. Reopen only this image, as after process termination.
+    diagnostics = await CallDiagnostics.installForTesting(
+      directory: coldImage,
+      enabled: null,
+    );
+    final records = await publications();
+    expect(records.map((e) => e['outcome']), ['started', 'ok']);
+    expect(records.last['values'], {'count': 2});
   });
 
   test(
