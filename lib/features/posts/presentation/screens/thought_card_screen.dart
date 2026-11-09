@@ -104,6 +104,10 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     with WidgetsBindingObserver {
   late PostModel _post;
   bool _videoStarted = false;
+
+  /// A read failed before the video played: show the card, with its Retry,
+  /// from then on.
+  bool _cardFallback = false;
   List<PostMediaAttachmentModel> _media = const [];
   StreamSubscription<String>? _postSubscription;
   StreamSubscription<void>? _eligibilitySubscription;
@@ -250,7 +254,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         if (!current.isIncoming) unawaited(_loadActivity());
       }
     } catch (_) {
-      if (mounted && !_closing) setState(() => _loadFailed = true);
+      if (mounted && !_closing) {
+        setState(() {
+          _loadFailed = true;
+          if (!_videoStarted) _cardFallback = true;
+        });
+      }
     } finally {
       _refreshing = false;
     }
@@ -410,6 +419,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         setState(() {
           _mediaLoading = false;
           _mediaLoadFailed = true;
+          if (!_videoStarted) _cardFallback = true;
         });
       }
     }
@@ -481,7 +491,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   void _playVideoOnce() {
-    if (!widget.playVideoAtOnce || _videoStarted) return;
+    if (!widget.playVideoAtOnce || _videoStarted || _cardFallback) return;
     _videoStarted = true;
     // After the frame's seen marking, which needs this card on top.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -589,7 +599,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       key: const ValueKey('thought-card-screen'),
       backgroundColor: Colors.black,
       resizeToAvoidBottomInset: true,
-      body: _closing || widget.playVideoAtOnce
+      body: _closing || (widget.playVideoAtOnce && !_cardFallback)
           ? const SizedBox.shrink()
           : _loadFailed
           ? _failure(l10n)
