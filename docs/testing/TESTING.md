@@ -8274,6 +8274,23 @@ visible and cannot become an ordinary first-attempt PASS.
   not a production cancellation defect. The corrected case and its complete
   245-case file pass with stable source/configuration.
 
+  The sibling `serialized group cancellation preserves same id direct pending
+  media` still uses a bounded fake-clock wait. On unchanged group source at
+  `576a4d097` versus `f688a0ae7`, its pending-row assertion failed just before
+  real file preparation persisted the row. The assertion also skips completing
+  its upload gate; that can retain the process-scoped `group-1` authority phase
+  needed by later cases. The [source and event trace](../../.codex-test-logs/contact-request-decline-20261109/group-source-trace-01.json)
+  supports this fixture failure and subsequent stall mechanism, without a
+  runtime stack proving the wait. Two unchanged isolated runs pass. Per
+  coordinator instruction `m-41ffe988`, record this as the known pending-media
+  fixture intermittency and stop the bounded investigation. Neither the exact
+  shared-temporary-directory cause nor a baseline failure was established.
+  The [retained gate and isolated results](../../.codex-test-logs/contact-request-decline-20261109/group-fixture-disposition-01.json)
+  keep the original group gate failed and incomplete: the following case was
+  interrupted after the owned check stalled, 30 selected files were unobserved,
+  and no suite completion was recorded. Isolated passes do not replace that
+  missing coverage; no group fixture or production code was changed.
+
 - **Strict forwarded-media fixture consistency:** prepared group-media staging
   writes its parent and attachments into the same database. Pairing it with an
   unrelated in-memory message repository hides that durable parent and omits
