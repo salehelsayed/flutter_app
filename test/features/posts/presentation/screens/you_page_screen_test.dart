@@ -21,6 +21,8 @@ import 'package:just_audio_platform_interface/just_audio_platform_interface.dart
 
 import '../../../../shared/fakes/fake_just_audio.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import '../../../../shared/fake_url_launcher.dart';
 
 final _now = DateTime.utc(2026, 11, 1, 12);
 
@@ -960,5 +962,34 @@ void main() {
     }
 
     expect(limits, [20, 40]);
+  });
+
+  testWidgets('a link in your own thought opens in the browser; a # inside it '
+      'is not a tag', (tester) async {
+    final launcher = FakeUrlLauncher.install();
+    await pumpPage(
+      tester,
+      () async => _data(
+        thought: YouThought(
+          post: _post(text: 'menu https://example.com/#lunch #Mornings'),
+          reactions: const [],
+          wroteBack: const [],
+        ),
+      ),
+    );
+    final card = find.byKey(const ValueKey('you-thought-post-1'));
+    expect(tappableWords(tester, card), ['https://example.com/#lunch']);
+    expect(
+      _inCard('post-1', find.byKey(const ValueKey('you-tag-mornings'))),
+      findsOneWidget,
+    );
+    expect(
+      _inCard('post-1', find.byKey(const ValueKey('you-tag-lunch'))),
+      findsNothing,
+    );
+    await tapWords(tester, card, 'https://example.com/#lunch');
+    expect(launcher.launches, [
+      ('https://example.com/#lunch', PreferredLaunchMode.externalApplication),
+    ]);
   });
 }
