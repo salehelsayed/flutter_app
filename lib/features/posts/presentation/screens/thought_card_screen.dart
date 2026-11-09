@@ -105,8 +105,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   late PostModel _post;
   bool _videoStarted = false;
 
-  /// The media read failed before the video played: show the card, with its
-  /// Retry, from then on.
+  /// A read failed before the video played: show the card, with its Retry,
+  /// from then on.
   bool _cardFallback = false;
   List<PostMediaAttachmentModel> _media = const [];
   StreamSubscription<String>? _postSubscription;
@@ -254,7 +254,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         if (!current.isIncoming) unawaited(_loadActivity());
       }
     } catch (_) {
-      if (mounted && !_closing) setState(() => _loadFailed = true);
+      if (mounted && !_closing) {
+        setState(() {
+          _loadFailed = true;
+          if (!_videoStarted) _cardFallback = true;
+        });
+      }
     } finally {
       _refreshing = false;
     }
