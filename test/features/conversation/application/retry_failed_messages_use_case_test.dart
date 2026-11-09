@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'package:clock/clock.dart';
 import 'dart:async';
@@ -615,6 +616,108 @@ void main() {
           },
         },
       );
+    });
+
+    for (final keyCase in <String, String?>{
+      'null': null,
+      'empty': '',
+      'whitespace': ' \t\n ',
+    }.entries) {
+      test(
+        'BL-2 ${keyCase.key} key defers failed-row automatic send until usable',
+        () async {
+          final diagnostics = await AppDiagnostics.installForTesting();
+          addTearDown(diagnostics.dispose);
+          identityRepo.seed(makeIdentity());
+          final pending = makeFailedMessage(id: 'waiting-row-${keyCase.key}');
+          messageRepo.seed([pending]);
+          contactRepo.seed([makeContact(mlKemPublicKey: keyCase.value)]);
+          final service = FakeP2PService(
+            initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+            discoverPeerResult: const DiscoveredPeer(
+              id: 'peer-target',
+              addresses: ['/ip4/127.0.0.1/tcp/4001'],
+            ),
+          );
+          Future<int> recover() => retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: service,
+            bridge: bridge,
+          );
+          for (var attempt = 0; attempt < 3; attempt++) {
+            expect(await recover(), 0);
+          }
+          final missingKeyFailures = (await diagnostics.eventsForTesting())
+              .where(
+                (event) =>
+                    event['feature'] == 'message' &&
+                    event['stage'] == 'finish' &&
+                    event['reason'] == 'recipient_key_missing',
+              );
+          expect(
+            missingKeyFailures,
+            isEmpty,
+            reason: 'automatic retry must wait before diagnosed send admission',
+          );
+          final retained = (await messageRepo.getMessage(pending.id))!;
+          expect(retained.id, pending.id);
+          expect(retained.text, pending.text);
+          expect(retained.timestamp, pending.timestamp);
+          expect(retained.createdAt, pending.createdAt);
+          expect(retained.status, 'failed');
+          expect(retained.wireEnvelope, isNull);
+          expect(bridge.commandLog, isNot(contains('message.encrypt')));
+          expect(service.sendMessageWithReplyCallCount, 0);
+          expect(service.storeInInboxCallCount, 0);
+
+          contactRepo.seed([makeContact()]);
+          expect(await recover(), 1);
+          expect(await recover(), 0);
+          final recovered = (await messageRepo.getMessage(pending.id))!;
+          expect(recovered.id, pending.id);
+          expect(recovered.text, pending.text);
+          expect(recovered.timestamp, pending.timestamp);
+          expect(recovered.createdAt, pending.createdAt);
+          expect(recovered.status, anyOf('sent', 'delivered', 'inboxed'));
+          expect(
+            bridge.commandLog.where((cmd) => cmd == 'message.encrypt'),
+            hasLength(1),
+          );
+        },
+      );
+    }
+
+    test('BL-2 explicit manual retry retains missing-key refusal', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
+      identityRepo.seed(makeIdentity());
+      final pending = makeFailedMessage();
+      messageRepo.seed([pending]);
+      contactRepo.seed([makeContact(mlKemPublicKey: null)]);
+      final service = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+      expect(
+        await retryFailedMessage(
+          messageId: pending.id,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: service,
+          bridge: bridge,
+        ),
+        0,
+      );
+      final failure = (await diagnostics.eventsForTesting()).singleWhere(
+        (event) => event['feature'] == 'message' && event['stage'] == 'finish',
+      );
+      expect(failure['reason'], 'recipient_key_missing');
+      expect((await messageRepo.getMessage(pending.id))!.status, 'failed');
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+      expect(service.sendMessageWithReplyCallCount, 0);
+      expect(service.storeInInboxCallCount, 0);
     });
 
     test(

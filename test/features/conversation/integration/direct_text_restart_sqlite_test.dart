@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/features/conversation/domain/models/authored_direct_text_intent.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'dart:async';
@@ -102,6 +103,7 @@ class _CutTransport extends FakeP2PService {
   _CutTransport({required super.peerId, required super.network, this.cut});
   final _SendCut? cut;
   final sentChatEnvelopes = <String>[];
+  final storedChatEnvelopes = <String>[];
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
@@ -130,6 +132,9 @@ class _CutTransport extends FakeP2PService {
     required AckCustodyKind custodyKind,
     int? timeoutMs,
   }) async {
+    if ((jsonDecode(message) as Map)['type'] == 'chat_message') {
+      storedChatEnvelopes.add(message);
+    }
     // Hold the competing hedge so it cannot settle an abandoned live attempt.
     if (cut?.checkpoint == _Checkpoint.afterTransmit) await cut!.block();
     return super.storeInAckCustodyInboxDetailed(
@@ -401,6 +406,14 @@ class _SqlPeer {
   Future<List<ConversationMessage>> rows() =>
       sql.messageRepo.getMessagesForContact(otherId);
 
+  // Contacts are an explicit fake port; the authored intent/custody store is SQL.
+  Future<void> setRecipientKey(String? key) async {
+    final contact = (await contacts.getContact(otherId))!;
+    await contacts.addContact(
+      ContactModel.fromMap({...contact.toMap(), 'ml_kem_public_key': key}),
+    );
+  }
+
   Future<void> recover() async {
     await recoverStuckSendingMessages(messageRepo: sql.messageRepo);
     await drainDirectInboxCustodyOutbox(
@@ -449,6 +462,149 @@ void main() {
     });
     return (sender, receiver);
   }
+
+  for (final keyCase in <String, String?>{
+    'null': null,
+    'empty': '',
+    'whitespace': ' \t\n ',
+  }.entries) {
+    test(
+      'BL-2 ${keyCase.key} key defers authored retry across SQLite reopen '
+      'then sends the original intent once',
+      () async {
+        final diagnostics = await AppDiagnostics.installForTesting();
+        addTearDown(diagnostics.dispose);
+        final (sender, receiver) = await pair();
+        await sender.setRecipientKey(keyCase.value);
+        final intent = AuthoredDirectTextIntent(
+          id: 'waiting-for-key-${keyCase.key}',
+          contactPeerId: receiver.id,
+          text: 'Keep this authored message',
+          timestamp: '2026-10-25T00:00:00.000Z',
+          token: 'waiting-token-${keyCase.key}',
+        );
+        expect(
+          await sender.sql.messageRepo.saveAuthoredDirectTextIntent(intent),
+          isTrue,
+        );
+        final initial = await sendChatMessage(
+          p2pService: sender.transport,
+          messageRepo: sender.sql.messageRepo,
+          targetPeerId: receiver.id,
+          text: intent.text,
+          senderPeerId: sender.id,
+          senderUsername: 'Fixture',
+          messageId: intent.id,
+          preassignedMessageIdIsFresh: true,
+          authoredTextIntentToken: intent.token,
+          timestamp: intent.timestamp,
+          bridge: sender.bridge,
+          recipientMlKemPublicKey: keyCase.value,
+        );
+        expect(initial.$1, SendChatMessageResult.encryptionRequired);
+        expect(initial.$2, isNull);
+
+        Future<int> missingKeyFailures() async =>
+            (await diagnostics.eventsForTesting())
+                .where(
+                  (event) =>
+                      event['feature'] == 'message' &&
+                      event['stage'] == 'finish' &&
+                      event['reason'] == 'recipient_key_missing',
+                )
+                .length;
+        expect(await missingKeyFailures(), 1);
+        await sender.recover();
+        await sender.recover();
+        await sender.restart();
+        // Restore the fake contact port to the same unavailable-key state.
+        await sender.setRecipientKey(keyCase.value);
+        await sender.recover();
+
+        expect(
+          await missingKeyFailures(),
+          1,
+          reason: 'automatic recovery must not re-enter failed send preflight',
+        );
+        expect(
+          (await sender.sql.messageRepo.loadAuthoredDirectTextIntents())
+              .single
+              .toMap(),
+          intent.toMap(),
+        );
+        expect(await sender.sql.db.query('messages'), isEmpty);
+        expect(await sender.sql.messageRepo.loadDirectInboxCustody(), isEmpty);
+        expect(sender.network.deliverCallCount, 0);
+        expect(sender.network.storeInInboxCallCount, 0);
+        expect(await receiver.rows(), isEmpty);
+        expect((await sender.rows()).single.id, intent.id);
+
+        await sender.setRecipientKey('${receiver.id}-mlkem');
+        await sender.recover();
+        await receiver.drain();
+        await sender.recover();
+        await receiver.drain();
+        final outgoing = (await sender.rows()).single;
+        final incoming = (await receiver.rows()).single;
+        expect(outgoing.id, intent.id);
+        expect(outgoing.text, intent.text);
+        expect(outgoing.timestamp, intent.timestamp);
+        expect(outgoing.status, 'delivered');
+        expect(incoming.dedupKey, intent.id);
+        expect(incoming.text, intent.text);
+        expect(incoming.timestamp, intent.timestamp);
+        expect(await sender.sql.db.query('messages'), hasLength(1));
+        expect(await receiver.sql.db.query('messages'), hasLength(1));
+        expect(
+          await sender.sql.messageRepo.loadAuthoredDirectTextIntents(),
+          isEmpty,
+        );
+        expect(await sender.sql.messageRepo.loadDirectInboxCustody(), isEmpty);
+        expect(
+          sender.bridge.commandLog.where((cmd) => cmd == 'message.encrypt'),
+          hasLength(1),
+        );
+        expect(await missingKeyFailures(), 1);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+  }
+
+  test(
+    'BL-2 missing current key still replays already-encrypted custody exactly',
+    () async {
+      final cut = _SendCut(_Checkpoint.afterCustody);
+      final (sender, receiver) = await pair(cut: cut);
+      cut.start(() async {
+        await sender.send(0, authored: true);
+      });
+      await cut.reached.future.timeout(const Duration(seconds: 10));
+      final before = (await sender.sql.messageRepo
+          .loadDirectInboxCustodyOwnerForMessageId(
+            messageId: 'direct-restart-0',
+          ))!;
+      await sender.restart();
+      await sender.setRecipientKey(null);
+      final reopened = (await sender.sql.messageRepo
+          .loadDirectInboxCustodyOwnerForMessageId(
+            messageId: 'direct-restart-0',
+          ))!;
+      expect(reopened.wireEnvelope, before.wireEnvelope);
+      expect(reopened.incarnationId, before.incarnationId);
+      await sender.recover();
+      expect(sender.transport.storedChatEnvelopes, [before.wireEnvelope]);
+      await receiver.drain();
+      await sender.recover();
+      await receiver.drain();
+      expect((await sender.rows()).single.id, 'direct-restart-0');
+      expect((await sender.rows()).single.status, 'delivered');
+      expect((await receiver.rows()).single.dedupKey, 'direct-restart-0');
+      expect(sender.bridge.commandLog, isNot(contains('message.encrypt')));
+      expect(await sender.sql.messageRepo.loadAuthoredDirectTextIntents(), isEmpty);
+      expect(await sender.sql.messageRepo.loadDirectInboxCustody(), isEmpty);
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
 
   test(
     'authored intent projection can be deleted for me before custody',
