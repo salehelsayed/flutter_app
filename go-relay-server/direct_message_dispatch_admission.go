@@ -84,6 +84,32 @@ func newDirectMessageDispatchAdmissionIdentity(
 	return identity, true
 }
 
+// Thought event IDs survive custody ACK/re-store and freshly encrypted retries.
+// Reuse provider admission without expanding the chat-only parser above, which
+// also controls sender custody-only and quiet-recovery eligibility.
+func newThoughtMessageDispatchAdmissionIdentity(
+	recipientPeerID string,
+	authenticatedSenderPeerID string,
+	message string,
+) (messageDispatchAdmissionIdentity, bool) {
+	var envelope map[string]interface{}
+	if json.Unmarshal([]byte(message), &envelope) != nil || exactString(envelope["type"]) != "post_create" {
+		return messageDispatchAdmissionIdentity{}, false
+	}
+	eventID := exactString(envelope["event_id"])
+	for _, value := range []string{recipientPeerID, authenticatedSenderPeerID, eventID} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return messageDispatchAdmissionIdentity{}, false
+		}
+	}
+	return messageDispatchAdmissionIdentity{
+		direct:          true,
+		recipientPeerID: recipientPeerID,
+		senderPeerID:    authenticatedSenderPeerID,
+		messageID:       directInboxThoughtEventIDDedupePrefix + eventID,
+	}, true
+}
+
 func newMemoryDirectMessageDispatchAdmissionBackend(ttl time.Duration) *memoryMessageDispatchAdmissionBackend {
 	return newMemoryMessageDispatchAdmissionBackend(ttl)
 }

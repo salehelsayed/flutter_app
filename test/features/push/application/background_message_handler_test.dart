@@ -13,6 +13,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -39,10 +41,17 @@ import 'package:flutter_app/features/push/application/push_decrypt_preview.dart'
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/post_listener.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_app_visibility.dart';
+import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/in_memory_post_repository.dart';
 
 /// One entry of a `getNotificationChannels` platform reply. Every key the
 /// plugin's mapper dereferences is supplied: it calls `Color(a['ledColor'])`
@@ -6480,7 +6489,10 @@ void main() {
 
       /// The app is closed and every sender is a known friend. A ciphertext
       /// `thought:<sender>:<postId>` decrypts to that thought's plaintext.
-      DurableConversationNotificationIdRegistry mockClosedAppWithFriends() {
+      DurableConversationNotificationIdRegistry mockClosedAppWithFriends({
+        String? createdAt,
+        Object? expiresAt,
+      }) {
         mockNotificationsPlugin();
         final directory = Directory.systemTemp.createTempSync(
           'background-thought-ids-',
@@ -6519,6 +6531,8 @@ void main() {
                   'snapshot': <String, Object?>{
                     'post_id': postId,
                     'author_peer_id': sender,
+                    if (createdAt != null) 'post_created_at': createdAt,
+                    if (expiresAt != null) 'expires_at': expiresAt,
                     'text': 'Thought $postId',
                     'media_kind': 'none',
                     'media': <Object?>[],
@@ -6528,6 +6542,307 @@ void main() {
             });
         return registry;
       }
+
+      test(
+        'delayed Thought push uses authored expiry ahead of an expired route hint',
+        () async {
+          final now = DateTime.now().toUtc();
+          mockClosedAppWithFriends(
+            createdAt: now
+                .subtract(const Duration(hours: 23))
+                .toIso8601String(),
+            expiresAt: now.add(const Duration(hours: 1)).toIso8601String(),
+          );
+
+          final richPush = thoughtPush(
+            sender: 'peer-alice',
+            postId: 'delayed-thought',
+          );
+          await firebaseMessagingBackgroundHandler(
+            RemoteMessage(
+              messageId: richPush.messageId,
+              data: {
+                ...richPush.data,
+                'expires_at': now
+                    .subtract(const Duration(hours: 1))
+                    .toIso8601String(),
+              },
+            ),
+          );
+
+          final show = log.singleWhere((call) => call.method == 'show');
+          final details = (show.arguments as Map)['platformSpecifics'] as Map;
+          expect(details['channelId'], mknoonThoughtsChannelId);
+          expect(details['timeoutAfter'], inInclusiveRange(3585000, 3600000));
+        },
+      );
+
+      test(
+        'expired Thought push makes no native card or announcement claim',
+        () async {
+          final now = DateTime.now().toUtc();
+          mockClosedAppWithFriends(
+            createdAt: now
+                .subtract(const Duration(hours: 25))
+                .toIso8601String(),
+            expiresAt: now.subtract(const Duration(hours: 1)).toIso8601String(),
+          );
+          final message = thoughtPush(
+            sender: 'peer-alice',
+            postId: 'expired-thought',
+          );
+
+          await firebaseMessagingBackgroundHandler(message);
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:expired-thought',
+              messageId: 'evt-expired-thought',
+            ),
+            isFalse,
+          );
+          expect(
+            await recentBackgroundNotificationGate.wasRecentlyShown(
+              backgroundPushFallbackDedupeKey(message)!,
+            ),
+            isFalse,
+          );
+        },
+      );
+
+      for (final expiry in <Object?>[null, 'not-a-timestamp']) {
+        test(
+          'Thought push with legacy expiry $expiry preserves its fallback card',
+          () async {
+            mockClosedAppWithFriends(expiresAt: expiry);
+
+            await firebaseMessagingBackgroundHandler(
+              thoughtPush(sender: 'peer-alice', postId: 'legacy-thought'),
+            );
+
+            final show = log.singleWhere((call) => call.method == 'show');
+            final arguments = show.arguments as Map;
+            final details = arguments['platformSpecifics'] as Map;
+            expect(arguments['body'], 'Thought legacy-thought');
+            expect(
+              details['timeoutAfter'],
+              const Duration(days: 1).inMilliseconds,
+            );
+            expect(details['playSound'], isTrue);
+          },
+        );
+      }
+
+      test(
+        'inbox-first Thought then rich push updates the same card without a second alert',
+        () async {
+          final now = DateTime.now().toUtc();
+          final expiresAt = now.add(const Duration(days: 1)).toIso8601String();
+          final registry = mockClosedAppWithFriends(
+            createdAt: now.toIso8601String(),
+            expiresAt: expiresAt,
+          );
+          final service = FlutterNotificationService(
+            notificationIdRegistryResolver: () async => registry,
+          );
+          await service.initialize();
+          final contacts = InMemoryContactRepository()
+            ..addTestContact(
+              ContactModel(
+                peerId: 'peer-alice',
+                publicKey: 'test-public-key',
+                rendezvous: '/dns4/example.invalid/tcp/443',
+                username: 'Alice',
+                signature: 'test-signature',
+                scannedAt: now.toIso8601String(),
+              ),
+            );
+          final posts = InMemoryPostRepository();
+          final inbox = StreamController<ChatMessage>();
+          final listener = PostListener(
+            postCreateStream: inbox.stream,
+            postRepo: posts,
+            contactRepo: contacts,
+            notificationService: service,
+            isAppForegroundActive: () async => false,
+            remoteNotificationGate: recentRemoteNotificationGate,
+            friendThoughtCards: FriendThoughtCardRegistry.under(
+              registry.directory,
+            ),
+          )..start();
+          addTearDown(() async {
+            listener.dispose();
+            posts.dispose();
+            await inbox.close();
+          });
+          final envelope = PostCreateEnvelope(
+            eventId: 'evt-inbox-first',
+            createdAt: now.toIso8601String(),
+            senderPeerId: 'peer-alice',
+            postId: 'inbox-first',
+            authorPeerId: 'peer-alice',
+            authorUsername: 'Alice',
+            text: 'Thought inbox-first',
+            mediaKind: 'none',
+            media: const [],
+            audience: const PostAudience(kind: PostAudienceKind.allFriends),
+            expiresAt: expiresAt,
+            keepAvailable: false,
+          );
+          final received = listener.incomingPostStream.first;
+          inbox.add(
+            ChatMessage(
+              from: 'peer-alice',
+              to: 'peer-self',
+              content: envelope.toJson(),
+              timestamp: envelope.createdAt,
+              isIncoming: true,
+            ),
+          );
+          await received.timeout(const Duration(seconds: 5));
+
+          final first =
+              log.singleWhere((call) => call.method == 'show').arguments as Map;
+          expect((first['platformSpecifics'] as Map)['playSound'], isTrue);
+
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'inbox-first'),
+          );
+
+          final shows = log.where((call) => call.method == 'show').toList();
+          expect(shows, hasLength(2));
+          final update = shows.last.arguments as Map;
+          expect(update['id'], first['id']);
+          expect(update['payload'], 'post:inbox-first');
+          final details = update['platformSpecifics'] as Map;
+          expect(details['tag'], (first['platformSpecifics'] as Map)['tag']);
+          expect(details['playSound'], isTrue);
+          await service.showNotification(
+            title: 'Reaction',
+            body: 'Reacted to your thought',
+            payload: 'post:another-thought',
+          );
+          final generic = log.lastWhere((call) => call.method == 'show');
+          final genericDetails =
+              (generic.arguments as Map)['platformSpecifics'] as Map;
+          expect(genericDetails['onlyAlertOnce'], isFalse);
+          expect(details['onlyAlertOnce'], isTrue);
+        },
+      );
+
+      RemoteMessage routingOnlyThoughtPush({String? expiresAt}) =>
+          RemoteMessage(
+            messageId: 'provider-routing-only-thought',
+            data: <String, dynamic>{
+              'type': 'post_create',
+              'sender_id': 'peer-alice',
+              'message_id': 'evt-routing-only-thought',
+              'post_id': 'routing-only-thought',
+              'title': 'New thought',
+              'body': 'A friend shared a thought',
+              if (expiresAt != null) 'expires_at': expiresAt,
+            },
+          );
+
+      test(
+        'routing-only Thought fallback keeps the provider remaining lifetime',
+        () async {
+          mockClosedAppWithFriends();
+          await firebaseMessagingBackgroundHandler(
+            routingOnlyThoughtPush(
+              expiresAt: DateTime.now()
+                  .toUtc()
+                  .add(const Duration(hours: 1))
+                  .toIso8601String(),
+            ),
+          );
+
+          final show = log.singleWhere((call) => call.method == 'show');
+          final details = (show.arguments as Map)['platformSpecifics'] as Map;
+          expect(details['timeoutAfter'], inInclusiveRange(3585000, 3600000));
+          expect(details['playSound'], isTrue);
+        },
+      );
+
+      test('expired routing-only Thought fallback makes no card', () async {
+        mockClosedAppWithFriends();
+        await firebaseMessagingBackgroundHandler(
+          routingOnlyThoughtPush(
+            expiresAt: DateTime.now()
+                .toUtc()
+                .subtract(const Duration(hours: 1))
+                .toIso8601String(),
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        expect(
+          await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+            payload: 'post:routing-only-thought',
+            messageId: 'evt-routing-only-thought',
+          ),
+          isFalse,
+        );
+      });
+
+      for (final rich in [true, false]) {
+        test(
+          'future Thought expiry keeps the existing 24h maximum rich=$rich',
+          () async {
+            final expiry = DateTime.now()
+                .toUtc()
+                .add(const Duration(days: 3))
+                .toIso8601String();
+            mockClosedAppWithFriends(expiresAt: rich ? expiry : null);
+
+            await firebaseMessagingBackgroundHandler(
+              rich
+                  ? thoughtPush(sender: 'peer-alice', postId: 'future-thought')
+                  : routingOnlyThoughtPush(expiresAt: expiry),
+            );
+
+            final show = log.singleWhere((call) => call.method == 'show');
+            final details = (show.arguments as Map)['platformSpecifics'] as Map;
+            expect(
+              details['timeoutAfter'],
+              const Duration(days: 1).inMilliseconds,
+            );
+          },
+        );
+      }
+
+      test(
+        'routing-only oversized Thought fallback cannot alert an archived contact',
+        () async {
+          mockNotificationsPlugin();
+          debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+            return directMessageLocalStateFromRows(
+              data: message.data,
+              identityRow: const <String, Object?>{'peer_id': 'peer-self'},
+              contactRow: const <String, Object?>{
+                'peer_id': 'peer-alice',
+                'username': 'Alice',
+                'is_blocked': 0,
+                'is_archived': 1,
+              },
+              currentMlKemSecretKey: 'current-key',
+              priorMlKemSecretKeys: const <String>[],
+            );
+          });
+
+          await firebaseMessagingBackgroundHandler(routingOnlyThoughtPush());
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:routing-only-thought',
+              messageId: 'evt-routing-only-thought',
+            ),
+            isFalse,
+          );
+        },
+      );
 
       test(
         'Thought notification persisted OFF prevents native show and false announcement',
@@ -6702,8 +7017,9 @@ void main() {
           expect(shows, hasLength(2));
           expect(
             shows.map(
-              (call) => ((call.arguments as Map)['platformSpecifics'] as Map)
-                  ['channelId'],
+              (call) =>
+                  ((call.arguments as Map)['platformSpecifics']
+                      as Map)['channelId'],
             ),
             [mknoonMessagesChannelId, mknoonMessagesSilentChannelId],
             reason: 'the second reply retains the existing chat tone debounce',

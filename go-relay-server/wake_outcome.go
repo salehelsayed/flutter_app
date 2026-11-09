@@ -959,7 +959,7 @@ func (b *redisInboxBackend) StoreWithWakeOutcome(
 	}
 	eventKey := b.key(toPeerID)
 	watchKeys = uniqueRedisKeys(append(watchKeys, eventKey)...)
-	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	dedupeKey := extractDirectInboxEntryDedupeKey(entry)
 	var result InboxStoreResult
 	var admissionStatus wakeOutcomeAdmissionStatus
 	pruned, evicted := 0, 0
@@ -980,7 +980,7 @@ func (b *redisInboxBackend) StoreWithWakeOutcome(
 		evicted = 0
 		if dedupeKey != "" {
 			for _, message := range validMessages {
-				if extractDirectInboxDedupeKey(message.Message) == dedupeKey {
+				if extractDirectInboxEntryDedupeKey(message) == dedupeKey {
 					result = InboxStoreResultDuplicate
 					admissionStatus = wakeOutcomeAdmissionSuppressed
 					if slices.Equal(rawEntries, validRaw) {

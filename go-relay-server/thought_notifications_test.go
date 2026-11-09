@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,6 +16,16 @@ import (
 type thoughtNotificationPushCase struct {
 	name     string
 	envelope string
+}
+
+var thoughtPreferenceEventSequence uint64
+
+// Preference fixtures retain their original authored timestamps while the
+// provider clock is fixed inside their lifetime. Custody still uses real time.
+func newThoughtNotificationPushService(backend PushTokenBackend) *PushService {
+	push := NewPushServiceWithBackend(backend)
+	push.now = postCreatePushFixtureNow
+	return push
 }
 
 func thoughtNotificationPushCases() []thoughtNotificationPushCase {
@@ -100,6 +111,13 @@ func assertThoughtNotificationProviderCalls(
 	want int,
 ) {
 	t.Helper()
+	// Each preference observation represents a new notification event. Exact
+	// event retries have their own provider-admission tests and keep their ID.
+	if extractChatPushMetadata(envelope).RouteType == "post_create" {
+		envelope = thoughtDeliveryEnvelope(t, envelope, map[string]interface{}{
+			"event_id": fmt.Sprintf("thought-preference-%d", atomic.AddUint64(&thoughtPreferenceEventSequence, 1)),
+		})
+	}
 	before := recorder.SendCallCount()
 	// SendNotification completes its provider attempt synchronously, so zero
 	// calls here proves suppression without a timing-based negative assertion.
@@ -114,7 +132,7 @@ func TestThoughtNotificationsRegistration_ControlsOnlyPostCreate(t *testing.T) {
 		for _, platform := range []string{"android", "ios"} {
 			t.Run(kind+"/"+platform, func(t *testing.T) {
 				backend, reopen := thoughtNotificationBackend(t, kind)
-				push := NewPushServiceWithBackend(backend)
+				push := newThoughtNotificationPushService(backend)
 				env := setupInboxStreamEnv(t, NewInboxStore(push), NewGroupInboxStore(500, 0))
 				recipient := env.sender.ID().String()
 				otherPeer := env.recipient.ID().String()
@@ -141,7 +159,7 @@ func TestThoughtNotificationsRegistration_ControlsOnlyPostCreate(t *testing.T) {
 					t.Fatalf("registration changed another peer's token: %#v", other)
 				}
 
-				push = NewPushServiceWithBackend(reopen())
+				push = newThoughtNotificationPushService(reopen())
 				push.sender = recorder.Send
 				for _, fixture := range thoughtNotificationPushCases() {
 					t.Run("off_after_restart/"+fixture.name, func(t *testing.T) {
@@ -161,14 +179,14 @@ func TestThoughtNotificationsRegistration_ControlsOnlyPostCreate(t *testing.T) {
 				})
 
 				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", &off, directReactionCapability)
-				push = NewPushServiceWithBackend(reopen())
+				push = newThoughtNotificationPushService(reopen())
 				push.sender = recorder.Send
 				t.Run("off_survives_token_refresh", func(t *testing.T) {
 					assertThoughtNotificationProviderCalls(t, push, recorder, recipient, postCreatePushFixtureWithPostID, 0)
 				})
 				on := true
 				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", &on, directReactionCapability)
-				push = NewPushServiceWithBackend(reopen())
+				push = newThoughtNotificationPushService(reopen())
 				push.sender = recorder.Send
 				for _, fixture := range thoughtNotificationPushCases() {
 					t.Run("explicit_on_restores/"+fixture.name, func(t *testing.T) {
@@ -180,7 +198,7 @@ func TestThoughtNotificationsRegistration_ControlsOnlyPostCreate(t *testing.T) {
 				}
 				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", &off, directReactionCapability)
 				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", nil, directReactionCapability)
-				push = NewPushServiceWithBackend(reopen())
+				push = newThoughtNotificationPushService(reopen())
 				push.sender = recorder.Send
 				t.Run("omitted_field_restores_default_on", func(t *testing.T) {
 					assertThoughtNotificationProviderCalls(t, push, recorder, recipient, postCreatePushFixtureWithPostID, 1)
@@ -216,7 +234,7 @@ func TestThoughtNotificationsLegacyRecords_DefaultOn(t *testing.T) {
 				}
 				reopened := newRedisPushTokenBackend(backend.client, backend.prefix)
 				reopened.vaultConfig = config
-				push := NewPushServiceWithBackend(reopened)
+				push := newThoughtNotificationPushService(reopened)
 				recorder := newRecordingPushSender()
 				push.sender = recorder.Send
 				for _, fixture := range thoughtNotificationPushCases() {
@@ -233,7 +251,7 @@ func TestThoughtNotificationsOpaqueRoute_OnlyThoughtOriginIsSuppressed(t *testin
 	for _, platform := range []string{"android", "ios"} {
 		t.Run(platform, func(t *testing.T) {
 			backend := newMemoryPushTokenStore()
-			push := NewPushServiceWithBackend(backend)
+			push := newThoughtNotificationPushService(backend)
 			env := setupInboxStreamEnv(t, NewInboxStore(push), NewGroupInboxStore(500, 0))
 			off := false
 			registerThoughtNotificationPreference(t, env, platform, "opaque-token", &off, opaqueWakeCapability)
@@ -285,15 +303,20 @@ func TestThoughtNotificationsOff_PreservesAndroidCallWake(t *testing.T) {
 	}
 }
 
-func TestThoughtNotificationsAndroidFallback_UsesThoughtChannel(t *testing.T) {
+func TestThoughtNotificationsAndroidFallback_RetainsDisplayOwner(t *testing.T) {
 	for _, fixture := range thoughtNotificationPushCases()[1:] {
 		t.Run(fixture.name, func(t *testing.T) {
 			message := projectPushMessageForPlatform(buildPushMessage("token", "sender", fixture.envelope), "android")
-			if message == nil || message.Android == nil || message.Android.Notification == nil {
-				t.Fatal("generic Thought fallback must retain its visible Android notification")
+			if message == nil || message.Android == nil {
+				t.Fatal("generic Thought fallback must retain Android delivery")
 			}
-			if got := message.Android.Notification.ChannelID; got != "mknoon_thoughts" {
-				t.Fatalf("Thought fallback channel = %q, want mknoon_thoughts", got)
+			appCanRender := strings.TrimSpace(message.Data["post_id"]) != ""
+			providerCanRender := message.Notification != nil || message.Android.Notification != nil
+			if appCanRender == providerCanRender {
+				t.Fatalf("Thought fallback must have one display owner: app=%t provider=%t", appCanRender, providerCanRender)
+			}
+			if message.Data["type"] != "post_create" || message.Data["sender_id"] != "sender" {
+				t.Fatalf("Thought fallback lost the authenticated sender required by archived-contact policy: %#v", message.Data)
 			}
 		})
 	}
@@ -330,7 +353,7 @@ func TestThoughtNotificationsStaleRoute_RefreshCannotBypassOptOut(t *testing.T) 
 				if revoked, err := backend.RevokeIfCurrent(selectedWhileOn); err != nil || revoked {
 					t.Fatalf("stale ON route revoked OFF registration: revoked=%v error=%v", revoked, err)
 				}
-				push := NewPushServiceWithBackend(reopen())
+				push := newThoughtNotificationPushService(reopen())
 				recorder := newRecordingPushSender()
 				push.sender = recorder.Send
 				for _, fixture := range thoughtNotificationPushCases() {
@@ -349,14 +372,14 @@ func TestThoughtNotificationsLegacyOptOut_SurvivesVaultMigration(t *testing.T) {
 		t.Run(platform, func(t *testing.T) {
 			config := plan367Config("key-a", "test", map[string][]byte{"key-a": plan367Key('a')})
 			_, backend := plan367RedisBackend(t, "thought-notifications-off-migration:", config)
-			push := NewPushServiceWithBackend(backend)
+			push := newThoughtNotificationPushService(backend)
 			env := setupInboxStreamEnv(t, NewInboxStore(push), NewGroupInboxStore(500, 0))
 			off := false
 			registerThoughtNotificationPreference(t, env, platform, "migration-token", &off)
 			plan367Migrate(t, backend)
 			reopened := newRedisPushTokenBackend(backend.client, backend.prefix)
 			reopened.vaultConfig = config
-			push = NewPushServiceWithBackend(reopened)
+			push = newThoughtNotificationPushService(reopened)
 			recorder := newRecordingPushSender()
 			push.sender = recorder.Send
 			assertThoughtNotificationProviderCalls(t, push, recorder, env.sender.ID().String(), postCreatePushFixtureWithPostID, 0)
@@ -390,7 +413,7 @@ func TestThoughtNotificationsVault_OptOutCannotBeFlippedWithoutAuthentication(t 
 	directory := plan367ReadJSONMap(t, backend, key)
 	directory["thought_notifications_enabled"] = true
 	plan367WriteJSONMap(t, backend, key, directory)
-	push := NewPushServiceWithBackend(backend)
+	push := newThoughtNotificationPushService(backend)
 	recorder := newRecordingPushSender()
 	push.sender = recorder.Send
 	assertThoughtNotificationProviderCalls(t, push, recorder, "recipient", postCreatePushFixtureWithPostID, 0)

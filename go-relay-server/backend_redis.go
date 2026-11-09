@@ -354,7 +354,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 	key := b.key(toPeerId)
 	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
-	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	dedupeKey := extractDirectInboxEntryDedupeKey(entry)
 	var result InboxStoreResult
 	pruned := 0
 	evicted := 0
@@ -373,7 +373,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 		if dedupeKey != "" {
 			for _, message := range validMessages {
-				if extractDirectInboxDedupeKey(message.Message) == dedupeKey {
+				if extractDirectInboxEntryDedupeKey(message) == dedupeKey {
 					if message.From == entry.From && message.Message == entry.Message {
 						validRaw = updateQuietRecoveryRows(validRaw, entry)
 						if err := b.replaceListsWithQuietRecovery(tx, map[string][]string{key: validRaw}, toPeerId, entry); err != nil {
