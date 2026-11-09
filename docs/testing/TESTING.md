@@ -3299,8 +3299,8 @@ defines a separate disposable available-simulator leg after UI-Update lands.
 
 CR-002's SQLite-backed decline cases keep the original envelope rejected after
 reopening the database with an empty in-memory replay cache. The authenticated
-public key and decoded signature bytes identify the persisted declined request; a genuinely
-different signed request still requires manual consent. Unit fixtures for that
+public key and decoded signature bytes identify the persisted declined request;
+a fresh manual or legacy request still requires manual consent. Unit fixtures for that
 fresh path must use a different old signature rather than the same constant
 signature for both requests. CR-020 keeps a valid request retryable when its SQL
 save fails: the storage exception reaches the existing negative-confirmation
@@ -3322,6 +3322,23 @@ under the same artifact directory. `signature-go-decoder-probe-cached.log` check
 the actual Go 1.27.1 verification helper: canonical, CR/LF, filler-bit and combined
 aliases verify, while a tab does not. This is a host helper probe, not a signed
 mobile-binary proof.
+
+Fresh automatic `key_exchange_retry` envelopes also remain ignored after a
+stored decline when no current contact exists, even with a valid new signature
+and a timestamp beyond the decision cutoff. Authentication and current-authority
+checks still run first; the unsigned outer intent only suppresses a request and
+never grants consent. The SQLite/Ed25519 cases in
+`declining_request_adds_no_contact_test.dart` prove no new prompt, pending row,
+contact or auto-add, with the declined row and consent cutoff unchanged in the
+live receiver and after SQL reopen. A fresh manual request still prompts once,
+and a first-ever automatic retry still recovers the initial request. The two
+causal failures on unchanged production and the 156-case receive, decision and
+authority preservation pass are retained as `contact-red-01.log` and
+`contact-green-01.log` under
+`.codex-test-logs/contact-request-decline-20261109/`. These are host receive/state
+proofs; native delivery and signed artifacts remain separate. Sender-side
+authored-message recovery is a different producer and is not changed by this
+receiver guard.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
