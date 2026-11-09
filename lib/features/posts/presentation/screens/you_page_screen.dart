@@ -22,6 +22,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/thought_tag_style.dart';
 
 class YouPageData {
@@ -1205,8 +1206,8 @@ class _ComposerBar extends StatelessWidget {
   }
 }
 
-/// Your words with each #tag in the tag type. A tag opens your own log of
-/// the Thoughts that carry it.
+/// Your words with each #tag in the tag type and each link tappable. A tag
+/// opens your own log of the Thoughts that carry it.
 class _TaggedText extends StatelessWidget {
   const _TaggedText({
     required this.text,
@@ -1230,48 +1231,40 @@ class _TaggedText extends StatelessWidget {
       fontWeight: FontWeight.w500,
     );
     final tagStyle = thoughtTagStyle(style, color: p.soft);
-    final spans = <InlineSpan>[];
-    var at = 0;
-    for (final tag in parseThoughtTags(text)) {
-      if (tag.start > at) {
-        spans.add(TextSpan(text: text.substring(at, tag.start)));
-      }
-      final label = text.substring(tag.start, tag.end);
-      spans.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: Semantics(
-            button: true,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onTag(tag, label),
-              child: tag.key == activeTag
-                  ? Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0x1AE8ECE9),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        label,
-                        key: ValueKey('you-tag-${tag.key}'),
-                        style: tagStyle.copyWith(color: p.ink),
-                      ),
-                    )
-                  : Text(
+    return LinkableText(
+      text: text,
+      style: style,
+      tagStyle: tagStyle,
+      tagSpan: (tag, label) => WidgetSpan(
+        alignment: PlaceholderAlignment.baseline,
+        baseline: TextBaseline.alphabetic,
+        child: Semantics(
+          button: true,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onTag(tag, label),
+            child: tag.key == activeTag
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0x1AE8ECE9),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
                       label,
                       key: ValueKey('you-tag-${tag.key}'),
-                      style: tagStyle,
+                      style: tagStyle.copyWith(color: p.ink),
                     ),
-            ),
+                  )
+                : Text(
+                    label,
+                    key: ValueKey('you-tag-${tag.key}'),
+                    style: tagStyle,
+                  ),
           ),
         ),
-      );
-      at = tag.end;
-    }
-    if (at < text.length) spans.add(TextSpan(text: text.substring(at)));
-    return Text.rich(TextSpan(children: spans), style: style);
+      ),
+    );
   }
 }
 

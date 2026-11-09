@@ -330,7 +330,16 @@ void main() {
         thoughts['peer-0'] = depthThought(0, text: sample);
         await mount(tester, phone);
         await enter(tester, up: false);
-        final style = tester.widget<Text>(text).style!;
+        // The style the words are drawn in, not a widget's setting.
+        final paragraph = tester.renderObject<RenderParagraph>(
+          find.descendant(of: text, matching: find.byType(RichText)),
+        );
+        TextStyle? drawn;
+        paragraph.text.visitChildren((span) {
+          if (span is TextSpan && span.text == sample) drawn = span.style;
+          return drawn == null;
+        });
+        final style = drawn!;
         expect((style.fontSize, style.fontWeight), (size, weight));
         expect(
           style.color,
