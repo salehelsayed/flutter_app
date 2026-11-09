@@ -10667,11 +10667,16 @@ visible and cannot become an ordinary first-attempt PASS.
   retain their observations. Token publications remain whole because native
   generation validation occurs after the shared invoke boundary. Private
   stream/state fingerprints stay in memory. Consent clear/disable discards the
-  buffer; export/dispose flushes it. The classifier/context and real client plus
+  buffer; export/dispose and every non-resumed lifecycle persistence boundary
+  flush it. The classifier/context and real client plus
   collector files `routine_authority_publication_test.dart` and
-  `routine_authority_publication_producer_test.dart` pass 18 host cases, including
+  `routine_authority_publication_producer_test.dart` pass 19 host cases, including
   reused operation IDs, interleaved failure, a call becoming active during an
-  await, consent reset and wall-clock rollback. Causal RED and first invalid
+  await, consent reset, wall-clock rollback and a frozen paused disk image that
+  cold-loads the final success/count before graceful dispose can rescue it.
+  The original candidate's RAM-only lifecycle loss was confirmed by independent
+  review and the same causal regression; that first failure is retained in the
+  `lifecycle/` evidence. Causal RED and first invalid
   synthetic routing-handle fixture evidence remain under
   `.codex-test-logs/authority-telemetry-app/`. Historical diagnostics lack the
   private command/semantic state needed to prove exact eligibility; a structural

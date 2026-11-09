@@ -956,6 +956,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(flush());
     } else {
+      _routinePublications.flush();
       unawaited(_persist());
     }
   }
