@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../diagnostics/call_diagnostics.dart';
+import '../diagnostics/routine_authority_publication.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -501,6 +502,14 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
     final context = diagnostics.contextForWire(
       callHandle: payload['callHandle'] as String?,
     );
+    final publication = diagnostics.enabled
+        ? RoutineAuthorityPublication.forRequest(
+            producer: this,
+            command: command,
+            payload: payload,
+            context: context,
+          )
+        : null;
     final wirePayload = <String, Object?>{...payload, 'diagnostics': ?context};
     final action = command.contains('_revoke_')
         ? 'revoke'
@@ -526,6 +535,7 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
       requestId: context?['requestId'] as String?,
       operationId: context?['operationId'] as String?,
       parentOperationId: context?['parentOperationId'] as String?,
+      routinePublication: publication,
     );
     record('started');
     try {

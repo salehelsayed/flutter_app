@@ -20,6 +20,7 @@ import '../../features/call/application/call_network_path_binding.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/diagnostics/routine_authority_publication.dart';
 import '../../features/call/infrastructure/call_stats_sampler.dart';
 import '../../features/call/application/blocked_call_media_release.dart';
 import '../../features/call/application/call_cleanup_coordinator.dart';
@@ -1147,7 +1148,10 @@ final class ProductionCallSignalingGraph
         diagnostics.beginOperation(reason: 'resume_refresh');
     return diagnostics.runWithOperation(
       operationId,
-      _advertiseCapabilityInOperation,
+      () => runWithRoutineAuthorityDiagnostics(
+        eligible: () => _canAdvertiseCapability && !_hasLiveSession,
+        action: _advertiseCapabilityInOperation,
+      ),
     );
   }
 

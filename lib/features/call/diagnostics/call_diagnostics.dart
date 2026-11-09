@@ -12,6 +12,7 @@ import 'package:flutter/widgets.dart';
 import '../../../core/bridge/bridge.dart';
 import '../../../core/diagnostics/diagnostic_archive_writer.dart';
 import 'call_diagnostic_schema.dart';
+import 'routine_authority_publication.dart';
 import '../../../core/diagnostics/local_connection_diagnostics.dart';
 
 typedef CallDiagnosticUpload =
@@ -137,6 +138,10 @@ final class CallDiagnostics with WidgetsBindingObserver {
   final Map<String, String> _operationReasons = {};
   final Map<String, String> _operationParents = {};
   final Stopwatch _elapsed = Stopwatch();
+  late final _routinePublications = RoutineAuthorityPublicationCoalescer(
+    monotonicNow: () => _elapsed.elapsed,
+    emit: _emitRoutinePublication,
+  );
   final Random _random = Random.secure();
   Directory? _directory;
   DiagnosticArchiveWriter? _archiveWriter;
@@ -571,6 +576,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     String? parentOperationId,
     String? requestId,
     Map<String, Object?> values = const {},
+    RoutineAuthorityPublication? routinePublication,
   }) {
     if (!enabled) return;
     try {
@@ -597,6 +603,27 @@ final class CallDiagnostics with WidgetsBindingObserver {
           'parentOperationId': id,
         if (_validId(requestId) case final String id) 'requestId': id,
       };
+      if (routinePublication == null) {
+        _append(event);
+      } else {
+        _routinePublications.add(
+          event,
+          streamKey: routinePublication.streamKey,
+          stateKey: routinePublication.stateKey,
+          publication: routinePublication.ticket,
+          routine: routinePublication.routine,
+          activeCall: !routinePublication.eligibleNow,
+          consentEpoch: _consentEpoch,
+        );
+      }
+    } catch (_) {
+      _lastError = 'sink_unavailable';
+    }
+  }
+
+  void _emitRoutinePublication(Map<String, Object?> event) {
+    if (!enabled || event['runId'] != _runId) return;
+    try {
       _append(event);
     } catch (_) {
       _lastError = 'sink_unavailable';
@@ -691,6 +718,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
   };
 
   Future<String> exportPreview() async {
+    _routinePublications.flush();
     await _persist();
     final header = <String, Object?>{
       'schemaVersion': 1,
@@ -934,6 +962,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
 
   Future<void> dispose() async {
     if (_disposed) return;
+    _routinePublications.close();
     _timer?.cancel();
     _persistTimer?.cancel();
     if (_observing) WidgetsBinding.instance.removeObserver(this);
@@ -1251,6 +1280,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
   }
 
   void _clearMemory() {
+    _routinePublications.reset();
     _retrying.clear();
     _resetUploadBackoff();
     if (_ready) _archiveWriter?.clearEvents();

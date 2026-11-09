@@ -380,6 +380,7 @@
         "test/core/diagnostics/",
         "test/features/call/diagnostics/call_diagnostics_test.dart",
         "test/features/call/diagnostics/routine_authority_publication_test.dart",
+        "test/features/call/diagnostics/routine_authority_publication_producer_test.dart",
         "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart",
         "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
       ],

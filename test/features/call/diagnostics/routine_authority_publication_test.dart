@@ -20,7 +20,7 @@ Map<String, Object?> event(
   'occurredAtMs': at,
   'elapsedMs': at,
   'values': <String, Object?>{},
-  if (trace != null) 'traceId': trace,
+  'traceId': ?trace,
 };
 
 void observe(
@@ -42,6 +42,188 @@ void observe(
 );
 
 void main() {
+  Map<String, Object?> endpoint() => {
+    'accountPeerId': 'PRIVATE_ACCOUNT',
+    'devicePeerId': 'PRIVATE_DEVICE',
+    'capabilities': ['voice_call_v1'],
+    'platform': 'ios',
+    'deviceKeyEpoch': 1,
+    'routingHandle': '0123456789abcdef0123456789abcdef',
+    'preferenceEpoch': 1000,
+    'expiresAtMs': 2000,
+    'signature': 'PRIVATE_SIGNATURE',
+  };
+
+  test('only an explicit routine producer and known cause qualify', () {
+    final producer = Object();
+    final unknown = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_endpoint_set_v1',
+      payload: endpoint(),
+      context: {'cause': 'resume_refresh'},
+    )!;
+    expect(unknown.routine, isFalse);
+    runWithRoutineAuthorityDiagnostics(
+      eligible: () => true,
+      action: () {
+        for (final cause in ['none', 'bootstrap', 'unknown']) {
+          final observation = RoutineAuthorityPublication.forRequest(
+            producer: producer,
+            command: 'call_endpoint_set_v1',
+            payload: endpoint(),
+            context: {'cause': cause},
+          )!;
+          expect(observation.routine, isFalse);
+        }
+        final known = RoutineAuthorityPublication.forRequest(
+          producer: producer,
+          command: 'call_endpoint_set_v1',
+          payload: endpoint(),
+          context: {'cause': 'resume_refresh'},
+        )!;
+        expect(known.routine, isTrue);
+        expect(known.eligibleNow, isTrue);
+      },
+    );
+  });
+
+  test('fresh signature/expiry/publication epoch preserve semantic state', () {
+    final producer = Object();
+    final initial = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_endpoint_set_v1',
+      payload: endpoint(),
+    )!;
+    final renewed = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_endpoint_set_v1',
+      payload: {
+        ...endpoint(),
+        'preferenceEpoch': 3000,
+        'expiresAtMs': 4000,
+        'signature': 'PRIVATE_RENEWED_SIGNATURE',
+      },
+    )!;
+    expect(renewed.streamKey, initial.streamKey);
+    expect(renewed.stateKey, initial.stateKey);
+    for (final change in [
+      {'deviceKeyEpoch': 2},
+      {'routingHandle': 'fedcba9876543210fedcba9876543210'},
+      {
+        'capabilities': ['voice_call_v1', 'changed-capability'],
+      },
+    ]) {
+      expect(
+        RoutineAuthorityPublication.forRequest(
+          producer: producer,
+          command: 'call_endpoint_set_v1',
+          payload: {...endpoint(), ...change},
+        )!.stateKey,
+        isNot(initial.stateKey),
+      );
+    }
+  });
+
+  test('active-call eligibility is rechecked after the request began', () {
+    var active = false;
+    final observation = runWithRoutineAuthorityDiagnostics(
+      eligible: () => !active,
+      action: () => RoutineAuthorityPublication.forRequest(
+        producer: Object(),
+        command: 'call_endpoint_set_v1',
+        payload: endpoint(),
+        context: {'cause': 'resume_refresh'},
+      )!,
+    );
+    expect(observation.eligibleNow, isTrue);
+    active = true;
+    expect(observation.eligibleNow, isFalse);
+  });
+
+  test('different producers and wake recipients never share a stream', () {
+    final producer = Object();
+    final first = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_endpoint_set_v1',
+      payload: endpoint(),
+    )!;
+    final other = RoutineAuthorityPublication.forRequest(
+      producer: Object(),
+      command: 'call_endpoint_set_v1',
+      payload: endpoint(),
+    )!;
+    expect(other.streamKey, isNot(first.streamKey));
+    final wake = {
+      'authorizedSenderPeerId': 'PRIVATE_SENDER',
+      'wakeHandle': 'PRIVATE_WAKE',
+      'expiresAtMs': 1000,
+    };
+    final before = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_wake_handle_set_v1',
+      payload: wake,
+    )!;
+    final changed = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_wake_handle_set_v1',
+      payload: {...wake, 'authorizedSenderPeerId': 'PRIVATE_OTHER_SENDER'},
+    )!;
+    expect(changed.streamKey, isNot(before.streamKey));
+  });
+
+  test('token value and native refresh epoch remain semantic changes', () {
+    final producer = Object();
+    final token = {
+      'tokenKind': 'ios_voip',
+      'platform': 'ios',
+      'token': 'PRIVATE_TOKEN',
+      'refreshEpoch': 1,
+      'expiresAtMs': 1000,
+    };
+    final initial = RoutineAuthorityPublication.forRequest(
+      producer: producer,
+      command: 'call_token_set_v1',
+      payload: token,
+    )!;
+    final scoped = runWithRoutineAuthorityDiagnostics(
+      eligible: () => true,
+      action: () => RoutineAuthorityPublication.forRequest(
+        producer: producer,
+        command: 'call_token_set_v1',
+        payload: token,
+        context: {'cause': 'resume_refresh'},
+      )!,
+    );
+    expect(scoped.routine, isFalse);
+    for (final change in [
+      {'token': 'PRIVATE_ROTATED_TOKEN'},
+      {'refreshEpoch': 2},
+    ]) {
+      final changed = RoutineAuthorityPublication.forRequest(
+        producer: producer,
+        command: 'call_token_set_v1',
+        payload: {...token, ...change},
+      )!;
+      expect(changed.stateKey, isNot(initial.stateKey));
+    }
+    expect(
+      RoutineAuthorityPublication.forRequest(
+        producer: producer,
+        command: 'call_endpoint_revoke_v1',
+        payload: endpoint(),
+      ),
+      isNull,
+    );
+    expect(
+      RoutineAuthorityPublication.forRequest(
+        producer: producer,
+        command: 'call_endpoint_set_v1',
+        payload: {},
+      ),
+      isNull,
+    );
+  });
+
   test('coalesces successful refreshes to first start and final ok in 60s', () {
     fakeAsync((clock) {
       final output = <Map<String, Object?>>[];
