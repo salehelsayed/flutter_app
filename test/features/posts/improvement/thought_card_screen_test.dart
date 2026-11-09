@@ -1289,6 +1289,28 @@ void main() {
       expect(card, findsOneWidget);
       await finish(tester);
     });
+
+    testWidgets(
+      '_loadFailed in play-at-once mode shows the failure view with its Retry',
+      (tester) async {
+        final thought = await videoThought();
+        await openCard(
+          tester,
+          thought,
+          playVideoAtOnce: true,
+          loadCurrent: () async => throw StateError('thought read failed'),
+        );
+        await pumpMediaFrames(tester);
+
+        expect(
+          find.text('Check your connection and try again.'),
+          findsOneWidget,
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        expect(viewer, findsNothing);
+        await finish(tester);
+      },
+    );
   });
 
   testWidgets('expiry closes its owned media viewer and the card together', (
