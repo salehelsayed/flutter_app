@@ -35,6 +35,26 @@ class _RecordingAi implements OnDeviceAi {
   Future<String> transcribe(String audioPath) => throw UnimplementedError();
 }
 
+/// Android's pinned SharedPreferences: a failed delete returns false.
+class _FailingRemove extends Fake implements SharedPreferences {
+  _FailingRemove(this._real);
+
+  final SharedPreferences _real;
+
+  @override
+  String? getString(String key) => _real.getString(key);
+
+  @override
+  List<String>? getStringList(String key) => _real.getStringList(key);
+
+  @override
+  Future<bool> setStringList(String key, List<String> value) =>
+      _real.setStringList(key, value);
+
+  @override
+  Future<bool> remove(String key) async => false;
+}
+
 ConversationMessage _text(String id, String text, {required bool incoming}) =>
     ConversationMessage(
       id: id,
@@ -136,6 +156,25 @@ void main() {
       expect(stored.getString('translate_preview.target'), 'de');
       expect(prefs.target.value, 'de');
     });
+
+    test(
+      'a failed delete fails the erasure and keeps the chat switch',
+      () async {
+        final real = await SharedPreferences.getInstance();
+        final failing = TranslationPreferences(
+          preferences: () async => _FailingRemove(real),
+        );
+        await failing.setShowTranslation('peer-b', true);
+
+        await expectLater(failing.forgetChats(), throwsStateError);
+
+        expect(
+          real.getStringList('translate_preview.shown_in_chats'),
+          hasLength(1),
+        );
+        expect(failing.showsTranslationIn('peer-b'), isTrue);
+      },
+    );
 
     testWidgets('the choice survives a restart', (tester) async {
       await prefs.setTarget('de');
