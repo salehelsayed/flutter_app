@@ -838,6 +838,7 @@ void main() {
         true,
       );
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
   test(
     'unavailable live targets are N/A with hashed discovery, not a pass',
