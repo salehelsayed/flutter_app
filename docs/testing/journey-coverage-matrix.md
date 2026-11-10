@@ -1,5 +1,12 @@
 # Mknoon journey coverage matrix
 
+Current source: `83021072ff9a6c5af8bb502765a2b5986ad6cf56`. Generated: 2026-11-10T15:00:52Z. Catalog: `/Volumes/CrucialX9/Kayan/testplan.yaml`, SHA256 `d741e2e72ad6cb5764fc240f5a631de7b921a89989434c30baf0798c1c95af33` (134 current IDs). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source.
+
+327 journeys in 22 families: **45 strong, 249 partial, 4 missing, 29 unknown**. The 295 historical ratings are preserved. Three new catalog rows have scoped source-read host evidence; 29 are explicitly unaudited. All 134 current catalog IDs are represented, plus historical GC-010. **This matrix does not certify a production release.**
+
+<details>
+<summary>Historical audit and scoped run provenance</summary>
+
 Ranked-gap progress refreshed: 2026-11-01; source `a4651274d447d016717a5340ba1a400a37cde5f7`. Original coverage-audit metadata and scoped updates retained: Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
 295 representative journeys: **45 strong, 246 partial, 4 missing, 0 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
@@ -11,61 +18,75 @@ Group C device evidence: source `0ee837d5d6b058977b22c09365fc706b38dfd1d3`, appl
 
 Lever 1 host joins: source `7572deae51a9acd19f9ff8c4a85724931b0c7f41`, nine shared-logic journeys now strong with actual host_run evidence; 43 distinct final cases PASS, zero skips, including 14 new and two strengthened cases. Separate bootstrap wrapper subset: 22 PASS across three files, child exit0; outer exit3/NOT RUN with28selected checks omitted. Native and signed-release boundaries remain explicit. See [host packet/runbook](astra-lever1-host-quickwins.md) and `header.lever1_host_run` in YAML. Its historical Android energy-proxy allowance is superseded by the owner decisions below.
 
-Current owner decisions (2026-10-22): VC-009/011/014/015/017/018/019 and CALL-007 remain partial: **needs the test-build audio hook (not approved)**. The no-hook energy proxy is not feasible. All 32 Lever2 native oracle routes remain **NOT RUN / SOURCE_CAPTURE_NOT_WIRED**; see [device status](astra-lever2-device-status.md), line 3, and [call decision](lever3-run-a-call-device-evidence.md), line 78. These constraints preserve prior scoped Group C/D device observations and structural call proof.
+Historical owner decisions (2026-10-22): VC-009/011/014/015/017/018/019 and CALL-007 remain partial: **needs the test-build audio hook (not approved)**. The no-hook energy proxy is not feasible. All 32 Lever2 native oracle routes remain **NOT RUN / SOURCE_CAPTURE_NOT_WIRED**; see [device status](astra-lever2-device-status.md), line 3, and [call decision](lever3-run-a-call-device-evidence.md), line 78. These constraints preserve prior scoped Group C/D device observations and structural call proof.
 
 Group D device evidence: flutter_app reports source `62450cba434f6f718f52472db6807026fed00071`, app base `f14f7d369646b9877bc80c71f517494628f4fe2b`, disposable Android debug package. Saved APK SHA256 `1bb4c9ab0f4141faf6d2d9f9ab5cb0f54a0d1ce5a55d4f5f2ff01f7c6336ac68` was hashed read-only; installation was not inspected by Astra. Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:2`. That packet recorded five scoped device_run rows and the TRANSFER-011 blocked_environment attempt; the later 2026-10-23 TRANSFER-011 row now records scoped iOS-simulator receiver PASS with rating partial. All six ratings remain partial: group3-peer, mid-I/O/video, optical/duplicate-scan, confirmed camera-feedback failure and failed migration limits stay explicit. No new source/receiver oracle or release pass is inferred.
 
 P0 phone rerun 2026-11-02, Hetzner build 201, main 15715c849: latest verdicts for eleven journeys are recorded in their open_questions notes and the four matching ranked-gap records. Coverage ratings and older device_result evidence retain their original audit scope. Source: /Volumes/CrucialX9/flutter_app/.codex-test-logs/p0-rerun-20261101/results.tsv. Execution by flutter_app; Astra inspected the saved report only.
 
+</details>
+
 ## Interpretation and execution
 
-- Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped Group C and D device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation. No production code or release publication was changed by this update.
-- 295 representative journeys in 19 logical families reconcile all 19 lib/features folders and all 103 catalog IDs. Not an exhaustive platform/network/state/format Cartesian product. Every test entry is scoped to its actual assertion and doubles; literal case index was navigation only.
-- Ratings describe coverage quality: strong means substantive causal assertions for the stated scoped contract (sometimes several complementary cases), partial means meaningful subset with material remaining seams, missing means no qualifying complete assertion for the defining boundary, unknown means reachability/policy unresolved or inactive future capability. Strong is not passed or end-to-end unless explicitly stated.
-- Execution records actual scoped legs: Group C has five device_run rows and CR-009 skipped_waiting_ui_update; Group D retains its initial partial/failure limits; TRANSFER-011 now adds the later scoped iOS-simulator receiver device_run PASS while retaining the earlier block. Nine Lever1 shared contracts have host_run evidence. None is a complete release verdict: per-row native/content/artifact gaps remain and focused host results stay separate.
-- Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped test executions. No analyzer, host-all, native tests or device/manual campaign ran in the initial audit; later scoped device evidence is recorded separately.
-- The first static preview reported 34 fallback checks and unmapped YAML; preserve that initial result. Follow-up adds only the exact docs/testing/journey-coverage-matrix.yaml path to existing documentation_only rules; Markdown already matches *.md. Current explicit-base/local wrapper plan and metadata validation are retained with the handoff. No new check was added.
-- Initial ordinary change-plan attempts were held before launch (change-plan.log, change-plan-v2.log). Static preview omitted toolchain capture. The final metadata-only wrapper plan captures version information and selection without launching checks or device discovery; selected checks remain unexecuted.
-- The initial audit identified source-disabled CONTACT presentation and malformed/future QR cases. Group B now enables and passes the CR-003/005/014/025 host guards; other per-row known gaps remain separate. GIF manual default is overridden true by its registered media runner.
-- Registration does not establish CI execution. Host-all discovers test/**/*_test.dart except performance; native/SIMS/legacy dispatch described per entry. CI job condition/trusted-event and actual external vars/runs were not inspected. No registered lane means not_run, never implicit pass.
-- Snapshot catalog source SHA256 57f78df40631adcaa1da16eb743bd0f4570c378d6af11be60affb43c4a9ad64c, 103 IDs; read-only live inventory snapshot generated 2026-10-20T11:46:09.388Z head a502c06bc. Linked test files, notes and old PASS labels are not substituted for reviewed assertions or fresh evidence.
-- Owner-reported stock iOS 1.0.1 (125) / Android 125 camera Original incident and reported compressed/default nonreproduction are reports, not this audit results. Actual original MIME/encoded bytes remain unknown; do not assume HEIC. New strict-custody cohort proofs cannot certify stock125 legacy behavior.
-- Default OFF linked authoring/multi-device/strict-custody/document-send/rotate-on-add cohorts are separate from default production behavior and retained durable authority. Existing PDF receive/open remains supported with send flag off. On-join metadata resync defaults ON. Full phrase-restore group convergence and dormant Posts are separate planned/unreachable scope.
-- Available-target project policy applies to all proposed device work: unavailable target/version/accessory/topology is N/A (target unavailable by project policy), not a release blocker. This agent did not discover/control devices; flutter_app owns execution. Actual previous published baseline and exact signed candidate/manual evidence were not supplied.
-
-- Scoped Group B host update at f4005fbfa66391500dce2c2b82a6f325cc65934f (2026-10-21): CR-003/005/014/025 strong; VC-013 partial with capability still planned; NAV-011 remains partial for unproven invite/recovery surfaces. Focused validation: 14 files, 200 passed, 0 skipped; first failures and one resource-aborted run retained under .codex-test-logs/groupB-fixes/. Full journey execution remains not_run; broad affected lanes, native/device, analyzer and full host-all were not run.
-
-- Scoped Group C host update on base f14f7d369646b9877bc80c71f517494628f4fe2b, tests commit 6ce42d583 (2026-10-22): MEDIA-002/003/014, DC-011, VC-015 and CR-009 partial. Three focused files: 28 passed, one pre-existing mixed-relay KNOWN GAP skip; eight new cases passed. First full camera attempt 005 resource-aborted at swapouts +37768 pages with zero completed cases; final 006 passed at unchanged swapouts. Evidence: .codex-test-logs/astra-groupCD. Appium runbook supplied, all actual cross-platform journeys remain not_run; CR-009 native fresh-add route waits for UI-Update. No native build/device/audio/manual proof, broad affected lanes or full host-all run.
-
-- Scoped Group D host update on base f14f7d369, following Group C commit 0ee837d5d, with test commits 7ebe0608c / 4365c0ae3 / 063aa72e2 (2026-10-22): DC-002, GC-005, MEDIA-018, MEDIA-010, CONTACT-001 and TRANSFER-011 partial. Focused direct probes: 9 passed, one new case-scoped ASTRA-D-1 KNOWN GAP skip; 6 new cases passed and one existing migration chain now decodes a real imported photo. Desired camera feedback was causally RED in 011 and routed to Codex after release 126; no app code fixed here. Test setup failures 010/012/015/017 are retained separately. Evidence: .codex-test-logs/astra-groupCD. Actual Android kills, OS grant/deny, live relay/crypto, mobile video/voice/PDF/viewers and signed-candidate evidence remain not_run. Android Appium steps supplied; broader lanes, analyzer and full host-all not run.
+- Current source/catalog refresh at 83021072ff9a6c5af8bb502765a2b5986ad6cf56, generated 2026-11-10T15:00:52Z. This is a bounded documentation refresh, not a new audit of all 295 historical journey assertions. Historical source/test evidence and ratings remain explicitly scoped to their original audit and later named updates.
+- The current catalog has 134 IDs. All are represented; historical GC-010 is retained as unlisted. There are 327 rows in 22 logical families. Newly cataloged rows do not replace similar but different older journeys.
+- execution values prefixed catalog_ are current testplan progress, not fresh execution by this refresh and not proof of every clause of a linked journey. catalog_mixed means linked IDs have different statuses; exact status/date/full note and current scope are preserved in catalog_progress. Historical audit execution remains in historical_audit_execution.
+- Coverage grades describe assertion quality, independently of catalog progress. Three new Thoughts rows have the specified source-read host subset and remain partial; the other 29 new rows are unknown because their assertion quality was not reassessed. A declared test path or manual PASS never automatically upgrades a coverage grade.
+- Ranked-gap progress is synchronized only for exact catalog identities with no explicit scope conflict. Signed-upgrade, intelligible-audio and TURN/fallback gaps stay open when the catalog note still records a block or missing proof. Related catalog aliases are shown without closing broader gaps.
+- Current Thoughts and You are reachable at this source: normal startup passes the post repository through FeedWired into OrbitWired; Thoughts and You default ON; Orbit opens ComposePostSheet(thoughtsOnly:true), the audience picker and YouPageScreen. This supersedes the original blanket dormant-Posts assumption. NOTIFY-010 retains a historical notification-fallback audit and does not certify every current ingress path.
+- Historical audit note: P0 phone rerun 2026-11-02, Hetzner build 201, main 15715c849: latest verdicts for eleven journeys are recorded in their open_questions notes and the four matching ranked-gap records. Coverage ratings and older device_result evidence retain their original audit scope. Source: /Volumes/CrucialX9/flutter_app/.codex-test-logs/p0-rerun-20261101/results.tsv. Execution by flutter_app; Astra inspected the saved report only.
+- Historical audit note: Scoped NAV-006 update (2026-10-30): owner approved automatic circle order by received-message timestamp, not manual membership editing. The 21 new cases produced 19 failures and 2 preservation passes on baseline b523feae9; the final six-file focused run passed 408 cases with zero failures/skips, including all 21 new cases. Analysis passed on 20 Dart files. Actual device/manual execution remains not_run. Evidence: .codex-test-logs/nav006-received-order-20261029/nav006-causal-red/result.json, nav006-green/result.json and nav006-analyze-current/result.json.
+- Historical audit note: Progress refresh 2026-10-26: only the 23 ranked-gap status fields and refresh metadata changed; original coverage audit a502c06bc7b2a87c66e01495d4d2285f6731be3e and all 295 journey ratings/execution records are retained. ready is reviewed preparation; covered can be scoped historical evidence or an existing runner, never a fresh device/signed-candidate PASS.
+- Historical audit note: Current test routing: remote test relays use Hetzner; owned local fixtures are allowed; production AWS is restricted to owner pre-publish store-build lanes. No remote relay mutation is authorized.
+- Historical audit note: DC-013 is outside the 23 ranked gaps: reuse integration_test/scripts/run_production_contact_delete.dart (kx0010/kx0011), documented in 0d7e4f1f7:docs/testing/privacy-e2e-mcp.md; no new rank or native result is added.
+- Historical audit note: Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped Group C and D device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation. No production code or release publication was changed by this update.
+- Historical audit note: 295 representative journeys in 19 logical families reconcile all 19 lib/features folders and all 103 catalog IDs. Not an exhaustive platform/network/state/format Cartesian product. Every test entry is scoped to its actual assertion and doubles; literal case index was navigation only.
+- Historical audit note: Ratings describe coverage quality: strong means substantive causal assertions for the stated scoped contract (sometimes several complementary cases), partial means meaningful subset with material remaining seams, missing means no qualifying complete assertion for the defining boundary, unknown means reachability/policy unresolved or inactive future capability. Strong is not passed or end-to-end unless explicitly stated.
+- Historical audit note: Execution records actual scoped legs: Group C has five device_run rows and CR-009 skipped_waiting_ui_update; Group D has five device_run rows with explicit partial/failure limits and TRANSFER-011 blocked_environment. Nine Lever1 shared contracts have host_run evidence. None is a complete release verdict: per-row native/content/artifact gaps remain and focused host results stay separate.
+- Historical audit note: Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped test executions. No analyzer, host-all, native tests or device/manual campaign ran in the initial audit; later scoped device evidence is recorded separately.
+- Historical audit note: The first static preview reported 34 fallback checks and unmapped YAML; preserve that initial result. Follow-up adds only the exact docs/testing/journey-coverage-matrix.yaml path to existing documentation_only rules; Markdown already matches *.md. Current explicit-base/local wrapper plan and metadata validation are retained with the handoff. No new check was added.
+- Historical audit note: Initial ordinary change-plan attempts were held before launch (change-plan.log, change-plan-v2.log). Static preview omitted toolchain capture. The final metadata-only wrapper plan captures version information and selection without launching checks or device discovery; selected checks remain unexecuted.
+- Historical audit note: The initial audit identified source-disabled CONTACT presentation and malformed/future QR cases. Group B now enables and passes the CR-003/005/014/025 host guards; other per-row known gaps remain separate. GIF manual default is overridden true by its registered media runner.
+- Historical audit note: Registration does not establish CI execution. Host-all discovers test/**/*_test.dart except performance; native/SIMS/legacy dispatch described per entry. CI job condition/trusted-event and actual external vars/runs were not inspected. No registered lane means not_run, never implicit pass.
+- Historical audit note: Snapshot catalog source SHA256 57f78df40631adcaa1da16eb743bd0f4570c378d6af11be60affb43c4a9ad64c, 103 IDs; read-only live inventory snapshot generated 2026-10-20T11:46:09.388Z head a502c06bc. Linked test files, notes and old PASS labels are not substituted for reviewed assertions or fresh evidence.
+- Historical audit note: Owner-reported stock iOS 1.0.1 (125) / Android 125 camera Original incident and reported compressed/default nonreproduction are reports, not this audit results. Actual original MIME/encoded bytes remain unknown; do not assume HEIC. New strict-custody cohort proofs cannot certify stock125 legacy behavior.
+- Historical audit note: Default OFF linked authoring/multi-device/strict-custody/document-send/rotate-on-add cohorts are separate from default production behavior and retained durable authority. Existing PDF receive/open remains supported with send flag off. On-join metadata resync defaults ON. The original dormant-Posts classification is historical and superseded for current Thoughts/You; legacy wider Posts surfaces and phrase-restore group convergence retain their separate unreviewed scope.
+- Historical audit note: Available-target project policy applies to all proposed device work: unavailable target/version/accessory/topology is N/A (target unavailable by project policy), not a release blocker. This agent did not discover/control devices; flutter_app owns execution. Actual previous published baseline and exact signed candidate/manual evidence were not supplied.
+- Historical audit note: Scoped Group B host update at f4005fbfa66391500dce2c2b82a6f325cc65934f (2026-10-21): CR-003/005/014/025 strong; VC-013 partial with capability still planned; NAV-011 remains partial for unproven invite/recovery surfaces. Focused validation: 14 files, 200 passed, 0 skipped; first failures and one resource-aborted run retained under .codex-test-logs/groupB-fixes/. Full journey execution remains not_run; broad affected lanes, native/device, analyzer and full host-all were not run.
+- Historical audit note: Scoped Group C host update on base f14f7d369646b9877bc80c71f517494628f4fe2b, tests commit 6ce42d583 (2026-10-22): MEDIA-002/003/014, DC-011, VC-015 and CR-009 partial. Three focused files: 28 passed, one pre-existing mixed-relay KNOWN GAP skip; eight new cases passed. First full camera attempt 005 resource-aborted at swapouts +37768 pages with zero completed cases; final 006 passed at unchanged swapouts. Evidence: .codex-test-logs/astra-groupCD. Appium runbook supplied, all actual cross-platform journeys remain not_run; CR-009 native fresh-add route waits for UI-Update. No native build/device/audio/manual proof, broad affected lanes or full host-all run.
+- Historical audit note: Scoped Group D host update on base f14f7d369, following Group C commit 0ee837d5d, with test commits 7ebe0608c / 4365c0ae3 / 063aa72e2 (2026-10-22): DC-002, GC-005, MEDIA-018, MEDIA-010, CONTACT-001 and TRANSFER-011 partial. Focused direct probes: 9 passed, one new case-scoped ASTRA-D-1 KNOWN GAP skip; 6 new cases passed and one existing migration chain now decodes a real imported photo. Desired camera feedback was causally RED in 011 and routed to Codex after release 126; no app code fixed here. Test setup failures 010/012/015/017 are retained separately. Evidence: .codex-test-logs/astra-groupCD. Actual Android kills, OS grant/deny, live relay/crypto, mobile video/voice/PDF/viewers and signed-candidate evidence remain not_run. Android Appium steps supplied; broader lanes, analyzer and full host-all not run.
+- Historical audit note: Scoped Group C device results (2026-10-22) from flutter_app on source 0ee837d5d, application base f14f7d369: camera/caption Original+Compressed online/offline/reverse legs passed; text/voice/video passed both ways with structural playback, retaining a first cellular video download failure and untapped automatic recovery at75seconds. VC-015 passed structurally both ways; audibility and native RTP not covered. CR-009 fresh add skipped waiting for UI-Update. Plain host rechecks: contacts3PASS, camera19PASS1pre-existing skip, calls6PASS; all exit0. These are not retroactive wrapper passes for Astra resource-aborted/lease-blocked attempts, which remain preserved.
 
 ## Feature coverage
 
 | Feature | Strong | Partial | Missing | Unknown | Biggest gap |
 | --- | ---: | ---: | ---: | ---: | --- |
-| IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. |
-| CONTACT — QR, contact requests, profiles and contact management | 7 | 29 | 0 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
-| CHAT — Direct text and conversation state | 2 | 11 | 0 | 0 | Actual native both-peer process death and deployed relay preservation for 100 messages remain unrun; host SQL/runtime reopen now proves the exact transcript. Full iPhone/Android native text/media interoperability remains separate. |
-| MEDIA — Direct/group media, voice, private viewing and libraries | 10 | 34 | 1 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
-| GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. |
-| CALL — Voice calls, lifecycle, privacy and history | 11 | 24 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
-| INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
-| NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. |
-| NAV — Feed, Orbit, rings, search and navigation | 0 | 11 | 0 | 0 | Actual device navigation and geometry preservation remain separate from host received-only circle ordering and SQL restart evidence. |
-| SHARE — External share and received-media forwarding | 0 | 11 | 0 | 0 | Native share URI lifetime/permission/cancel and actual recipient full decode/play across selected targets are not joined by fake ingress/forwarding tests. |
-| SETTINGS — Profile, preferences and support | 2 | 10 | 0 | 0 | Preference/profile host boundaries do not prove native picker/clipboard/mail, actual peer avatar convergence or auto-download policy on received full media. |
-| TRANSFER — Move Account between phones | 1 | 15 | 0 | 0 | Host loopback transfer now opens a real imported photo through the host codec. Native mobile video/voice/PDF/viewers, secure keychain/SQLCipher and complete candidate cutover remain unverified. |
-| LINKED — Flag-gated linked devices and durable linked state | 1 | 12 | 0 | 0 | Default OFF authoring flags, durable authority and actual multi-installation native media delivery must be separated; full phrase-restore group convergence is unfinished. |
-| UPDATE — Signed update checks and update-required UI | 3 | 6 | 0 | 0 | Signed verification/cache and shared required-gate recovery have host assertions; actual OS background wake, external store behavior and the exact installed candidate remain separate. |
-| TRANSPORT — Cross-cutting discovery, reconnect and local/offline routing | 0 | 8 | 0 | 0 | Real host Go transport checks do not prove actual native local discovery/airplane/radio handover and recipient media continuity under OS lifecycle. |
-| DIAG — User-controlled diagnostics and recovery reporting | 0 | 5 | 0 | 0 | Host redaction/export policy lacks joined actual platform export failure/cancel while live communication and microphone ownership remain intact. |
-| LOCAL — Local storage, identity secrecy and account erasure | 0 | 5 | 0 | 0 | Native encrypted DB/keychain/first-unlock/erase and actual published-to-candidate upgrade custody are separate from host SQL/files and fake secure storage. |
-| ACCESS — Localization, accessibility and usable interaction | 0 | 6 | 0 | 0 | Host semantics/layout/RTL/contrast tests do not establish actual screen-reader/keyboard/native input and cross-platform delivered-content accessibility. |
-| RELEASE — Upgrade and whole-app preservation | 0 | 5 | 0 | 0 | No actual previous published revision, exact signed candidate/artifact/configuration and required device/manual evidence supplied for release certification. |
+| IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Historical assertion-audit gap: Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. Current catalog progress is separate and scoped by the linked notes. |
+| CONTACT — QR, contact requests, profiles and contact management | 7 | 29 | 0 | 0 | Historical assertion-audit gap: Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. Current catalog progress is separate and scoped by the linked notes. |
+| CHAT — Direct text and conversation state | 2 | 11 | 0 | 1 | Historical assertion-audit gap: Actual native both-peer process death and deployed relay preservation for 100 messages remain unrun; host SQL/runtime reopen now proves the exact transcript. Full iPhone/Android native text/media interoperability remains separate. Current catalog progress is separate and scoped by the linked notes. |
+| MEDIA — Direct/group media, voice, private viewing and libraries | 10 | 34 | 1 | 2 | Historical assertion-audit gap: Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. Current catalog progress is separate and scoped by the linked notes. |
+| GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Historical assertion-audit gap: Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. Current catalog progress is separate and scoped by the linked notes. |
+| CALL — Voice calls, lifecycle, privacy and history | 11 | 24 | 1 | 0 | Historical assertion-audit gap: Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. Current catalog progress is separate and scoped by the linked notes. |
+| INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Historical assertion-audit gap: Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. Current catalog progress is separate and scoped by the linked notes. |
+| NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Historical assertion-audit gap: Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. Current catalog progress is separate and scoped by the linked notes. |
+| NAV — Feed, Orbit, rings, search and navigation | 0 | 11 | 0 | 0 | Historical assertion-audit gap: Actual device navigation and geometry preservation remain separate from host received-only circle ordering and SQL restart evidence. Current catalog progress is separate and scoped by the linked notes. |
+| SHARE — External share and received-media forwarding | 0 | 11 | 0 | 0 | Historical assertion-audit gap: Native share URI lifetime/permission/cancel and actual recipient full decode/play across selected targets are not joined by fake ingress/forwarding tests. Current catalog progress is separate and scoped by the linked notes. |
+| SETTINGS — Profile, preferences and support | 2 | 10 | 0 | 0 | Historical assertion-audit gap: Preference/profile host boundaries do not prove native picker/clipboard/mail, actual peer avatar convergence or auto-download policy on received full media. Current catalog progress is separate and scoped by the linked notes. |
+| TRANSFER — Move Account between phones | 1 | 15 | 0 | 0 | Historical assertion-audit gap: Host loopback transfer now opens a real imported photo through the host codec. Native mobile video/voice/PDF/viewers, secure keychain/SQLCipher and complete candidate cutover remain unverified. Current catalog progress is separate and scoped by the linked notes. |
+| LINKED — Flag-gated linked devices and durable linked state | 1 | 12 | 0 | 0 | Historical assertion-audit gap: Default OFF authoring flags, durable authority and actual multi-installation native media delivery must be separated; full phrase-restore group convergence is unfinished. Current catalog progress is separate and scoped by the linked notes. |
+| UPDATE — Signed update checks and update-required UI | 3 | 6 | 0 | 0 | Historical assertion-audit gap: Signed verification/cache and shared required-gate recovery have host assertions; actual OS background wake, external store behavior and the exact installed candidate remain separate. Current catalog progress is separate and scoped by the linked notes. |
+| TRANSPORT — Cross-cutting discovery, reconnect and local/offline routing | 0 | 8 | 0 | 0 | Historical assertion-audit gap: Real host Go transport checks do not prove actual native local discovery/airplane/radio handover and recipient media continuity under OS lifecycle. Current catalog progress is separate and scoped by the linked notes. |
+| DIAG — User-controlled diagnostics and recovery reporting | 0 | 5 | 0 | 0 | Historical assertion-audit gap: Host redaction/export policy lacks joined actual platform export failure/cancel while live communication and microphone ownership remain intact. Current catalog progress is separate and scoped by the linked notes. |
+| LOCAL — Local storage, identity secrecy and account erasure | 0 | 5 | 0 | 0 | Historical assertion-audit gap: Native encrypted DB/keychain/first-unlock/erase and actual published-to-candidate upgrade custody are separate from host SQL/files and fake secure storage. Current catalog progress is separate and scoped by the linked notes. |
+| ACCESS — Localization, accessibility and usable interaction | 0 | 6 | 0 | 0 | Historical assertion-audit gap: Host semantics/layout/RTL/contrast tests do not establish actual screen-reader/keyboard/native input and cross-platform delivered-content accessibility. Current catalog progress is separate and scoped by the linked notes. |
+| RELEASE — Upgrade and whole-app preservation | 0 | 5 | 0 | 0 | Historical assertion-audit gap: No actual previous published revision, exact signed candidate/artifact/configuration and required device/manual evidence supplied for release certification. Current catalog progress is separate and scoped by the linked notes. |
+| THOUGHTS — Thoughts, audience and You history | 0 | 3 | 0 | 13 | Three journeys have scoped source-read host assertions; remaining new rows need assertion-quality review. Current device catalog notes retain their accepted gaps and do not constitute a fresh whole-feature audit. |
+| STICKERS — Sticker delivery, packs and reporting | 0 | 0 | 0 | 5 | Catalog tests and scoped device results are linked, but full real/fake and preservation assertion quality was not reassessed by this refresh. |
+| PRIVATE_AI — Private translator, transcripts and model lifecycle | 0 | 0 | 0 | 8 | Current catalog preparation and declared host tests are represented. No fresh assertion-quality or OS/model/device campaign is claimed. |
 
 ## Source entrypoint reconciliation
 
-These 19 folders cover the implementation inventory. UI callback names are navigation anchors; they do not prove that a dormant/unwired action ships. Application composition/root/lifecycle, native ingress and shared viewers are mapped through the owning journeys.
+The following navigation inventory is retained from the historical 19-folder audit. UI callback names are navigation anchors; they do not prove that a dormant/unwired action ships. Application composition/root/lifecycle, native ingress and shared viewers are mapped through the owning journeys.
 
 | Source family | Journey family / representative rows |
 | --- | --- |
@@ -82,14 +103,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 | [lib/features/introduction/](../../lib/features/introduction/) | INTRO / IN-001–010 and INTRO-001–003 |
 | [lib/features/orbit/](../../lib/features/orbit/) | NAV / search/filters/rings; CONTACT / request/management; GROUP / invites/exit; CALL / Calls entry |
 | [lib/features/p2p/](../../lib/features/p2p/) | CHAT / direct messaging; TRANSPORT / routing/reconnect; MEDIA custody; CALL signaling |
-| [lib/features/posts/](../../lib/features/posts/) | Planned/unreachable Posts UI; reachable post notification is NOTIFY-010 intentional Feed fallback |
+| [lib/features/posts/](../../lib/features/posts/) | Historical wider Posts entry inventory; current Thoughts/You are THOUGHTS; NOTIFY-010 remains a distinct historical fallback audit |
 | [lib/features/push/](../../lib/features/push/) | NOTIFY / ingress/read/routing/privacy; CALL / wake; UPDATE / check-now |
 | [lib/features/qr_code/](../../lib/features/qr_code/) | CONTACT / scan/display/peer binding; LINKED / linked QR; TRANSFER / migration QR |
 | [lib/features/settings/](../../lib/features/settings/) | SETTINGS / preferences/profile/support; UPDATE; DIAG; LOCAL; TRANSFER entry |
 | [lib/features/share/](../../lib/features/share/) | SHARE / external and received-media forwarding; MEDIA / egress/library |
 | [lib/features/update_check/](../../lib/features/update_check/) | UPDATE / signed verifier/cache/gate/background/store |
 
-### Screen callback inventory
+### Historical screen callback inventory
 
 | Production screen / wired entry | Owning journey family |
 | --- | --- |
@@ -127,8 +148,8 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 | [lib/features/introduction/presentation/screens/sent_confirmation_wired.dart](../../lib/features/introduction/presentation/screens/sent_confirmation_wired.dart) | INTRO / IN-001–010 and INTRO-001–003 |
 | [lib/features/orbit/presentation/screens/orbit_screen.dart](../../lib/features/orbit/presentation/screens/orbit_screen.dart) | NAV / search/filters/rings; CONTACT / request/management; GROUP / invites/exit; CALL / Calls entry |
 | [lib/features/orbit/presentation/screens/orbit_wired.dart](../../lib/features/orbit/presentation/screens/orbit_wired.dart) | NAV / search/filters/rings; CONTACT / request/management; GROUP / invites/exit; CALL / Calls entry |
-| [lib/features/posts/presentation/screens/posts_screen.dart](../../lib/features/posts/presentation/screens/posts_screen.dart) | Planned/unreachable Posts UI; reachable post notification is NOTIFY-010 intentional Feed fallback |
-| [lib/features/posts/presentation/screens/posts_wired.dart](../../lib/features/posts/presentation/screens/posts_wired.dart) | Planned/unreachable Posts UI; reachable post notification is NOTIFY-010 intentional Feed fallback |
+| [lib/features/posts/presentation/screens/posts_screen.dart](../../lib/features/posts/presentation/screens/posts_screen.dart) | Historical wider Posts entry inventory; current Thoughts/You are THOUGHTS; NOTIFY-010 remains a distinct historical fallback audit |
+| [lib/features/posts/presentation/screens/posts_wired.dart](../../lib/features/posts/presentation/screens/posts_wired.dart) | Historical wider Posts entry inventory; current Thoughts/You are THOUGHTS; NOTIFY-010 remains a distinct historical fallback audit |
 | [lib/features/qr_code/presentation/screens/qr_display_screen.dart](../../lib/features/qr_code/presentation/screens/qr_display_screen.dart) | CONTACT / scan/display/peer binding; LINKED / linked QR; TRANSFER / migration QR |
 | [lib/features/qr_code/presentation/screens/qr_display_wired.dart](../../lib/features/qr_code/presentation/screens/qr_display_wired.dart) | CONTACT / scan/display/peer binding; LINKED / linked QR; TRANSFER / migration QR |
 | [lib/features/qr_code/presentation/screens/qr_scanner_screen.dart](../../lib/features/qr_code/presentation/screens/qr_scanner_screen.dart) | CONTACT / scan/display/peer binding; LINKED / linked QR; TRANSFER / migration QR |
@@ -140,13 +161,35 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 | [lib/features/share/presentation/screens/share_target_picker_screen.dart](../../lib/features/share/presentation/screens/share_target_picker_screen.dart) | SHARE / external and received-media forwarding; MEDIA / egress/library |
 | [lib/features/share/presentation/screens/share_target_picker_wired.dart](../../lib/features/share/presentation/screens/share_target_picker_wired.dart) | SHARE / external and received-media forwarding; MEDIA / egress/library |
 
+
+### Current source and added catalog families
+
+Pinned source contains 21 feature folders: `account_migration`, `call`, `contact_profile`, `contact_request`, `contacts`, `conversation`, `feed`, `groups`, `home`, `identity`, `introduction`, `orbit`, `p2p`, `posts`, `push`, `qr_code`, `settings`, `share`, `stickers`, `translate_preview`, `update_check`. This inventory does not re-audit every assertion or old navigation line.
+
+Current Thoughts and You are reachable at this source: normal startup passes the post repository through FeedWired into OrbitWired; Thoughts and You default ON; Orbit opens ComposePostSheet(thoughtsOnly:true), the audience picker and YouPageScreen. This supersedes the original blanket dormant-Posts assumption. NOTIFY-010 retains a historical notification-fallback audit and does not certify every current ingress path.
+
+- application root: `lib/app/application_root.dart:3610-3623`.
+- startup router: `lib/features/identity/presentation/startup_router.dart:719-732`.
+- feed wired: `lib/features/feed/presentation/screens/feed_wired.dart:3140-3152`.
+- defaults: `lib/core/config/thoughts_feature_flags.dart:14,29`.
+- orbit compose you: `lib/features/orbit/presentation/screens/orbit_wired.dart:1104-1126,3751-3760,4355-4358`.
+- audience picker: `lib/features/posts/presentation/widgets/compose_post_sheet.dart:259-279,954`.
+- legacy root reveal: `lib/app/application_root.dart:2265`.
+- current pending target: `lib/features/orbit/presentation/screens/orbit_wired.dart:1435-1439`.
+
+- THOUGHTS: TH-001–016, current Thoughts/You/audience contracts.
+- STICKERS: ST-001–005, distinct sticker delivery, packs, consent and protected-group contracts.
+- PRIVATE_AI: PAI-001–008, private translator/model/transcript contracts.
+- CHAT: DC-025 in-chat search; this is not NAV-004 Orbit search.
+- MEDIA: DC-024 Send as text and DC-026 recording-time camera switch; these are distinct from the older camera rows.
+
 ## Detailed journeys
 
 ### IDENTITY — Onboarding, identity and recovery
 
 #### IDENTITY-001 — Create identity and reach first-time home without duplicate creation
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-002.
 
 **Steps**
 
@@ -176,6 +219,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - No single assertion joins actual native entropy/ML-KEM, durable secure storage and the real first-time home.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-002: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh onboarding to first direct and group message with consent at every step; observation: contact request took 4.5 min once (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### IDENTITY-002 — Cancel or interrupt identity generation; restore a truthful startup state
 
@@ -312,7 +363,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### IDENTITY-006 — Grant, deny or skip the onboarding microphone permission step
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-002.
 
 **Steps**
 
@@ -334,6 +385,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - All platform statuses/prompts come from FakeMicPermissionGateway; no native OS permission or later voice-use recovery is asserted.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-002: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh onboarding to first direct and group message with consent at every step; observation: contact request took 4.5 min once (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### IDENTITY-007 — Restart after onboarding; retain identity and choose the correct home
 
@@ -362,7 +421,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### IDENTITY-008 — First-time user edits their display name and scans first contact
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-002.
 
 **Steps**
 
@@ -388,6 +447,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Edit/save/QR-call assertions exist; the scan case only checks rendered affordances. Actual camera scan and remote contact acceptance are separate evidence.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-002: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh onboarding to first direct and group message with consent at every step; observation: contact request took 4.5 min once (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### IDENTITY-009 — Restoring a phrase preserves the account identity without promising historical messages or group keys
 
@@ -447,7 +514,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### DC-013 — Deleting a contact wipes the chat
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-013.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-013.
 
 **Steps**
 
@@ -474,9 +541,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real owner-scoped media/SQL cleanup is covered, but full contact delete UI/cancel/confirmation, native file/notification cleanup and restart preservation are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-013: passed (2026-10-28).** Passed 10-28 set 1: kx0010 runner on emulator, Hetzner v1.11.3; kx0011 not run
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-016 — Block and unblock preserve ingress privacy
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-016.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-016.
 
 **Steps**
 
@@ -507,9 +582,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual receive/projection policy is causal at host seams; native push preview/privacy and unblock/restart/replay across real peers are not one proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-016: passed (2026-10-28).** Passed 10-28 set 1: blocked text/photo/reaction rejected silently, kept after restart, unblock delivers once
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-001 — Scan a QR code, the other person accepts, and both can chat
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-001.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-001.
 
 **Steps**
 
@@ -536,9 +619,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong orchestration negative control exists, but native camera/ML-KEM/crypto/network/storage are faked in composed host journey; real peer/candidate end-to-end unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-001: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh account adds iPhone by QR, accepted, first texts both ways, calls only after the accept (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-002 — Declining a request adds no contact
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-002.
 
 **Steps**
 
@@ -562,9 +653,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Source-disabled KNOWN GAP CR-002: declining_request_adds_no_contact_test.dart:530-531 skips the sole defining replay/SQL-reopen story. ReplayCache is in-memory only and incoming handling can overwrite declined back to pending without durable message-ID/timestamp ordering. Default gates cannot fail this disabled defining assertion; this is more than not executed in this audit.
 - Native transport/ML-KEM encryption and OS presentation remain modeled.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-002: passed (2026-11-10).** PASS 2026-11-10 on build 240 (main app code), Hetzner, as Astra device gap 1: decline on the iPhone 13 and iPhone 11 legs, and a later new request shown once (m-7638d426). Found BL-11 on the requester side.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-003 — A missed request can still be found and answered
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-003.
+**Coverage:** strong. **Execution:** catalog_ready. **Catalog:** CR-003.
 
 **Steps**
 
@@ -603,9 +702,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host replay, remount, retained-subscriber release and decision-before-replay timing pass. Real OS notification delivery and native/network peer behavior remain outside this scoped host proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-003: ready (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): pending_request_shell_test.dart:123 'CR-003 suppression release reveals a missed request with shell subscribers retained'
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-004 — Fake or tampered requests are rejected
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-004.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-004.
 
 **Steps**
 
@@ -636,9 +743,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real Ed25519 identity-binding fixtures and storage boundaries exist; request-specific invalid-crypto controller tests often stub bridge rejection. Genuine native request encryption/signature-to-receive mutation boundary is not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-004: covered (2026-10-26).** Astra audit: test/features/contact_request/application/existing_contact_repair_receive_test.dart:251-334,451 plus test/features/contact_request/application/handle_incoming_message_use_case_test.dart:343-396 cover signature/identity/sender/self/recipient and same-ID changed-body rejection; last run not reverif...
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-005 — The same request arriving twice shows once
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-005.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** CR-005.
 
 **Steps**
 
@@ -665,9 +780,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Single-shell restart and retained Feed/Orbit ownership pass with real pending SQL; actual OS/native transport ingress remains modeled.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-005: passed (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): pending_request_shell_test.dart:181 one dialog with Feed+Orbit mounted; :149 live+inbox duplicate and listener restart keep one dialog
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-006 — A request reaches someone who was offline for less than a day
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-006.
 
 **Steps**
 
@@ -698,9 +821,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host fake network immediate reconnect covers retry mechanics; actual near24h relay retention/provider wake and full new-user consent path are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-006: passed (2026-10-27).** PASS on emulator pair, main 0a6ec56a6, Hetzner, 10-27 01:08-01:59 CET (.codex-test-logs/cr-emu-20261027T0008Z); part of the proof only in logcat, receipt INCOMPLETE
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-007 — Blocked people cannot get a request through
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-007.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** CR-007.
 
 **Steps**
 
@@ -727,9 +858,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to actual app receive policy with real signed fixtures/SQL; OS provider/notification ingress and hardware privacy remain separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-007: covered (2026-10-26).** Astra audit: test/features/contact_request/application/existing_contact_repair_receive_test.dart:489, test/features/contact_request/application/contact_request_listener_test.dart:417 and test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart:635 cover blocked receive/replay/scan with unchanged ...
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-009 — iPhone and Android can add each other
 
-**Coverage:** partial. **Execution:** skipped_waiting_ui_update. **Catalog:** CR-009.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** CR-009.
 
 **Steps**
 
@@ -768,9 +907,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** skipped_waiting_ui_update. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-009: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Android scans iPhone PASS (10-31); iPhone scans Android BLOCKED, iPhone camera cannot see the Pixel screen, release has no paste route.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-010 — Encrypted requests never fall back to plain text
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-010.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-010.
 
 **Steps**
 
@@ -797,9 +944,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Error-result tests use a fake bridge and do not themselves assert every zero-outbound counter; genuine native crypto confidentiality and on-wire absence of plaintext are not jointly established.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-010: covered (2026-10-26).** Astra audit: test/features/contact_request/application/send_contact_request_use_case_test.dart + marked-send/bridge-crypto tests assert no plaintext fallback, no-key fail and secret placement; receiver v1 cwh rejection at test/features/contact_request/application/handle_incoming_message_use_case_test.dart:1759.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-011 — Scanning someone you already have keeps them intact
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-011.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** CR-011.
 
 **Steps**
 
@@ -830,9 +985,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - UI and real SQL repair are separately tested with fake network/ML-KEM; complete native scanner-to-real-peer response after restart remains unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-011: not_started (2026-10-26).** Astra audit: Catalog:2262; scanner/repair and deletion-consent controls exist, but complete seeded-chat-history preservation across the rescan row is not asserted by the listed integration suites; device rescan is optional.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-012 — A request that failed to send is retried later
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-012.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-012.
 
 **Steps**
 
@@ -859,9 +1022,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real SQL reciprocal restart evidence exists, but generic retry flow uses fake network/store and no OS scheduling/provider execution.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-012: passed (2026-10-27).** PASS on emulator pair, main 0a6ec56a6, Hetzner, 10-27 01:08-01:59 CET (.codex-test-logs/cr-emu-20261027T0008Z); part of the proof only in logcat, receipt INCOMPLETE
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-013 — Accepting survives a crash halfway through
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-013.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-013.
 
 **Steps**
 
@@ -885,9 +1056,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Source-disabled KNOWN GAP CR-013: accepting_survives_crash_halfway_test.dart:262 and :382 skip both cases. Non-atomic contact/status writes can leave pending consent after a mid-accept crash; repeated accept can overwrite current key/archive/block state. Default gates cannot fail these disabled defining assertions.
 - No actual abrupt OS kill, native SQLCipher/keychain or power-loss guarantee was verified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-013: covered (2026-10-27).** Fixed on main f845d447d (Codex contact fixes A-D, Astra-reviewed); disabled KNOWN GAP tests re-enabled and passing in full lanes; device run pending
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-014 — Many requests at once are all kept
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-014.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** CR-014.
 
 **Steps**
 
@@ -914,9 +1093,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - The bounded three-request host burst passes; production load, native transport and OS lifecycle behavior are not certified by this fixture.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-014: covered (2026-10-26).** Astra audit: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:213 and repair overflow/retry controls active; docs/testing/TESTING.md:2898-2951 records 14 shell passes / focused 200 PASS, no stacked dialogs.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-015 — A fake or altered QR code adds no contact
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-015.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** CR-015.
 
 **Steps**
 
@@ -939,9 +1126,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to parser identity binding with real Ed25519; actual camera/native bridge/transport is separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-015: covered (2026-10-26).** Astra audit: Real signed scanner rejection variants and stored-key conflict active; docs/testing/TESTING.md:2820-2854 and qr-payload-retry-20261024/qr-green-final.log document host proof and zero outbound/contact effects.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-016 — Requester names display safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-016.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-016.
 
 **Steps**
 
@@ -964,9 +1159,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Mixed-script direction is asserted; full unsafe bidi, extreme length/emoji and narrow-view action reachability are not all asserted in this dialog journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-016: covered (2026-10-26).** Astra audit: Reviewed 3396d2b20 stored-name sanitizer plus real signed QR cases; docs/testing/TESTING.md:2870-2887 supersedes old unsanitized-storage note, dialog direction tests retained.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-017 — Old request actions cannot undo a newer decision
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-017.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-017.
 
 **Steps**
 
@@ -998,9 +1201,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Source-disabled KNOWN GAP CR-017: old_request_actions_preserve_newer_decision_test.dart:239, :325 and :414 skip all three stale-action cases. Stale accept may synthesize a contact after decline, stale decline may overwrite accepted state, and stale pending accept may overwrite a newer blocked contact/key. Default gates cannot fail these disabled defining assertions.
 - OS native notification actions and real network effects remain modeled.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-017: covered (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): old_request_actions_preserve_newer_decision_test.dart:153 and :355 (stale accept after decline; stale accept vs newer block/ML-KEM key)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-018 — Acceptance still reaches the other person after a restart
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-018.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-018.
 
 **Steps**
 
@@ -1023,9 +1234,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real SQL reopen/Ed25519 pipeline is substantive, but encryption lookup/network/store doubles do not prove actual native cryptographic delivery or process termination.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-018: passed (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): acceptance_reaches_peer_after_restart_test.dart:181 (reciprocal send failure recovered on restart, no duplicate prompt/contact)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-019 — Old key updates cannot replace newer contact details
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-019.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** CR-019.
 
 **Steps**
 
@@ -1048,9 +1267,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong applies to actual receive ordering/relationship policy with real signed inputs; public ML-KEM strings and grant/token storage are fixture seams, not native key validation.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-019: passed (2026-11-01).** Fixed on main 4ef163505 (guard contact authority at capability and key writes); CR-019 KNOWN GAP skips removed, no CR-019 skips left on origin/main (Kayan grep 11-01). Astra a41c45748 is equivalent.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-020 — A failed save does not lose a valid request
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-020.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-020.
 
 **Steps**
 
@@ -1074,9 +1301,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Source-disabled KNOWN GAP CR-020: failed_save_preserves_valid_request_test.dart:637-638 skips the defining failed-save/ACK recovery case. Incoming storage failure can become invalidMessage and positive completion/custody commit without a saved request. Default gates cannot fail this disabled defining assertion.
 - Native transport ACK wire, device SQLCipher and OS storage failure behavior were not executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-020: covered (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): failed_save_preserves_valid_request_test.dart:416 (storage failure withholds ACK, stays retryable, request surfaces once)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-021 — You can add a contact without the camera
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-021.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-021.
 
 **Steps**
 
@@ -1103,9 +1338,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual pasted Submit/handoff is asserted with fake bridge/network/repositories; real OS clipboard input and native crypto/recipient acceptance are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-021: passed (2026-10-27).** PASS on emulator pair, main 0a6ec56a6, Hetzner, 10-27 01:08-01:59 CET (.codex-test-logs/cr-emu-20261027T0008Z)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-022 — Your own QR code is signed and fails safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-022.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-022.
 
 **Steps**
 
@@ -1136,9 +1379,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - QR build/render tests fake signing; decline integration independently uses real Ed25519 build/parse. Native keychain/signing bridge/camera decoding on installed app is not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-022: covered (2026-10-26).** Astra audit: Builder/display/FTE signed-output plus error/Retry controls active; docs/testing/TESTING.md:2828-2853 documents green-final screen/parser preservation, no partial/unsigned QR.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-023 — Move Account and linked-device QR codes never add a contact
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-023.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-023.
 
 **Steps**
 
@@ -1165,9 +1416,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Causal protocol-dispatch guards exist at widget callback seams; actual native camera and full dedicated migration/linked handler are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-023: covered (2026-10-26).** Astra audit: test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart migration/linked handler and unsupported branches preserve contact and assert zero request/encryption; docs/testing/TESTING.md:2825-2829 documents whole routing scope.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-024 — A request from someone you were introduced to finishes the introduction
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-024.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-024.
 
 **Steps**
 
@@ -1190,9 +1449,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real signed request/SQL recovery matrix is meaningful; encryption/transport/secure-store remain fake and actual multi-party UI/native crypto is unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-024: covered (2026-10-26).** Astra audit: test/features/contact_request/integration/introduced_contact_request_recovery_test.dart:244 seven signed SQL scenarios cover exact qualifying intro and refusal branches; catalog:2508 records reviewed 10-25 host proof.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-025 — Old QR codes are refused
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-025.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** CR-025.
 
 **Steps**
 
@@ -1219,9 +1486,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - All four scanner timestamp cases pass with real signed input and SQL. Native camera acquisition, platform clock correctness and actual remote network delivery remain modeled.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-025: covered (2026-10-26).** Astra audit: test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart:27-104 rejects expired/unreadable/future with zero effects and fresh positive control; docs/testing/TESTING.md:2849-2854,2909-2914 records active PASS and supersedes old acceptance note.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-001 — Cancel the QR camera or deny camera permission without adding a contact
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** CR-001, CR-021.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-001, CR-021.
 
 **Steps**
 
@@ -1261,9 +1536,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-001: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh account adds iPhone by QR, accepted, first texts both ways, calls only after the accept (.codex-test-logs/p0-phone-20261031/)
+- **CR-021: passed (2026-10-27).** PASS on emulator pair, main 0a6ec56a6, Hetzner, 10-27 01:08-01:59 CET (.codex-test-logs/cr-emu-20261027T0008Z)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-002 — Scan continuously or double-submit one QR without duplicate side effects
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-005.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-005.
 
 **Steps**
 
@@ -1294,9 +1578,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real rescan/receive duplicate mechanisms are covered; continuous camera callbacks/double Submit before first parse and all native egress counts are not one causal test.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-005: passed (2026-10-29).** Product gap FIXED on main (Astra triage 10-29 at b523feae9; source-confirmed, host regression enabled, not rerun on device): pending_request_shell_test.dart:181 one dialog with Feed+Orbit mounted; :149 live+inbox duplicate and listener restart keep one dialog
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-003 — Share or copy My QR from Orbit/settings and return safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-022.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-022.
 
 **Steps**
 
@@ -1322,6 +1614,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Copy is implemented at qr_code_section.dart:139 (Clipboard.setData) but its tests only cover render/loading/error, not long-press copy bytes/failure. Native external QR share is not claimed as an implemented app action.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-022: covered (2026-10-26).** Astra audit: Builder/display/FTE signed-output plus error/Retry controls active; docs/testing/TESTING.md:2828-2853 documents green-final screen/parser preservation, no partial/unsigned QR.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### CONTACT-004 — Open contact profile from Orbit/avatar and return to the same conversation
 
@@ -1412,7 +1712,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CONTACT-007 — Delete a contact from Orbit with cancel/confirm and preserve unrelated users
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-013.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-013.
 
 **Steps**
 
@@ -1439,9 +1739,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real ownership cleanup exists, but profile Back does not prove Orbit delete cancel/confirm. No single actual Orbit confirmation->full real cleanup->restart journey established.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-013: passed (2026-10-28).** Passed 10-28 set 1: kx0010 runner on emulator, Hetzner v1.11.3; kx0011 not run
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-008 — Profile name/avatar updates converge without replacing newer identity keys
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-019.
 
 **Steps**
 
@@ -1472,9 +1780,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Listener download callback and widget repositories are fake; actual normalized image bytes/network/UI plus concurrent key-authority update not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-019: passed (2026-11-01).** Fixed on main 4ef163505 (guard contact authority at capability and key writes); CR-019 KNOWN GAP skips removed, no CR-019 skips left on origin/main (Kayan grep 11-01). Astra a41c45748 is equivalent.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-009 — Scan another user while a call, modal or migration flow is active
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-023.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** CR-023.
 
 **Steps**
 
@@ -1509,9 +1825,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Which scanner entries are intentionally usable during an active call or blocked migration? Existing late-scan test defines completion after accepted Submit, not user cancellation.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-023: covered (2026-10-26).** Astra audit: test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart migration/linked handler and unsupported branches preserve contact and assert zero request/encryption; docs/testing/TESTING.md:2825-2829 documents whole routing scope.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CONTACT-010 — Receive a request near expiry or after expiry across restart
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-006.
 
 **Steps**
 
@@ -1543,11 +1867,19 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Actual v2 envelope freshness and key ordering are tested; full near-expiry real SQL restart/provider delivery is not joined.
 - Known legacy QR malformed/future skip is a different input boundary and is not generalized to v2 request expiry.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-006: passed (2026-10-27).** PASS on emulator pair, main 0a6ec56a6, Hetzner, 10-27 01:08-01:59 CET (.codex-test-logs/cr-emu-20261027T0008Z); part of the proof only in logcat, receipt INCOMPLETE
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 ### CHAT — Direct text and conversation state
 
 #### DC-001 — Bidirectional text delivery smoke
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-001.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** DC-001.
 
 **Steps**
 
@@ -1578,9 +1910,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to the registered five-message delivery smoke, not100-message/restart, composer UI or signed-store parity. Campaign/artifact was not executed/validated here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-001: covered (2026-10-26).** Astra audit: production.routing_smoke S5 proves the five alternating sends; live inventory PASS fixround-rerun, 2026-10-19.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-002 — 100 messages in order, no duplicates
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-002.
 
 **Steps**
 
@@ -1615,9 +1955,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-002: passed (2026-10-27).** PASS on main 457cda820, emulator pair, Hetzner, 10-27 ~08:35 CET: 100 online + 10 recipient-offline texts, both process restarts, exact order, exactly once (.codex-test-logs/dc002-hetzner-20261027T0105Z/campaigns-run-20261027T071630Z)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-003 — Recipient offline for a long time, then catches up once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-003.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-003.
 
 **Steps**
 
@@ -1644,9 +1992,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host offline roundtrip uses an in-memory relay and immediate reconnect; source cases named large backlog only send10 and do not prove actual pagination/long dwell/TTL. Actual relay-bound complete transcript remains unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-003: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: 10 texts to an offline phone arrive once each in order via inbox (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-004 — Sender app killed mid-send, delivered exactly once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-004.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-004.
 
 **Steps**
 
@@ -1673,9 +2029,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - One case reuses in-memory stores; another only seeds a row and simulates pause/resume despite its app-killed title. No actual text process-death checkpoint and signed-app recipient proof executed/validated.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-004: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: sender killed right after Send, delivered once after restart, duplicate dropped (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-006 — Reply, react, edit and delete stay in sync
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-006.
 
 **Steps**
 
@@ -1710,9 +2074,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Causal individual roundtrips exist with fake crypto/network/in-memory stores; no full real-peer sequence with durable restart and current UI assertions.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-006: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. quote, reaction add/remove, offline edit then retry, online and offline delete converge on both sides after restart, no duplicates.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-007 — In-flight, failure, retry and transport status stay truthful
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-007.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-007.
 
 **Steps**
 
@@ -1743,9 +2115,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Receipt composition and actual UI are separate fake-network/repository tests. No real remote receipt/native lifecycle-to-persisted-current-widget combined proof. Current UI intentionally retires delivered double-check/read ladder.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-007: passed (2026-10-28).** Passed 10-28 set 1: Pixel + iPhone 13 on dev 158, Hetzner; offline sends stay sending, all Sent to inbox within 12 s, once, in order. Terminal-failed Retry leg not reachable
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-010 — Relay-only path delivers
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-010.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** DC-010.
 
 **Steps**
 
@@ -1772,9 +2152,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to the existing registered keepalive-drop proof, which was not executed here. Does not certify iOS, arbitrary relay outages, signed-store artifact or media decoder.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-010: covered (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. release 201 has no keepalive drop-latch switch (E2E_TEST_MODE=0); emulator could be the second Android, but the journey needs an E2E/debug APK.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-011 — iPhone and Android chat with each other
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-011.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-011.
 
 **Steps**
 
@@ -1828,9 +2216,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-012 — Over a mobile network
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-012.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** DC-012.
 
 **Steps**
 
@@ -1857,9 +2253,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native/Dart path classification and fake transport retry are separate; no actual cellular data service/radio/content journey observed. Availability-bounded hardware requirement applies.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-012: not_started (2026-10-26).** Astra audit: Catalog:285; test/core/services/network_path_source_test.dart covers classification only; no cellular/Wi-Fi handoff delivery journey or confirmed whole-entry hardware unavailability.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-014 — Arabic, emoji and long text preserve content and direction
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-014.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-014.
 
 **Steps**
 
@@ -1886,9 +2290,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - BiDi smoke contains local fixture widgets only; ordinary burst text is different. No exact long/emoji/mixed-script real-peer sender-to-recipient content+render assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-014: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 9: Arabic bubbles and swipe-reply on the Pixel. The iPhone app-language leg was not run (m-bf3a5b77).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-015 — Message speed
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-015.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** DC-015.
 
 **Steps**
 
@@ -1915,9 +2327,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host hard gate proves deadline behavior against fake delays; it does not establish production latency percentiles, real-radio performance or signed-candidate thresholds.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-015: not_started (2026-10-26).** Astra audit: Catalog:342; production.message_latency measures call-to-outcome, not budgeted receiver-visible online/reconnect latency; budgets/oracle remain undefined.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-017 — Text recovers after relay service outage
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-017.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-017.
 
 **Steps**
 
@@ -1948,9 +2368,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Transport and relay are simulated in composed application tests; actual service restart/multi-relay routing and recipient durable proof remain separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-017: passed (2026-10-28).** Passed 10-28 on Pixel + iPhone 13 (dev 158): Hetzner relay service stopped ~3 min, texts stayed sending (no false delivered, no Retry), sent to inbox ~25 s after restart, received exactly once in order, still once after force restarts. Limit: receiver backgrounded, not per-app relay block (no rooted device)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-022 — Sender offline submission has an honest recoverable outcome
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-022.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-022.
 
 **Steps**
 
@@ -1981,11 +2409,51 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Causal UI and retry storage seams exist but use fake send/network/repositories; exact OS offline-to-native-reconnect full UI/durable recipient path is not one assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-022: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 2: Pixel to iPhone 13, the missing-key send recovers once. The iPhone 11 to Pixel leg is an accepted gap (needs a person to scan). Found BL-12 (m-c5a02f34).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### DC-025 — In-chat search finds messages on a real phone
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** DC-025.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Searching inside a chat on a phone finds matching messages and opens the chat at the found message.
+
+**Declared and scoped test evidence**
+
+- No automated assertion was identified by this bounded refresh; the catalog result remains scoped evidence, not an automation rating.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Astra device gap 8. Scope as in m-0ffbe4e1.
+
+**Current catalog progress (scoped)**
+
+- **DC-025: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 8: in-chat search. Group text delete is not applicable by design (m-30b5903c).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 ### MEDIA — Direct/group media, voice, private viewing and libraries
 
 #### DC-008 — Photo, video and file both ways
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2021,9 +2489,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Real local bytes and received caption/grid are covered at separate seams; no real two-way photo/video/file picker-to-native-viewer plus restart journey.
 - Synthetic JPEG bytes and fake crypto/network do not prove real image/video/PDF decode.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-009 — Voice message, record and play
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-009.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-009.
 
 **Steps**
 
@@ -2055,9 +2531,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Strong is scoped to the registered full Android pair campaign under its prepared APK/pregranted permission; it was not executed here.
 - The native-recorder smoke alone is narrower and cannot certify send/receive/playback; signed-store artifact, iOS parity and UI hold/review gestures remain separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-009: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 6: Thought voice pause/resume plus caption on the Pixel, iPhone 13 and iPhone 11 (m-6cb06e84).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-018 — Near-limit direct media and interrupted transfer
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-018.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** DC-018.
 
 **Steps**
 
@@ -2092,9 +2576,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Size UI injects budget metadata over tiny fixtures; slow transfer uses a timed fake bridge. No actual near-cap physical-byte end-to-end interruption and recipient decode.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GX-003 — Near-limit group media and interrupted transfer
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GX-003.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** GX-003.
 
 **Steps**
 
@@ -2125,9 +2617,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Fanout uses four-byte fixture media; registered real-relay campaign covers narrower process/ACL assertions, not actual near-cap image/video full decode for every member.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GX-003: not_started (2026-10-26).** Astra audit: Catalog:513; test/features/groups/integration/group_media_fanout_test.dart and size-policy controls are partial; authorized near-limit interruption/exact-byte/oversize native composition missing.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-021 — Private media retains its policy over the wire
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -2162,9 +2662,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Wire test inspects real serialization but crypto response is opaque fake. Local state/viewer proofs do not join real encrypted remote receipt and native protection.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-006 — Authorized members receive usable group media
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-006.
 
 **Steps**
 
@@ -2195,9 +2703,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host downloaded files have four synthetic bytes, so done/metadata is not decode/playability proof. No actual camera/codec/caption for all group recipients.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-006: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: photo, video, PDF, voice usable on every member, offline member gets full media when back (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-010 — Group private media preserves each recipient lifecycle
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-010.
+**Coverage:** partial. **Execution:** catalog_unlisted. **Catalog:** GC-010.
 
 **Steps**
 
@@ -2228,9 +2744,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Policy/live/offline and local SQL expiry are substantive but fake transport/native protection remain seams. No multi-member real native lifecycle/crypto journey or signed artifact execution.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-010: unlisted.** Historical catalog ID absent from current catalog.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-001 — In-app camera photo plus caption: recipient opens the full correct image and sees the caption
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2261,9 +2785,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Compose test uses a fake gallery picker and generated PNG; byte test uses synthetic non-image data. Neither exercises actual camera output nor recipient original-viewer open.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-002 — iPhone camera+caption to Android: Original/compressed quality over relay-only online delivery
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008, DC-011, DC-010.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-008, DC-011, DC-010.
 
 **Steps**
 
@@ -2304,9 +2836,19 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+- **DC-010: covered (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. release 201 has no keepalive drop-latch switch (E2E_TEST_MODE=0); emulator could be the second Android, but the journey needs an E2E/debug APK.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-003 — Android camera photo plus caption to iPhone receiver
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008, DC-011.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008, DC-011.
 
 **Steps**
 
@@ -2347,9 +2889,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-004 — Gallery JPEG/PNG photo plus caption to the recipient
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2384,9 +2935,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - PARTIAL 2026-11-02: iPhone gallery JPEG and caption passed to Android, with Android JPEG/PNG to iPhone retained from 2026-10-31. iPhone gallery PNG remains blocked because received images save as JPEG. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:13.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-005 — Gallery HEIC/HEIF or unsupported image: normalize or reject honestly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-011.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008, DC-011.
 
 **Steps**
 
@@ -2417,9 +2976,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - HEIF test only canonicalizes MIME and mocks upload; native HEIC decode/normalization is unproved. Existing image fallback deliberately passes undecodable compressor output through unchanged.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-006 — Capture a video in-app and deliver a playable full video plus caption
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2450,9 +3018,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Record Video case injects FakeMediaPicker and uses PNG bytes in .mp4 files; it only asserts processing copy/progress. No actual capture/encode/orientation/remote playback+caption assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-007 — Select gallery video and preserve orientation, duration and caption
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2483,9 +3059,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Processing and player controls use fake native adapters/fixtures. No causal native orientation/duration transform-to-recipient playable outcome.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-008 — Select a mixed multi-item gallery batch; preserve order, identity and per-item outcomes
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2516,9 +3100,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host batch only asserts pending processing state; GIF viewer harness uses fake network. Mixed real native input-to-recipient ordering/full decode and per-item caption/outcomes are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-009 — Cancel camera/gallery selection or remove a draft attachment before sending
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2550,9 +3142,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-010 — Deny camera/photo permission and retry after granting permission
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2598,9 +3198,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-011 — PDF sending with document flag enabled; recipient receives and opens the document
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2631,9 +3239,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Header-only PDF staging/native gateway fake is not a real parsed PDF viewer. No native picker, actual transfer and recipient document-open combined proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-012 — Document sending flag off while receiving/opening an existing PDF remains supported
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2668,9 +3284,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-013 — Reject unsupported document types, oversize files and malformed picker results
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008, DC-018.
+**Coverage:** strong. **Execution:** catalog_mixed. **Catalog:** DC-008, DC-018.
 
 **Steps**
 
@@ -2711,9 +3335,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-014 — iPhone camera+caption to offline Android: Original/compressed quality, relay inbox catch-up
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-003, DC-008, DC-011.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-003, DC-008, DC-011.
 
 **Steps**
 
@@ -2754,9 +3387,19 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-003: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: 10 texts to an offline phone arrive once each in order via inbox (.codex-test-logs/p0-phone-20261031/)
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-015 — Local Wi-Fi without internet delivers media locally, separately from deferred internet delivery
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2787,9 +3430,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - BLOCKED 2026-11-02: Wi-Fi without internet requires a physical network setup with no safe automated route. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:20.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-016 — No usable local or relay path: honest failed/pending media and later retry
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-022.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008, DC-022.
 
 **Steps**
 
@@ -2820,9 +3471,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Retry state/local strict custody tests use fake networking and explicit cohort flags; actual default-path recipient full decode is absent.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-022: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 2: Pixel to iPhone 13, the missing-key send recovers once. The iPhone 11 to Pixel leg is an accepted gap (needs a person to scan). Found BL-12 (m-c5a02f34).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-017 — Media transfer switches Wi-Fi/mobile or loses connection; correct full content survives retry
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-018.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** DC-018.
 
 **Steps**
 
@@ -2853,9 +3513,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Fake progress/lock and registered group process recovery do not join actual radio handover, full remote bytes and native decoder. No such campaign executed here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-018 — Restart sender or receiver during upload/download; no permanent thumbnail-only success
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-004, DC-018.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-004, DC-018.
 
 **Steps**
 
@@ -2903,9 +3571,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-004: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: sender killed right after Send, delivered once after restart, duplicate dropped (.codex-test-logs/p0-phone-20261031/)
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-019 — Recipient sees unavailable media; retry restores full content or reports terminal expiry honestly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-018.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-008, DC-018.
 
 **Steps**
 
@@ -2936,9 +3613,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Terminal retry and hash refusal are causal with fake relay; restoration uses injected download state/bytes rather than a real expired blob/recipient full decoder.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-020 — Sender preview and recipient original remain distinct when sender cache is deleted
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2965,9 +3651,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strict local custody test uses a deliberately unusable preview and real authoritative local bytes, but no actual remote recipient/decoder. Default legacy camera path is unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-021 — Photo/video quality preference is applied while recipient can open the resulting media
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2998,9 +3692,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Argument selection100/85 and fake processing UI do not prove actual native format/size/orientation or resulting recipient decode+caption. Original must be audited separately from default compressed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-022 — Received image full-screen zoom/swipe/navigation and correct selection across a batch
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -3035,9 +3737,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-023 — Received video pause/seek/resume/rotate and supported picture-in-picture lifecycle
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -3072,9 +3782,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - PASS 2026-11-02: Android PiP restored playing video with controls, and PiP after playback ended no longer crashed. iOS PASS is retained from 2026-10-31. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:21.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-024 — Save/share received ordinary media using platform egress permissions and cancellation
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-008.
 
 **Steps**
 
@@ -3108,6 +3826,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Open questions**
 
 - PARTIAL 2026-11-02: iPhone save and save-cancel passed, with share-cancel retained from 2026-10-31. Android save and denial remain blocked by cloud-backup and granted-permission constraints. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:15.
+
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. iPhone gallery sender now PASS (test image picked by label, Pixel opens image and caption); photo/video both ways and restart PASS; file N/A (flag off in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### MEDIA-025 — Open direct/group shared-media library; search/filter, paginate and select the correct parent
 
@@ -3194,7 +3920,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-027 — Voice tap-to-start/tap-to-stop then send preserves playable recipient audio
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-009.
 
 **Backlog:** hold-to-record + lock/review: backlog (owner 10-31)
 
@@ -3231,9 +3957,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - PARTIAL 2026-11-02: Tap record, stop, send and recipient playback passed on build 201. Hold-to-send and lock-review are absent and remain an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:22.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-009: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 6: Thought voice pause/resume plus caption on the Pixel, iPhone 13 and iPhone 11 (m-6cb06e84).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-028 — Cancel/discard voice recording, deny mic permission or interrupt it with a call
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-009.
 
 **Steps**
 
@@ -3264,9 +3998,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual UI/lease decisions and file deletion are causal; native microphone permission/call takeover and audio-session release use doubles.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-009: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 6: Thought voice pause/resume plus caption on the Pixel, iPhone 13 and iPhone 11 (m-6cb06e84).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-029 — Voice playback seek/pause/resume/interruption and competing audio ownership are truthful
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-009.
 
 **Backlog:** playback speed: backlog (owner 10-31)
 
@@ -3303,9 +4045,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - PARTIAL 2026-11-02: Android seek, pause and resume passed, with interruption proof retained from 2026-10-31. Build 201 has no speed control, which remains an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:23.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-009: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 6: Thought voice pause/resume plus caption on the Pixel, iPhone 13 and iPhone 11 (m-6cb06e84).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-030 — Protected media delivery: authorized recipient opens while save/share/forward is refused
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3340,9 +4090,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Authorization and cover ordering are causal; actual cryptographic receipt/native protection/OS egress is not a single asserted remote journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-031 — View-once media opens once, survives process interruption and cannot replay after consumption
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3373,9 +4131,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Local state-machine, route-controller and real SQL reopen assertions jointly cover one-use authority; actual OS process kill, native screen protection and signed-store runtime are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-032 — Disappearing media expires with clock rollback/restart and deletes owned local secrets
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3406,9 +4172,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong covers local clock/state/file/reference cleanup under host SQL fixtures; real keychain/keystore erasure, wall-clock OS scheduling and device-level secure deletion are unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-033 — Protected/view-once viewer handles screenshot/capture/background/platform protection failures
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3439,9 +4213,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native events/channel are mocked in host tests. Actual Android/iOS capture safeguards have separate integration proof sources but were not executed or independently artifact-verified here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-034 — Private-media cancel-before-open, unavailable-download retry and delete/read races preserve policy
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-021.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3485,9 +4267,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-021: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: protected and view-once policy kept on the receiver incl. cold restart (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-035 — Group camera photo/caption reaches every authorized member as a usable full image
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** GC-006.
+**Coverage:** missing. **Execution:** catalog_passed. **Catalog:** GC-006.
 
 **Steps**
 
@@ -3522,9 +4312,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - No qualifying actual group camera-output-to-every-member full correct decode/open+caption assertion found. Fake PNG compose checks one logical recipient/grid/caption; HEIF sender test mocks upload; fanout uses four synthetic bytes.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-006: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: photo, video, PDF, voice usable on every member, offline member gets full media when back (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-036 — Group gallery/video/PDF/voice delivery respects recipient authorization and per-item failures
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-006.
 
 **Steps**
 
@@ -3559,9 +4357,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Full group gallery/native video/PDF/voice output and per-member decode/playback are not joined. Direct Android voice campaign is supporting native/transport evidence, not proof of group delivery.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-006: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: photo, video, PDF, voice usable on every member, offline member gets full media when back (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-037 — New group member receives only policy-permitted historical media; removed member cannot fetch
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-004, GC-006.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-004, GC-006.
 
 **Steps**
 
@@ -3592,9 +4398,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Fake-network membership filters and registered real-relay ACL checks are narrower; actual historical media/key-window admission plus removed-peer real blob fetch attempts and full decoder are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-004: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: removed member gets nothing new, keeps old messages read-only; after re-add only new messages (.codex-test-logs/p0-phone-20261031/)
+- **GC-006: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: photo, video, PDF, voice usable on every member, offline member gets full media when back (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### MEDIA-038 — Expired relay blob, corrupt ciphertext/hash or missing key never becomes a valid visible attachment
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-018, GX-003.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** DC-018, GX-003.
 
 **Steps**
 
@@ -3629,11 +4444,105 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual SHA256/refusal is causal; crypto provider is fake here and deployed relay expiry/native decoder integration is separate. Real Go AEAD tests cannot alone certify a displayed attachment.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+- **GX-003: not_started (2026-10-26).** Astra audit: Catalog:513; test/features/groups/integration/group_media_fanout_test.dart and size-policy controls are partial; authorized near-limit interruption/exact-byte/oversize native composition missing.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### DC-024 — Send a voice recording as text instead of a voice message
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** DC-024.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** While recording in a 1:1 or ordinary group chat on a phone with the private translator, Send as text stops the recording, puts the on-device transcript into the text field and deletes the audio; nothing is sent until the normal Send. Without the model the recording stays in review and the translator sheet opens; on failure the recording is kept.
+
+**Declared and scoped test evidence**
+
+- [test/features/conversation/presentation/widgets/compose_area_test.dart](../../test/features/conversation/presentation/widgets/compose_area_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/groups/presentation/group_conversation_wired_test.dart](../../test/features/groups/presentation/group_conversation_wired_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/conversation/presentation/widgets/action_discoverability_test.dart](../../test/features/conversation/presentation/widgets/action_discoverability_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/thought_card_screen_test.dart](../../test/features/posts/improvement/thought_card_screen_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart](../../test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart) — `Catalog-declared widget test for DC-024` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for DC-024; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Current catalog progress (scoped)**
+
+- **DC-024: passed (2026-11-10).** Passed 2026-11-10 (gap 7, m-21ce2eac): offline conversion on iPhone 13 exact in chat and Thought composer, one text delivered, no voice attached, background during conversion kept the text; iPhone 11 delivered but appended invented words (BL-15); Keep as voice not reachable on demand.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### DC-026 — Switching the camera while recording a video keeps the recording
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** DC-026.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Switching between front and back camera during a video recording in chat neither stops nor loses the recording, and the sent video plays for the receiver.
+
+**Declared and scoped test evidence**
+
+- No automated assertion was identified by this bounded refresh; the catalog result remains scoped evidence, not an automation rating.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Astra device gap 5. Scope as in m-0ffbe4e1.
+
+**Current catalog progress (scoped)**
+
+- **DC-026: passed (2026-11-10).** Passed 2026-11-10 (gap 5, m-be54c1f0) on iPhone 13, iPhone 11 and Pixel: in-chat Record Video with two live camera switches, received clip plays in full, upright, both camera segments; a second clip records (camera not left busy); no picker.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 ### GROUP — Group membership, messaging and management
 
 #### GX-001 — Larger group (8 members)
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** GX-001.
+**Coverage:** missing. **Execution:** catalog_n_a. **Catalog:** GX-001.
 
 **Steps**
 
@@ -3655,9 +4564,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Closest inspected host fanout uses5 modeled peers; registered production full-mesh uses3, shared journey wiring up to4. No eight-actor send/receive journey found. Run only if eight targets actually available; unavailable topology is N/A by policy.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GX-001: n_a (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: N/A: owner N/A (eight actors) (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GX-002 — Mixed iPhone and Android group
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** GX-002.
+**Coverage:** missing. **Execution:** catalog_passed. **Catalog:** GX-002.
 
 **Steps**
 
@@ -3683,9 +4600,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - No full mixed-platform group assertion found. Android catalog campaigns and fake shared policy cannot certify iOS/Android parity; signed-chat-group-media is an adjacent release lane, not this complete journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GX-002: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. after admin promotion, removal by the promoted admin and re-add, the re-added iPhone stays on the old key epoch: sends and receives nothing, never sees the later leave. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS (same key epoch through promote, remove, re-add, leave).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-001 — Create, invite, join and add a member
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-001.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** GC-001.
 
 **Steps**
 
@@ -3720,9 +4645,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real create/invite campaigns exist; accepted history/media and existing-group add are separate cases, not one complete UI/native joined journey. No campaign executed here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-001: covered (2026-10-26).** Astra audit: Whole entry has complementary create/invite and gm002/gm003/online-add/offline-add tests (pre-add exclusion included); inventory PASS c1-resume-f10 and c5-pixel, 2026-10-19.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-002 — Every member receives ordered text exactly once
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** GC-002.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** GC-002.
 
 **Steps**
 
@@ -3753,9 +4686,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Coverage combines registered exact production full-mesh, ordered100 and replay cases. No runs in this audit; it does not generalize to eight members or every signed candidate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-002: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. 4 members round robin and 100 ordered texts complete, in order, once on all; replay checked on newest 50 rows (older rows hidden after reopen).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-003 — Offline and background members recover naturally
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-003.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-003.
 
 **Steps**
 
@@ -3786,9 +4727,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host background is fake unsubscribe plus manually seeded inbox. Registered replay campaigns may explicitly drain; natural push/foreground recovery, process restart and ordered backlog are not proven together.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-003: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: a killed member gets all messages once, in order, after relaunch (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-004 — Removed members lose content and mutation access
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-004.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-004.
 
 **Steps**
 
@@ -3819,9 +4768,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Substantive production text-window and notification-observation campaigns exist; media entitlement/native preview across offline removal/re-add are separate boundaries. Full exact signed-candidate conjunction unexecuted.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-004: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: removed member gets nothing new, keeps old messages read-only; after re-add only new messages (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-005 — Accepted text and membership survive process death
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** GC-005.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** GC-005.
 
 **Steps**
 
@@ -3864,9 +4821,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-005: covered (2026-10-26).** Existing device runners prove it; fresh device run queued on store build 127
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-008 — Leave, delete and supported admin changes preserve access rules
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-008.
 
 **Steps**
 
@@ -3901,9 +4866,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real SQL exit fault/recreation and UI cancellation guards exist. Native leave, end-to-end remaining-member convergence and direct-chat preservation are separate registered/host cases, unexecuted here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-008: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. cancel, sole-admin block, dissolve, local delete, 1:1 kept PASS; after role transfer and old admin leave the new admin rotates alone and the group splits. Fixed on origin/main 0e3d34447 (round 8; owner-approved successor-only rotation). Device recheck 2026-11-02 on Hetzner build 204: PASS (remaining members share one key, messages both ways).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-009 — Supported group replies, reactions and local deletion behave correctly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-009.
 
 **Steps**
 
@@ -3933,6 +4906,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Quote entitlement, reaction authorization and real local deletion journal are causal but split across fake transport and secure-store seams; no complete actual-app combined reply/reaction/delete-for-me journey run.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-009: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. quote with parent and unavailable parent, reaction add/remove, received photo delete-for-me persists across restart.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### GROUP-001 — Cancel group creation or submit empty/invalid names and selections
 
@@ -4447,7 +5428,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### VC-001 — Android calls connect, exchange audio and end cleanly
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-001.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-001.
 
 **Steps**
 
@@ -4470,9 +5451,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Campaign source establishes the requested Android/RTP/control/cleanup boundary. Not run here; independent Pion audio oracle is host-side and app RTP is not human audibility or content fidelity.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-001: covered (2026-10-26).** Astra audit: android.production_1to1_audio_call PASS kx0003-v4, 2026-10-20, exact RTP/control/cleanup scope of catalog:1005; audible signed-audio is a separate unverified requirement.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-002 — Calls use the expected ringing time limits
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-002.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-002.
 
 **Steps**
 
@@ -4499,9 +5488,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual runtime deadline campaign plus causal host timer; no run here and no delayed/offline incoming-admission claim.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-002: covered (2026-10-26).** Astra audit: kx0001 PASS c2-rerun, 2026-10-19; tool/sims/production_call_regression_criteria.dart:194-267 verifies signed invite metadata/scheduled timers, not actual no-answer behavior.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-003 — A call keeps going when either person leaves the app and comes back
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-003.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-003.
 
 **Steps**
 
@@ -4532,9 +5529,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Registered Android campaign checks current-call/native notification handover with positive observations. Not run; iOS lifecycle is VC-009.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-003: covered (2026-10-26).** Astra audit: Complementary kx0002 PASS c2-rerun and kx0003 PASS kx0003-v4 cover both background/return roles and card handover; retain their distinct dated artifacts.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-004 — Call screens show contact names, never hidden IDs
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-004.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-004.
 
 **Steps**
 
@@ -4565,9 +5570,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Substantive Android native card/name campaigns plus host overlay/Swift resolver; actual iOS system CallKit display and all platform surfaces remain unexecuted/separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-004: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. names right on in-app incoming/active, Android card and iOS CallKit, no peer ID; raw-ID fallback and Swift/campaign tests not run.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-005 — Calling back from a missed call reaches the right person
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-005.
+**Coverage:** strong. **Execution:** catalog_ready. **Catalog:** VC-005.
 
 **Steps**
 
@@ -4598,9 +5611,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real Android callback/keyguard campaigns cover current source contract on credential-free emulator; not run, no credentialed physical unlock claim.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-005: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. killed-Pixel Call back reaches the right contact 2/2; A-then-B coalescing BLOCKED (harness), locked BLOCKED.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-006 — Calling back when busy or without microphone access fails clearly
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-006.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-006.
 
 **Steps**
 
@@ -4627,9 +5648,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual Android current-call and positive-to-zero capture evidence required by registered campaigns. No campaign run here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-006: covered (2026-10-26).** Astra audit: kx0007 busy PASS 10-19 plus documented five-assertion KX8 permission-focus device PASS in docs/testing/TESTING.md:8010-8016; raw historical rerun file not present in checked worktrees, old inventory FAIL retained.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-007 — Speaker turns on and switches back to an available audio output
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-007.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-007.
 
 **Steps**
 
@@ -4656,9 +5685,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Campaign only claims actually available outputs. Acoustic correctness and attaching absent hardware are outside this bounded route-inventory journey; not run.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-007: covered (2026-10-26).** Astra audit: Documented KX29 speaker/earpiece return PASS in docs/testing/TESTING.md:8014-8016,9424; raw historical rerun file not present in checked worktrees; current physicalCaller validator scopes actual available routes.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-008 — The always-relay setting turns on and off and is remembered
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-008.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-008.
 
 **Steps**
 
@@ -4681,9 +5718,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Saved choice/copy/relaunch campaign is a sufficient scoped test, unexecuted here. Network causality is tracked separately in VC-023.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-008: covered (2026-10-26).** Astra audit: kx0030 PASS c2-batch2-rerun, 2026-10-19; setting UI/copy/toggle/readback scope only, explicitly not route enforcement.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-009 — An iPhone call keeps going when you leave the app
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-009.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-009.
 
 **Steps**
 
@@ -4710,9 +5755,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Swift lifecycle unit ownership does not establish actual iOS suspension/CallKit/WebRTC audible continuity. kx0009 physical campaign is registered inactive/automationReady=false; it is not passing coverage.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-009: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. same call kept through background/return and minimize, mute kept; audio content BLOCKED (tooling).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-010 — iPhone call screens show the caller's name safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-010.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-010.
 
 **Steps**
 
@@ -4739,9 +5792,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Resolver/native bridge tests do not inspect real iOS system call UI/provider display. kx0004 physical fixture is inactive, not proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-010: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: name shown safely in app, banner and lock screen; unknown caller (emulator, not a contact) does not ring at all (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-011 — An old call on the iPhone cannot disturb a new one
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-011.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-011.
 
 **Steps**
 
@@ -4764,9 +5825,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Swift fake-provider ownership test is exact and causal; actual late OS event/current audible call and Dart/native joined presentation remain separate/unrun.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-011: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. back-to-back call B kept connected after A ended; old-ACK replay BLOCKED (no injection tool), Swift test not run.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-012 — A muted call stays connected and keeps exchanging audio
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-012.
+**Coverage:** strong. **Execution:** catalog_ready. **Catalog:** VC-012.
 
 **Steps**
 
@@ -4793,9 +5862,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Registered actual foreground WebRTC campaign supplies RTP separate from host decisions, but no run here. Muted RTP does not establish microphone-content suppression.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-012: ready (2026-10-26).** Astra audit: android.foreground_webrtc_audio + validateForegroundWebRtcAudioCanonicalArtifactV2 prove exactly both-muted direct RTP scope; reviewed runnable scenario, inventory latest null.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-013 — A relayed call can later switch to a direct connection safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-013.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** VC-013.
 
 **Steps**
 
@@ -4826,9 +5903,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - When this capability is enabled, define current supported upgrade policy and available transport/topology proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-013: not_started (2026-10-26).** Astra audit: Catalog:1310; future DCUtR upgrade/negative scenarios inactive, no runnable test. Deferred future capability, not hardware N/A or an unconditional release gate.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-014 — Incoming calls ring in supported background and locked states
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-014.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-014.
 
 **Steps**
 
@@ -4859,9 +5944,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Headless/presentation admission and native journal tests do not prove actual FCM/PushKit/APNs transport through OS suspended/process-killed states. Required artifact-bound provider/device evidence remains incomplete.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-014: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Pixel process-killed callee rings in 2.9 s and connects from the shade; Pixel locked and audio content BLOCKED.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-015 — iPhone and Android can call each other both ways
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** VC-015.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-015.
 
 **Steps**
 
@@ -4901,9 +5994,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-015: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. both directions connect and end cleanly on 201; audio content BLOCKED (tooling).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-016 — Declined, cancelled, unanswered and overlapping calls end cleanly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-016.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-016.
 
 **Steps**
 
@@ -4938,9 +6039,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real coordinator two-party race/no-answer/refusal policies covered using fake wire/native media. Actual native cancellation disappearance/offline timeout and all cleanup outcomes are not one full campaign.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-016: ready (2026-10-28).** 10-28: offline no-answer at 30 s, no late ring, crossed calls merge; third-caller NOT RUN
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-017 — A dropped connection recovers the call or ends it honestly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-017.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-017.
 
 **Steps**
 
@@ -4971,9 +6080,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Causal fake-time/network/native readiness model; no actual radio handover/packet interruption and restored bidirectional media run.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-017: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: 12 s network loss recovers the same call, past the deadline both sides end after 15 s, no late revival (iOS) (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-018 — Audio interruptions let the call recover or end safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-018.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-018.
 
 **Steps**
 
@@ -5004,9 +6121,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Injected interruption and microphone leases test policy. Actual OS audio-focus/phone interruption/native route recovery/audio are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-018: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. no automatable OS audio interruption (no second phone line, no audio-focus test app).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-019 — The microphone is never sent before answering or while muted
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-019.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-019.
 
 **Steps**
 
@@ -5037,9 +6162,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host verifies command/capture ownership with fake native port; actual muted RTP progress can contain silence or content. No qualifying recipient semantic/acoustic no-microphone-content proof before answer/while muted found.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-019: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. no capture before answer, mute stops and unmute restarts capture, lifecycle keeps mute; received audio BLOCKED.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-020 — Calls handle microphone and notification permissions safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-020.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-020.
 
 **Steps**
 
@@ -5074,9 +6207,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real Android denied-callback capture campaign exists; other eligibility/permission grant/native notification fallback branches remain split host/native fake boundaries. All requested entrypoints not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-020: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. notifications off still rings and connects, busy and ineligible PASS; missing identity BLOCKED (no fixture).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-021 — Call history is kept after a restart and calls back the right person
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** VC-021.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** VC-021.
 
 **Steps**
 
@@ -5119,9 +6260,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-021: covered (2026-10-26).** Astra audit: Reviewed 3396d2b20 host history projector/connected-failure/repository/CallsPage set, 75 PASS per catalog:1526; SQL reopen and correct stored-contact callback, not a new native call PASS.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-022 — Fake or old call signals cannot take over a call
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-022.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-022.
 
 **Steps**
 
@@ -5156,9 +6305,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual codec/admission/ownership policies tested using deterministic reversible crypto/signatures and fake roster/transport. Genuine Go/native crypto plus OS-presentation joined adversarial proof not established by these host tests.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-022: ready (2026-10-28).** 10-28: blocked caller refused, unblock restores; host 133 Dart + 26 Go green; busy/bad-signature not runnable
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-023 — With always-relay on, calls really go through the relay
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-023.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-023.
 
 **Steps**
 
@@ -5193,9 +6350,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Saved preference and relayOnly/outage policy tested separately; actual audio campaign uses forced-relay build. No joined user-toggle-to-real-route/outage/no-direct-fallback/restored-service campaign found.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-023: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. always-relay toggle and call PASS; route not readable (diagnostics copy empty), TURN stop/start needs server.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-024 — Long calls stay clear on available audio outputs
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** VC-024.
+**Coverage:** missing. **Execution:** catalog_ready. **Catalog:** VC-024.
 
 **Steps**
 
@@ -5226,9 +6391,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Specify supported sustained-call acceptance duration/resource thresholds; do not require unavailable accessories.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-024: ready (2026-11-01).** Host tests on main a6d9275e5 (Astra ded98bd3f): virtual 30-min call, recovery timers, cleanup, second-contact admission (call_coordinator_test.dart, call_screens_test.dart; 57/57). Device soak runbook docs/testing/vc024-long-call-runbook.md (30-min call, RSS <=1.2x/+30MiB, cleanup after end) not yet run on phones.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-025 — Answering on a locked phone does not reveal private chats
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-025.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-025.
 
 **Steps**
 
@@ -5255,9 +6428,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Semantics modal policy and locked callback no-dial are different assertions. Neither proves real locked-answer physical visual/touch/history confidentiality; native JVM tests remain separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-025: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-026 — If the app is killed during a call, both sides recover correctly
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-026.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-026.
 
 **Steps**
 
@@ -5288,9 +6469,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual SQL reopen/supplied journal and given media-loss deadline proven. Graceful shutdown sends terminate but cannot stand for hard OS kill; native capture cleanup and surviving remote under actual kill missing.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-026: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. minor: Android killed side records a connected call as Missed voice call (2/2); iOS killed-side row now present. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS 2/2 (killed Pixel shows connected call with duration).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-027 — Every way a call ends frees the microphone and audio
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-027.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-027.
 
 **Steps**
 
@@ -5325,9 +6514,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real normal Android hangup/native cleanup campaign exists and host critical retry/ownership cases cover policy. Actual native failure/decline/cancel/timeout/busy matrix not fully joined or run.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-027: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 4: iOS audio hand-back on the iPhone 13 and iPhone 11 (m-815a6256).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### VC-028 — Calls work both over a direct connection and through the relay
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-028.
+**Coverage:** partial. **Execution:** catalog_not_started. **Catalog:** VC-028.
 
 **Steps**
 
@@ -5362,9 +6559,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host native adapter simulates classifications. Actual local production audio proves scoped relay/RTP, not complete direct/TURN TCP failure/fallback and platform transport matrix.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-028: not_started (2026-10-26).** Astra audit: Catalog:1729; VC-012 canonical validator is muted/direct only; direct/TURN UDP/TCP selected-profile/media/fallback native matrix is not prepared.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-001 — Start a call from chat header, call-history row and missed-call notification
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-005, VC-021.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** VC-005, VC-021.
 
 **Steps**
 
@@ -5395,9 +6600,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native callback campaign and current-history guards substantive; actual chat-header/history-row-to-audible-call joins are not all covered by same production flow.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-005: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. killed-Pixel Call back reaches the right contact 2/2; A-then-B coalescing BLOCKED (harness), locked BLOCKED.
+- **VC-021: covered (2026-10-26).** Astra audit: Reviewed 3396d2b20 host history projector/connected-failure/repository/CallsPage set, 75 PASS per catalog:1526; SQL reopen and correct stored-contact callback, not a new native call PASS.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-002 — Cancel outgoing call before answer; callee stops ringing without stale ongoing UI
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-016.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-016.
 
 **Steps**
 
@@ -5428,9 +6642,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host admission and terminal/race policies do not inspect actual callee ringing dismissal and late native answer across both devices.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-016: ready (2026-10-28).** 10-28: offline no-answer at 30 s, no late ring, crossed calls merge; third-caller NOT RUN
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-003 — Caller offline or callee unreachable: no false connected or permanently ringing state
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-017.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** VC-017.
 
 **Steps**
 
@@ -5461,9 +6683,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Fake-time no-answer and connection/credential failure covered, but actual unreachable peer/native ring and successful later retry not a complete device assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-017: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: 12 s network loss recovers the same call, past the deadline both sides end after 15 s, no late revival (iOS) (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-004 — Incoming call while another call or protected-media viewer is active
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-016, VC-018.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-016, VC-018.
 
 **Steps**
 
@@ -5490,9 +6720,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Canonical busy and voice-recorder shared lease covered. Protected-media viewer, native incoming presentation during it and no content/privacy leak are not a joined assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-016: ready (2026-10-28).** 10-28: offline no-answer at 30 s, no late ring, crossed calls merge; third-caller NOT RUN
+- **VC-018: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. no automatable OS audio interruption (no second phone line, no audio-focus test app).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-005 — Bluetooth/wired headset attach/detach and route selection during a call
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-007, VC-024.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** VC-007, VC-024.
 
 **Steps**
 
@@ -5519,9 +6758,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Campaign proves existing inventory/speaker fallback only. Widget hot-plug is injected; actual accessory attach/detach and audible recovery require available hardware.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-007: covered (2026-10-26).** Astra audit: Documented KX29 speaker/earpiece return PASS in docs/testing/TESTING.md:8014-8016,9424; raw historical rerun file not present in checked worktrees; current physicalCaller validator scopes actual available routes.
+- **VC-024: ready (2026-11-01).** Host tests on main a6d9275e5 (Astra ded98bd3f): virtual 30-min call, recovery timers, cleanup, second-contact admission (call_coordinator_test.dart, call_screens_test.dart; 57/57). Device soak runbook docs/testing/vc024-long-call-runbook.md (30-min call, RSS <=1.2x/+30MiB, cleanup after end) not yet run on phones.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-006 — Android connected notification handover, tap-return and terminal cleanup preserve audio
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** VC-003, VC-027.
+**Coverage:** strong. **Execution:** catalog_mixed. **Catalog:** VC-003, VC-027.
 
 **Steps**
 
@@ -5556,9 +6804,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Registered real Android state/card/order/return/cleanup campaigns cover boundary; all unexecuted in this audit.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-003: covered (2026-10-26).** Astra audit: Complementary kx0002 PASS c2-rerun and kx0003 PASS kx0003-v4 cover both background/return roles and card handover; retain their distinct dated artifacts.
+- **VC-027: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 4: iOS audio hand-back on the iPhone 13 and iPhone 11 (m-815a6256).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-007 — iOS system call UI answer/decline/end/mute agrees with in-app ownership
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-009, VC-014.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** VC-009, VC-014.
 
 **Steps**
 
@@ -5589,9 +6846,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Swift fake-provider journal and Dart command policies do not prove real system CallKit action-to-WebRTC behavior; physical fixtures inactive, not pass.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-009: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. same call kept through background/return and minimize, mute kept; audio content BLOCKED (tooling).
+- **VC-014: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Pixel process-killed callee rings in 2.9 s and connects from the shade; Pixel locked and audio content BLOCKED.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CALL-008 — Peer renaming/contact deletion during call history and callback keeps exact account identity
 
-**Coverage:** strong. **Execution:** host_run. **Catalog:** VC-004, VC-021.
+**Coverage:** strong. **Execution:** catalog_mixed. **Catalog:** VC-004, VC-021.
 
 **Steps**
 
@@ -5634,9 +6900,20 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
+**Historical audit execution:** host_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **VC-004: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. names right on in-app incoming/active, Android card and iOS CallKit, no peer ID; raw-ID fallback and Swift/campaign tests not run.
+- **VC-021: covered (2026-10-26).** Astra audit: Reviewed 3396d2b20 host history projector/connected-failure/repository/CallsPage set, 75 PASS per catalog:1526; SQL reopen and correct stored-contact callback, not a new native call PASS.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+### INTRO — Introductions and mutual consent
+
 #### IN-001 — The introducer is notified when an introduction is accepted
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-001.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-001.
 
 **Steps**
 
@@ -5667,9 +6944,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host notification is a fake service; registered capture validator depends on an external artifact not produced/validated here. Actual OS notice/tap route remains unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-001: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. intro accepted notification opens recipient chat with intro messages (background only).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-002 — When both people accept, they become contacts and can chat
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-002.
 
 **Steps**
 
@@ -5696,9 +6981,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real consent orchestration is composed across fake network/in-memory storage/passthrough crypto; native authenticated transport/durable restart and actual users are not established.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-002: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. one accept makes no contact, both accept connects, first message both ways (one order).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-003 — Either person can decline, and nothing connects
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-003.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-003.
 
 **Steps**
 
@@ -5725,9 +7018,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Multi-node pass case asserts passed state and may seed missing offers; it does not independently assert both contact edges absent. Whole three-party durable UI outcome is not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-003: passed (2026-10-28).** Passed 10-28 set 1: all four decline orders on 3 devices, no contact created, late accept ignored
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-004 — Unanswered introductions expire
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** IN-004.
+**Coverage:** strong. **Execution:** catalog_not_started. **Catalog:** IN-004.
 
 **Steps**
 
@@ -5750,9 +7051,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to expiry policy invoked with a timestamp; real elapsed days, OS wake scheduling and multi-peer expiry synchronization are outside that claim.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-004: not_started (2026-10-26).** Astra audit: Catalog:1851; model/expiry startup tests cover >30 whole-day rules, but complete late-response/expired-or-passed/restart no-revival proof is not established as a whole row.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-005 — Repeated or out-of-order messages do not break consent
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-005.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** IN-005.
 
 **Steps**
 
@@ -5779,9 +7088,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Causal three-party fake-network proofs exist; actual signed malicious/replayed ciphertext and durable process restart are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-005: covered (2026-10-26).** Astra audit: Reviewed 10-25 handle_incoming_introduction/folded_response/introduction_multi_node host suites cover replay/order/newer-pair/contact uniqueness; catalog:1876 records host proof, no device result claimed.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-006 — Fake introductions are rejected
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-006.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** IN-006.
 
 **Steps**
 
@@ -5808,9 +7125,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real listener/SQL authorization guards are substantive, but PassthroughCryptoBridge does not establish genuine signature/AEAD rejection or authenticated socket identity.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-006: covered (2026-10-26).** Astra audit: test/features/introduction/integration/fake_introductions_rejected_test.dart:354,546,630 actively asserts wrong recipient/sender, key conflicts, blocked offers and allowed response reconciliation using signed SQL cases; last run not reverified here.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-007 — Introductions keep existing contacts and conversations intact
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** IN-007.
+**Coverage:** strong. **Execution:** catalog_covered. **Catalog:** IN-007.
 
 **Steps**
 
@@ -5833,9 +7158,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong applies to the real local SQL preservation boundary; OS/network delivery and signed-app upgrade are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-007: covered (2026-10-26).** Astra audit: test/features/introduction/integration/existing_contacts_and_conversations_preserved_test.dart:470 has both roles and pre-existing/created-meanwhile contact cases with preserved SQL history; last run not reverified here.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-009 — Introductions sent while offline arrive once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-009.
 
 **Steps**
 
@@ -5870,9 +7203,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Relay and repository durability are in-memory in the composed journey; real relay expiry, sender process death and actual peer full flow remain unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-009: passed (2026-10-28).** Passed 10-28 step-2 group 2: Android, 4 orders plus a positive control, Hetzner
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-010 — The introduction picker sends only the chosen contacts
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-010.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** IN-010.
 
 **Steps**
 
@@ -5899,9 +7240,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Exact chooser dispatch is causal; crypto/network/storage are fake and send-time changed eligibility plus actual receiving participants are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-010: covered (2026-10-26).** Astra audit: test/features/introduction/presentation/screens/friend_picker_wired_test.dart:292,440 checks filtering and exact multi-send; test/features/introduction/presentation/screens/friend_picker_test.dart:145,173 asserts empty/sending buttons disabled; source guards repeated/empty submit. Last run not re...
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### INTRO-001 — Cancel the introduction picker, search/select/deselect and enforce eligible recipients
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-010.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** IN-010.
 
 **Steps**
 
@@ -5932,9 +7281,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Close screen test only records callback; no wired Cancel-plus-zero-outbox/send assertion found in cited picker tests.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-010: covered (2026-10-26).** Astra audit: test/features/introduction/presentation/screens/friend_picker_wired_test.dart:292,440 checks filtering and exact multi-send; test/features/introduction/presentation/screens/friend_picker_test.dart:145,173 asserts empty/sending buttons disabled; source guards repeated/empty submit. Last run not re...
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### INTRO-002 — Select multiple introductions with partial send failure; retry only failed intended targets
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-009.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-009.
 
 **Steps**
 
@@ -5965,9 +7322,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Multi-send UI and one-envelope failure/retry are separate tests; no single picker partial-result/failed-only multi-target retry assertion found.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-009: passed (2026-10-28).** Passed 10-28 step-2 group 2: Android, 4 orders plus a positive control, Hetzner
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### INTRO-003 — Restart/expiry/blocked-user changes while consent is pending preserve all participants
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-003, IN-004, IN-007.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** IN-003, IN-004, IN-007.
 
 **Steps**
 
@@ -6002,11 +7367,21 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real SQL rejection/preservation and pure expiry are covered separately; no all-three-participants durable cold restart with changed block/expiry and real transport.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-003: passed (2026-10-28).** Passed 10-28 set 1: all four decline orders on 3 devices, no contact created, late accept ignored
+- **IN-004: not_started (2026-10-26).** Astra audit: Catalog:1851; model/expiry startup tests cover >30 whole-day rules, but complete late-response/expired-or-passed/restart no-revival proof is not established as a whole row.
+- **IN-007: covered (2026-10-26).** Astra audit: test/features/introduction/integration/existing_contacts_and_conversations_preserved_test.dart:470 has both roles and pre-existing/created-meanwhile contact cases with preserved SQL history; last run not reverified here.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 ### NOTIFY — Notification ingress, routing, unread and privacy
 
 #### DC-005 — Killed recipient gets a notification that opens the right chat
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-005.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-005.
 
 **Steps**
 
@@ -6037,9 +7412,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Registered provider campaign and artifact validator exist, but no fresh exact killed-before-send provider-to-visible-content artifact audited/executed. Production warm/cold runner kills after receiving the card, so it alone cannot establish killed-before-send.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-005: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 3: Android notification permission. Found BL-13, a second prompt after one deny (m-85806eb7).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### DC-023 — Direct notifications respect routing, unread and privacy controls
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-023.
+**Coverage:** strong. **Execution:** catalog_ready. **Catalog:** DC-023.
 
 **Steps**
 
@@ -6070,9 +7453,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong covers real local Dart/SQL/UI policy; native card map/crypto/provider/channel blocking are mocked and OS presentation remains unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### GC-007 — Group notifications preserve routing, unread and privacy
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-007.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-007.
 
 **Steps**
 
@@ -6103,9 +7494,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Projection/routing/unread logic is tested at separate fake native/repository seams; no complete provider-to-native-card-to-current-group visible content journey audited/executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-007: passed (2026-10-26).** group-mute and notifications-android PASS on the AWS relay v1.11.2, store build 127 tree, 10-26
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### IN-008 — Tapping the notification opens the introduction without accepting it
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-008.
 
 **Steps**
 
@@ -6128,9 +7527,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Route/shell proof exists but cited route test does not assert unchanged pending consent/zero acceptance; actual OS tap/cold setup is separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-008: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: intro card opens Intros pending, no contact until both accept; minor: a duplicate local card after the push is opened (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### CR-008 — Tapping a request notification opens it without accepting
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** CR-008.
 
 **Steps**
 
@@ -6153,9 +7560,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Materializer dialog and explicit accept companion are tested with in-memory repos; no full native notification tap and a single zero-autoaccept assertion through cold launch.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **CR-008: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: request card in background, killed and locked; tap opens the dialog without accepting; minor: card stays after an in-app decline (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-001 — Warm and cold notification opens exact direct chat with the triggering content visible
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-005, DC-023.
+**Coverage:** strong. **Execution:** catalog_mixed. **Catalog:** DC-005, DC-023.
 
 **Steps**
 
@@ -6182,9 +7597,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong denotes meaningful existing campaign assertions, not a passing run. No artifact validated/executed here; iOS and signed-store candidate parity separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-005: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 3: Android notification permission. Found BL-13, a second prompt after one deny (m-85806eb7).
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-002 — Foreground exact-chat suppression preserves another peer notification and unread count
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-023.
+**Coverage:** strong. **Execution:** catalog_ready. **Catalog:** DC-023.
 
 **Steps**
 
@@ -6207,9 +7631,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong local policy boundary uses mock native cards/provider; actual system notification replacement and foreground classification are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-003 — Tap an older notification generation without cancelling a newer replacement
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-023.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** DC-023.
 
 **Steps**
 
@@ -6236,9 +7668,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real file/SQL CAS and route ordinal proofs are separate; no actual older OS notification tap racing a native newer replacement in one journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-004 — Deny notification permission or block Messages channel; preserve message delivery and truthful UI
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-023.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** DC-023.
 
 **Steps**
 
@@ -6269,9 +7709,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host seams prove mapping/channel choice and message storage; registered real OS campaign was not executed or artifact-verified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-005 — Direct media/private-media previews do not expose protected content
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-023.
+**Coverage:** partial. **Execution:** catalog_ready. **Catalog:** DC-023.
 
 **Steps**
 
@@ -6302,9 +7750,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual copy/resolver assertions exist, but decrypted plaintext/key/native channels use doubles; actual APNs/NSE/lock-screen/signing/privacy settings are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-006 — Group message/reaction notification opens the correct group and exact unread state
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-007.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** GC-007.
 
 **Steps**
 
@@ -6335,9 +7791,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host route/reaction/projection tests use in-memory repos/native doubles; full real provider/card/tap/SQL exact group read journey not audited/executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-007: passed (2026-10-26).** group-mute and notifications-android PASS on the AWS relay v1.11.2, store build 127 tree, 10-26
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-007 — Group invite notification opens consent without accepting automatically
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** GC-001, GC-007.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** GC-001, GC-007.
 
 **Steps**
 
@@ -6364,9 +7828,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Presenter/resolver have exact payload and pending selection proofs; no single native tap->actual dialog->zero-autoaccept assertion or real provider execution.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **GC-001: covered (2026-10-26).** Astra audit: Whole entry has complementary create/invite and gm002/gm003/online-add/offline-add tests (pre-add exclusion included); inventory PASS c1-resume-f10 and c5-pixel, 2026-10-19.
+- **GC-007: passed (2026-10-26).** group-mute and notifications-android PASS on the AWS relay v1.11.2, store build 127 tree, 10-26
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-008 — Introduction/request notification interrupted by onboarding, migration or another route is deferred safely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** IN-008, CR-008.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** IN-008, CR-008.
 
 **Steps**
 
@@ -6401,9 +7874,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Coordinator coalescing/ordinal and materializers are separate unit/widget seams; whole interrupted setup/migration native-tap consent journey not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **IN-008: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: intro card opens Intros pending, no contact until both accept; minor: a duplicate local card after the push is opened (.codex-test-logs/p0-phone-20261031/)
+- **CR-008: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: request card in background, killed and locked; tap opens the dialog without accepting; minor: card stays after an in-app decline (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### NOTIFY-009 — iOS notification extension/app-group handoff and Android headless recovery converge once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-005, GC-007.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-005, GC-007.
 
 **Steps**
 
@@ -6438,7 +7920,16 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native campaign machinery/host ledger proofs exist; no current artifact-bound provider/NSE/headless execution audited or performed. Source/validator cannot certify signed artifact or OS delivery.
 
-#### NOTIFY-010 — Post/comment notification retains target and uses existing Feed fallback (Posts UI dormant)
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-005: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 3: Android notification permission. Found BL-13, a second prompt after one deny (m-85806eb7).
+- **GC-007: passed (2026-10-26).** group-mute and notifications-android PASS on the AWS relay v1.11.2, store build 127 tree, 10-26
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### NOTIFY-010 — Post/comment notification retains target and uses existing Feed fallback (historical scoped audit)
 
 **Coverage:** partial. **Execution:** not_run. **Catalog:** source-derived.
 
@@ -6452,7 +7943,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Expected:** Coordinator retains exact post/comment target, falls back to Feed intentionally and expires unresolved state; no active Posts-tab claim.
 
-**Inspected test evidence**
+**Historical inspected test evidence**
 
 - [test/features/posts/phase1/post_notification_open_flow_test.dart](../../test/features/posts/phase1/post_notification_open_flow_test.dart) — `timeout opens Posts with the approved fallback message` (unit).
   - Real: PostNotificationOpenCoordinator/pending target deadlines/AppShellController.
@@ -6463,13 +7954,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
   - Faked: post repository and shortened60ms budget.
   - Proves / registration: test/features/posts/phase1/post_notification_open_flow_test.dart:160: Unresolved post target and status clear after expiry; no visible active Posts surface exists to certify. Registered: affected-surfaces, host-all.
 
-**Remaining gaps**
+**Historical gaps from the scoped audit**
 
 - Tests use fake post repository and reveal callback. Production application_root.dart:2230 pops to root; dormant Posts UI is excluded. No rendered post/comment or visible fallback-message claim established.
 
+**Current source scope:** Current Thoughts and You are reachable at this source: normal startup passes the post repository through FeedWired into OrbitWired; Thoughts and You default ON; Orbit opens ComposePostSheet(thoughtsOnly:true), the audience picker and YouPageScreen. This supersedes the original blanket dormant-Posts assumption. NOTIFY-010 retains a historical notification-fallback audit and does not certify every current ingress path.
+
 #### NOTIFY-011 — Notification sound/vibration debounce, silent recovery and duplicate delivery remain correct
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-023, GC-007.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-023, GC-007.
 
 **Steps**
 
@@ -6503,6 +7996,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Dart tone policy and native OS-flag campaign assertions are meaningful but no run here. Actual audible output/vibration and iOS signed provider behavior are not established by fake service or descriptor media.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-023: ready (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. two-peer routing and clearing PASS, protected photo card generic PASS; duplicate delivery BLOCKED (no injection tool in release).
+- **GC-007: passed (2026-10-26).** group-mute and notifications-android PASS on the AWS relay v1.11.2, store build 127 tree, 10-26
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 ### NAV — Feed, Orbit, rings, search and navigation
 
@@ -6810,7 +8312,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### NAV-011 — Navigation during pending request/invite/recovery does not stack duplicate dialogs
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** none.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** source-derived.
 
 **Steps**
 
@@ -7521,7 +9023,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### DC-019 — Account transfer preserves direct and group chat continuity
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7552,9 +9054,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real loopback/files/FFI SQL composition is substantive, but crypto/SQLCipher/native stores/discovery are fake or constructed. No actual signed phones plus new direct/group message/media-open post-transfer journey audited/executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-001 — Old phone opens Move Account; new phone displays/scans the correct migration QR
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7581,9 +9091,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real route/UI with injected keygen/scan/authorizer/receiver proves handoff; native camera, local discovery and two real displays/code match not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-002 — Reject malformed, expired, future, reused, wrong-kind or untrusted transfer QR
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7614,9 +9132,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Parser/session/type/confirmation boundaries are causal; real authenticated peer/channel and native QR capture are substituted.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-003 — Confirm matching codes; cancel or reject mismatched confirmation without cutover
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7651,9 +9177,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Code derivation, UI and cancellation are separate tests with constructed transcript/fake runner; no actual two-phone mismatched confirmation-to-zero-cutover proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-004 — Establish local transfer on Wi-Fi without internet, separately from internet recovery
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7684,9 +9218,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - PARTIAL 2026-11-02: Three delayed starts (73-133 seconds) passed without the earlier stuck-resolution trigger. Wi-Fi without internet remains blocked. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:36.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-005 — Preflight insufficient space or oversized account and recover without corrupting either phone
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7713,9 +9255,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Arithmetic/UI use injected estimates/providers. Actual disk-full during write, realistic free-space scan and both-phone cleanup/retry are not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-006 — Transfer encrypted database, media files, secure references, groups and pending work completely
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7750,9 +9300,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Chained host uses constructed schema/plain FFI SQL and deterministic reversible crypto/fake secure stores. Genuine ML-KEM/SQLCipher/native keychain and all current schema coverage are separate.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-007 — Interrupt/cancel transfer before cutover; source remains usable and receiver staging is cleaned
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7783,9 +9341,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - File cleanup is real and state/route guards causal, but actual secure-store/disconnect/OS cancellation and source runtime are fake.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-008 — Retry/resume interrupted segments without duplicate import or lost files
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7812,9 +9378,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real host wire/files/checkpoint reload exist; crypto/secure stores/SQLCipher/discovery are seams and no actual process/radio interruption executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-009 — Crash or lose network at authorization/cutover/finalization; exactly one account authority survives
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7845,9 +9419,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Proof/state machine and operation order use fake persistence; no actual power loss/native secure-store fsync/process race across two devices.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-010 — Finalize receiver, retire old sender authority and reconnect using correct transport identity
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7878,9 +9460,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native runtime shutdown, push provider unregistration and actual transported identity/reconnect are not joined with host import/proof checks.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-011 — Open migrated photos/videos/voice/documents on the receiver, not only message metadata
 
-**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7929,9 +9519,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Execution by flutter_app; Astra inspected saved evidence only. The 2026-10-23 summary lines 10-18 defines the scoped simulator receiver PASS; the earlier Group D block remains historical evidence.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
+**Historical audit execution:** device_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-012 — Migrated direct/group unread, drafts, history and pending outgoing retries remain coherent
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7962,9 +9560,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Manifest/local row/file preservation is meaningful; actual application draft/unread rendering and resumed pending direct/group sends after full transfer are not one assertion.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-013 — Reject transfer from a linked-secondary installation and honor transfer-time feature restrictions
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** strong. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7987,9 +9593,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to the explicit local export refusal; real secure-store tamper resistance and signed artifact migration enforcement were not executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSFER-014 — Close/back/app-background while receiver finalization is locked; restore a truthful progress state
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-019.
 
 **Steps**
 
@@ -8015,6 +9629,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Actual route guards use injected receiver events; background/native keep-alive/OS process restart and durable finalization state restoration are separate.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-019: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PASS. group leg added: group history (2 msgs) on new phone after move, new group msgs both ways with Pixel, old phone blocked and silent; direct leg PASS 10-31.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### TRANSFER-015 — Erase a blocked/retired account with explicit confirmation and preserve unrelated OS data
 
@@ -8053,7 +9675,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### DC-020 — Linked direct installations converge under the enabled feature
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8088,9 +9710,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real transactions/identity mapping exist; crypto/transport/receipts are seams and no complete actual multi-installation text/media convergence evidence audited/executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-001 — Default-off build hides new linked-device authoring but preserves durable installed authority
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8117,9 +9747,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host selectors/snapshots and source default constants prove policy seams, not an installed flag-on->flag-off signed-binary upgrade with actual native secure credential.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-002 — Flag-enabled phrase-based linked-secondary setup and dual-signed device QR
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8155,9 +9793,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - Corrected source flow: linked_device_setup_wired.dart:106 takes phrase and calls secondary setup; it is not a primary-issued pairing QR.
 - Onboarding test substitutes setup route; no behavior test of full LinkedDeviceSetupWired submit/native key creation/secure persistence/QR display and remote trust in one journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-003 — Reject forged, expired, replayed or wrong-protocol linked QR without adding an ordinary contact
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8184,9 +9830,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual parser/SQL and no-legacy dispatch are tested, but signature model is SHA256 over public key/data rather than genuine Ed25519; native camera/bridge authentication not joined.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-004 — Observe pending sibling device in contact profile; verify/reject/revoke the exact installation
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8213,9 +9867,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real DB CAS and profile callback arguments are substantive but separately tested; no actual remote device status convergence or profile wired to real DB/native proof in one journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-005 — Read restricted linked status/group list, retry load failures and prevent unavailable modalities
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8250,9 +9912,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - What status/retry UI is required after group-list/authority load failure? Current source-string checks do not define it.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-006 — Flag-enabled text/edit/delete/reaction fanout converges across admitted installations
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8283,9 +9953,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real SQL staging/authority exists; native crypto/network and all event types across actual installations after restart are not a single proof.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-007 — Flag-enabled media/voice/private fanout reaches each intended installation with correct custody
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8316,9 +9994,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - 2x2/large-generation transactional custody is tested with fake keys/receipts; no actual native media/private decoder/playback at all linked targets. Cannot infer default/store125 behavior.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-008 — Flag rollback refuses new fanout while draining already-committed durable rows
 
-**Coverage:** strong. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** strong. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8349,9 +10035,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Strong is scoped to local selection/ownership/transaction invariants; actual rebuilt signed APK rollback/native credentials and successful relay delivery were not executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### LINKED-009 — Restart/quarantine/revoke a linked authority without falling back to a conflicting legacy transport
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-020.
+**Coverage:** partial. **Execution:** catalog_n_a. **Catalog:** DC-020.
 
 **Steps**
 
@@ -8381,6 +10075,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Role/canonical trust checks are causal at host seams; real secure-store corruption/OS restart and authenticated transport revoke race remain unverified.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-020: n_a (2026-10-28).** N/A 10-28: build 158 has linked-device flags off
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### LINKED-010 — Linked group enrollment/bootstrap/key epochs gate content before authority settles
 
@@ -8827,7 +10529,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### TRANSPORT-002 — Direct connection failure falls back to durable relay delivery without duplicate rows
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-010.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** DC-010.
 
 **Steps**
 
@@ -8854,9 +10556,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Sender race is causal, but ranked race receiver is a manually deduping list. Actual relay wire plus production receiver dedup across simultaneous legs is not established by that file.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-010: covered (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. release 201 has no keepalive drop-latch switch (E2E_TEST_MODE=0); emulator could be the second Android, but the journey needs an E2E/debug APK.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSPORT-003 — Mixed Wi-Fi/mobile peers deliver direct text and full media with sender/recipient agreement
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-011, DC-012.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-011, DC-012.
 
 **Steps**
 
@@ -8887,9 +10597,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Loopback byte transfer and network-event/native transport recovery are separate. No actual mixed-radio full-media+caption/decode journey or recorded cellular service observed here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-011: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/)
+- **DC-012: not_started (2026-10-26).** Astra audit: Catalog:285; test/core/services/network_path_source_test.dart covers classification only; no cellular/Wi-Fi handoff delivery journey or confirmed whole-entry hardware unavailability.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSPORT-004 — Wi-Fi/mobile handover during queued sends or media transfer recovers exact owned work
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-017, DC-018.
+**Coverage:** partial. **Execution:** catalog_mixed. **Catalog:** DC-017, DC-018.
 
 **Steps**
 
@@ -8924,9 +10643,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Substantive real Go relay/socket preservation exists; mobile OS handover plus actual in-flight media/recipient completion are not joined or executed.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-017: passed (2026-10-28).** Passed 10-28 on Pixel + iPhone 13 (dev 158): Hetzner relay service stopped ~3 min, texts stayed sending (no false delivered, no Retry), sent to inbox ~25 s after restart, received exactly once in order, still once after force restarts. Limit: receiver backgrounded, not per-app relay block (no rooted device)
+- **DC-018: not_started (2026-10-26).** Astra audit: Catalog:441; ordinary retry/custody tests do not cover full near-limit interrupted native open/oversize/no-duplicate row; go-relay-server/catalog_near_limit_media_recovery_test.go absent on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSPORT-005 — Airplane/no-network startup and resume preserve local reading and pending send intent
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-022.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-022.
 
 **Steps**
 
@@ -8952,6 +10680,14 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Use-case fake network recovery is covered; full offline cold-start rendered local history plus saved draft and real OS connectivity is not one asserted journey.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-022: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 2: Pixel to iPhone 13, the missing-key send recovers once. The iPhone 11 to Pixel leg is an accepted gap (needs a person to scan). Found BL-12 (m-c5a02f34).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 #### TRANSPORT-006 — Local peer discovery disabled/permission denied or stale endpoint never authorizes an unknown peer
 
@@ -8988,7 +10724,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### TRANSPORT-007 — Relay outage or bridge restart recovers inbox delivery and accepted durable work exactly once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-017.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-017.
 
 **Steps**
 
@@ -9023,9 +10759,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Real loopback staging reopen and fake relay send retry are meaningful; actual deployed relay persistence/bridge restart-to-recipient completion remains unverified.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-017: passed (2026-10-28).** Passed 10-28 on Pixel + iPhone 13 (dev 158): Hetzner relay service stopped ~3 min, texts stayed sending (no false delivered, no Retry), sent to inbox ~25 s after restart, received exactly once in order, still once after force restarts. Limit: receiver backgrounded, not per-app relay block (no rooted device)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### TRANSPORT-008 — Background/closed-process recovery respects single-runtime ownership and foreground handoff
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-005, GC-003.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** DC-005, GC-003.
 
 **Steps**
 
@@ -9055,6 +10799,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Dart lifecycle tests use a fake native gateway and database callbacks; actual native cross-process locking, SQLCipher ownership and OS recovery are not executed here.
+
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **DC-005: passed (2026-11-10).** PASS 2026-11-10 on build 240, Hetzner, as Astra device gap 3: Android notification permission. Found BL-13, a second prompt after one deny (m-85806eb7).
+- **GC-003: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: a killed member gets all messages once, in order, after relaunch (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
 
 ### DIAG — User-controlled diagnostics and recovery reporting
 
@@ -9559,7 +11312,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### RG-001 — Published-to-candidate signed upgrade preserves messaging
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-001.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-001.
 
 **Steps**
 
@@ -9586,9 +11339,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Mandatory manual contract exists; no exact baseline/candidate/artifact-bound execution supplied or performed in this audit. Host migration source tests cannot certify signed upgrade.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-001: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. only candidate is debug-signed Hetzner 201; needs the published store-signed candidate to upgrade in place.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### RG-002 — Fresh onboarding reaches the first direct and group message
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-002.
 
 **Steps**
 
@@ -9611,9 +11372,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Host golden path fakes native identity/network/storage and omits real UI scan plus first group message. Existing production journeys prepare contacts, so their later sends alone cannot close this onboarding journey.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-002: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh onboarding to first direct and group message with consent at every step; observation: contact request took 4.5 min once (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### RG-003 — Retained backlog, expiry and pagination follow policy
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-003.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-003.
 
 **Steps**
 
@@ -9636,9 +11405,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Controlled host drain demonstrates a narrower boundary; no complete direct/group actual relay TTL plus key-retention/epoch/page signed-app catch-up. Seven-day history policy is not by itself proof of relay TTL.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-003: passed (2026-10-28).** Passed 10-28 set 1: Pixel offline 190 s, 8 direct + 3 group caught up in order within 7 s, kept after restart
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### RG-004 — Rejected incoming events do not wedge valid delivery
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-004.
+**Coverage:** partial. **Execution:** catalog_covered. **Catalog:** RG-004.
 
 **Steps**
 
@@ -9665,9 +11442,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Direct listener/real SQL subsequent-delivery proof exists. Decryption is a controlled failure seam; it does not cover genuine cryptographic malformed inputs, all group events or native production transport loops.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-004: covered (2026-10-26).** Existing host tests prove it (rejected_events_preserve_valid_delivery_test.dart, relay custody test); Codex review OK
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 #### RELEASE-004 — Candidate permissions/platform configuration and first-unlock behavior match supported release claims
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** RG-001, RG-002.
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** RG-001, RG-002.
 
 **Steps**
 
@@ -9694,40 +11479,1340 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Checked-in source contracts and fake gateway UI do not establish merged signed manifest/entitlements, real platform prompts, first-unlock behavior or distribution configuration. No candidate artifact was built/inspected here.
 
+**Historical audit execution:** not_run. Original assertions and scoped run evidence above are retained.
+
+**Current catalog progress (scoped)**
+
+- **RG-001: passed (2026-11-02).** P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. only candidate is debug-signed Hetzner 201; needs the published store-signed candidate to upgrade in place.
+- **RG-002: passed (2026-11-01).** Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: fresh onboarding to first direct and group message with consent at every step; observation: contact request took 4.5 min once (.codex-test-logs/p0-phone-20261031/)
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+### THOUGHTS — Thoughts, audience and You history
+
+#### TH-001 — Deleting a Thought removes it for every recipient
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-001.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=emulator; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A deleted Thought disappears for every recipient even if the direct send is not acknowledged; the retract falls back to the inbox, survives a restart and is retried, finished retract rows are removed, and a connected delete applies once.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/post_follow_on_delivery_test.dart](../../test/features/posts/improvement/post_follow_on_delivery_test.dart) — `Catalog-declared unit test for TH-001` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/retract_thought_use_case_test.dart](../../test/features/posts/improvement/retract_thought_use_case_test.dart) — `Catalog-declared unit test for TH-001` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/post_follow_on_outbox_repository_test.dart](../../test/features/posts/improvement/post_follow_on_outbox_repository_test.dart) — `Catalog-declared integration test for TH-001` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** New 10-26 (main b295aadbc). Found on device by flutter_app (an unacked direct retract was neither inbox-stored nor retried, so the receiver kept the deleted Thought); causes confirmed by Codex-UI and fixed by Codex, reviewed by Astra in 3 rounds. Emulator proof PASS, offline receiver gets the retract from the inbox on reconnect and a connected delete is acked in 142 ms with no inbox copy.
+
+**Current catalog progress (scoped)**
+
+- **TH-001: passed (2026-10-28).** Passed 10-28 set 1: deleted Thought gone on both recipients within 12 s; offline one 1 s after reconnect
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-002 — Defines-free Thoughts are visible, the 3D depth view is on, and unseen notes are distinct
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-002.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A build without Thoughts/depth Dart defines shows Thoughts and the 3D depth view (owner 10-27: 3D ON in 128); unseen notes have an outline and new-Thought semantics beyond bold, while seen notes use their regular style. Existing explicit-off and Settings QR handoff controls remain passing obligations.
+
+**Declared and scoped test evidence**
+
+- [test/core/config/thoughts_feature_flags_test.dart](../../test/core/config/thoughts_feature_flags_test.dart) — `Catalog-declared unit test for TH-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/widgets/orbit_thought_notes_test.dart](../../test/features/orbit/presentation/widgets/orbit_thought_notes_test.dart) — `Catalog-declared widget test for TH-002` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/screens/orbit_wired_test.dart](../../test/features/orbit/presentation/screens/orbit_wired_test.dart) — `Catalog-declared widget test for TH-002` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Item G plus Task1 defaults. Final checklist leg2; no run/PASS yet. Source: bb16e0e2b/4a01e9a75; defines-free defaults fixture, note outline/semantics case, explicit-off Orbit case and paired Settings Scan/Paste/Submit/OK tests. Actual build command/artifact identity must accompany device proof.
+
+**Current catalog progress (scoped)**
+
+- **TH-002: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-003 — Thought entry and composer preserve hints, replacement copy, and photo framing
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-003.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** The plus has an effective 44-point target separate from the self-avatar; the first-use hint retires across reopen/relaunch even if its preference loads late. Composer explains replacement, all-friends and 24hours. Picked photos show inline in the composer as a large whole-photo preview over blur (owner 10-27 Pattern 2, no separate framing screen), each with an X to remove it; correct orientation/order and the draft is preserved.
+
+**Declared and scoped test evidence**
+
+- [test/features/orbit/presentation/widgets/orbital_visualization_test.dart](../../test/features/orbit/presentation/widgets/orbital_visualization_test.dart) — `Catalog-declared widget test for TH-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/screens/orbit_wired_test.dart](../../test/features/orbit/presentation/screens/orbit_wired_test.dart) — `Catalog-declared widget test for TH-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/thought_compose_sheet_test.dart](../../test/features/posts/improvement/thought_compose_sheet_test.dart) — `Catalog-declared widget test for TH-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Items B/C/J. Final checklist legs2-3. The 44-point outer-corner tap assertion is in Astra2a94261d3; J was replaced by Pattern 2 (Claude-UI d971f186a); its tests are in thought_compose_sheet_test.dart. Existing hint-race test is orbit_wired_test.dart:1278 on inspected base. No device result claimed.
+
+**Current catalog progress (scoped)**
+
+- **TH-003: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-004 — Offline photo posting has clear progress and a one-tap retry
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-004.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=emulator; connectivity: As specified by the catalog contract and scoped result; offline: Included only where stated in the catalog contract; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** An offline text-plus-photo Thought keeps clear pending/failure state; retry after connectivity returns shows progress without closing the own card or duplicating the post, and the recipient receives the matching full photo. Repeated taps while retry is active do not create another attempt.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/post_delivery_runner_test.dart](../../test/features/posts/improvement/post_delivery_runner_test.dart) — `Catalog-declared unit test for TH-004` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/thought_card_screen_test.dart](../../test/features/posts/improvement/thought_card_screen_test.dart) — `Catalog-declared widget test for TH-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Item A. Final checklist leg5. Codex-UI owns the pending own-posting-retry card case; existing delivery-runner failure status is supporting host evidence, not actual offline photo/retry proof. No ready/PASS claim until final candidate tests and paired delivery succeed.
+
+**Current catalog progress (scoped)**
+
+- **TH-004: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-005 — Photo previews stay encrypted and turn into true-ratio photos and quote thumbnails
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-005.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=emulator; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Preview bytes travel only inside encrypted media_keys, never the v1/plain renderable payload; old payloads without preview still parse, and old rows retain a nullable preview. A held download shows the distinctive blurred preview or the old-sender shaped placeholder, then the downloaded photo at its true contained ratio over blur. Quotes show the photo and refresh after late download.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/post_create_envelope_media_keys_test.dart](../../test/features/posts/improvement/post_create_envelope_media_keys_test.dart) — `Catalog-declared unit test for TH-005` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/post_media_attachment_crypto_fields_test.dart](../../test/features/posts/improvement/post_media_attachment_crypto_fields_test.dart) — `Catalog-declared unit test for TH-005` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/post_create_encrypted_media_integration_test.dart](../../test/features/posts/improvement/post_create_encrypted_media_integration_test.dart) — `Catalog-declared integration test for TH-005` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/thought_card_screen_test.dart](../../test/features/posts/improvement/thought_card_screen_test.dart) — `Catalog-declared widget test for TH-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/thought_quote_block_test.dart](../../test/features/posts/improvement/thought_quote_block_test.dart) — `Catalog-declared widget test for TH-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/screens/orbit_wired_test.dart](../../test/features/orbit/presentation/screens/orbit_wired_test.dart) — `Catalog-declared widget test for TH-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Item I and retained photo-display work. Final checklist legs4 and6. Existing preview card fixture on b250c4504 never completes its download future, so it proves held-preview display only; Kayan routed the missing completion/removal/full-photo assertion to Codex-UI (m-590182dc). Pending Claude-UI Thoughts-only true-ratio change must be integrated. Ordinary chat layout has a separate preservation obligation. No cached-photo result substitutes for a controlled pre-download preview.
+
+**Current catalog progress (scoped)**
+
+- **TH-005: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-006 — Thought replies and reactions send in place and quoted Thoughts reopen in the same chat
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-006.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=emulator; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Reply/reaction keeps the Thought card open with Sent/Retry progress, a retry keeps its original reply identity/text and delivers once, and Open chat is explicit. Tapping a live chat quote reopens that Thought and replying again stays in the same chat; deleted/unavailable Thoughts do not reopen stale cards.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/thought_card_screen_test.dart](../../test/features/posts/improvement/thought_card_screen_test.dart) — `Catalog-declared widget test for TH-006` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-006; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/screens/orbit_wired_test.dart](../../test/features/orbit/presentation/screens/orbit_wired_test.dart) — `Catalog-declared integration test for TH-006` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-006; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Items D/E. Final checklist leg6. Codex-UI owns pending in-place, stable-ID Retry and queued-to-Sent cases. Existing E case at orbit_wired_test.dart:1522 covers live-quote same-chat routing; :1553 covers a missing Thought and later cases cover removal races. Replace the base's old close-before-reply assertion with the author version before the one final run.
+
+**Current catalog progress (scoped)**
+
+- **TH-006: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-007 — Own Thought names actual viewers and groups distinct reaction actors
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-007.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=emulator; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Delivery alone and placeholder-only display never create a seen receipt. Displaying actual Thought content records the correct viewer, repeated open/retry/receipt delivery produces no duplicate actor, and own activity names viewers and groups distinct reaction actors. Durable receipts survive reopen and do not turn transport delivery into seen.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/thought_card_screen_test.dart](../../test/features/posts/improvement/thought_card_screen_test.dart) — `Catalog-declared widget test for TH-007` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/124_thought_photo_previews_and_view_receipts_test.dart](../../test/core/database/migrations/124_thought_photo_previews_and_view_receipts_test.dart) — `Catalog-declared integration test for TH-007` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/124_thought_upgrade_preserves_data_test.dart](../../test/core/database/migrations/124_thought_upgrade_preserves_data_test.dart) — `Catalog-declared integration test for TH-007` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Items F/H (F folded into H). Final checklist leg7. Codex-UI owns pending placeholder-not-viewed and own-activity/distinct-actors cases plus the receipt send/store/retry implementation. Add its final protocol selectors when supplied; migration/schema presence alone does not prove live receipt delivery. The requested two-peer device pair cannot prove three distinct actors; grouped-count/dedup oracle remains host-only in that topology.
+
+**Current catalog progress (scoped)**
+
+- **TH-007: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-008 — DB123 to124 preserves identity, chats, Thoughts and cached photos
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-008.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Opening the production-registry version123 database at124 preserves every prior column in seeded identity/contact/chat/Thought/attachment/recipient/read-state rows and cached bytes. Old previews start null and delivered Thoughts create no view receipt. New preview/receipt writes survive another reopen. An available physical install-over retains the same account/data, with actual old/new schema recorded.
+
+**Declared and scoped test evidence**
+
+- [test/core/database/migrations/124_thought_photo_previews_and_view_receipts_test.dart](../../test/core/database/migrations/124_thought_photo_previews_and_view_receipts_test.dart) — `Catalog-declared integration test for TH-008` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-008; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/124_thought_upgrade_preserves_data_test.dart](../../test/core/database/migrations/124_thought_upgrade_preserves_data_test.dart) — `Catalog-declared integration test for TH-008` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-008; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/integration/full_migration_chain_test.dart](../../test/core/database/integration/full_migration_chain_test.dart) — `Catalog-declared integration test for TH-008` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-008; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Shared I/H upgrade boundary, final checklist legs1/8. Real file-backed host preservation fixture is Astra2a94261d3; original schema fixture is Claude-UI414269e69. Host SQLite does not certify signed SQLCipher install-over. If installed baseline is already124, label that actual install-over honestly and keep123->124 host proof separate; do not erase/reseed the physical account to fabricate the old version. K excluded.
+
+**Current catalog progress (scoped)**
+
+- **TH-008: passed (2026-10-28).** Passed 10-28: main ac6aaa690 (128); full lanes 109 PASS / 0 FAIL (82 device-only blocked, affected-push temp-dir race passed on rerun); device checklist on dev 158 (Pixel + iPhone 13) items 2-8 PASS; 127 vs 128 emulator test: no breaks
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-009 — Thought alert opt-out is durable and does not suppress messages or calls
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** TH-009.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Thought notifications default on. Turning them off persists the device's choice and suppresses new Thought alerts at the relay semantic boundary and local presentation, including a preference change during card preparation or decrypt. Thought storage, acknowledgement, media hydration, and Orbit publication continue. Direct messages, quoted replies, reactions, and call wake retain their supported behavior. Restart, stale route refresh, and token-vault migration cannot silently restore alerts against durable OFF.
+
+**Declared and scoped test evidence**
+
+- [test/features/settings/application/thought_notifications_preference_use_cases_test.dart](../../test/features/settings/application/thought_notifications_preference_use_cases_test.dart) — `Catalog-declared unit test for TH-009` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-009; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/phase1/post_listener_test.dart](../../test/features/posts/phase1/post_listener_test.dart) — `Catalog-declared unit test for TH-009` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-009; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [go-relay-server/thought_notifications_test.go](../../go-relay-server/thought_notifications_test.go) — `Catalog-declared unit test for TH-009` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-009; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [ios/RunnerTests/NotificationPreviewResolverTests.swift](../../ios/RunnerTests/NotificationPreviewResolverTests.swift) — `Catalog-declared unit test for TH-009` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-009; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/settings/presentation/screens/settings_wired_test.dart](../../test/features/settings/presentation/screens/settings_wired_test.dart) — `Catalog-declared widget test for TH-009` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-009; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 for honoring an explicit notification privacy choice while preserving core chat and call delivery. Source commits 890077900 and 7f94c60e4. post_listener_test.dart:258,315,339 covers durable receipt and late OFF; thought_notifications_test.go:112,232,265,314,347,384,424 covers relay scope and authority; NotificationPreviewResolverTests.swift:3622,3665,3693 covers native preference timing and ordinary chat preservation. Device evidence exists at .codex-test-logs/round9-device-20261102/thoughtswitch/. Distinguish this alert preference from the separate Thoughts feature flag and Thoughts metrics preference. Preserve the initial failed iOS OFF result before the token-refresh fix; later PASS does not erase it.
+
+**Current catalog progress (scoped)**
+
+- **TH-009: ready (2026-11-03).** Build 209 OFF/ON/OFF, Settings reopen, two restarts, and ordinary chat/quoted-reply/reaction preservation passed in m-294fb47c, 2026-11-02. The complete relay race and native preference assertions still need linked execution evidence.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-010 — Changing Thought alerts reuses the registered token and does not stall Settings
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** TH-010.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Changing the Thought alert preference resends the current registered token with the new choice without waiting for another provider token read. A stalled token provider does not stall saving the local preference. Failed relay synchronization leaves durable OFF intact and reports the actual state; serialized saves and initial preference loading do not display an uncommitted choice as saved.
+
+**Declared and scoped test evidence**
+
+- [test/features/push/application/push_registration_coordinator_test.dart](../../test/features/push/application/push_registration_coordinator_test.dart) — `Catalog-declared unit test for TH-010` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-010; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/settings/presentation/screens/settings_wired_test.dart](../../test/features/settings/presentation/screens/settings_wired_test.dart) — `Catalog-declared widget test for TH-010` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-010; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Source fix 8d688b7d5. Settings fixtures are at settings_wired_test.dart:535, 648,685,713,759; held-token/provider dependencies are exercised in push_registration_coordinator_test.dart around :202-233. The device measurement proves the observed fixed path, not a universal latency bound. Evidence .codex-test-logs/round9-device-20261102/thoughtswitch/. TH-009 owns the opt-out privacy obligation; this row isolates the iOS Settings responsiveness regression and its retry behavior.
+
+**Current catalog progress (scoped)**
+
+- **TH-010: ready (2026-11-03).** The build 209 iOS OFF change completed in 56 ms with relay synchronization reported around 0.1 s, m-294fb47c on 2026-11-02. Source fixtures also cover stalled providers and durable synchronization failure; full result set not attached.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-011 — Expired own Thoughts and their media remain available only in own history
+
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** TH-011.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Expiry keeps the author's own Thought rows and media for a newest-first own history read, while excluding expired rows from public/live reads and retry eligibility. Incoming expired Thoughts still follow their expiry policy. History hydration resolves retained media after reload. Deleting an expired own Thought removes its local row and owned file without retracting a friend's Thought or rebroadcasting an expired item.
+
+**Declared and scoped test evidence**
+
+- [test/core/database/helpers/thought_lifetime_queries_test.dart](../../test/core/database/helpers/thought_lifetime_queries_test.dart) — `Catalog-declared integration test for TH-011` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-011; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/phase2/load_posts_feed_media_test.dart](../../test/features/posts/phase2/load_posts_feed_media_test.dart) — `Catalog-declared unit test for TH-011` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-011; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/presentation/screens/you_page_screen_test.dart](../../test/features/posts/presentation/screens/you_page_screen_test.dart) — `Expired own history and pagination source assertions at lines 921 and 937` (widget).
+  - Real: You-page history rendering and pagination assertions.
+  - Faked: Fixture boundaries not fully reclassified; native/device/network proof is outside this scoped source read.
+  - Proves / registration: Source read at 83021072f: lines 921 and 937 assert expired own history and pagination. This is a scoped host assertion, not a fresh test run, a real elapsed 24-hour proof, media-custody certification or a device clock-restoration verdict.
+
+**Remaining gaps**
+
+- Only the listed source-read host assertion is rated here. Other clauses and native/transport/device boundaries retain the exact catalog-result limitations; a catalog PASS is not a new whole-journey coverage audit.
+
+**Coverage provenance:** New catalog row with the listed narrow source assertion read at the pinned source; no test rerun
+
+**Catalog contract note:** Source commit 0deddebe6. SQLite/repository boundaries are at thought_lifetime_queries_test.dart:71,102,207,222,252,280; hydration and newest-first filtering are at load_posts_feed_media_test.dart:24. Production API lib/features/posts/application/load_own_thought_history_use_case.dart is data-layer work. Do not infer a shipped history screen from that API. Partial device evidence .codex-test-logs/round9-device-20261102/youpage/. Run deterministic expiry logic with a controlled clock rather than delaying every host check for 24 hours; keep any actual device expiry observation separate and accurately dated.
+
+**Current catalog progress (scoped)**
+
+- **TH-011: passed (2026-11-10).** Passed 2026-11-10 as the owner-approved Pixel clock test (+25 h, m-cc8718df): friends' Thoughts left the Pixel live views; own expired photo Thought stayed in You history with tag, photo and hourglass; tag filter showed only own history; clock restore normal. Found BL-14 (restored clock does not bring back a friend's dropped Thought). Real 24 h fixture on the iPhone 11 runs as later confirmation.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-012 — Large photo Thoughts retain a useful iOS notification without changing canonical delivery
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** TH-012.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** When the full encrypted photo Thought exceeds the existing provider payload budget, the iOS push may use an encrypted minimal snapshot that the native extension validates against its authenticated route and trusted contact. A fitting full payload stays authoritative. Missing or invalid compact data uses the safe fallback. Android and unknown-platform behavior, canonical encrypted media delivery, inbox custody, retry identity, and acknowledgement remain unchanged.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/post_create_envelope_media_keys_test.dart](../../test/features/posts/improvement/post_create_envelope_media_keys_test.dart) — `Catalog-declared unit test for TH-012` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-012; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/post_create_envelope_post_id_test.dart](../../test/features/posts/improvement/post_create_envelope_post_id_test.dart) — `Catalog-declared unit test for TH-012` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-012; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/posts/improvement/post_delivery_runner_test.dart](../../test/features/posts/improvement/post_delivery_runner_test.dart) — `Catalog-declared unit test for TH-012` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-012; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [go-relay-server/thought_photo_compact_push_test.go](../../go-relay-server/thought_photo_compact_push_test.go) — `Catalog-declared unit test for TH-012` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-012; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [ios/RunnerTests/NotificationPreviewResolverTests.swift](../../ios/RunnerTests/NotificationPreviewResolverTests.swift) — `Catalog-declared unit test for TH-012` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-012; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** RED source e47c06e84 and fix f70b4ea84. Delivery snapshot fixture is at post_delivery_runner_test.dart:51; provider budget, full-payload preservation, fallback, platform preservation, and canonical custody fixtures are at thought_photo_compact_push_test.go:80,128,152,189,208. Native compact parity is at NotificationPreviewResolverTests.swift:3531 and broader authority rejection at :3714. Device report m-c261f9c7 records the fixed build 211 result; .codex-test-logs/b210-20261103/device/steps.txt exists as related campaign context, not as a substitute for the build 211 report. Preserve the first killed-ON photo-push failure alongside the rerun. This row extends TH-005; encrypted payload privacy remains mandatory.
+
+**Current catalog progress (scoped)**
+
+- **TH-012: ready (2026-11-03).** Killed-iPhone photo Thought push passed on build 211 at e104e3a6e, 2026-11-03, after an earlier failure: a compact 2499-byte frame reached the native extension. Wider fallback, custody, and compatibility assertions remain host evidence to attach.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-013 — The 3D Thought layout keeps content, replies, and send controls usable across content types
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** TH-013.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Short text, long text, voice, and photos share a stable Thought area, action bar, and Orbit position across supported screen sizes and both entry swipe directions. Reply keeps the intended recipient, exposes the top of clipped content above the keyboard, preserves photo framing instead of squeezing it, and keeps voice playback mounted. Empty Send remains disabled. A valid reply sends once, shows honest sending/failure/retry state, retains identity on retry, and stays in 3D until the user explicitly opens chat. Back closes the composer without leaving 3D; RTL and semantics preserve usable controls.
+
+**Declared and scoped test evidence**
+
+- [test/features/orbit/domain/orbit_depth_geometry_test.dart](../../test/features/orbit/domain/orbit_depth_geometry_test.dart) — `Catalog-declared unit test for TH-013` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/widgets/orbit_depth_space_test.dart](../../test/features/orbit/presentation/widgets/orbit_depth_space_test.dart) — `Catalog-declared widget test for TH-013` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/widgets/orbit_depth_answers_test.dart](../../test/features/orbit/presentation/widgets/orbit_depth_answers_test.dart) — `Catalog-declared widget test for TH-013` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/widgets/orbit_depth_media_test.dart](../../test/features/orbit/presentation/widgets/orbit_depth_media_test.dart) — `Catalog-declared widget test for TH-013` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/widgets/orbit_depth_surface_test.dart](../../test/features/orbit/presentation/widgets/orbit_depth_surface_test.dart) — `Catalog-declared widget test for TH-013` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/orbit/presentation/screens/orbit_wired_test.dart](../../test/features/orbit/presentation/screens/orbit_wired_test.dart) — `Catalog-declared widget test for TH-013` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-013; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Layout source 0bb5bfed5, text/voice clipping 79a6c0437 and 6ee40b728, voice mount d55957cf8, photo reply 717b4f08f, centred text e104e3a6e. Geometry/content matrix is at orbit_depth_space_test.dart:273,329,344,369, 414,447,512; send/retry, Back, RTL, and small targets are at orbit_depth_answers_test.dart:198,241,302,436,476,530,566,633. Current source sends reactions as quoted replies and suppresses a duplicate same-emoji tap for one visit (:223); do not replace that contract with an unimplemented reaction-toggle design. Device reports m-c261f9c7 and m-71f07b35 are scoped evidence, with paths .codex-test-logs/round9-device-20261102/bar3d/ and .codex-test-logs/b212-20261103/device/steps.txt. Build 212 empty-Send repeats passed, but one delayed-tap send was not reproduced twice; retain that observation without declaring a confirmed duplicate-send defect. Resolve the multi-photo framing requirement and its failing leg before whole-entry PASS. Do not attribute a crop baked into the submitted image to this viewer. Build 212 was assembled at reviewed branch head 7ff26930f, beyond the pinned main source; its empty-Send and photo-fill changes include 8ae0e80e7. Keep that newer device evidence separate from the main-source test references above and recheck the final chosen candidate.
+
+**Current catalog progress (scoped)**
+
+- **TH-013: ready (2026-11-03).** Build 211 text/voice Reply clipping improved, but build 212 evidence still reports multi-photo cropping in swipe-up and full-card views. Whole-layout PASS is not supported; voice playback continuity is also only partial on build 211.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-014 — Thought "Seen by" shows which friends viewed your Thought
+
+**Coverage:** unknown. **Execution:** catalog_passed. **Catalog:** TH-014.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Your own Thought card shows "No views yet" before anyone opens it; after a friend opens it, the open card changes to "Seen by 1 friend" without a reopen (within 60 s; observed about 4-5 s); tapping it lists the viewer's name; the count survives close and reopen; works in both directions; a delivered but unopened Thought stays "No views yet" for 90 s.
+
+**Declared and scoped test evidence**
+
+- [docker-ws/beta/seen_e2e.py](../../docker-ws/beta/seen_e2e.py) — `Catalog-declared e2e test for TH-014` (e2e).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for TH-014; not present in the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Appium driver on both iPhones (needs WDA sessions): python3 docker-ws/beta/seen_e2e.py .codex-test-logs/seen-<date>. Posts to one person only and cleans up even on failure. The control is on your own Thought card opened from Orbit, not on the You page; the You page row has no seen control (owner asked 2026-11-09).
+
+**Current catalog progress (scoped)**
+
+- **TH-014: passed (2026-11-09).** flutter_app device run 20:44 Berlin on physical iPhones 11 and 13 (dev 131 / 131 Hetzner preview): WORKS, all checks true, 0 leftover Thoughts. Evidence .codex-test-logs/seen-1109/run2/result.json.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-015 — You page shows "Seen by" and past Thoughts, and replacing a Thought keeps its history
+
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** TH-015.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** On the You page, your current Thought shows who saw it inline; past Thoughts are listed with an hourglass; replacing a Thought keeps the old one in history marked with a swap icon; Arabic text lays out right to left.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/presentation/screens/you_page_seen_test.dart](../../test/features/posts/presentation/screens/you_page_seen_test.dart) — `Seen-by count and lazy viewer loading source assertions at line 137` (widget).
+  - Real: You-page Seen-by rendering and lazy viewer loading assertions.
+  - Faked: Fixture boundaries not fully reclassified; native/device/network proof is outside this scoped source read.
+  - Proves / registration: Source read at 83021072f: line 137 asserts Seen by 80 and lazy viewer loading. It supports part of this composite catalog journey; replacing/history/native behavior is not all established by this host case. No fresh execution is claimed.
+
+**Remaining gaps**
+
+- Only the listed source-read host assertion is rated here. Other clauses and native/transport/device boundaries retain the exact catalog-result limitations; a catalog PASS is not a new whole-journey coverage audit.
+
+**Coverage provenance:** New catalog row with the listed narrow source assertion read at the pinned source; no test rerun
+
+**Catalog contract note:** Store build 131 item 9 (owner: "include it in 131"). Codex reviews done. The 24 h expiry leg is TH-011.
+
+**Current catalog progress (scoped)**
+
+- **TH-015: passed (2026-11-10).** iPhone check 2026-11-10 on build 240 (merge a7119f5da): PASS: chip, inline viewer list, hourglass, replacing a Thought keeps its history with the swap icon; Arabic checked on the Pixel. "See all" and its sheet are widget-test only.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### TH-016 — A Thought shared with picked people reaches only them
+
+**Coverage:** partial. **Execution:** catalog_passed. **Catalog:** TH-016.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A Thought posted to a picked set of friends is delivered to and shown for each picked friend, and a friend who was not picked never receives or sees it.
+
+**Declared and scoped test evidence**
+
+- [test/features/posts/improvement/thought_audience_sheet_test.dart](../../test/features/posts/improvement/thought_audience_sheet_test.dart) — `Picked audience and exact peer IDs after Share source assertions at line 137` (widget).
+  - Real: Thought audience selection and submitted peer-ID assertions.
+  - Faked: Fixture boundaries not fully reclassified; native/device/network proof is outside this scoped source read.
+  - Proves / registration: Source read at 83021072f: line 137 selects two friends, shares, and asserts PostAudienceKind.pickPeople and the exact peer IDs. It does not itself prove recipient transport, exclusion on another phone or native receipt. No fresh execution is claimed.
+
+**Remaining gaps**
+
+- Only the listed source-read host assertion is rated here. Other clauses and native/transport/device boundaries retain the exact catalog-result limitations; a catalog PASS is not a new whole-journey coverage audit.
+
+**Coverage provenance:** New catalog row with the listed narrow source assertion read at the pinned source; no test rerun
+
+**Catalog contract note:** Three phones: the poster, one picked friend and one friend who was not picked.
+
+**Current catalog progress (scoped)**
+
+- **TH-016: passed (2026-11-10).** Passed 2026-11-10 a-e on build 240 (= main b830bbe1f app code), Pixel + iPhone 13 + iPhone 11 on Wi-Fi: picked friend stored it in 1 s, non-picked phone had no receive event after 2 min foreground and after cold start, both directions (Pixel and iPhone author); 'to 1 person' on You page; all-friends repost replaced it. iPhone 13 receipt proven by log because overflow-arc seats show no bubble by design (m-549f1054).
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+### STICKERS — Sticker delivery, packs and reporting
+
+#### ST-001 — Stickers use ordinary direct and group delivery without losing a draft
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** ST-001.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A sticker selected in a direct chat or ordinary group creates one ordinary encrypted image attachment with its sticker identifier. It reaches the intended recipient or members, renders as a sticker after reload, and uses the Sticker chat-preview and quote label. An upload or admission failure preserves the existing typed text, staged photos, and failed-text retry.
+
+**Declared and scoped test evidence**
+
+- [test/features/stickers/sticker_attachment_wire_test.dart](../../test/features/stickers/sticker_attachment_wire_test.dart) — `Catalog-declared unit test for ST-001` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/128_media_attachment_sticker_id_test.dart](../../test/core/database/migrations/128_media_attachment_sticker_id_test.dart) — `Catalog-declared integration test for ST-001` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/stickers/sticker_receive_test.dart](../../test/features/stickers/sticker_receive_test.dart) — `Catalog-declared widget test for ST-001` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `Catalog-declared widget test for ST-001` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/groups/presentation/group_conversation_wired_test.dart](../../test/features/groups/presentation/group_conversation_wired_test.dart) — `Catalog-declared widget test for ST-001` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 for core send/receive and preservation of an existing unsent message. Source commits 28a6972d0 and 31d9826c1. Direct send/failure fixtures are at conversation_wired_test.dart:3811,4174,4223,7711; ordinary group send is at group_conversation_wired_test.dart:2074; receiver reload is at sticker_receive_test.dart:83,100. Device report m-78c47ad5, 2026-11-02, evidence .codex-test-logs/round9-device-20261102/stickers/. Build 211 sticker sanity in m-c261f9c7 is supporting smoke evidence, not a rerun of every preservation case. Protected groups have a separate contract ST-005.
+
+**Current catalog progress (scoped)**
+
+- **ST-001: ready (2026-11-03).** Device subset PASS on build 207, 2026-11-02: stickers from all three packs sent both ways in direct chat and to a three-member ordinary group. Persistence, failure preservation, and exact current-candidate host results still need attachment.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### ST-002 — Older builds and unknown sticker identifiers retain a usable image
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** ST-002.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A current sticker remains a usable ordinary image on a supported older build. A current receiver renders an unknown sticker identifier without requiring that pack locally, while an attachment without the sticker field remains an ordinary photo. The optional wire field and database migration preserve legacy attachment rows and survive reopen.
+
+**Declared and scoped test evidence**
+
+- [test/features/stickers/sticker_attachment_wire_test.dart](../../test/features/stickers/sticker_attachment_wire_test.dart) — `Catalog-declared unit test for ST-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/128_media_attachment_sticker_id_test.dart](../../test/core/database/migrations/128_media_attachment_sticker_id_test.dart) — `Catalog-declared integration test for ST-002` (integration).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/stickers/sticker_receive_test.dart](../../test/features/stickers/sticker_receive_test.dart) — `Catalog-declared widget test for ST-002` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Optional attachment field introduced by 033c526c2; receiver and send fixes are in 28a6972d0 and 31d9826c1. Source oracles are sticker_receive_test.dart:115,126 and 128_media_attachment_sticker_id_test.dart:42,57. Device report m-78c47ad5 covers one real older-build pairing at .codex-test-logs/round9-device-20261102/stickers/. It does not certify every historical build or a signed install-over. Use the actual supported baseline.
+
+**Current catalog progress (scoped)**
+
+- **ST-002: ready (2026-11-03).** Device subset PASS on build 207 against older build 201, 2026-11-02: the older peer receives a Photo fallback. Unknown identifiers and schema-upgrade preservation have source tests; exact execution evidence is not attached here.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### ST-003 — Sticker packs, recents, and Nujoom labels remain selectable and understandable
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** ST-003.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** The bundled pack list resolves every shipped asset and exposes the intended three packs in order. Selecting pack tabs or groups, and swiping between packs, keeps the correct sticker selection. Recent contains the newest 16 distinct stickers, updates immediately after send, and survives overlapping writes. Arabic layout mirrors appropriately. Sticker semantics distinguish similar art and announce printed words, including all Nujoom labels and the approved corrections to the two printed misprints.
+
+**Declared and scoped test evidence**
+
+- [test/features/stickers/domain/sticker_catalog_test.dart](../../test/features/stickers/domain/sticker_catalog_test.dart) — `Catalog-declared unit test for ST-003` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/stickers/presentation/sticker_panel_test.dart](../../test/features/stickers/presentation/sticker_panel_test.dart) — `Catalog-declared widget test for ST-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Source commits 855813f09, 01fce4e7d, and 062a28286. The current catalog fixture expects 133 stickers across three packs; Nujoom's 32 entries and printed-word corrections are checked at sticker_catalog_test.dart:82. Recents and concurrent writes are at sticker_panel_test.dart:182,201,272,332; accessibility and localization cases are at :82,93,126,214,235. Device reports m-78c47ad5 and m-294fb47c establish the scoped build 207/209 facts. An accessibility-tree check is not an actual TalkBack or VoiceOver run. Test-only pack filtering is a build-configuration check, not a reason to expose an unshipped pack in the catalog verdict.
+
+**Current catalog progress (scoped)**
+
+- **ST-003: ready (2026-11-03).** Build 207 pack use passed on 2026-11-02; build 209 Nujoom printed-word labels passed accessibility-tree inspection later that day. Full picker, recents, localization, and native screen-reader execution are not all evidenced by those reports.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### ST-004 — Sticker usage reporting respects consent and contains only approved daily counts
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** ST-004.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** An admitted send increments its approved sticker's local daily count once, without emitting a per-send event. Disabling or clearing diagnostics removes pending counts, wins against an earlier pending write, and prevents counts from reappearing after restart or re-enable. Unknown/private fields are rejected or erased. Closed-day snapshots retain their identity and values across upload retries and timezone changes. A tally failure cannot fail the user's otherwise admitted send.
+
+**Declared and scoped test evidence**
+
+- [test/core/diagnostics/sticker_usage_diagnostics_test.dart](../../test/core/diagnostics/sticker_usage_diagnostics_test.dart) — `Catalog-declared unit test for ST-004` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [go-relay-server/app_diagnostics_sticker_test.go](../../go-relay-server/app_diagnostics_sticker_test.go) — `Catalog-declared unit test for ST-004` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `Catalog-declared widget test for ST-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/groups/presentation/group_conversation_wired_test.dart](../../test/features/groups/presentation/group_conversation_wired_test.dart) — `Catalog-declared widget test for ST-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 for diagnostics consent and privacy, not the popularity metric itself. Source commits c5081ca8b, c4ee9442d, and 74e82e2f5. Detailed fixtures are sticker_usage_diagnostics_test.dart:76,128,163,182,213,287,398,455,481; Go schema compatibility/privacy is at app_diagnostics_sticker_test.go:5. Group admission versus rejection tally cases begin at group_conversation_wired_test.dart:2403. Preserve device partial status until a real closed-day snapshot and the consent/restart leg are observed; deterministic host clock tests can prove rollover logic without waiting for another whole day. Retain only redacted counters and paths as evidence.
+
+**Current catalog progress (scoped)**
+
+- **ST-004: ready (2026-11-03).** 2026-11-02 device report m-78c47ad5 records only partial usage-tally proof while waiting for the local day boundary. Source contains consent, rollover, retry, and privacy fixtures; no new execution is claimed.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### ST-005 — Protected-group sticker selection preserves the canonical protected-photo contract
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** ST-005.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Selecting a sticker in a protected group sends an ordinary protected photo through the existing protected-media custody path, with no sticker field in its canonical commitment and no persisted sticker identifier. A commitment carrying the extra sticker field is rejected. Admission succeeds or fails under the same authorization rules as protected photos, and usage counts record only an admitted send.
+
+**Declared and scoped test evidence**
+
+- [test/features/stickers/sticker_receive_test.dart](../../test/features/stickers/sticker_receive_test.dart) — `Catalog-declared unit test for ST-005` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/groups/presentation/group_conversation_wired_test.dart](../../test/features/groups/presentation/group_conversation_wired_test.dart) — `Catalog-declared widget test for ST-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for ST-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 for protected-media authorization and canonical commitment integrity. sticker_receive_test.dart:140 explicitly retains the strict legacy commitment parser; group_conversation_wired_test.dart:2210 exercises the outgoing fallback, and :2403 covers tally admission/rejection. Source 31d9826c1. Preserve the missing live proof; ordinary-group sticker PASS is not a substitute. Device owner should use an available supported linked topology and report unavailable exact hardware legs as N/A by policy, without declaring the host contract untested or the whole feature passed.
+
+**Current catalog progress (scoped)**
+
+- **ST-005: ready (2026-11-03).** Protected-group device leg was blocked in m-78c47ad5 on 2026-11-02 because its required linked-device setup was unavailable. Source fixtures cover the canonical manifest and ordinary-photo fallback; no live result is claimed.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+### PRIVATE_AI — Private translator, transcripts and model lifecycle
+
+#### PAI-001 — Private translator downloads only by choice and recovers honestly
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-001.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Download starts only after an explicit request on an eligible phone with enough space. Wi-Fi is the default; mobile-data consent is persisted and enforced on starts and resumes. Pause, retry, restart recovery and cancellation retain only valid owned state. Ready is published only after exact size and checksum verification; changed or corrupt model files cannot be reused. Closing the download sheet does not cancel the chosen download.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/model_delivery_core_test.dart](../../test/features/translate_preview/model_delivery_core_test.dart) — `Catalog-declared unit test for PAI-001` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/model_delivery_platform_test.dart](../../test/features/translate_preview/model_delivery_platform_test.dart) — `Catalog-declared unit test for PAI-001` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/private_translator_sheet_test.dart](../../test/features/translate_preview/private_translator_sheet_test.dart) — `Catalog-declared widget test for PAI-001` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_delivery_link_test.dart](../../test/features/translate_preview/translate_preview_delivery_link_test.dart) — `Catalog-declared widget test for PAI-001` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-001; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Core test anchors: model_delivery_core_test.dart:46,88,110,239,503,548,589,638,725. Native adapter anchors: model_delivery_platform_test.dart:101,216,240,286,741,888. Host adapters use controlled fakes and temporary files, so they do not prove actual OS background transfer or network transitions. Reuse the existing UI and real download on available supported iOS/Android targets; no new generic harness is needed. Invalid URLs/digests, backup exclusion, stale callback fencing and removal ownership stay in the causal host suite. This optional download is P1, not core message delivery.
+
+**Current catalog progress (scoped)**
+
+- **PAI-001: ready (2026-11-03).** Source/test audit at e104e3a6e; prepared for a fresh run, not an execution PASS. Delivery commits 9c9a22c45, 3713dad6a, ca9b2e311 and 96926e3b7 are present on main.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-002 — Memory admission prevents unsafe model loads and permits deliberate recovery
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-002.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=host; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Static platform capability and fresh cold-load memory checks fail closed before model or audio allocation. Temporary low headroom shows a retryable message without discarding a valid download. Warm model reuse follows its separate admission policy. Interrupted starts and typed resource exhaustion update durable safety state, display one appropriate notice and stop automatic repeated allocation. Settings retry clears the block only through the explicit recheck path; it cannot erase an active inference marker or start a download by itself.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/translation_capability_test.dart](../../test/features/translate_preview/translation_capability_test.dart) — `Catalog-declared unit test for PAI-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translation_memory_preflight_test.dart](../../test/features/translate_preview/translation_memory_preflight_test.dart) — `Catalog-declared unit test for PAI-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/model_delivery_core_test.dart](../../test/features/translate_preview/model_delivery_core_test.dart) — `Catalog-declared unit test for PAI-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/model_delivery_platform_test.dart](../../test/features/translate_preview/model_delivery_platform_test.dart) — `Catalog-declared unit test for PAI-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [android/app/src/test/kotlin/com/mknoon/app/GemmaPreviewChannelTest.kt](../../android/app/src/test/kotlin/com/mknoon/app/GemmaPreviewChannelTest.kt) — `Catalog-declared unit test for PAI-002` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_widgets_test.dart](../../test/features/translate_preview/translate_preview_widgets_test.dart) — `Catalog-declared widget test for PAI-002` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/private_translator_settings_section_test.dart](../../test/features/translate_preview/private_translator_settings_section_test.dart) — `Catalog-declared widget test for PAI-002` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-002; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Policy source: lib/features/translate_preview/translation_capability.dart:10-16,23,126; inference allocation gate: gemma_preview_service.dart:147. Commits 25fc8af9a, 89d3da9c2, 80ea5e4b3 and 623565b72 are present. Tests cover exact boundaries and native fact failures, rather than requiring unavailable low-RAM hardware. model_delivery_core_test.dart:790,812,873,899,1043,1080,1103,1168,1212,1273,1319 cover marker ordering, recovery and warm reuse. translate_preview_widgets_test.dart:65,136,182,208 covers startup handoff and localized notices. Reported device evidence: .codex-test-logs/round9-device-20261102/ram, m-78c47ad5; the upgrade-path notice gap is retained. Host results would prove the policy decisions, not peak-memory safety on every phone.
+
+**Current catalog progress (scoped)**
+
+- **PAI-002: ready (2026-11-03).** PARTIAL device evidence 2026-11-02, build 207, m-78c47ad5: unsupported Android clean install displayed memory refusal; eligible iOS loaded and translated. Upgrade-path notice was not observed within 84 seconds, cause unresolved. Full safety contract remains ready.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-003 — Settings accurately controls the private translator lifecycle
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-003.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=host; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** The Private translator row shows the current unsupported, not-downloaded, low-space, downloading, paused, failed or ready state and offers the matching action. Mobile-data choice persists without starting a download. Remove asks for confirmation; Cancel preserves the model and confirmed Remove releases only owned model data. The existing Settings page remains usable and unsupported phones do not expose a mobile-download switch.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/model_delivery_core_test.dart](../../test/features/translate_preview/model_delivery_core_test.dart) — `Catalog-declared unit test for PAI-003` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/model_delivery_platform_test.dart](../../test/features/translate_preview/model_delivery_platform_test.dart) — `Catalog-declared unit test for PAI-003` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/private_translator_settings_section_test.dart](../../test/features/translate_preview/private_translator_settings_section_test.dart) — `Catalog-declared widget test for PAI-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/private_translator_sheet_test.dart](../../test/features/translate_preview/private_translator_sheet_test.dart) — `Catalog-declared widget test for PAI-003` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-003; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Source: lib/features/translate_preview/private_translator_settings_section.dart:34,94,121,147. Widget cases at private_translator_settings_section_test.dart:40,55,75,96,122,131,138,171,187 cover the state actions and Settings placement. Model removal must retain memory-safety history, as pinned by model_delivery_core_test.dart:1022; do not interpret Remove as permission to erase saved chat previews or unrelated downloads. Native transfer/resource disposal remains part of PAI-001 device validation.
+
+**Current catalog progress (scoped)**
+
+- **PAI-003: ready (2026-11-03).** PARTIAL device evidence 2026-11-02, build 207, m-e4ee9aca: Android Settings > Media and storage contains Private translator with Get and mobile-data control. This corrects the earlier absent-row report; full lifecycle and unsupported-device Settings remain unverified.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-004 — Translation uses the app language and reports progress or failure honestly
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-004.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Eligible Thought text, photo captions and voice transcripts offer translation into the Mknoon app language. Same-language, unsupported-language and Arabizi suppression follow the current heuristic. Translation displays loading, then a result or retryable failure without altering or sending the original content. The selected prompt treats source content as data to translate rather than instructions to execute.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/language_heuristic_test.dart](../../test/features/translate_preview/language_heuristic_test.dart) — `Catalog-declared unit test for PAI-004` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/gemma_preview_prompts_test.dart](../../test/features/translate_preview/gemma_preview_prompts_test.dart) — `Catalog-declared unit test for PAI-004` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_widgets_test.dart](../../test/features/translate_preview/translate_preview_widgets_test.dart) — `Catalog-declared widget test for PAI-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_delivery_link_test.dart](../../test/features/translate_preview/translate_preview_delivery_link_test.dart) — `Catalog-declared widget test for PAI-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_persistence_test.dart](../../test/features/translate_preview/translate_preview_persistence_test.dart) — `Catalog-declared widget test for PAI-004` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-004; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Source inference path: lib/features/translate_preview/gemma_preview_service.dart:69. Widget anchors: translate_preview_widgets_test.dart:277,309,328,352. Prompt assertions are string-contract tests, not proof that the model always obeys them. On available supported targets, use the installed verified model and a small approved multilingual fixture set to check semantic preservation, app-language targeting, task-like source text and visible retry behavior. Parent-held Gemma benchmark results may be attached with their exact model/prompt identity; a benchmark is not signed-build UI proof. DC-024 separately covers sending a recording as text.
+
+**Current catalog progress (scoped)**
+
+- **PAI-004: ready (2026-11-03).** PARTIAL device evidence 2026-11-02, build 207, m-78c47ad5: eligible iOS translated successfully. Full language, failure and retry contract remains ready; source includes owner-selected prompt commits 376b311e6 and 1be4dbcf9.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-005 — Received voice messages can be transcribed locally without changing the recording
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-005.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** An eligible received direct voice message offers Transcribe; outgoing or disabled-feature messages do not. The original recording remains intact. Decoded audio is normalized to valid 16-kHz mono input, empty audio is rejected, and the UI shows progress, transcript or an honest failure. The transcript can then be translated. Real model evaluation checks speech in its original language and that the end of the recording is represented.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/language_heuristic_test.dart](../../test/features/translate_preview/language_heuristic_test.dart) — `Catalog-declared unit test for PAI-005` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/gemma_preview_prompts_test.dart](../../test/features/translate_preview/gemma_preview_prompts_test.dart) — `Catalog-declared unit test for PAI-005` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_conversation_test.dart](../../test/features/translate_preview/translate_preview_conversation_test.dart) — `Catalog-declared widget test for PAI-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_widgets_test.dart](../../test/features/translate_preview/translate_preview_widgets_test.dart) — `Catalog-declared widget test for PAI-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_delivery_link_test.dart](../../test/features/translate_preview/translate_preview_delivery_link_test.dart) — `Catalog-declared widget test for PAI-005` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-005; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Inference source: lib/features/translate_preview/gemma_preview_service.dart:90-136; audio normalization: lib/features/translate_preview/wav_16k_mono.dart. Exact anchors include language_heuristic_test.dart:110-159, translate_preview_conversation_test.dart:93,103 and translate_preview_widgets_test.dart:370,406. Fake-AI widgets and prompt tests do not establish recognition quality or a maximum supported recording duration. Reuse approved short and longer audio fixtures on available supported phones and record actual duration plus model/prompt identity; do not assume an unmeasured cutoff. DC-024 already owns recording-to-draft conversion.
+
+**Current catalog progress (scoped)**
+
+- **PAI-005: ready (2026-11-03).** Source/test audit at e104e3a6e; transcription prompt and empty-audio protections from eb90f9054 are present. No inference accuracy or long-recording PASS is inferred from widget fakes.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-006 — Saved translations and transcripts survive reopen without repeated inference
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-006.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=host; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** A completed received-voice transcript and its translation survive widget and database reopen without another model request. Thought text and photo captions reuse the correct saved translation. Results are keyed to their owner, source and target language; changing the app language hides the old result until requested and can reuse the correct saved target. Fresh database creation and migration preserve existing message and Thought data.
+
+**Declared and scoped test evidence**
+
+- [test/core/database/migrations/125_local_ai_previews_test.dart](../../test/core/database/migrations/125_local_ai_previews_test.dart) — `Catalog-declared unit test for PAI-006` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-006; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_persistence_test.dart](../../test/features/translate_preview/translate_preview_persistence_test.dart) — `Catalog-declared widget test for PAI-006` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-006; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** Source: lib/core/database/helpers/local_ai_preview_db_helpers.dart:86,97,151 and lib/features/translate_preview/translate_preview_persistence.dart:25. Database-backed widget anchors: translate_preview_persistence_test.dart:53,100,138,198; migration fixtures: 125_local_ai_previews_test.dart:16. The fixture proves reopen and migration behavior, not the encryption properties of a shipped native database. PAI-007 owns deletion, expiry and local-only output boundaries.
+
+**Current catalog progress (scoped)**
+
+- **PAI-006: ready (2026-11-03).** Source/test audit at e104e3a6e; persistence commits 944751740 and 8b40c632d are present. Real-database fixture tests exist; they were not rerun for this draft.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-007 — Local AI results obey message privacy and deletion boundaries
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-007.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=host; connectivity: As specified by the catalog contract and scoped result; offline: Not inferred; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Preview results remain local and cannot enter message wire JSON. A transcript is read or saved only for the matching live incoming direct attachment and message. Message deletion, hiding, chat deletion and disappearing-media expiry clear retained results, including after clock rollback; late inference completion cannot recreate them. Thought edit or deletion invalidates the old result and rejects a delayed save against stale source text.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/translate_preview_persistence_test.dart](../../test/features/translate_preview/translate_preview_persistence_test.dart) — `Catalog-declared unit test for PAI-007` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/core/database/migrations/125_local_ai_previews_test.dart](../../test/core/database/migrations/125_local_ai_previews_test.dart) — `Catalog-declared unit test for PAI-007` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_persistence_test.dart](../../test/features/translate_preview/translate_preview_persistence_test.dart) — `Catalog-declared widget test for PAI-007` (widget).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-007; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 because retained or transmitted derived private content would violate the original message policy. Source admission: lib/core/database/helpers/local_ai_preview_db_helpers.dart:12-83,97; migration triggers: lib/core/database/migrations/125_local_ai_previews.dart. Test anchors cover actual SQLite lifecycle and MediaAttachment.toJson exclusion, not only mock callbacks. This entry does not claim verified backup, filesystem encryption, or network capture. Explicit user-authorized sending through DC-024 is a separate action, never automatic preview forwarding.
+
+**Current catalog progress (scoped)**
+
+- **PAI-007: ready (2026-11-03).** Source/test audit at e104e3a6e; local-result retention and wire-exclusion regressions exist at translate_preview_persistence_test.dart:231,314,349,409. No new execution PASS claimed.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
+#### PAI-008 — Private inference works offline and does not upload message content
+
+**Coverage:** unknown. **Execution:** catalog_ready. **Catalog:** PAI-008.
+
+**Steps**
+
+1. Open the supported surface described by this catalog journey.
+2. Perform the catalog action under the stated conditions.
+3. Verify the expected result and the remaining scope below.
+
+**Conditions:** platform: Available targets; catalog runs_on=real_phone; connectivity: As specified by the catalog contract and scoped result; offline: Included only where stated in the catalog contract; app state: As specified by the catalog contract; input: Current catalog contract; recovery: As specified by the catalog contract.
+
+**Expected:** Once the model is verified and installed, translating text and transcribing a received recording execute on the device without a remote-inference fallback or content upload. Offline operation preserves the same user-visible workflow. Model-download traffic is distinguished from inference, and release diagnostics do not expose source text, recordings or generated results.
+
+**Declared and scoped test evidence**
+
+- [test/features/translate_preview/model_delivery_core_test.dart](../../test/features/translate_preview/model_delivery_core_test.dart) — `Catalog-declared unit test for PAI-008` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-008; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+- [test/features/translate_preview/translate_preview_persistence_test.dart](../../test/features/translate_preview/translate_preview_persistence_test.dart) — `Catalog-declared unit test for PAI-008` (unit).
+  - Real: Not classified by this refresh.
+  - Faked: Real/fake assertion boundary not reassessed in this documentation refresh.
+  - Proves / registration: Declared in /Volumes/CrucialX9/Kayan/testplan.yaml for PAI-008; tracked at the pinned source. Listing a path is not a coverage assertion or a passing execution.
+
+**Remaining gaps**
+
+- This refresh inventories the current catalog contract and declared test links; assertion quality has not been independently classified. Catalog status or file existence alone does not justify strong, partial or missing coverage.
+
+**Coverage provenance:** New catalog row; coverage quality unaudited
+
+**Catalog contract note:** P0 because the feature promises private processing of message content. Source refs: lib/features/translate_preview/gemma_preview_service.dart:31-33,69,90,199-224 and on_device_ai.dart:17. Source installs from the verified local file and uses the CPU backend; host tests cover mocked model admission and wire-result exclusion only. They do not prove network egress or the installed native runtime. Shortest remaining proof is an installed-model offline translation/transcription on each available shipped platform plus scoped release log/network observation during inference. Attach exact candidate/configuration and redact output; do not mark passed solely because airplane-mode inference works or source imports a local engine.
+
+**Current catalog progress (scoped)**
+
+- **PAI-008: ready (2026-11-03).** Source/test audit at e104e3a6e establishes a local-file LiteRT-LM path, but no current-candidate offline/network-observation evidence is attached. Device-owner verification remains required.
+
+Full catalog notes, including prior results, are retained in YAML `catalog_progress`. This badge does not certify every clause of the journey.
+
 ## Prioritized test plan
 
 Ranks order the next useful proofs; run only applicable available-target legs. Missing/partial coverage is not an instruction for this host-only agent to execute device work.
 
 <!-- ranked-gap-status:start -->
-Latest scoped P0 update: 2026-11-02, Hetzner build 201, main `15715c849`. `passed` records the reported PASS for the stated leg. `ready` means remaining proof is pending, including a recorded PARTIAL. `covered` marks prior scoped evidence or an existing runner. Individual row dates identify older results. These results do not certify a signed release candidate. Remote test traffic uses Hetzner. Owned local fixtures are permitted. AWS is reserved for owner pre-publish lanes.
+Current catalog progress refreshed 2026-11-10. Exact catalog identities may update preparation or scoped completion; related IDs and explicit signed/native/audio scope conflicts do not close a broader ranked requirement. Full prior status notes are retained as historical_progress in YAML.
 
 | Rank | Journey | Status | Date | Evidence / remaining scope |
 | --- | --- | --- | --- | --- |
-| 1 | MEDIA-002 | ready | 2026-11-02 | PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12. |
-| 2 | MEDIA-014 | passed | 2026-11-02 | PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14. |
-| 3 | RG-001 | blocked | 2026-11-01 | BLOCKED: needs the published-to-store signed upgrade; waits for the store build to be distributed. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [RG-001]. |
-| 4 | VC-014 | blocked | 2026-11-01 | PARTIAL: iOS suspended, terminated, locked and Pixel background (answer from shade) and Pixel process-killed all ring and connect; missed-ring retest 3 of 3 rang; Pixel locked BLOCKED (no lock screen, screen-off key forbidden); audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-014]. |
-| 5 | VC-019 | blocked | 2026-11-01 | PARTIAL: no mic before answer, mute stops and restarts the mic; received audio BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-019]. |
-| 6 | VC-025 | covered | 2026-11-01 | PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-025]. |
-| 7 | DC-002 | covered | 2026-10-26 | Existing 100-text/restart runner: integration_test/scripts/run_production_direct_ordered_replay.dart; no new native execution. |
-| 8 | GC-005 | covered | 2026-10-26 | Existing ordered/process-death runners documented in 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md; no new native execution. |
-| 9 | TRANSFER-011 | covered | 2026-11-01 | PASS: pre-move photo opens full on the new phone (photo only). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [TRANSFER-011]. Coverage is photo-only; audible migrated voice and missing-original recovery remain open under the broader journey. |
-| 10 | VC-026 | ready | 2026-11-01 | FAIL: minor: process loss ringing and active, remote deadline and fresh call PASS on iOS and Android; the killed side has no call history row for a call that was connected when killed (iOS and Android). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-026]. Fixed, recheck queued on main f8539a599 and 0c438261e; no post-fix device PASS claimed. |
-| 11 | CONTACT-001 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2. |
-| 12 | MEDIA-010 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19. |
-| 13 | MEDIA-003 | covered | 2026-10-26 | 10-22 reverse camera/caption/full iPhone viewer, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18; not signed-127 proof. |
-| 14 | MEDIA-035 | covered | 2026-11-01 | PASS: camera photo with caption opens full on every member. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-035]. |
-| 15 | VC-015 | blocked | 2026-11-01 | PARTIAL: both directions Pixel and iPhone connect and end cleanly; audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-015]. |
-| 16 | DC-011 | covered | 2026-11-01 | PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [DC-011]. |
-| 17 | CR-009 | blocked | 2026-11-01 | PARTIAL: Android scans iPhone PASS; iPhone scans Android BLOCKED (iPhone camera cannot see the emulator screen). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [CR-009]. |
-| 18 | GX-002 | ready | 2026-11-01 | FAIL: after admin change, remove and re-add, a member's leave never reaches one iPhone (still listed as admin, 3 members); no content leak. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [GX-002]. Fixed, recheck queued on main bf4089530; no post-fix device PASS claimed. |
-| 19 | VC-023 | blocked | 2026-11-01 | PARTIAL: always-relay switch works and calls connect with it; relay-only route not provable from release logs, TURN stop and start not redone (no server access). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-023]. |
-| 20 | MEDIA-018 | covered | 2026-11-01 | PASS: sender killed mid-send and receiver closed before download, one full playable video each time. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-018]. |
-| 21 | VC-024 | not_started | 2026-10-26 | Not started: sustained bidirectional audio/resource proof; only unavailable wired/Bluetooth accessory legs are N/A per owner; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024). |
-| 22 | GX-001 | n_a | 2026-10-26 | Owner reports eight concurrent targets unavailable; /Volumes/CrucialX9/Kayan/testplan.yaml (GX-001); N/A by available-target policy. |
+| 1 | MEDIA-002 | ready | 2026-11-02 | PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12. Catalog refresh 2026-11-10: DC-008=passed, DC-011=passed, DC-010=covered. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 2 | MEDIA-014 | passed | 2026-11-02 | PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14. Catalog refresh 2026-11-10: DC-003=passed, DC-008=passed, DC-011=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 3 | RG-001 | blocked | 2026-11-01 | BLOCKED: needs the published-to-store signed upgrade; waits for the store build to be distributed. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [RG-001]. Catalog refresh 2026-11-10: RG-001=passed. The catalog says passed but its note still says the published/store-signed upgrade is BLOCKED; retain the artifact-specific gap. |
+| 4 | VC-014 | ready | 2026-11-02 | Catalog VC-014: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Pixel process-killed callee rings in 2.9 s and connects from the shade; Pixel locked and audio content BLOCKED. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 5 | VC-019 | ready | 2026-11-02 | Catalog VC-019: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. no capture before answer, mute stops and unmute restarts capture, lifecycle keeps mute; received audio BLOCKED. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 6 | VC-025 | passed | 2026-11-01 | Catalog VC-025: Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock (.codex-test-logs/p0-phone-20261031/) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 7 | DC-002 | passed | 2026-10-27 | Catalog DC-002: PASS on main 457cda820, emulator pair, Hetzner, 10-27 ~08:35 CET: 100 online + 10 recipient-offline texts, both process restarts, exact order, exactly once (.codex-test-logs/dc002-hetzner-20261027T0105Z/campaigns-run-20261027T071630Z) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 8 | GC-005 | covered | 2026-10-26 | Catalog GC-005: Existing device runners prove it; fresh device run queued on store build 127 Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 9 | TRANSFER-011 | covered | 2026-11-01 | PASS: pre-move photo opens full on the new phone (photo only). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [TRANSFER-011]. Coverage is photo-only; audible migrated voice and missing-original recovery remain open under the broader journey. Catalog refresh 2026-11-10: DC-019=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 10 | VC-026 | passed | 2026-11-02 | Catalog VC-026: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. minor: Android killed side records a connected call as Missed voice call (2/2); iOS killed-side row now present. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS 2/2 (killed Pixel shows connected call with duration). Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 11 | CONTACT-001 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2. Catalog refresh 2026-11-10: CR-001=passed, CR-021=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 12 | MEDIA-010 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19. Catalog refresh 2026-11-10: DC-008=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 13 | MEDIA-003 | covered | 2026-10-26 | 10-22 reverse camera/caption/full iPhone viewer, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18; not signed-127 proof. Catalog refresh 2026-11-10: DC-008=passed, DC-011=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 14 | MEDIA-035 | covered | 2026-11-01 | PASS: camera photo with caption opens full on every member. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-035]. Catalog refresh 2026-11-10: GC-006=passed. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 15 | VC-015 | blocked | 2026-11-01 | PARTIAL: both directions Pixel and iPhone connect and end cleanly; audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-015]. Catalog refresh 2026-11-10: VC-015=passed. The catalog says passed but its note says audio content is BLOCKED; retain the intelligible-audio gap. |
+| 16 | DC-011 | covered | 2026-11-01 | PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [DC-011]. Catalog refresh 2026-11-10: DC-011=passed. The catalog reports scoped phone interoperability, but this ranked requirement additionally binds actual signed candidates; retain its prior scoped coverage status. |
+| 17 | CR-009 | ready | 2026-11-02 | Catalog CR-009: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Android scans iPhone PASS (10-31); iPhone scans Android BLOCKED, iPhone camera cannot see the Pixel screen, release has no paste route. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 18 | GX-002 | passed | 2026-11-02 | Catalog GX-002: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. after admin promotion, removal by the promoted admin and re-add, the re-added iPhone stays on the old key epoch: sends and receives nothing, never sees the later leave. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS (same key epoch through promote, remove, re-add, leave). Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 19 | VC-023 | blocked | 2026-11-01 | PARTIAL: always-relay switch works and calls connect with it; relay-only route not provable from release logs, TURN stop and start not redone (no server access). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-023]. Catalog refresh 2026-11-10: VC-023=passed. The catalog says passed but its note leaves actual route inspection and TURN stop/start unproved; retain the relay/no-direct-fallback gap. |
+| 20 | MEDIA-018 | covered | 2026-11-01 | PASS: sender killed mid-send and receiver closed before download, one full playable video each time. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-018]. Catalog refresh 2026-11-10: DC-004=passed, DC-018=not_started. These linked catalog rows are related scopes rather than an exact ranked-gap identity; do not close the broader requirement from their status alone. |
+| 21 | VC-024 | ready | 2026-11-01 | Catalog VC-024: Host tests on main a6d9275e5 (Astra ded98bd3f): virtual 30-min call, recovery timers, cleanup, second-contact admission (call_coordinator_test.dart, call_screens_test.dart; 57/57). Device soak runbook docs/testing/vc024-long-call-runbook.md (30-min call, RSS <=1.2x/+30MiB, cleanup after end) not yet run on phones. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
+| 22 | GX-001 | n_a | 2026-11-01 | Catalog GX-001: Phone campaign 2026-10-31/11-01 build 191 Hetzner: N/A: owner N/A (eight actors) (.codex-test-logs/p0-phone-20261031/) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress. |
 | 23 | NAV-006 | ready | 2026-11-01 | Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Approved automatic received-message order has 21 causal host cases and SQL/repository restart coverage; no manual membership editor required. Actual device/manual execution remains not_run. |
-
-DC-013 is outside this rank list; reuse `run_production_contact_delete.dart` (`kx0010`/`kx0011`) per `0d7e4f1f7:docs/testing/privacy-e2e-mcp.md`. No rank or journey rating is added.
 <!-- ranked-gap-status:end -->
 
 1. **MEDIA-002** (e2e): Reproduce actual iPhone camera Original and compressed image+caption to Android over relay-only online path; recipient opens full correct image and exact caption. Record actual MIME/encoded fixture privately, never assume HEIC. Owner-reported stock125 incident is not covered by synthetic-byte or caption-only widget tests.
@@ -9763,11 +12848,20 @@ DC-013 is outside this rank list; reuse `run_production_contact_delete.dart` (`k
 
 ## Planned / unreachable scope
 
-- **Full Posts authoring/feed/comments/pass-along/pin UI:** Implementation and tests exist, but rg PostsWired( lib finds only its declaration; AppShellTab supports Feed/Orbit only. Root post notification reveal only popUntil(first). Treat retained dormant UI as planned/unreachable until owner clarifies supported entry; audit the reachable post-notification route separately.
+- **Legacy Posts surfaces outside current Thoughts and You:** The blanket dormant-Posts assumption is superseded: current main exposes Thoughts authoring, audience selection and You history/viewers. The original broader PostsWired/comment/pin/pass-along surface is not certified by this bounded refresh; retain its historical scope separately from the current TH catalog rows.
 - **Unqualified group same-user convergence after phrase restore:** kMultiDeviceSyncEnabled defaults off; source explicitly describes full convergence as unfinished. Do not equate phrase restore with historical group/key hydration. Implemented flag-gated linked-group pieces remain in LINKED rows.
 - **Relay-to-direct call upgrade (VC-013):** Inactive vc02.dcutr_upgrade and negative symmetric-NAT capability have automationReady=false; future/conditional, not a current unconditional release gate.
 
 ## Commands and evidence
+
+This refresh uses the canonical YAML and current catalog, with the actual Mission Control reader as its format/source check. It launches no app test or device campaign. The prior commands below remain historical provenance; their ignored renderer files are no longer available.
+
+- `node /Users/I560101/.codex/investigations/journey-matrix-20261110/refresh-matrix.mjs /Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 /Volumes/CrucialX9/Kayan/testplan.yaml 2026-11-10T15:00:52Z /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-refresh-final.json`
+- `KAYAN_APP_DIR=/Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 node /Users/I560101/.codex/investigations/journey-matrix-20261110/validate-consumer.mjs /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-consumer-after.json 83021072ff9a6c5af8bb502765a2b5986ad6cf56`
+- `git diff --check`
+
+<details>
+<summary>Historical commands and evidence</summary>
 
 Commands below identify audit/validation work and the one fresh behavioral subset; the ignored handoff retains stdout and gate logs. Source navigation used targeted `rg`/bounded reads and actual assertion/fake/runner inspection. No workflow/SIMS inventory declaration is treated as a passing run.
 
@@ -9805,3 +12899,6 @@ Commands below identify audit/validation work and the one fresh behavioral subse
 - `git diff --check`
 
 Fresh behavioral stdout: `build/kayan-safe/astra-matrix/media-bytes.log` (4 passed, 0 skipped, exit 0). Dependency stdout: `pubget-attempt2.log` (exit 0). Held-before-launch evidence: `pubget.log`, `update-verifier.log`, `safety-support.log`. Static validation/change-plan and patch identity are retained separately in that handoff.
+
+
+</details>
