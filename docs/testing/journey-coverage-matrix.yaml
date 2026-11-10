@@ -1,6 +1,6 @@
 header:
   commit: 83021072ff9a6c5af8bb502765a2b5986ad6cf56
-  generated_at: 2026-11-10T15:00:52Z
+  generated_at: 2026-11-10T15:11:29Z
   status_refresh:
     date: 2026-11-10
     source_commit: 83021072ff9a6c5af8bb502765a2b5986ad6cf56
@@ -8,15 +8,15 @@ header:
     coverage_audit_generated_at: 2026-10-20T14:42:18Z
     scope: Current catalog progress and inventory refresh. All 295 historical ratings/tests are retained; 32 catalog rows are added, with three narrowly source-evidenced partial ratings and 29 unaudited ratings.
   commands:
-  - node /Users/I560101/.codex/investigations/journey-matrix-20261110/refresh-matrix.mjs /Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 /Volumes/CrucialX9/Kayan/testplan.yaml 2026-11-10T15:00:52Z /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-refresh-final.json
-  - KAYAN_APP_DIR=/Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 node /Users/I560101/.codex/investigations/journey-matrix-20261110/validate-consumer.mjs /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-consumer-after.json 83021072ff9a6c5af8bb502765a2b5986ad6cf56
+  - node /Users/I560101/.codex/investigations/journey-matrix-20261110/refresh-matrix.mjs /Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 /Volumes/CrucialX9/Kayan/testplan.yaml 2026-11-10T15:11:29Z /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-refresh-gap-correction.json
+  - KAYAN_APP_DIR=/Volumes/CrucialX9/flutter_app-astra-journey-matrix-20261110 node /Users/I560101/.codex/investigations/journey-matrix-20261110/validate-consumer.mjs /Users/I560101/.codex/investigations/journey-matrix-20261110/worker-consumer-gap-correction.json 83021072ff9a6c5af8bb502765a2b5986ad6cf56
   - git diff --check
   limitations:
-  - Current source/catalog refresh at 83021072ff9a6c5af8bb502765a2b5986ad6cf56, generated 2026-11-10T15:00:52Z. This is a bounded documentation refresh, not a new audit of all 295 historical journey assertions. Historical source/test evidence and ratings remain explicitly scoped to their original audit and later named updates.
+  - Current source/catalog refresh at 83021072ff9a6c5af8bb502765a2b5986ad6cf56, generated 2026-11-10T15:11:29Z. This is a bounded documentation refresh, not a new audit of all 295 historical journey assertions. Historical source/test evidence and ratings remain explicitly scoped to their original audit and later named updates.
   - The current catalog has 134 IDs. All are represented; historical GC-010 is retained as unlisted. There are 327 rows in 22 logical families. Newly cataloged rows do not replace similar but different older journeys.
   - execution values prefixed catalog_ are current testplan progress, not fresh execution by this refresh and not proof of every clause of a linked journey. catalog_mixed means linked IDs have different statuses; exact status/date/full note and current scope are preserved in catalog_progress. Historical audit execution remains in historical_audit_execution.
   - Coverage grades describe assertion quality, independently of catalog progress. Three new Thoughts rows have the specified source-read host subset and remain partial; the other 29 new rows are unknown because their assertion quality was not reassessed. A declared test path or manual PASS never automatically upgrades a coverage grade.
-  - Ranked-gap progress is synchronized only for exact catalog identities with no explicit scope conflict. Signed-upgrade, intelligible-audio and TURN/fallback gaps stay open when the catalog note still records a block or missing proof. Related catalog aliases are shown without closing broader gaps.
+  - "Ranked-gap status/date mirror canonical catalog progress for every exact catalog identity, including passed results whose notes retain blocked or narrower proof. Catalog passed is not an unqualified full-requirement or signed-artifact verdict: unchanged must_verify requirements, signed-upgrade, intelligible-audio, TURN/fallback and other scope limits remain explicit in the notes. Related aliases without an exact catalog identity retain their distinct ranked-gap state."
   - "Current Thoughts and You are reachable at this source: normal startup passes the post repository through FeedWired into OrbitWired; Thoughts and You default ON; Orbit opens ComposePostSheet(thoughtsOnly:true), the audience picker and YouPageScreen. This supersedes the original blanket dormant-Posts assumption. NOTIFY-010 retains a historical notification-fallback audit and does not certify every current ingress path."
   - "Historical audit note: P0 phone rerun 2026-11-02, Hetzner build 201, main 15715c849: latest verdicts for eleven journeys are recorded in their open_questions notes and the four matching ranked-gap records. Coverage ratings and older device_result evidence retain their original audit scope. Source: /Volumes/CrucialX9/flutter_app/.codex-test-logs/p0-rerun-20261101/results.tsv. Execution by flutter_app; Astra inspected the saved report only."
   - "Historical audit note: Scoped NAV-006 update (2026-10-30): owner approved automatic circle order by received-message timestamp, not manual membership editing. The 21 new cases produced 19 failures and 2 preservation passes on baseline b523feae9; the final six-file focused run passed 408 cases with zero failures/skips, including all 21 new cases. Analysis passed on 20 Dart files. Actual device/manual execution remains not_run. Evidence: .codex-test-logs/nav006-received-order-20261029/nav006-causal-red/result.json, nav006-green/result.json and nav006-analyze-current/result.json."
@@ -158,7 +158,7 @@ header:
     path: /Volumes/CrucialX9/Kayan/testplan.yaml
     sha256: d741e2e72ad6cb5764fc240f5a631de7b921a89989434c30baf0798c1c95af33
     row_count: 134
-    snapshot_at: 2026-11-10T15:00:52Z
+    snapshot_at: 2026-11-10T15:11:29Z
     authoritative_for: Catalog status, status_date and status_note only; not a whole-journey coverage grade
     retained_unlisted_historical_ids:
     - GC-010
@@ -20298,9 +20298,9 @@ gaps:
 - rank: 3
   journey_id: RG-001
   test_type: release
-  status: blocked
-  status_date: 2026-11-01
-  status_note: "BLOCKED: needs the published-to-store signed upgrade; waits for the store build to be distributed. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [RG-001]. Catalog refresh 2026-11-10: RG-001=passed. The catalog says passed but its note still says the published/store-signed upgrade is BLOCKED; retain the artifact-specific gap."
+  status: passed
+  status_date: 2026-11-02
+  status_note: "Catalog RG-001: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): BLOCKED. only candidate is debug-signed Hetzner 201; needs the published store-signed candidate to upgrade in place. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. The catalog note still says the published/store-signed upgrade is BLOCKED. Catalog passed is not an artifact-specific verification verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Bind actual previous published revision and exact candidate source/configuration/signed artifact; execute mandatory-plus-affected preservation and required available-target manual/device legs.
   why: Host/source or a later/debug artifact cannot certify the signed upgrade released to users.
   historical_progress:
@@ -20319,7 +20319,7 @@ gaps:
   test_type: e2e
   status: ready
   status_date: 2026-11-02
-  status_note: "Catalog VC-014: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Pixel process-killed callee rings in 2.9 s and connects from the shade; Pixel locked and audio content BLOCKED. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog VC-014: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Pixel process-killed callee rings in 2.9 s and connects from the shade; Pixel locked and audio content BLOCKED. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Correlate provider acceptance, actual OS wake/system presentation and answered audio in supported suspended/process-terminated/locked states on available platforms.
   why: Host admission/journal tests cannot prove platform courier/OS delivery and first-attempt missed ring remains evidence.
   historical_progress:
@@ -20338,7 +20338,7 @@ gaps:
   test_type: e2e
   status: ready
   status_date: 2026-11-02
-  status_note: "Catalog VC-019: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. no capture before answer, mute stops and unmute restarts capture, lifecycle keeps mute; received audio BLOCKED. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog VC-019: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. no capture before answer, mute stops and unmute restarts capture, lifecycle keeps mute; received audio BLOCKED. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Use causal received audio/content oracle before answer, while either peer muted and after hangup, with positive unmuted controls and lifecycle changes.
   why: Command counters and continuing RTP do not prove microphone content is absent.
   historical_progress:
@@ -20357,7 +20357,7 @@ gaps:
   test_type: e2e
   status: passed
   status_date: 2026-11-01
-  status_note: "Catalog VC-025: Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock (.codex-test-logs/p0-phone-20261031/) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog VC-025: Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock (.codex-test-logs/p0-phone-20261031/) Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Answer through actual locked system surface, attempt allowed/forbidden navigation and inspect visual/touch/accessibility history exposure until real unlock.
   why: Semantics-only modal tests and locked no-dial callback prove different boundaries.
   historical_progress:
@@ -20376,7 +20376,7 @@ gaps:
   test_type: e2e
   status: passed
   status_date: 2026-10-27
-  status_note: "Catalog DC-002: PASS on main 457cda820, emulator pair, Hetzner, 10-27 ~08:35 CET: 100 online + 10 recipient-offline texts, both process restarts, exact order, exactly once (.codex-test-logs/dc002-hetzner-20261027T0105Z/campaigns-run-20261027T071630Z) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog DC-002: PASS on main 457cda820, emulator pair, Hetzner, 10-27 ~08:35 CET: 100 online + 10 recipient-offline texts, both process restarts, exact order, exactly once (.codex-test-logs/dc002-hetzner-20261027T0105Z/campaigns-run-20261027T071630Z) Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Send100 numbered texts, kill/restart both sides at verified checkpoints, then assert every exact logical row/content/order once and later live delivery.
   why: Smaller bursts and unrelated routing criteria cannot prove this100-message restart contract.
   historical_progress:
@@ -20395,7 +20395,7 @@ gaps:
   test_type: e2e
   status: covered
   status_date: 2026-10-26
-  status_note: "Catalog GC-005: Existing device runners prove it; fresh device run queued on store build 127 Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog GC-005: Existing device runners prove it; fresh device run queued on store build 127 Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Kill actual owned sender at verified accepted-text custody checkpoint, reopen and verify same-ID delivery once while preserving membership-window authority.
   why: Current verified process-death campaign covers membership add/removal/re-add only.
   historical_progress:
@@ -20433,7 +20433,7 @@ gaps:
   test_type: e2e
   status: passed
   status_date: 2026-11-02
-  status_note: "Catalog VC-026: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. minor: Android killed side records a connected call as Missed voice call (2/2); iOS killed-side row now present. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS 2/2 (killed Pixel shows connected call with duration). Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog VC-026: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. minor: Android killed side records a connected call as Missed voice call (2/2); iOS killed-side row now present. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS 2/2 (killed Pixel shows connected call with duration). Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Kill actual ringing/active app; inspect owned native capture/call/card release or reconciliation, remote deadline and fresh call after restart.
   why: Graceful teardown and supplied native replay cannot stand for hard process loss.
   historical_progress:
@@ -20538,9 +20538,9 @@ gaps:
 - rank: 15
   journey_id: VC-015
   test_type: e2e
-  status: blocked
-  status_date: 2026-11-01
-  status_note: "PARTIAL: both directions Pixel and iPhone connect and end cleanly; audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-015]. Catalog refresh 2026-11-10: VC-015=passed. The catalog says passed but its note says audio content is BLOCKED; retain the intelligible-audio gap."
+  status: passed
+  status_date: 2026-11-02
+  status_note: "Catalog VC-015: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. both directions connect and end cleanly on 201; audio content BLOCKED (tooling). Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. The catalog note says audio content is BLOCKED. Catalog passed does not establish the remaining intelligible-audio proof. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Available iPhone/Android each initiate and answer, exchange intelligible audio and clean both native owners.
   why: Android-only RTP does not establish mixed-platform audible interoperability.
   historical_progress:
@@ -20557,9 +20557,9 @@ gaps:
 - rank: 16
   journey_id: DC-011
   test_type: e2e
-  status: covered
+  status: passed
   status_date: 2026-11-01
-  status_note: "PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [DC-011]. Catalog refresh 2026-11-10: DC-011=passed. The catalog reports scoped phone interoperability, but this ranked requirement additionally binds actual signed candidates; retain its prior scoped coverage status."
+  status_note: "Catalog DC-011: Phone campaign 2026-10-31/11-01 build 191 Hetzner: PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart (.codex-test-logs/p0-phone-20261031/) Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. The catalog reports scoped phone interoperability; this ranked requirement additionally binds actual signed candidates, which the catalog passed status does not certify. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Use actual available iOS/Android signed candidates for bidirectional text and full representative media with exact identity/caption/restart assertions.
   why: Shared host logic and single-platform campaigns do not certify parity.
   historical_progress:
@@ -20578,7 +20578,7 @@ gaps:
   test_type: e2e
   status: ready
   status_date: 2026-11-02
-  status_note: "Catalog CR-009: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Android scans iPhone PASS (10-31); iPhone scans Android BLOCKED, iPhone camera cannot see the Pixel screen, release has no paste route. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog CR-009: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. Android scans iPhone PASS (10-31); iPhone scans Android BLOCKED, iPhone camera cannot see the Pixel screen, release has no paste route. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Scan/add each platform in both directions, accept/decline and complete reciprocal key exchange then first real chat.
   why: Host lookup encryption/bridge substitutes do not establish native cross-platform contact protocol.
   historical_progress:
@@ -20597,7 +20597,7 @@ gaps:
   test_type: e2e
   status: passed
   status_date: 2026-11-02
-  status_note: "Catalog GX-002: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. after admin promotion, removal by the promoted admin and re-add, the re-added iPhone stays on the old key epoch: sends and receives nothing, never sees the later leave. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS (same key epoch through promote, remove, re-add, leave). Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog GX-002: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): FAIL. after admin promotion, removal by the promoted admin and re-add, the re-added iPhone stays on the old key epoch: sends and receives nothing, never sees the later leave. Fixed on origin/main 0e3d34447 (round 8). Device recheck 2026-11-02 on Hetzner build 204: PASS (same key epoch through promote, remove, re-add, leave). Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: With available mixed-platform group topology, exchange full text/media and apply add/remove/re-add with every entitled receiver checked.
   why: Small single-platform production cases and fake group policies leave full parity incomplete.
   historical_progress:
@@ -20614,9 +20614,9 @@ gaps:
 - rank: 19
   journey_id: VC-023
   test_type: e2e
-  status: blocked
-  status_date: 2026-11-01
-  status_note: "PARTIAL: always-relay switch works and calls connect with it; relay-only route not provable from release logs, TURN stop and start not redone (no server access). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-023]. Catalog refresh 2026-11-10: VC-023=passed. The catalog says passed but its note leaves actual route inspection and TURN stop/start unproved; retain the relay/no-direct-fallback gap."
+  status: passed
+  status_date: 2026-11-02
+  status_note: "Catalog VC-023: P0 phone rerun 2026-11-02, Hetzner build 201 (main 15715c849): PARTIAL. always-relay toggle and call PASS; route not readable (diagnostics copy empty), TURN stop/start needs server. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. The catalog note leaves actual route inspection and TURN stop/start unproved. Catalog passed does not establish the remaining relay/no-direct-fallback proof. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Enable user always-relay preference, observe actual selected route, remove TURN and prove no direct fallback, restore TURN and call again.
   why: Forced-relay build, saved boolean and fake outage policy are separate assertions.
   historical_progress:
@@ -20660,7 +20660,7 @@ gaps:
   test_type: e2e
   status: ready
   status_date: 2026-11-01
-  status_note: "Catalog VC-024: Host tests on main a6d9275e5 (Astra ded98bd3f): virtual 30-min call, recovery timers, cleanup, second-contact admission (call_coordinator_test.dart, call_screens_test.dart; 57/57). Device soak runbook docs/testing/vc024-long-call-runbook.md (30-min call, RSS <=1.2x/+30MiB, cleanup after end) not yet run on phones. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog VC-024: Host tests on main a6d9275e5 (Astra ded98bd3f): virtual 30-min call, recovery timers, cleanup, second-contact admission (call_coordinator_test.dart, call_screens_test.dart; 57/57). Device soak runbook docs/testing/vc024-long-call-runbook.md (30-min call, RSS <=1.2x/+30MiB, cleanup after end) not yet run on phones. Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: Specify duration/resource thresholds, hold real bidirectional audio and test only actually available output accessories with positive audio continuity.
   why: Short RTP/control runs and sampler unit tests cannot prove sustained audio/resource behavior.
   historical_progress:
@@ -20679,7 +20679,7 @@ gaps:
   test_type: e2e
   status: n_a
   status_date: 2026-11-01
-  status_note: "Catalog GX-001: Phone campaign 2026-10-31/11-01 build 191 Hetzner: N/A: owner N/A (eight actors) (.codex-test-logs/p0-phone-20261031/) Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
+  status_note: "Catalog GX-001: Phone campaign 2026-10-31/11-01 build 191 Hetzner: N/A: owner N/A (eight actors) (.codex-test-logs/p0-phone-20261031/) Status/date mirror the canonical catalog progress, not an unqualified full-requirement or signed-artifact verdict. Scope is the reported catalog leg; the unchanged must_verify text is not broadened into a new execution claim. Historical gap result retained in historical_progress."
   must_verify: When eight concurrent app targets are actually available, expand role binding and exact every-sender/every-receiver dedupe assertions.
   why: Five fake peers and three/four actual actors do not prove eight-member scale; unavailable topology N/A.
   historical_progress:
