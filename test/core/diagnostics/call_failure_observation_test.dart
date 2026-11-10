@@ -43,18 +43,38 @@ final class _History implements CallHistoryRepository {
 }
 
 final class _Executor implements CallEffectExecutor {
-  _Executor(this.target, this.error, {this.hang = false});
+  _Executor(this.target, this.error, {this.hang = false, this.beforeThrow});
   final CallEffectType target;
   final Object error;
   final bool hang;
+  final void Function()? beforeThrow;
   @override
   Future<CallEvent?> execute(
     CallEffect effect,
     CallSessionSnapshot snapshot,
   ) async {
     if (effect.type == target) {
+      beforeThrow?.call();
       if (hang) return Completer<CallEvent?>().future;
       throw error;
+    }
+    return null;
+  }
+}
+
+final class _SuccessfulFollowUpExecutor implements CallEffectExecutor {
+  _SuccessfulFollowUpExecutor({this.secondFailure});
+  final Object? secondFailure;
+  var completed = 0;
+  @override
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (effect.type == CallEffectType.startNegotiation) {
+      completed++;
+      if (completed > 1 && secondFailure != null) throw secondFailure!;
+      return _event(CallEventType.negotiationReady);
     }
     return null;
   }
@@ -135,6 +155,70 @@ void main() {
     expect(cleanups, 1);
     expect(history.rows, hasLength(1));
   }
+
+  test(
+    'follow-up checkpoint failure does not relabel a completed media effect',
+    () async {
+      final error = StateError('PRIVATE_CALL_FOLLOWUP_CHECKPOINT');
+      final executor = _SuccessfulFollowUpExecutor();
+      var checkpoints = 0;
+      final c = coordinator(
+        executor: executor,
+        persist: (_) async {
+          checkpoints++;
+          if (checkpoints == 4) throw error;
+        },
+      );
+      await c.dispatch(_event(CallEventType.place));
+      await c.dispatch(_event(CallEventType.outgoingInviteReady));
+      await expectLater(
+        c.dispatch(_event(CallEventType.remoteAccept)),
+        throwsA(same(error)),
+      );
+      expect(executor.completed, 1);
+      expect(checkpoints, 4);
+      expectTerminal(c, CallEndReason.mediaFailed);
+      await expectObservation(media: false, timeout: false);
+    },
+  );
+
+  test(
+    'nested effect failure is observed once at the failing execution',
+    () async {
+      final error = StateError('PRIVATE_CALL_INNER_EFFECT');
+      final executor = _SuccessfulFollowUpExecutor(secondFailure: error);
+      final c = coordinator(executor: executor);
+      await c.dispatch(_event(CallEventType.place));
+      await c.dispatch(_event(CallEventType.outgoingInviteReady));
+      await expectLater(
+        c.dispatch(_event(CallEventType.remoteAccept)),
+        throwsA(same(error)),
+      );
+      expect(executor.completed, 2);
+      expectTerminal(c, CallEndReason.mediaFailed);
+      await expectObservation(media: true, timeout: false);
+    },
+  );
+
+  test('admitted interruption fences a failing effect observation', () async {
+    late final CallCoordinator c;
+    late final Future<CallReduction> end;
+    c = coordinator(
+      executor: _Executor(
+        CallEffectType.startNegotiation,
+        StateError('PRIVATE_CALL_INTERRUPTED_EFFECT'),
+        beforeThrow: () {
+          end = c.dispatch(_event(CallEventType.end));
+        },
+      ),
+    );
+    await c.dispatch(_event(CallEventType.place));
+    await c.dispatch(_event(CallEventType.outgoingInviteReady));
+    await c.dispatch(_event(CallEventType.remoteAccept));
+    await end;
+    expectTerminal(c, CallEndReason.localHangup);
+    expect(await records(), isEmpty);
+  });
 
   for (final target in [
     CallEffectType.startNegotiation,
