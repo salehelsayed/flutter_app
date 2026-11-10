@@ -468,7 +468,10 @@ const _productionBootstrapNormalizedSha256 =
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
     // Thought history (build 131) wires the paged own-history database read
     // into the existing PostRepositoryImpl; no owner moves.
-    '17e5961f9bb933b48b63fb59bd55cabcb08e8ec019037f29188f3f9586a75e20';
+    // Item 9 (build 131): You page viewers and keep-replaced add three
+    // database callbacks to the same PostRepositoryImpl, 10 additive lines;
+    // no owner moves.
+    'eeae32842e128acf73d6479f6ab36b68982ee402c0fcf530202ff363d1852869';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -507,8 +510,9 @@ const _productionBootstrapNormalizedSha256 =
 // Local intro dismissal injects the existing settings store into the same
 // adapter; both reviewed notification callbacks remain exact.
 // The same paged own-history read leaves the historical callback exact.
+// The same item 9 viewer and keep-replaced callbacks leave it exact too.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '65d08005d9afa8fe257bd4d482da547b186fc86f924b94871844254e14a0237f';
+    '39a4f1028879811b4ce225c4fe38c9f805400d0f90003ac78e7af3885823b039';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
