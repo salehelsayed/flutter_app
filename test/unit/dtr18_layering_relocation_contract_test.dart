@@ -257,11 +257,15 @@ const _privacySha256 =
 // The iOS Thought switch uses the same coordinator for preference-only resend.
 // Normal registration preparation and all historical ownership stay in place.
 // Evidence: thought-switch-ios-stall-20261102/dtr18-pin-proof.json.
+// 2026-11-10: contact-request presentation diagnostics add only the helper
+// import and an observation after obtaining the existing showDialog future.
+// Inverting those hunks reproduces the complete b0fe24e3b owner source exactly;
+// resume/Posts relocation, dialog callbacks and awaited decisions stay intact.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
     // Round 9 combines the sticker and Thought-notification switch wiring.
-    '874a4e7453c5a29e4f95dd3a2627407bb4793de0e214b81648ec6c2b6ecbd8b4';
+    '88792e56dbdc9391880aa8d0948d89a8759af3453df14fde4926931b6ec1ebe6';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
