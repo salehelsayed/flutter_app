@@ -34,6 +34,9 @@ class UnreadOrbitIndicator extends StatefulWidget {
   final bool showSatellites;
   final bool showCountBadge;
 
+  final Color? thoughtStarColor;
+  final Widget? child;
+
   const UnreadOrbitIndicator({
     super.key,
     required this.unreadCount,
@@ -42,6 +45,8 @@ class UnreadOrbitIndicator extends StatefulWidget {
     this.accent = kUnreadAccent,
     this.showSatellites = true,
     this.showCountBadge = false,
+    this.thoughtStarColor,
+    this.child,
   });
 
   /// The app's green unread accent (the `#1DB954` family shared with
