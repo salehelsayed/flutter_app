@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -209,6 +211,96 @@ void main() {
   }
 
   group('FirstTimeExperienceWired', () {
+    for (final enabled in [true, false]) {
+      testWidgets(
+        'diagnostic route admission ${enabled ? 'opted-in' : 'opted-out'} '
+        'observes a real dialog once without changing decline',
+        (tester) async {
+          late Directory diagnosticDirectory;
+          late AppDiagnostics diagnostics;
+          final previousFlow = flowEventLoggingEnabled;
+          flowEventLoggingEnabled = false;
+          await tester.runAsync(() async {
+            diagnosticDirectory = await Directory.systemTemp.createTemp(
+              'fte-observation-',
+            );
+            diagnostics = await AppDiagnostics.installForTesting(
+              directory: diagnosticDirectory,
+              enabled: enabled,
+            );
+          });
+          addTearDown(() async {
+            contactRequestListener.dispose();
+            await diagnostics.dispose();
+            await diagnosticDirectory.delete(recursive: true);
+            flowEventLoggingEnabled = previousFlow;
+          });
+          identityRepo.seed(testIdentity);
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'test-sig',
+          };
+          const request = ContactRequestModel(
+            peerId: 'PRIVATE_DIALOG_PEER_CANARY',
+            publicKey: 'PRIVATE_DIALOG_KEY_CANARY',
+            rendezvous: 'PRIVATE_DIALOG_ROUTE_CANARY',
+            username: 'PRIVATE_DIALOG_NAME_CANARY',
+            signature: 'PRIVATE_DIALOG_SIGNATURE_CANARY',
+            receivedAt: '2026-01-01T00:00:00.000Z',
+          );
+          contactRequestRepo.seed([request]);
+          await tester.pumpWidget(buildFTE());
+          await pumpFrames(tester);
+          expect(find.text(request.username), findsOneWidget);
+          expect(find.text('Decline'), findsOneWidget);
+
+          Future<List<Map<String, dynamic>>> admitted() async {
+            final preview = (await tester.runAsync(diagnostics.exportPreview))!;
+            for (final secret in [
+              request.peerId,
+              request.publicKey,
+              request.rendezvous,
+              request.username,
+              request.signature,
+            ]) {
+              expect(preview, isNot(contains(secret)));
+            }
+            final records = ((jsonDecode(preview) as Map)['events'] as List)
+                .cast<Map<String, dynamic>>()
+                .where(
+                  (event) =>
+                      event['feature'] == 'contact_request' &&
+                      event['stage'] == 'present' &&
+                      event['outcome'] == 'ok',
+                )
+                .toList();
+            for (final event in records) {
+              expect(event.containsKey('traceId'), isFalse);
+              expect(event.containsKey('attemptId'), isFalse);
+              expect(event['values'], {
+                'consentClass': 'unknown',
+                'requestDisposition': 'pending',
+              });
+            }
+            return records;
+          }
+
+          expect(await admitted(), hasLength(enabled ? 1 : 0));
+          await pumpFrames(tester, count: 4);
+          expect(await admitted(), hasLength(enabled ? 1 : 0));
+          await tester.tap(find.text('Decline'));
+          await pumpFrames(tester);
+          expect(
+            (await tester.runAsync(
+              () => contactRequestRepo.getRequest(request.peerId),
+            ))!.status,
+            ContactRequestStatus.declined,
+          );
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+
     for (final missingIdentity in [true, false]) {
       testWidgets(
         'CR-022 first-run ${missingIdentity ? 'missing identity' : 'signing failure'} '
