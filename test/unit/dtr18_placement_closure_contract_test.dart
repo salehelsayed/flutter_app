@@ -253,8 +253,11 @@ const _relocations = <String, List<String>>{
     // Round 9 keeps expired own Thoughts in the same adapter; imports are
     // unchanged. Thought history (build 131) adds the paged own-history read
     // (loadExpiredOwnPosts with limit and offset) to the same adapter;
-    // placement and imports are unchanged.
-    '03be22e2c51de2ab36818c15ab88ce551ed4dc5346dbdde3edd2d20f8e4df74c',
+    // placement and imports are unchanged. You page viewers (store 131
+    // item 9) add the own-Thought view count, view list and replaced-Thought
+    // retire callbacks to the same adapter; placement and imports are
+    // unchanged.
+    'b959bd955ece9641fcc99bca1ef1fa86cbb1f55f0881ffd480ded5f38c926c30',
   ],
 };
 
