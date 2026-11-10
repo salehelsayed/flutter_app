@@ -94,6 +94,8 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
         let completionReason: String
         if let error = value as? FlutterError {
           completionReason = error.code == "bad_args" ? "invalid_request" : "unknown"
+        } else if accepted == false && call.method == "activateAudio" {
+          completionReason = "audio_activation_failed"
         } else {
           completionReason = accepted == false && stage == "answer" ? "native_answer_refused" : reason
         }
