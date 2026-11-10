@@ -62,8 +62,10 @@ final class TranslationPreferences {
   /// Account erasure: every chat switch goes, the language stays.
   Future<void> forgetChats() async {
     await _ready;
+    if (!await (await _preferences()).remove(_chatsKey)) {
+      throw StateError('translate_preview chat switches were not removed');
+    }
     _chats.value = const {};
-    await (await _preferences()).remove(_chatsKey);
   }
 
   Future<void> _load() async {
