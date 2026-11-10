@@ -4126,6 +4126,19 @@ and device deadlines remain unchanged. A composition contract checks both the
 selection and budget against the canonical workflow entry. Evidence:
 `full-workflow-budget-repair-001/`; owning verification remains pending.
 
+The legacy-binding workflow fixture
+`test_real_protected_full_and_reliability_cli_launch_every_configured_route`
+still shares fixed `closure-*` device lease IDs across worktrees. Overlapping
+workflow runs can therefore report `BLOCKED` synthetic routes despite using
+stubbed commands. Preserve the first failures, check the overlapping runs, and
+serialize this fixture across sessions before diagnosing an app regression.
+The unchanged fixture passed alone (1/0/0 in 39.220 seconds) after overlapping
+BL-11 and DTR-13 runs failed it. This is host orchestration evidence, not device
+proof. Source equality, overlap, and evidence limits are recorded in
+`/Users/I560101/.codex/investigations/scanner-wording-20261110/workflow-contention-proof-01.json`;
+the serial receipt is `workflow-serial-diagnostic-01.json` under the scanner
+worktree's `.codex-test-logs/scanner-wording-20261110/` directory.
+
 The generic `testNotificationTap`, `testColdNotificationTap`, and
 `testTapExistingNotification` full-suite entries use the existing simulator
 APNs fixture campaign's explicit `--native-selector` mode. It accepts only the

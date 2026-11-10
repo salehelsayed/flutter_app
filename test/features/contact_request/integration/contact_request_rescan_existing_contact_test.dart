@@ -381,7 +381,7 @@ void main() {
 
       await pair.rescanAAsB(tester);
 
-      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Contact already saved'), findsOneWidget);
       expect(pair.aReceived, hasLength(1));
       final result = await pair.aListener.processIncomingMessage(
         pair.aReceived.single,
@@ -433,7 +433,7 @@ void main() {
 
       await pair.rescanAAsB(tester);
 
-      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Contact already saved'), findsOneWidget);
       expect(pair.aReceived, hasLength(1));
       final result = await pair.aListener.processIncomingMessage(
         pair.aReceived.single,

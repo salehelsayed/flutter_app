@@ -571,7 +571,7 @@ void main() {
         expect(stored.publicKey, friend.publicKey);
         expect(await contactRepo.getContactCount(), 1);
         expect(await contactRequestRepo.getPendingRequests(), isEmpty);
-        expect(find.text('Added to your circle!'), findsOneWidget);
+        expect(find.text('Contact saved'), findsOneWidget);
         expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.lastStoreInInboxPeerId, friend.peerId);
         expect(p2pService.sendMessageCallCount, 0);

@@ -642,11 +642,6 @@ class QRScannerWired extends StatelessWidget {
               AppLocalizations.of(context)!.qr_already_in_circle,
               style: const TextStyle(color: Colors.amber, fontSize: 14),
             ),
-            const SizedBox(height: 4),
-            Text(
-              AppLocalizations.of(context)!.qr_contact_added_previously,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-            ),
             const SizedBox(height: 24),
             // OK button
             SizedBox(

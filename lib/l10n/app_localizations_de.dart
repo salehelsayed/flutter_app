@@ -3333,13 +3333,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get feed_connected => 'Verbunden';
 
   @override
-  String get qr_added_to_circle => 'Zu deinem Kreis hinzugefügt!';
+  String get qr_added_to_circle => 'Kontakt gespeichert';
 
   @override
   String get btn_ok => 'OK';
 
   @override
-  String get qr_already_in_circle => 'Bereits in deinem Kreis!';
+  String get qr_already_in_circle => 'Kontakt bereits gespeichert';
 
   @override
   String get qr_contact_added_previously =>

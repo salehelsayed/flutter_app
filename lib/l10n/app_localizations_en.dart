@@ -3265,13 +3265,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get feed_connected => 'Connected';
 
   @override
-  String get qr_added_to_circle => 'Added to your circle!';
+  String get qr_added_to_circle => 'Contact saved';
 
   @override
   String get btn_ok => 'OK';
 
   @override
-  String get qr_already_in_circle => 'Already in your circle!';
+  String get qr_already_in_circle => 'Contact already saved';
 
   @override
   String get qr_contact_added_previously => 'This contact was added previously';
