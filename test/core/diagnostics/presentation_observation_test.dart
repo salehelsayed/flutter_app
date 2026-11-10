@@ -127,7 +127,7 @@ void main() {
     expect(records.single['values'], {
       'requestDisposition': 'ignored',
       'consentClass': consent,
-      if (source != null) 'requestSource': source,
+      'requestSource': ?source,
     });
   }
 

@@ -90,3 +90,30 @@ void recordContactRequestDeclineDiagnostic({
     // A diagnostic sink cannot change the committed decision or its result.
   }
 }
+
+/// A route admission or an owned suppression decision, never a queue join.
+void recordContactRequestPresentationDiagnostic({
+  required bool admitted,
+  ContactRequestDiagnosticSource? source,
+  ContactRequestConsentClass consent = ContactRequestConsentClass.unknown,
+}) {
+  try {
+    AppDiagnostics.instance.record(
+      feature: 'contact_request',
+      stage: 'present',
+      outcome: admitted ? 'ok' : 'rejected',
+      values: {
+        'requestDisposition': admitted ? 'pending' : 'ignored',
+        'consentClass': consent.name,
+        if (source != null)
+          'requestSource': switch (source) {
+            ContactRequestDiagnosticSource.live => 'live',
+            ContactRequestDiagnosticSource.storedReplay => 'stored_replay',
+            ContactRequestDiagnosticSource.localAction => 'local_action',
+          },
+      },
+    );
+  } catch (_) {
+    // Observation cannot admit, suppress, or hold a presentation.
+  }
+}

@@ -297,6 +297,7 @@ void main() {
             ContactRequestStatus.declined,
           );
           await tester.pumpWidget(const SizedBox.shrink());
+          await tester.runAsync(diagnostics.dispose);
         },
       );
     }

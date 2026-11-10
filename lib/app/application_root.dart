@@ -40,6 +40,7 @@ import 'package:flutter_app/features/contact_request/data/repositories/contact_r
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
@@ -1003,7 +1004,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   return;
                 }
                 Future<void>? decision;
-                await showDialog<void>(
+                final route = showDialog<void>(
                   context: navigator.context,
                   barrierDismissible: false,
                   builder: (dialogContext) => ContactRequestDialog(
@@ -1018,6 +1019,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     },
                   ),
                 );
+                recordContactRequestPresentationDiagnostic(admitted: true);
+                await route;
                 await decision;
               },
           openConversation: ({required navigator, required contact}) =>
