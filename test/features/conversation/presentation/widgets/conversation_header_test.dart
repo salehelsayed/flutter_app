@@ -30,7 +30,6 @@ void main() {
           body: ConversationHeader(
             contactPeerId: '12D3KooWTestPeerId1234567890',
             contactUsername: 'Alice',
-            connectionDate: 'February 9, 2026',
             onBack: onBack ?? () {},
             onOverflow: onOverflow,
             onCall: onCall,
@@ -100,9 +99,10 @@ void main() {
       expect(marker.container, isTrue);
     });
 
-    testWidgets('displays connection date', (tester) async {
+    testWidgets('shows the name without a connection date', (tester) async {
       await tester.pumpWidget(buildTestWidget());
-      expect(find.text('Connected February 9, 2026'), findsOneWidget);
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.textContaining('Connected'), findsNothing);
     });
 
     testWidgets('shows back chevron icon', (tester) async {

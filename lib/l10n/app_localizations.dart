@@ -2446,12 +2446,6 @@ abstract class AppLocalizations {
   /// **'This app needs notification access to alert you of incoming messages'**
   String get perm_notifications;
 
-  /// No description provided for @connected_date.
-  ///
-  /// In en, this message translates to:
-  /// **'Connected {date}'**
-  String connected_date(String date);
-
   /// No description provided for @date_today.
   ///
   /// In en, this message translates to:
@@ -8269,6 +8263,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Download over mobile data'**
   String get translator_settings_mobile_data;
+
+  /// Settings row, chat panel row and language list title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate to'**
+  String get translate_to_title;
+
+  /// Settings row subtitle under Translate to.
+  ///
+  /// In en, this message translates to:
+  /// **'The language you read translations in.'**
+  String get translate_to_subtitle;
+
+  /// Language list entry and Settings value that follow the app language.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as the app'**
+  String get translate_to_same_as_app;
+
+  /// Language list section label.
+  ///
+  /// In en, this message translates to:
+  /// **'All languages'**
+  String get translate_to_all_languages;
+
+  /// Chat panel switch that shows translations under received messages.
+  ///
+  /// In en, this message translates to:
+  /// **'Show translation'**
+  String get translate_show_translation;
 
   /// Remove dialog title.
   ///

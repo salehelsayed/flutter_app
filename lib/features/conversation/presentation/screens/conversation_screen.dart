@@ -44,6 +44,10 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/translate_preview/language_heuristic.dart';
+import 'package:flutter_app/features/translate_preview/translate_to_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
@@ -650,9 +654,34 @@ class _ConversationScreenState extends State<ConversationScreen>
     }
   }
 
+  /// Read once: the delivery is app-wide and outlives this screen.
+  final ModelDeliveryController? _translator = translatePreviewEnabled
+      ? translatePreviewDelivery
+      : null;
+
+  void _onTranslationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The language this chat's received messages are translated into, or null
+  /// while "Show translation" is off or the translator is not ready.
+  String? _translateMessagesTo(BuildContext context) {
+    final prefs = translationPreferences;
+    if (_translator?.state.value is! ModelReady ||
+        !prefs.showsTranslationIn(widget.contactPeerId)) {
+      return null;
+    }
+    return translationTargetOf(context, prefs.target.value);
+  }
+
   @override
   void initState() {
     super.initState();
+    if (_translator case final translator?) {
+      translator.state.addListener(_onTranslationChanged);
+      translationPreferences.target.addListener(_onTranslationChanged);
+      translationPreferences.chats.addListener(_onTranslationChanged);
+    }
     _syncProtectedThumbnailProtection();
     widget.composerStateListenable?.addListener(_onComposerStateChanged);
     _composerExtraHeight = _composerExtraHeightFor(_currentComposerState);
@@ -886,6 +915,11 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   void dispose() {
+    if (_translator case final translator?) {
+      translator.state.removeListener(_onTranslationChanged);
+      translationPreferences.target.removeListener(_onTranslationChanged);
+      translationPreferences.chats.removeListener(_onTranslationChanged);
+    }
     widget.composerStateListenable?.removeListener(_onComposerStateChanged);
     _releaseProtectedThumbnailProtection();
     _privateMediaRouteObserver?.unsubscribe(this);
@@ -917,10 +951,15 @@ class _ConversationScreenState extends State<ConversationScreen>
                 ConversationHeader(
                   contactPeerId: widget.contactPeerId,
                   contactUsername: widget.contactUsername,
-                  connectionDate: widget.connectionDate,
                   onBack: widget.onBack,
                   onOverflow: widget.onOverflow,
                   onAvatarTap: widget.onAvatarTap,
+                  translateAction: translatePreviewEnabled
+                      ? ChatTranslateAction(
+                          peerId: widget.contactPeerId,
+                          delivery: _translator,
+                        )
+                      : null,
                   onCall: widget.onCall,
                   onCallRetry: widget.onCallRetry,
                   onSearch: widget.search?.open,
@@ -1136,6 +1175,8 @@ class _ConversationScreenState extends State<ConversationScreen>
         return '';
       }
     }
+
+    final translateMessagesTo = _translateMessagesTo(context);
 
     return ListView.builder(
       key: const ValueKey('messages'),
@@ -1648,6 +1689,14 @@ class _ConversationScreenState extends State<ConversationScreen>
               );
             }
 
+            final translateTo =
+                message.isIncoming &&
+                    !message.isDeleted &&
+                    displayText.isNotEmpty &&
+                    translateMessagesTo != null &&
+                    shouldOfferTranslate(displayText, translateMessagesTo)
+                ? translateMessagesTo
+                : null;
             LetterCard buildLetterCard({
               VoidCallback? onLongPress,
               void Function(int index)? onMediaLongPress,
@@ -1694,6 +1743,16 @@ class _ConversationScreenState extends State<ConversationScreen>
                     ? ValueKey('private-media-decorated-body-${message.id}')
                     : null,
                 privateContentSlot: privateContentSlotFactory?.call(),
+                textFooter: translateTo == null
+                    ? null
+                    : MessageTranslation(
+                        key: ValueKey('message-translation-${message.id}'),
+                        text: displayText,
+                        targetLanguage: translateTo,
+                        ai: translatePreviewAi,
+                        color: context.backgroundReadableColors.textSecondary,
+                        dividerColor: context.backgroundReadableColors.divider,
+                      ),
                 audioFooterBuilder:
                     translatePreviewEnabled &&
                         message.isIncoming &&

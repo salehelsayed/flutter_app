@@ -17,37 +17,46 @@ enum TextScript {
 }
 
 /// English names the benchmark prompt uses ("Arabic", "German", "English"),
-/// keyed by ISO 639-1 code, with the script each language is written in.
-const _languages = <String, (String, TextScript)>{
-  'ar': ('Arabic', TextScript.arabic),
-  'fa': ('Persian', TextScript.arabic),
-  'ur': ('Urdu', TextScript.arabic),
-  'en': ('English', TextScript.latin),
-  'de': ('German', TextScript.latin),
-  'fr': ('French', TextScript.latin),
-  'es': ('Spanish', TextScript.latin),
-  'it': ('Italian', TextScript.latin),
-  'pt': ('Portuguese', TextScript.latin),
-  'nl': ('Dutch', TextScript.latin),
-  'tr': ('Turkish', TextScript.latin),
-  'pl': ('Polish', TextScript.latin),
-  'sv': ('Swedish', TextScript.latin),
-  'id': ('Indonesian', TextScript.latin),
-  'ru': ('Russian', TextScript.cyrillic),
-  'uk': ('Ukrainian', TextScript.cyrillic),
-  'el': ('Greek', TextScript.greek),
-  'he': ('Hebrew', TextScript.hebrew),
-  'hi': ('Hindi', TextScript.devanagari),
-  'th': ('Thai', TextScript.thai),
-  'ko': ('Korean', TextScript.hangul),
-  'ja': ('Japanese', TextScript.kana),
-  'zh': ('Chinese', TextScript.han),
+/// keyed by ISO 639-1 code, with the language's own name and the script it is
+/// written in.
+const _languages = <String, (String, String, TextScript)>{
+  'ar': ('Arabic', 'العربية', TextScript.arabic),
+  'fa': ('Persian', 'فارسی', TextScript.arabic),
+  'ur': ('Urdu', 'اردو', TextScript.arabic),
+  'en': ('English', 'English', TextScript.latin),
+  'de': ('German', 'Deutsch', TextScript.latin),
+  'fr': ('French', 'Français', TextScript.latin),
+  'es': ('Spanish', 'Español', TextScript.latin),
+  'it': ('Italian', 'Italiano', TextScript.latin),
+  'pt': ('Portuguese', 'Português', TextScript.latin),
+  'nl': ('Dutch', 'Nederlands', TextScript.latin),
+  'tr': ('Turkish', 'Türkçe', TextScript.latin),
+  'pl': ('Polish', 'Polski', TextScript.latin),
+  'sv': ('Swedish', 'Svenska', TextScript.latin),
+  'id': ('Indonesian', 'Bahasa Indonesia', TextScript.latin),
+  'ru': ('Russian', 'Русский', TextScript.cyrillic),
+  'uk': ('Ukrainian', 'Українська', TextScript.cyrillic),
+  'el': ('Greek', 'Ελληνικά', TextScript.greek),
+  'he': ('Hebrew', 'עברית', TextScript.hebrew),
+  'hi': ('Hindi', 'हिन्दी', TextScript.devanagari),
+  'th': ('Thai', 'ไทย', TextScript.thai),
+  'ko': ('Korean', '한국어', TextScript.hangul),
+  'ja': ('Japanese', '日本語', TextScript.kana),
+  'zh': ('Chinese', '中文', TextScript.han),
 };
 
 /// The English language name for a locale's language code, or null when the
 /// preview has no prompt name for it.
 String? translateLanguageName(String languageCode) =>
     _languages[languageCode.toLowerCase()]?.$1;
+
+/// The language's name in that language ("Deutsch", "العربية"), or null when
+/// the translator does not support it.
+String? translateLanguageNativeName(String languageCode) =>
+    _languages[languageCode.toLowerCase()]?.$2;
+
+/// Every language the translator can translate into.
+Iterable<String> get translateLanguageCodes => _languages.keys;
 
 /// Whether to show "Translate" for [text] on a phone whose system language is
 /// [targetLanguageCode].
@@ -57,10 +66,10 @@ bool shouldOfferTranslate(String text, String targetLanguageCode) {
   final script = dominantScript(text);
   if (script == null) return false;
   if (script != TextScript.latin) {
-    return !_sameScriptFamily(script, target.$2);
+    return !_sameScriptFamily(script, target.$3);
   }
   if (looksLikeArabizi(text)) return false;
-  if (target.$2 != TextScript.latin) return true;
+  if (target.$3 != TextScript.latin) return true;
   final guess = guessLatinLanguage(text);
   return guess != targetLanguageCode.toLowerCase();
 }

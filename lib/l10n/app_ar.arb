@@ -595,14 +595,6 @@
   "perm_location": "يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين",
   "perm_local_network": "يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.",
   "perm_notifications": "يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة",
-  "connected_date": "تمت الإضافة في {date}",
-  "@connected_date": {
-    "placeholders": {
-      "date": {
-        "type": "String"
-      }
-    }
-  },
   "date_today": "اليوم",
   "date_yesterday": "أمس",
   "feed_collapse": "طي",
@@ -2235,6 +2227,11 @@
   "translator_resume": "استئناف",
   "translator_remove": "إزالة",
   "translator_settings_mobile_data": "التنزيل عبر بيانات الجوال",
+  "translate_to_title": "ترجمة إلى",
+  "translate_to_subtitle": "اللغة التي تقرأ بها الترجمات.",
+  "translate_to_same_as_app": "مثل لغة التطبيق",
+  "translate_to_all_languages": "كل اللغات",
+  "translate_show_translation": "إظهار الترجمة",
   "translator_remove_title": "إزالة الترجمة؟",
   "translator_remove_body": "يحرر {size}. يمكنك تنزيلها مجددًا في أي وقت.",
   "translator_size_gb": "{size} غيغابايت",
