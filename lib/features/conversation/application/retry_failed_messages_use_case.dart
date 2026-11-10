@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:clock/clock.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
@@ -208,6 +209,22 @@ Future<int> retryFailedMessages({
   bool retryDirectInboxCustody = true,
   DirectEventFanoutAuthoring? directEventFanout,
 }) async {
+  var missingKeyObserved = false;
+  void observeMissingKey() {
+    if (missingKeyObserved) return;
+    missingKeyObserved = true;
+    try {
+      AppDiagnostics.instance.record(
+        feature: 'message',
+        stage: 'recover',
+        outcome: 'blocked',
+        reason: 'recipient_key_missing',
+      );
+    } catch (_) {
+      // Observation cannot change deferred recovery or its retry authority.
+    }
+  }
+
   var authoredSucceeded = 0;
   if (messageRepo is AuthoredDirectTextIntentRepository) {
     final intents = messageRepo as AuthoredDirectTextIntentRepository;
@@ -221,7 +238,10 @@ Future<int> retryFailedMessages({
             if (contact == null || contact.isBlocked) continue;
             // Keep the authored intent until encryption can be prepared.
             final recipientKey = contact.mlKemPublicKey;
-            if (recipientKey == null || recipientKey.trim().isEmpty) continue;
+            if (recipientKey == null || recipientKey.trim().isEmpty) {
+              observeMissingKey();
+              continue;
+            }
             final result = await runWithAutomaticRecoveryNotificationPolicy(
               originalTimestamp: intent.timestamp,
               manualRetry: false,
@@ -270,6 +290,7 @@ Future<int> retryFailedMessages({
         manualRetry: false,
         retryDirectInboxCustody: retryDirectInboxCustody,
         loadFailedMessages: messageRepo.getFailedOutgoingMessages,
+        onMissingRecipientKey: observeMissingKey,
       );
 }
 
@@ -333,6 +354,7 @@ Future<int> _retryFailedMessagesInternal({
   required P2PService p2pService,
   required Bridge bridge,
   required Future<List<ConversationMessage>> Function() loadFailedMessages,
+  void Function()? onMissingRecipientKey,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
@@ -444,6 +466,7 @@ Future<int> _retryFailedMessagesInternal({
         manualRetry: manualRetry,
         retryDirectInboxCustody: retryDirectInboxCustody,
         storeExactCustody: storeExactCustody,
+        onMissingRecipientKey: onMissingRecipientKey,
       ),
     );
     if (retried) {
@@ -492,6 +515,7 @@ Future<bool> _retryFailedMessageCandidate({
   required bool manualRetry,
   required bool retryDirectInboxCustody,
   required StoreInAckCustodyInboxDetailedFn storeExactCustody,
+  void Function()? onMissingRecipientKey,
 }) async {
   if (!_retryInFlightMessageIds.add(msg.id)) {
     emitFlowEvent(
@@ -1204,6 +1228,7 @@ Future<bool> _retryFailedMessageCandidate({
     if (!manualRetry &&
         needsRecipientKey &&
         (mlKemPk == null || mlKemPk.trim().isEmpty)) {
+      onMissingRecipientKey?.call();
       return false;
     }
 

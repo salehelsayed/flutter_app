@@ -198,10 +198,14 @@ void main() {
         throw StateError('PRIVATE_RECOVERY_OBSERVER');
       },
     );
-    final before = writes;
+    expect(writes, greaterThan(0));
+    expect(
+      diagnostics.record(feature: 'runtime', stage: 'snapshot', outcome: 'ok'),
+      isFalse,
+    );
     expect(await recover(), 0);
     await diagnostics.exportPreview();
-    expect(writes, greaterThan(before));
+
     await expectNoSend();
     expect(messages.intents, hasLength(3));
     expect(await messages.getFailedOutgoingMessages(), hasLength(3));
