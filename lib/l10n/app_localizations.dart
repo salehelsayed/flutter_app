@@ -8551,6 +8551,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Checking for updates'**
   String get settings_updates_checking;
+
+  /// You page seen list, owner-approved 2026-11-10
+  ///
+  /// In en, this message translates to:
+  /// **'See all {count}'**
+  String you_seen_all(int count);
+
+  /// No description provided for @you_thought_replaced.
+  ///
+  /// In en, this message translates to:
+  /// **'replaced by a newer Thought'**
+  String get you_thought_replaced;
 }
 
 class _AppLocalizationsDelegate

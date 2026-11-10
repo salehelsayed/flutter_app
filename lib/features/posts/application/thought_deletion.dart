@@ -45,11 +45,12 @@ bool isNewerThought(PostModel candidate, PostModel previous) {
       (byCreatedAt == 0 && candidate.id.compareTo(previous.id) < 0);
 }
 
-/// One live thought per author: the [replacement] takes the author's
-/// older [thoughts] with it, so deleting it later cannot bring one of them
-/// back. A thought that cannot be removed is logged and does not keep the new
-/// one out; the expiry sweep gets another run at it within 24 h.
-Future<void> deleteReplacedThoughts({
+/// One live thought per author: the [replacement] ends the author's older
+/// [thoughts], so deleting it later cannot bring one of them back. The
+/// user's own stay in history with their viewers; a friend's copies go. A
+/// thought that cannot be ended is logged and does not keep the new one out;
+/// the expiry sweep gets another run at a friend's copy within 24 h.
+Future<void> dropReplacedThoughts({
   required PostRepository postRepo,
   required MediaFileManager? mediaFileManager,
   required Iterable<PostModel> thoughts,
@@ -58,15 +59,26 @@ Future<void> deleteReplacedThoughts({
   for (final thought in thoughts) {
     if (!isNewerThought(replacement, thought)) continue;
     try {
-      await deleteStoredThought(
-        postRepo: postRepo,
-        mediaFileManager: mediaFileManager,
-        postId: thought.id,
-      );
+      if (thought.isIncoming) {
+        await deleteStoredThought(
+          postRepo: postRepo,
+          mediaFileManager: mediaFileManager,
+          postId: thought.id,
+        );
+      } else {
+        await postRepo.retireReplacedThought(
+          thought.id,
+          replacedAt: replacement.createdAt,
+        );
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'POST_REPLACED_OLDER',
-        details: {'postId': thought.id, 'replacedBy': replacement.id},
+        details: {
+          'postId': thought.id,
+          'replacedBy': replacement.id,
+          'kept': !thought.isIncoming,
+        },
       );
     } catch (error) {
       emitFlowEvent(

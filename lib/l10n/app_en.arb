@@ -2601,5 +2601,8 @@
   "settings_app_updates": "App updates",
   "settings_updates_current": "Up to date",
   "settings_updates_unknown": "Status unavailable",
-  "settings_updates_checking": "Checking for updates"
+  "settings_updates_checking": "Checking for updates",
+  "you_seen_all": "See all {count}",
+  "@you_seen_all": {"description": "You page seen list, owner-approved 2026-11-10", "placeholders": {"count": {"type": "int"}}},
+  "you_thought_replaced": "replaced by a newer Thought"
 }

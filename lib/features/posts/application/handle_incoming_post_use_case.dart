@@ -200,7 +200,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
         return (HandleIncomingPostResult.superseded, incomingPost, null);
       }
       await postRepo.savePost(incomingPost);
-      await deleteReplacedThoughts(
+      await dropReplacedThoughts(
         postRepo: postRepo,
         mediaFileManager: mediaFileManager,
         thoughts: otherThoughts,

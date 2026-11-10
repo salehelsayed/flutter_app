@@ -156,6 +156,7 @@ import 'package:flutter_app/features/posts/presentation/screens/thought_card_scr
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/thought_view_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
 import 'package:flutter_app/features/posts/application/publish_thought_view_use_case.dart';
@@ -3759,6 +3760,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           builder: (routeContext) => YouPageScreen(
             load: (historyLimit, tag) =>
                 _loadYouPage(identity, historyLimit, tag),
+            loadViewers: (postId) => _loadYouViewers(identity, postId),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
@@ -3793,8 +3795,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<YouThought> _youThoughtResponses(
     PostRepository repository,
     PostModel post,
-    List<ContactModel> friends,
-  ) async {
+    List<ContactModel> friends, {
+    int seenCount = 0,
+  }) async {
     final messageRepo = widget.messageRepo;
     final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
         ? messageRepo as ThoughtReactionMessageRepository
@@ -3817,6 +3820,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         const <ThoughtWroteBack>[];
     return YouThought(
       post: post,
+      seenCount: seenCount,
       reactions: groupThoughtReactions(
         postId: post.id,
         replies: replies,
@@ -3832,6 +3836,39 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
       ],
     );
+  }
+
+  /// Who saw your Thought [postId], live or past, named only for the friends
+  /// it was sent to.
+  Future<List<YouViewer>> _loadYouViewers(
+    IdentityModel identity,
+    String postId,
+  ) async {
+    final repository = _thoughtPosts;
+    if (repository is! ThoughtViewRepository) return const [];
+    final recipients = {
+      for (final delivery in await repository!.getRecipientDeliveries(postId))
+        delivery.recipientPeerId,
+    };
+    final names = {
+      for (final contact in await widget.contactRepo.getAllContacts())
+        if (!contact.isBlocked &&
+            !contact.isArchived &&
+            recipients.contains(contact.peerId))
+          contact.peerId: contact.username,
+    };
+    final receipts = await (repository as ThoughtViewRepository)
+        .loadOwnThoughtViews(authorPeerId: identity.peerId, postId: postId);
+    return [
+      for (final receipt in receipts)
+        if ((names[receipt.viewerPeerId], DateTime.tryParse(receipt.viewedAt))
+            case (final name?, final viewedAt?))
+          YouViewer(
+            peerId: receipt.viewerPeerId,
+            name: name,
+            viewedAt: viewedAt,
+          ),
+    ];
   }
 
   /// Set once the note pointing at the You page's # has been seen.
@@ -3888,8 +3925,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           nowProvider: widget.thoughtNowProvider,
         );
 
-    Future<YouThought> responses(PostModel post) =>
-        _youThoughtResponses(repository, post, friends);
+    final shownPast = [
+      for (final post in past)
+        if (post.id != own?.id) post,
+    ];
+    final seen = switch (repository) {
+      final ThoughtViewRepository views => await views.countOwnThoughtViews(
+        authorPeerId: identity.peerId,
+        postIds: [?own?.id, for (final post in shownPast) post.id],
+      ),
+      _ => const <String, int>{},
+    };
+
+    Future<YouThought> responses(PostModel post) => _youThoughtResponses(
+      repository,
+      post,
+      friends,
+      seenCount: seen[post.id] ?? 0,
+    );
 
     final ownSurface = own == null
         ? null
@@ -3905,10 +3958,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       friendCount: friends.length,
       thought: ownSurface == null ? null : await responses(ownSurface),
       // The live and expired reads take the clock separately.
-      past: await Future.wait([
-        for (final post in past)
-          if (post.id != own?.id) responses(post),
-      ]),
+      past: await Future.wait([for (final post in shownPast) responses(post)]),
       tag: tag,
       tagCount: tag == null
           ? 0

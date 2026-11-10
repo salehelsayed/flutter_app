@@ -2281,5 +2281,7 @@
   "settings_app_updates": "App-Updates",
   "settings_updates_current": "Auf dem neuesten Stand",
   "settings_updates_unknown": "Status nicht verfügbar",
-  "settings_updates_checking": "Updates werden geprüft"
+  "settings_updates_checking": "Updates werden geprüft",
+  "you_seen_all": "Alle {count} anzeigen",
+  "you_thought_replaced": "durch einen neueren Gedanken ersetzt"
 }

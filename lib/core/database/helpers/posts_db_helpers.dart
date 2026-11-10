@@ -19,6 +19,13 @@ void _emitPostsDbTiming({
   );
 }
 
+/// A replaced own Thought keeps its row with its expiry pulled in to the
+/// replacement's creation. Stored times alone mark it, so a phone clock set
+/// back cannot make it live again.
+final _retiredOwnThought =
+    '(p.is_incoming = 0 AND COALESCE(julianday(p.expires_at) < '
+    "julianday(p.post_created_at, '+${ThoughtLifetime.duration.inSeconds} seconds'), 0))";
+
 Future<String> _localSharedToCountSubquery(Database db) async {
   final sharedToExpression = await _sharedToCountExpression(db);
   return '''
@@ -107,6 +114,16 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
       insertRow.remove('nearby_sender_accuracy_m');
     }
     await dbWriteTransaction(db, (txn) async {
+      // A save from a stale copy must not revive a replaced own Thought.
+      final retired = await txn.rawQuery(
+        'SELECT p.expires_at FROM posts p '
+        'WHERE p.post_id = ? AND $_retiredOwnThought',
+        [postId],
+      );
+      if (retired.isNotEmpty) {
+        insertRow['expires_at'] = retired.single['expires_at'];
+        insertRow['delivery_status'] = 'sent';
+      }
       // Keep same-item replay an UPDATE: REPLACE would delete local previews.
       final updated = await txn.update(
         'posts',
@@ -181,6 +198,7 @@ Future<Map<String, Object?>?> dbLoadPost(
           $localSharedToCountSubquery
         ) psc ON psc.post_id = p.post_id
         WHERE p.post_id = ? AND julianday(p.expires_at) > julianday(?)
+          AND NOT $_retiredOwnThought
         LIMIT 1
       ''',
       <Object?>[postId, nowIso],
@@ -257,6 +275,7 @@ Future<List<Map<String, Object?>>> dbLoadPostsByIds(
         ) psc ON psc.post_id = p.post_id
         WHERE p.post_id IN ($placeholders)
           AND julianday(p.expires_at) > julianday(?)
+          AND NOT $_retiredOwnThought
       ''',
       <Object?>[...uniquePostIds, nowIso],
     );
@@ -322,6 +341,7 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(
       ) psc ON psc.post_id = p.post_id
       WHERE COALESCE(fs.is_hidden, 0) = 0
         AND julianday(p.expires_at) > julianday(?)
+        AND NOT $_retiredOwnThought
       ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
     ''',
       <Object?>[nowIso],
@@ -412,6 +432,7 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
       WHERE p.is_incoming = 0
         AND p.delivery_status IN ('sending', 'partial', 'failed')
         AND julianday(p.post_created_at) > julianday(?)
+        AND NOT $_retiredOwnThought
       ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
     ''',
     <Object?>[cutoff],
@@ -476,7 +497,7 @@ Future<List<Map<String, Object?>>> _loadExpiredPosts(
       LEFT JOIN (
         $localSharedToCountSubquery
       ) psc ON psc.post_id = p.post_id
-      WHERE julianday(p.expires_at) <= julianday(?)
+      WHERE (julianday(p.expires_at) <= julianday(?) OR $_retiredOwnThought)
         ${ownOnly ? 'AND p.is_incoming = 0' : ''}
       $pageClause
     ''',
@@ -484,18 +505,41 @@ Future<List<Map<String, Object?>>> _loadExpiredPosts(
   );
 }
 
+/// Ends an own Thought its author replaced: the expiry moves in to
+/// [replacedAt] and unfinished sends stop. Viewers, reactions, recipients,
+/// queued retractions and media stay, so the Thought remains in history.
+Future<void> dbRetireReplacedThought(
+  Database db,
+  String postId,
+  String replacedAt,
+) => dbWriteTransaction(db, (txn) async {
+  await txn.rawUpdate(
+    "UPDATE posts SET expires_at = ?, delivery_status = 'sent' "
+    'WHERE post_id = ? AND is_incoming = 0 '
+    'AND julianday(expires_at) > julianday(?)',
+    <Object?>[replacedAt, postId, replacedAt],
+  );
+  await _deleteUnsentFollowOns(txn, postId);
+  await _deleteRequiredPostRows(txn, 'post_pending_child_events', postId);
+  await _deleteRequiredPostRows(txn, 'post_media_upload_recovery', postId);
+});
+
+/// Retractions must survive their thought so delivery can retry.
+Future<void> _deleteUnsentFollowOns(Transaction txn, String postId) async {
+  await txn.rawDelete(
+    'DELETE FROM post_follow_on_outbox_recipient_deliveries WHERE event_id IN (SELECT event_id FROM post_follow_on_outbox_events WHERE post_id = ? AND event_type != ?)',
+    <Object?>[postId, 'post_retract'],
+  );
+  await txn.delete(
+    'post_follow_on_outbox_events',
+    where: 'post_id = ? AND event_type != ?',
+    whereArgs: <Object?>[postId, 'post_retract'],
+  );
+}
+
 Future<void> dbDeletePostCascade(Database db, String postId) async {
   await dbWriteTransaction(db, (txn) async {
-    // Retractions must survive removal of their thought so delivery can retry.
-    await txn.rawDelete(
-      'DELETE FROM post_follow_on_outbox_recipient_deliveries WHERE event_id IN (SELECT event_id FROM post_follow_on_outbox_events WHERE post_id = ? AND event_type != ?)',
-      <Object?>[postId, 'post_retract'],
-    );
-    await txn.delete(
-      'post_follow_on_outbox_events',
-      where: 'post_id = ? AND event_type != ?',
-      whereArgs: <Object?>[postId, 'post_retract'],
-    );
+    await _deleteUnsentFollowOns(txn, postId);
     await _deleteRequiredPostRows(txn, 'post_comment_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_comments', postId);

@@ -355,7 +355,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   }
   if (otherOwnThoughts.isNotEmpty) {
     // Friends the new thought reaches drop the old one when it arrives; the
-    // rest are asked to now, before the old thought's recipient rows go.
+    // rest are asked to now. The old thought stays here as history.
     final reached = {
       for (final recipient in resolvedRecipients) recipient.contact.peerId,
     };
@@ -369,7 +369,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         now: now,
       );
     }
-    await deleteReplacedThoughts(
+    await dropReplacedThoughts(
       postRepo: postRepo,
       mediaFileManager: mediaFileManager ?? MediaFileManager(),
       thoughts: otherOwnThoughts,

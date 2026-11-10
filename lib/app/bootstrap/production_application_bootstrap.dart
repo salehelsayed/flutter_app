@@ -2269,6 +2269,14 @@ final class ProductionApplicationBootstrap
 
     final postRepository = PostRepositoryImpl(
       dbLoadThoughtViews: (postId) => dbLoadThoughtViews(db, postId),
+      dbCountOwnThoughtViews: ({required authorPeerId, required postIds}) =>
+          dbCountOwnThoughtViews(
+            db,
+            authorPeerId: authorPeerId,
+            postIds: postIds,
+          ),
+      dbLoadOwnThoughtViews: ({required authorPeerId, required postId}) =>
+          dbLoadOwnThoughtViews(db, authorPeerId: authorPeerId, postId: postId),
       dbQueueThoughtView:
           ({
             required receipt,
@@ -2301,6 +2309,8 @@ final class ProductionApplicationBootstrap
       dbLoadExpiredOwnPosts: (nowIso, {limit, offset = 0}) =>
           dbLoadExpiredOwnPosts(db, nowIso, limit: limit, offset: offset),
       dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
+      dbRetireReplacedThought: (postId, replacedAt) =>
+          dbRetireReplacedThought(db, postId, replacedAt),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),
       dbLoadRecipientDeliveries: (postId) =>
