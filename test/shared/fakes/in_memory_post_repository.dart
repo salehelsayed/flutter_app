@@ -71,6 +71,7 @@ class InMemoryPostRepository implements PostRepository {
   /// Own thoughts the author replaced: out of live reads, kept in history.
   final Set<String> _retiredIds = <String>{};
 
+  @override
   Future<void> retireReplacedThought(
     String postId, {
     required String replacedAt,

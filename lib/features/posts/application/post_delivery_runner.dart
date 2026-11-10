@@ -100,10 +100,14 @@ class PostDeliveryRunner {
   }
 
   Future<(SendPostResult, PostModel)> execute(CreatedLocalPost created) async {
-    bool isEligible() => !ThoughtLifetime.isExpired(
-      DateTime.parse(created.post.createdAt),
-      nowProvider?.call() ?? DateTime.now(),
-    );
+    // Set once the stored row is gone or replaced: queued recipients stop.
+    var ended = false;
+    bool isEligible() =>
+        !ended &&
+        !ThoughtLifetime.isExpired(
+          DateTime.parse(created.post.createdAt),
+          nowProvider?.call() ?? DateTime.now(),
+        );
     if (!isEligible()) return (SendPostResult.sendFailed, created.post);
     _PostDeliveryProgress? progress;
     final deliveryStopwatch = Stopwatch()..start();
@@ -128,9 +132,10 @@ class PostDeliveryRunner {
           // Re-read the mark: switching Thoughts metrics off mid-fanout marks
           // the stored row, and the remaining recipients must carry it.
           final stored = await postRepo.getPost(created.post.id);
+          if (stored == null) ended = true;
           return _buildWireEnvelope(
             post: created.post,
-            metricsOptOut: (stored ?? created.post).metricsOptOut,
+            metricsOptOut: stored?.metricsOptOut ?? created.post.metricsOptOut,
             bridge: bridge,
             recipient: recipient.contact,
             nearbyDistanceM: recipient.nearbyDistanceM,
