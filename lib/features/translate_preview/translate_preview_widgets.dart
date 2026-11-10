@@ -222,6 +222,7 @@ class TranslatePreview extends StatelessWidget {
 class MessageTranslation extends StatelessWidget {
   const MessageTranslation({
     super.key,
+    required this.account,
     required this.text,
     required this.targetLanguage,
     required this.ai,
@@ -229,6 +230,9 @@ class MessageTranslation extends StatelessWidget {
     this.dividerColor,
   });
 
+  /// The signed-in account's peer ID, so one account never reads another's
+  /// cached translations.
+  final String? account;
   final String text;
   final String targetLanguage;
   final OnDeviceAi ai;
@@ -238,7 +242,7 @@ class MessageTranslation extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final key = (text, targetLanguage);
+    final key = (account, text, targetLanguage);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -276,7 +280,7 @@ class MessageTranslation extends StatelessWidget {
 
 /// Chat translations stay in memory only: a stored copy would outlive a
 /// message deleted for everyone.
-final _messageTranslations = <(String, String), String>{};
+final _messageTranslations = <(String?, String, String), String>{};
 
 /// A small "Transcribe" link under a received voice message, then the
 /// transcript with "See translation" offered on it.

@@ -1747,6 +1747,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                     ? null
                     : MessageTranslation(
                         key: ValueKey('message-translation-${message.id}'),
+                        account: widget.ownPeerId,
                         text: displayText,
                         targetLanguage: translateTo,
                         ai: translatePreviewAi,
