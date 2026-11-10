@@ -34,9 +34,29 @@ void main() {
         'is_incoming': incoming ? 1 : 0,
       });
     }
+    for (final (peer, blocked, archived) in [
+      ('amira', 0, 0),
+      ('bilal', 0, 0),
+      ('cara', 1, 0),
+      ('dina', 0, 1),
+    ]) {
+      await db.insert('contacts', {
+        'peer_id': peer,
+        'public_key': 'pk-$peer',
+        'rendezvous': 'rv-$peer',
+        'username': peer,
+        'signature': 'sig-$peer',
+        'scanned_at': _created,
+        'is_blocked': blocked,
+        'is_archived': archived,
+      });
+    }
     for (final (post, viewer, at) in [
       ('own-live', 'amira', '2026-10-27T10:05:00.000Z'),
       ('own-live', 'bilal', '2026-10-27T10:09:00.000Z'),
+      ('own-live', 'cara', '2026-10-27T10:10:00.000Z'),
+      ('own-live', 'dina', '2026-10-27T10:11:00.000Z'),
+      ('own-live', 'gone-friend', '2026-10-27T10:12:00.000Z'),
       ('own-expired', 'amira', '2026-10-27T11:00:00.000Z'),
       ('incoming', 'me', '2026-10-27T10:30:00.000Z'),
     ]) {
@@ -49,16 +69,19 @@ void main() {
   });
   tearDown(() => db.close());
 
-  test('one count per own Thought, live and expired, never incoming', () async {
-    expect(
-      await dbCountOwnThoughtViews(
-        db,
-        authorPeerId: 'me',
-        postIds: ['own-live', 'own-expired', 'own-unseen', 'incoming'],
-      ),
-      {'own-live': 2, 'own-expired': 1},
-    );
-  });
+  test(
+    'one count per own Thought, live and expired, never incoming, only friends the list can name',
+    () async {
+      expect(
+        await dbCountOwnThoughtViews(
+          db,
+          authorPeerId: 'me',
+          postIds: ['own-live', 'own-expired', 'own-unseen', 'incoming'],
+        ),
+        {'own-live': 2, 'own-expired': 1},
+      );
+    },
+  );
 
   test('counts only the posts asked for', () async {
     expect(
