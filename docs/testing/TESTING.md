@@ -10431,6 +10431,15 @@ visible and cannot become an ordinary first-attempt PASS.
   result exists. A newer refresh generation cannot be satisfied by an older
   in-flight grant or denial. Account cutover, disable and disposal fence both
   paths; automatic token/timer retries keep their existing no-reprompt policy.
+  Resume and automatic relay recovery must also retain passive permission-read
+  intent when they arrive while the first system prompt is still open. Turning
+  that unknown state into explicit Retry queues a second prompt after denial.
+  Without a permission reader, passive recovery keeps a known denial until an
+  explicit request; a real reader still observes a later Settings grant. The
+  coordinator and Android method-channel regressions in
+  [the denial host evidence](../../.codex-test-logs/notification-denial-20261110/worker-green-preservation-01.log)
+  preserve one prompt, denied health, no retry timer, Settings recovery, and
+  explicit Retry. They do not establish the exact installed-device interleaving.
   The [binding regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-binding-red.log),
   [permission regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-permission-red.log)
   and [focused verification](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-recovery-final.log)
