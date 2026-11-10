@@ -609,7 +609,7 @@ void main() {
     expect(wrongTarget['nativeExecutedByThisCommand'], false);
   });
   test(
-    'CLI checks processed-source bytes and keeps absent byte proof NOT RUN',
+    'MEDIA-035 CLI retains every recipient outcome and absent byte proof NOT RUN',
     () async {
       final directory = await Directory.systemTemp.createTemp(
         'journey-gap-bytes-',
@@ -623,6 +623,20 @@ void main() {
       ((receipt['evidence'] as List).single as Map)['sha256'] = sha256
           .convert(raw)
           .toString();
+      final observations = receipt['observations'] as Map;
+      ((observations['group'] as Map)['memberRoles'] as List).addAll(<String>[
+        'dana',
+        'erin',
+      ]);
+      final targets = receipt['targets'] as Map;
+      for (final role in ['dana', 'erin']) {
+        targets[role] = <String, String>{
+          'deviceId': 'synthetic-$role-device',
+          'packageName': 'com.fixture.app',
+          'platform': 'android',
+          'artifactSha256': 'b' * 64,
+        };
+      }
       Object? canonical(Object? value) {
         if (value is Map) {
           final keys = value.keys.cast<String>().toList()..sort();
@@ -632,7 +646,7 @@ void main() {
         return value;
       }
 
-      final media = (receipt['observations'] as Map)['media'] as List;
+      final media = observations['media'] as List;
       final fullFiles = <String, List<int>>{};
       for (final item in media.cast<Map>()) {
         final pixels = image.Image(width: 128, height: 96);
@@ -674,11 +688,23 @@ void main() {
         await File(
           '${directory.path}/${item['senderReceiptFile']}',
         ).writeAsString(jsonEncode(sender));
-        final recipient = (item['recipients'] as List).single as Map;
-        await File(
-          '${directory.path}/${recipient['fullFile']}',
-        ).writeAsBytes(plain);
-        fullFiles[recipient['fullFile'] as String] = plain;
+        final firstRecipient = (item['recipients'] as List).single as Map;
+        final recipients = [
+          firstRecipient,
+          for (final role in ['dana', 'erin'])
+            {
+              ...firstRecipient,
+              'role': role,
+              'fullFile': 'full-${item['quality']}-$role.png',
+            },
+        ];
+        item['recipients'] = recipients;
+        for (final recipient in recipients) {
+          await File(
+            '${directory.path}/${recipient['fullFile']}',
+          ).writeAsBytes(plain);
+          fullFiles[recipient['fullFile'] as String] = plain;
+        }
       }
       Future<Map> evaluate(
         String label,
@@ -718,12 +744,85 @@ void main() {
         true,
       );
       expect(matched['nativeExecutedByThisCommand'], false);
-      final first = ((media.first as Map)['recipients'] as List).single as Map;
+      final original = media.first as Map;
+      final originalRecipients = (original['recipients'] as List).cast<Map>();
+      final first = originalRecipients.first;
       await File(
         '${directory.path}/${first['fullFile']}',
       ).writeAsString('truncated');
+      final wrongBytes =
+          fullFiles[(((media.last as Map)['recipients'] as List).first
+              as Map)['fullFile']]!;
+      await File(
+        '${directory.path}/${originalRecipients[1]['fullFile']}',
+      ).writeAsBytes(wrongBytes);
       final mismatch = await evaluate('mismatch', 1);
-      expect(mismatch['failures'], isNotEmpty);
+      expect(mismatch['status'], 'FAIL');
+      expect(mismatch['nativeExecutedByThisCommand'], false);
+      final outcomes = (mismatch['mediaFiles'] as List).cast<Map>();
+      expect(outcomes, hasLength(6));
+      expect(
+        outcomes
+            .map((v) => (v['messageId'], v['attachmentId'], v['role']))
+            .toSet(),
+        {
+          for (final item in media.cast<Map>())
+            for (final recipient in (item['recipients'] as List).cast<Map>())
+              (item['messageId'], item['attachmentId'], recipient['role']),
+        },
+      );
+      final originalOutcomes = outcomes.where(
+        (v) => v['messageId'] == original['messageId'],
+      );
+      final corrupt = originalOutcomes.singleWhere((v) => v['role'] == 'bob');
+      expect(corrupt['hostFullDecode'], 'FAIL');
+      expect(corrupt['processedSendByteEquality'], 'NOT RUN');
+      expect(corrupt['failure'], isNotEmpty);
+      final wrong = originalOutcomes.singleWhere((v) => v['role'] == 'dana');
+      expect(wrong['hostFullDecode'], 'PASS');
+      expect(wrong['processedSendByteEquality'], 'FAIL');
+      final later = originalOutcomes.singleWhere((v) => v['role'] == 'erin');
+      expect(later['hostFullDecode'], 'PASS');
+      expect(later['processedSendByteEquality'], 'PASS');
+      final failures = (mismatch['failures'] as List).cast<String>();
+      for (final role in ['bob', 'dana']) {
+        expect(
+          failures.any(
+            (failure) => failure.startsWith(
+              '${original['messageId']}/${original['attachmentId']}/$role:',
+            ),
+          ),
+          isTrue,
+          reason:
+              'retain the independent $role failure with its media identity',
+        );
+      }
+      expect(
+        outcomes
+            .where((v) => v['messageId'] == (media.last as Map)['messageId'])
+            .every(
+              (v) =>
+                  v['hostFullDecode'] == 'PASS' &&
+                  v['processedSendByteEquality'] == 'PASS',
+            ),
+        isTrue,
+      );
+      for (final entry in fullFiles.entries) {
+        await File('${directory.path}/${entry.key}').writeAsBytes(entry.value);
+      }
+      await File('${directory.path}/${first['fullFile']}').delete();
+      final missing = await evaluate('missing-export', 1);
+      final missingOutcomes = (missing['mediaFiles'] as List).cast<Map>();
+      expect(missingOutcomes, hasLength(6));
+      final unreadable = missingOutcomes.singleWhere(
+        (v) => v['messageId'] == original['messageId'] && v['role'] == 'bob',
+      );
+      expect(unreadable['hostFullDecode'], 'FAIL');
+      expect(unreadable['failure'], isNotEmpty);
+      expect(
+        missingOutcomes.where((v) => v['hostFullDecode'] == 'PASS'),
+        hasLength(5),
+      );
       for (final entry in fullFiles.entries) {
         await File('${directory.path}/${entry.key}').writeAsBytes(entry.value);
       }
