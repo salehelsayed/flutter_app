@@ -8125,6 +8125,7 @@ class _Plan257Capture {
     await _openGroup(senderId);
     await _sendGroupText(senderId, _killedGradedMarker);
     await _waitForBackgroundPushWakes(2);
+    final gradedCardDeadline = DateTime.now().add(const Duration(seconds: 180));
     _killedGradedNotificationDump =
         await _waitForGroupNotificationBodyContaining(
           _groupName,
@@ -8135,8 +8136,12 @@ class _Plan257Capture {
     //    pure function with host rows: it excludes the warm-up wake and takes
     //    the graded push from the SHOWN event, failing closed rather than
     //    guessing.
-    final flowLog = await _accumulatedRecipientFlowLines();
-    final binding = resolveKilledTextCardPushBinding(flowLog);
+    final polled = await pollKilledTextCardPushBinding(
+      readFlowLog: _accumulatedRecipientFlowLines,
+      deadline: gradedCardDeadline,
+    );
+    final flowLog = polled.flowLog;
+    final binding = polled.binding;
     if (binding == null) {
       await _writeMutedDiagnosticDump(
         'killed_text_card_binding_unresolvable',

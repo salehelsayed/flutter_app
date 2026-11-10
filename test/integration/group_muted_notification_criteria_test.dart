@@ -935,6 +935,40 @@ void main() {
         isNull,
       );
     });
+
+    test('re-reads the flow log until the graded SHOWN line lands', () async {
+      final reads = <String>[
+        log(received: <String>['warm', 'graded'], shown: <String>['warm']),
+        log(
+          received: <String>['warm', 'graded'],
+          shown: <String>['warm', 'graded'],
+        ),
+      ];
+      var calls = 0;
+      final result = await pollKilledTextCardPushBinding(
+        readFlowLog: () async => reads[calls++ < 1 ? 0 : 1],
+        deadline: DateTime.now().add(const Duration(seconds: 5)),
+        interval: const Duration(milliseconds: 1),
+      );
+
+      expect(result.binding, isNotNull);
+      expect(result.binding!.gradedFcmMessageId, 'graded');
+      expect(calls, 2);
+    });
+
+    test('stays fail-closed when the deadline passes without the graded SHOWN',
+        () async {
+      final incomplete =
+          log(received: <String>['warm', 'graded'], shown: <String>['warm']);
+      final result = await pollKilledTextCardPushBinding(
+        readFlowLog: () async => incomplete,
+        deadline: DateTime.now().add(const Duration(milliseconds: 20)),
+        interval: const Duration(milliseconds: 5),
+      );
+
+      expect(result.binding, isNull);
+      expect(result.flowLog, incomplete);
+    });
   });
 
   group('Plan 379 out-of-catalog registration', () {

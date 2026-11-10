@@ -1793,6 +1793,35 @@ KilledTextCardPushBinding? resolveKilledTextCardPushBinding(String flowLog) {
   );
 }
 
+/// The flow log read last and the binding it yielded (null = fail closed).
+typedef KilledTextCardPollResult = ({
+  KilledTextCardPushBinding? binding,
+  String flowLog,
+});
+
+/// Re-reads the recipient flow log until [resolveKilledTextCardPushBinding]
+/// binds, or [deadline] passes.
+///
+/// The notification card can be visible a few milliseconds before the
+/// presenter's `PUSH_BACKGROUND_NOTIFICATION_SHOWN` line is readable, so a
+/// single read taken right after the card appears can miss the graded SHOWN.
+/// The binding rule is unchanged; only the read is repeated inside the
+/// caller's existing bounded deadline.
+Future<KilledTextCardPollResult> pollKilledTextCardPushBinding({
+  required Future<String> Function() readFlowLog,
+  required DateTime deadline,
+  Duration interval = const Duration(milliseconds: 500),
+}) async {
+  var flowLog = await readFlowLog();
+  var binding = resolveKilledTextCardPushBinding(flowLog);
+  while (binding == null && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(interval);
+    flowLog = await readFlowLog();
+    binding = resolveKilledTextCardPushBinding(flowLog);
+  }
+  return (binding: binding, flowLog: flowLog);
+}
+
 /// Counts raw log lines carrying [eventName].
 ///
 /// `PUSH_BACKGROUND_NOTIFICATION_ERROR` details are `{'error': …}` only — the
