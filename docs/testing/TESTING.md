@@ -2642,7 +2642,12 @@ refusal, exercise repeated recovery, then provide a key and require one send
 with the original identity, content, and timestamps. The SQLite cases also
 close and reopen the database before key arrival. Their contact/key port is
 fake and is explicitly restored after reopen; this does not prove contact-key
-persistence. Explicit manual retry still reports the normal missing-key
+persistence. The automatic bulk pass now emits at most one anonymous
+message/recover/blocked marker across both missing-key guards, with empty values
+and no trace/attempt binding. `recovery_block_observation_test.dart` covers each
+guard and their combination for null, empty and whitespace-only keys, repeated
+passes and unavailable/opted-out collectors. This proves deferral, not a failed
+send or the root cause of the missing key. Explicit manual retry still reports the normal missing-key
 refusal, and already-encrypted custody still replays its exact envelope with
 no re-encryption when the current contact key is missing. Key acquisition and
 the timing of the next existing recovery pass remain separate concerns.
@@ -11454,7 +11459,28 @@ classification; missing rows never invent past withdrawal. A fresh request from 
 absent withdrawn contact records an ignored observation before the existing
 option-A return; it does not create pending consent. Stored replay remains unknown
 unless its existing-contact decision proves activation. Automatic eligibility
-and completed acceptance are separate observations. Call preparation records
+and completed acceptance are separate observations. Durable decline observations
+claim declined/committed only after the repository decision confirms it;
+not-found/not-pending outcomes remain ignored with unknown consent, while write
+errors remain failed with unknown consent. Presentation observations cover the
+early and queued suppression gates and actual dialog route admission. A joined
+queue or a presenter callback by itself is not proof of a dialog, and suppression
+does not prove decline. The host tests in `test/core/diagnostics/` plus the FTE
+widget test exercise private-export canaries, consent and unavailable collectors,
+while preserving existing decisions and reads. These coarse app observations
+omit optional trace/attempt handles and requestAction; legacy projection remains
+unchanged.
+
+Call effect observations distinguish an observed TimeoutException from other
+caught failures before reducer failure mapping. Only known negotiation effects
+use media/negotiation_failed; other effects and checkpoint writes remain runtime
+with timeout/unknown. Coordinator tests preserve original exceptions, terminal
+reason, cleanup, history and interruption behavior. Permission observations use
+the existing posting-admission result, preserve original requester exceptions,
+and separately mark caught OS-check failures without changing fail-open policy.
+An unfinished request has only a started observation; it does not prove an OS
+grant, lost callback or timeout. These host checks do not prove native activation
+or signed application behavior. Call preparation records
 bounded input booleans, at most 16 trusted devices, and repair outcomes on the
 original attempt. Outgoing terminal summaries retain observed ringing and an
 optional bounded timestamp difference; incoming ringing is not remote evidence.
