@@ -68,8 +68,34 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Stream<String> get postChanges => _changes.stream;
 
+  /// Own thoughts the author replaced: out of live reads, kept in history.
+  final Set<String> _retiredIds = <String>{};
+
+  Future<void> retireReplacedThought(
+    String postId, {
+    required String replacedAt,
+  }) async {
+    final post = _posts[postId];
+    if (post == null || post.isIncoming) return;
+    _retiredIds.add(postId);
+    _posts[postId] = post.copyWith(
+      expiresAt: replacedAt.compareTo(post.expiresAt) < 0
+          ? replacedAt
+          : post.expiresAt,
+      deliveryStatus: 'sent',
+    );
+    _changes.add(postId);
+  }
+
   @override
   Future<void> savePost(PostModel post) async {
+    final retired = _posts[post.id];
+    if (_retiredIds.contains(post.id) && retired != null) {
+      post = post.copyWith(
+        expiresAt: retired.expiresAt,
+        deliveryStatus: 'sent',
+      );
+    }
     // Like the posts table, a save never clears metrics_opt_out.
     _posts[post.id] = _posts[post.id]?.metricsOptOut == true
         ? post.copyWith(metricsOptOut: true)
@@ -87,7 +113,7 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<PostModel?> getPost(String postId) async {
     final post = _posts[postId];
-    if (post == null) {
+    if (post == null || _retiredIds.contains(postId)) {
       return null;
     }
     return _decoratePost(post);
@@ -98,7 +124,7 @@ class InMemoryPostRepository implements PostRepository {
     final posts = <PostModel>[];
     for (final postId in postIds) {
       final post = _posts[postId];
-      if (post != null) {
+      if (post != null && !_retiredIds.contains(postId)) {
         posts.add(_decoratePost(post));
       }
     }
@@ -110,18 +136,22 @@ class InMemoryPostRepository implements PostRepository {
 
   @override
   Future<List<PostModel>> loadFeed() async {
-    final posts = _posts.values.map(_decoratePost).toList(growable: false)
-      ..sort((a, b) {
-        final visibleCompare = b.visibleAt.compareTo(a.visibleAt);
-        if (visibleCompare != 0) {
-          return visibleCompare;
-        }
-        final createdCompare = b.createdAt.compareTo(a.createdAt);
-        if (createdCompare != 0) {
-          return createdCompare;
-        }
-        return b.id.compareTo(a.id);
-      });
+    final posts =
+        _posts.values
+            .where((post) => !_retiredIds.contains(post.id))
+            .map(_decoratePost)
+            .toList(growable: false)
+          ..sort((a, b) {
+            final visibleCompare = b.visibleAt.compareTo(a.visibleAt);
+            if (visibleCompare != 0) {
+              return visibleCompare;
+            }
+            final createdCompare = b.createdAt.compareTo(a.createdAt);
+            if (createdCompare != 0) {
+              return createdCompare;
+            }
+            return b.id.compareTo(a.id);
+          });
     return posts;
   }
 
@@ -131,6 +161,7 @@ class InMemoryPostRepository implements PostRepository {
         .map(_decoratePost)
         .where(
           (post) =>
+              !_retiredIds.contains(post.id) &&
               !post.isIncoming &&
               (post.deliveryStatus == 'sending' ||
                   post.deliveryStatus == 'partial' ||
@@ -153,7 +184,11 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<List<PostModel>> loadExpiredPosts(String nowIso) async {
     return _posts.values
-        .where((post) => post.expiresAt.compareTo(nowIso) <= 0)
+        .where(
+          (post) =>
+              post.expiresAt.compareTo(nowIso) <= 0 ||
+              _retiredIds.contains(post.id),
+        )
         .toList(growable: false)
       ..sort((a, b) => a.expiresAt.compareTo(b.expiresAt));
   }
@@ -185,6 +220,7 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<void> deletePostCascade(String postId) async {
     _posts.remove(postId);
+    _retiredIds.remove(postId);
     _commentsByPostId.remove(postId)?.forEach((comment) {
       _commentsById.remove(comment.id);
       _commentReactionsByCommentId.remove(comment.id)?.forEach((reaction) {
