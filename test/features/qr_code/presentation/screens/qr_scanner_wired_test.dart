@@ -63,6 +63,26 @@ void main() {
   late ImageProcessor imageProcessor;
 
   const ownPeerId = 'own-peer-id-12345';
+  const scannerCopyCases = [
+    (
+      locale: Locale('en'),
+      saved: 'Contact saved',
+      alreadySaved: 'Contact already saved',
+      oldBody: 'This contact was added previously',
+    ),
+    (
+      locale: Locale('ar'),
+      saved: 'تم حفظ جهة الاتصال',
+      alreadySaved: 'جهة الاتصال محفوظة مسبقًا',
+      oldBody: 'تمت إضافة جهة الاتصال هذه سابقًا',
+    ),
+    (
+      locale: Locale('de'),
+      saved: 'Kontakt gespeichert',
+      alreadySaved: 'Kontakt bereits gespeichert',
+      oldBody: 'Dieser Kontakt wurde schon hinzugefügt',
+    ),
+  ];
 
   final identity = IdentityModel(
     peerId: ownPeerId,
@@ -125,6 +145,7 @@ void main() {
   });
 
   Widget buildScanner({
+    Locale locale = const Locale('en'),
     ShareIntentService? shareIntentService,
     Future<void> Function(String qrData)? onMigrationQrScanned,
     Future<void> Function(String qrData)? onDirectLinkedDeviceQrScanned,
@@ -134,7 +155,7 @@ void main() {
     Future<bool> Function(String peerId)? shouldMarkContactRequest,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       theme: themeOverride,
@@ -319,7 +340,7 @@ void main() {
       expect(downloadCalls, 0);
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
-      expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.text('Contact saved'), findsNothing);
     },
   );
 
@@ -344,34 +365,37 @@ void main() {
       await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
-      expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.text('Contact saved'), findsNothing);
       expect(find.byType(SnackBar), findsOneWidget);
     },
   );
 
-  testWidgets(
-    'offline QR add keeps automatic request recovery before local success',
-    (tester) async {
-      final scanned = _fx('new');
+  for (final copy in scannerCopyCases) {
+    testWidgets(
+      'offline QR add confirms local save in ${copy.locale.languageCode} '
+      'while retaining automatic request recovery',
+      (tester) async {
+        final scanned = _fx('new');
 
-      await tester.pumpWidget(buildScanner());
-      await pumpFrames(tester);
-      tester
-          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
-          .onScanned(_buildValidQrData(identity: scanned));
-      await pumpFrames(tester, count: 20);
+        await tester.pumpWidget(buildScanner(locale: copy.locale));
+        await pumpFrames(tester);
+        tester
+            .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+            .onScanned(_buildValidQrData(identity: scanned));
+        await pumpFrames(tester, count: 20);
 
-      // The confirmation describes the completed local add. An offline
-      // reciprocal request must remain owned by reconnect/resume recovery.
-      expect(await contactRepository.getContact(scanned.peerId), isNotNull);
-      expect(find.text('Added to your circle!'), findsOneWidget);
-      expect(p2pService.storeInInboxCallCount, 0);
-      expect(
-        await readMlKemReannounceMarker(secureKeyStore),
-        contains(scanned.peerId),
-      );
-    },
-  );
+        // The confirmation describes the completed local add. An offline
+        // reciprocal request must remain owned by reconnect/resume recovery.
+        expect(await contactRepository.getContact(scanned.peerId), isNotNull);
+        expect(find.text(copy.saved), findsOneWidget);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          await readMlKemReannounceMarker(secureKeyStore),
+          contains(scanned.peerId),
+        );
+      },
+    );
+  }
 
   testWidgets(
     'failed QR rescan of a keyed contact is redriven by key exchange recovery',
@@ -403,7 +427,7 @@ void main() {
           .onScanned(_buildValidQrData(identity: scanned));
       await pumpFrames(tester, count: 20);
 
-      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Contact already saved'), findsOneWidget);
       expect(p2pService.storeInInboxCallCount, 1);
       p2pService.storeInInboxResult = true;
       expect(
@@ -459,7 +483,7 @@ void main() {
       );
       await pumpFrames(tester, count: 20);
 
-      expect(find.text('Added to your circle!'), findsOneWidget);
+      expect(find.text('Contact saved'), findsOneWidget);
       final contact = await contactRepository.getContact(scannedPeerId);
       expect(contact, isNotNull);
       expect(contact?.username, 'Bob');
@@ -487,69 +511,77 @@ void main() {
     },
   );
 
-  testWidgets(
-    'scanning an existing contact shows the circle dialog and re-sends our '
-    'request without touching the stored row',
-    (tester) async {
-      final existingPeerId = _fx('existing').peerId;
-      final existing = ContactModel(
-        peerId: existingPeerId,
-        publicKey: _fx('existing').publicKey,
-        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-        username: 'Bob (stored)',
-        signature: 'stored-sig',
-        scannedAt: '2026-01-01T00:00:00.000Z',
-      );
-      contactRepository.addTestContact(existing);
-      var downloadCalls = 0;
-      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
-      p2pService.storeInInboxResult = true;
+  for (final copy in scannerCopyCases) {
+    testWidgets(
+      'rescan confirms local save in ${copy.locale.languageCode} without '
+      'redundant body and preserves the stored row and request',
+      (tester) async {
+        final existingPeerId = _fx('existing').peerId;
+        final existing = ContactModel(
+          peerId: existingPeerId,
+          publicKey: _fx('existing').publicKey,
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Bob (stored)',
+          signature: 'stored-sig',
+          scannedAt: '2026-01-01T00:00:00.000Z',
+        );
+        contactRepository.addTestContact(existing);
+        var downloadCalls = 0;
+        p2pService.emitState(
+          const NodeState(isStarted: true, peerId: ownPeerId),
+        );
+        p2pService.storeInInboxResult = true;
 
-      await tester.pumpWidget(
-        buildScanner(
-          downloadProfilePictureFn:
-              ({
-                required bridge,
-                required contactRepo,
-                required ownerPeerId,
-                required avatarVersion,
-                bool retryPendingRequest = false,
-              }) async {
-                downloadCalls++;
-                return null;
-              },
-        ),
-      );
-      await pumpFrames(tester);
-      tester
-          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
-          .onScanned(
-            _buildValidQrData(identity: _fx('existing'), username: 'Bob'),
-          );
-      await pumpFrames(tester, count: 20);
+        await tester.pumpWidget(
+          buildScanner(
+            locale: copy.locale,
+            downloadProfilePictureFn:
+                ({
+                  required bridge,
+                  required contactRepo,
+                  required ownerPeerId,
+                  required avatarVersion,
+                  bool retryPendingRequest = false,
+                }) async {
+                  downloadCalls++;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        tester
+            .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+            .onScanned(
+              _buildValidQrData(identity: _fx('existing'), username: 'Bob'),
+            );
+        await pumpFrames(tester, count: 20);
 
-      expect(find.text('Already in your circle!'), findsOneWidget);
-      expect(find.text('Added to your circle!'), findsNothing);
+        expect(find.text(copy.oldBody), findsNothing);
+        expect(find.text(copy.alreadySaved), findsOneWidget);
+        expect(find.text(copy.saved), findsNothing);
 
-      expect(p2pService.storeInInboxCallCount, 1);
-      expect(p2pService.lastStoreInInboxPeerId, existingPeerId);
-      final envelope =
-          jsonDecode(p2pService.lastStoreInInboxMessage!)
-              as Map<String, dynamic>;
-      expect(envelope['type'], 'contact_request');
-      expect(envelope['version'], '2');
-      expect(envelope['intent'], 'new_request');
-      expect(_contactRequestRecipientKeys(bridge), [_fx('existing').publicKey]);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastStoreInInboxPeerId, existingPeerId);
+        final envelope =
+            jsonDecode(p2pService.lastStoreInInboxMessage!)
+                as Map<String, dynamic>;
+        expect(envelope['type'], 'contact_request');
+        expect(envelope['version'], '2');
+        expect(envelope['intent'], 'new_request');
+        expect(_contactRequestRecipientKeys(bridge), [
+          _fx('existing').publicKey,
+        ]);
 
-      // No profile download, no delete, no duplicate, no overwrite.
-      expect(downloadCalls, 0);
-      expect(await contactRepository.getContactCount(), 1);
-      expect(
-        (await contactRepository.getContact(existingPeerId))!.toMap(),
-        existing.toMap(),
-      );
-    },
-  );
+        // No profile download, no delete, no duplicate, no overwrite.
+        expect(downloadCalls, 0);
+        expect(await contactRepository.getContactCount(), 1);
+        expect(
+          (await contactRepository.getContact(existingPeerId))!.toMap(),
+          existing.toMap(),
+        );
+      },
+    );
+  }
 
   testWidgets(
     'a QR that claims a stored contact with a different key fails the '
@@ -581,7 +613,7 @@ void main() {
       await pumpFrames(tester, count: 20);
 
       expect(find.text('Invalid Signature'), findsOneWidget);
-      expect(find.text('Already in your circle!'), findsNothing);
+      expect(find.text('Contact already saved'), findsNothing);
       expect(_contactRequestRecipientKeys(bridge), isEmpty);
       await expectNoContactRequestTraffic();
       expect(p2pService.storeInInboxCallCount, 0);
@@ -703,7 +735,7 @@ void main() {
           .widget<QRScannerScreen>(find.byType(QRScannerScreen))
           .onScanned(_buildValidQrData(identity: _fx('open')));
       await pumpFrames(tester, count: 20);
-      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Contact already saved'), findsOneWidget);
       expect(p2pService.storeInInboxCallCount, 1);
       expect(p2pService.lastStoreInInboxPeerId, openPeerId);
 
@@ -716,7 +748,7 @@ void main() {
           .onScanned(_buildValidQrData(identity: _fx('blocked')));
       await pumpFrames(tester, count: 20);
 
-      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Contact already saved'), findsOneWidget);
       expect(p2pService.storeInInboxCallCount, 1);
       expect(p2pService.lastStoreInInboxPeerId, openPeerId);
       expect(await contactRepository.getContactCount(), 2);
@@ -750,7 +782,7 @@ void main() {
       scanner.onScanned(_buildValidQrData());
       await pumpFrames(tester);
 
-      expect(find.text('Added to your circle!'), findsOneWidget);
+      expect(find.text('Contact saved'), findsOneWidget);
       final okButton = tester.widget<ElevatedButton>(
         find.widgetWithText(ElevatedButton, 'OK'),
       );
@@ -784,7 +816,7 @@ void main() {
       );
       await pumpFrames(tester);
 
-      expect(find.text('Added to your circle!'), findsOneWidget);
+      expect(find.text('Contact saved'), findsOneWidget);
       await tester.tap(find.text('OK'));
       await pumpFrames(tester, count: 20);
 
@@ -850,7 +882,7 @@ void main() {
     await pumpFrames(tester);
 
     expect(await contactRepository.getContact(_fx('late').peerId), isNotNull);
-    expect(find.text('Added to your circle!'), findsOneWidget);
+    expect(find.text('Contact saved'), findsOneWidget);
     await tester.tap(find.text('OK'));
     await pumpFrames(tester, count: 20);
     expect(find.byType(FeedWired), findsOneWidget);
@@ -956,7 +988,7 @@ void main() {
           'contact_request',
         );
         expect(_contactRequestRecipientKeys(bridge), [scanned.publicKey]);
-        expect(find.text('Added to your circle!'), findsOneWidget);
+        expect(find.text('Contact saved'), findsOneWidget);
 
         sendGate.complete(true);
         await pumpFrames(tester);
@@ -1000,7 +1032,7 @@ void main() {
           scanned.publicKey,
         ]);
         expect(await contactRequestRepository.getPendingRequests(), isEmpty);
-        expect(find.text('Already in your circle!'), findsOneWidget);
+        expect(find.text('Contact already saved'), findsOneWidget);
       },
     );
   }
@@ -1034,7 +1066,7 @@ void main() {
     );
     await pumpFrames(tester);
 
-    expect(find.text('Added to your circle!'), findsOneWidget);
+    expect(find.text('Contact saved'), findsOneWidget);
     await tester.tap(find.text('OK'));
     await pumpFrames(tester, count: 20);
 
@@ -1094,7 +1126,7 @@ void main() {
       await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
-      expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.text('Contact saved'), findsNothing);
 
       // ── Refused outright from an ordinary "scan a friend's code" entry
       // point, which supplies no handler. It must NOT fall through to the
@@ -1114,7 +1146,7 @@ void main() {
       await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
-      expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.text('Contact saved'), findsNothing);
       expect(find.byType(SnackBar), findsOneWidget);
     },
   );
