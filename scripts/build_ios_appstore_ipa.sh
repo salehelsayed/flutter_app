@@ -38,6 +38,8 @@ capture_dir="$(python3 "$ROOT_DIR/scripts/ios_build_provenance.py" begin --root 
 )
 
 retained_dir="$(python3 "$ROOT_DIR/scripts/ios_build_provenance.py" retain --root "$ROOT_DIR" --capture "$ROOT_DIR/$capture_dir" -- "$@")"
+# Stop a store IPA whose push extension lacks the Go decrypt bridge (silent Podfile drop).
+bash "$ROOT_DIR/scripts/check_ios_nse_go_bridge.sh" "$ROOT_DIR/$retained_dir"
 printf '\nRetained archive, symbols, IPA and provenance: %s\n' "$retained_dir"
 
 ipa_dir="$ROOT_DIR/build/ios/ipa"
