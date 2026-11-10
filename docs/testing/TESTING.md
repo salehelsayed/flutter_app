@@ -11474,8 +11474,15 @@ unchanged.
 Call effect observations distinguish an observed TimeoutException from other
 caught failures before reducer failure mapping. Only known negotiation effects
 use media/negotiation_failed; other effects and checkpoint writes remain runtime
-with timeout/unknown. Coordinator tests preserve original exceptions, terminal
-reason, cleanup, history and interruption behavior. Permission observations use
+with timeout/unknown. A successful effect's returned follow-up reduction owns
+its own checkpoint/effect failure observation: do not relabel a propagated
+checkpoint failure as media failure or count a nested effect failure twice.
+Retain the outer interruption fence before observing an actual execution error.
+Coordinator tests preserve original exceptions, terminal reason, cleanup, history
+and interruption behavior. The causal REDs, complete frozen host results and
+correction evidence are retained in `.codex-test-logs/diagnostic-gaps-131/`;
+passing the original diagnostic lane did not cover the missing nested case.
+Permission observations use
 the existing posting-admission result, preserve original requester exceptions,
 and separately mark caught OS-check failures without changing fail-open policy.
 An unfinished request has only a started observation; it does not prove an OS
