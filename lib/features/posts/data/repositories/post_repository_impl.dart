@@ -62,6 +62,8 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   })?
   dbLoadExpiredOwnPosts;
   final Future<void> Function(String postId)? dbDeletePostCascade;
+  final Future<void> Function(String postId, String replacedAt)?
+  dbRetireReplacedThought;
   final Future<void> Function(Map<String, Object?> row)
   dbUpsertRecipientDelivery;
   final Future<List<Map<String, Object?>>> Function(String postId)
@@ -193,6 +195,7 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
     this.dbLoadExpiredPosts,
     this.dbLoadExpiredOwnPosts,
     this.dbDeletePostCascade,
+    this.dbRetireReplacedThought,
     required this.dbUpsertRecipientDelivery,
     required this.dbLoadRecipientDeliveries,
     this.dbLoadPostPassRecipientDeliveries,
@@ -429,6 +432,19 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
     );
     final rows = await dbLoad(nowIso, limit: limit, offset: offset);
     return rows.map(PostModel.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<void> retireReplacedThought(
+    String postId, {
+    required String replacedAt,
+  }) async {
+    final dbRetire = _require(
+      dbRetireReplacedThought,
+      'Thought replacement is not configured for this repository.',
+    );
+    await dbRetire(postId, replacedAt);
+    _postChangesController.add(postId);
   }
 
   @override

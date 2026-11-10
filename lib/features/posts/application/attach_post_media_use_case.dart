@@ -154,7 +154,8 @@ attachPostMedia({
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
     );
-    if (isExpired()) {
+    // A replaced or deleted Thought uploads nothing more.
+    if (isExpired() || await postRepo.getPost(postId) == null) {
       if (prepared.localFilePath != sourcePath) {
         await _removeLateMediaFile(prepared.localFilePath, mediaFileManager);
       }

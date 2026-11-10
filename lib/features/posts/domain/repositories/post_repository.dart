@@ -44,6 +44,13 @@ abstract class PostRepository {
 
   Future<void> deletePostCascade(String postId);
 
+  /// Moves an own Thought the author replaced into history at [replacedAt],
+  /// keeping its viewers, reactions and recipients.
+  Future<void> retireReplacedThought(
+    String postId, {
+    required String replacedAt,
+  });
+
   Future<void> saveComment(PostCommentModel comment);
 
   Future<List<PostCommentModel>> loadComments(String postId);
