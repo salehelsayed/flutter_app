@@ -59,6 +59,9 @@ final class TranslationPreferences {
     await _write((prefs) => prefs.setStringList(_chatsKey, keys));
   }
 
+  /// Account erasure: every chat switch goes, the language stays.
+  Future<void> forgetChats() async {}
+
   Future<void> _load() async {
     try {
       final prefs = await _preferences();

@@ -20,12 +20,15 @@ const _englishIn = 'See you at seven tonight';
 const _translated = 'Good morning! Are you free this evening?';
 
 class _RecordingAi implements OnDeviceAi {
+  _RecordingAi([this.result = _translated]);
+
+  final String result;
   final calls = <({String text, String languageName})>[];
 
   @override
   Future<String> translate(String text, {required String languageName}) async {
     calls.add((text: text, languageName: languageName));
-    return _translated;
+    return result;
   }
 
   @override
@@ -44,13 +47,16 @@ ConversationMessage _text(String id, String text, {required bool incoming}) =>
       createdAt: '2026-11-10T09:00:00.000Z',
     );
 
-Widget _screen(List<ConversationMessage> messages) => localizedApp(
+Widget _screen(
+  List<ConversationMessage> messages, {
+  String ownPeerId = 'peer-a',
+}) => localizedApp(
   Scaffold(
     body: ConversationScreen(
       contactPeerId: 'peer-b',
       contactUsername: 'User-B',
       connectionDate: 'October 28, 2026',
-      ownPeerId: 'peer-a',
+      ownPeerId: ownPeerId,
       messages: messages,
       onSend: (_) {},
       onBack: () {},
@@ -115,6 +121,20 @@ void main() {
       await tester.tap(find.text('See translation'));
       await tester.pump();
       expect(ai.calls.last.languageName, 'English');
+    });
+
+    test('erasing the account forgets every chat switch but keeps the '
+        'language', () async {
+      await prefs.setTarget('de');
+      await prefs.setShowTranslation('peer-b', true);
+
+      await prefs.forgetChats();
+
+      final stored = await SharedPreferences.getInstance();
+      expect(stored.getStringList('translate_preview.shown_in_chats'), isNull);
+      expect(prefs.showsTranslationIn('peer-b'), isFalse);
+      expect(stored.getString('translate_preview.target'), 'de');
+      expect(prefs.target.value, 'de');
     });
 
     testWidgets('the choice survives a restart', (tester) async {
@@ -306,6 +326,31 @@ void main() {
       await tester.pump();
       expect(find.text(_arabicIn), findsOneWidget);
       expect(find.text(_translated), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('a translation made for one account never shows for the '
+        'account that replaces it', (tester) async {
+      const text = 'مساء الخير يا صديقي';
+      final incoming = [_text('in-ar-2', text, incoming: true)];
+      debugTranslatePreviewEnabledOverride = true;
+      await prefs.setShowTranslation('peer-b', true);
+      debugOnDeviceAiOverride = _RecordingAi('translated for account A');
+      await tester.pumpWidget(_screen(incoming, ownPeerId: 'account-a'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('translated for account A'), findsOneWidget);
+      await finish(tester);
+
+      final accountB = _RecordingAi('translated for account B');
+      debugOnDeviceAiOverride = accountB;
+      await tester.pumpWidget(_screen(incoming, ownPeerId: 'account-b'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('translated for account A'), findsNothing);
+      expect(find.text('translated for account B'), findsOneWidget);
+      expect(accountB.calls, [(text: text, languageName: 'English')]);
       await finish(tester);
     });
 
