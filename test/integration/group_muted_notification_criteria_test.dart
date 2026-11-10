@@ -956,6 +956,30 @@ void main() {
       expect(calls, 2);
     });
 
+    test('never accepts a SHOWN read after the deadline (Codex probe)',
+        () async {
+      final incomplete =
+          log(received: <String>['warm', 'graded'], shown: <String>['warm']);
+      final complete = log(
+        received: <String>['warm', 'graded'],
+        shown: <String>['warm', 'graded'],
+      );
+      var calls = 0;
+      final started = DateTime.now();
+      final result = await pollKilledTextCardPushBinding(
+        readFlowLog: () async => calls++ == 0 ? incomplete : complete,
+        deadline: started.add(const Duration(milliseconds: 25)),
+      );
+
+      expect(result.binding, isNull);
+      expect(
+        DateTime.now().difference(started),
+        lessThan(const Duration(milliseconds: 400)),
+        reason: 'the wait is capped to the remaining time, not the 500 ms '
+            'default interval',
+      );
+    });
+
     test('stays fail-closed when the deadline passes without the graded SHOWN',
         () async {
       final incomplete =

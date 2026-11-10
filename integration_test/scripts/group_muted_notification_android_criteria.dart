@@ -1814,9 +1814,13 @@ Future<KilledTextCardPollResult> pollKilledTextCardPushBinding({
 }) async {
   var flowLog = await readFlowLog();
   var binding = resolveKilledTextCardPushBinding(flowLog);
-  while (binding == null && DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(interval);
+  while (binding == null) {
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) break;
+    await Future<void>.delayed(remaining < interval ? remaining : interval);
     flowLog = await readFlowLog();
+    // A SHOWN line read after the deadline is late: fail closed.
+    if (!DateTime.now().isBefore(deadline)) break;
     binding = resolveKilledTextCardPushBinding(flowLog);
   }
   return (binding: binding, flowLog: flowLog);
