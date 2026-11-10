@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import '../../../core/media/media_audio_session.dart';
+import '../diagnostics/call_diagnostics.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -449,7 +450,8 @@ final class CallCoordinator {
     if (!snapshot.isTerminal && persist != null) {
       try {
         await persist(snapshot).timeout(effectTimeout);
-      } catch (_) {
+      } catch (error) {
+        _recordFailure(error, snapshot);
         await _dispatchNow(
           CallEvent(
             type: CallEventType.negotiationFailed,
@@ -507,6 +509,7 @@ final class CallCoordinator {
                 Object error,
                 StackTrace stackTrace,
               ) {
+                _recordFailure(error, snapshot);
                 firstEffectError ??= error;
                 firstEffectStack ??= stackTrace;
               }),
@@ -527,6 +530,11 @@ final class CallCoordinator {
             await _finishPreparationInterruption(interruption!);
             break;
           }
+          _recordFailure(
+            error,
+            snapshot,
+            negotiation: _isNegotiationEffect(effect.type),
+          );
           firstEffectError ??= error;
           firstEffectStack ??= stackTrace;
           if (!snapshot.isTerminal) {
@@ -673,6 +681,30 @@ final class CallCoordinator {
         // A late preparation must never send Accept or advance another call.
         if (interruption?.requested.isCompleted == true) return;
         if (followUp != null) await _dispatchNow(followUp);
+    }
+  }
+
+  void _recordFailure(
+    Object error,
+    CallSessionSnapshot snapshot, {
+    bool negotiation = false,
+  }) {
+    try {
+      final diagnostics = CallDiagnostics.instance;
+      final timeout = error is TimeoutException;
+      diagnostics.record(
+        stage: negotiation ? 'media' : 'runtime',
+        action: 'finish',
+        outcome: timeout ? 'timeout' : 'failed',
+        reason: timeout
+            ? 'timeout'
+            : negotiation
+            ? 'negotiation_failed'
+            : 'unknown',
+        traceId: diagnostics.traceForCall(callId: snapshot.callId?.value),
+      );
+    } catch (_) {
+      // Cause observation cannot change reducer, cleanup, or exception handling.
     }
   }
 

@@ -149,10 +149,12 @@ void main() {
               ? TimeoutException('PRIVATE_CALL_TIMEOUT')
               : StateError('PRIVATE_CALL_ERROR');
           final c = coordinator(executor: _Executor(target, error));
-          if (target != CallEffectType.prepareOutgoingInvite)
+          if (target != CallEffectType.prepareOutgoingInvite) {
             await c.dispatch(_event(CallEventType.place));
-          if (target == CallEffectType.startNegotiation)
+          }
+          if (target == CallEffectType.startNegotiation) {
             await c.dispatch(_event(CallEventType.outgoingInviteReady));
+          }
           final trigger = target == CallEffectType.startNegotiation
               ? CallEventType.remoteAccept
               : target == CallEffectType.sendTerminate
