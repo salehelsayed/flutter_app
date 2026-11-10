@@ -113,6 +113,12 @@ Future<List<Map<String, Object?>>> dbLoadThoughtWroteBackMessages(
   ['thought:$postId'],
 );
 
+/// A viewer the You page can name: a friend not blocked or archived, so the
+/// count on the chip matches the names in its list.
+const _namedFriend =
+    'EXISTS (SELECT 1 FROM contacts c WHERE c.peer_id = r.viewer_peer_id '
+    'AND c.is_blocked = 0 AND c.is_archived = 0)';
+
 /// How many friends saw each of [authorPeerId]'s own Thoughts in [postIds],
 /// live or expired. A post nobody saw has no entry.
 Future<Map<String, int>> dbCountOwnThoughtViews(
@@ -126,6 +132,7 @@ Future<Map<String, int>> dbCountOwnThoughtViews(
        JOIN posts p ON p.post_id = r.post_id
        WHERE p.author_peer_id = ? AND p.is_incoming = 0
          AND r.post_id IN (${List.filled(postIds.length, '?').join(', ')})
+         AND $_namedFriend
        GROUP BY r.post_id''',
     [authorPeerId, ...postIds],
   );
@@ -145,6 +152,7 @@ Future<List<Map<String, Object?>>> dbLoadOwnThoughtViews(
   '''SELECT r.post_id, r.viewer_peer_id, r.viewed_at
      FROM post_view_receipts r JOIN posts p ON p.post_id = r.post_id
      WHERE r.post_id = ? AND p.author_peer_id = ? AND p.is_incoming = 0
+       AND $_namedFriend
      ORDER BY r.viewed_at DESC, r.viewer_peer_id ASC''',
   [postId, authorPeerId],
 );
