@@ -64,30 +64,52 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
   }
 
   func testAnswerRefusalKeepsExistingReason() throws {
+    let rig = makeBridgeRig()
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(rig.controller.resolveCallHandle(handle), callId)
+    let before = try XCTUnwrap(rig.store.snapshot())
+    rig.transactions.nextError = NSError(domain: "answer-refusal-test", code: 1)
     let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
     XCTAssertTrue(spool.configure(true))
-    let bridge = MknoonCallNativeBridge(controller: makeBridgeRig().controller, messenger: nil,
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
       diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
         spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
                      reason: reason, values: values, context: context)
       })
-    XCTAssertEqual(invoke(bridge, "answer", identity(callId.uuidString.lowercased())) as? Bool, false)
+    // Answer replies on the main queue even when the transaction fake refuses.
+    let completed = expectation(description: "native answer refusal result")
+    var value: Any?
+    bridge.handle(FlutterMethodCall(methodName: "answer", arguments: identity(handle))) {
+      value = $0
+      completed.fulfill()
+    }
+    wait(for: [completed], timeout: 1)
+    XCTAssertEqual(value as? Bool, false)
+    XCTAssertEqual(rig.transactions.transactions.count, 1)
+    XCTAssertEqual(rig.store.snapshot(), before)
     let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
     let rejected = try XCTUnwrap(events.first { $0["outcome"] as? String == "rejected" })
+    XCTAssertEqual(rejected["stage"] as? String, "answer")
     XCTAssertEqual(rejected["reason"] as? String, "native_answer_refused")
+    XCTAssertEqual((rejected["values"] as? [String: Any])?["accepted"] as? Bool, false)
   }
 
   func testOptedOutAudioObservationCannotChangeRefusal() throws {
     let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
     XCTAssertTrue(spool.configure(false))
     let rig = makeBridgeRig()
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(rig.controller.resolveCallHandle(handle), callId)
+    let before = try XCTUnwrap(rig.store.snapshot())
     let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
       diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
         spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
                      reason: reason, values: values, context: context)
       })
-    XCTAssertEqual(invoke(bridge, "activateAudio", identity(callId.uuidString.lowercased())) as? Bool, false)
-    XCTAssertNil(rig.store.snapshot())
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, false)
+    XCTAssertEqual(rig.store.snapshot(), before)
     let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
     XCTAssertTrue(events.isEmpty)
   }
