@@ -5222,4 +5222,12 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_updates_checking => 'جارٍ التحقق من التحديثات';
+
+  @override
+  String you_seen_all(int count) {
+    return 'عرض الكل ($count)';
+  }
+
+  @override
+  String get you_thought_replaced => 'استُبدلت بخاطرة أحدث';
 }

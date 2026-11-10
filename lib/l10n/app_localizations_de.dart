@@ -5266,4 +5266,12 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_updates_checking => 'Updates werden geprüft';
+
+  @override
+  String you_seen_all(int count) {
+    return 'Alle $count anzeigen';
+  }
+
+  @override
+  String get you_thought_replaced => 'durch einen neueren Gedanken ersetzt';
 }

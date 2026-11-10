@@ -280,7 +280,7 @@ void main() {
           matching: find.byIcon(Icons.visibility_outlined),
         );
         final label = find.descendant(of: chip, matching: find.byType(Text));
-        final half = tester.getSize(find.byType(YouPageScreen)).width / 2;
+        final width = tester.getSize(find.byType(YouPageScreen)).width;
 
         expect(eye, findsOneWidget);
         expect(label, findsOneWidget);
@@ -289,13 +289,13 @@ void main() {
             tester.getCenter(eye).dx,
             greaterThan(tester.getCenter(label).dx),
           );
-          expect(tester.getTopLeft(chip).dx, greaterThan(half));
+          expect(tester.getTopRight(chip).dx, closeTo(width - 16, 0.01));
         } else {
           expect(
             tester.getCenter(eye).dx,
             lessThan(tester.getCenter(label).dx),
           );
-          expect(tester.getTopRight(chip).dx, lessThan(half));
+          expect(tester.getTopLeft(chip).dx, closeTo(16, 0.01));
         }
 
         await openSeen(tester, 'live');
@@ -303,7 +303,7 @@ void main() {
         final name = find.descendant(of: row, matching: find.text('Sara'));
         final face = find.descendant(
           of: row,
-          matching: find.byKey(const ValueKey('you-viewer-face-p0')),
+          matching: find.byKey(const ValueKey('you-face-p0')),
         );
         final ago = find.descendant(
           of: row,

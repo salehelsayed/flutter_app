@@ -22,6 +22,16 @@ import 'package:flutter_app/features/posts/domain/models/thought_view_receipt.da
 class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   final Future<List<Map<String, Object?>>> Function(String postId)?
   dbLoadThoughtViews;
+  final Future<Map<String, int>> Function({
+    required String authorPeerId,
+    required List<String> postIds,
+  })?
+  dbCountOwnThoughtViews;
+  final Future<List<Map<String, Object?>>> Function({
+    required String authorPeerId,
+    required String postId,
+  })?
+  dbLoadOwnThoughtViews;
   final Future<bool> Function({
     required Map<String, Object?> receipt,
     required Map<String, Object?> event,
@@ -171,6 +181,8 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
 
   PostRepositoryImpl({
     this.dbLoadThoughtViews,
+    this.dbCountOwnThoughtViews,
+    this.dbLoadOwnThoughtViews,
     this.dbQueueThoughtView,
     this.dbRecordIncomingThoughtView,
     required this.dbInsertPost,
@@ -250,6 +262,27 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
       (await _require(dbLoadThoughtViews, 'Thought views are not configured.')(
         postId,
       )).map(ThoughtViewReceipt.fromMap).toList(growable: false);
+
+  @override
+  Future<Map<String, int>> countOwnThoughtViews({
+    required String authorPeerId,
+    required List<String> postIds,
+  }) => _require(dbCountOwnThoughtViews, 'Thought views are not configured.')(
+    authorPeerId: authorPeerId,
+    postIds: postIds,
+  );
+
+  @override
+  Future<List<ThoughtViewReceipt>> loadOwnThoughtViews({
+    required String authorPeerId,
+    required String postId,
+  }) async =>
+      (await _require(
+            dbLoadOwnThoughtViews,
+            'Thought views are not configured.',
+          )(authorPeerId: authorPeerId, postId: postId))
+          .map(ThoughtViewReceipt.fromMap)
+          .toList(growable: false);
 
   @override
   Future<bool> queueThoughtView({

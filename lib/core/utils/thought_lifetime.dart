@@ -9,5 +9,6 @@ abstract final class ThoughtLifetime {
       !now.toUtc().isBefore(expiresAt(createdAt));
 
   /// Ended before its full lifetime because a newer Thought took its place.
-  static bool isReplaced(DateTime createdAt, DateTime expiresAt) => false;
+  static bool isReplaced(DateTime createdAt, DateTime expiresAt) =>
+      expiresAt.toUtc().isBefore(ThoughtLifetime.expiresAt(createdAt));
 }

@@ -119,7 +119,20 @@ Future<Map<String, int>> dbCountOwnThoughtViews(
   Database db, {
   required String authorPeerId,
   required List<String> postIds,
-}) async => const {};
+}) async {
+  if (postIds.isEmpty) return const {};
+  final rows = await db.rawQuery(
+    '''SELECT r.post_id, COUNT(*) AS seen FROM post_view_receipts r
+       JOIN posts p ON p.post_id = r.post_id
+       WHERE p.author_peer_id = ? AND p.is_incoming = 0
+         AND r.post_id IN (${List.filled(postIds.length, '?').join(', ')})
+       GROUP BY r.post_id''',
+    [authorPeerId, ...postIds],
+  );
+  return {
+    for (final row in rows) row['post_id']! as String: row['seen']! as int,
+  };
+}
 
 /// Who saw one of [authorPeerId]'s own Thoughts, newest first, live or
 /// expired. Receipts on incoming Thoughts are the local user's own and never
@@ -128,4 +141,10 @@ Future<List<Map<String, Object?>>> dbLoadOwnThoughtViews(
   Database db, {
   required String authorPeerId,
   required String postId,
-}) async => const [];
+}) => db.rawQuery(
+  '''SELECT r.post_id, r.viewer_peer_id, r.viewed_at
+     FROM post_view_receipts r JOIN posts p ON p.post_id = r.post_id
+     WHERE r.post_id = ? AND p.author_peer_id = ? AND p.is_incoming = 0
+     ORDER BY r.viewed_at DESC, r.viewer_peer_id ASC''',
+  [postId, authorPeerId],
+);

@@ -11,6 +11,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
@@ -72,7 +73,14 @@ class YouThought {
   /// How many friends saw it.
   final int seenCount;
 
-  bool get replaced => false;
+  /// Ended early because a newer Thought took its place.
+  bool get replaced {
+    final created = DateTime.tryParse(post.createdAt);
+    final expires = DateTime.tryParse(post.expiresAt);
+    return created != null &&
+        expires != null &&
+        ThoughtLifetime.isReplaced(created, expires);
+  }
 }
 
 /// A friend who saw one of your Thoughts.
@@ -258,6 +266,9 @@ class _YouPageScreenState extends State<YouPageScreen>
 
   /// The one-time note under # went away this visit.
   bool _tagsNoteGone = false;
+
+  /// Thoughts whose seen list is open, with who saw them once loaded.
+  final _seen = <String, List<YouViewer>?>{};
   String? _mediaPostId;
 
   @override
@@ -314,8 +325,14 @@ class _YouPageScreenState extends State<YouPageScreen>
         for (final past in data.past) past.post.id,
       };
       if (!shown.contains(_mediaPostId)) _closeMediaViewer();
-      setState(() => _data = data);
+      setState(() {
+        _data = data;
+        _seen.removeWhere((postId, _) => !shown.contains(postId));
+      });
       _armExpiry(data.thought?.post);
+      for (final postId in _seen.keys.toList()) {
+        unawaited(_loadSeen(postId));
+      }
     } catch (_) {
       // The page keeps what it last showed; the next change or open reloads.
     }
@@ -409,6 +426,26 @@ class _YouPageScreenState extends State<YouPageScreen>
       );
     }
     return false;
+  }
+
+  void _toggleSeen(String postId) {
+    if (_seen.containsKey(postId)) {
+      setState(() => _seen.remove(postId));
+      return;
+    }
+    setState(() => _seen[postId] = null);
+    unawaited(_loadSeen(postId));
+  }
+
+  Future<void> _loadSeen(String postId) async {
+    try {
+      final viewers = await widget.loadViewers(postId);
+      if (mounted && _seen.containsKey(postId)) {
+        setState(() => _seen[postId] = viewers);
+      }
+    } catch (_) {
+      // The list stays empty; reopening it or the next reload reads again.
+    }
   }
 
   Future<void> _compose() async {
@@ -521,6 +558,9 @@ class _YouPageScreenState extends State<YouPageScreen>
                                   _openMedia(each.post.id, visual, index),
                               activeTag: tag?.key,
                               onTag: _showTag,
+                              seenOpen: _seen.containsKey(each.post.id),
+                              viewers: _seen[each.post.id],
+                              onToggleSeen: () => _toggleSeen(each.post.id),
                             ),
                         ],
                       ),
@@ -626,6 +666,9 @@ class _ThoughtCard extends StatelessWidget {
     required this.onOpenMedia,
     required this.activeTag,
     required this.onTag,
+    required this.seenOpen,
+    required this.viewers,
+    required this.onToggleSeen,
   });
 
   final YouThought thought;
@@ -638,6 +681,11 @@ class _ThoughtCard extends StatelessWidget {
   onOpenMedia;
   final String? activeTag;
   final void Function(ThoughtTag tag, String label) onTag;
+  final bool seenOpen;
+
+  /// Who saw it, null until the open list has loaded.
+  final List<YouViewer>? viewers;
+  final VoidCallback onToggleSeen;
 
   int _hoursLeft() {
     final expiry = DateTime.tryParse(thought.post.expiresAt)?.toUtc();
@@ -680,63 +728,89 @@ class _ThoughtCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (created != null) ...[
-            Text(
-              formatDaySeparatorLabel(
-                created,
-                now: now(),
-                todayLabel: l10n.date_today,
-                yesterdayLabel: l10n.date_yesterday,
-                locale: Localizations.localeOf(context).toLanguageTag(),
-              ),
-              style: label,
-            ),
-            const SizedBox(height: 6),
-          ],
-          _AudienceChip(
-            label: picked == 0
-                ? l10n.compose_audience_all
-                : l10n.you_page_people(picked),
-          ),
-          if (post.text.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            _TaggedText(text: post.text, activeTag: activeTag, onTag: onTag),
-          ],
-          if (visual.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _MediaGrid(
-              tiles: [
-                for (var i = 0; i < visual.length; i++)
-                  GestureDetector(
-                    key: ValueKey('you-media-${visual[i].mediaId}'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => onOpenMedia(visual, i),
-                    child: _MediaTile(
-                      path: visual[i].localPath,
-                      kind: visual[i].kind,
-                      durationMs: visual[i].durationMs,
-                    ),
+          Opacity(
+            // A past Thought steps back behind the live one.
+            opacity: live ? 1 : 0.6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (created != null) ...[
+                  Row(
+                    children: [
+                      Text(
+                        formatDaySeparatorLabel(
+                          created,
+                          now: now(),
+                          todayLabel: l10n.date_today,
+                          yesterdayLabel: l10n.date_yesterday,
+                          locale: Localizations.localeOf(
+                            context,
+                          ).toLanguageTag(),
+                        ),
+                        style: label,
+                      ),
+                      if (!live) ...[
+                        const SizedBox(width: 6),
+                        _PastIcon(replaced: thought.replaced),
+                      ],
+                    ],
                   ),
+                  const SizedBox(height: 6),
+                ],
+                _AudienceChip(
+                  label: picked == 0
+                      ? l10n.compose_audience_all
+                      : l10n.you_page_people(picked),
+                ),
+                if (post.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  _TaggedText(
+                    text: post.text,
+                    activeTag: activeTag,
+                    onTag: onTag,
+                  ),
+                ],
+                if (visual.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _MediaGrid(
+                    tiles: [
+                      for (var i = 0; i < visual.length; i++)
+                        GestureDetector(
+                          key: ValueKey('you-media-${visual[i].mediaId}'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => onOpenMedia(visual, i),
+                          child: _MediaTile(
+                            path: visual[i].localPath,
+                            kind: visual[i].kind,
+                            durationMs: visual[i].durationMs,
+                          ),
+                        ),
+                    ],
+                  ),
+                ] else if (localPhotos.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _MediaGrid(
+                    tiles: [
+                      for (final source in localPhotos)
+                        _MediaTile(
+                          path: source.localFilePath,
+                          kind: source.kind,
+                        ),
+                    ],
+                  ),
+                ],
+                for (final attachment in voice) ...[
+                  const SizedBox(height: 8),
+                  if (attachment.caption case final caption?)
+                    ThoughtVoiceCaption(caption, color: p.muted),
+                  AudioPlayerWidget(
+                    key: ValueKey('you-voice-${attachment.mediaId}'),
+                    attachment: attachment.toSharedMediaAttachment(),
+                  ),
+                ],
               ],
             ),
-          ] else if (localPhotos.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _MediaGrid(
-              tiles: [
-                for (final source in localPhotos)
-                  _MediaTile(path: source.localFilePath, kind: source.kind),
-              ],
-            ),
-          ],
-          for (final attachment in voice) ...[
-            const SizedBox(height: 8),
-            if (attachment.caption case final caption?)
-              ThoughtVoiceCaption(caption, color: p.muted),
-            AudioPlayerWidget(
-              key: ValueKey('you-voice-${attachment.mediaId}'),
-              attachment: attachment.toSharedMediaAttachment(),
-            ),
-          ],
+          ),
           if (live) ...[
             const SizedBox(height: 8),
             Row(
@@ -764,8 +838,26 @@ class _ThoughtCard extends StatelessWidget {
               ],
             ),
           ],
-          if (reacted > 0 || wrote.isNotEmpty) const SizedBox(height: 10),
-          if (reacted > 0)
+          const SizedBox(height: 10),
+          _SeenChip(
+            key: ValueKey('you-seen-${post.id}'),
+            count: thought.seenCount,
+            open: seenOpen,
+            onTap: onToggleSeen,
+          ),
+          if (viewers case final viewers? when seenOpen) ...[
+            const SizedBox(height: 8),
+            _SeenList(
+              postId: post.id,
+              viewers: viewers,
+              reactions: thought.reactions,
+              now: now(),
+            ),
+          ],
+          // The open list already shows who reacted.
+          if ((reacted > 0 && !seenOpen) || wrote.isNotEmpty)
+            const SizedBox(height: 10),
+          if (reacted > 0 && !seenOpen)
             _ResponseRow(
               label: Text(l10n.you_page_reacted(reacted), style: label),
               child: Wrap(
@@ -785,7 +877,8 @@ class _ThoughtCard extends StatelessWidget {
                 ],
               ),
             ),
-          if (reacted > 0 && wrote.isNotEmpty) const SizedBox(height: 8),
+          if (reacted > 0 && !seenOpen && wrote.isNotEmpty)
+            const SizedBox(height: 8),
           // Who wrote, never what: the words live in your chats.
           if (wrote.isNotEmpty)
             _ResponseRow(
@@ -1394,6 +1487,525 @@ class _TagBar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The quiet "Seen by N friends" chip under each of your Thoughts.
+class _SeenChip extends StatelessWidget {
+  const _SeenChip({
+    super.key,
+    required this.count,
+    required this.open,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _Palette.of(context);
+    final label = AppLocalizations.of(context)!.thought_seen_count(count);
+    return Semantics(
+      button: true,
+      expanded: open,
+      label: label,
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: 28,
+          padding: const EdgeInsetsDirectional.fromSTEB(9, 0, 6, 0),
+          decoration: BoxDecoration(
+            color: open ? p.hairline : null,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: p.hairline),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.visibility_outlined, size: 15, color: p.muted),
+              const SizedBox(width: 6),
+              Text(label, style: _mono.copyWith(color: p.ink, fontSize: 11.5)),
+              const SizedBox(width: 2),
+              Icon(
+                open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                size: 18,
+                color: p.muted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+typedef _SeenRow = ({YouViewer viewer, String? glyph});
+
+/// Inline, the list never grows past this; the rest live in the sheet.
+const _inlineViewers = 5;
+
+/// Over this many viewers the sheet gets a search field.
+const _searchOver = 20;
+
+/// Who saw it, newest first, each wearing the reaction they sent.
+List<_SeenRow> _newestViewers(
+  List<YouViewer> viewers,
+  List<ThoughtReactionGroup> reactions,
+) {
+  final glyphs = {
+    for (final group in reactions)
+      for (final person in group.participants)
+        person.peerId: group.reaction.glyph,
+  };
+  return [
+    for (final viewer in [
+      ...viewers,
+    ]..sort((a, b) => b.viewedAt.compareTo(a.viewedAt)))
+      (viewer: viewer, glyph: glyphs[viewer.peerId]),
+  ];
+}
+
+String _ago(AppLocalizations l10n, DateTime now, DateTime at) {
+  final age = now.difference(at);
+  if (age.inMinutes < 1) return l10n.time_just_now;
+  if (age.inMinutes < 60) return l10n.time_min_ago(age.inMinutes);
+  if (age.inHours < 24) return l10n.time_hour_ago(age.inHours);
+  return l10n.time_day_ago(age.inDays);
+}
+
+class _ViewerRow extends StatelessWidget {
+  const _ViewerRow({
+    required this.row,
+    required this.now,
+    required this.palette,
+    required this.ground,
+  });
+
+  final _SeenRow row;
+  final DateTime now;
+  final _Palette palette;
+
+  /// What the reaction badge sits on.
+  final Color ground;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = palette;
+    final viewer = row.viewer;
+    return SizedBox(
+      key: ValueKey('you-viewer-${viewer.peerId}'),
+      height: 44,
+      child: Row(
+        children: [
+          SizedBox(
+            key: ValueKey('you-face-${viewer.peerId}'),
+            width: 34,
+            height: 34,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                UserAvatar(peerId: viewer.peerId, size: 30, showGlow: false),
+                if (row.glyph case final glyph?)
+                  PositionedDirectional(
+                    end: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(1.5),
+                      decoration: BoxDecoration(
+                        color: ground,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(glyph, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              viewer.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: p.ink,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Text(
+            _ago(AppLocalizations.of(context)!, now, viewer.viewedAt),
+            style: _mono.copyWith(fontSize: 11.5, color: p.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Who saw it, at most [_inlineViewers] rows: friends who reacted first, then
+/// the most recent. A longer list ends in a row that opens all of them.
+class _SeenList extends StatelessWidget {
+  const _SeenList({
+    required this.postId,
+    required this.viewers,
+    required this.reactions,
+    required this.now,
+  });
+
+  final String postId;
+  final List<YouViewer> viewers;
+  final List<ThoughtReactionGroup> reactions;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _Palette.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final newest = _newestViewers(viewers, reactions);
+    final inline = [
+      ...newest.where((row) => row.glyph != null),
+      ...newest.where((row) => row.glyph == null),
+    ].take(_inlineViewers);
+    final small = _mono.copyWith(fontSize: 11.5);
+    return Container(
+      key: ValueKey('you-seen-list-$postId'),
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 12, 6),
+      decoration: BoxDecoration(
+        color: p.hairline,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: p.hairline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                l10n.thought_seen_title,
+                style: small.copyWith(
+                  color: p.ink,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                l10n.you_page_tag_private,
+                style: small.copyWith(color: p.faint),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (newest.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                l10n.thought_seen_count(0),
+                style: small.copyWith(color: p.muted),
+              ),
+            ),
+          for (final row in inline)
+            _ViewerRow(row: row, now: now, palette: p, ground: p.ground),
+          if (newest.length > _inlineViewers)
+            Semantics(
+              button: true,
+              child: GestureDetector(
+                key: ValueKey('you-seen-all-$postId'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => _ViewersSheet(viewers: newest, now: now),
+                ),
+                child: Container(
+                  height: 44,
+                  margin: const EdgeInsets.only(top: 2),
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: p.hairline)),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        l10n.you_seen_all(newest.length),
+                        style: small.copyWith(
+                          color: p.accent,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Icon(
+                        Directionality.of(context) == TextDirection.rtl
+                            ? Icons.chevron_left_rounded
+                            : Icons.chevron_right_rounded,
+                        size: 20,
+                        color: p.muted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The sheet sits outside the page's background, so it keeps the You tags
+/// sheet's dark look on every background.
+const _sheetFill = Color(0xFF111318);
+const _sheetPalette = _Palette.dark;
+
+/// Every viewer, newest first, with an All / Reactions switch and, once the
+/// list is long, a search field.
+class _ViewersSheet extends StatefulWidget {
+  const _ViewersSheet({required this.viewers, required this.now});
+
+  final List<_SeenRow> viewers;
+  final DateTime now;
+
+  @override
+  State<_ViewersSheet> createState() => _ViewersSheetState();
+}
+
+class _ViewersSheetState extends State<_ViewersSheet> {
+  final _search = TextEditingController();
+  bool _reactedOnly = false;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const p = _sheetPalette;
+    final l10n = AppLocalizations.of(context)!;
+    final query = _search.text.trim().toLowerCase();
+    final reacted = [
+      for (final row in widget.viewers)
+        if (row.glyph != null) row,
+    ];
+    final shown = [
+      for (final row in _reactedOnly ? reacted : widget.viewers)
+        if (query.isEmpty || row.viewer.name.toLowerCase().contains(query)) row,
+    ];
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 1,
+        minChildSize: 0.5,
+        builder: (context, controller) => Material(
+          key: const ValueKey('you-viewers-sheet'),
+          color: _sheetFill,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              children: [
+                Container(
+                  width: 36,
+                  height: 5,
+                  margin: const EdgeInsets.only(top: 8, bottom: 2),
+                  decoration: BoxDecoration(
+                    color: p.hairline,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(16, 2, 8, 4),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 56),
+                      Expanded(
+                        child: Text(
+                          l10n.thought_seen_count(widget.viewers.length),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: p.ink,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: p.muted,
+                          minimumSize: const Size(56, 44),
+                        ),
+                        child: Text(l10n.you_tags_done),
+                      ),
+                    ],
+                  ),
+                ),
+                if (widget.viewers.length > _searchOver)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: TextField(
+                      key: const ValueKey('you-viewers-search'),
+                      controller: _search,
+                      onChanged: (_) => setState(() {}),
+                      style: _mono.copyWith(color: p.ink, fontSize: 14),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        filled: true,
+                        fillColor: p.composerPhotoFill,
+                        prefixIcon: Icon(
+                          Icons.search,
+                          size: 18,
+                          color: p.faint,
+                        ),
+                        hintText: l10n.thought_pick_search,
+                        hintStyle: TextStyle(color: p.faint, fontSize: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: p.hairline),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: p.hairline),
+                        ),
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  child: Row(
+                    children: [
+                      _FilterPill(
+                        key: const ValueKey('you-viewers-all'),
+                        label: l10n.orbit_filter_all,
+                        count: widget.viewers.length,
+                        selected: !_reactedOnly,
+                        onTap: () => setState(() => _reactedOnly = false),
+                      ),
+                      const SizedBox(width: 8),
+                      _FilterPill(
+                        key: const ValueKey('you-viewers-reacted'),
+                        label: l10n.group_reactions_title,
+                        count: reacted.length,
+                        selected: _reactedOnly,
+                        onTap: () => setState(() => _reactedOnly = true),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    key: const ValueKey('you-viewers-list'),
+                    controller: controller,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemExtent: 52,
+                    itemCount: shown.length,
+                    itemBuilder: (_, i) => Align(
+                      child: _ViewerRow(
+                        row: shown[i],
+                        now: widget.now,
+                        palette: p,
+                        ground: _sheetFill,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterPill extends StatelessWidget {
+  const _FilterPill({
+    super.key,
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const p = _sheetPalette;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0x24E8ECE9) : null,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0x24E8ECE9)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? p.ink : p.muted,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '$count',
+                style: _mono.copyWith(color: p.muted, fontSize: 11.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Why a past Thought is no longer up, as a glyph after its date: an
+/// hourglass when it ran out, two arrows when a newer Thought took its place.
+class _PastIcon extends StatelessWidget {
+  const _PastIcon({required this.replaced});
+
+  final bool replaced;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final words = replaced ? l10n.you_thought_replaced : l10n.post_expired;
+    return Tooltip(
+      message: words,
+      excludeFromSemantics: true,
+      child: Semantics(
+        container: true,
+        label: words,
+        child: Icon(
+          replaced ? Icons.swap_horiz_rounded : Icons.hourglass_bottom_rounded,
+          size: 14,
+          color: _Palette.of(context).muted,
+        ),
       ),
     );
   }

@@ -2281,5 +2281,7 @@
   "settings_app_updates": "تحديث التطبيق",
   "settings_updates_current": "التطبيق محدّث",
   "settings_updates_unknown": "الحالة غير متاحة",
-  "settings_updates_checking": "جارٍ التحقق من التحديثات"
+  "settings_updates_checking": "جارٍ التحقق من التحديثات",
+  "you_seen_all": "عرض الكل ({count})",
+  "you_thought_replaced": "استُبدلت بخاطرة أحدث"
 }
