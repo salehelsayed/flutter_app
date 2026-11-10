@@ -1,5 +1,6 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
@@ -25,39 +26,54 @@ Future<bool> requestPushPermission({
   Future<NotificationSettings> Function()? requestPermissionFn,
   Future<bool> Function()? osNotificationsEnabledFn,
 }) async {
-  logPushDiagnostic('permission_request_begin');
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'PUSH_PERMISSION_REQUEST_BEGIN',
-    details: {},
-  );
+  _recordPermissionObservation(stage: 'preflight', outcome: 'started');
+  try {
+    logPushDiagnostic('permission_request_begin');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_PERMISSION_REQUEST_BEGIN',
+      details: {},
+    );
 
-  final effectiveRequestPermission =
-      requestPermissionFn ?? _defaultRequestPermission;
+    final effectiveRequestPermission =
+        requestPermissionFn ?? _defaultRequestPermission;
 
-  final settings = await effectiveRequestPermission();
+    final settings = await effectiveRequestPermission();
 
-  final (:granted, :osEnabled) = await _confirmWithOs(
-    settings,
-    osNotificationsEnabledFn,
-  );
+    final (:granted, :osEnabled) = await _confirmWithOs(
+      settings,
+      osNotificationsEnabledFn,
+    );
 
-  final resultDetails = <String, dynamic>{
-    'status': settings.authorizationStatus.name,
-    'granted': granted,
-    // Null-aware element: the key is present only when the check answered.
-    'osEnabled': ?osEnabled,
-  };
+    final resultDetails = <String, dynamic>{
+      'status': settings.authorizationStatus.name,
+      'granted': granted,
+      // Null-aware element: the key is present only when the check answered.
+      'osEnabled': ?osEnabled,
+    };
 
-  logPushDiagnostic('permission_request_result', details: resultDetails);
+    logPushDiagnostic('permission_request_result', details: resultDetails);
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'PUSH_PERMISSION_REQUEST_RESULT',
-    details: resultDetails,
-  );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_PERMISSION_REQUEST_RESULT',
+      details: resultDetails,
+    );
 
-  return granted;
+    _recordPermissionObservation(
+      stage: 'preflight',
+      outcome: granted ? 'ok' : 'rejected',
+      reason: granted ? 'none' : 'permission_denied',
+    );
+    return granted;
+  } catch (_) {
+    _recordPermissionObservation(
+      stage: 'preflight',
+      outcome: 'failed',
+      reason: 'unknown',
+    );
+    rethrow;
+  }
 }
 
 Future<NotificationSettings> _defaultRequestPermission() async {
@@ -132,6 +148,11 @@ Future<({bool granted, bool? osEnabled})> _confirmWithOs(
     try {
       osEnabled = await effectiveOsCheck();
     } catch (e) {
+      _recordPermissionObservation(
+        stage: 'verify',
+        outcome: 'failed',
+        reason: 'unknown',
+      );
       // Fail OPEN, behind a deliberately BROAD catch. An escaping throw would
       // land in the coordinator's exception handler, which schedules a 15s
       // retry that re-enters with the permission state still `unknown` and
@@ -198,4 +219,21 @@ Future<bool> _defaultOsNotificationsEnabled() async {
   if (android == null) return true;
   if (!(await android.areNotificationsEnabled() ?? true)) return false;
   return mknoonPrimaryMessageChannelEnabled(plugin);
+}
+
+void _recordPermissionObservation({
+  required String stage,
+  required String outcome,
+  String reason = 'none',
+}) {
+  try {
+    AppDiagnostics.instance.record(
+      feature: 'push',
+      stage: stage,
+      outcome: outcome,
+      reason: reason,
+    );
+  } catch (_) {
+    // Permission decisions and escaping exceptions stay owned by the requester.
+  }
 }
