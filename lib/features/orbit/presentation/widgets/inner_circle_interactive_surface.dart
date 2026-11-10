@@ -16,6 +16,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -1314,10 +1315,9 @@ class _InnerCircleInteractiveSurfaceState
           ),
         ),
 
-      // Pill: a 52px collapsed circle (bottom-right) that expands to a
+      // Pill: the shared 44px control circle (bottom-right) that expands to a
       // full-width (left/right 16) >=48-high search bar. Bottom band clears any
-      // host chrome via bottomClearance (persistent nav). 212: bordered +
-      // shadowed like every chrome sibling, but NO BackdropFilter — a
+      // host chrome via bottomClearance (persistent nav). NO BackdropFilter — a
       // permanently-mounted blur over the continuously-animating rings would
       // re-sample per frame (INV-212-3, 202 perf class).
       // Nav-line seat: when the HOST owns the collapsed pill (findOpenSignal
@@ -1406,27 +1406,7 @@ class _InnerCircleInteractiveSurfaceState
                     key: const ValueKey('orbit-find-pill'),
                     behavior: HitTestBehavior.opaque,
                     onTap: _openFind,
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: colors.glassSurface,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: colors.glassBorder),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x59000000),
-                            blurRadius: 18,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.search,
-                        size: 24,
-                        color: colors.iconPrimary,
-                      ),
-                    ),
+                    child: const OrbitControlCircle(icon: Icons.search),
                   ),
                 ),
         ),

@@ -606,6 +606,12 @@ class OrbitalVisualization extends StatelessWidget {
                       : OrbitalAvatarFocusTreatment.none,
                   avatarGlowEnabled: !v2 && quiet && focused,
                   unreadCountBadge: v2,
+                  // An unopened thought orbits as a star once its title is
+                  // put away (pinched in); the title itself says it otherwise.
+                  thoughtStarColor:
+                      reveal == 0 && notes[seat.index]?.isRead == false
+                      ? relationshipAccent
+                      : null,
                 ),
               ),
             ),
@@ -751,6 +757,7 @@ class OrbitalVisualization extends StatelessWidget {
         OrbitalAvatarFocusTreatment.none,
     bool avatarGlowEnabled = false,
     bool unreadCountBadge = false,
+    Color? thoughtStarColor,
   }) {
     switch (item) {
       case OrbitFriendItem(:final friend):
@@ -777,6 +784,7 @@ class OrbitalVisualization extends StatelessWidget {
           focusTreatment: focusTreatment,
           avatarGlowEnabled: avatarGlowEnabled,
           unreadCountBadge: unreadCountBadge,
+          thoughtStarColor: thoughtStarColor,
         );
       case OrbitGroupItem(:final group):
         return OrbitalAvatar(

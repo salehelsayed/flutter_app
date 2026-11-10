@@ -42,7 +42,7 @@ void main() {
       expect(find.byType(CustomPaint), findsWidgets);
     });
 
-    testWidgets('uses readable glass chrome on daylight', (tester) async {
+    testWidgets('uses the light chrome hairline and faint fill on daylight', (tester) async {
       const colors = BackgroundReadableColors.representativeLight;
 
       await tester.pumpWidget(
@@ -61,8 +61,8 @@ void main() {
           .first;
       final decoration = container.decoration as BoxDecoration;
 
-      expect(decoration.color, colors.glassSurface);
-      expect((decoration.border as Border).top.color, colors.glassBorder);
+      expect(decoration.color, colors.chromeFaintFill);
+      expect((decoration.border as Border).top.color, colors.chromeHairline);
     });
   });
 }

@@ -1,12 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-/// 52x52 glass circle search button for opening the search dock (212: full
-/// glass-chrome vocabulary — border + blur + soft drop shadow — with a
-/// Semantics button label and an opaque hit square so the corners of the
-/// circle still tap).
+/// The search control for opening the search dock: the shared
+/// [OrbitControlCircle], with a Semantics button label and an opaque hit
+/// square so the corners of the circle still tap.
 class OrbitSearchTrigger extends StatelessWidget {
   final VoidCallback onSearchTap;
 
@@ -14,8 +12,6 @@ class OrbitSearchTrigger extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final readableColors = context.backgroundReadableColors;
-
     return Semantics(
       container: true,
       button: true,
@@ -23,39 +19,7 @@ class OrbitSearchTrigger extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onSearchTap,
-        child: Container(
-          width: 52,
-          height: 52,
-          // Shadow lives OUTSIDE the ClipOval — a clipped shadow is invisible.
-          // Neutral black reads on both background tones.
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x59000000),
-                blurRadius: 18,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          child: ClipOval(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: readableColors.glassSurface,
-                  border: Border.all(color: readableColors.glassBorder),
-                ),
-                child: Icon(
-                  Icons.search,
-                  size: 24,
-                  color: readableColors.iconPrimary,
-                ),
-              ),
-            ),
-          ),
-        ),
+        child: const OrbitControlCircle(icon: Icons.search),
       ),
     );
   }
