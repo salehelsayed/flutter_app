@@ -376,6 +376,54 @@ void main() {
       });
     });
 
+    test('Android resume during a denied prompt does not request twice', () {
+      fakeAsync((async) {
+        final nativeReply = Completer<bool>();
+        androidRequest = () => nativeReply.future;
+        var completions = 0;
+        var registrations = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: requestPushPermission,
+          readPermission: readPushPermission,
+          registerPushToken: () async {
+            registrations++;
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+
+        try {
+          coordinator.ensureStarted().then((_) => completions++);
+          async.flushMicrotasks();
+          coordinator.refreshOnResume().then((_) => completions++);
+          async.flushMicrotasks();
+          expect(completions, 0);
+          expect(calls, <String>['android:requestNotificationsPermission']);
+
+          nativeReply.complete(false);
+          async.flushMicrotasks();
+
+          expect(completions, 2);
+          expect(registrations, 0);
+          expect(
+            calls.where(
+              (call) => call.endsWith('requestNotificationsPermission'),
+            ),
+            hasLength(1),
+          );
+          expect(
+            calls,
+            isNot(contains('firebase:Messaging#requestPermission')),
+          );
+          expect(async.pendingTimers, isEmpty);
+        } finally {
+          coordinator.dispose();
+          if (!nativeReply.isCompleted) nativeReply.complete(false);
+          async.flushMicrotasks();
+        }
+      });
+    });
+
     test('Android keeps one slow permission prompt pending until grant', () {
       fakeAsync((async) {
         final nativeReply = Completer<bool>();
