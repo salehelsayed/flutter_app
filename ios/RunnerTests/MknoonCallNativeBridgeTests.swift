@@ -31,6 +31,67 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
     XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
   }
 
+  func testAudioActivationRefusalHasCoarseReasonAndMayLaterRecover() throws {
+    let rig = makeBridgeRig()
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(true))
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, false)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent, "a refused checkpoint does not end the call")
+    XCTAssertTrue(rig.controller.handleAnswer(callId))
+    XCTAssertTrue(rig.controller.acknowledge(callId, through: 2, disposition: .adopted))
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callId))
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, true)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    let completed = events.filter { $0["outcome"] as? String != "started" }
+    XCTAssertEqual(completed.count, 2)
+    XCTAssertEqual(completed.map { $0["stage"] as? String }, ["audio", "audio"])
+    XCTAssertEqual(completed.map { $0["action"] as? String }, ["activate", "activate"])
+    XCTAssertEqual(completed.map { $0["outcome"] as? String }, ["rejected", "ok"])
+    XCTAssertEqual(completed.map { $0["reason"] as? String }, ["audio_activation_failed", "none"])
+    XCTAssertEqual((completed[0]["values"] as? [String: Any])?["accepted"] as? Bool, false)
+    XCTAssertEqual((completed[1]["values"] as? [String: Any])?["accepted"] as? Bool, true)
+    let exported = String(decoding: try JSONSerialization.data(withJSONObject: events), as: UTF8.self)
+    XCTAssertFalse(exported.contains(handle))
+  }
+
+  func testAnswerRefusalKeepsExistingReason() throws {
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(true))
+    let bridge = MknoonCallNativeBridge(controller: makeBridgeRig().controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    XCTAssertEqual(invoke(bridge, "answer", identity(callId.uuidString.lowercased())) as? Bool, false)
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    let rejected = try XCTUnwrap(events.first { $0["outcome"] as? String == "rejected" })
+    XCTAssertEqual(rejected["reason"] as? String, "native_answer_refused")
+  }
+
+  func testOptedOutAudioObservationCannotChangeRefusal() throws {
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(false))
+    let rig = makeBridgeRig()
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(callId.uuidString.lowercased())) as? Bool, false)
+    XCTAssertNil(rig.store.snapshot())
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    XCTAssertTrue(events.isEmpty)
+  }
+
   func testSharedWireContextSurvivesCapabilityWrapperWithoutChangingAuthorityFields() throws {
     for wire in try nativeDiagnosticWireContexts().values {
       let rig = makeBridgeRig()
