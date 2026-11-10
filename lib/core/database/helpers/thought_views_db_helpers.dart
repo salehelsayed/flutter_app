@@ -112,3 +112,20 @@ Future<List<Map<String, Object?>>> dbLoadThoughtWroteBackMessages(
      ORDER BY m.timestamp ASC, m.id ASC''',
   ['thought:$postId'],
 );
+
+/// How many friends saw each of [authorPeerId]'s own Thoughts in [postIds],
+/// live or expired. A post nobody saw has no entry.
+Future<Map<String, int>> dbCountOwnThoughtViews(
+  Database db, {
+  required String authorPeerId,
+  required List<String> postIds,
+}) async => const {};
+
+/// Who saw one of [authorPeerId]'s own Thoughts, newest first, live or
+/// expired. Receipts on incoming Thoughts are the local user's own and never
+/// show here.
+Future<List<Map<String, Object?>>> dbLoadOwnThoughtViews(
+  Database db, {
+  required String authorPeerId,
+  required String postId,
+}) async => const [];

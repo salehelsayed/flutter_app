@@ -62,11 +62,30 @@ class YouThought {
     required this.post,
     required this.reactions,
     required this.wroteBack,
+    this.seenCount = 0,
   });
 
   final PostModel post;
   final List<ThoughtReactionGroup> reactions;
   final List<YouWroteBack> wroteBack;
+
+  /// How many friends saw it.
+  final int seenCount;
+
+  bool get replaced => false;
+}
+
+/// A friend who saw one of your Thoughts.
+class YouViewer {
+  const YouViewer({
+    required this.peerId,
+    required this.name,
+    required this.viewedAt,
+  });
+
+  final String peerId;
+  final String name;
+  final DateTime viewedAt;
 }
 
 class YouWroteBack {
@@ -184,7 +203,13 @@ class YouPageScreen extends StatefulWidget {
     this.tagsNoteSeen = true,
     this.onTagsNoteSeen,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.loadViewers = _noViewers,
   });
+
+  static Future<List<YouViewer>> _noViewers(String postId) async => const [];
+
+  /// Who saw your Thought [postId], read when its seen list opens.
+  final Future<List<YouViewer>> Function(String postId) loadViewers;
 
   /// The background the user chose for Orbit; the You page sits on it too.
   final BackgroundPreference backgroundPreference;
