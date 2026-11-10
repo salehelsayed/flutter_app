@@ -6930,9 +6930,10 @@ final class ProductionApplicationBootstrap
     // Plan 375: persisted-token restore and every relay-health transition
     // route through this one late-installed retry owner; afterward no raw
     // bridge registration path remains in the service.
+    // Automatic recovery must not repeat a denied permission prompt.
     if (pushRegistrationCoordinator != null) {
       p2pService.installPushRegistrationRetryNow(
-        pushRegistrationCoordinator.retryNow,
+        pushRegistrationCoordinator.refreshOnResume,
       );
     }
     // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the

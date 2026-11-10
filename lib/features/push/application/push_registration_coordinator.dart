@@ -17,8 +17,8 @@ typedef _PushRegistrationHealthAuthority = ({
 class PushRegistrationCoordinator {
   final Future<bool> Function() requestPermission;
 
-  /// Reads the current permission without asking. Null keeps resume on
-  /// [requestPermission].
+  /// Reads the current permission without asking. Without a reader, passive
+  /// recovery preserves a known denial until an explicit permission request.
   final Future<bool> Function()? readPermission;
   final Future<RegisterPushTokenResult> Function() registerPushToken;
 
@@ -109,18 +109,12 @@ class PushRegistrationCoordinator {
     });
   }
 
-  /// Resume must see settings changed outside the app without asking again:
-  /// closing the system permission dialog itself resumes the app. Once the
-  /// app has an answer, resume only reads the current permission. Before the
-  /// first answer it asks, as startup does.
+  /// Resume and relay recovery must not repeat a denied prompt.
+  /// Closing the system dialog can resume the app before its answer arrives;
+  /// retain passive intent while joining that pending startup attempt.
   Future<void> refreshOnResume() async {
-    final read = readPermission;
-    if (read == null ||
-        !_started ||
-        _permissionState == _PushPermissionState.unknown) {
-      return retryNow();
-    }
     if (_disposed || !isEnabled()) return;
+    if (!_started) return ensureStarted();
     _permissionCheckGeneration++;
     await _attemptRegistration(
       checkPermission: true,
@@ -134,8 +128,8 @@ class PushRegistrationCoordinator {
       return;
     }
 
-    // Resume and explicit Retry must observe settings changed outside the app.
-    // Automatic token/timer retries keep their existing no-reprompt policy.
+    // Explicit Retry may ask again after denial. Automatic recovery uses the
+    // passive refresh path instead.
     _permissionCheckGeneration++;
     if (!_started) {
       await ensureStarted();
@@ -298,7 +292,8 @@ class PushRegistrationCoordinator {
     required String trigger,
     required _PushRegistrationHealthAuthority authority,
   }) async {
-    if (!checkPermission && _permissionState == _PushPermissionState.denied) {
+    if (_permissionState == _PushPermissionState.denied &&
+        (!checkPermission || (readOnly && readPermission == null))) {
       return;
     }
     final previousHealth = _healthRecord;
