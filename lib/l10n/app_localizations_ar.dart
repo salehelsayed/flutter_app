@@ -3315,13 +3315,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get feed_connected => 'متصل';
 
   @override
-  String get qr_added_to_circle => 'تمت الإضافة إلى دائرتك!';
+  String get qr_added_to_circle => 'تم حفظ جهة الاتصال';
 
   @override
   String get btn_ok => 'حسنًا';
 
   @override
-  String get qr_already_in_circle => 'موجود بالفعل في دائرتك!';
+  String get qr_already_in_circle => 'جهة الاتصال محفوظة مسبقًا';
 
   @override
   String get qr_contact_added_previously => 'تمت إضافة جهة الاتصال هذه سابقًا';

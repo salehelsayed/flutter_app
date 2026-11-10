@@ -5411,7 +5411,7 @@ abstract class AppLocalizations {
   /// No description provided for @qr_added_to_circle.
   ///
   /// In en, this message translates to:
-  /// **'Added to your circle!'**
+  /// **'Contact saved'**
   String get qr_added_to_circle;
 
   /// No description provided for @btn_ok.
@@ -5423,7 +5423,7 @@ abstract class AppLocalizations {
   /// No description provided for @qr_already_in_circle.
   ///
   /// In en, this message translates to:
-  /// **'Already in your circle!'**
+  /// **'Contact already saved'**
   String get qr_already_in_circle;
 
   /// No description provided for @qr_contact_added_previously.

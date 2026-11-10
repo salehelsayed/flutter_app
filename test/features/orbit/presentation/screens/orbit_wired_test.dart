@@ -816,7 +816,7 @@ void main() {
           );
           await tester.tap(find.text('Submit'));
           await pumpOrbitFrames(tester, count: 8);
-          expect(find.text('Added to your circle!'), findsOneWidget);
+          expect(find.text('Contact saved'), findsOneWidget);
           expect(await contactRepo.getContact(scanned.peerId), isNotNull);
           await tester.tap(find.text('OK'));
           await pumpOrbitFrames(tester, count: 10);

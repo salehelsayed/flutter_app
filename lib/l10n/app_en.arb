@@ -1758,9 +1758,9 @@
   "@feed_connected": {
     "description": "134 Feed redesign: muted label on a system card for a plain new connection (vs an introduction)."
   },
-  "qr_added_to_circle": "Added to your circle!",
+  "qr_added_to_circle": "Contact saved",
   "btn_ok": "OK",
-  "qr_already_in_circle": "Already in your circle!",
+  "qr_already_in_circle": "Contact already saved",
   "qr_contact_added_previously": "This contact was added previously",
   "btn_got_it": "Got it",
   "orbit_intro_banner_mixed": "{inviteCount, plural, =1{1 group invite} other{{inviteCount} group invites}} and {introCount, plural, =1{1 introduction} other{{introCount} introductions}} waiting",
