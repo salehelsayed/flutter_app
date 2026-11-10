@@ -35,6 +35,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_butt
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_intro_dock.dart';
@@ -176,16 +177,17 @@ enum _OrbitIntroEntryType {
   spacer,
 }
 
-// 207: right-hand cap for the intro dock slot = 64 (the 211 pill's right
-// anchor) + 134 (widest pill state: 'Online ✦' + debug connection count,
-// TC-207-05-measured) + 8 gap. Scaled by the ambient text scale at the mount
-// so the dock always yields to the intrinsic-width pill — adjust the constant,
-// never let the two overlap (TC-207-05 pins the widest state).
-const double _kIntroDockRightReserve = 206;
+// 207: right-hand cap for the intro dock slot = 68 (the 211 pill's right
+// anchor) + 147 (widest hairline pill state: 'Online ✦' + debug connection
+// count, 13 px over the old 12 px capsule) + 8 gap. Scaled by the ambient text
+// scale at the mount so the dock always yields to the intrinsic-width pill —
+// adjust the constant, never let the two overlap (TC-207-05 pins the widest
+// state).
+const double _kIntroDockRightReserve = 223;
 
 /// The top control row (view toggle, connection pill, calls, create FAB) in
-/// SafeArea coordinates: 8 inset + 40 row + 8 gap. 3D stays below it.
-const double _kHeaderRowClearance = 56;
+/// SafeArea coordinates: 8 inset + 44 row + 8 gap. 3D stays below it.
+const double _kHeaderRowClearance = 60;
 
 class _OrbitIntroEntry {
   final _OrbitIntroEntryType type;
@@ -966,19 +968,22 @@ class _OrbitScreenView extends StatelessWidget {
                     ),
 
                   // Calls sits left of the top-right create-group FAB
-                  // (16 inset + 40 FAB + 8 gap), never on top of it.
+                  // (16 inset + 44 FAB + 8 gap), never on top of it.
                   if (onOpenCalls != null && !innerEditing)
                     Positioned(
                       top: MediaQuery.paddingOf(context).top + 8,
-                      right: 64,
-                      width: 40,
-                      height: 40,
-                      child: IconButton(
-                        key: const ValueKey('orbit-calls'),
-                        tooltip: AppLocalizations.of(context)!.calls_title,
-                        padding: EdgeInsets.zero,
-                        onPressed: onOpenCalls,
-                        icon: const Icon(Icons.phone_in_talk_outlined),
+                      right: 68,
+                      width: OrbitControlCircle.size,
+                      height: OrbitControlCircle.size,
+                      child: OrbitControlCircle.custom(
+                        child: IconButton(
+                          key: const ValueKey('orbit-calls'),
+                          tooltip: AppLocalizations.of(context)!.calls_title,
+                          padding: EdgeInsets.zero,
+                          color: context.backgroundReadableColors.chromeInk,
+                          onPressed: onOpenCalls,
+                          icon: const Icon(Icons.phone_in_talk_outlined),
+                        ),
                       ),
                     ),
 
@@ -1166,9 +1171,9 @@ class _OrbitScreenView extends StatelessWidget {
                         return Positioned(
                           key: const ValueKey('orbit-intro-dock-slot'),
                           top: MediaQuery.of(context).padding.top + 8,
-                          left: 64,
+                          left: 68,
                           right: _kIntroDockRightReserve * textScale,
-                          height: 40,
+                          height: OrbitControlCircle.size,
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: OrbitIntroDock(
@@ -1189,8 +1194,8 @@ class _OrbitScreenView extends StatelessWidget {
 
                   // Layer 4b: connection-status pill (211) — migrated from the Feed
                   // header. Physical right (RTL-safe, same rationale as the toggle);
-                  // right = 16 (FAB inset) + 40 (FAB) + 8 gap, plus 48 more when the
-                  // Calls button sits in that slot. height:40 + Center
+                  // right = 16 (FAB inset) + 44 (FAB) + 8 gap, plus 52 more when the
+                  // Calls button sits in that slot. height:44 + Center
                   // keeps the pill vertically aligned with the FAB at any text
                   // scale. Hidden during sculpt-edit because the edit banner spans
                   // the full top width. Mounted BEFORE the FAB so the open-menu
@@ -1203,19 +1208,23 @@ class _OrbitScreenView extends StatelessWidget {
                     Positioned(
                       key: const ValueKey('orbit-connection-indicator'),
                       top: MediaQuery.of(context).padding.top + 8,
-                      right: onOpenCalls != null ? 112 : 64,
-                      height: 40,
+                      right: onOpenCalls != null ? 120 : 68,
+                      height: OrbitControlCircle.size,
                       child: Center(
                         child:
                             connectionIndicatorOverride ??
-                            ConnectionStatusIndicator(p2pService: p2pService!),
+                            ConnectionStatusIndicator(
+                              p2pService: p2pService!,
+                              style: ConnectionStatusIndicatorStyle.hairline,
+                            ),
                       ),
                     ),
 
                   // Layer 5: ExpandableFab (create group)
                   ExpandableFab(
                     anchor: ExpandableFabAnchor.topRight,
-                    fabSize: 40,
+                    fabSize: OrbitControlCircle.size,
+                    filled: true,
                     fabSemanticIdentifier: 'orbit_create_group_fab',
                     fabSemanticLabel: AppLocalizations.of(
                       context,
@@ -2086,8 +2095,8 @@ class _PokeNotifier extends ChangeNotifier {
 }
 
 /// The Inner-Circle collapsed find pill, re-seated as nav-band chrome. Visual
-/// twin of the in-surface pill it replaces in persistent mode (52px glass
-/// circle, border + shadow, NO BackdropFilter — INV-212-3: a permanent blur
+/// twin of the in-surface pill it replaces in persistent mode (the shared
+/// [OrbitControlCircle], NO BackdropFilter — INV-212-3: a permanent blur
 /// over the continuously-animating rings would re-sample per frame) and of
 /// [OrbitSearchTrigger] on the all-chats surface. Deliberately its own type:
 /// find-in-circle is not list search, and the "no OrbitSearchTrigger on
@@ -2099,7 +2108,6 @@ class _RingsFindPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     return Semantics(
       container: true,
       button: true,
@@ -2108,30 +2116,14 @@ class _RingsFindPill extends StatelessWidget {
         key: const ValueKey('orbit-find-pill'),
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: colors.glassSurface,
-            shape: BoxShape.circle,
-            border: Border.all(color: colors.glassBorder),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x59000000),
-                blurRadius: 18,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Icon(Icons.search, size: 24, color: colors.iconPrimary),
-        ),
+        child: const OrbitControlCircle(icon: Icons.search),
       ),
     );
   }
 }
 
-/// Bottom-left settings entry. Same glass circle as [_RingsFindPill] so the
-/// two bottom corners read as one pair.
+/// Bottom-left settings entry. Same [OrbitControlCircle] as [_RingsFindPill]
+/// so the two bottom corners read as one pair.
 class _OrbitSettingsButton extends StatelessWidget {
   final VoidCallback onTap;
 
@@ -2139,7 +2131,6 @@ class _OrbitSettingsButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     return Semantics(
       container: true,
       button: true,
@@ -2148,27 +2139,7 @@ class _OrbitSettingsButton extends StatelessWidget {
         key: const ValueKey('orbit-settings-button'),
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: colors.glassSurface,
-            shape: BoxShape.circle,
-            border: Border.all(color: colors.glassBorder),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x59000000),
-                blurRadius: 18,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.settings_outlined,
-            size: 24,
-            color: colors.iconPrimary,
-          ),
-        ),
+        child: const OrbitControlCircle(icon: Icons.settings_outlined),
       ),
     );
   }

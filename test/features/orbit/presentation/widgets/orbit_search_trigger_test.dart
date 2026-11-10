@@ -81,7 +81,7 @@ void main() {
       expect(searchTapped, isTrue);
     });
 
-    testWidgets('uses readable glass and icon color on daylight', (
+    testWidgets('uses the light hairline, faint fill and ink on daylight', (
       tester,
     ) async {
       const colors = BackgroundReadableColors.representativeLight;
@@ -91,15 +91,15 @@ void main() {
       );
 
       final container = tester.widget<Container>(find.descendant(
-        of: find.byType(BackdropFilter),
+        of: find.byType(OrbitSearchTrigger),
         matching: find.byType(Container),
       ));
       final decoration = container.decoration as BoxDecoration;
       final icon = tester.widget<Icon>(find.byIcon(Icons.search));
 
-      expect(decoration.color, colors.glassSurface);
-      expect((decoration.border as Border).top.color, colors.glassBorder);
-      expect(icon.color, colors.iconPrimary);
+      expect(decoration.color, const Color(0x080B0F19));
+      expect((decoration.border as Border).top.color, const Color(0x240B0F19));
+      expect(icon.color, const Color(0xFF1A2130));
     });
   });
 }

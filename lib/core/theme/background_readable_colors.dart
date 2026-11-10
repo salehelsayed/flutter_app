@@ -283,6 +283,15 @@ class BackgroundReadableColors
 
   bool get isLightSurface => statusBarIconBrightness == Brightness.dark;
 
+  /// Outlined chrome controls (the Orbit circles and status pill): a 1 px
+  /// hairline at 14%, a faint fill and a soft ink, on white or on ink.
+  Color get chromeHairline =>
+      isLightSurface ? const Color(0x240B0F19) : const Color(0x24FFFFFF);
+  Color get chromeFaintFill =>
+      isLightSurface ? const Color(0x080B0F19) : const Color(0x0AFFFFFF);
+  Color get chromeInk =>
+      isLightSurface ? const Color(0xFF1A2130) : const Color(0xFFE6E9EF);
+
   @override
   BackgroundReadableColors copyWith({
     Color? textPrimary,

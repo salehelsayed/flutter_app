@@ -1,8 +1,8 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 
-/// 24x24 glass circle X button for closing the Orbit screen.
+/// The X control for closing the Orbit screen: the shared [OrbitControlCircle].
 class OrbitCloseButton extends StatelessWidget {
   final VoidCallback onTap;
 
@@ -14,21 +14,10 @@ class OrbitCloseButton extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
-      child: ClipOval(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: readableColors.glassSurface,
-              border: Border.all(color: readableColors.glassBorder),
-            ),
-            child: CustomPaint(
-              size: const Size(20, 20),
-              painter: _XPainter(color: readableColors.iconPrimary),
-            ),
+      child: OrbitControlCircle.custom(
+        child: SizedBox.expand(
+          child: CustomPaint(
+            painter: _XPainter(color: readableColors.chromeInk),
           ),
         ),
       ),

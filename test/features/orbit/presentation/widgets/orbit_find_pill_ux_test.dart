@@ -190,7 +190,7 @@ void main() {
       await settle(tester);
     });
 
-    testWidgets('TC-205-04 all faint search lenses use iconPrimary', (
+    testWidgets('TC-205-04 search lenses use their readable ink', (
       tester,
     ) async {
       suppressAssetErrors(tester);
@@ -202,7 +202,8 @@ void main() {
         of: pillF(),
         matching: find.byIcon(Icons.search),
       ));
-      expect(collapsedLens.color, iconPrimary, reason: 'collapsed pill lens');
+      expect(collapsedLens.color, const Color(0xFFE6E9EF),
+          reason: 'the collapsed pill is an Orbit control and uses its ink');
 
       // (b) expanded find-pill lens.
       await tester.tap(pillF());

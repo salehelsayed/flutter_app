@@ -33,7 +33,9 @@ class GlowFab extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: backgroundColor,
-          border: Border.all(color: ringColor, width: ringWidth),
+          border: ringWidth > 0
+              ? Border.all(color: ringColor, width: ringWidth)
+              : null,
           boxShadow: glowEnabled
               ? [BoxShadow(color: ringColor, blurRadius: 12, spreadRadius: 1)]
               : null,

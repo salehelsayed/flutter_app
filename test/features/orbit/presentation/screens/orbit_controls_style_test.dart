@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
@@ -93,7 +94,10 @@ void main() {
 
     final outlined = {
       'chat list': find.byKey(const ValueKey('orbit-view-toggle')),
-      'calls': find.byKey(const ValueKey('orbit-calls')),
+      'calls': find.ancestor(
+        of: find.byKey(const ValueKey('orbit-calls')),
+        matching: find.byType(OrbitControlCircle),
+      ),
       'settings': find.byKey(const ValueKey('orbit-settings-button')),
       'find': find.byKey(const ValueKey('orbit-find-pill')),
     };
