@@ -23,6 +23,15 @@ enum StickerColourToken {
 
 /// One text layer. [center] is normalized to the square canvas (0..1 on
 /// both axes, top-left origin) so the same layer renders at any canvas size.
+final _letter = RegExp(r'\p{L}', unicode: true);
+
+bool _isRtlRune(int rune) =>
+    (rune >= 0x0590 && rune <= 0x08FF) ||
+    (rune >= 0xFB1D && rune <= 0xFDFF) ||
+    (rune >= 0xFE70 && rune <= 0xFEFF) ||
+    (rune >= 0x10800 && rune <= 0x10FFF) ||
+    (rune >= 0x1E800 && rune <= 0x1EFFF);
+
 final class StickerTextLayer {
   const StickerTextLayer({
     required this.id,
@@ -44,7 +53,13 @@ final class StickerTextLayer {
 
   /// First strong character decides, so a layer starting with Arabic (after
   /// digits, spaces or emoji) lays out right to left.
-  TextDirection get direction => TextDirection.ltr;
+  TextDirection get direction {
+    for (final rune in text.runes) {
+      if (_isRtlRune(rune)) return TextDirection.rtl;
+      if (_letter.hasMatch(String.fromCharCode(rune))) return TextDirection.ltr;
+    }
+    return TextDirection.ltr;
+  }
 
   StickerTextLayer copyWith({
     String? text,
@@ -168,7 +183,80 @@ final class DeleteTextLayer extends StickerTextEdit {
 StickerTextEditState reduceStickerText(
   StickerTextEditState state,
   StickerTextEdit edit,
-) => state;
+) {
+  StickerTextEditState mapLayer(
+    int id,
+    StickerTextLayer Function(StickerTextLayer) change,
+  ) {
+    return StickerTextEditState(
+      layers: [
+        for (final layer in state.layers)
+          layer.id == id ? change(layer) : layer,
+      ],
+      selectedId: state.selectedId,
+      nextId: state.nextId,
+    );
+  }
+
+  StickerTextEditState remove(int id) {
+    return StickerTextEditState(
+      layers: [
+        for (final layer in state.layers)
+          if (layer.id != id) layer,
+      ],
+      selectedId: state.selectedId == id ? null : state.selectedId,
+      nextId: state.nextId,
+    );
+  }
+
+  return switch (edit) {
+    AddTextLayer(:final text) when state.canAddLayer && text.isNotEmpty =>
+      StickerTextEditState(
+        layers: [
+          ...state.layers,
+          StickerTextLayer(id: state.nextId, text: text),
+        ],
+        selectedId: state.nextId,
+        nextId: state.nextId + 1,
+      ),
+    AddTextLayer() => state,
+    SelectTextLayer(:final id) => StickerTextEditState(
+      layers: state.layers,
+      selectedId: state.layers.any((l) => l.id == id) ? id : null,
+      nextId: state.nextId,
+    ),
+    EditLayerText(:final id, :final text) when text.trim().isEmpty => remove(
+      id,
+    ),
+    EditLayerText(:final id, :final text) => mapLayer(
+      id,
+      (l) => l.copyWith(text: text),
+    ),
+    TransformTextLayer(
+      :final id,
+      :final center,
+      :final scale,
+      :final rotation,
+    ) =>
+      mapLayer(
+        id,
+        (l) => l.copyWith(
+          center: Offset(center.dx.clamp(0, 1), center.dy.clamp(0, 1)),
+          scale: scale.clamp(kMinStickerTextScale, kMaxStickerTextScale),
+          rotation: rotation,
+        ),
+      ),
+    SetLayerFont(:final id, :final font) => mapLayer(
+      id,
+      (l) => l.copyWith(font: font),
+    ),
+    SetLayerColour(:final id, :final colour) => mapLayer(
+      id,
+      (l) => l.copyWith(colour: colour),
+    ),
+    DeleteTextLayer(:final id) => remove(id),
+  };
+}
 
 /// Undoable edit history. Selection changes are not undo steps; a gesture
 /// (drag, pinch, rotate) is one step however many updates it delivers.

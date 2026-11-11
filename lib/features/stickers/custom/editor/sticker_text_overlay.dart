@@ -49,7 +49,26 @@ void paintStickerTextLayers(
   Canvas canvas,
   double canvasSide,
   List<StickerTextLayer> layers,
-) {}
+) {
+  for (final layer in layers) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: layer.text,
+        style: stickerLayerTextStyle(layer, canvasSide),
+      ),
+      textAlign: TextAlign.center,
+      textDirection: layer.direction,
+    )..layout(maxWidth: stickerLayerMaxWidth(canvasSide));
+    canvas
+      ..save()
+      ..translate(layer.center.dx * canvasSide, layer.center.dy * canvasSide)
+      ..rotate(layer.rotation)
+      ..scale(layer.scale);
+    painter.paint(canvas, Offset(-painter.width / 2, -painter.height / 2));
+    canvas.restore();
+    painter.dispose();
+  }
+}
 
 /// Rasterises [layers] once into exactly 512x512 pixels, top-left origin,
 /// row-major, 8-bit straight (non-premultiplied) RGBA, fully transparent
@@ -57,5 +76,18 @@ void paintStickerTextLayers(
 Future<Uint8List?> rasterizeStickerTextOverlay(
   List<StickerTextLayer> layers,
 ) async {
-  return Uint8List(0);
+  if (layers.isEmpty) return null;
+  final recorder = ui.PictureRecorder();
+  paintStickerTextLayers(Canvas(recorder), kStickerCanvasPx.toDouble(), layers);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(kStickerCanvasPx, kStickerCanvasPx);
+  picture.dispose();
+  try {
+    final data = await image.toByteData(
+      format: ui.ImageByteFormat.rawStraightRgba,
+    );
+    return data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  } finally {
+    image.dispose();
+  }
 }
