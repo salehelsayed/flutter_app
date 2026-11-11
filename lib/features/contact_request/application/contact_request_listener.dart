@@ -250,6 +250,7 @@ class ContactRequestListener {
           generation == _presentationGeneration &&
           _presentationQueue.isNotEmpty) {
         final next = _presentationQueue.removeFirst();
+        var replayPendingAfterRelease = false;
         try {
           if (_presentations[next.peerId]?.allowSuppressed == true ||
               !_isPresentationSuppressed(next.peerId)) {
@@ -258,6 +259,8 @@ class ContactRequestListener {
               accept: true,
               existingContactOnly: true,
             );
+            replayPendingAfterRelease =
+                decision == ContactRequestDecisionResult.notPending;
             if (decision == ContactRequestDecisionResult.pending &&
                 !_disposed &&
                 generation == _presentationGeneration &&
@@ -286,6 +289,12 @@ class ContactRequestListener {
         } finally {
           if (generation == _presentationGeneration) {
             _presentations.remove(next.peerId)?.completion.complete();
+            // Concurrent receives can replace the stored request while its
+            // first presentation owns the peer lease. Replay the current row
+            // only after releasing that stale lease, using the existing guards.
+            if (replayPendingAfterRelease && !_disposed) {
+              _replayPendingRequestsOnAttach();
+            }
           }
         }
       }
