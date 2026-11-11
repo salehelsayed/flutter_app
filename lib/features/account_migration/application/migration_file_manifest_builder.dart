@@ -25,6 +25,8 @@ class MigrationFileManifestBuilder {
   });
 
   Future<MigrationFileManifest> build({
+    // RED scaffold: accepted input; sticker file validation is not implemented.
+    Iterable<Map<String, Object?>> customStickerRows = const [],
     Iterable<Map<String, Object?>> chatMediaRows = const [],
     Iterable<Map<String, Object?>> directMediaBlobCustodyRows = const [],
     Iterable<Map<String, Object?>> postMediaRows = const [],
