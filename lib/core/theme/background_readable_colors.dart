@@ -292,6 +292,11 @@ class BackgroundReadableColors
   Color get chromeInk =>
       isLightSurface ? const Color(0xFF1A2130) : const Color(0xFFE6E9EF);
 
+  /// The glyph on a [ctaIcon]-filled control, kept at 3:1 or more: ink on the
+  /// pale dark-theme blue, white on the deep light-theme accent.
+  Color get ctaFilledGlyph =>
+      isLightSurface ? const Color(0xFFFFFFFF) : const Color(0xFF0B0F19);
+
   @override
   BackgroundReadableColors copyWith({
     Color? textPrimary,

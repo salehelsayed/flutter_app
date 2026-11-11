@@ -36,7 +36,7 @@ class ExpandableFab extends StatefulWidget {
   final bool quietOutlined;
   final bool refinedNeutral;
 
-  /// A solid accent circle with a white icon and no ring or glow.
+  /// A solid accent circle with no ring or glow.
   final bool filled;
 
   const ExpandableFab({
@@ -122,7 +122,7 @@ class _ExpandableFabState extends State<ExpandableFab>
         },
         child: Icon(
           _isOpen ? Icons.close : Icons.add,
-          color: Colors.white,
+          color: widget.filled ? readableColors.ctaFilledGlyph : Colors.white,
           size: widget.filled ? 22 : 28,
         ),
       ),

@@ -5,7 +5,9 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -136,5 +138,91 @@ void main() {
       tester.view.viewId,
     );
     expect(result.path.where((entry) => entry.target == star), isEmpty);
+  });
+
+  // Owner follow-up 2026-11-11: the star marks the pinched-in view only. Notes
+  // put away for the "+N" arcs or for a sculpt session show no star.
+  Widget surface(Map<String, OrbitThoughtNote> thoughts) => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(extensions: const [BackgroundReadableColors.dark]),
+    home: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(disableAnimations: true),
+        child: Scaffold(
+          body: InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            onSelfAvatarTap: () {},
+            items: [for (var i = 0; i < 14; i++) OrbitFriendItem(friend(i))],
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            thoughtsByPeerId: thoughts,
+            nowProvider: () => start,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  testWidgets('notes put away for the +N arcs show no star', (tester) async {
+    await tester.pumpWidget(surface({'friend-0': note()}));
+    await tester.tap(find.byType(OverflowBadge));
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      find.byKey(starKey),
+      findsNothing,
+      reason: 'the badge put the notes away, not a pinch',
+    );
+    await tester.tap(find.byType(OverflowBadge));
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      tester
+          .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
+          .overflowExpanded,
+      isTrue,
+    );
+    expect(find.byKey(starKey), findsNothing, reason: 'arcs are open');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a thought arriving in a sculpt session shows no star', (
+    tester,
+  ) async {
+    await tester.pumpWidget(surface(const {}));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.longPress(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+    await tester.pumpWidget(surface({'friend-0': note()}));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(starKey), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a pinch that hides the titles shows the star', (tester) async {
+    await tester.pumpWidget(surface({'friend-0': note()}));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(starKey), findsNothing, reason: 'titles are shown');
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('orbit-thought-pinch-surface')),
+    );
+    final a = await tester.startGesture(
+      center - const Offset(50, 0),
+      pointer: 1,
+    );
+    final b = await tester.startGesture(
+      center + const Offset(50, 0),
+      pointer: 2,
+    );
+    await a.moveBy(const Offset(25, 0));
+    await b.moveBy(const Offset(-25, 0));
+    await tester.pump();
+    await a.up();
+    await b.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(starKey), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }
