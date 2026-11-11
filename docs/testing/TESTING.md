@@ -6557,6 +6557,27 @@ visible and cannot become an ordinary first-attempt PASS.
   dimensions. Evidence: `.codex-test-logs/sticker-outgoing-alignment-131/`.
   These host cases do not certify device screenshots or transport behavior.
 
+- **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
+  cases validate byte/hash and decoded claims, metadata removal/rejection,
+  transparent-pixel privacy, bounded frames and duration, and independent temp
+  ownership. A multi-frame asset must have positive total duration, matching
+  schema 130; the real 0 ms rejection and byte-identical 1 ms control preserve
+  that boundary. `sqlite_custom_sticker_library_test.dart` passes 15 cases using
+  the production migration chain, host SQLite and real files/codecs. It covers
+  canonical dedup, both quota limits, serialized admission, exact reorder,
+  owned deletion, independent canonical/poster sends, tamper rejection and
+  retirement/access revocation while normalization is paused. Listing does not
+  prune missing-file accounting rows. The implementation assumes one library
+  instance and trusted account roots; account replacement/erase must retire and
+  drain it before closing SQL or replacing those roots. Those app lifecycle
+  bindings, Move Account, transport and device SQLCipher remain separate proof.
+  For image 4.12, `WebPDecoder.maxPixels` is a property; full animation decoding
+  uses the bounded aggregate frame budget to retain first-frame composition.
+  Evidence: `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`
+  (`normalizer-duration-fix-verdict.json`, `library-red-verdict.json`,
+  `library-green-second-exit.json`). The first library compile failure remains
+  retained; targeted library analysis subsequently found no issues.
+
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
   discovery indefinitely. StartupRouter now starts its existing group
