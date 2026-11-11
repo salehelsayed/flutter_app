@@ -506,10 +506,14 @@ class _FontRow extends StatelessWidget {
             ChoiceChip(
               selected: layer.font == font,
               onSelected: (_) => onSelect(font),
+              backgroundColor: Colors.white10,
+              selectedColor: Colors.white30,
+              checkmarkColor: Colors.white,
+              side: const BorderSide(color: Colors.white38),
               label: Text(
                 l10n.sticker_editor_text,
                 style: stickerLayerTextStyle(
-                  layer.copyWith(font: font, colour: StickerColourToken.black),
+                  layer.copyWith(font: font, colour: StickerColourToken.white),
                   kStickerCanvasPx.toDouble(),
                 ).copyWith(fontSize: 16),
               ),
