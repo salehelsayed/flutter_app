@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"math"
+	randv2 "math/rand/v2"
 	"slices"
 	"sort"
 	"strings"
@@ -176,7 +177,7 @@ func withRedisWatchRetryKeys(
 	ctx := context.Background()
 	var lastErr error
 
-	for range redisWatchRetries {
+	for attempt := range redisWatchRetries {
 		err := client.Watch(ctx, fn, keys...)
 		if err == nil {
 			return nil
@@ -185,6 +186,10 @@ func withRedisWatchRetryKeys(
 			return err
 		}
 		lastErr = err
+		if attempt+1 < redisWatchRetries {
+			delay := (10 * time.Millisecond) << attempt
+			time.Sleep(delay + time.Duration(randv2.Int64N(int64(delay))))
+		}
 	}
 
 	if lastErr == nil {

@@ -595,14 +595,6 @@
   "perm_location": "Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst",
   "perm_local_network": "mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.",
   "perm_notifications": "Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren",
-  "connected_date": "Verbunden am {date}",
-  "@connected_date": {
-    "placeholders": {
-      "date": {
-        "type": "String"
-      }
-    }
-  },
   "date_today": "Heute",
   "date_yesterday": "Gestern",
   "feed_collapse": "Einklappen",
@@ -2235,6 +2227,11 @@
   "translator_resume": "Fortsetzen",
   "translator_remove": "Entfernen",
   "translator_settings_mobile_data": "Über mobile Daten laden",
+  "translate_to_title": "Übersetzen in",
+  "translate_to_subtitle": "Die Sprache, in der du Übersetzungen liest.",
+  "translate_to_same_as_app": "Wie die App",
+  "translate_to_all_languages": "Alle Sprachen",
+  "translate_show_translation": "Übersetzung anzeigen",
   "translator_remove_title": "Übersetzung entfernen?",
   "translator_remove_body": "Gibt {size} frei. Du kannst sie jederzeit wieder laden.",
   "translator_size_gb": "{size} GB",

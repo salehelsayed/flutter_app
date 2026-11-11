@@ -475,7 +475,7 @@ const _productionBootstrapNormalizedSha256 =
     // Item 9 (build 131): You page viewers and keep-replaced add three
     // database callbacks to the same PostRepositoryImpl, 10 additive lines;
     // no owner moves.
-    'cd146bce449aa546ad1410a3a95853a0af68c016eb722ca574ae45b2ddb3d247';
+    '7d5e552098c9654012470b984bb9aa944d638307a538ae744a304bee693080a0';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -516,7 +516,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same paged own-history read leaves the historical callback exact.
 // The same item 9 viewer and keep-replaced callbacks leave it exact too.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '81fd1e6bac30dd66529ca770d32034cbd6c594756de3577138f30ba9325ae57d';
+    '914ded2cb970034f8341dcdb4a8bff83e4156321b671ae997d9cf8d6faa0d1d0';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

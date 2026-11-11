@@ -5716,7 +5716,8 @@
     {
       "id": "relay",
       "patterns": [
-        "go-relay-server/*"
+        "go-relay-server/*",
+        "docker-ws/group-reaction-staging-manifest-315.json"
       ],
       "checks": [
         "affected-conversation",
@@ -7088,6 +7089,7 @@
     {
       "id": "stickers",
       "patterns": [
+        "lib/core/config/custom_stickers_flag.dart",
         "lib/features/stickers/*",
         "assets/stickers/*",
         "test/features/stickers/*"
@@ -7095,7 +7097,7 @@
       "checks": [
         "affected-stickers"
       ],
-      "why": "The sticker catalog, picker, Recent store and bundled art have their own host suite"
+      "why": "The sticker catalog, picker, Recent store, custom-sticker flag and contracts, and bundled art have their own host suite"
     },
     {
       "id": "camera-native-switch",

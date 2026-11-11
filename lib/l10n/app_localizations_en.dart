@@ -1466,11 +1466,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'This app needs notification access to alert you of incoming messages';
 
   @override
-  String connected_date(String date) {
-    return 'Connected $date';
-  }
-
-  @override
   String get date_today => 'Today';
 
   @override
@@ -4981,6 +4976,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get translator_settings_mobile_data => 'Download over mobile data';
+
+  @override
+  String get translate_to_title => 'Translate to';
+
+  @override
+  String get translate_to_subtitle => 'The language you read translations in.';
+
+  @override
+  String get translate_to_same_as_app => 'Same as the app';
+
+  @override
+  String get translate_to_all_languages => 'All languages';
+
+  @override
+  String get translate_show_translation => 'Show translation';
 
   @override
   String get translator_remove_title => 'Remove translation?';

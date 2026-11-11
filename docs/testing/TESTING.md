@@ -7031,6 +7031,20 @@ visible and cannot become an ordinary first-attempt PASS.
   its snapshot, commits the competing claim, then verifies the loser returns
   no claim. Red/green evidence is retained in the adjacent
   `quiet-recovery-go-claim-conflict-*` logs.
+  Concurrent Redis inbox Store and ACK both replace the same watched list.
+  Five immediate attempts can exhaust with only one Store worker and one ACK
+  worker. The [bounded contention regression](../../go-relay-server/backend_redis_contention_test.go)
+  uses two TCP miniredis clients, stays below the inbox cap, injects no
+  conflicts and accounts for every successful write and acknowledged row.
+  The shared retry helper retains five attempts and error propagation, but
+  requests positive exponential jitter between conflict attempts, totaling
+  150 to less than 300 ms of requested sleep. There is no wait after success,
+  a non-conflict error or final exhaustion. A smaller 5 ms base still exhausted
+  ACK retries under race instrumentation despite ordinary host passes. Ten
+  unchanged race-instrumented repetitions with the 10 ms base completed with
+  no Store or ACK exhaustion; keep this case in race coverage. This verifies
+  the contention mechanism, not an outage, message loss or the exact cause of
+  historical production error bursts.
   Mixed-version recovery additionally requires action-level relay admission:
   `store_quiet_v1` and `store_custody_quiet_v1` preserve the existing storage
   and custody owners, but an older relay rejects them before accepting a row

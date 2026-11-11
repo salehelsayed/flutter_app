@@ -5,10 +5,13 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_group.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
+import 'package:flutter_app/features/translate_preview/translate_to_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-/// The "Private translator" row in the Preferences card, plus the
-/// "Download over mobile data" switch on phones that can run it.
+/// The "Private translator" row in the Preferences card, plus "Translate to"
+/// on phones that can run it and "Download over mobile data" until the
+/// translator is on the phone.
 class PrivateTranslatorSettingsSection extends StatelessWidget {
   const PrivateTranslatorSettingsSection({
     super.key,
@@ -85,6 +88,11 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
             ),
           );
           if (state is ModelUnsupported) return row;
+          final divider = Divider(
+            height: 1,
+            thickness: 1,
+            color: context.backgroundReadableColors.divider,
+          );
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -94,25 +102,35 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
                   padding: const EdgeInsetsDirectional.fromSTEB(40, 0, 14, 10),
                   child: LinearProgressIndicator(value: state.percent / 100),
                 ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: context.backgroundReadableColors.divider,
-              ),
-              ValueListenableBuilder<bool>(
-                valueListenable: controller.allowMobileData,
-                builder: (context, allow, _) => SettingsListRow(
-                  key: const ValueKey('settings-row-translator-mobile-data'),
-                  icon: Icons.signal_cellular_alt,
-                  label: l10n.translator_settings_mobile_data,
-                  trailing: Switch.adaptive(
-                    value: allow,
-                    onChanged: (next) =>
-                        unawaited(controller.setAllowMobileData(next)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
+              divider,
+              ValueListenableBuilder<String?>(
+                valueListenable: translationPreferences.target,
+                builder: (context, chosen, _) => SettingsListRow(
+                  key: const ValueKey('settings-row-translate-to'),
+                  icon: Icons.language,
+                  label: l10n.translate_to_title,
+                  subtitle: l10n.translate_to_subtitle,
+                  value: translateToLabel(context, chosen),
+                  onTap: () => unawaited(showTranslateToSheet(context)),
                 ),
               ),
+              if (state is! ModelReady) ...[
+                divider,
+                ValueListenableBuilder<bool>(
+                  valueListenable: controller.allowMobileData,
+                  builder: (context, allow, _) => SettingsListRow(
+                    key: const ValueKey('settings-row-translator-mobile-data'),
+                    icon: Icons.signal_cellular_alt,
+                    label: l10n.translator_settings_mobile_data,
+                    trailing: Switch.adaptive(
+                      value: allow,
+                      onChanged: (next) =>
+                          unawaited(controller.setAllowMobileData(next)),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
+              ],
             ],
           );
         },
