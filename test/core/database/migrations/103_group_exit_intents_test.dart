@@ -114,12 +114,12 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 18]
+        productionCreateMigrations[productionCreateMigrations.length - 19]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 18]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 19]
             .version,
         112,
       );
