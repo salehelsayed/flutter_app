@@ -4455,6 +4455,15 @@ they do not certify device image decoding. The [scoped host receipts](../../.cod
 retain initial failures and the 214-test Orbit integration rerun. These host
 checks do not prove real transport, OS notification taps or device rendering.
 
+Orbit thought stars mark titles hidden by a pinch. Sculpt entry temporarily
+owns that visibility reason; exit restores the prior reason only while titles
+remain hidden. Spreading titles back out must keep the star off, and a badge
+hide must never become a pinch on sculpt exit. `orbit_thought_star_test.dart`
+drives pinch → sculpt → exit and spread, retaining a five-second sculpt check
+and the badge-hidden control. The causal RED and focused GREEN are retained in
+`.codex-test-logs/codex-ui-orbit-sculpt-star-20261111/`; this is host gesture
+evidence, with the installed Pixel recheck remaining separate.
+
 Animated 2D Thought layout must observe the real Surface clock; geometry
 fixtures with Reduce Motion enabled do not exercise normal motion. Re-solving
 discrete collision gaps on every tick can change avatar seats with identical

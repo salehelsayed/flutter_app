@@ -176,6 +176,7 @@ class _InnerCircleInteractiveSurfaceState
   bool _thoughtsVisible = true;
   // Why the notes are put away; null while they are shown.
   _NotesAwayCause? _notesAwayCause;
+  _NotesAwayCause? _notesAwayBeforeSculpt;
   bool _thoughtMotionEnabled = true;
   final OrbitThoughtSwim _thoughtSwim = OrbitThoughtSwim();
   late final AnimationController _thoughtReveal = AnimationController(
@@ -411,7 +412,14 @@ class _InnerCircleInteractiveSurfaceState
   void _setEditing(bool value) {
     if (_editing == value) return;
     _editing = value;
-    if (!value) {
+    if (value) {
+      _notesAwayBeforeSculpt = _notesAwayCause;
+      _notesAwayCause = _NotesAwayCause.sculpt;
+    } else {
+      if (_notesAwayCause == _NotesAwayCause.sculpt) {
+        _notesAwayCause = _thoughtsVisible ? null : _notesAwayBeforeSculpt;
+      }
+      _notesAwayBeforeSculpt = null;
       _armed = null;
       _dimFlashTimer?.cancel();
       _dimFlash = false;
@@ -919,6 +927,7 @@ class _InnerCircleInteractiveSurfaceState
                                   thoughtSwim: _thoughtSwim,
                                   thoughtVisibility: _thoughtReveal.value,
                                   thoughtStarsShown:
+                                      !_editing &&
                                       _notesAwayCause == _NotesAwayCause.pinch,
                                   // 205 item 4: centering spacer (see build()).
                                   topInset: centerTopInset,
