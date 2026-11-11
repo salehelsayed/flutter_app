@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
@@ -94,10 +97,7 @@ void main() {
 
     final outlined = {
       'chat list': find.byKey(const ValueKey('orbit-view-toggle')),
-      'calls': find.ancestor(
-        of: find.byKey(const ValueKey('orbit-calls')),
-        matching: find.byType(OrbitControlCircle),
-      ),
+      'calls': find.byKey(const ValueKey('orbit-calls')),
       'settings': find.byKey(const ValueKey('orbit-settings-button')),
       'find': find.byKey(const ValueKey('orbit-find-pill')),
     };
@@ -182,5 +182,88 @@ void main() {
     final label = tester.widget<Text>(find.text('Online'));
     expect(label.style!.fontSize, 13);
     expect(label.style!.fontWeight, FontWeight.w500);
+  });
+
+  // Owner follow-up 2026-11-11: the + glyph meets WCAG AA for a graphical
+  // object (3:1) on the blue fill.
+  double contrast(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+  }
+
+  for (final tone in {
+    'dark': BackgroundReadableColors.dark,
+    'light': BackgroundReadableColors.representativeLight,
+  }.entries) {
+    testWidgets('the + glyph has at least 3:1 contrast on ${tone.key}', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: [tone.value]),
+          home: Scaffold(
+            body: ExpandableFab(
+              anchor: ExpandableFabAnchor.topRight,
+              fabSize: OrbitControlCircle.size,
+              filled: true,
+              items: const [],
+            ),
+          ),
+        ),
+      );
+      final visual = find.byKey(const ValueKey('expandable-fab-toggle-visual'));
+      final fill = circleOf(tester, visual).color!;
+      expect(fill, tone.value.ctaIcon, reason: 'the fill keeps the accent');
+      final glyph = tester
+          .widget<Icon>(
+            find.descendant(of: visual, matching: find.byType(Icon)),
+          )
+          .color!;
+      expect(glyph.a, 1.0, reason: 'an opaque glyph');
+      final ratio = contrast(glyph, fill);
+      // ignore: avoid_print
+      print(
+        '+ glyph ${tone.key}: $glyph on $fill = ${ratio.toStringAsFixed(2)}:1',
+      );
+      expect(ratio, greaterThanOrEqualTo(3.0));
+    });
+  }
+
+  testWidgets('the calls control takes taps across its whole 44 px circle', (
+    tester,
+  ) async {
+    phone(tester);
+    var opened = 0;
+    await tester.pumpWidget(
+      buildOrbitScreenHarness(
+        viewMode: OrbitViewMode.innerCircle,
+        onToggleView: () {},
+        onOpenCalls: () => opened++,
+      ),
+    );
+    await settle(tester);
+
+    final hit = tester.getRect(find.byKey(const ValueKey('orbit-calls')));
+    expect(hit.size, const Size(44, 44));
+    final circle = tester.getRect(
+      find.descendant(
+        of: find.byKey(const ValueKey('orbit-calls')),
+        matching: find.byType(OrbitControlCircle),
+        matchRoot: true,
+      ),
+    );
+    expect(circle, hit, reason: 'the hit area is the drawn circle');
+    for (final edge in [
+      Offset(hit.left + 0.5, hit.center.dy),
+      Offset(hit.right - 0.5, hit.center.dy),
+      Offset(hit.center.dx, hit.top + 0.5),
+      Offset(hit.center.dx, hit.bottom - 0.5),
+    ]) {
+      await tester.tapAt(edge);
+      await tester.pump();
+    }
+    expect(opened, 4, reason: 'every edge of the circle opens calls');
+    await tester.pump(const Duration(seconds: 2));
   });
 }
