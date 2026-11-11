@@ -77,11 +77,13 @@ void main() {
       productionUpgradeMigrations,
     ]) {
       expect(registry.where((e) => e.version == 128), hasLength(1));
-      final entry = registry[registry.length - 2];
+      final index = registry.indexWhere((entry) => entry.version == 128);
+      final entry = registry[index];
       expect(entry.version, 128);
       expect(entry.name, '128_media_attachment_sticker_id');
       expect(entry.run, same(runMediaAttachmentStickerIdMigration));
-      expect(registry[registry.length - 3].version, 127);
+      expect(registry[index - 1].version, 127);
+      expect(registry[index + 1].version, 129);
     }
   });
 }
