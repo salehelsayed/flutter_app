@@ -7,7 +7,7 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/stickers/data/sqlite_custom_sticker_library.dart';
-import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
