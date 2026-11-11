@@ -138,7 +138,7 @@ def validate_metadata(check):
 
 NATIVE_LEASE = 'mknoon.shared-native-build'
 HOST_TESTS_LEASE = 'mknoon.host-tests'
-HOST_TEST_SLOTS = 2
+HOST_TEST_SLOTS = 4
 # A waiter refreshes its marker on every attempt. A holder's marker lives as long
 # as its process, so a crashed owner never blocks host slots.
 NATIVE_WANTED_TTL = 120
@@ -291,7 +291,7 @@ def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=1
         elif not guard():
             reason = 'host memory or swap guard'
         else:
-            reason = 'both host-test slots busy'
+            reason = 'all host-test slots busy'
             for name in host_slot_names():
                 candidate = _open_lock(directory, name)
                 if _try_flock(candidate):

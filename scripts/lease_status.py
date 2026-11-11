@@ -10,7 +10,7 @@ not take or disturb a lease.
     python3 scripts/lease_status.py <lease-name> ...      # only the named leases
     python3 scripts/lease_status.py --json
 
-Host-test slots (mknoon.host-tests.slot-1/2) are reported as N/2 used, plus any live
+Host-test slots (mknoon.host-tests.slot-1..4) are reported as N/4 used, plus any live
 native-wanted marker, which pauses new host slots.
 """
 import argparse
@@ -23,7 +23,7 @@ import time
 
 DEFAULT_LEASE = 'mknoon.shared-native-build'
 HOST_TESTS_LEASE = 'mknoon.host-tests'
-HOST_TEST_SLOTS = 2
+HOST_TEST_SLOTS = 4
 NATIVE_WANTED_TTL = 120
 
 
