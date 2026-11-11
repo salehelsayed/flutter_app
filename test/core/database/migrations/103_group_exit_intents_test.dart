@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 129);
+      expect(currentIdentityDatabaseVersion, 130);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -137,7 +137,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '129_post_media_caption',
+        '130_custom_stickers',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

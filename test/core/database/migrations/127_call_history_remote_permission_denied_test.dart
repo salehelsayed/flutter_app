@@ -127,11 +127,11 @@ void main() {
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
-      final entry = registry[registry.length - 3];
+      final entry = registry[registry.length - 4];
       expect(entry.version, 127);
       expect(entry.name, '127_call_history_remote_permission_denied');
       expect(entry.run, same(runCallHistoryRemotePermissionDeniedMigration));
-      expect(registry[registry.length - 4].version, 126);
+      expect(registry[registry.length - 5].version, 126);
     }
   });
 }

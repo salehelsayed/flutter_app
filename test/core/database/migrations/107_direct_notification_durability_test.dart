@@ -119,7 +119,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 129);
+      expect(currentIdentityDatabaseVersion, 130);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
@@ -133,8 +133,8 @@ void main() {
           same(runDirectNotificationDurabilityMigration),
         );
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '129_post_media_caption');
-        expect(registry[registry.length - 18].version, 112);
+        expect(registry.last.name, '130_custom_stickers');
+        expect(registry[registry.length - 19].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
