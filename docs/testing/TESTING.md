@@ -6576,7 +6576,18 @@ visible and cannot become an ordinary first-attempt PASS.
   the production migration chain, host SQLite and real files/codecs. It covers
   canonical dedup, both quota limits, serialized admission, exact reorder,
   owned deletion, independent canonical/poster sends, tamper rejection and
-  retirement/access revocation while normalization is paused. Listing does not
+  retirement/access revocation while normalization is paused. The core-owned
+  `defaultCustomStickerSendRepresentation` is temporarily `staticPoster` until
+  the permitted supported baseline has accepted animation-decoding proof. The
+  real-file library cases apply this default to both static and animated assets:
+  static bytes stay exact, the animated send contains the bounded first visual
+  frame, and the stored animation remains unchanged. Explicit canonical
+  preparation stays covered; changing the default later needs one production
+  constant change, not a capability handshake or per-recipient representation.
+  These host codec checks do not close v1 animated-delivery acceptance; current
+  receiver animation and supported-baseline compatibility need separate proof.
+  The focused policy receipt is `default-send-policy-focused-verdict.json` in
+  the evidence directory below. Listing does not
   prune missing-file accounting rows. The implementation assumes one library
   instance and trusted account roots; account replacement/erase must retire and
   drain it before closing SQL or replacing those roots. The stable account
