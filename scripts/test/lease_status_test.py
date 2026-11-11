@@ -53,7 +53,7 @@ class LeaseStatusTest(unittest.TestCase):
     def test_missing_lock_file_is_free(self):
         write_exe(self.lsof, 'exit 1\n')
         self.assertEqual(self.run_main().splitlines(),
-                         ['mknoon.shared-native-build: FREE', 'mknoon.host-tests: 0/2 slots used'])
+                         ['mknoon.shared-native-build: FREE', 'mknoon.host-tests: 0/4 slots used'])
 
     def test_lock_file_without_holder_is_free(self):
         open(self.lock, 'w').close()
@@ -94,11 +94,11 @@ class LeaseStatusTest(unittest.TestCase):
             json.dump({'pid': os.getppid(), 'state': 'waiting', 'time': time.time()}, f)
         lines = self.run_main().splitlines()
         self.assertEqual(lines[0], 'mknoon.shared-native-build: FREE')
-        self.assertEqual(lines[1], 'mknoon.host-tests: 1/2 slots used (slot-2 pid 5151 age 01:02:03 cwd /Volumes/x/build/wt-astra)'
+        self.assertEqual(lines[1], 'mknoon.host-tests: 1/4 slots used (slot-2 pid 5151 age 01:02:03 cwd /Volumes/x/build/wt-astra)'
                                    ' [native priority: new slots paused, pid %d waiting]' % os.getppid())
         host = json.loads(self.run_main('--json'))[1]
         self.assertEqual((host['lease'], host['used'], [s['state'] for s in host['slots']]),
-                         ('mknoon.host-tests', 1, ['FREE', 'HELD']))
+                         ('mknoon.host-tests', 1, ['FREE', 'HELD', 'FREE', 'FREE']))
         self.assertEqual([w['state'] for w in host['nativeWanted']], ['waiting'])
 
     def test_holding_native_marker_does_not_report_a_pause(self):
@@ -106,7 +106,7 @@ class LeaseStatusTest(unittest.TestCase):
         with open(os.path.join(self.dir, 'native-wanted.%d' % os.getppid()), 'w') as f:
             json.dump({'pid': os.getppid(), 'state': 'holding', 'time': time.time()}, f)
         lines = self.run_main().splitlines()
-        self.assertEqual(lines[1], 'mknoon.host-tests: 0/2 slots used')
+        self.assertEqual(lines[1], 'mknoon.host-tests: 0/4 slots used')
         host = json.loads(self.run_main('--json'))[1]
         self.assertEqual([w['state'] for w in host['nativeWanted']], ['holding'])
 
