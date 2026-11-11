@@ -173,6 +173,19 @@ void main() {
       findsNothing,
       reason: 'the badge put the notes away, not a pinch',
     );
+    await tester.longPress(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
+    expect(
+      find.byKey(starKey),
+      findsNothing,
+      reason: 'still hidden by the badge',
+    );
     await tester.tap(find.byType(OverflowBadge));
     await tester.pump(const Duration(seconds: 1));
     expect(
@@ -223,6 +236,72 @@ void main() {
     await b.up();
     await tester.pump(const Duration(seconds: 1));
     expect(find.byKey(starKey), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('pinch -> sculpt -> exit restores the star only while pinched', (
+    tester,
+  ) async {
+    await tester.pumpWidget(surface({'friend-0': note()}));
+    await tester.pump(const Duration(seconds: 1));
+    final pinchSurface = find.byKey(
+      const ValueKey('orbit-thought-pinch-surface'),
+    );
+    final selfAvatar = find.byKey(const ValueKey('orbit-center-self-avatar'));
+    final editBanner = find.byKey(const ValueKey('orbit-edit-banner'));
+    final center = tester.getCenter(pinchSurface);
+    final a = await tester.startGesture(
+      center - const Offset(50, 0),
+      pointer: 1,
+    );
+    final b = await tester.startGesture(
+      center + const Offset(50, 0),
+      pointer: 2,
+    );
+    await a.moveBy(const Offset(25, 0));
+    await b.moveBy(const Offset(-25, 0));
+    await a.up();
+    await b.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(starKey), findsOneWidget, reason: 'pinched titles');
+
+    await tester.longPress(selfAvatar);
+    await tester.pump(const Duration(seconds: 5));
+    expect(editBanner, findsOneWidget);
+    expect(
+      find.byKey(starKey),
+      findsNothing,
+      reason: 'sculpt owns the surface',
+    );
+
+    await tester.tap(selfAvatar);
+    await tester.pump(const Duration(seconds: 1));
+    expect(editBanner, findsNothing);
+    expect(
+      find.byKey(starKey),
+      findsOneWidget,
+      reason: 'still pinched on exit',
+    );
+
+    await tester.longPress(selfAvatar);
+    await tester.pump();
+    expect(editBanner, findsOneWidget);
+    expect(find.byKey(starKey), findsNothing);
+    final c = await tester.startGesture(
+      center - const Offset(25, 0),
+      pointer: 3,
+    );
+    final d = await tester.startGesture(
+      center + const Offset(25, 0),
+      pointer: 4,
+    );
+    await c.moveBy(const Offset(-25, 0));
+    await d.moveBy(const Offset(25, 0));
+    await c.up();
+    await d.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(editBanner, findsNothing, reason: 'spread restores the titles');
+    expect(find.byKey(starKey), findsNothing, reason: 'no longer pinched');
     await tester.pumpWidget(const SizedBox());
   });
 }
