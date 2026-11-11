@@ -6782,6 +6782,20 @@ visible and cannot become an ordinary first-attempt PASS.
   the native verdicts above. Initial analyzer style findings remain retained;
   final targeted analysis is clean. No behavioral assertion was removed.
 
+  Creation-route widget checks instantiate the production Dart cutout service
+  under both compile-time flag states. They verify that validated native bytes
+  reach the editor, unsupported devices use crop, the disabled flag makes no
+  channel calls, and cancellation preserves the original photo while deleting
+  owned files without library admission. Native-response PNG fixtures require
+  an alpha channel; RGB-only output correctly fails the cutout validator.
+  Editor cancellation uses its localized Cancel control. The default sticker
+  lane passed 271 cases and enabled creation passed 16, with zero failures or
+  skips; the exact 14-case changed selector reused the default lane's receipt.
+  `final-integration-cutout-final-scoped-verdict.json` in the evidence directory
+  above pins the source and toolchain identities and retains both earlier
+  fixture failures. Its four omitted integration scopes remain NOT RUN; this
+  scoped host result does not certify the final integrated or device candidate.
+
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
   discovery indefinitely. StartupRouter now starts its existing group

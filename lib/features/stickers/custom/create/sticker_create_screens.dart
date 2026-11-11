@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/camera_video_recorder.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/application/method_channel_sticker_cutout_service.dart';
 import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
 import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
@@ -328,7 +329,7 @@ final class UnsupportedStickerCutout implements StickerCutoutService {
 Future<void> openStickerCreate(
   BuildContext context, {
   required CustomStickerLibrary library,
-  StickerCutoutService cutout = const UnsupportedStickerCutout(),
+  StickerCutoutService? cutout,
   MediaPicker? picker,
   StickerClipExporter? exporter,
   Future<Directory> Function() temporaryDirectory = getTemporaryDirectory,
@@ -341,52 +342,60 @@ Future<void> openStickerCreate(
   final media = picker ?? SystemMediaPicker();
   final clips = exporter ?? StickerClipExporter();
 
-  final flow = StickerCreateFlow(
-    library: library,
-    cutout: cutout,
-    // Some pickers return the user's original file; the flow deletes its
-    // input, so it only ever gets an owned copy.
-    pickPhoto: (source) async {
-      final picked = await media.pickImage(
-        source: source == StickerCreateSource.galleryPhoto
-            ? ImageSource.gallery
-            : ImageSource.camera,
-      );
-      if (picked == null) return null;
-      final copy = p.join(
-        (await temporaryDirectory()).path,
-        'sticker-source-${DateTime.now().microsecondsSinceEpoch}'
-        '${p.extension(picked.path)}',
-      );
-      await File(picked.path).copy(copy);
-      return copy;
-    },
-    captureClip: () async {
-      if (!context.mounted) return null;
-      return (await captureStickerCameraClip(context))?.path;
-    },
-    readBytes: (path) => File(path).readAsBytes(),
-    deleteFile: deleteStickerTemp,
-    cropStill: (path) async => navigator.push<StickerStillCrop>(
-      MaterialPageRoute(
-        builder: (_) =>
-            StickerCropScreen(imageBytes: File(path).readAsBytesSync()),
-      ),
-    ),
-    cropClip: (path) => navigator.push<StickerClipCrop>(
-      MaterialPageRoute(builder: (_) => StickerClipCropScreen(clipPath: path)),
-    ),
-    editStill: (bytes, shape) async =>
-        _editInto(navigator, bytes, shape, await temporaryDirectory()),
-    exportClip: (path, crop) =>
-        clips.export(clipPath: path, crop: crop.crop, circle: crop.circle),
-    showNoSubject: () => messenger.showSnackBar(
-      SnackBar(content: Text(l10n.stickers_no_subject)),
-    ),
-  );
-
   StickerCreateOutcome outcome;
   try {
+    final actualCutout =
+        cutout ??
+        MethodChannelStickerCutoutService(
+          temporaryDirectory: await temporaryDirectory(),
+        );
+    if (!context.mounted) return;
+    final flow = StickerCreateFlow(
+      library: library,
+      cutout: actualCutout,
+      // Some pickers return the user's original file; the flow deletes its
+      // input, so it only ever gets an owned copy.
+      pickPhoto: (source) async {
+        final picked = await media.pickImage(
+          source: source == StickerCreateSource.galleryPhoto
+              ? ImageSource.gallery
+              : ImageSource.camera,
+        );
+        if (picked == null) return null;
+        final copy = p.join(
+          (await temporaryDirectory()).path,
+          'sticker-source-${DateTime.now().microsecondsSinceEpoch}'
+          '${p.extension(picked.path)}',
+        );
+        await File(picked.path).copy(copy);
+        return copy;
+      },
+      captureClip: () async {
+        if (!context.mounted) return null;
+        return (await captureStickerCameraClip(context))?.path;
+      },
+      readBytes: (path) => File(path).readAsBytes(),
+      deleteFile: deleteStickerTemp,
+      cropStill: (path) async => navigator.push<StickerStillCrop>(
+        MaterialPageRoute(
+          builder: (_) =>
+              StickerCropScreen(imageBytes: File(path).readAsBytesSync()),
+        ),
+      ),
+      cropClip: (path) => navigator.push<StickerClipCrop>(
+        MaterialPageRoute(
+          builder: (_) => StickerClipCropScreen(clipPath: path),
+        ),
+      ),
+      editStill: (bytes, shape) async =>
+          _editInto(navigator, bytes, shape, await temporaryDirectory()),
+      exportClip: (path, crop) =>
+          clips.export(clipPath: path, crop: crop.crop, circle: crop.circle),
+      showNoSubject: () => messenger.showSnackBar(
+        SnackBar(content: Text(l10n.stickers_no_subject)),
+      ),
+    );
+
     outcome = await flow.run(source);
   } on Exception {
     outcome = const StickerCreateFailed(CustomStickerErrorCode.storageFailure);

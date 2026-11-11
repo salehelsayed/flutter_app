@@ -5366,6 +5366,29 @@
         "third_party/camera_avfoundation/upstream/DefaultCamera.swift.original"
       ],
       "limitations": "Native mocked capture graph and writer; no physical camera, actual encoded file, audio continuity or signed artifact claim. Unavailable simulator is N/A by project policy."
+    },
+    "custom-stickers-creation-enabled": {
+      "kind": "command",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--concurrency=4",
+        "--dart-define=CUSTOM_STICKERS_ENABLED=true",
+        "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+      ],
+      "paths": [
+        "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+      ],
+      "success_marker": "All tests passed!",
+      "boundary": "Production sticker creation supplies the real cutout service behind its compile-time gate, uses validated native cutout bytes when ready, preserves crop fallback, and cleans owned files on cancellation.",
+      "limitations": "Host widget tests use real PNG files and the production Dart cutout service with a controlled native channel; actual model availability, segmentation quality and device cost remain separate proof. Default-off behavior runs in affected-stickers.",
+      "requirements": [
+        "flutter"
+      ],
+      "timeout_seconds": 900
     }
   },
   "areas": [
@@ -7210,6 +7233,23 @@
         "affected-stickers"
       ],
       "why": "Cutout input/output ownership, cancellation and engine replacement/detach require the exact Android native slice and its real-FD fixture controls; the host registration contracts preserve both platform callsites. Existing broad native/build mappings remain in force."
+    },
+    {
+      "id": "custom-sticker-creation",
+      "patterns": [
+        "lib/core/config/custom_stickers_flag.dart",
+        "lib/features/stickers/application/sticker_cutout.dart",
+        "lib/features/stickers/application/method_channel_sticker_cutout_service.dart",
+        "lib/features/stickers/custom/create/*",
+        "lib/features/stickers/presentation/custom_sticker_scope.dart",
+        "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+      ],
+      "checks": [
+        "custom-stickers-creation-enabled",
+        "affected-stickers"
+      ],
+      "why": "The production create route must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lane; default-off tests cannot prove native cutout composition."
     }
   ],
   "documentation_only": [

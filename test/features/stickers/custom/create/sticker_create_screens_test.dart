@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -236,6 +239,117 @@ void main() {
     expect(original.existsSync(), isTrue);
     expect(temp.listSync(), isEmpty);
   });
+
+  for (final availability in ['ready', 'unsupported']) {
+    testWidgets('Create uses the shipping cutout gate and preserves crop '
+        'fallback when native availability is $availability', (tester) async {
+      final root = Directory.systemTemp.createTempSync('stk-cutout-route-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final originalBytes = img.encodePng(
+        img.fill(
+          img.Image(width: 40, height: 30),
+          color: img.ColorRgb8(180, 30, 20),
+        ),
+      );
+      final cutoutBytes = img.encodePng(
+        img.fill(
+          img.Image(width: 40, height: 30, numChannels: 4),
+          color: img.ColorRgba8(20, 180, 30, 255),
+        ),
+      );
+      expect(img.decodePng(cutoutBytes)!.hasAlpha, isTrue);
+      final original = File('${root.path}/original.png')
+        ..writeAsBytesSync(originalBytes);
+      final temp = Directory('${root.path}/tmp')..createSync();
+      final library = FakeCustomStickerLibrary();
+      final calls = <String>[];
+      const channel = MethodChannel('mknoon/custom_sticker_cutout');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        if (call.method == 'availability') return availability;
+        expect(call.method, 'extract');
+        final arguments = call.arguments as Map;
+        await File(arguments['outputPath'] as String).writeAsBytes(cutoutBytes);
+        return {
+          'width': 40,
+          'height': 30,
+          'subjectBounds': {
+            'left': 0.0,
+            'top': 0.0,
+            'right': 1.0,
+            'bottom': 1.0,
+          },
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      var temporaryReads = 0;
+      Future<void>? running;
+      await tester.pumpWidget(
+        _app(
+          Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => running = openStickerCreate(
+                  context,
+                  library: library,
+                  picker: _OnePhotoPicker(original.path),
+                  temporaryDirectory: () async {
+                    temporaryReads++;
+                    return temp;
+                  },
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(calls, isEmpty);
+      expect(temporaryReads, 0);
+      await tester.tap(find.text('Gallery'));
+
+      final usesCutout = kCustomStickersEnabled && availability == 'ready';
+      final destination = usesCutout
+          ? find.byType(StickerTextEditorScreen)
+          : find.byType(StickerCropScreen);
+      await _settleUntil(tester, () => destination.evaluate().isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(destination, findsOneWidget);
+      if (usesCutout) {
+        expect(find.byType(StickerCropScreen), findsNothing);
+        expect(
+          tester.widget<StickerTextEditorScreen>(destination).sourceBytes,
+          orderedEquals(cutoutBytes),
+        );
+      }
+      expect(
+        calls,
+        !kCustomStickersEnabled
+            ? isEmpty
+            : orderedEquals(
+                usesCutout ? ['availability', 'extract'] : ['availability'],
+              ),
+      );
+
+      if (usesCutout) {
+        await tester.tap(find.byTooltip('Cancel'));
+      } else {
+        await tester.pageBack();
+      }
+      await tester.pumpAndSettle();
+      var finished = false;
+      unawaited(running!.whenComplete(() => finished = true));
+      await _settleUntil(tester, () => finished);
+      expect(finished, isTrue);
+      expect(original.readAsBytesSync(), orderedEquals(originalBytes));
+      expect(temp.listSync(recursive: true).whereType<File>(), isEmpty);
+      expect(library.ids, isEmpty);
+    });
+  }
 
   group('stickerCreateMessage', () {
     final l10n = lookupAppLocalizations(const Locale('en'));
