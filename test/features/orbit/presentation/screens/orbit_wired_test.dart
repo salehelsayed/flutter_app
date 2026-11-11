@@ -1023,15 +1023,45 @@ void main() {
     );
 
     Future<_OrbitThoughtPostRepository> enterDepthWithThought(
-      WidgetTester tester,
-    ) async {
+      WidgetTester tester, {
+      bool photo = false,
+    }) async {
       setLargeTestSurface(tester);
       messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
       final posts = _OrbitThoughtPostRepository();
       addTearDown(posts.dispose);
-      await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+      await posts.savePost(
+        thought(
+          'lake',
+          text: 'Sunset at the lake?',
+          mediaKind: photo ? 'image' : 'none',
+        ),
+      );
+      if (photo) {
+        final directory = Directory.systemTemp.createTempSync('card-react-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final file = File('${directory.path}/lake.png')
+          ..writeAsBytesSync(
+            base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+            ),
+          );
+        await posts.savePostMediaAttachment(
+          PostMediaAttachmentModel(
+            mediaId: 'media-lake',
+            postId: 'lake',
+            blobId: 'blob-lake',
+            kind: 'image',
+            mime: 'image/png',
+            sizeBytes: file.lengthSync(),
+            createdAt: thoughtNow.toIso8601String(),
+            localPath: file.path,
+            downloadStatus: 'done',
+          ),
+        );
+      }
       await tester.pumpWidget(
         buildOrbitWired(
           postRepository: posts,
@@ -1047,6 +1077,145 @@ void main() {
       await pumpOrbitFrames(tester, count: 30);
       return posts;
     }
+
+    bool reactionPressed(WidgetTester tester, String key) => tester
+        .widget<Semantics>(
+          find
+              .descendant(
+                of: find.byKey(ValueKey(key)),
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Semantics && widget.properties.selected != null,
+                ),
+              )
+              .first,
+        )
+        .properties
+        .selected!;
+
+    for (final photo in [false, true]) {
+      testWidgets(
+        'full-screen friend ${photo ? 'photo' : 'text'} reactions dispatch '
+        'all four quoted replies and share selection with 3D',
+        (tester) async {
+          await enterDepthWithThought(tester, photo: photo);
+          await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
+          await pumpOrbitFrames(tester, count: 12);
+          expect(find.byType(ThoughtCardScreen), findsOneWidget);
+          if (photo) {
+            expect(
+              find.byKey(const ValueKey('thought-photo-full')),
+              findsOneWidget,
+            );
+          }
+          for (final name in ['love', 'laugh', 'fire', 'applause']) {
+            final button = find.byKey(ValueKey('thought-react-$name'));
+            expect(button.hitTestable(), findsOneWidget);
+            await tester.tap(button);
+            await pumpOrbitFrames(tester, count: 8);
+            expect(reactionPressed(tester, 'thought-react-$name'), isTrue);
+          }
+          final replies = await messageRepo.getMessagesForContact(
+            testContact.peerId,
+          );
+          expect(
+            replies.map((message) => (message.text, message.quotedMessageId)),
+            unorderedEquals([
+              for (final glyph in ['❤️', '😂', '🔥', '👏'])
+                (glyph, 'thought:lake'),
+            ]),
+          );
+          expect(replies.map((message) => message.id).toSet(), hasLength(4));
+          await tester.tap(find.byKey(const ValueKey('thought-close')));
+          await pumpOrbitFrames(tester, count: 12);
+          for (final name in ['love', 'laugh', 'fire', 'applause']) {
+            expect(reactionPressed(tester, 'orbit-depth-react-$name'), isTrue);
+          }
+          await tester.tap(
+            find.byKey(const ValueKey('orbit-depth-react-love')),
+          );
+          await pumpOrbitFrames(tester, count: 8);
+          expect(
+            await messageRepo.getMessagesForContact(testContact.peerId),
+            hasLength(4),
+          );
+          await finishThoughtCase(tester);
+        },
+      );
+    }
+
+    testWidgets(
+      'full-screen friend reactions retain 3D selection and update it on return',
+      (tester) async {
+        await enterDepthWithThought(tester);
+        await tester.tap(find.byKey(const ValueKey('orbit-depth-react-love')));
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(
+          find.byKey(const ValueKey('thought-react-love')),
+          findsOneWidget,
+        );
+        expect(reactionPressed(tester, 'thought-react-love'), isTrue);
+        expect(reactionPressed(tester, 'thought-react-laugh'), isFalse);
+        await tester.tap(find.byKey(const ValueKey('thought-react-laugh')));
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byKey(const ValueKey('thought-close')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(reactionPressed(tester, 'orbit-depth-react-love'), isTrue);
+        expect(reactionPressed(tester, 'orbit-depth-react-laugh'), isTrue);
+        final replies = await messageRepo.getMessagesForContact(
+          testContact.peerId,
+        );
+        expect(
+          replies.map((message) => (message.text, message.quotedMessageId)),
+          unorderedEquals([('❤️', 'thought:lake'), ('😂', 'thought:lake')]),
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets('full-screen own Thought keeps all four reactions absent', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('mine', text: 'My own thought').copyWith(
+          authorPeerId: testIdentity.peerId,
+          senderPeerId: testIdentity.peerId,
+          isIncoming: false,
+        ),
+      );
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.timedDrag(
+        find.byType(OrbitDepthSurface),
+        const Offset(0, -260),
+        const Duration(seconds: 1),
+      );
+      await pumpOrbitFrames(tester, count: 30);
+      await tester.tap(find.byKey(const ValueKey('orbit-depth-text-mine')));
+      await pumpOrbitFrames(tester, count: 8);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      for (final name in ['love', 'laugh', 'fire', 'applause']) {
+        expect(find.byKey(ValueKey('thought-react-$name')), findsNothing);
+      }
+      expect(find.byKey(const ValueKey('thought-delete')), findsOneWidget);
+      expect(
+        await messageRepo.getMessagesForContact(testContact.peerId),
+        isEmpty,
+      );
+      await finishThoughtCase(tester);
+    });
 
     testWidgets(
       'a 3D reaction sends one quoted reply and stays on the ring; the same '
