@@ -268,6 +268,74 @@ class LegacyBindingTest(unittest.TestCase):
         self.assertTrue(any('--sender' in c['args'] for c in commands))
         self.assertTrue(any('--device-id' in c['args'] for c in commands))
 
+    def test_real_protected_cli_fixtures_can_hold_leases_concurrently(self):
+        # Keep the pre-fix reproduction off other sessions' ambient leases.
+        # Explicit directories supplied by an isolated fixture still pass through.
+        customize = self.tmp/'python-path'
+        customize.mkdir()
+        (customize/'sitecustomize.py').write_text(
+            'import contextlib,os,sys\n'
+            f'sys.path.insert(0,{str(ROOT/"scripts")!r})\n'
+            'import device_campaign_preflight as p\n'
+            '_leases=p.device_leases\n'
+            '@contextlib.contextmanager\n'
+            'def owned_leases(targets,directory=None):\n'
+            ' root=directory if directory is not None else os.environ["CLOSURE_SHARED_LEASE_ROOT"]\n'
+            ' p._closure_fixture_last_lease_root=str(root)\n'
+            ' try:\n'
+            '  with _leases(targets,directory=root) as owned:yield owned\n'
+            ' except p.DeviceLeaseBusy as error:\n'
+            '  if sys.argv[0].endswith("legacy_target_contracts.py"):\n'
+            '   print("CONCURRENT_FIXTURE_LEASE_BUSY "+str(error),file=sys.stderr,flush=True)\n'
+            '  raise\n'
+            'p.device_leases=owned_leases\n'
+            'p._closure_fixture_customized=True\n')
+        release = self.tmp/'release-fixtures'
+        shared = self.tmp/'ambient-leases'
+        code = (
+            'import sys,unittest\n'
+            f'sys.path.insert(0,{str(ROOT/"scripts")!r})\n'
+            'import device_campaign_preflight as p\n'
+            'assert getattr(p,"_closure_fixture_customized",False), "owned lease boundary missing"\n'
+            'import scripts.test.mknoon_full_legacy_binding_test as fixture\n'
+            'unittest.main(module=fixture,defaultTest="LegacyBindingTest.'
+            'test_real_protected_full_and_reliability_cli_launch_every_configured_route",verbosity=2)\n')
+        children = []
+        ready = [self.tmp/f'ready-{index}.json' for index in range(2)]
+        results = []
+        try:
+            for index in range(2):
+                child = subprocess.Popen([sys.executable,'-c',code],cwd=ROOT,
+                    env={**os.environ,
+                         'PYTHONPATH':str(customize)+os.pathsep+os.environ.get('PYTHONPATH',''),
+                         'CLOSURE_SHARED_LEASE_ROOT':str(shared),
+                         'CLOSURE_FIXTURE_READY':str(ready[index]),
+                         'CLOSURE_FIXTURE_RELEASE':str(release)},
+                    stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                children.append(child)
+                deadline = time.monotonic()+30
+                while not ready[index].exists() and child.poll() is None and time.monotonic()<deadline:
+                    time.sleep(.01)
+                if not ready[index].exists():
+                    break
+        finally:
+            release.touch()
+            deadline = time.monotonic()+190
+            for child in children:
+                try:
+                    output,_ = child.communicate(timeout=max(1,deadline-time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    output,_ = child.communicate()
+                results.append((child.returncode,output))
+        self.assertEqual(len(children),2,results)
+        self.assertEqual([code for code,_ in results],[0,0],
+                         '\n'.join(output for _,output in results))
+        self.assertTrue(all(path.exists() for path in ready),results)
+        observations = [json.loads(path.read_text()) for path in ready]
+        self.assertTrue(set(observations[0]['pins']).isdisjoint(observations[1]['pins']))
+        self.assertNotEqual(observations[0]['lease_root'],observations[1]['lease_root'])
+
 
 TOOL_FIXTURE = r'''
 import json,os,sys,subprocess
@@ -292,6 +360,17 @@ for target in pins.values():
         with p.device_leases([target]):pass
     except p.DeviceLeaseBusy:pass
     else:raise AssertionError('target was forwarded before acquiring its lease: '+target)
+if pins and os.environ.get('CLOSURE_FIXTURE_READY'):
+    import time
+    from pathlib import Path
+    ready=Path(os.environ['CLOSURE_FIXTURE_READY'])
+    if not ready.exists():
+        ready.write_text(json.dumps(dict(pins=list(pins.values()),
+            lease_root=p._closure_fixture_last_lease_root)))
+        release=Path(os.environ['CLOSURE_FIXTURE_RELEASE']);deadline=time.monotonic()+40
+        while not release.exists():
+            if time.monotonic()>deadline:raise AssertionError('concurrent fixture release missing')
+            time.sleep(.01)
 if name=='adb' and 'dumpsys' in args:
     print('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n  mProcessesReady=true mSystemReady=true mBooted=true mFactoryTest=0\n  mForceBackgroundCheck=false');sys.exit()
 with open(os.environ['CLOSURE_FIXTURE_LOG'],'a') as f:f.write(json.dumps(dict(name=name,args=args,pins=pins))+'\n')
