@@ -15,6 +15,7 @@ import com.mknoon.app.call.MknoonIncomingCallPresentation
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
@@ -35,6 +36,8 @@ class MainActivity : FlutterActivity() {
 
     private var goBridge: GoBridge? = null
     private var receivedMediaEgressHandler: ReceivedMediaEgressHandler? = null
+    private var stickerClipFrameBridge: StickerClipFrameBridge? = null
+    private var stickerCutoutBridge: StickerCutoutBridge? = null
     private var privateMediaProtectionHandler: PrivateMediaProtectionHandler? = null
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
@@ -116,6 +119,8 @@ class MainActivity : FlutterActivity() {
             this,
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        setupStickerClipFrameBridge(flutterEngine.dartExecutor.binaryMessenger)
+        setupStickerCutoutBridge(flutterEngine.dartExecutor.binaryMessenger)
         privateMediaProtectionEngine = flutterEngine
         privateMediaProtectionHandler = privateMediaProtectionRegistry.bind(
             engineIdentity = flutterEngine,
@@ -371,7 +376,36 @@ class MainActivity : FlutterActivity() {
         super.onBackPressed()
     }
 
+    private fun setupStickerCutoutBridge(messenger: BinaryMessenger) {
+        closeStickerCutoutBridge()
+        val context = applicationContext
+        stickerCutoutBridge = StickerCutoutBridge(
+            messenger = messenger,
+            cacheDirectory = cacheDir,
+            clientFactory = { MlKitStickerCutoutClient.create(context) },
+        )
+    }
+
+    private fun closeStickerCutoutBridge() {
+        val bridge = stickerCutoutBridge
+        stickerCutoutBridge = null
+        bridge?.close()
+    }
+
+    private fun setupStickerClipFrameBridge(messenger: BinaryMessenger) {
+        closeStickerClipFrameBridge()
+        stickerClipFrameBridge = StickerClipFrameBridge(messenger, cacheDir)
+    }
+
+    private fun closeStickerClipFrameBridge() {
+        val bridge = stickerClipFrameBridge
+        stickerClipFrameBridge = null
+        bridge?.close()
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        closeStickerClipFrameBridge()
+        closeStickerCutoutBridge()
         androidCallWakeBridge?.dispose()
         androidCallWakeBridge = null
         updateCheckBackgroundBridge?.dispose()

@@ -5271,6 +5271,60 @@
       ],
       "inspected": true
     },
+    "custom-stickers-animation-enabled": {
+      "kind": "command",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--concurrency=1",
+        "--dart-define=CUSTOM_STICKERS_ENABLED=true",
+        "test/features/stickers/animated_sticker_codec_test.dart",
+        "test/features/stickers/sticker_clip_exporter_test.dart",
+        "test/core/media/camera_video_recorder_test.dart"
+      ],
+      "paths": [
+        "test/features/stickers/animated_sticker_codec_test.dart",
+        "test/features/stickers/sticker_clip_exporter_test.dart",
+        "test/core/media/camera_video_recorder_test.dart"
+      ],
+      "success_marker": "All tests passed!",
+      "boundary": "Enabled animated-sticker byte and timing bounds, transparent pixel privacy, worker export ownership and cancellation, and silent two-second camera capture; ordinary recorder preservation runs in the same file.",
+      "limitations": "Host codecs and a mocked native camera/frame-extraction boundary. Native frame orientation, timestamps, cancellation latency and phone performance require the separately owned native/device proof; default-off behavior remains in affected-stickers and affected-media.",
+      "requirements": [
+        "flutter"
+      ],
+      "timeout_seconds": 900
+    },
+    "custom-stickers-native-android": {
+      "kind": "command",
+      "command": [
+        "python3",
+        "scripts/test/run_custom_sticker_native_unit_tests.py"
+      ],
+      "success_marker": "CUSTOM_STICKER_NATIVE_UNIT_TESTS_PASS",
+      "timeout_seconds": 1800,
+      "requirements": ["python3", "java"],
+      "resources": ["shared-native-build"],
+      "references": [
+        "scripts/test/run_custom_sticker_native_unit_tests.py",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameRegistrationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardownTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/StickerCutoutBridge.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/MlKitStickerCutoutClient.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutBridgeTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutRegistrationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostPosixShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostOsConstantsShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostBlockGuardOsShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostPosixShadowTest.kt"
+      ],
+      "boundary": "43 exact Android JVM cases: four frame-channel ownership, 21 cutout input/PNG and job-lifecycle, six real-host POSIX fixture controls, four cutout engine-registration, and eight runtime/call/intent preservation cases; every selected class requires fresh JUnit results.",
+      "limitations": "Android JVM/Robolectric with controlled model tasks and serial regular-file POSIX fixtures. This does not establish real ML Kit/provider availability, model download or segmentation quality, phone frame orientation/timestamps, cancellation latency, performance, or iOS native execution.",
+      "inspected": true
+    },
     "camera-native-runner": {
       "kind": "python",
       "paths": [
@@ -5785,6 +5839,7 @@
         "affected-transport",
         "affected-calls",
         "affected-media",
+        "affected-stickers",
         "affected-surfaces",
         "affected-feed",
         "go-core",
@@ -7113,6 +7168,48 @@
         "workflow"
       ],
       "why": "The pinned native camera transaction and its exact upstream XCTest host/receipt runner must preserve active recording state and distinguish expected fault RED from setup errors."
+    },
+    {
+      "id": "custom-sticker-animation",
+      "patterns": [
+        "lib/core/config/custom_stickers_flag.dart",
+        "lib/core/media/camera_video_recorder.dart",
+        "lib/features/stickers/application/animated_sticker_codec.dart",
+        "lib/features/stickers/application/sticker_clip_exporter.dart",
+        "android/app/src/main/kotlin/com/mknoon/app/StickerClipFrameBridge.kt",
+        "ios/Runner/StickerClipFrameBridge.swift",
+        "test/features/stickers/animated_sticker_codec_test.dart",
+        "test/features/stickers/sticker_clip_exporter_test.dart",
+        "test/core/media/camera_video_recorder_test.dart"
+      ],
+      "checks": [
+        "custom-stickers-animation-enabled",
+        "affected-stickers",
+        "affected-media"
+      ],
+      "why": "Both compile-time states must execute: the default-off lanes cannot exercise silent capture or native extraction/worker export when CUSTOM_STICKERS_ENABLED is true. Native build changes retain their existing broad mappings and separate proof obligations."
+    },
+    {
+      "id": "custom-sticker-native-registration",
+      "patterns": [
+        "android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/StickerClipFrameBridge.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameRegistrationTest.kt",
+        "scripts/test/run_custom_sticker_native_unit_tests.py",
+        "android/app/src/main/kotlin/com/mknoon/app/StickerCutoutBridge.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/MlKitStickerCutoutClient.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutBridgeTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutRegistrationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostPosixShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostOsConstantsShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostBlockGuardOsShadow.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostPosixShadowTest.kt"
+      ],
+      "checks": [
+        "custom-stickers-native-android",
+        "affected-stickers"
+      ],
+      "why": "Cutout input/output ownership, cancellation and engine replacement/detach require the exact Android native slice and its real-FD fixture controls; the host registration contracts preserve both platform callsites. Existing broad native/build mappings remain in force."
     }
   ],
   "documentation_only": [

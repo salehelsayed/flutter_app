@@ -6605,6 +6605,63 @@ visible and cannot become an ordinary first-attempt PASS.
   dimensions. Evidence: `.codex-test-logs/sticker-outgoing-alignment-131/`.
   These host cases do not certify device screenshots or transport behavior.
 
+- **Custom sticker animation:** encoding tests require the actual `image 4.12.0`
+  graph; `image 4.8.0` has no `WebPEncoder`. Execute both compile-time flag
+  states: default-off cases prove capture/export inertness but do not exercise
+  the enabled worker and silent-capture paths. The codec cases compare sources
+  differing only outside the circle, require identical animation/poster bytes,
+  and check real WebP timing, frame counts, byte caps and decoded alpha-zero
+  RGB. Nonzero RGB reconstructed by a lossy decoder alone does not establish
+  retention of the original camera background. Independent libwebp decoding
+  checked every final circle frame and the static poster. Exporter cases prove
+  byte/hash metadata, malformed native-output rejection, concurrent-export
+  refusal and cancellation that joins the mocked native response before
+  removing its owned job; caller clips stay intact. Camera cases use the real
+  `CameraController` with a fake platform to preserve ordinary recording while
+  proving silent capture, the two-second deadline and cancellation cleanup.
+  Source `84d15cec4` with dependency snapshot `0fc60c598` passed 28 enabled
+  and 24 default-off app cases plus targeted analysis at candidate `e2295d8ad`.
+  Evidence and all first failures are retained in
+  `.codex-test-logs/codex-ui-bl17-animation-spike-20261111/`, including
+  `app-focused-completion.json` and `exact-codec-alpha-validation.json`.
+  Native extraction/orientation/cancellation latency, Flutter font shaping,
+  installed old-build compatibility, transport and phone cost remain separate
+  proofs; these host receipts do not certify an integrated or signed candidate.
+
+- **Custom sticker native registration:** six host contract cases first failed
+  on missing registration, then passed with 28 neighboring lifecycle/configuration
+  cases. `run_custom_sticker_native_unit_tests.py` requires 43 Android JVM cases:
+  four frame-channel ownership, 21 cutout bridge, six real-host POSIX controls,
+  four cutout engine-registration, and eight runtime, call-teardown and new-intent
+  sentinels. Its caller owns the shared native-build lease. The runner archives
+  old XML, removes only the seven selected class reports before one Gradle
+  invocation, and requires fresh exact case counts and execution of the selected
+  task before reporting success; cached XML is not execution evidence.
+  `android-cutout-curated-43-second-verdict.json` records 43 PASS / 0 FAIL /
+  0 SKIP at `e84d6238c3f4e46901c30f3462b1688769b1fd16` plus the recorded local
+  fixture, runner and selection hashes. The first combined 37 PASS / 6 fixture
+  FAIL result remains in `android-cutout-curated-43-first/`.
+  Controls that passed alone failed together because Robolectric reused
+  `Libcore.rawOs`/`os` instances holding default shadows after switching to the
+  custom shadow map. The controls-only repair saves those references,
+  reinitializes the OS chain under the active map before each case, and restores
+  the original references in cleanup. All six bodies and 77 assertion calls,
+  production bytes and neighboring cases remained unchanged; the combined run
+  verifies that repair without relying on class ordering.
+  The five real-helper `StickerClipFramePluginTests` XCTest cases also passed
+  at `333a0a3981a4ba464d72af401fcd81dc9de96cc2` on the iPhone 17 / iOS 26.5
+  simulator, as recorded in `ios-stickers-native-333-verdict.json`; this
+  supersedes the earlier compile/typecheck-only status. The XCTest owner tests
+  observe fake messengers, and Android registration isolates Flutter superclass
+  cleanup and engine construction while running MainActivity's real cleanup
+  override. Actual engine callback timing, device frame extraction and phone
+  performance remain separate proof; these receipts do not certify a signed
+  or subsequently integrated candidate. Evidence is under
+  `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`, including
+  `native-registration-host-verdict.json` and the native verdicts named above.
+  Initial standalone XCTest setup and fixture compile failures remain retained
+  in `native-registration-swift-typecheck-{first,second,third}/`.
+
 - **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
   cases validate byte/hash and decoded claims, metadata removal/rejection,
   transparent-pixel privacy, bounded frames and duration, and independent temp
@@ -6665,6 +6722,41 @@ visible and cannot become an ordinary first-attempt PASS.
   `sticker-migration-green-verdict.json` and
   `sticker-migration-preservation-verdict.json`; targeted migration analysis is
   clean after an assertion-preserving test-loop brace fix.
+
+- **Custom sticker cutout boundary:** the Dart channel suite passes 38 cases
+  with the shipping flag value and 37 with the compile-time flag enabled.
+  Disabled construction/extraction performs no channel or filesystem work.
+  Enabled cases use real PNG bytes and controlled native responses to verify
+  the private per-job output path, 2048-pixel axis and 24 MiB bounds, descriptor
+  validation, strict PNG chunk/CRC framing, one frame, metadata exclusion and
+  zero RGB beneath transparent pixels. Validation and decoding use an isolate;
+  the service republishes the validated snapshot before transferring ownership.
+  Cancel acknowledgement or platform failure releases admission while late
+  responses can clean only their retired job; returned caller-owned PNGs and
+  source files survive subsequent jobs and cancellation. Missing native plugins
+  report unsupported, permitting the crop fallback. These Dart receipts establish
+  the channel boundary with a fake native channel.
+  The Android native slice separately passes 21 bridge cases with controlled
+  model tasks and real host files/codecs as part of the combined 43-case runner
+  above. The iOS `StickerCutoutBridgeTests` suite passed all 19 XCTest cases at
+  `d3c74fb0e69384f38615fcba934f16b9fab82574` on the iPhone 17 / iOS 26.5 simulator.
+  Its injected segmenter and real ImageIO/PNG path cover all eight EXIF
+  orientations, bounded thumbnails without upscaling, full-canvas transparent
+  output, tight bounds, metadata/hidden-RGB exclusion, path ownership and
+  cancellation, duplicate completion, detach and successor safety. These native
+  tests do not establish real ML Kit/Vision model availability or segmentation
+  quality, physical-device performance, or signed-app behavior.
+  `ios-cutout-native-d3-verdict.json` pins the 19-case result and xcresult
+  `result-20261111T084410Z.xcresult`. The preceding 17 PASS / 2 fixture FAIL
+  result remains in `ios-stickers-native-333-verdict.json`: the messenger fixture
+  omitted the semantic handler-removal count in `cleanUpConnection`; its
+  connection-identity guard, all 19 test bodies and production bytes stayed
+  unchanged when the count was repaired. Dart evidence remains in
+  `cutout-red-verdict.json`, `cutout-green-verdict.json` and their first
+  command/raw/exit receipts under
+  `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`, alongside
+  the native verdicts above. Initial analyzer style findings remain retained;
+  final targeted analysis is clean. No behavioral assertion was removed.
 
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message

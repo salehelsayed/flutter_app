@@ -412,6 +412,7 @@ dependencies {
     // firebase_messaging keeps this dependency non-transitive at the app
     // compile boundary, so declare the already-resolved SDK version directly.
     implementation("com.google.firebase:firebase-messaging:24.1.2")
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("androidx.core:core-telecom:1.1.0-beta01")
     implementation("com.google.guava:guava:33.3.1-android")

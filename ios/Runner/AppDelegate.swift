@@ -898,6 +898,8 @@ final class IosSetupReadinessEntryCoordinator {
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
+  private var stickerClipFramePlugin: StickerClipFramePlugin?
+  private var stickerCutoutPlugin: StickerCutoutPlugin?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
   private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
   private var iosSetupReadinessEntryChannel: FlutterMethodChannel?
@@ -922,6 +924,8 @@ final class IosSetupReadinessEntryCoordinator {
   private var fcmMessagingPluginDelegate: UNUserNotificationCenterDelegate?
 
   deinit {
+    stickerClipFramePlugin?.close()
+    stickerCutoutPlugin?.close()
     iosCallNativeBridge?.dispose()
     iosAppVisibilityCoordinator?.stop()
     NotificationCenter.default.removeObserver(self)
@@ -1213,6 +1217,20 @@ final class IosSetupReadinessEntryCoordinator {
     captureFcmMessagingPluginDelegate(registry: engineBridge.pluginRegistry)
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
+    stickerClipFramePlugin?.close()
+    stickerClipFramePlugin = nil
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StickerClipFramePlugin") {
+      let plugin = StickerClipFramePlugin(messenger: registrar.messenger())
+      registrar.publish(plugin)
+      stickerClipFramePlugin = plugin
+    }
+    stickerCutoutPlugin?.close()
+    stickerCutoutPlugin = nil
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StickerCutoutPlugin") {
+      let plugin = StickerCutoutPlugin(messenger: registrar.messenger())
+      registrar.publish(plugin)
+      stickerCutoutPlugin = plugin
+    }
     let privateMediaImageViewFactory = PrivateMediaCaptureProtectedImageViewFactory(
       messenger: messenger
     )
