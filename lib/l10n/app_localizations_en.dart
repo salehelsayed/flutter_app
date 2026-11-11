@@ -5152,6 +5152,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sticker_pack_nujoom => 'Nujoom';
 
   @override
+  String get stickers_mine => 'My stickers';
+
+  @override
+  String get stickers_create => 'Create';
+
+  @override
+  String get stickers_delete => 'Delete';
+
+  @override
+  String get stickers_drag_to_reorder => 'Drag to reorder';
+
+  @override
+  String get stickers_manage_done => 'Done';
+
+  @override
+  String get stickers_move_earlier => 'Move earlier';
+
+  @override
+  String get stickers_move_later => 'Move later';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'Sticker $position of $count';
+  }
+
+  @override
   String get settings_app_updates => 'App updates';
 
   @override

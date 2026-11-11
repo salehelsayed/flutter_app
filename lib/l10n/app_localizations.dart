@@ -8552,6 +8552,54 @@ abstract class AppLocalizations {
   /// **'Nujoom'**
   String get sticker_pack_nujoom;
 
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'My stickers'**
+  String get stickers_mine;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get stickers_create;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get stickers_delete;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to reorder'**
+  String get stickers_drag_to_reorder;
+
+  /// Custom stickers copy, same words as you_tags_done
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get stickers_manage_done;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move earlier'**
+  String get stickers_move_earlier;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move later'**
+  String get stickers_move_later;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Sticker {position} of {count}'**
+  String stickers_mine_semantics(int position, int count);
+
   /// No description provided for @settings_app_updates.
   ///
   /// In en, this message translates to:

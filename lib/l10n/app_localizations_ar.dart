@@ -5222,6 +5222,32 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sticker_pack_nujoom => 'نجوم';
 
   @override
+  String get stickers_mine => 'ملصقاتي';
+
+  @override
+  String get stickers_create => 'إنشاء';
+
+  @override
+  String get stickers_delete => 'حذف';
+
+  @override
+  String get stickers_drag_to_reorder => 'اسحب لإعادة الترتيب';
+
+  @override
+  String get stickers_manage_done => 'تم';
+
+  @override
+  String get stickers_move_earlier => 'نقل إلى موضع سابق';
+
+  @override
+  String get stickers_move_later => 'نقل إلى موضع لاحق';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'ملصق $position من $count';
+  }
+
+  @override
   String get settings_app_updates => 'تحديث التطبيق';
 
   @override
