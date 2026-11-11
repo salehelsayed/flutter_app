@@ -2549,8 +2549,9 @@ Thirty-five causal oracle/registry tests pass in
 first attempt's two host-fixture type errors remain in `005-units.log`.
 Three focused integration-tagged Go host contracts pass in the same evidence
 directory's `007-go-checkpoint-summary.json`. These are host results, not device
-coverage. GC-005 still needs its separate membership process-death companion,
-and call content audio still needs the unapproved test-build audio hook.
+coverage. GC-005 still needs its separate membership process-death companion.
+The earlier audio-hook approval gap is historical for VC-024; its current scoped
+PCM and OS-route decision is recorded in the [long-call runbook](vc024-long-call-runbook.md).
 
 The additional journey preparation is documented in
 `docs/testing/priority-e2e-codex-mcp-execution.md`, using the shared camera
@@ -2564,6 +2565,20 @@ videos must pass a full host decode as well as the recorded native viewer
 checks. Equality with the processed encryption input is additional proof and
 remains `NOT RUN` when its existing sender receipt was not captured. Available
 target discovery supports an explicit unavailable-target N/A rather than a pass.
+
+MEDIA-035's two `GroupConversationWired` camera cases exercise the actual
+`Take Photo` action with injected camera/processor/transport, verify Original
+and Compressed processing, exact multilingual caption and one processed
+attachment, and reject gallery/document/video-picker substitution. This is the
+legacy group host path, not native camera or device-delivery proof. The real-file
+receipt regression now retains all six recipient outcomes across both qualities
+when an earlier export is corrupt, missing or differs from the processed send
+input; later valid recipients remain visible and absent sender-byte proof stays
+`NOT RUN`. The camera selection passed 2 tests; the full receipt suite and
+existing fanout/allowed-peer tests passed 72 tests, including removed-member and
+partial-delivery preservation. Commands, causal RED and first preparation
+failures remain in `.codex-test-logs/p0-journeys-20261110/` in the owned P0
+journey worktree. These results do not certify a native group-camera campaign.
 
 CONTACT-001 separates logical requests from transport retries. A contact missing
 its reciprocal ML-KEM key remains in the durable retry set across reopen, and
@@ -11077,6 +11092,32 @@ visible and cannot become an ordinary first-attempt PASS.
   incident or certify a production soak. The
   [long-call runbook](vc024-long-call-runbook.md) defines the separately required
   device observations and approved resource investigation thresholds.
+  **VC-024 recorded resource contract:** `run_call_audio_soak.dart` now checks
+  retained, hashed process measurements bound to source/run/device/artifact and
+  one canonical call. The 43-case host suite covers the 1800-second floor, both
+  RSS growth branches, matched-route in-call CPU, post-idle recovery, stable
+  process/clock/counter identity, missing windows and replay/tamper rejection.
+  CPU uses cumulative process seconds on the one-core scale; the November 10
+  approval sets late route CPU to at most `max(1.20 * warm, warm + 5pp)`.
+  Post-idle observation follows owned cleanup and any recovery call, with its
+  actual start required; a sample at a declared start after the main call ends
+  must already be idle. These are synthetic parser/CLI fixtures, not sustained
+  device measurements. Resource success is only `PASS_RECORDED`; the CLI keeps
+  full-soak status `NOT RUN` and exit 78, and no-argument execution stays
+  `BLOCKED`/78. Android sampled decoded PCM and iOS route/active-session evidence
+  remain separate; physical output is `NOT PROVEN`, nonblocking under Kayan's
+  November 10 decision. The corrected resource suite passed all 43 cases;
+  the current coordinator/screen/RTP preservation selection passed 60 cases.
+  Evidence in `.codex-test-logs/p0-journeys-20261110/` retains the causal RED,
+  initial SDK-stderr assertion failure, focused correction and complete GREEN.
+  Two review probes first returned `PASS_RECORDED` for a missing post-idle start
+  and an active recovery call at that start; both now fail closed. Their
+  `vc024-post-idle-*` receipts retain RED (0 PASS / 2 FAIL), full resource GREEN
+  (43 PASS) and the complete five-check change gate against `4e9463e82`.
+  The original preparation's broader wrapper result remains 11 checks PASS and
+  88 NOT RUN; the review-fix gate does not replace that scope or provide a device
+  verdict. Its exact resource selector is
+  `call-audio-soak-resource-contract` in `tool/testing/selection.json`.
   An offline terminal send may fail immediately while local history, native
   acknowledgement and context cleanup complete. Its bounded delivery owner
   retains only the already sealed envelope and immutable destination metadata;

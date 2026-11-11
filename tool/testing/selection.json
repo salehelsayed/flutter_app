@@ -1252,6 +1252,23 @@
         "tool/call_audio_oracle/coturn.lock.json"
       ]
     },
+    "call-audio-soak-resource-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/integration/call_audio_soak_resource_evidence_test.dart"
+      ],
+      "boundary": "Recorded VC-024 monotonic duration, same-process RSS and CPU growth/recovery evidence, with source/run/artifact binding and preserved blocked/list behavior",
+      "limitations": "Saved measurements only; no device execution, native cleanup, received-content, physical-output or full-soak certification",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/scripts/run_call_audio_soak.dart"
+      ],
+      "inspected": true
+    },
     "production-audio-harness-contract": {
       "kind": "flutter",
       "paths": [
@@ -5848,6 +5865,17 @@
       "why": "Launch status must distinguish a live slow-starting app from a failed launch before the bounded device recovery journey"
     },
     {
+      "id": "call-audio-soak-resource",
+      "patterns": [
+        "integration_test/scripts/run_call_audio_soak.dart",
+        "test/integration/call_audio_soak_resource_evidence_test.dart"
+      ],
+      "checks": [
+        "call-audio-soak-resource-contract"
+      ],
+      "why": "Standalone saved-resource parser and CLI contracts; no application, native lifecycle, transport, device runner or shared fixture mutation"
+    },
+    {
       "id": "other-test-infrastructure",
       "patterns": [
         "test/integration/android_bridge_runtime_lease_census_test.dart",
@@ -5877,7 +5905,7 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests execute disposable Python/Git/receipt fixtures only and remain covered by the workflow area",
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests execute disposable Python/Git/receipt fixtures only and remain covered by the workflow area; the exact excluded call-soak entrypoint operates only on saved resource evidence and has its own contract check, including blocked and list-scenarios behavior",
       "exclude_paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
@@ -5888,7 +5916,8 @@
         "scripts/test/mknoon_full_review_regression_test.py",
         "scripts/test/mknoon_full_composition_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
-        "scripts/test/priority_e2e_verdict_test.py"
+        "scripts/test/priority_e2e_verdict_test.py",
+        "integration_test/scripts/run_call_audio_soak.dart"
       ]
     },
     {
