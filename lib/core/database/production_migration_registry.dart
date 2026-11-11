@@ -129,6 +129,7 @@ import 'migrations/126_thoughts_metrics_opt_out.dart';
 import 'migrations/127_call_history_remote_permission_denied.dart';
 import 'migrations/128_media_attachment_sticker_id.dart';
 import 'migrations/129_post_media_caption.dart';
+import 'migrations/130_custom_stickers.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -747,6 +748,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '129_post_media_caption',
     runPostMediaCaptionMigration,
   ),
+  ProductionMigrationEntry(
+    130,
+    '130_custom_stickers',
+    runCustomStickersMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1354,6 +1360,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     129,
     '129_post_media_caption',
     runPostMediaCaptionMigration,
+  ),
+  ProductionMigrationEntry(
+    130,
+    '130_custom_stickers',
+    runCustomStickersMigration,
   ),
 ]);
 

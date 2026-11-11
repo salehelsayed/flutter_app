@@ -46,6 +46,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
@@ -584,6 +585,8 @@ class MyApp extends StatefulWidget {
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
   final PushRegistrationHealthNotifier? pushRegistrationHealthNotifier;
   final PushNotificationSettingsGateway pushNotificationSettingsGateway;
+  final CustomStickerLibrary? customStickerLibrary;
+  final Future<void> Function()? onCustomStickerAccountActivated;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
@@ -761,6 +764,8 @@ class MyApp extends StatefulWidget {
     this.pushRegistrationHealthNotifier,
     this.pushNotificationSettingsGateway =
         const PlatformPushNotificationSettingsGateway(),
+    this.customStickerLibrary,
+    this.onCustomStickerAccountActivated,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.accountMigrationStartReceiver,
@@ -3535,6 +3540,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         await pushRegistration?.completeAccountBindingCutover();
       }
     }
+    await widget.onCustomStickerAccountActivated?.call();
   }
 
   @override
