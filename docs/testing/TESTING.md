@@ -4583,6 +4583,26 @@ expiry tests need a second live peer and must assert its face rotates to the
 front as well as its card changing. A static replacement-card assertion misses
 that geometry failure.
 
+Friend full-screen Thought reactions use the same four circles, quoted-chat
+sender and send ledger as the 3D bar; own Thoughts expose no reaction controls.
+The wiring tests cover text and decoded-photo cards, all four quoted sends,
+selection in both directions and duplicate suppression after returning to 3D.
+The card tests retain the own-card exclusion and verify a later failed
+delivery retries the same message ID, plus 320-point EN/AR layouts at 2× text.
+The dial's unsent drafts remain local when shared answer state changes.
+
+Positive reaction-selection fixtures must start the fake P2P node and seed a
+connected peer. Its default stopped state legitimately stages a quoted reply
+as failed (`CHAT_MSG_SEND_NODE_NOT_RUNNING`), leaving the reaction unpressed
+in both views; a staged row alone does not prove delivery. The original
+stopped-node failures and diagnostic traces are retained. The corrected
+ready-transport RED on `e0b942a2f` still fails for the three missing friend
+controls, with the own-card control passing. The four complete wiring, card,
+depth-answer and visit-state files pass 301 cases on `f2e3f8128`, with no
+failures or skips. Evidence is under
+`.codex-test-logs/codex-ui-orbit-fullscreen-reactions-20261111/`; this is host
+widget/state coverage, not a phone-rendering or transport acceptance receipt.
+
 Depth media must resolve persisted relative paths through
 `MediaFileManager.resolveStoredPathSync` before checking for cached files.
 Calling the downloader again for a valid relative cache can delete that cache
