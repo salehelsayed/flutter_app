@@ -114,4 +114,13 @@ void main() {
     expect(dir('Hello مرحبا'), 'ltr');
     expect(dir('😀 Hi'), 'ltr');
   });
+
+  test('Arabic digits and punctuation before Latin letters stay left to right', () {
+    String dir(String text) => StickerTextLayer(id: 1, text: text).direction.name;
+    expect(
+      [dir('١٢ Hello'), dir('، Hello'), dir('Hello مرحبا')],
+      ['ltr', 'ltr', 'ltr'],
+    );
+    expect([dir('١٢ مرحبا'), dir('😀 مرحبا')], ['rtl', 'rtl']);
+  });
 }

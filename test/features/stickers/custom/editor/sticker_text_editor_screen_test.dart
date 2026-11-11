@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -352,5 +353,53 @@ void main() {
 
     expect(await result, isA<StickerEditorCancelled>());
     expect(output.existsSync(), isFalse);
+  });
+
+  testWidgets('a screen reader can pick a colour swatch', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await _openEditor(tester, _outputFile());
+    await _addText(tester, 'Hello');
+
+    final node = tester.getSemantics(find.bySemanticsLabel('Red'));
+    tester.binding.pipelineOwner.semanticsOwner!.performAction(
+      node.id,
+      SemanticsAction.tap,
+    );
+    await tester.pumpAndSettle();
+
+    final color = tester
+        .renderObject<RenderParagraph>(find.text('Hello'))
+        .text
+        .style
+        ?.color;
+    expect(color?.toARGB32(), 0xFFFF3B30);
+    semantics.dispose();
+  });
+
+  testWidgets('Cancel and back do nothing while the sticker is saving', (
+    tester,
+  ) async {
+    final output = _outputFile();
+    final result = await _openEditor(tester, output);
+    await _addText(tester, 'H');
+
+    StickerEditorResult? done;
+    result.then((value) => done = value);
+    await tester.tap(find.text('Save sticker'));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Cancel'));
+    await tester.pump();
+    await tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pump();
+    expect(done, isNull);
+
+    for (var i = 0; i < 100 && done == null; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(done, isA<StickerEditorReady>());
   });
 }
