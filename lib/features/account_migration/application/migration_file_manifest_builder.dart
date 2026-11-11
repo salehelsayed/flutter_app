@@ -15,6 +15,57 @@ import 'package:path/path.dart' as p;
 
 typedef MigrationSecureValueReader = Future<String?> Function(String key);
 
+/// Shared by manifest construction and its later source-file re-verification.
+/// Root ancestors may use platform aliases; links in the owned tree are refused.
+Future<MigrationFileManifestIssueCode?> migrationCustomStickerPathIssue(
+  String documentsRootPath,
+  String relativePath,
+) async {
+  if (!relativePath.startsWith('stickers/') ||
+      relativePath.length <= 9 ||
+      relativePath.endsWith('/') ||
+      relativePath.contains('\\') ||
+      relativePath.contains('\u0000') ||
+      p.posix.normalize(relativePath) != relativePath) {
+    return MigrationFileManifestIssueCode.unsupportedAbsolutePath;
+  }
+  try {
+    final root = Directory(p.normalize(p.absolute(documentsRootPath)));
+    final rootType = await FileSystemEntity.type(root.path, followLinks: false);
+    if (rootType == FileSystemEntityType.notFound) {
+      return MigrationFileManifestIssueCode.missingRequiredFile;
+    }
+    if (rootType != FileSystemEntityType.directory) {
+      return MigrationFileManifestIssueCode.unsupportedAbsolutePath;
+    }
+    final trustedRoot = await root.resolveSymbolicLinks();
+    final parts = p.posix.split(relativePath);
+    var current = trustedRoot;
+    for (var index = 0; index < parts.length; index++) {
+      current = p.join(current, parts[index]);
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        return MigrationFileManifestIssueCode.missingRequiredFile;
+      }
+      final expected = index == parts.length - 1
+          ? FileSystemEntityType.file
+          : FileSystemEntityType.directory;
+      if (type != expected) {
+        return MigrationFileManifestIssueCode.unsupportedAbsolutePath;
+      }
+    }
+    if (await File(current).resolveSymbolicLinks() != current ||
+        await FileSystemEntity.type(root.path, followLinks: false) !=
+            FileSystemEntityType.directory ||
+        await root.resolveSymbolicLinks() != trustedRoot) {
+      return MigrationFileManifestIssueCode.unsupportedAbsolutePath;
+    }
+    return null;
+  } on FileSystemException {
+    return MigrationFileManifestIssueCode.missingRequiredFile;
+  }
+}
+
 class MigrationFileManifestBuilder {
   final String documentsRootPath;
   final MigrationSecureValueReader? secureValueReader;
@@ -25,7 +76,6 @@ class MigrationFileManifestBuilder {
   });
 
   Future<MigrationFileManifest> build({
-    // RED scaffold: accepted input; sticker file validation is not implemented.
     Iterable<Map<String, Object?>> customStickerRows = const [],
     Iterable<Map<String, Object?>> chatMediaRows = const [],
     Iterable<Map<String, Object?>> directMediaBlobCustodyRows = const [],
@@ -56,6 +106,10 @@ class MigrationFileManifestBuilder {
         allowedIdentityScopes: identityScopes,
         row: row,
       );
+    }
+
+    for (final row in customStickerRows) {
+      await _addCustomSticker(items, issues, includedPaths, row);
     }
 
     for (final row in chatMediaRows) {
@@ -130,6 +184,93 @@ class MigrationFileManifestBuilder {
       items: items,
       issues: issues,
       pathRepairs: pathRepairs,
+    );
+  }
+
+  Future<void> _addCustomSticker(
+    List<MigrationFileManifestItem> items,
+    List<MigrationFileManifestIssue> issues,
+    Set<String> includedPaths,
+    Map<String, Object?> row,
+  ) async {
+    final id = row['id'];
+    final relativePath = row['relative_path'];
+    final size = row['size_bytes'];
+    final hash = row['content_sha256'];
+    void reject(MigrationFileManifestIssueCode code) {
+      issues.add(
+        MigrationFileManifestIssue(
+          code: code,
+          sourceTable: 'custom_stickers',
+          sourceId: id is String ? id : 'unknown-sticker',
+          relativePath: relativePath is String ? relativePath : null,
+          criticality: MigrationFileCriticality.critical,
+        ),
+      );
+    }
+
+    if (relativePath is! String) {
+      reject(MigrationFileManifestIssueCode.unsupportedAbsolutePath);
+      return;
+    }
+    if (id is! String ||
+        id.isEmpty ||
+        size is! int ||
+        size < 1 ||
+        size > 524288 ||
+        hash is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(hash) ||
+        row['mime'] != 'image/webp' ||
+        includedPaths.contains(relativePath)) {
+      reject(MigrationFileManifestIssueCode.fileSizeMismatch);
+      return;
+    }
+
+    final pathIssue = await migrationCustomStickerPathIssue(
+      documentsRootPath,
+      relativePath,
+    );
+    if (pathIssue != null) {
+      reject(pathIssue);
+      return;
+    }
+    try {
+      final file = File(_absoluteForRelativePath(relativePath));
+      // Compare the bounded row length before hashing; never repair sticker
+      // paths or treat missing canonical bytes as a dispensable media cache.
+      if (await file.length() != size) {
+        reject(MigrationFileManifestIssueCode.fileSizeMismatch);
+        return;
+      }
+      final digest = (await sha256.bind(file.openRead()).first).toString();
+      final afterReadIssue = await migrationCustomStickerPathIssue(
+        documentsRootPath,
+        relativePath,
+      );
+      if (afterReadIssue != null) {
+        reject(afterReadIssue);
+        return;
+      }
+      if (digest != hash || await file.length() != size) {
+        reject(MigrationFileManifestIssueCode.fileSizeMismatch);
+        return;
+      }
+    } on FileSystemException {
+      reject(MigrationFileManifestIssueCode.missingRequiredFile);
+      return;
+    }
+
+    includedPaths.add(relativePath);
+    items.add(
+      MigrationFileManifestItem(
+        kind: MigrationFileManifestItemKind.customSticker,
+        criticality: MigrationFileCriticality.critical,
+        relativePath: relativePath,
+        sizeBytes: size,
+        sha256: hash,
+        sourceTable: 'custom_stickers',
+        sourceId: id,
+      ),
     );
   }
 
