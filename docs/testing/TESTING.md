@@ -6572,8 +6572,16 @@ visible and cannot become an ordinary first-attempt PASS.
   drain it before closing SQL or replacing those roots. The stable account
   facade has 16 real-DB host cases for synchronous generation revocation,
   pending initialization and file drains, same-account replacement, explicit
-  activation failure, and subscriptions surviving replacement. Production
-  bootstrap bindings, transport and device SQLCipher remain separate proof.
+  activation failure, and subscriptions surviving replacement. The bound
+  factory has 21 real-DB host cases for passive identity, migration-authority
+  and mobile-binding reads, legacy/noAccount eligibility, linked-independent
+  local access, and revocation during awaited provider resolution. It checks
+  account ownership again before publishing the concrete delegate. Disabled
+  composition does not read providers or SQL. The production-schema fixture
+  stores both secret columns as NULL; empty strings violate migration 005.
+  Six AST cases verify the bootstrap facade, export drain and import/erase/
+  shutdown retirement callsites, but do not execute the app. Full bootstrap/UI
+  activation, transport and device SQLCipher remain separate proof.
   For image 4.12, `WebPDecoder.maxPixels` is a property; full animation decoding
   uses the bounded aggregate frame budget to retain first-frame composition.
   Evidence: `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`
@@ -6581,7 +6589,8 @@ visible and cannot become an ordinary first-attempt PASS.
   `library-green-second-exit.json`). The first library compile failure remains
   retained; targeted library analysis subsequently found no issues. Facade
   evidence is `sticker-lifecycle-red-verdict.json` and
-  `sticker-lifecycle-green-verdict.json` in that evidence directory.
+  `sticker-lifecycle-green-verdict.json`, `sticker-bootstrap-red-verdict.json`
+  and `sticker-bootstrap-green-verdict.json` in that evidence directory.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,

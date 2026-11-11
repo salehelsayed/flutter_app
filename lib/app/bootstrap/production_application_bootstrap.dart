@@ -18,6 +18,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
 import 'package:flutter_app/app/bootstrap/canonical_runtime_shutdown_sequence.dart';
+import 'package:flutter_app/app/bootstrap/custom_sticker_library_composition.dart';
+import 'package:flutter_app/features/stickers/application/account_custom_sticker_library.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
@@ -732,8 +734,10 @@ final class ProductionApplicationBootstrap
     // leave through Go before either is shut down.
     void Function()? disposeThoughtExpiry;
     TranslatePreviewPersistence? accountPreviewPersistence;
+    Future<void> Function()? retireCustomStickerLibrary;
     final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
-      shutdownRuntime: () {
+      shutdownRuntime: () async {
+        await retireCustomStickerLibrary?.call();
         if (identical(translatePreviewPersistence, accountPreviewPersistence)) {
           translatePreviewPersistence = null;
         }
@@ -1038,6 +1042,18 @@ final class ProductionApplicationBootstrap
     // Both group backfills and deferred Firebase/push eligibility await this
     // retained future below.
     final groupReactionProjectionIdentityReady = repository.loadIdentity();
+    final customStickerLibrary = AccountCustomStickerLibrary(
+      createLibrary: (isCurrent) => createBoundCustomStickerLibrary(
+        db: db,
+        documentsDirectory: appDocDir,
+        temporaryDirectory: getTemporaryDirectory,
+        readAuthority: accountMigrationAuthorityRepository.loadAuthority,
+        readAccountBinding:
+            canonicalRuntimeBindingCoordinator?.readCurrentAccountBinding,
+        isCurrent: isCurrent,
+      ),
+    );
+    retireCustomStickerLibrary = customStickerLibrary.retire;
     Future<bool> allowsAccountRuntimeNetworkSideEffects(
       String operation,
     ) async {
@@ -5920,7 +5936,11 @@ final class ProductionApplicationBootstrap
         availableBytesProvider: () =>
             diskSpaceChannel.getAvailableBytes(appDocDir.path),
       ),
-      bundleSource: accountMigrationBundleSource.call,
+      bundleSource: (output) async {
+        // The transfer runtime has persisted the export pause before this call.
+        await customStickerLibrary.drainForExport();
+        return accountMigrationBundleSource.call(output);
+      },
       streamCrypto: accountMigrationStreamCrypto,
       bundleReceiver: AccountMigrationProductionBundleReceiver(
         streamCrypto: accountMigrationStreamCrypto,
@@ -10299,6 +10319,8 @@ final class ProductionApplicationBootstrap
       );
 
       return MyApp(
+        customStickerLibrary: customStickerLibrary,
+        onCustomStickerAccountActivated: customStickerLibrary.activate,
         thoughtNotificationsStore: thoughtNotificationsStore,
         repository: repository,
         updateCheckController: debugE2EComposition?.updateCheckController,
@@ -10794,6 +10816,9 @@ final class ProductionApplicationBootstrap
                   'receive an account. Use a phone that is not linked.',
             );
           }
+          // Retire before incoming files can replace account-owned content.
+          // Only committed receiver activation may open the next generation.
+          await customStickerLibrary.retire();
           return accountMigrationTransferRuntime.startNewPhoneReceiver(output);
         },
         accountMigrationStopReceiver:
@@ -10815,6 +10840,7 @@ final class ProductionApplicationBootstrap
         // the canonical lease until normal teardown, so a background engine
         // cannot reopen storage between deletion and secure-key cleanup.
         eraseLocalAccountDatabase: () async {
+          await customStickerLibrary.retire();
           disposeThoughtExpiry?.call();
           // Keep the database key and retired authority until every owned
           // media/cache/notification-state removal has succeeded, including readback.
