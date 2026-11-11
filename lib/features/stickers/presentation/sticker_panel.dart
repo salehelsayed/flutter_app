@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
@@ -13,6 +15,21 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// The panel's height on a tall screen; it takes at most 40% of a short one.
 const double kStickerPanelHeight = 300;
 
+/// What the panel needs to show the My stickers tab.
+class MyStickersSource {
+  const MyStickersSource({
+    required this.library,
+    required this.onSend,
+    required this.onCreate,
+  });
+
+  final CustomStickerLibrary library;
+
+  /// Called with the id of the custom sticker the user tapped.
+  final ValueChanged<String> onSend;
+  final VoidCallback onCreate;
+}
+
 /// The sticker picker that takes the keyboard's place under the composer.
 class StickerPanel extends StatefulWidget {
   const StickerPanel({
@@ -20,9 +37,13 @@ class StickerPanel extends StatefulWidget {
     required this.catalog,
     required this.recentIds,
     required this.onSend,
+    this.myStickers,
   });
 
   final StickerCatalog catalog;
+
+  /// Shows My stickers as the first tab when set.
+  final MyStickersSource? myStickers;
 
   /// Newest first. Ids the catalog does not know (or hides) are skipped.
   final List<String> recentIds;
@@ -310,10 +331,18 @@ class _StickerImage extends StatelessWidget {
 /// [StickerPanel] over the bundled catalog and this phone's Recent list.
 /// Tapping a sticker moves it to the front of Recent, then calls [onSend].
 class BundledStickerPanel extends StatefulWidget {
-  const BundledStickerPanel({super.key, required this.onSend, this.recents});
+  const BundledStickerPanel({
+    super.key,
+    required this.onSend,
+    this.recents,
+    this.myStickers,
+  });
 
   final ValueChanged<StickerEntry> onSend;
   final StickerRecentsStore? recents;
+
+  /// Used only in builds with [kCustomStickersEnabled].
+  final MyStickersSource? myStickers;
 
   @override
   State<BundledStickerPanel> createState() => _BundledStickerPanelState();
@@ -355,6 +384,7 @@ class _BundledStickerPanelState extends State<BundledStickerPanel> {
           catalog: catalog,
           recentIds: _recentIds ??= loadedRecentIds,
           onSend: _onSend,
+          myStickers: kCustomStickersEnabled ? widget.myStickers : null,
         );
       },
     );
