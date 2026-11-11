@@ -1487,11 +1487,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة';
 
   @override
-  String connected_date(String date) {
-    return 'تمت الإضافة في $date';
-  }
-
-  @override
   String get date_today => 'اليوم';
 
   @override
@@ -5048,6 +5043,21 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get translator_settings_mobile_data => 'التنزيل عبر بيانات الجوال';
+
+  @override
+  String get translate_to_title => 'ترجمة إلى';
+
+  @override
+  String get translate_to_subtitle => 'اللغة التي تقرأ بها الترجمات.';
+
+  @override
+  String get translate_to_same_as_app => 'مثل لغة التطبيق';
+
+  @override
+  String get translate_to_all_languages => 'كل اللغات';
+
+  @override
+  String get translate_show_translation => 'إظهار الترجمة';
 
   @override
   String get translator_remove_title => 'إزالة الترجمة؟';

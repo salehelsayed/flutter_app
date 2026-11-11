@@ -7,11 +7,10 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 
 /// Frosted-glass sticky header for the conversation screen.
 ///
-/// Shows back button, contact avatar, name, connection status, and overflow menu.
+/// Shows back button, contact avatar, name, actions, and overflow menu.
 class ConversationHeader extends StatelessWidget {
   final String contactPeerId;
   final String contactUsername;
-  final String connectionDate;
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
@@ -19,6 +18,9 @@ class ConversationHeader extends StatelessWidget {
 
   /// Opens in-chat search; no magnifier without it.
   final VoidCallback? onSearch;
+
+  /// Sits between search and the overflow menu.
+  final Widget? translateAction;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
@@ -31,13 +33,13 @@ class ConversationHeader extends StatelessWidget {
     super.key,
     required this.contactPeerId,
     required this.contactUsername,
-    required this.connectionDate,
     required this.onBack,
     this.onOverflow,
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
     this.onSearch,
+    this.translateAction,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
@@ -114,34 +116,15 @@ class ConversationHeader extends StatelessWidget {
                           UserAvatar(peerId: contactPeerId, size: 36),
                           const SizedBox(width: 14),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  contactUsername,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: readableColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 1),
-                                Text(
-                                  AppLocalizations.of(
-                                    context,
-                                  )!.connected_date(connectionDate),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w400,
-                                    color: readableColors.textMuted,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              contactUsername,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: readableColors.textPrimary,
+                              ),
                             ),
                           ),
                         ],
@@ -168,6 +151,7 @@ class ConversationHeader extends StatelessWidget {
                       fixedSize: const Size.square(44),
                     ),
                   ),
+                ?translateAction,
                 // Overflow button
                 ActionSemantics(
                   label: AppLocalizations.of(
