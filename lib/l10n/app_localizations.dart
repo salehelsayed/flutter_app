@@ -8635,6 +8635,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'replaced by a newer Thought'**
   String get you_thought_replaced;
+
+  /// No description provided for @sticker_editor_text.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get sticker_editor_text;
+
+  /// No description provided for @sticker_editor_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save sticker'**
+  String get sticker_editor_save;
+
+  /// No description provided for @sticker_editor_colour.
+  ///
+  /// In en, this message translates to:
+  /// **'Colour'**
+  String get sticker_editor_colour;
+
+  /// No description provided for @sticker_editor_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get sticker_editor_delete;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get sticker_editor_undo;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Font'**
+  String get sticker_editor_font;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move up'**
+  String get sticker_editor_move_up;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move down'**
+  String get sticker_editor_move_down;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move left'**
+  String get sticker_editor_move_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move right'**
+  String get sticker_editor_move_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Bigger'**
+  String get sticker_editor_bigger;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Smaller'**
+  String get sticker_editor_smaller;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate left'**
+  String get sticker_editor_rotate_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate right'**
+  String get sticker_editor_rotate_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'White'**
+  String get sticker_colour_white;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Black'**
+  String get sticker_colour_black;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Yellow'**
+  String get sticker_colour_yellow;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Red'**
+  String get sticker_colour_red;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Blue'**
+  String get sticker_colour_blue;
 }
 
 class _AppLocalizationsDelegate
