@@ -160,6 +160,7 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
   }
 
   void _cancel() {
+    if (_saving) return;
     Navigator.of(context).pop(const StickerEditorResult.cancelled());
   }
 
@@ -198,7 +199,7 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
           leading: IconButton(
             icon: const Icon(Icons.close),
             tooltip: l10n.btn_cancel,
-            onPressed: _cancel,
+            onPressed: _saving ? null : _cancel,
           ),
           actions: [
             IconButton(
@@ -557,6 +558,7 @@ class _ColourRow extends StatelessWidget {
               button: true,
               selected: layer.colour == colour,
               label: _name(colour),
+              onTap: () => onSelect(colour),
               excludeSemantics: true,
               child: InkResponse(
                 onTap: () => onSelect(colour),

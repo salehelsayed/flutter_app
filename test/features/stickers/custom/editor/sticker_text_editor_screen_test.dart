@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -361,10 +360,7 @@ void main() {
     await _addText(tester, 'Hello');
 
     final node = tester.getSemantics(find.bySemanticsLabel('Red'));
-    tester.binding.pipelineOwner.semanticsOwner!.performAction(
-      node.id,
-      SemanticsAction.tap,
-    );
+    node.owner!.performAction(node.id, SemanticsAction.tap);
     await tester.pumpAndSettle();
 
     final color = tester

@@ -55,8 +55,8 @@ final class StickerTextLayer {
   /// digits, spaces or emoji) lays out right to left.
   TextDirection get direction {
     for (final rune in text.runes) {
-      if (_isRtlRune(rune)) return TextDirection.rtl;
-      if (_letter.hasMatch(String.fromCharCode(rune))) return TextDirection.ltr;
+      if (!_letter.hasMatch(String.fromCharCode(rune))) continue;
+      return _isRtlRune(rune) ? TextDirection.rtl : TextDirection.ltr;
     }
     return TextDirection.ltr;
   }
