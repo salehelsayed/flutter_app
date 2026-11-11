@@ -74,7 +74,9 @@ class _StickerPanelState extends State<StickerPanel> {
   void didUpdateWidget(StickerPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.myStickers?.library == widget.myStickers?.library) return;
+    _customLoads++;
     unawaited(_customChanges?.cancel());
+    _customChanges = null;
     _custom = const [];
     _managing = false;
     if (widget.myStickers == null && _selection is MyStickersSelection) {
