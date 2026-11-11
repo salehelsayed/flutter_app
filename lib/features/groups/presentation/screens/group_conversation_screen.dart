@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart'
+    show kCustomStickerMarkerId;
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -130,6 +132,10 @@ class GroupConversationScreen extends StatelessWidget {
   /// attachment identity. Delete for me is whole-message (current group
   /// persistence/tombstones are message-scoped).
   final void Function(String messageId, String attachmentId)? onMediaSave;
+
+  /// Saves one received attachment to My stickers. Null hides the entry.
+  final void Function(String messageId, String attachmentId)?
+  onMediaSaveSticker;
   final void Function(String messageId, String attachmentId)? onMediaShare;
   final Future<void> Function(String messageId, String attachmentId)?
   onMediaInfo;
@@ -225,6 +231,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onOpenPrivateMedia,
     this.privateMediaEnabled = false,
     this.onMediaSave,
+    this.onMediaSaveSticker,
     this.onMediaShare,
     this.onMediaInfo,
     this.onMediaDeleteForMe,
@@ -1348,6 +1355,13 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
+  static const _receivedStickerMimes = {
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+  };
+
   Future<void> _showMessageContextOverlay(
     GroupMessage message, {
     required BuildContext cardContext,
@@ -1413,6 +1427,19 @@ class GroupConversationScreen extends StatelessWidget {
         mediaTarget != null &&
         mediaCapabilities.contains(GroupReceivedMediaAction.share) &&
         onMediaShare != null;
+    // Option A: the gate that already allows Save (incoming, group lane,
+    // ordinary, verified), narrowed to the image types core accepts. Core
+    // requalifies the current row on tap.
+    final stickerActionLabel =
+        mediaTarget != null &&
+            mediaCapabilities.contains(GroupReceivedMediaAction.save) &&
+            onMediaSaveSticker != null &&
+            mediaTarget.mediaType == 'image' &&
+            _receivedStickerMimes.contains(mediaTarget.mime.toLowerCase())
+        ? (mediaTarget.stickerId == kCustomStickerMarkerId
+              ? AppLocalizations.of(cardContext)!.stickers_save_to_mine
+              : AppLocalizations.of(cardContext)!.stickers_use_as_sticker)
+        : null;
     final showInfoAction =
         mediaTarget != null &&
         mediaCapabilities.contains(GroupReceivedMediaAction.info);
@@ -1447,6 +1474,13 @@ class GroupConversationScreen extends StatelessWidget {
             ? () {
                 Navigator.of(dialogContext).pop();
                 onMediaShare?.call(message.id, mediaTarget.id);
+              }
+            : null,
+        stickerActionLabel: stickerActionLabel,
+        onStickerTap: stickerActionLabel != null
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onMediaSaveSticker?.call(message.id, mediaTarget!.id);
               }
             : null,
         onInfoTap: showInfoAction

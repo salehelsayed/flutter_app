@@ -154,6 +154,10 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
+import 'package:flutter_app/features/stickers/application/received_sticker_feedback.dart';
+import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart'
+    show editReceivedStickerPhoto;
 import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
@@ -6005,6 +6009,43 @@ class _ConversationWiredState extends State<ConversationWired>
     await _onSend('', sticker: (id: sticker.id, media: media));
   }
 
+  /// Null hides the received-sticker action: flag off, no library or no
+  /// media controller.
+  DirectReceivedStickerSaveHandler? _receivedStickerSaveHandler(
+    BuildContext context,
+  ) {
+    if (!kCustomStickersEnabled) return null;
+    final library = CustomStickerScope.libraryOf(context);
+    final controller = _mediaActionController;
+    if (library == null || controller == null) return null;
+    return (identity) {
+      final navigator = Navigator.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+      final peerId = widget.contact.peerId;
+      final route = ModalRoute.of(context);
+      bool isCurrent() =>
+          mounted && route?.isActive == true && widget.contact.peerId == peerId;
+      return saveReceivedStickerWithFeedback(
+        l10n: AppLocalizations.of(context)!,
+        isCurrent: isCurrent,
+        editPhoto: ({required sourceImagePath, required outputDirectory}) =>
+            editReceivedStickerPhoto(
+              navigator,
+              sourceImagePath: sourceImagePath,
+              outputDirectory: outputDirectory,
+              isCurrent: isCurrent,
+            ),
+        save: (editPhoto) => controller.saveReceivedSticker(
+          identity: identity,
+          library: library,
+          editPhoto: editPhoto,
+        ),
+        show: (message) =>
+            messenger.showSnackBar(SnackBar(content: Text(message))),
+      );
+    };
+  }
+
   Future<void> _sendCustomSticker(String id) async {
     final library = CustomStickerScope.libraryOf(context);
     if (library == null) return;
@@ -9431,6 +9472,7 @@ class _ConversationWiredState extends State<ConversationWired>
           onLoadMediaActionDecision: _mediaActionController != null
               ? _loadDirectMediaActionDecision
               : null,
+          onSaveReceivedSticker: _receivedStickerSaveHandler(context),
           pictureInPictureControllerFactory: _mediaViewerResumeStore == null
               ? null
               : _createMediaPictureInPictureController,

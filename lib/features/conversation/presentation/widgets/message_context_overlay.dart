@@ -25,6 +25,7 @@ class MessageContextOverlay extends StatefulWidget {
   // sites keep their exact Reply/Edit/Copy/Delete menu.
   static const saveActionKey = ValueKey('message-context-save-action');
   static const shareActionKey = ValueKey('message-context-share-action');
+  static const stickerActionKey = ValueKey('message-context-sticker-action');
   static const forwardActionKey = ValueKey('message-context-forward-action');
   static const infoActionKey = ValueKey('message-context-info-action');
 
@@ -58,6 +59,10 @@ class MessageContextOverlay extends StatefulWidget {
   final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
+  /// Received-sticker entry: shown only when both are set.
+  final String? stickerActionLabel;
+  final VoidCallback? onStickerTap;
+
   const MessageContextOverlay({
     super.key,
     required this.anchorRect,
@@ -81,6 +86,8 @@ class MessageContextOverlay extends StatefulWidget {
     this.onEditTap,
     this.onCopyTap,
     this.onSaveTap,
+    this.stickerActionLabel,
+    this.onStickerTap,
     this.onShareTap,
     this.onForwardTap,
     this.onInfoTap,
@@ -120,6 +127,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
         (widget.showCopyAction ? 1 : 0) +
         (widget.showSaveAction ? 1 : 0) +
         (widget.showShareAction ? 1 : 0) +
+        (widget.stickerActionLabel != null && widget.onStickerTap != null
+            ? 1
+            : 0) +
         (widget.showForwardAction ? 1 : 0) +
         (widget.showInfoAction ? 1 : 0) +
         (widget.showDeleteAction ? 1 : 0);
@@ -302,6 +312,10 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                     onShareTap: widget.onShareTap != null
                         ? () => _handleOnce(widget.onShareTap!)
                         : null,
+                    stickerActionLabel: widget.stickerActionLabel,
+                    onStickerTap: widget.onStickerTap != null
+                        ? () => _handleOnce(widget.onStickerTap!)
+                        : null,
                     onForwardTap: widget.onForwardTap != null
                         ? () => _handleOnce(widget.onForwardTap!)
                         : null,
@@ -350,6 +364,10 @@ class _ContextMenuCard extends StatelessWidget {
   final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
+  /// Received-sticker entry: shown only when both are set.
+  final String? stickerActionLabel;
+  final VoidCallback? onStickerTap;
+
   const _ContextMenuCard({
     super.key,
     required this.showReplyAction,
@@ -366,6 +384,8 @@ class _ContextMenuCard extends StatelessWidget {
     this.onEditTap,
     this.onCopyTap,
     this.onSaveTap,
+    this.stickerActionLabel,
+    this.onStickerTap,
     this.onShareTap,
     this.onForwardTap,
     this.onInfoTap,
@@ -424,6 +444,13 @@ class _ContextMenuCard extends StatelessWidget {
           icon: Icons.ios_share_rounded,
           label: l10n.conversation_context_share,
           onTap: onShareTap,
+        ),
+      if (stickerActionLabel case final label? when onStickerTap != null)
+        _ContextMenuAction(
+          key: MessageContextOverlay.stickerActionKey,
+          icon: Icons.emoji_emotions_outlined,
+          label: label,
+          onTap: onStickerTap,
         ),
       if (showForwardAction)
         _ContextMenuAction(

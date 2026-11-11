@@ -114,6 +114,10 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
+import 'package:flutter_app/features/stickers/application/received_sticker_feedback.dart';
+import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart'
+    show editReceivedStickerPhoto;
 import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
@@ -1037,6 +1041,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 mediaAttachmentRepository: mediaRepo,
                 egressService: ReceivedMediaEgressService(),
                 mediaFileManager: widget.mediaFileManager,
+                groupRepository: widget.groupRepo,
               )
             : null);
     _mediaDeleteForMeCoordinator =
@@ -7421,6 +7426,50 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // 235: bubble-initiated received-media actions
   // ---------------------------------------------------------------------
 
+  /// Null hides the received-sticker action: flag off, no library or no
+  /// media controller.
+  void Function(String messageId, String attachmentId)?
+  _receivedStickerSaveHandler(BuildContext context) {
+    if (!kCustomStickersEnabled) return null;
+    final library = CustomStickerScope.libraryOf(context);
+    final controller = _mediaActionsController;
+    if (library == null || controller == null) return null;
+    return (messageId, attachmentId) {
+      final navigator = Navigator.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+      final groupId = _group.id;
+      final bindingGeneration = _sendLaneBindingGeneration;
+      final route = ModalRoute.of(context);
+      bool isCurrent() =>
+          mounted &&
+          route?.isActive == true &&
+          _group.id == groupId &&
+          _sendLaneBindingGeneration == bindingGeneration;
+      unawaited(
+        saveReceivedStickerWithFeedback(
+          l10n: AppLocalizations.of(context)!,
+          isCurrent: isCurrent,
+          editPhoto: ({required sourceImagePath, required outputDirectory}) =>
+              editReceivedStickerPhoto(
+                navigator,
+                sourceImagePath: sourceImagePath,
+                outputDirectory: outputDirectory,
+                isCurrent: isCurrent,
+              ),
+          save: (editPhoto) => controller.saveReceivedSticker(
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            library: library,
+            editPhoto: editPhoto,
+          ),
+          show: (message) =>
+              messenger.showSnackBar(SnackBar(content: Text(message))),
+        ),
+      );
+    };
+  }
+
   Future<void> _onMediaSave(String messageId, String attachmentId) async {
     final controller = _mediaActionsController;
     if (controller == null) return;
@@ -8787,6 +8836,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 : (messageId) => unawaited(_openGroupPrivateMedia(messageId)),
             privateMediaEnabled: widget.privateMediaAvailability.isEnabled,
             onMediaSave: _mediaActionsController != null ? _onMediaSave : null,
+            onMediaSaveSticker: _receivedStickerSaveHandler(context),
             onMediaShare: _mediaActionsController != null
                 ? _onMediaShare
                 : null,

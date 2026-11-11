@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart'
+    show kCustomStickerMarkerId;
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_quote_block.dart';
 import 'package:flutter/services.dart';
@@ -90,6 +92,11 @@ typedef DirectReceivedMediaInfoLoader =
     Future<DirectReceivedMediaInfo?> Function(
       DirectReceivedMediaActionIdentity identity,
     );
+
+/// Saves one received attachment to My stickers through core's
+/// requalifying received-sticker action.
+typedef DirectReceivedStickerSaveHandler =
+    Future<void> Function(DirectReceivedMediaActionIdentity identity);
 
 typedef DirectReceivedMediaForwardHandler =
     Future<bool> Function(String messageId, {String? currentAttachmentId});
@@ -406,6 +413,9 @@ class ConversationScreen extends StatefulWidget {
   final DirectReceivedMediaInfoLoader? onLoadMediaInfo;
   final DirectPrivateMediaActionDecisionLoader? onLoadMediaActionDecision;
   final DirectReceivedMediaForwardHandler? onForwardMedia;
+
+  /// Null hides the sticker action entirely (flag off or no library).
+  final DirectReceivedStickerSaveHandler? onSaveReceivedSticker;
   final DirectPrivateMediaViewerLauncher? onOpenPrivateMedia;
   final DirectPrivateMediaResultLauncher? onOpenPrivateMediaResult;
   final DirectPrivateParentDecisionLoader? onLoadPrivateParentDecision;
@@ -517,6 +527,7 @@ class ConversationScreen extends StatefulWidget {
     this.onLoadMediaInfo,
     this.onLoadMediaActionDecision,
     this.onForwardMedia,
+    this.onSaveReceivedSticker,
     this.onOpenPrivateMedia,
     this.onOpenPrivateMediaResult,
     this.onLoadPrivateParentDecision,
@@ -2137,6 +2148,17 @@ class _ConversationScreenState extends State<ConversationScreen>
         _isDirectMediaActionEligible(message, mediaTarget!) &&
         mediaDecision!.allows(DirectPrivateMediaAction.saveToFiles);
     final showShareAction = showSaveAction;
+    // Option A: the same synchronous gate as Save (ordinary, incoming, live,
+    // downloaded, direct-owned), narrowed to the image types core accepts.
+    // Core requalifies the current row on tap.
+    final stickerActionLabel =
+        showSaveAction &&
+            widget.onSaveReceivedSticker != null &&
+            _isReceivedStickerCandidate(mediaTarget)
+        ? (mediaTarget.stickerId == kCustomStickerMarkerId
+              ? AppLocalizations.of(context)!.stickers_save_to_mine
+              : AppLocalizations.of(context)!.stickers_use_as_sticker)
+        : null;
     final showForwardAction =
         widget.onForwardMedia != null &&
         !message.isDeleted &&
@@ -2204,6 +2226,13 @@ class _ConversationScreenState extends State<ConversationScreen>
             ? () {
                 Navigator.of(dialogContext).pop();
                 unawaited(_promptSaveDestinationAndPerform(mediaIdentity));
+              }
+            : null,
+        stickerActionLabel: stickerActionLabel,
+        onStickerTap: stickerActionLabel != null
+            ? () {
+                Navigator.of(dialogContext).pop();
+                unawaited(widget.onSaveReceivedSticker!(mediaIdentity!));
               }
             : null,
         onShareTap: showShareAction
@@ -2285,6 +2314,17 @@ class _ConversationScreenState extends State<ConversationScreen>
     if (localPath == null || localPath.isEmpty) return false;
     return File(MediaFileManager.resolveStoredPathSync(localPath)).existsSync();
   }
+
+  static const _receivedStickerMimes = {
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+  };
+
+  bool _isReceivedStickerCandidate(MediaAttachment attachment) =>
+      attachment.mediaType == 'image' &&
+      _receivedStickerMimes.contains(attachment.mime.toLowerCase());
 
   bool _isTrustedDirectMediaTarget(
     ConversationMessage message,

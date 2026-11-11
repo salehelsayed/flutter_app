@@ -6732,6 +6732,33 @@ visible and cannot become an ordinary first-attempt PASS.
   authority remain in `received-sticker-save-red-verdict.json`. This
   host scope does not certify route/editor wiring or device rendering.
 
+  Received-photo UI guards also recheck the originating chat before invoking
+  the lent-photo editor, after the file read and crop await, and before late
+  feedback. The direct predicate retains the peer identity; groups retain the
+  group and send-lane generation. Both capture the originating ModalRoute and
+  require it to remain active: an accepted Back pop revokes it before the
+  reverse transition disposes the still-mounted chat. A real Navigator test
+  releases pending photo preparation and saved feedback in that interval;
+  custom-sticker-enabled execution must open no editor and show no snackbar.
+  The feedback and real-temp photo-editor
+  regressions cover retirement during preparation, reading, cropping and
+  feedback without changing core requalification or snapshot lease cleanup.
+  Evidence: `.codex-test-logs/codex-ui-bl17-received-lifecycle-20261111/`
+  (`red-first/`, `green-focused-first/`, `route-pop-red-corrected-first/`,
+  `route-pop-green-first/`). These host tests do not replace
+  live direct/group navigation proof.
+
+  TC-294-09 also freezes the pure-screen handoffs. Reviewed BL-17 commits
+  `5b8bee021` and `e09ee8637` add only `onSendCustom` inside `stickerPanel`
+  and the direct/group received-sticker callbacks. Exact AST projections
+  confirm both public Wired APIs, every other argument and argument order
+  remain unchanged; undoing those additions restores both previous hashes.
+  The handoff pins retain the full assertions and six transferred-owner
+  normalizations. Static evidence is Astra's
+  `custom-stickers-core-20261111/fingerprint-diagnosis/diagnosis.json`;
+  the original integrated assertion failure remains in
+  `final-integrated-host-20261111/host-first/affected-conversation-1.raw.log`.
+
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
   changed or linked files block export rather than downgrade to missing chat

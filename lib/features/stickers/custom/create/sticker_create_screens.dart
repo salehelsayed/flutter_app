@@ -438,11 +438,15 @@ Future<StickerEditorResult> editReceivedStickerPhoto(
   NavigatorState navigator, {
   required String sourceImagePath,
   required Directory outputDirectory,
+  required bool Function() isCurrent,
 }) async {
   final bytes = await File(sourceImagePath).readAsBytes();
+  if (!isCurrent()) return const StickerEditorResult.cancelled();
   final crop = await navigator.push<StickerStillCrop>(
     MaterialPageRoute(builder: (_) => StickerCropScreen(imageBytes: bytes)),
   );
-  if (crop == null) return const StickerEditorResult.cancelled();
+  if (!isCurrent() || crop == null) {
+    return const StickerEditorResult.cancelled();
+  }
   return _editInto(navigator, crop.bytes, crop.shape, outputDirectory);
 }

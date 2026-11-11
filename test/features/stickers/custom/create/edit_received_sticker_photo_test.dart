@@ -20,8 +20,10 @@ void main() {
   late Directory root;
   late File source;
   late Directory output;
+  var current = true;
 
   setUp(() {
+    current = true;
     root = Directory.systemTemp.createTempSync('stk-recv-');
     source = File('${root.path}/received.png')
       ..writeAsBytesSync(img.encodePng(img.Image(width: 40, height: 30)));
@@ -41,6 +43,7 @@ void main() {
               Navigator.of(context),
               sourceImagePath: source.path,
               outputDirectory: output,
+              isCurrent: () => current,
             ),
             child: const Text('open'),
           ),
@@ -89,5 +92,52 @@ void main() {
     expect(result(), isA<StickerEditorCancelled>());
     expect(output.listSync(), isEmpty);
     expect(source.existsSync(), isTrue);
+  });
+
+  testWidgets('a chat left while cropping opens no text editor and cancels', (
+    tester,
+  ) async {
+    final result = await open(tester);
+
+    current = false;
+    await tester.tap(find.widgetWithText(TextButton, 'Crop'));
+    await _settle(tester, () => result() != null);
+    await tester.pumpAndSettle();
+
+    expect(result(), isA<StickerEditorCancelled>());
+    expect(find.text('Save sticker'), findsNothing);
+    expect(output.listSync(), isEmpty);
+    expect(source.existsSync(), isTrue);
+  });
+
+  testWidgets('a chat left while the photo is read opens no crop and cancels', (
+    tester,
+  ) async {
+    StickerEditorResult? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await editReceivedStickerPhoto(
+              Navigator.of(context),
+              sourceImagePath: source.path,
+              outputDirectory: output,
+              isCurrent: () => current,
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    current = false;
+    await _settle(tester, () => result != null);
+    await tester.pumpAndSettle();
+
+    expect(result, isA<StickerEditorCancelled>());
+    expect(find.widgetWithText(TextButton, 'Crop'), findsNothing);
+    expect(output.listSync(), isEmpty);
   });
 }

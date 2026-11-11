@@ -164,7 +164,8 @@ const _expectedGroupApiFingerprint = '2b594730';
 // In-chat search (owner, 2026-11-04): the direct handoff adds only `search`,
 // the wired-owned search controller. Wired APIs are unchanged; without it the
 // fingerprint is the previous c2e5142a.
-const _expectedDirectHandoffFingerprint = '3abca198';
+// BL-17 (5b8bee021, e09ee8637): both handoffs add only reviewed sticker callbacks.
+const _expectedDirectHandoffFingerprint = '38fc7512';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
@@ -174,7 +175,7 @@ const _expectedDirectHandoffFingerprint = '3abca198';
 // In-chat search (owner, 2026-11-04): the group handoff adds only `search`,
 // the wired-owned search controller; without it the fingerprint is the
 // previous 3d456f26.
-const _expectedGroupHandoffFingerprint = '0de580c4';
+const _expectedGroupHandoffFingerprint = '80a95f41';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 

@@ -5277,7 +5277,7 @@
         "flutter",
         "test",
         "--no-pub",
-        "--concurrency=1",
+        "--concurrency=4",
         "--dart-define=CUSTOM_STICKERS_ENABLED=true",
         "test/features/stickers/animated_sticker_codec_test.dart",
         "test/features/stickers/sticker_clip_exporter_test.dart",
@@ -5376,15 +5376,17 @@
         "--concurrency=4",
         "--dart-define=CUSTOM_STICKERS_ENABLED=true",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
-        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart",
+        "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
       "paths": [
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
-        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart",
+        "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
       "success_marker": "All tests passed!",
-      "boundary": "Production sticker creation supplies the real cutout service behind its compile-time gate, uses validated native cutout bytes when ready, preserves crop fallback, and cleans owned files on cancellation.",
-      "limitations": "Host widget tests use real PNG files and the production Dart cutout service with a controlled native channel; actual model availability, segmentation quality and device cost remain separate proof. Default-off behavior runs in affected-stickers.",
+      "boundary": "Production sticker creation supplies the real cutout service behind its compile-time gate, uses validated native cutout bytes when ready, preserves crop fallback, and cleans owned files on cancellation. A received-photo action cannot open an editor or show late feedback after its originating chat accepts Back, including the still-mounted reverse transition.",
+      "limitations": "Host widget tests use real PNG files, the production Dart cutout service with a controlled native channel, and a real Navigator with the production chat. Actual model availability, segmentation quality, device cost and live navigation remain separate proof. Default-off counterparts run in the selected sticker and conversation host lanes.",
       "requirements": [
         "flutter"
       ],
@@ -7238,18 +7240,22 @@
       "id": "custom-sticker-creation",
       "patterns": [
         "lib/core/config/custom_stickers_flag.dart",
+        "lib/features/conversation/presentation/screens/conversation_wired.dart",
+        "lib/features/groups/presentation/screens/group_conversation_wired.dart",
         "lib/features/stickers/application/sticker_cutout.dart",
         "lib/features/stickers/application/method_channel_sticker_cutout_service.dart",
+        "lib/features/stickers/application/received_sticker_feedback.dart",
         "lib/features/stickers/custom/create/*",
         "lib/features/stickers/presentation/custom_sticker_scope.dart",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
-        "test/features/stickers/presentation/custom_sticker_scope_test.dart"
+        "test/features/stickers/presentation/custom_sticker_scope_test.dart",
+        "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
       "checks": [
         "custom-stickers-creation-enabled",
         "affected-stickers"
       ],
-      "why": "The production create route must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lane; default-off tests cannot prove native cutout composition."
+      "why": "The production create and received-photo routes must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lanes; default-off tests cannot prove native cutout composition or the accepted-Back interval of an enabled received-sticker action."
     }
   ],
   "documentation_only": [
