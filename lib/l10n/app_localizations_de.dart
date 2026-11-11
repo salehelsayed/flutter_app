@@ -5274,4 +5274,61 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get you_thought_replaced => 'durch einen neueren Gedanken ersetzt';
+
+  @override
+  String get sticker_editor_text => 'Text';
+
+  @override
+  String get sticker_editor_save => 'Sticker speichern';
+
+  @override
+  String get sticker_editor_colour => 'Farbe';
+
+  @override
+  String get sticker_editor_delete => 'Löschen';
+
+  @override
+  String get sticker_editor_undo => 'Rückgängig';
+
+  @override
+  String get sticker_editor_font => 'Schrift';
+
+  @override
+  String get sticker_editor_move_up => 'Nach oben';
+
+  @override
+  String get sticker_editor_move_down => 'Nach unten';
+
+  @override
+  String get sticker_editor_move_left => 'Nach links';
+
+  @override
+  String get sticker_editor_move_right => 'Nach rechts';
+
+  @override
+  String get sticker_editor_bigger => 'Größer';
+
+  @override
+  String get sticker_editor_smaller => 'Kleiner';
+
+  @override
+  String get sticker_editor_rotate_left => 'Nach links drehen';
+
+  @override
+  String get sticker_editor_rotate_right => 'Nach rechts drehen';
+
+  @override
+  String get sticker_colour_white => 'Weiß';
+
+  @override
+  String get sticker_colour_black => 'Schwarz';
+
+  @override
+  String get sticker_colour_yellow => 'Gelb';
+
+  @override
+  String get sticker_colour_red => 'Rot';
+
+  @override
+  String get sticker_colour_blue => 'Blau';
 }

@@ -5230,4 +5230,61 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get you_thought_replaced => 'استُبدلت بخاطرة أحدث';
+
+  @override
+  String get sticker_editor_text => 'نص';
+
+  @override
+  String get sticker_editor_save => 'حفظ الملصق';
+
+  @override
+  String get sticker_editor_colour => 'اللون';
+
+  @override
+  String get sticker_editor_delete => 'حذف';
+
+  @override
+  String get sticker_editor_undo => 'تراجع';
+
+  @override
+  String get sticker_editor_font => 'الخط';
+
+  @override
+  String get sticker_editor_move_up => 'تحريك للأعلى';
+
+  @override
+  String get sticker_editor_move_down => 'تحريك للأسفل';
+
+  @override
+  String get sticker_editor_move_left => 'تحريك لليسار';
+
+  @override
+  String get sticker_editor_move_right => 'تحريك لليمين';
+
+  @override
+  String get sticker_editor_bigger => 'أكبر';
+
+  @override
+  String get sticker_editor_smaller => 'أصغر';
+
+  @override
+  String get sticker_editor_rotate_left => 'تدوير لليسار';
+
+  @override
+  String get sticker_editor_rotate_right => 'تدوير لليمين';
+
+  @override
+  String get sticker_colour_white => 'أبيض';
+
+  @override
+  String get sticker_colour_black => 'أسود';
+
+  @override
+  String get sticker_colour_yellow => 'أصفر';
+
+  @override
+  String get sticker_colour_red => 'أحمر';
+
+  @override
+  String get sticker_colour_blue => 'أزرق';
 }
