@@ -523,32 +523,44 @@ void main() {
   );
 
   test(
-    'prepared canonical send owns bytes that survive library removal',
+    'canonical and default static sends retain exact bytes after library removal',
     () async {
       final value = library();
       final stored = await value.admit(await input(1));
       final canonical = await File(stored.asset.filePath).readAsBytes();
-      final prepared = await value.prepareSend(
-        stored.id,
-        representation: CustomStickerSendRepresentation.canonical,
-      );
-      expect(prepared.file.path, isNot(stored.asset.filePath));
-      expect(p.isWithin(temporary.path, prepared.file.path), isTrue);
-      expect(prepared.budgetBytes, canonical.length);
-      expect((prepared.width, prepared.height), (16, 16));
-      expect(await prepared.file.readAsBytes(), orderedEquals(canonical));
+      final prepared = [
+        await value.prepareSend(
+          stored.id,
+          representation: CustomStickerSendRepresentation.canonical,
+        ),
+        await value.prepareSend(
+          stored.id,
+          representation: defaultCustomStickerSendRepresentation,
+        ),
+      ];
+      expect(prepared.first.file.path, isNot(prepared.last.file.path));
+      for (final send in prepared) {
+        expect(send.file.path, isNot(stored.asset.filePath));
+        expect(p.isWithin(temporary.path, send.file.path), isTrue);
+        expect(send.budgetBytes, canonical.length);
+        expect((send.width, send.height), (16, 16));
+        expect(send.durationMs, 0);
+        expect(await send.file.readAsBytes(), orderedEquals(canonical));
+      }
 
       await value.remove(stored.id);
       await settle(value);
       expect(await rows(), isEmpty);
       expect(await File(stored.asset.filePath).exists(), isFalse);
-      expect(await prepared.file.readAsBytes(), orderedEquals(canonical));
-      await prepared.file.delete(); // The composer now owns this lifetime.
+      for (final send in prepared) {
+        expect(await send.file.readAsBytes(), orderedEquals(canonical));
+        await send.file.delete(); // The composer now owns this lifetime.
+      }
     },
   );
 
   test(
-    'static poster send preserves the first frame and leaves canonical animation intact',
+    'default send policy preserves the first frame and leaves canonical animation intact',
     () async {
       final value = library();
       final first = _pixels(0)..frameDuration = 83;
@@ -588,7 +600,7 @@ void main() {
 
       final prepared = await value.prepareSend(
         stored.id,
-        representation: CustomStickerSendRepresentation.staticPoster,
+        representation: defaultCustomStickerSendRepresentation,
       );
       expect(prepared.file.path, isNot(stored.asset.filePath));
       expect(prepared.file.path, isNot(source.filePath));
