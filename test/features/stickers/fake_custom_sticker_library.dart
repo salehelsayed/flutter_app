@@ -29,10 +29,16 @@ class FakeCustomStickerLibrary implements CustomStickerLibrary {
   @override
   Stream<void> get changes => _changes.stream;
 
+  /// When set, list() waits for it before answering.
+  Completer<void>? listGate;
+
   @override
   Future<List<CustomSticker>> list() async {
     listCalls++;
-    return List.unmodifiable(_rows);
+    final rows = List<CustomSticker>.unmodifiable(_rows);
+    final gate = listGate;
+    if (gate != null) await gate.future;
+    return rows;
   }
 
   @override

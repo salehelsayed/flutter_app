@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -340,4 +341,64 @@ void main() {
       greaterThan(tester.getCenter(_sticker('b')).dx),
     );
   });
+
+  Widget panelWith(MyStickersSource? source) => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: Align(
+        alignment: Alignment.bottomCenter,
+        child: StickerPanel(
+          catalog: _catalog,
+          recentIds: const ['orbit_crew.tux.approved'],
+          onSend: (_) {},
+          myStickers: source,
+        ),
+      ),
+    ),
+  );
+
+  MyStickersSource sourceFor(FakeCustomStickerLibrary library) =>
+      MyStickersSource(library: library, onSend: (_) {}, onCreate: () {});
+
+  testWidgets(
+    'a load still pending when My stickers is removed changes nothing',
+    (tester) async {
+      final old = FakeCustomStickerLibrary(ids: ['a1'])
+        ..listGate = Completer<void>();
+      await tester.pumpWidget(panelWith(sourceFor(old)));
+      await tester.pump();
+
+      await tester.pumpWidget(panelWith(null));
+      await tester.pump();
+      old.listGate!.complete();
+      await tester.pump();
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('sticker-tab-mine')), findsNothing);
+      expect(_myGrid(tester), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'a load still pending when the library is replaced never shows its rows',
+    (tester) async {
+      final old = FakeCustomStickerLibrary(ids: ['a1'])
+        ..listGate = Completer<void>();
+      final replacement = FakeCustomStickerLibrary(ids: ['b1']);
+      await tester.pumpWidget(panelWith(sourceFor(old)));
+      await tester.pump();
+
+      await tester.pumpWidget(panelWith(sourceFor(replacement)));
+      await tester.pump();
+      await tester.pump();
+      old.listGate!.complete();
+      await tester.pump();
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(_myGrid(tester), ['create', 'b1']);
+    },
+  );
 }
