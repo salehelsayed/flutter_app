@@ -738,14 +738,6 @@
   "perm_location": "This app needs location access to share nearby posts with your direct friends",
   "perm_local_network": "mknoon looks for your friends on the same WiFi to send messages directly to their phone. It's faster, more private, and we never collect your data.",
   "perm_notifications": "This app needs notification access to alert you of incoming messages",
-  "connected_date": "Connected {date}",
-  "@connected_date": {
-    "placeholders": {
-      "date": {
-        "type": "String"
-      }
-    }
-  },
   "date_today": "Today",
   "date_yesterday": "Yesterday",
   "feed_collapse": "Collapse",
@@ -2532,6 +2524,16 @@
   "@translator_remove": {"description": "Settings button and dialog button that remove the translator."},
   "translator_settings_mobile_data": "Download over mobile data",
   "@translator_settings_mobile_data": {"description": "Settings switch."},
+  "translate_to_title": "Translate to",
+  "@translate_to_title": {"description": "Settings row, chat panel row and language list title."},
+  "translate_to_subtitle": "The language you read translations in.",
+  "@translate_to_subtitle": {"description": "Settings row subtitle under Translate to."},
+  "translate_to_same_as_app": "Same as the app",
+  "@translate_to_same_as_app": {"description": "Language list entry and Settings value that follow the app language."},
+  "translate_to_all_languages": "All languages",
+  "@translate_to_all_languages": {"description": "Language list section label."},
+  "translate_show_translation": "Show translation",
+  "@translate_show_translation": {"description": "Chat panel switch that shows translations under received messages."},
   "translator_remove_title": "Remove translation?",
   "@translator_remove_title": {"description": "Remove dialog title."},
   "translator_remove_body": "Frees {size}. You can download it again any time.",

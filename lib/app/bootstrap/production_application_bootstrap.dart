@@ -62,6 +62,7 @@ import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/local_ai_preview_db_helpers.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -10855,6 +10856,7 @@ final class ProductionApplicationBootstrap
             );
             await eraseAccountNotificationState(directory: shared);
           }
+          await translationPreferences.forgetChats();
           await eraseEncryptedDatabase(db);
         },
         accountMigrationRecoverExportPause: () async {

@@ -221,6 +221,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(find.text('Private translator'), findsOneWidget);
-    expect(find.text('Download over mobile data'), findsOneWidget);
+    expect(find.text('Translate to'), findsOneWidget);
+    expect(find.text('Download over mobile data'), findsNothing);
   });
 }

@@ -146,6 +146,10 @@ class LetterCard extends StatelessWidget {
   /// "Transcribe" link. Null draws nothing.
   final Widget Function(MediaAttachment audio)? audioFooterBuilder;
 
+  /// Drawn under the body text, as wide as the text, such as a translation.
+  /// The body text and its inline time stay as they are.
+  final Widget? textFooter;
+
   /// Privacy-safe presentation mounted inside the decorated message body.
   /// When present, ordinary media/audio renderers are suppressed so private
   /// bytes can never be projected into the conversation scroll.
@@ -207,6 +211,7 @@ class LetterCard extends StatelessWidget {
     this.hugPrivateContentBubble = false,
     this.privateContentSlot,
     this.audioFooterBuilder,
+    this.textFooter,
     this.decoratedBodyKey,
     this.messageUploadProgress,
   });
@@ -255,6 +260,26 @@ class LetterCard extends StatelessWidget {
       !isDeleted &&
       transport != 'system' &&
       transport != 'unknown';
+
+  /// The footer shares the text's width, so its divider spans the text without
+  /// stretching the hugging bubble.
+  Widget _withTextFooter(Widget body) {
+    final footer = textFooter;
+    if (footer == null || isDeleted) return body;
+    return IntrinsicWidth(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          body,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: footer,
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _withAudioFooter(MediaAttachment audio, Widget player) {
     final footer = audioFooterBuilder;
@@ -548,51 +573,53 @@ class LetterCard extends StatelessWidget {
         ),
       // Body text (only if non-empty)
       if (text.isNotEmpty)
-        Padding(
-          padding: EdgeInsets.fromLTRB(16, bodyTopPad, 16, bodyBottomPad),
-          child: isDeleted
-              ? Text(
-                  text,
-                  textDirection: detectTextDirection(text),
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w400,
-                    fontStyle: FontStyle.italic,
-                    color: readableColors.textMuted,
-                    height: bodyLineHeight,
-                    letterSpacing: 0.2,
-                  ),
-                )
-              : LinkableText(
-                  text: text,
-                  textDirection: detectTextDirection(text),
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w400,
-                    color: isIncoming
-                        ? readableColors.textPrimary
-                        : readableColors.textSecondary,
-                    height: bodyLineHeight,
-                    letterSpacing: 0.2,
-                  ),
-                  suffixSpans: metaInlined
-                      ? [_buildInlineMetaSpan(context, readableColors, l10n)]
-                      : null,
-                  markQuery: searchQuery,
-                  markStyle: isCurrentSearchHit
-                      ? TextStyle(
-                          backgroundColor: readableColors.accent,
-                          color: readableColors.isLightSurface
-                              ? Colors.white
-                              : const Color(0xFF04130A),
-                        )
-                      : TextStyle(
-                          backgroundColor: readableColors.accent.withValues(
-                            alpha: 0.28,
+        _withTextFooter(
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, bodyTopPad, 16, bodyBottomPad),
+            child: isDeleted
+                ? Text(
+                    text,
+                    textDirection: detectTextDirection(text),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      fontStyle: FontStyle.italic,
+                      color: readableColors.textMuted,
+                      height: bodyLineHeight,
+                      letterSpacing: 0.2,
+                    ),
+                  )
+                : LinkableText(
+                    text: text,
+                    textDirection: detectTextDirection(text),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: isIncoming
+                          ? readableColors.textPrimary
+                          : readableColors.textSecondary,
+                      height: bodyLineHeight,
+                      letterSpacing: 0.2,
+                    ),
+                    suffixSpans: metaInlined
+                        ? [_buildInlineMetaSpan(context, readableColors, l10n)]
+                        : null,
+                    markQuery: searchQuery,
+                    markStyle: isCurrentSearchHit
+                        ? TextStyle(
+                            backgroundColor: readableColors.accent,
+                            color: readableColors.isLightSurface
+                                ? Colors.white
+                                : const Color(0xFF04130A),
+                          )
+                        : TextStyle(
+                            backgroundColor: readableColors.accent.withValues(
+                              alpha: 0.28,
+                            ),
+                            color: readableColors.textPrimary,
                           ),
-                          color: readableColors.textPrimary,
-                        ),
-                ),
+                  ),
+          ),
         )
       else if (isDeleted)
         Padding(
