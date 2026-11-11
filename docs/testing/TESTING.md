@@ -4153,10 +4153,19 @@ selection and budget against the canonical workflow entry. Evidence:
 
 The legacy-binding workflow fixture
 `test_real_protected_full_and_reliability_cli_launch_every_configured_route`
-still shares fixed `closure-*` device lease IDs across worktrees. Overlapping
-workflow runs can therefore report `BLOCKED` synthetic routes despite using
-stubbed commands. Preserve the first failures, check the overlapping runs, and
-serialize this fixture across sessions before diagnosing an app regression.
+formerly shared fixed `closure-*` device lease IDs across worktrees. Overlapping
+workflow runs could therefore report `BLOCKED` synthetic routes despite using
+stubbed commands. The temporary requirement to serialize this fixture is
+superseded by per-process synthetic ID suffixes and a per-fixture temporary
+lease directory. The fixture dispatcher and its busy-lock probes use that same
+directory through the existing lease API; production lease paths and exclusion
+are unchanged. The concurrent regression holds both real fixture leases before
+releasing either child, then requires both original 80/67-route fixtures to pass,
+disjoint IDs and distinct lease roots. Its RED retains actual dispatcher lease
+contention in an owned temporary ambient root; GREEN passes with isolation.
+Receipts are in
+`/Users/I560101/.codex/investigations/workflow-fixture-isolation-20261111-m9ee370e6/`
+(`red-causal.raw.log` and `worker/green-causal.raw.log`).
 The unchanged fixture passed alone (1/0/0 in 39.220 seconds) after overlapping
 BL-11 and DTR-13 runs failed it. This is host orchestration evidence, not device
 proof. Source equality, overlap, and evidence limits are recorded in

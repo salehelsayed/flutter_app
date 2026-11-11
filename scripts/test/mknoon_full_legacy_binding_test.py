@@ -19,6 +19,7 @@ import tempfile
 import time
 import signal
 import unittest
+import uuid
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,10 +32,11 @@ DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/un
 _BUNDLED_DART = DART.parent / 'cache/dart-sdk/bin/dart'
 if _BUNDLED_DART.is_file():
     DART = _BUNDLED_DART
-PINS = {'android-physical':'closure-usb', 'android-emulator':'closure-emu',
-        **{'ios-simulator-'+s:'closure-sim-'+s for s in 'abcd'}}
-MATRIX = dict(errors=[], adb=['closure-usb','closure-emu'],
-    ios_simulators=['closure-sim-'+s for s in 'abcd'],
+_PIN_NONCE = uuid.uuid4().hex
+PINS = {'android-physical':'closure-usb-'+_PIN_NONCE, 'android-emulator':'closure-emu-'+_PIN_NONCE,
+        **{'ios-simulator-'+s:'closure-sim-'+s+'-'+_PIN_NONCE for s in 'abcd'}}
+MATRIX = dict(errors=[], adb=[v for k,v in PINS.items() if k.startswith('android')],
+    ios_simulators=[v for k,v in PINS.items() if k.startswith('ios')],
     flutter=[dict(id=v,targetPlatform='android-arm64' if k.startswith('android') else 'ios',
                   emulator=k!='android-physical') for k,v in PINS.items()])
 IDLE = ('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n'
@@ -245,7 +247,7 @@ class LegacyBindingTest(unittest.TestCase):
         for name in ['flutter','dart','adb','xcrun','bash','python3']:(bin_dir/name).symlink_to(stub)
         env={**self.env,'PATH':str(bin_dir)+':'+os.environ['PATH'],
              'CLOSURE_FIXTURE_LOG':str(self.tmp/'commands.jsonl'),
-             'MKNOON_LEGACY_INHERITED_LEASES_JSON':json.dumps(list(PINS.values()))}
+             'CLOSURE_FIXTURE_LEASE_DIRECTORY':str(self.tmp/'device-leases')}
         rules=json.loads((ROOT/checks.RULES).read_text())
         full=next(c for c in rules['full_commands'] if c['id']=='full-legacy')
         manifest=json.loads((ROOT/checks.SIMS).read_text())
@@ -342,6 +344,12 @@ import json,os,sys,subprocess
 sys.path.insert(0,'@ROOT@/scripts')
 import device_campaign_preflight as p
 name=os.path.basename(sys.argv[0]);args=sys.argv[1:]
+if name=='python3' and args and args[0]=='scripts/legacy_target_contracts.py':
+    import functools,runpy
+    p.device_leases=functools.partial(p.device_leases,directory=os.environ['CLOSURE_FIXTURE_LEASE_DIRECTORY'])
+    sys.argv=args
+    runpy.run_path(args[0],run_name='__main__')
+    sys.exit()
 if name=='python3' and (not args or args[0]!='scripts/migration_sqlcipher_portability.py'):
     os.execv(sys.executable,[sys.executable,*args])
 if name=='bash' and ('--dry-run' in args or '--selection-only' in args or any(a.startswith('--list') for a in args) or '--records-tsv' in args or any('check_reliability_simulation_discovery' in a for a in args)):
@@ -357,7 +365,7 @@ if name=='xcrun' and args[:3]==['simctl','list','devices']:
     print(json.dumps({'devices':{'iOS-fixture':[dict(udid=v,name='iPhone fixture',isAvailable=True) for k,v in pins.items() if k.startswith('ios')]}}));sys.exit()
 for target in pins.values():
     try:
-        with p.device_leases([target]):pass
+        with p.device_leases([target],directory=os.environ['CLOSURE_FIXTURE_LEASE_DIRECTORY']):pass
     except p.DeviceLeaseBusy:pass
     else:raise AssertionError('target was forwarded before acquiring its lease: '+target)
 if pins and os.environ.get('CLOSURE_FIXTURE_READY'):
