@@ -276,6 +276,31 @@ void main() {
         orderedEquals(durations));
   });
 
+  test('rejects real two-frame WebP with truthful zero total duration', () async {
+    final bytes = img.encodeWebP(_animation([83, 83]));
+    final frames = _webpChunks(bytes).where((chunk) => chunk.tag == 'ANMF');
+    expect(frames.length, 2);
+    for (final frame in frames) {
+      bytes.fillRange(frame.dataOffset + 12, frame.dataOffset + 15, 0);
+    }
+    final decoded = img.decodeWebP(bytes)!;
+    expect(decoded.numFrames, 2);
+    expect(decoded.frames.map((frame) => frame.frameDuration), [0, 0]);
+    await invalid(await source(bytes,
+        mime: 'image/webp', frameCount: 2, durationMs: 0));
+  });
+
+  test('preserves real two-frame WebP with positive total duration', () async {
+    final bytes = img.encodeWebP(_animation([0, 1]));
+    final input = await source(bytes,
+        mime: 'image/webp', frameCount: 2, durationMs: 1);
+    final (output, copied, decoded) = await normalized(input);
+    expect(copied, orderedEquals(bytes));
+    expect(output.frameCount, 2);
+    expect(output.durationMs, 1);
+    expect(decoded.frames.map((frame) => frame.frameDuration), [0, 1]);
+  });
+
   for (final field in [
     'sha256', 'length', 'mime', 'width', 'height', 'frameCount', 'durationMs',
   ]) {
