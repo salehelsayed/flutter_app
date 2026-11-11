@@ -6569,14 +6569,34 @@ visible and cannot become an ordinary first-attempt PASS.
   retirement/access revocation while normalization is paused. Listing does not
   prune missing-file accounting rows. The implementation assumes one library
   instance and trusted account roots; account replacement/erase must retire and
-  drain it before closing SQL or replacing those roots. Those app lifecycle
-  bindings, Move Account, transport and device SQLCipher remain separate proof.
+  drain it before closing SQL or replacing those roots. The stable account
+  facade has 16 real-DB host cases for synchronous generation revocation,
+  pending initialization and file drains, same-account replacement, explicit
+  activation failure, and subscriptions surviving replacement. Production
+  bootstrap bindings, transport and device SQLCipher remain separate proof.
   For image 4.12, `WebPDecoder.maxPixels` is a property; full animation decoding
   uses the bounded aggregate frame budget to retain first-frame composition.
   Evidence: `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`
   (`normalizer-duration-fix-verdict.json`, `library-red-verdict.json`,
   `library-green-second-exit.json`). The first library compile failure remains
-  retained; targeted library analysis subsequently found no issues.
+  retained; targeted library analysis subsequently found no issues. Facade
+  evidence is `sticker-lifecycle-red-verdict.json` and
+  `sticker-lifecycle-green-verdict.json` in that evidence directory.
+
+- **Custom sticker migration and erasure:** canonical sticker files are critical
+  manifest entries bound to persisted paths, byte lengths and hashes. Missing,
+  changed or linked files block export rather than downgrade to missing chat
+  media. Discovery excludes orphan and editor/send files. The 24 focused host
+  cases use production SQLite schema, real canonical assets and bundle import
+  to preserve rows, ordering and quota totals while the UI flag is off; they
+  also prove exact owned-temp erasure and symlink refusal. Existing manifest,
+  bundle, schema-roundtrip and erasure preservation passes 65 cases with the
+  unchanged native SQLCipher capability host skip. These file-level checks
+  require the separate runtime pause/retire barriers; they do not prove native
+  encryption or device transfer. Evidence in the directory above:
+  `sticker-migration-green-verdict.json` and
+  `sticker-migration-preservation-verdict.json`; targeted migration analysis is
+  clean after an assertion-preserving test-loop brace fix.
 
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
