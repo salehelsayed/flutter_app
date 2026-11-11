@@ -146,6 +146,7 @@ Uint8List _snapshot(NormalizedStickerAsset input) {
       input.durationMs < 0 ||
       input.durationMs > _maxDurationMs ||
       (input.frameCount == 1 && input.durationMs != 0) ||
+      (input.frameCount > 1 && input.durationMs <= 0) ||
       (input.mime == 'image/png' && input.frameCount != 1) ||
       input.sha256Hex.length != 64 ||
       !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(input.sha256Hex)) {
@@ -346,7 +347,11 @@ _WebP _inspectWebP(Uint8List bytes) {
       if (inner.width != width || inner.height != height) _invalid();
       frames.add((width: width, height: height, durationMs: durationMs));
     }
-    if (frames.isEmpty || (frames.length == 1 && duration != 0)) _invalid();
+    if (frames.isEmpty ||
+        (frames.length == 1 && duration != 0) ||
+        (frames.length > 1 && duration <= 0)) {
+      _invalid();
+    }
   } else {
     final image = _imageSize(bytes, chunks.sublist(index));
     if (canvas != null && canvas != image) _invalid();
