@@ -7,6 +7,15 @@ import 'direct_media_blob_artifact_store.dart';
 import 'group_media_blob_artifact_store.dart';
 import 'media_file_manager.dart';
 
+final _stickerTemporaryDirectoryName = RegExp(
+  r'^(custom-sticker-.+|mknoon-sticker-animation-.+|'
+  r'mknoon-sticker-cutout-[0-9a-f]{32}-.+)$',
+);
+final _stickerTemporaryFileName = RegExp(
+  r'^sticker-([0-9a-f]{32}|send-[0-9a-f]{8}-[0-9a-f]{4}-'
+  r'4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.webp$',
+);
+
 /// Removes owned account media before the database and secure keys are erased.
 /// The caller must keep account work blocked until restart, including on failure.
 /// Supplied roots must come from this application's path-provider directories.
@@ -16,8 +25,9 @@ Future<void> eraseAccountMedia({
   List<Directory>? temporaryDirectories,
   List<Directory>? externalStorageDirectories,
 }) async {
-  final documents =
+  final suppliedDocuments =
       documentsDirectory ?? await getApplicationDocumentsDirectory();
+  final documents = Directory(p.normalize(suppliedDocuments.absolute.path));
   final caches = cacheDirectories ?? [await getApplicationCacheDirectory()];
   if (cacheDirectories == null && Platform.isAndroid) {
     caches.addAll(await getExternalCacheDirectories() ?? []);
@@ -31,18 +41,31 @@ Future<void> eraseAccountMedia({
           ? await getExternalStorageDirectories() ?? []
           : <Directory>[]);
 
-  for (final name in [
-    'media',
-    'local_media',
-    'local_media_tmp',
-    'post_media',
-    'pending_uploads',
-    kDirectMediaBlobArtifactRootDirectory,
-    kGroupMediaBlobArtifactRootDirectory,
-    'account_migration',
-    'composer_drafts',
-  ]) {
-    await _eraseDirectory(Directory(p.join(documents.path, name)));
+  if (await _directoryExists(documents)) {
+    // Reject a final Documents link before descending, but permit legitimate
+    // platform aliases above it (for example /var -> /private/var on macOS).
+    final trustedDocuments = await documents.resolveSymbolicLinks();
+    if (!await _directoryExists(documents) ||
+        await documents.resolveSymbolicLinks() != trustedDocuments) {
+      throw FileSystemException(
+        'Unsafe account media directory',
+        documents.path,
+      );
+    }
+    for (final name in [
+      'media',
+      'local_media',
+      'local_media_tmp',
+      'post_media',
+      'pending_uploads',
+      kDirectMediaBlobArtifactRootDirectory,
+      kGroupMediaBlobArtifactRootDirectory,
+      'account_migration',
+      'composer_drafts',
+      'stickers',
+    ]) {
+      await _eraseDirectory(Directory(p.join(trustedDocuments, name)));
+    }
   }
 
   // Application cache is package-specific. Temporary directories on desktop
@@ -64,7 +87,14 @@ Future<void> eraseAccountMedia({
     if (!await _directoryExists(directory)) continue;
     await for (final entry in directory.list(followLinks: false)) {
       final name = p.basename(entry.path);
-      if (name == 'share_cache' ||
+      if ((entry is Directory || entry is Link) &&
+          _stickerTemporaryDirectoryName.hasMatch(name)) {
+        // The directory check refuses a matching root link. A regular file
+        // with a directory-style name is not one of our generated artifacts.
+        await _eraseDirectory(Directory(entry.path));
+      } else if (entry is File && _stickerTemporaryFileName.hasMatch(name)) {
+        await _eraseEntry(entry);
+      } else if (name == 'share_cache' ||
           name == 'video_compress' ||
           name == MediaFileManager.groupForwardSnapshotRootDirectoryName ||
           name.startsWith('mknoon-preview-') ||

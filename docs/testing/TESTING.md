@@ -231,6 +231,16 @@ Do not claim runtime-input equivalence from source hashes alone. The
 [group replay preservation receipts](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-replay-transport/ios-config-input-restoration.json)
 record this boundary without logging configuration contents.
 
+BL-17 reproduced this prerequisite failure in its isolated core checkout
+(1,355 passed, one missing-plist failure). Restoring the matching ignored file
+left tracked source and tests unchanged; the existing iOS config file then
+passed all ten cases. Preserve the input hash in
+`~/.codex/investigations/custom-stickers-core-20261111/sticker-core-ios-firebase-setup-repair.json`
+and the original `sticker-core-boundary-current-main-host-run/affected-push-1.raw.log`.
+The combined 14-case focused verdict is
+`sticker-core-bootstrap-push-setup-focused-verdict.json` in that evidence root;
+host configuration assertions do not certify native push delivery.
+
 When the owner reserves Firebase configuration staging to `flutter_app`, Codex
 must leave the file untouched and delegate this source-contract check with the
 exact candidate and selected test files. Plan 407 Step 4 retained its missing-file
@@ -6557,6 +6567,56 @@ visible and cannot become an ordinary first-attempt PASS.
   dimensions. Evidence: `.codex-test-logs/sticker-outgoing-alignment-131/`.
   These host cases do not certify device screenshots or transport behavior.
 
+- **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
+  cases validate byte/hash and decoded claims, metadata removal/rejection,
+  transparent-pixel privacy, bounded frames and duration, and independent temp
+  ownership. A multi-frame asset must have positive total duration, matching
+  schema 130; the real 0 ms rejection and byte-identical 1 ms control preserve
+  that boundary. `sqlite_custom_sticker_library_test.dart` passes 15 cases using
+  the production migration chain, host SQLite and real files/codecs. It covers
+  canonical dedup, both quota limits, serialized admission, exact reorder,
+  owned deletion, independent canonical/poster sends, tamper rejection and
+  retirement/access revocation while normalization is paused. Listing does not
+  prune missing-file accounting rows. The implementation assumes one library
+  instance and trusted account roots; account replacement/erase must retire and
+  drain it before closing SQL or replacing those roots. The stable account
+  facade has 16 real-DB host cases for synchronous generation revocation,
+  pending initialization and file drains, same-account replacement, explicit
+  activation failure, and subscriptions surviving replacement. The bound
+  factory has 21 real-DB host cases for passive identity, migration-authority
+  and mobile-binding reads, legacy/noAccount eligibility, linked-independent
+  local access, and revocation during awaited provider resolution. It checks
+  account ownership again before publishing the concrete delegate. Disabled
+  composition does not read providers or SQL. The production-schema fixture
+  stores both secret columns as NULL; empty strings violate migration 005.
+  Six AST cases verify the bootstrap facade, export drain and import/erase/
+  shutdown retirement callsites, but do not execute the app. Full bootstrap/UI
+  activation, transport and device SQLCipher remain separate proof.
+  For image 4.12, `WebPDecoder.maxPixels` is a property; full animation decoding
+  uses the bounded aggregate frame budget to retain first-frame composition.
+  Evidence: `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`
+  (`normalizer-duration-fix-verdict.json`, `library-red-verdict.json`,
+  `library-green-second-exit.json`). The first library compile failure remains
+  retained; targeted library analysis subsequently found no issues. Facade
+  evidence is `sticker-lifecycle-red-verdict.json` and
+  `sticker-lifecycle-green-verdict.json`, `sticker-bootstrap-red-verdict.json`
+  and `sticker-bootstrap-green-verdict.json` in that evidence directory.
+
+- **Custom sticker migration and erasure:** canonical sticker files are critical
+  manifest entries bound to persisted paths, byte lengths and hashes. Missing,
+  changed or linked files block export rather than downgrade to missing chat
+  media. Discovery excludes orphan and editor/send files. The 24 focused host
+  cases use production SQLite schema, real canonical assets and bundle import
+  to preserve rows, ordering and quota totals while the UI flag is off; they
+  also prove exact owned-temp erasure and symlink refusal. Existing manifest,
+  bundle, schema-roundtrip and erasure preservation passes 65 cases with the
+  unchanged native SQLCipher capability host skip. These file-level checks
+  require the separate runtime pause/retire barriers; they do not prove native
+  encryption or device transfer. Evidence in the directory above:
+  `sticker-migration-green-verdict.json` and
+  `sticker-migration-preservation-verdict.json`; targeted migration analysis is
+  clean after an assertion-preserving test-loop brace fix.
+
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
   discovery indefinitely. StartupRouter now starts its existing group
@@ -8425,6 +8485,17 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged. The four DTR-18 cases pass after the two-pin update; retain
   `.codex-test-logs/contact-request-decisions-20261026/bootstrap-pin-proof.json`
   and `bootstrap-owner-diff.patch`.
+  BL-17's lazy sticker-library composition, lifecycle barriers and optional
+  app-root activation hook change all three composition pins at the same owners.
+  Exact reverse diffs of reviewed `832ef7add` reproduce the prior fingerprints;
+  the historical notification callback remains byte-identical and unique, and
+  relocation/import assertions are unchanged. Refresh only the three explained
+  baselines. The four DTR-18 cases pass after the update; retain the original
+  bootstrap result (20 passed, three stale-pin failures) and the reconstruction
+  proof under `~/.codex/investigations/custom-stickers-core-20261111/`:
+  `bootstrap-preservation-fix-staging/source-fingerprint-proof.json`,
+  `sticker-core-boundary-current-main-host-run/bootstrap-1.raw.log` and
+  `sticker-core-bootstrap-push-setup-focused-verdict.json`.
 
 - **Post notification readiness:** the active-direct-contact listener test waits
   with its existing bounded `_until` helper for the observable notification before
