@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
@@ -264,6 +265,45 @@ void main() {
       await tester.pump();
     }
     expect(opened, 4, reason: 'every edge of the circle opens calls');
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  testWidgets('the calls control takes keyboard focus and Enter or Space', (
+    tester,
+  ) async {
+    phone(tester);
+    var opened = 0;
+    await tester.pumpWidget(
+      buildOrbitScreenHarness(
+        viewMode: OrbitViewMode.innerCircle,
+        onToggleView: () {},
+        onOpenCalls: () => opened++,
+      ),
+    );
+    await settle(tester);
+
+    bool focusOnCalls() {
+      final focused = FocusManager.instance.primaryFocus?.context;
+      var found = false;
+      focused?.visitAncestorElements((e) {
+        found = e.widget.key == const ValueKey('orbit-calls');
+        return !found;
+      });
+      return found;
+    }
+
+    for (var i = 0; i < 40 && !focusOnCalls(); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(focusOnCalls(), isTrue, reason: 'Tab reaches the calls control');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(opened, 1, reason: 'Enter opens calls');
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(opened, 2, reason: 'Space opens calls');
     await tester.pump(const Duration(seconds: 2));
   });
 }
