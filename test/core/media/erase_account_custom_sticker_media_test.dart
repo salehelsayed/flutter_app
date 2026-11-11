@@ -104,8 +104,9 @@ void main() {
         await write(p.join(temporary.path, 'custom_sticker_notes/keep')),
       ];
       await erase();
-      for (final file in preserved)
+      for (final file in preserved) {
         expect(await file.readAsBytes(), [7, 3, 9, 1]);
+      }
     },
   );
 
