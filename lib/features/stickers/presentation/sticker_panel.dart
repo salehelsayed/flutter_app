@@ -12,6 +12,7 @@ import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_selection.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -731,9 +732,15 @@ class BundledStickerPanel extends StatefulWidget {
     required this.onSend,
     this.recents,
     this.myStickers,
+    this.onSendCustom,
   });
 
   final ValueChanged<StickerEntry> onSend;
+
+  /// Sends the tapped My stickers item by id. With a [CustomStickerScope]
+  /// above and no explicit [myStickers], the panel builds its source from
+  /// the scope with this callback.
+  final ValueChanged<String>? onSendCustom;
   final StickerRecentsStore? recents;
 
   /// Used only in builds with [kCustomStickersEnabled].
@@ -751,6 +758,13 @@ class _BundledStickerPanelState extends State<BundledStickerPanel> {
     _recents.load(),
   ).wait;
   List<String>? _recentIds;
+
+  MyStickersSource? _myStickers(BuildContext context) {
+    if (widget.myStickers case final explicit?) return explicit;
+    final onSendCustom = widget.onSendCustom;
+    if (onSendCustom == null) return null;
+    return myStickersFromScope(context, onSend: onSendCustom);
+  }
 
   void _onSend(StickerEntry sticker) {
     setState(
@@ -779,7 +793,7 @@ class _BundledStickerPanelState extends State<BundledStickerPanel> {
           catalog: catalog,
           recentIds: _recentIds ??= loadedRecentIds,
           onSend: _onSend,
-          myStickers: kCustomStickersEnabled ? widget.myStickers : null,
+          myStickers: kCustomStickersEnabled ? _myStickers(context) : null,
         );
       },
     );

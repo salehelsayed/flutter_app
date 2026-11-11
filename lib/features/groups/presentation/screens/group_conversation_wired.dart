@@ -113,6 +113,8 @@ import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart';
@@ -2975,6 +2977,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _onSend(
     String text, {
     ({String id, PendingComposerMedia media, int bindingGeneration})? sticker,
+    VoidCallback? onStickerMediaAdopted,
   }) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
@@ -3102,6 +3105,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         return;
       }
     }
+    // From here the send and its retries own the sticker media.
+    if (sticker != null) onStickerMediaAdopted?.call();
 
     if (sticker == null) {
       _draftText = '';
@@ -4947,6 +4952,33 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         id: sticker.id,
         media: media,
         bindingGeneration: bindingGeneration,
+      ),
+    );
+  }
+
+  Future<void> _sendCustomSticker(String id) async {
+    final library = CustomStickerScope.libraryOf(context);
+    if (library == null) return;
+    final bindingGeneration = _sendLaneBindingGeneration;
+    await sendCustomSticker(
+      library: library,
+      id: id,
+      isCurrent: () =>
+          mounted && bindingGeneration == _sendLaneBindingGeneration,
+      send: (markerId, media, adopt) => _onSend(
+        '',
+        sticker: (
+          id: markerId,
+          media: media,
+          bindingGeneration: bindingGeneration,
+        ),
+        onStickerMediaAdopted: adopt,
+      ),
+      discard: _discardStaleStickerMedia,
+      onPrepareError: (error) => emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_STICKER_PREPARE_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
       ),
     );
   }
@@ -8723,7 +8755,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             onRemoveAttachment: _canWrite ? _removeAttachment : null,
             onAttach: _canWrite ? _onAttach : null,
             stickerPanel: _stickerPanelOpen && _canWrite
-                ? BundledStickerPanel(onSend: _sendSticker)
+                ? BundledStickerPanel(
+                    onSend: _sendSticker,
+                    onSendCustom: _sendCustomSticker,
+                  )
                 : null,
             onComposerTextTap: _closeStickerPanel,
             onStickerToggle: _canWrite

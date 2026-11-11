@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
@@ -41,8 +42,12 @@ class FakeCustomStickerLibrary implements CustomStickerLibrary {
     return rows;
   }
 
+  /// When set, admit() throws it instead of storing anything.
+  CustomStickerException? admitError;
+
   @override
   Future<CustomSticker> admit(NormalizedStickerAsset asset) async {
+    if (admitError case final error?) throw error;
     final existing = _rows.where((r) => r.asset.sha256Hex == asset.sha256Hex);
     if (existing.isNotEmpty) return existing.first;
     final row = _admitSync(asset, id: 'custom-${_clock + 1}');
@@ -94,11 +99,29 @@ class FakeCustomStickerLibrary implements CustomStickerLibrary {
     _changes.add(null);
   }
 
+  final prepareCalls = <(String, CustomStickerSendRepresentation)>[];
+
+  /// When set, prepareSend() throws it.
+  Object? prepareError;
+
+  /// When set, prepareSend() waits for it before answering.
+  Completer<void>? prepareGate;
+
   @override
   Future<PendingComposerMedia> prepareSend(
     String id, {
     required CustomStickerSendRepresentation representation,
-  }) => throw UnimplementedError('not used by the library UI');
+  }) async {
+    prepareCalls.add((id, representation));
+    if (prepareError case final error?) throw error;
+    if (prepareGate case final gate?) await gate.future;
+    return PendingComposerMedia(
+      file: File('/nonexistent/send-$id.webp'),
+      budgetBytes: 1000,
+      width: 512,
+      height: 512,
+    );
+  }
 
   void _renumber() {
     for (var i = 0; i < _rows.length; i++) {

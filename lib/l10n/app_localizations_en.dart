@@ -5178,6 +5178,46 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get stickers_record_clip => 'Record clip';
+
+  @override
+  String get stickers_library_full =>
+      'My stickers is full. Delete one to add another.';
+
+  @override
+  String get stickers_save_failed => 'Couldn\'t save this sticker. Try again.';
+
+  @override
+  String get stickers_no_subject => 'No clear subject. Crop it instead.';
+
+  @override
+  String get stickers_new => 'New sticker';
+
+  @override
+  String get stickers_take_photo => 'Take photo';
+
+  @override
+  String get stickers_gallery => 'Gallery';
+
+  @override
+  String get stickers_crop => 'Crop';
+
+  @override
+  String get stickers_square => 'Square';
+
+  @override
+  String get stickers_circle => 'Circle';
+
+  @override
+  String get stickers_saved => 'Saved to My stickers';
+
+  @override
+  String get stickers_use_as_sticker => 'Use as sticker';
+
+  @override
+  String get stickers_save_to_mine => 'Save to My stickers';
+
+  @override
   String get settings_app_updates => 'App updates';
 
   @override

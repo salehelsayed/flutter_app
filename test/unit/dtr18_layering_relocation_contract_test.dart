@@ -267,7 +267,9 @@ const _applicationRootNormalizedSha256 =
     // Round 9 combines the sticker and Thought-notification switch wiring.
     // BL-17 adds the reviewed optional library and success-only activation
     // hook at this same app owner; the six-line reverse diff is exact.
-    '1330bcaa9cc6046ad680c4fdcab089ce1df021729119c3d78660c6bffb753266';
+    // BL-17 piece 4 forwards that library to routes as CustomStickerScope
+    // around the existing route child only; no owner or resume dispatch moves.
+    '8c9534b2fcc0cf32cc06033f402581f73cd54a55d5383f8a0ef0d55e533b61d2';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

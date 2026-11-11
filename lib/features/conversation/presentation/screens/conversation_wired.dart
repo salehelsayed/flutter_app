@@ -153,6 +153,8 @@ import 'package:flutter_app/features/translate_preview/private_translator_sheet.
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart';
@@ -3852,6 +3854,7 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _onSend(
     String text, {
     ({String id, PendingComposerMedia media})? sticker,
+    VoidCallback? onStickerMediaAdopted,
   }) async {
     final identity = _identity;
     if (identity == null) return;
@@ -4154,6 +4157,8 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
       }
+      // From here the send and its retries own the sticker media.
+      if (sticker != null) onStickerMediaAdopted?.call();
 
       final now = DateTime.now().toUtc().toIso8601String();
       final optimisticMessageId =
@@ -5998,6 +6003,28 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     if (!mounted) return;
     await _onSend('', sticker: (id: sticker.id, media: media));
+  }
+
+  Future<void> _sendCustomSticker(String id) async {
+    final library = CustomStickerScope.libraryOf(context);
+    if (library == null) return;
+    await sendCustomSticker(
+      library: library,
+      id: id,
+      isCurrent: () => mounted,
+      send: (markerId, media, adopt) => _onSend(
+        '',
+        sticker: (id: markerId, media: media),
+        onStickerMediaAdopted: adopt,
+      ),
+      discard: (media) =>
+          unawaited(media.file.delete().then((_) {}, onError: (Object _) {})),
+      onPrepareError: (error) => emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_STICKER_PREPARE_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      ),
+    );
   }
 
   void _recordStickerSent(String stickerId) {
@@ -9327,7 +9354,10 @@ class _ConversationWiredState extends State<ConversationWired>
           recordingState: _composerController.value.recordingState,
           onAttach: _onAttach,
           stickerPanel: _stickerPanelOpen
-              ? BundledStickerPanel(onSend: _sendSticker)
+              ? BundledStickerPanel(
+                  onSend: _sendSticker,
+                  onSendCustom: _sendCustomSticker,
+                )
               : null,
           onComposerTextTap: _closeStickerPanel,
           onStickerToggle: widget.modalityGate.allowsMediaAuthoring

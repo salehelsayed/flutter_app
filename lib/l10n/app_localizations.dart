@@ -8600,6 +8600,84 @@ abstract class AppLocalizations {
   /// **'Sticker {position} of {count}'**
   String stickers_mine_semantics(int position, int count);
 
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Record clip'**
+  String get stickers_record_clip;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'My stickers is full. Delete one to add another.'**
+  String get stickers_library_full;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save this sticker. Try again.'**
+  String get stickers_save_failed;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'No clear subject. Crop it instead.'**
+  String get stickers_no_subject;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'New sticker'**
+  String get stickers_new;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Take photo'**
+  String get stickers_take_photo;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery'**
+  String get stickers_gallery;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Crop'**
+  String get stickers_crop;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Square'**
+  String get stickers_square;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Circle'**
+  String get stickers_circle;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to My stickers'**
+  String get stickers_saved;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11 (m-2b345433)
+  ///
+  /// In en, this message translates to:
+  /// **'Use as sticker'**
+  String get stickers_use_as_sticker;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Save to My stickers'**
+  String get stickers_save_to_mine;
+
   /// No description provided for @settings_app_updates.
   ///
   /// In en, this message translates to:

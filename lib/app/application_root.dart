@@ -47,6 +47,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
@@ -3559,10 +3560,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
         navigatorObservers: [directPrivateMediaRouteObserver],
         builder: (context, child) {
+          final stickerLibrary = widget.customStickerLibrary;
+          final page = child ?? const SizedBox.shrink();
           final routedChild = DirectPrivateMediaRouteObserverScope(
             observer: directPrivateMediaRouteObserver,
             appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
-            child: child ?? const SizedBox.shrink(),
+            child: stickerLibrary == null
+                ? page
+                : CustomStickerScope(library: stickerLibrary, child: page),
           );
           final healthNotifier = widget.pushRegistrationHealthNotifier;
           final appChild = FullScreenCallAccessSurface(

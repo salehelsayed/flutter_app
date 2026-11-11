@@ -5293,6 +5293,48 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get stickers_record_clip => 'Clip aufnehmen';
+
+  @override
+  String get stickers_library_full =>
+      '„Meine Sticker“ ist voll. Lösche einen, um einen neuen hinzuzufügen.';
+
+  @override
+  String get stickers_save_failed =>
+      'Dieser Sticker konnte nicht gespeichert werden. Versuch es noch einmal.';
+
+  @override
+  String get stickers_no_subject =>
+      'Kein klares Motiv. Schneide das Bild stattdessen zu.';
+
+  @override
+  String get stickers_new => 'Neuer Sticker';
+
+  @override
+  String get stickers_take_photo => 'Foto aufnehmen';
+
+  @override
+  String get stickers_gallery => 'Galerie';
+
+  @override
+  String get stickers_crop => 'Zuschneiden';
+
+  @override
+  String get stickers_square => 'Quadrat';
+
+  @override
+  String get stickers_circle => 'Kreis';
+
+  @override
+  String get stickers_saved => 'In Meine Sticker gespeichert';
+
+  @override
+  String get stickers_use_as_sticker => 'Als Sticker verwenden';
+
+  @override
+  String get stickers_save_to_mine => 'In Meine Sticker speichern';
+
+  @override
   String get settings_app_updates => 'App-Updates';
 
   @override

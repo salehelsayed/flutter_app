@@ -5248,6 +5248,46 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get stickers_record_clip => 'تسجيل مقطع';
+
+  @override
+  String get stickers_library_full => 'ملصقاتي ممتلئة. احذف ملصقًا لإضافة آخر.';
+
+  @override
+  String get stickers_save_failed => 'تعذّر حفظ هذا الملصق. حاول مرة أخرى.';
+
+  @override
+  String get stickers_no_subject =>
+      'لا يوجد عنصر واضح. اقتصّ الصورة بدلًا من ذلك.';
+
+  @override
+  String get stickers_new => 'ملصق جديد';
+
+  @override
+  String get stickers_take_photo => 'التقاط صورة';
+
+  @override
+  String get stickers_gallery => 'المعرض';
+
+  @override
+  String get stickers_crop => 'اقتصاص';
+
+  @override
+  String get stickers_square => 'مربع';
+
+  @override
+  String get stickers_circle => 'دائرة';
+
+  @override
+  String get stickers_saved => 'تم الحفظ في ملصقاتي';
+
+  @override
+  String get stickers_use_as_sticker => 'استخدام كملصق';
+
+  @override
+  String get stickers_save_to_mine => 'حفظ في ملصقاتي';
+
+  @override
   String get settings_app_updates => 'تحديث التطبيق';
 
   @override
