@@ -61,9 +61,10 @@ Map<String, Object?> evaluateCallAudioSoakResources(
     _require(pid > 0 && _nonempty(processStart), 'process identity required');
     final connected = _number(capture['connectedAtMs'], 'connected time');
     final ended = _number(capture['endedAtMs'], 'ended time');
-    final postStart = capture['postObservationStartMs'] == null
-        ? ended
-        : _number(capture['postObservationStartMs'], 'post-observation start');
+    final postStart = _number(
+      capture['postObservationStartMs'],
+      'post-observation start',
+    );
     final duration = ended - connected;
     report['durationMs'] = duration;
     report['postObservationStartMs'] = postStart;
@@ -101,7 +102,7 @@ Map<String, Object?> evaluateCallAudioSoakResources(
           'canonical call or connected time changed',
         );
       } else if ((atMs >= connected - 5 * _minuteMs && atMs < connected) ||
-          (atMs > postStart && atMs <= postStart + 5 * _minuteMs)) {
+          (atMs >= postStart && atMs <= postStart + 5 * _minuteMs)) {
         _require(
           row['canonicalCallId'] == null,
           'idle CPU period contains an active call',

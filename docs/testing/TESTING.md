@@ -11094,23 +11094,29 @@ visible and cannot become an ordinary first-attempt PASS.
   device observations and approved resource investigation thresholds.
   **VC-024 recorded resource contract:** `run_call_audio_soak.dart` now checks
   retained, hashed process measurements bound to source/run/device/artifact and
-  one canonical call. The 41-case host suite covers the 1800-second floor, both
+  one canonical call. The 43-case host suite covers the 1800-second floor, both
   RSS growth branches, matched-route in-call CPU, post-idle recovery, stable
   process/clock/counter identity, missing windows and replay/tamper rejection.
   CPU uses cumulative process seconds on the one-core scale; the November 10
   approval sets late route CPU to at most `max(1.20 * warm, warm + 5pp)`.
   Post-idle observation follows owned cleanup and any recovery call, with its
-  actual start retained. These are synthetic parser/CLI fixtures, not sustained
+  actual start required; a sample at a declared start after the main call ends
+  must already be idle. These are synthetic parser/CLI fixtures, not sustained
   device measurements. Resource success is only `PASS_RECORDED`; the CLI keeps
   full-soak status `NOT RUN` and exit 78, and no-argument execution stays
   `BLOCKED`/78. Android sampled decoded PCM and iOS route/active-session evidence
   remain separate; physical output is `NOT PROVEN`, nonblocking under Kayan's
-  November 10 decision. The corrected resource suite passed all 41 cases;
+  November 10 decision. The corrected resource suite passed all 43 cases;
   the current coordinator/screen/RTP preservation selection passed 60 cases.
   Evidence in `.codex-test-logs/p0-journeys-20261110/` retains the causal RED,
   initial SDK-stderr assertion failure, focused correction and complete GREEN.
-  The scoped wrapper result is 11 checks PASS and 88 NOT RUN, not a full change
-  gate or device verdict. Its exact new resource selector is
+  Two review probes first returned `PASS_RECORDED` for a missing post-idle start
+  and an active recovery call at that start; both now fail closed. Their
+  `vc024-post-idle-*` receipts retain RED (0 PASS / 2 FAIL), full resource GREEN
+  (43 PASS) and the complete five-check change gate against `4e9463e82`.
+  The original preparation's broader wrapper result remains 11 checks PASS and
+  88 NOT RUN; the review-fix gate does not replace that scope or provide a device
+  verdict. Its exact resource selector is
   `call-audio-soak-resource-contract` in `tool/testing/selection.json`.
   An offline terminal send may fail immediately while local history, native
   acknowledgement and context cleanup complete. Its bounded delivery owner
