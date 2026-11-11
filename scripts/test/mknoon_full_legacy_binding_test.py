@@ -19,6 +19,7 @@ import tempfile
 import time
 import signal
 import unittest
+import uuid
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,10 +32,11 @@ DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/un
 _BUNDLED_DART = DART.parent / 'cache/dart-sdk/bin/dart'
 if _BUNDLED_DART.is_file():
     DART = _BUNDLED_DART
-PINS = {'android-physical':'closure-usb', 'android-emulator':'closure-emu',
-        **{'ios-simulator-'+s:'closure-sim-'+s for s in 'abcd'}}
-MATRIX = dict(errors=[], adb=['closure-usb','closure-emu'],
-    ios_simulators=['closure-sim-'+s for s in 'abcd'],
+_PIN_NONCE = uuid.uuid4().hex
+PINS = {'android-physical':'closure-usb-'+_PIN_NONCE, 'android-emulator':'closure-emu-'+_PIN_NONCE,
+        **{'ios-simulator-'+s:'closure-sim-'+s+'-'+_PIN_NONCE for s in 'abcd'}}
+MATRIX = dict(errors=[], adb=[v for k,v in PINS.items() if k.startswith('android')],
+    ios_simulators=[v for k,v in PINS.items() if k.startswith('ios')],
     flutter=[dict(id=v,targetPlatform='android-arm64' if k.startswith('android') else 'ios',
                   emulator=k!='android-physical') for k,v in PINS.items()])
 IDLE = ('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n'
@@ -245,7 +247,7 @@ class LegacyBindingTest(unittest.TestCase):
         for name in ['flutter','dart','adb','xcrun','bash','python3']:(bin_dir/name).symlink_to(stub)
         env={**self.env,'PATH':str(bin_dir)+':'+os.environ['PATH'],
              'CLOSURE_FIXTURE_LOG':str(self.tmp/'commands.jsonl'),
-             'MKNOON_LEGACY_INHERITED_LEASES_JSON':json.dumps(list(PINS.values()))}
+             'CLOSURE_FIXTURE_LEASE_DIRECTORY':str(self.tmp/'device-leases')}
         rules=json.loads((ROOT/checks.RULES).read_text())
         full=next(c for c in rules['full_commands'] if c['id']=='full-legacy')
         manifest=json.loads((ROOT/checks.SIMS).read_text())
@@ -268,12 +270,86 @@ class LegacyBindingTest(unittest.TestCase):
         self.assertTrue(any('--sender' in c['args'] for c in commands))
         self.assertTrue(any('--device-id' in c['args'] for c in commands))
 
+    def test_real_protected_cli_fixtures_can_hold_leases_concurrently(self):
+        # Keep the pre-fix reproduction off other sessions' ambient leases.
+        # Explicit directories supplied by an isolated fixture still pass through.
+        customize = self.tmp/'python-path'
+        customize.mkdir()
+        (customize/'sitecustomize.py').write_text(
+            'import contextlib,os,sys\n'
+            f'sys.path.insert(0,{str(ROOT/"scripts")!r})\n'
+            'import device_campaign_preflight as p\n'
+            '_leases=p.device_leases\n'
+            '@contextlib.contextmanager\n'
+            'def owned_leases(targets,directory=None):\n'
+            ' root=directory if directory is not None else os.environ["CLOSURE_SHARED_LEASE_ROOT"]\n'
+            ' p._closure_fixture_last_lease_root=str(root)\n'
+            ' try:\n'
+            '  with _leases(targets,directory=root) as owned:yield owned\n'
+            ' except p.DeviceLeaseBusy as error:\n'
+            '  if sys.argv[0].endswith("legacy_target_contracts.py"):\n'
+            '   print("CONCURRENT_FIXTURE_LEASE_BUSY "+str(error),file=sys.stderr,flush=True)\n'
+            '  raise\n'
+            'p.device_leases=owned_leases\n'
+            'p._closure_fixture_customized=True\n')
+        release = self.tmp/'release-fixtures'
+        shared = self.tmp/'ambient-leases'
+        code = (
+            'import sys,unittest\n'
+            f'sys.path.insert(0,{str(ROOT/"scripts")!r})\n'
+            'import device_campaign_preflight as p\n'
+            'assert getattr(p,"_closure_fixture_customized",False), "owned lease boundary missing"\n'
+            'import scripts.test.mknoon_full_legacy_binding_test as fixture\n'
+            'unittest.main(module=fixture,defaultTest="LegacyBindingTest.'
+            'test_real_protected_full_and_reliability_cli_launch_every_configured_route",verbosity=2)\n')
+        children = []
+        ready = [self.tmp/f'ready-{index}.json' for index in range(2)]
+        results = []
+        try:
+            for index in range(2):
+                child = subprocess.Popen([sys.executable,'-c',code],cwd=ROOT,
+                    env={**os.environ,
+                         'PYTHONPATH':str(customize)+os.pathsep+os.environ.get('PYTHONPATH',''),
+                         'CLOSURE_SHARED_LEASE_ROOT':str(shared),
+                         'CLOSURE_FIXTURE_READY':str(ready[index]),
+                         'CLOSURE_FIXTURE_RELEASE':str(release)},
+                    stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                children.append(child)
+                deadline = time.monotonic()+30
+                while not ready[index].exists() and child.poll() is None and time.monotonic()<deadline:
+                    time.sleep(.01)
+                if not ready[index].exists():
+                    break
+        finally:
+            release.touch()
+            deadline = time.monotonic()+190
+            for child in children:
+                try:
+                    output,_ = child.communicate(timeout=max(1,deadline-time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    output,_ = child.communicate()
+                results.append((child.returncode,output))
+        self.assertEqual(len(children),2,results)
+        self.assertEqual([code for code,_ in results],[0,0],
+                         '\n'.join(output for _,output in results))
+        self.assertTrue(all(path.exists() for path in ready),results)
+        observations = [json.loads(path.read_text()) for path in ready]
+        self.assertTrue(set(observations[0]['pins']).isdisjoint(observations[1]['pins']))
+        self.assertNotEqual(observations[0]['lease_root'],observations[1]['lease_root'])
+
 
 TOOL_FIXTURE = r'''
 import json,os,sys,subprocess
 sys.path.insert(0,'@ROOT@/scripts')
 import device_campaign_preflight as p
 name=os.path.basename(sys.argv[0]);args=sys.argv[1:]
+if name=='python3' and args and args[0]=='scripts/legacy_target_contracts.py':
+    import functools,runpy
+    p.device_leases=functools.partial(p.device_leases,directory=os.environ['CLOSURE_FIXTURE_LEASE_DIRECTORY'])
+    sys.argv=args
+    runpy.run_path(args[0],run_name='__main__')
+    sys.exit()
 if name=='python3' and (not args or args[0]!='scripts/migration_sqlcipher_portability.py'):
     os.execv(sys.executable,[sys.executable,*args])
 if name=='bash' and ('--dry-run' in args or '--selection-only' in args or any(a.startswith('--list') for a in args) or '--records-tsv' in args or any('check_reliability_simulation_discovery' in a for a in args)):
@@ -289,9 +365,20 @@ if name=='xcrun' and args[:3]==['simctl','list','devices']:
     print(json.dumps({'devices':{'iOS-fixture':[dict(udid=v,name='iPhone fixture',isAvailable=True) for k,v in pins.items() if k.startswith('ios')]}}));sys.exit()
 for target in pins.values():
     try:
-        with p.device_leases([target]):pass
+        with p.device_leases([target],directory=os.environ['CLOSURE_FIXTURE_LEASE_DIRECTORY']):pass
     except p.DeviceLeaseBusy:pass
     else:raise AssertionError('target was forwarded before acquiring its lease: '+target)
+if pins and os.environ.get('CLOSURE_FIXTURE_READY'):
+    import time
+    from pathlib import Path
+    ready=Path(os.environ['CLOSURE_FIXTURE_READY'])
+    if not ready.exists():
+        ready.write_text(json.dumps(dict(pins=list(pins.values()),
+            lease_root=p._closure_fixture_last_lease_root)))
+        release=Path(os.environ['CLOSURE_FIXTURE_RELEASE']);deadline=time.monotonic()+40
+        while not release.exists():
+            if time.monotonic()>deadline:raise AssertionError('concurrent fixture release missing')
+            time.sleep(.01)
 if name=='adb' and 'dumpsys' in args:
     print('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n  mProcessesReady=true mSystemReady=true mBooted=true mFactoryTest=0\n  mForceBackgroundCheck=false');sys.exit()
 with open(os.environ['CLOSURE_FIXTURE_LOG'],'a') as f:f.write(json.dumps(dict(name=name,args=args,pins=pins))+'\n')
