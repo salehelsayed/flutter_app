@@ -3400,6 +3400,173 @@ void main() {
       );
     }
 
+    for (final scenario in [
+      (
+        preference: ImageQualityPreference.original,
+        quality: 100,
+        label: 'Original',
+      ),
+      (
+        preference: ImageQualityPreference.compressed,
+        quality: 85,
+        label: 'Compressed',
+      ),
+    ]) {
+      testWidgets(
+        'MEDIA-035 legacy group Take Photo ${scenario.label} sends exact caption and processed attachment once',
+        (tester) async {
+          tester.view.physicalSize = const Size(800, 1600);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          mediaUploadInFlightTracker.clearAll();
+          addTearDown(mediaUploadInFlightTracker.clearAll);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final directory = Directory.systemTemp.createTempSync(
+            'media035-group-camera-',
+          );
+          addTearDown(() {
+            if (directory.existsSync()) directory.deleteSync(recursive: true);
+          });
+          final cameraFile = File('${directory.path}/camera.png')
+            ..writeAsBytesSync(_tinyPngBytes);
+          final processedFile = File('${directory.path}/processed.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes);
+          final picker = _RecordingCameraPicker()
+            ..imageResult = XFile(cameraFile.path);
+          final qualities = <int>[];
+          final processor = ImageProcessor(
+            loadImageQualityPreference: () async => scenario.preference,
+            compressFile:
+                ({
+                  required path,
+                  required quality,
+                  required keepExif,
+                  minWidth = 1920,
+                  minHeight = 1080,
+                }) async {
+                  expect(path, cameraFile.path);
+                  qualities.add(quality);
+                  return XFile(processedFile.path);
+                },
+            compressVideo:
+                ({
+                  required path,
+                  required compress,
+                  void Function(double progress)? onProgress,
+                }) async => null,
+          );
+          final uploadedBlobIds = <String>[];
+          final uploadedBytes = <List<int>>[];
+          const caption = 'Group photo عربي\nGrüße an alle';
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: TrackingDurableMediaFileManager(directory),
+              mediaPicker: picker,
+              imageProcessor: processor,
+              qualityPreference: scenario.preference,
+              uploadMediaFn:
+                  ({
+                    required bridge,
+                    required localFilePath,
+                    required mime,
+                    required recipientPeerId,
+                    String? blobId,
+                    mediaFileManager,
+                    width,
+                    height,
+                    durationMs,
+                    waveform,
+                    allowedPeers,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
+                  }) async {
+                    uploadedBlobIds.add(blobId!);
+                    uploadedBytes.add(await File(localFilePath).readAsBytes());
+                    return successfulGroupUploadFixture(
+                      blobId: blobId,
+                      mime: mime,
+                      localFilePath: localFilePath,
+                    );
+                  },
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+          await tester.tap(find.byIcon(Icons.add_rounded));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          final takePhoto = find.widgetWithText(ListTile, 'Take Photo');
+          expect(takePhoto.hitTestable(), findsOneWidget);
+          await tester.tap(takePhoto);
+          await pumpUntilAsyncWorkSettles(tester, () {
+            final screen = tester.widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            );
+            return screen
+                    .composerStateListenable!
+                    .value
+                    .pendingAttachments
+                    .length ==
+                1;
+          });
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(picker.imageSources, [ImageSource.camera]);
+          expect(picker.pickImageCalls, 1);
+          expect(picker.pickMultipleMediaCalls, 0);
+          expect(picker.pickDocumentsCalls, 0);
+          expect(picker.pickVideoCalls, 0);
+          expect(qualities, [scenario.quality]);
+          expect(
+            screen
+                .composerStateListenable!
+                .value
+                .pendingAttachments
+                .single
+                .path,
+            processedFile.path,
+          );
+          await tester.enterText(find.byType(TextField), caption);
+          await tester.pump();
+          await tester.tap(
+            find.byIcon(Icons.arrow_upward_rounded).hitTestable(),
+          );
+          await pumpUntilAsyncWorkSettles(
+            tester,
+            () =>
+                groupPublishPayloads(bridge).isNotEmpty &&
+                mediaUploadInFlightTracker.inFlightCount == 0,
+          );
+          await pumpFrames(tester, count: 10);
+
+          final sent = (await msgRepo.getMessagesPage(group.id)).single;
+          expect((sent.text, sent.status), (caption, 'sent'));
+          final attachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage(sent.id, owner: MediaOwnerLane.group);
+          expect(attachments, hasLength(1));
+          expect(uploadedBlobIds, [attachments.single.id]);
+          expect(uploadedBytes, [validJpegFixtureBytes]);
+          expect(attachments.single.downloadStatus, 'done');
+          final outbound = groupPublishPayloads(bridge).single;
+          expect(outbound['messageId'], sent.id);
+          expect(outbound['text'], caption);
+          expect(outbound['media'], hasLength(1));
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            isEmpty,
+          );
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(const Duration(seconds: 1));
+        },
+      );
+    }
+
     testWidgets(
       'P269 ordinary and voice empty ACL preflight preserves sources with zero durable or crypto effects',
       (tester) async {
@@ -25189,6 +25356,16 @@ class RecordingGroupMediaDeleteForMeCoordinator
     required String messageId,
   }) async {
     calls.add('$groupId/$messageId');
+  }
+}
+
+class _RecordingCameraPicker extends FakeMediaPicker {
+  final imageSources = <ImageSource>[];
+
+  @override
+  Future<XFile?> pickImage({required ImageSource source}) {
+    imageSources.add(source);
+    return super.pickImage(source: source);
   }
 }
 
