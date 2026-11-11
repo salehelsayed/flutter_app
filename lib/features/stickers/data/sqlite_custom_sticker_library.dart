@@ -76,6 +76,10 @@ final class SqliteCustomStickerLibrary implements CustomStickerLibrary {
 
   Future<void> drain() => _lock.synchronized<void>(() {});
 
+  /// Passive account authority for core received-media preparation. This does
+  /// not acquire the mutation lock or keep retirement waiting for an editor.
+  Future<void> checkAccountAccess() => _checkAccess();
+
   @override
   Future<List<CustomSticker>> list() => _run(() async {
     _stickerRoot(create: false);

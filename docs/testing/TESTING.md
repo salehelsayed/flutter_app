@@ -6708,6 +6708,30 @@ visible and cannot become an ordinary first-attempt PASS.
   `sticker-lifecycle-green-verdict.json`, `sticker-bootstrap-red-verdict.json`
   and `sticker-bootstrap-green-verdict.json` in that evidence directory.
 
+  Received-sticker actions belong to the existing direct/group action
+  controllers. Their read-only visibility probe shares dispatch qualification;
+  a prior positive probe never authorizes a later save. View Once (also called
+  limited-view), protected, unexpired disappearing, unsupported, stale and
+  foreign-owned sources are excluded before snapshot allocation. Group actions
+  require authoritative `knownClear` local-deletion state; a legacy null
+  tombstone lookup cannot substitute for missing or unknown authority. The
+  existing chat/announcement save policy also excludes non-keepable QA media.
+  Strict-group
+  transport alone is not a privacy restriction: eligible unmarked photos use
+  the editor, while canonical WebP keeps its full bytes and animation without
+  a creator/catalog dependency. The real-file/SQLite received-action cases
+  cover those boundaries, independent snapshot/editor ownership and cleanup,
+  and same-account/cross-account replacement during copy or editor awaits.
+  The account facade binds preparation to one concrete generation and checks
+  passive account authority around awaits; retirement does not wait for an
+  open editor. Editor Ready and Cancelled both fail unavailable after
+  revocation. `contentHash` belongs to the relay ciphertext; the canonical
+  descriptor hashes the owned plaintext snapshot. Evidence is
+  `received-sticker-save-focused-verdict.json` in the directory above. The
+  original 26 PASS/4 assertion failures for missing/unknown group deletion
+  authority remain in `received-sticker-save-red-verdict.json`. This
+  host scope does not certify route/editor wiring or device rendering.
+
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
   changed or linked files block export rather than downgrade to missing chat

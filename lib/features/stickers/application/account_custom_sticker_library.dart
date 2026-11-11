@@ -83,16 +83,64 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
   Future<T> _run<T>(
     Future<T> Function(SqliteCustomStickerLibrary library) action,
   ) async {
+    final generation = _captureGeneration();
+    final library = await _start(generation, _retirement);
+    if (library == null || !_isCurrent(generation)) _unavailable();
+    return action(library);
+  }
+
+  _StickerLibraryGeneration _captureGeneration() {
     if (!_enabled) {
       throw const CustomStickerException(CustomStickerErrorCode.disabled);
     }
     if (_blocked) _unavailable();
-    final generation = _current ??= _StickerLibraryGeneration(
-      retryIfNoIdentity: true,
-    );
+    return _current ??= _StickerLibraryGeneration(retryIfNoIdentity: true);
+  }
+
+  /// Binds received-media preparation to the account that began the action.
+  ///
+  /// The core preparer checks access around file/editor awaits. Retirement
+  /// revokes it immediately without waiting for an open editor; late output
+  /// can never be admitted through a successor, including same-account import.
+  /// The preparer owns its temporary files until this future settles.
+  Future<CustomSticker?> prepareReceivedSticker(
+    Future<NormalizedStickerAsset?> Function(
+      Future<void> Function() checkAccess,
+    )
+    prepare,
+  ) => _withReceivedAccount((library, checkAccess) async {
+    final asset = await prepare(checkAccess);
+    await checkAccess();
+    return asset == null ? null : library.admit(asset);
+  });
+
+  /// Read-only presentation probe; it never admits content or writes a file.
+  Future<bool> inspectReceivedStickerEligibility(
+    Future<bool> Function(Future<void> Function() checkAccess) inspect,
+  ) => _withReceivedAccount((_, checkAccess) async {
+    final result = await inspect(checkAccess);
+    await checkAccess();
+    return result;
+  });
+
+  Future<T> _withReceivedAccount<T>(
+    Future<T> Function(
+      SqliteCustomStickerLibrary library,
+      Future<void> Function() checkAccess,
+    )
+    action,
+  ) async {
+    final generation = _captureGeneration();
     final library = await _start(generation, _retirement);
     if (library == null || !_isCurrent(generation)) _unavailable();
-    return action(library);
+    Future<void> checkAccess() async {
+      if (!_isCurrent(generation)) _unavailable();
+      await library.checkAccountAccess();
+      if (!_isCurrent(generation)) _unavailable();
+    }
+
+    await checkAccess();
+    return action(library, checkAccess);
   }
 
   /// Caller persists the export pause before entering this barrier. Its passive

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
@@ -42,6 +43,50 @@ Future<NormalizedStickerAsset> normalizeCustomStickerAsset(
   final temporaryPath = temporaryDirectory.path;
   return Isolate.run(() => _normalize(input, temporaryPath));
 }
+
+/// Describes an already-owned received snapshot without rewriting its bytes.
+///
+/// A noncanonical still WebP needs the ordinary-photo editor. An animation
+/// must satisfy the complete canonical contract; it never falls back to a
+/// still editor. Admission independently validates this descriptor again.
+Future<NormalizedStickerAsset?> inspectReceivedStickerWebP(
+  Uint8List bytes, {
+  required String filePath,
+}) => Isolate.run(() {
+  if (bytes.length < 20 ||
+      bytes.length > kGroupMediaImageLimitBytes ||
+      String.fromCharCodes(bytes, 0, 4) != 'RIFF' ||
+      String.fromCharCodes(bytes, 8, 12) != 'WEBP' ||
+      ByteData.sublistView(bytes).getUint32(4, Endian.little) !=
+          bytes.length - 8) {
+    _invalid();
+  }
+  final chunks = _chunks(bytes, 12, bytes.length);
+  final animated = chunks.any(
+    (chunk) =>
+        chunk.tag == 'ANIM' ||
+        chunk.tag == 'ANMF' ||
+        (chunk.tag == 'VP8X' && chunk.size > 0 && (bytes[chunk.data] & 2) != 0),
+  );
+  final _WebP structure;
+  try {
+    structure = _inspectWebP(bytes);
+  } on CustomStickerException {
+    if (animated) rethrow;
+    return null;
+  }
+  _decodeWebP(bytes, structure);
+  return NormalizedStickerAsset(
+    filePath: filePath,
+    sha256Hex: sha256.convert(bytes).toString(),
+    mime: 'image/webp',
+    byteLength: bytes.length,
+    width: structure.width,
+    height: structure.height,
+    frameCount: structure.frames.length,
+    durationMs: _duration(structure),
+  );
+});
 
 NormalizedStickerAsset _normalize(
   NormalizedStickerAsset input,
