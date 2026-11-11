@@ -5222,6 +5222,32 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sticker_pack_nujoom => 'نجوم';
 
   @override
+  String get stickers_mine => 'ملصقاتي';
+
+  @override
+  String get stickers_create => 'إنشاء';
+
+  @override
+  String get stickers_delete => 'حذف';
+
+  @override
+  String get stickers_drag_to_reorder => 'اسحب لإعادة الترتيب';
+
+  @override
+  String get stickers_manage_done => 'تم';
+
+  @override
+  String get stickers_move_earlier => 'نقل إلى موضع سابق';
+
+  @override
+  String get stickers_move_later => 'نقل إلى موضع لاحق';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'ملصق $position من $count';
+  }
+
+  @override
   String get settings_app_updates => 'تحديث التطبيق';
 
   @override
@@ -5240,4 +5266,61 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get you_thought_replaced => 'استُبدلت بخاطرة أحدث';
+
+  @override
+  String get sticker_editor_text => 'نص';
+
+  @override
+  String get sticker_editor_save => 'حفظ الملصق';
+
+  @override
+  String get sticker_editor_colour => 'اللون';
+
+  @override
+  String get sticker_editor_delete => 'حذف';
+
+  @override
+  String get sticker_editor_undo => 'تراجع';
+
+  @override
+  String get sticker_editor_font => 'الخط';
+
+  @override
+  String get sticker_editor_move_up => 'تحريك للأعلى';
+
+  @override
+  String get sticker_editor_move_down => 'تحريك للأسفل';
+
+  @override
+  String get sticker_editor_move_left => 'تحريك لليسار';
+
+  @override
+  String get sticker_editor_move_right => 'تحريك لليمين';
+
+  @override
+  String get sticker_editor_bigger => 'أكبر';
+
+  @override
+  String get sticker_editor_smaller => 'أصغر';
+
+  @override
+  String get sticker_editor_rotate_left => 'تدوير لليسار';
+
+  @override
+  String get sticker_editor_rotate_right => 'تدوير لليمين';
+
+  @override
+  String get sticker_colour_white => 'أبيض';
+
+  @override
+  String get sticker_colour_black => 'أسود';
+
+  @override
+  String get sticker_colour_yellow => 'أصفر';
+
+  @override
+  String get sticker_colour_red => 'أحمر';
+
+  @override
+  String get sticker_colour_blue => 'أزرق';
 }

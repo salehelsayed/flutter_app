@@ -8552,6 +8552,54 @@ abstract class AppLocalizations {
   /// **'Nujoom'**
   String get sticker_pack_nujoom;
 
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'My stickers'**
+  String get stickers_mine;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get stickers_create;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get stickers_delete;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to reorder'**
+  String get stickers_drag_to_reorder;
+
+  /// Custom stickers copy, same words as you_tags_done
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get stickers_manage_done;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move earlier'**
+  String get stickers_move_earlier;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move later'**
+  String get stickers_move_later;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Sticker {position} of {count}'**
+  String stickers_mine_semantics(int position, int count);
+
   /// No description provided for @settings_app_updates.
   ///
   /// In en, this message translates to:
@@ -8587,6 +8635,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'replaced by a newer Thought'**
   String get you_thought_replaced;
+
+  /// No description provided for @sticker_editor_text.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get sticker_editor_text;
+
+  /// No description provided for @sticker_editor_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save sticker'**
+  String get sticker_editor_save;
+
+  /// No description provided for @sticker_editor_colour.
+  ///
+  /// In en, this message translates to:
+  /// **'Colour'**
+  String get sticker_editor_colour;
+
+  /// No description provided for @sticker_editor_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get sticker_editor_delete;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get sticker_editor_undo;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Font'**
+  String get sticker_editor_font;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move up'**
+  String get sticker_editor_move_up;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move down'**
+  String get sticker_editor_move_down;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move left'**
+  String get sticker_editor_move_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move right'**
+  String get sticker_editor_move_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Bigger'**
+  String get sticker_editor_bigger;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Smaller'**
+  String get sticker_editor_smaller;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate left'**
+  String get sticker_editor_rotate_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate right'**
+  String get sticker_editor_rotate_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'White'**
+  String get sticker_colour_white;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Black'**
+  String get sticker_colour_black;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Yellow'**
+  String get sticker_colour_yellow;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Red'**
+  String get sticker_colour_red;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Blue'**
+  String get sticker_colour_blue;
 }
 
 class _AppLocalizationsDelegate

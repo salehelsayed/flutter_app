@@ -5152,6 +5152,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sticker_pack_nujoom => 'Nujoom';
 
   @override
+  String get stickers_mine => 'My stickers';
+
+  @override
+  String get stickers_create => 'Create';
+
+  @override
+  String get stickers_delete => 'Delete';
+
+  @override
+  String get stickers_drag_to_reorder => 'Drag to reorder';
+
+  @override
+  String get stickers_manage_done => 'Done';
+
+  @override
+  String get stickers_move_earlier => 'Move earlier';
+
+  @override
+  String get stickers_move_later => 'Move later';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'Sticker $position of $count';
+  }
+
+  @override
   String get settings_app_updates => 'App updates';
 
   @override
@@ -5170,4 +5196,61 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get you_thought_replaced => 'replaced by a newer Thought';
+
+  @override
+  String get sticker_editor_text => 'Text';
+
+  @override
+  String get sticker_editor_save => 'Save sticker';
+
+  @override
+  String get sticker_editor_colour => 'Colour';
+
+  @override
+  String get sticker_editor_delete => 'Delete';
+
+  @override
+  String get sticker_editor_undo => 'Undo';
+
+  @override
+  String get sticker_editor_font => 'Font';
+
+  @override
+  String get sticker_editor_move_up => 'Move up';
+
+  @override
+  String get sticker_editor_move_down => 'Move down';
+
+  @override
+  String get sticker_editor_move_left => 'Move left';
+
+  @override
+  String get sticker_editor_move_right => 'Move right';
+
+  @override
+  String get sticker_editor_bigger => 'Bigger';
+
+  @override
+  String get sticker_editor_smaller => 'Smaller';
+
+  @override
+  String get sticker_editor_rotate_left => 'Rotate left';
+
+  @override
+  String get sticker_editor_rotate_right => 'Rotate right';
+
+  @override
+  String get sticker_colour_white => 'White';
+
+  @override
+  String get sticker_colour_black => 'Black';
+
+  @override
+  String get sticker_colour_yellow => 'Yellow';
+
+  @override
+  String get sticker_colour_red => 'Red';
+
+  @override
+  String get sticker_colour_blue => 'Blue';
 }
