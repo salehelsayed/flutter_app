@@ -231,6 +231,16 @@ Do not claim runtime-input equivalence from source hashes alone. The
 [group replay preservation receipts](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-replay-transport/ios-config-input-restoration.json)
 record this boundary without logging configuration contents.
 
+BL-17 reproduced this prerequisite failure in its isolated core checkout
+(1,355 passed, one missing-plist failure). Restoring the matching ignored file
+left tracked source and tests unchanged; the existing iOS config file then
+passed all ten cases. Preserve the input hash in
+`~/.codex/investigations/custom-stickers-core-20261111/sticker-core-ios-firebase-setup-repair.json`
+and the original `sticker-core-boundary-current-main-host-run/affected-push-1.raw.log`.
+The combined 14-case focused verdict is
+`sticker-core-bootstrap-push-setup-focused-verdict.json` in that evidence root;
+host configuration assertions do not certify native push delivery.
+
 When the owner reserves Firebase configuration staging to `flutter_app`, Codex
 must leave the file untouched and delegate this source-contract check with the
 exact candidate and selected test files. Plan 407 Step 4 retained its missing-file
@@ -8475,6 +8485,17 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged. The four DTR-18 cases pass after the two-pin update; retain
   `.codex-test-logs/contact-request-decisions-20261026/bootstrap-pin-proof.json`
   and `bootstrap-owner-diff.patch`.
+  BL-17's lazy sticker-library composition, lifecycle barriers and optional
+  app-root activation hook change all three composition pins at the same owners.
+  Exact reverse diffs of reviewed `832ef7add` reproduce the prior fingerprints;
+  the historical notification callback remains byte-identical and unique, and
+  relocation/import assertions are unchanged. Refresh only the three explained
+  baselines. The four DTR-18 cases pass after the update; retain the original
+  bootstrap result (20 passed, three stale-pin failures) and the reconstruction
+  proof under `~/.codex/investigations/custom-stickers-core-20261111/`:
+  `bootstrap-preservation-fix-staging/source-fingerprint-proof.json`,
+  `sticker-core-boundary-current-main-host-run/bootstrap-1.raw.log` and
+  `sticker-core-bootstrap-push-setup-focused-verdict.json`.
 
 - **Post notification readiness:** the active-direct-contact listener test waits
   with its existing bounded `_until` helper for the observable notification before

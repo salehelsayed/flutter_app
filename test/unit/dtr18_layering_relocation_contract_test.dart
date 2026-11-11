@@ -265,7 +265,9 @@ const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
     // Round 9 combines the sticker and Thought-notification switch wiring.
-    '88792e56dbdc9391880aa8d0948d89a8759af3453df14fde4926931b6ec1ebe6';
+    // BL-17 adds the reviewed optional library and success-only activation
+    // hook at this same app owner; the six-line reverse diff is exact.
+    '1330bcaa9cc6046ad680c4fdcab089ce1df021729119c3d78660c6bffb753266';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -475,7 +477,9 @@ const _productionBootstrapNormalizedSha256 =
     // Item 9 (build 131): You page viewers and keep-replaced add three
     // database callbacks to the same PostRepositoryImpl, 10 additive lines;
     // no owner moves.
-    '7d5e552098c9654012470b984bb9aa944d638307a538ae744a304bee693080a0';
+    // BL-17 adds the reviewed lazy library and export/import/erase/shutdown
+    // barriers at this same bootstrap owner; no relocation URI changes.
+    '90b8daf1645696fb64630c050de2db18e83e74acb9b230711c6b5c0383ce7379';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -515,8 +519,10 @@ const _productionBootstrapNormalizedSha256 =
 // adapter; both reviewed notification callbacks remain exact.
 // The same paged own-history read leaves the historical callback exact.
 // The same item 9 viewer and keep-replaced callbacks leave it exact too.
+// BL-17 rebases the same reviewed composition. The historical notification
+// callback remains byte-identical and unique; no existing owner relocates.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '914ded2cb970034f8341dcdb4a8bff83e4156321b671ae997d9cf8d6faa0d1d0';
+    '1440941faffef1a65c7e2cd7a448689a5f893d1395c3722850c929f4b0bbf21a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
