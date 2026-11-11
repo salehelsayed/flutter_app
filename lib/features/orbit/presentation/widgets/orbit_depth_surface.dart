@@ -24,6 +24,7 @@ import 'package:flutter_app/features/translate_preview/translate_preview_persist
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
 import 'orbit_depth_media.dart';
 
 /// The production flat surface remains mounted below this local dial. Data,
@@ -59,6 +60,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.hostChrome,
     this.onReply,
     this.replyStatusChanges,
+    this.answers,
   });
   final Widget child;
   final List<OrbitItem> items;
@@ -105,6 +107,9 @@ class OrbitDepthSurface extends StatefulWidget {
   /// Sends a reaction or a typed reply to a friend's thought on the ring as
   /// an ordinary quoted chat reply. Null leaves the thought without its bar.
   final ThoughtReplySender? onReply;
+
+  /// Shared with the host's full-screen cards; it owns later status updates.
+  final OrbitDepthAnswers? answers;
 
   /// Later delivery updates for those replies, by message id.
   final Stream<({String messageId, ThoughtReplyStatus status})>?
@@ -215,11 +220,29 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     widget.resetSignal?.addListener(_reset);
     _vertical.addListener(_publishChrome);
     _replyFocus.addListener(_onReplyFocus);
+    _listenAnswers();
     _listenReplyStatuses();
+  }
+
+  void _listenAnswers([OrbitDepthAnswers? previous]) {
+    previous?.removeListener(_onAnswersChanged);
+    final answers = widget.answers;
+    if (answers == null) return;
+    _visit = _visit.withAnswersFrom(answers.value);
+    answers.addListener(_onAnswersChanged);
+  }
+
+  void _onAnswersChanged() {
+    final answers = widget.answers;
+    if (mounted && answers != null) {
+      setState(() => _visit = _visit.withAnswersFrom(answers.value));
+    }
   }
 
   void _listenReplyStatuses() {
     _replyStatuses?.cancel();
+    _replyStatuses = null;
+    if (widget.answers != null) return;
     _replyStatuses = widget.replyStatusChanges?.listen((update) {
       if (!mounted || !_visit.sends.containsKey(update.messageId)) return;
       setState(
@@ -277,7 +300,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       oldWidget.resetSignal?.removeListener(_reset);
       widget.resetSignal?.addListener(_reset);
     }
-    if (oldWidget.replyStatusChanges != widget.replyStatusChanges) {
+    if (oldWidget.answers != widget.answers) {
+      _listenAnswers(oldWidget.answers);
+    }
+    if (oldWidget.answers != widget.answers ||
+        oldWidget.replyStatusChanges != widget.replyStatusChanges) {
       _listenReplyStatuses();
     }
     if (!_active || !widget.gesturesEnabled) _reset(notifyBuild: false);
@@ -712,7 +739,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   };
 
   void _endVisit() {
-    _visit = OrbitDepthVisit.empty;
+    final answers = widget.answers;
+    _visit = answers == null
+        ? OrbitDepthVisit.empty
+        : OrbitDepthVisit.empty.withAnswersFrom(answers.value);
     if (_replyFocus.hasFocus) _replyFocus.unfocus();
   }
 
@@ -771,6 +801,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (dispatch == null || onReply == null) return;
     final send = dispatch.send;
     setState(() => _visit = dispatch.visit);
+    final answers = widget.answers;
+    if (answers != null) {
+      unawaited(answers.dispatch(dispatch, onReply));
+      return;
+    }
     unawaited(() async {
       ThoughtReplyStatus status;
       try {
@@ -788,6 +823,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   void dispose() {
     widget.resetSignal?.removeListener(_reset);
     _replyStatuses?.cancel();
+    widget.answers?.removeListener(_onAnswersChanged);
     _replyController.dispose();
     _replyFocus.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -1231,7 +1267,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             child: Row(
               children: [
                 for (final reaction in ThoughtReaction.values) ...[
-                  _ReactionCircle(
+                  ThoughtReactionCircle(
                     key: ValueKey('orbit-depth-react-${reaction.name}'),
                     glyph: reaction.glyph,
                     label: switch (reaction) {
@@ -1630,61 +1666,8 @@ const _thoughtType = {
 };
 const _voiceType = (size: 30.0, weight: FontWeight.w600);
 
-const _answerGreen = Color(0xFF1DB954);
+const _answerGreen = thoughtReactionGreen;
 const _onAnswerGreen = Color(0xFF04130A);
-
-class _ReactionCircle extends StatelessWidget {
-  const _ReactionCircle({
-    super.key,
-    required this.glyph,
-    required this.label,
-    required this.size,
-    required this.pressed,
-    required this.onTap,
-    required this.onActivate,
-  });
-
-  final String glyph;
-  final String label;
-  final double size;
-  final bool pressed;
-  final VoidCallback onTap;
-
-  /// The screen reader's tap.
-  final VoidCallback onActivate;
-
-  @override
-  Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return Semantics(
-      button: true,
-      selected: pressed,
-      label: label,
-      excludeSemantics: true,
-      onTap: onActivate,
-      child: Material(
-        color: pressed
-            ? _answerGreen.withValues(alpha: .18)
-            : onSurface.withValues(alpha: .08),
-        shape: CircleBorder(
-          side: pressed
-              ? const BorderSide(color: _answerGreen, width: 2)
-              : BorderSide(color: onSurface.withValues(alpha: .10)),
-        ),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: SizedBox.square(
-            dimension: size,
-            child: Center(
-              child: Text(glyph, style: TextStyle(fontSize: size * .46)),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// The near half of the ring is tinted light blue, as in the agreed mock; on
 /// a light background the same tint would vanish, so it deepens there.

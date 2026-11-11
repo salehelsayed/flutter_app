@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'dart:async';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
@@ -1440,8 +1441,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// A friend's card only shows the thought: reactions and replies are sent
-  /// from the 3D ring's action bar, or from the chat itself.
+  /// Friend cards share their reaction controls and sends with the 3D ring.
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
@@ -1511,6 +1511,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         initialPost: current,
         authorName: authorName,
         postRepo: repository,
+        answers: isOwn ? null : _depthAnswers,
+        onReply: isOwn ? null : _sendDepthReply,
         loadCurrentThought: loadCurrent,
         nowProvider: widget.thoughtNowProvider,
         eligibilityChanges: _thoughtEligibilityChanges.stream,
@@ -1606,17 +1608,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// A reaction or typed reply from the 3D action bar, through the same
-  /// quoted-reply path the full-screen card used.
+  /// Reactions from either Thought view, and typed replies from the 3D bar,
+  /// use the same ordinary quoted-chat-reply path.
   Future<ThoughtReplyStatus> _sendDepthReply(
     String text,
     String postId,
     String messageId,
   ) async {
     final repository = _thoughtPosts;
-    final post = _depthThoughtsByPeerId.values
-        .where((thought) => thought.id == postId)
-        .firstOrNull;
+    final post = await repository?.getPost(postId);
     if (repository == null || post == null) return ThoughtReplyStatus.failed;
     return sendThoughtReply(
       messageId: messageId,
@@ -1633,6 +1633,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       nowProvider: widget.thoughtNowProvider,
     );
   }
+
+  late final _depthAnswers = OrbitDepthAnswers(statusChanges: _depthReplyStatuses);
 
   late final Stream<({String messageId, ThoughtReplyStatus status})>?
   _depthReplyStatuses = switch (widget.messageRepo) {
@@ -3700,8 +3702,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
-            // The chat's own composer answers a quoted thought; its card is
-            // view only, so the in-card sender goes unused.
+            // The card's reactions and chat's typed answers use the same
+            // quoted-reply path.
             onOpenThought: (postId, _) => _openThought(postId),
             postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
@@ -4297,6 +4299,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _searchController.dispose();
     _searchFocusNode.dispose();
     _innerCircleResetTick.dispose();
+    _depthAnswers.dispose();
     _openRowNotifier.removeListener(_onOpenRowNotifierChanged);
     widget.appShellController?.removeListener(_onAppShellChanged);
     widget.onEmbeddedExitActionChanged?.call(null);
@@ -4352,6 +4355,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           unawaited(_openThought(postId, playVideoAtOnce: true)),
       onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
       depthReplyStatusChanges: _depthReplyStatuses,
+      depthAnswers: _depthAnswers,
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),

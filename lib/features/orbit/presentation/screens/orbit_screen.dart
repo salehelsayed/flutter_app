@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'dart:math' as math;
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -348,6 +349,7 @@ class OrbitScreen extends StatefulWidget {
   final ThoughtReplySender? onDepthReply;
   final Stream<({String messageId, ThoughtReplyStatus status})>?
   depthReplyStatusChanges;
+  final OrbitDepthAnswers? depthAnswers;
   final ValueChanged<String>? onThoughtTap;
 
   /// A Thought video started playing straight from the 3D ring card.
@@ -444,6 +446,7 @@ class OrbitScreen extends StatefulWidget {
     this.downloadDepthMedia,
     this.onDepthReply,
     this.depthReplyStatusChanges,
+    this.depthAnswers,
     this.onThoughtTap,
     this.onThoughtVideoPlay,
     this.onThoughtsExpired,
@@ -574,6 +577,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     downloadDepthMedia: widget.downloadDepthMedia,
     onDepthReply: widget.onDepthReply,
     depthReplyStatusChanges: widget.depthReplyStatusChanges,
+    depthAnswers: widget.depthAnswers,
     onThoughtTap: widget.onThoughtTap,
     onThoughtVideoPlay: widget.onThoughtVideoPlay,
     onThoughtsExpired: widget.onThoughtsExpired,
@@ -674,6 +678,7 @@ class _OrbitScreenView extends StatelessWidget {
   final ThoughtReplySender? onDepthReply;
   final Stream<({String messageId, ThoughtReplyStatus status})>?
   depthReplyStatusChanges;
+  final OrbitDepthAnswers? depthAnswers;
   final ValueChanged<String>? onThoughtTap;
 
   /// A Thought video started playing straight from the 3D ring card.
@@ -780,6 +785,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.downloadDepthMedia,
     this.onDepthReply,
     this.depthReplyStatusChanges,
+    this.depthAnswers,
     this.onThoughtTap,
     this.onThoughtVideoPlay,
     this.onThoughtsExpired,
@@ -1354,6 +1360,7 @@ class _OrbitScreenView extends StatelessWidget {
             downloadMedia: downloadDepthMedia,
             onReply: onDepthReply,
             replyStatusChanges: depthReplyStatusChanges,
+            answers: depthAnswers,
             hostChrome: hostChrome,
             child: child!,
           ),

@@ -1289,14 +1289,14 @@ void main() {
       },
     );
 
-    testWidgets('a tap on the 3D thought opens its card view only', (
+    testWidgets('a tap on the 3D thought opens its card with friend reactions', (
       tester,
     ) async {
       await enterDepthWithThought(tester);
       await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
       await pumpOrbitFrames(tester, count: 8);
       expect(find.byType(ThoughtCardScreen), findsOneWidget);
-      expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+      expect(find.byKey(const ValueKey('thought-react-love')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('thought-reply-composer')),
         findsNothing,
@@ -3848,7 +3848,7 @@ void main() {
     });
 
     testWidgets(
-      'latest note opens a view-only current-name card, marks read, and the face opens ordinary chat',
+      'latest note opens a current-name reaction card, marks read, and the face opens ordinary chat',
       (tester) async {
         setLargeTestSurface(tester);
         messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
@@ -3902,7 +3902,7 @@ void main() {
           find.byKey(const ValueKey('thought-reply-composer')),
           findsNothing,
         );
-        expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+        expect(find.byKey(const ValueKey('thought-react-love')), findsOneWidget);
         await tester.tap(find.byKey(const ValueKey('thought-close')));
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsNothing);

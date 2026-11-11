@@ -9,10 +9,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
@@ -24,6 +28,7 @@ import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:uuid/uuid.dart';
 
 /// A Thought photo or video as the full-screen viewer shows it.
 MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
@@ -51,8 +56,8 @@ MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
 
 /// One author's current thought, full screen.
 ///
-/// A friend's card only shows the thought; reactions and replies live on the
-/// 3D ring. The user's own card adds its posting status, Seen by and Delete.
+/// A friend's card shares its reactions with the 3D ring. The user's own card
+/// adds its posting status, Seen by and Delete, without reaction controls.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
@@ -69,11 +74,15 @@ class ThoughtCardScreen extends StatefulWidget {
     this.eligibilityChanges,
     this.nowProvider,
     this.playVideoAtOnce = false,
+    this.answers,
+    this.onReply,
   });
 
   final PostModel initialPost;
   final String authorName;
   final PostRepository postRepo;
+  final OrbitDepthAnswers? answers;
+  final ThoughtReplySender? onReply;
 
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
@@ -901,6 +910,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             ),
           ),
         ],
+        if (_post.isIncoming && widget.answers != null && widget.onReply != null)
+          _reactionRow(l10n),
         if (!_post.isIncoming) ...[
           _postingStatus(l10n),
           if (widget.loadActivity != null) _ownActivity(l10n),
@@ -947,6 +958,43 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       ),
     );
   }
+
+  void _react(ThoughtReaction reaction) {
+    final answers = widget.answers;
+    final sender = widget.onReply;
+    if (answers == null || sender == null || !_post.isIncoming ||
+        !_validated || _closing || !_isLive) return;
+    unawaited(answers.dispatch(
+      answers.value.react(_post.id, reaction, const Uuid().v4()),
+      sender,
+    ));
+  }
+
+  Widget _reactionRow(AppLocalizations l10n) =>
+      ValueListenableBuilder<OrbitDepthVisit>(
+        valueListenable: widget.answers!,
+        builder: (context, visit, _) => Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            for (final reaction in ThoughtReaction.values)
+              ThoughtReactionCircle(
+                key: ValueKey('thought-react-${reaction.name}'),
+                glyph: reaction.glyph,
+                label: switch (reaction) {
+                  ThoughtReaction.love => l10n.thought_react_love,
+                  ThoughtReaction.laugh => l10n.thought_react_laugh,
+                  ThoughtReaction.fire => l10n.thought_react_fire,
+                  ThoughtReaction.applause => l10n.thought_react_applause,
+                },
+                size: 52,
+                pressed: visit.pressed(_post.id, reaction),
+                foregroundColor: Colors.white,
+                onTap: () => _react(reaction),
+                onActivate: () => _react(reaction),
+              ),
+          ],
+        ),
+      );
 
   Widget _postingStatus(AppLocalizations l10n) {
     final status = _retryingPost ? 'sending' : _post.deliveryStatus;
