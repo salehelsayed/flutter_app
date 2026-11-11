@@ -176,6 +176,39 @@ void main() {
     expect(result['postCpuLimitOneCorePct'], 15);
   });
 
+  test('VC-024 rejects a missing declared post-idle start', () {
+    final capture = _samples('caller');
+    expect(_resources(capture)['resourceCriteria'], 'PASS_RECORDED');
+    capture.remove('postObservationStartMs');
+
+    final result = _resources(capture);
+    expect(result['resourceCriteria'], 'FAIL_RECORDED');
+    expect(result['failures'], isNotEmpty);
+    expect(result['nativeExecutedByThisCommand'], false);
+  });
+
+  test(
+    'VC-024 rejects an active recovery call at the declared post-idle start',
+    () {
+      final capture = _samples('caller', postDelayMs: 360000);
+      expect(_resources(capture)['resourceCriteria'], 'PASS_RECORDED');
+      final first = _rows(
+        capture,
+      ).singleWhere((row) => row['atMs'] == capture['postObservationStartMs']);
+      first['canonicalCallId'] = 'fixture-owned-recovery';
+      first['connectedAtMs'] = (first['atMs'] as int) - 1;
+      first['route'] = 'speaker';
+
+      final result = _resources(capture);
+      expect(result['resourceCriteria'], 'FAIL_RECORDED');
+      expect(
+        result['failures'],
+        contains('idle CPU period contains an active call'),
+      );
+      expect(result['nativeExecutedByThisCommand'], false);
+    },
+  );
+
   test('VC-024 rejects the relative in-call CPU branch above its limit', () {
     final result = _resources(_samples('caller', lateSpeakerCpu: 48.01));
     expect(result['resourceCriteria'], 'FAIL_RECORDED');
