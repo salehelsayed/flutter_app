@@ -975,14 +975,19 @@ class _OrbitScreenView extends StatelessWidget {
                       right: 68,
                       width: OrbitControlCircle.size,
                       height: OrbitControlCircle.size,
-                      child: OrbitControlCircle.custom(
-                        child: IconButton(
-                          key: const ValueKey('orbit-calls'),
-                          tooltip: AppLocalizations.of(context)!.calls_title,
-                          padding: EdgeInsets.zero,
-                          color: context.backgroundReadableColors.chromeInk,
-                          onPressed: onOpenCalls,
-                          icon: const Icon(Icons.phone_in_talk_outlined),
+                      child: Semantics(
+                        container: true,
+                        button: true,
+                        child: Tooltip(
+                          message: AppLocalizations.of(context)!.calls_title,
+                          child: GestureDetector(
+                            key: const ValueKey('orbit-calls'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: onOpenCalls,
+                            child: const OrbitControlCircle(
+                              icon: Icons.phone_in_talk_outlined,
+                            ),
+                          ),
                         ),
                       ),
                     ),
