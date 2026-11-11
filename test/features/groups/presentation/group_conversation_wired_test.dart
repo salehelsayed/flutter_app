@@ -17161,43 +17161,58 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
+        expect(mediaAttachmentRepo.count, 0);
         final sendFuture = await startScreenSend(tester, 'Cancel collide');
-        await pumpUntil(tester, () => uploadStarted.length == 1, maxPumps: 120);
-        await pumpFrames(tester, count: 5);
+        late String collidingMessageId;
+        try {
+          await pumpUntilAsyncWorkSettles(
+            tester,
+            () =>
+                uploadStarted.length == 1 && mediaAttachmentRepo.count == 1,
+            maxPumps: 120,
+          );
+          await pumpFrames(tester, count: 5);
 
-        // The durable group row is upload_pending; learn the colliding
-        // message id and seed the same-ID DIRECT-lane sibling BEFORE the
-        // cancel-driven group terminalization runs.
-        final pendingGroup = await mediaAttachmentRepo
-            .getUploadPendingAttachments(owner: MediaOwnerLane.group);
-        expect(pendingGroup, hasLength(1));
-        final collidingMessageId = pendingGroup.single.messageId;
-        await mediaAttachmentRepo.saveAttachment(
-          MediaAttachment(
-            id: 'att-direct-sibling',
-            messageId: collidingMessageId,
-            mime: 'image/jpeg',
-            size: 10,
-            mediaType: 'image',
-            localPath:
-                'pending_uploads/$collidingMessageId/att-direct-sibling.jpg',
-            downloadStatus: 'upload_pending',
-            createdAt: '2026-01-15T12:02:00.000Z',
-          ),
-          owner: MediaOwnerLane.direct,
-        );
+          // The durable group row is upload_pending; learn the colliding
+          // message id and seed the same-ID DIRECT-lane sibling BEFORE the
+          // cancel-driven group terminalization runs.
+          final pendingGroup = await mediaAttachmentRepo
+              .getUploadPendingAttachments(owner: MediaOwnerLane.group);
+          expect(pendingGroup, hasLength(1));
+          expect(uploadStarted, hasLength(1));
+          collidingMessageId = pendingGroup.single.messageId;
+          await mediaAttachmentRepo.saveAttachment(
+            MediaAttachment(
+              id: 'att-direct-sibling',
+              messageId: collidingMessageId,
+              mime: 'image/jpeg',
+              size: 10,
+              mediaType: 'image',
+              localPath:
+                  'pending_uploads/$collidingMessageId/att-direct-sibling.jpg',
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-01-15T12:02:00.000Z',
+            ),
+            owner: MediaOwnerLane.direct,
+          );
 
-        final cancellingScreen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        expect(cancellingScreen.onCancelUpload, isNotNull);
-        cancellingScreen.onCancelUpload!.call();
-        await tester.pump();
-
-        uploadGate.complete();
-        await tester.runAsync(() async {
-          await sendFuture.future;
-        });
+          final cancellingScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(cancellingScreen.onCancelUpload, isNotNull);
+          cancellingScreen.onCancelUpload!.call();
+          await tester.pump();
+        } finally {
+          // A failed assertion must not strand this test's owned send phase.
+          if (!uploadGate.isCompleted) {
+            uploadGate.complete();
+          }
+          await pumpUntilFuturesComplete(
+            tester,
+            [sendFuture.future],
+            maxPumps: 120,
+          );
+        }
         await pumpUntil(
           tester,
           () =>
