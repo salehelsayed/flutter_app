@@ -45,7 +45,8 @@ class OrbitDepthSend {
 typedef OrbitDepthDispatch = ({OrbitDepthVisit visit, OrbitDepthSend send});
 
 /// What the user has answered on the ring's thoughts during one visit to the
-/// 3D view. The visit ends when the user leaves 3D, and all of it goes.
+/// 3D view. Drafts and composer end with that visit; the wired host can retain
+/// its answers for the full-screen card through [OrbitDepthAnswers].
 ///
 /// [sends] is the one ledger, in the order they started; which emoji is
 /// pressed and which status a thought shows are read from it.

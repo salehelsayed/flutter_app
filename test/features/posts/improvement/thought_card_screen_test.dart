@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
@@ -45,6 +47,11 @@ void main() {
   late GlobalKey<NavigatorState> navigator;
   late _RecordingNavigatorObserver navigationObserver;
   late JustAudioPlatform originalAudioPlatform;
+  late OrbitDepthAnswers answers;
+  late StreamController<({String messageId, ThoughtReplyStatus status})>
+  reactionStatuses;
+  late List<({String text, String postId, String messageId})> reactions;
+  late ThoughtReplyStatus reactionResult;
 
   setUp(() {
     now = initialNow;
@@ -55,9 +62,15 @@ void main() {
     navigationObserver = _RecordingNavigatorObserver();
     originalAudioPlatform = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
+    reactions = [];
+    reactionResult = ThoughtReplyStatus.sent;
+    reactionStatuses = StreamController.broadcast();
+    answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
   });
 
   tearDown(() async {
+    answers.dispose();
+    await reactionStatuses.close();
     await eligibility.close();
     posts.dispose();
     JustAudioPlatform.instance = originalAudioPlatform;
@@ -88,9 +101,18 @@ void main() {
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
     bool playVideoAtOnce = false,
+    double? textScale,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        builder: textScale == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(textScale)),
+                child: child!,
+              ),
         navigatorKey: navigator,
         navigatorObservers: [navigationObserver],
         locale: locale,
@@ -107,6 +129,11 @@ void main() {
             initialPost: initialPost,
             authorName: authorName,
             postRepo: posts,
+            answers: answers,
+            onReply: (text, postId, messageId) async {
+              reactions.add((text: text, postId: postId, messageId: messageId));
+              return reactionResult;
+            },
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
             replyChanges: replyChanges,
@@ -144,7 +171,7 @@ void main() {
   }
 
   testWidgets(
-    'shows name, age and text, marks shown thought and exposes no engagement',
+    'shows name, age and text, marks shown thought without legacy post controls',
     (tester) async {
       final thought = _thought(initialNow);
       await posts.savePost(thought);
@@ -164,7 +191,7 @@ void main() {
     },
   );
 
-  testWidgets("a friend's card is view only: no reactions, reply field or "
+  testWidgets("a friend's card shows reactions without a reply field or "
       'microphone, with its header and Close', (tester) async {
     final thought = _thought(initialNow);
     await posts.savePost(thought);
@@ -177,9 +204,12 @@ void main() {
     expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
     for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
-      expect(find.byKey(ValueKey('thought-react-$reaction')), findsNothing);
+      expect(
+        find.byKey(ValueKey('thought-react-$reaction')).hitTestable(),
+        findsOneWidget,
+      );
     }
-    expect(find.text('❤️'), findsNothing);
+    expect(find.text('❤️'), findsOneWidget);
     expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Reply to Alice…'), findsNothing);
@@ -188,6 +218,74 @@ void main() {
     expect(find.byKey(const ValueKey('thought-activity-open')), findsNothing);
     await finish(tester);
   });
+
+  testWidgets('a later failed card reaction retries the same quoted reply ID', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    reactionResult = ThoughtReplyStatus.queued;
+    await openCard(tester, thought);
+    final love = find.byKey(const ValueKey('thought-react-love'));
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, hasLength(1));
+    final first = reactions.single;
+    expect(first.text, '❤️');
+    expect(first.postId, thought.id);
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isTrue);
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, hasLength(1));
+    reactionStatuses.add((
+      messageId: first.messageId,
+      status: ThoughtReplyStatus.failed,
+    ));
+    await tester.pump();
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isFalse);
+    reactionResult = ThoughtReplyStatus.sent;
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, [first, first]);
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isTrue);
+    await finish(tester);
+  });
+
+  for (final locale in [const Locale('en'), const Locale('ar')]) {
+    for (final photo in [false, true]) {
+      testWidgets('friend ${photo ? 'photo' : 'text'} reactions fit at320px '
+          'with2x text in ${locale.languageCode}', (tester) async {
+        tester.view.physicalSize = const Size(320, 568);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final thought = _thought(
+          initialNow,
+        ).copyWith(mediaKind: photo ? 'image' : 'none');
+        await posts.savePost(thought);
+        if (photo) {
+          final file = _tempFile('reaction-photo.png', pngBytes: true);
+          await posts.savePostMediaAttachment(
+            _attachment(
+              'image',
+            ).copyWith(localPath: file.path, downloadStatus: 'done'),
+          );
+        }
+        await openCard(tester, thought, locale: locale, textScale: 2);
+        await pumpMediaFrames(tester);
+        for (final name in ['love', 'laugh', 'fire', 'applause']) {
+          final button = find.byKey(ValueKey('thought-react-$name'));
+          expect(button.hitTestable(), findsOneWidget);
+          final bounds = tester.getRect(button);
+          expect(bounds.left, greaterThanOrEqualTo(0));
+          expect(bounds.right, lessThanOrEqualTo(320));
+          expect(bounds.bottom, lessThanOrEqualTo(568));
+        }
+        expect(tester.takeException(), isNull);
+        await finish(tester);
+      });
+    }
+  }
 
   testWidgets("a friend's tags are plain words, as written", (tester) async {
     final thought = _thought(
@@ -288,7 +386,9 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('thought-delete')), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+    for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
+      expect(find.byKey(ValueKey('thought-react-$reaction')), findsNothing);
+    }
     expect(find.byType(TextField), findsNothing);
     await finish(tester);
   });

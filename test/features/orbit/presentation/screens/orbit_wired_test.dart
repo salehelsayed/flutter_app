@@ -105,6 +105,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_no
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as p2p_connection;
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -1025,9 +1026,28 @@ void main() {
     Future<_OrbitThoughtPostRepository> enterDepthWithThought(
       WidgetTester tester, {
       bool photo = false,
+      bool online = false,
     }) async {
       setLargeTestSurface(tester);
       messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
+      if (online) {
+        p2pService.emitState(
+          NodeState(
+            peerId: testIdentity.peerId,
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            connections: [
+              p2p_connection.ConnectionState(
+                peerId: testContact.peerId,
+                multiaddrs: const ['/ip4/127.0.0.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
+      }
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
       final posts = _OrbitThoughtPostRepository();
@@ -1098,7 +1118,7 @@ void main() {
         'full-screen friend ${photo ? 'photo' : 'text'} reactions dispatch '
         'all four quoted replies and share selection with 3D',
         (tester) async {
-          await enterDepthWithThought(tester, photo: photo);
+          await enterDepthWithThought(tester, photo: photo, online: true);
           await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
           await pumpOrbitFrames(tester, count: 12);
           expect(find.byType(ThoughtCardScreen), findsOneWidget);
@@ -1147,7 +1167,7 @@ void main() {
     testWidgets(
       'full-screen friend reactions retain 3D selection and update it on return',
       (tester) async {
-        await enterDepthWithThought(tester);
+        await enterDepthWithThought(tester, online: true);
         await tester.tap(find.byKey(const ValueKey('orbit-depth-react-love')));
         await pumpOrbitFrames(tester, count: 8);
         await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));

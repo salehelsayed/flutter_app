@@ -1634,7 +1634,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
-  late final _depthAnswers = OrbitDepthAnswers(statusChanges: _depthReplyStatuses);
+  late final _depthAnswers = OrbitDepthAnswers(
+    statusChanges: _depthReplyStatuses,
+  );
 
   late final Stream<({String messageId, ThoughtReplyStatus status})>?
   _depthReplyStatuses = switch (widget.messageRepo) {

@@ -962,12 +962,20 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   void _react(ThoughtReaction reaction) {
     final answers = widget.answers;
     final sender = widget.onReply;
-    if (answers == null || sender == null || !_post.isIncoming ||
-        !_validated || _closing || !_isLive) return;
-    unawaited(answers.dispatch(
-      answers.value.react(_post.id, reaction, const Uuid().v4()),
-      sender,
-    ));
+    if (answers == null ||
+        sender == null ||
+        !_post.isIncoming ||
+        !_validated ||
+        _closing ||
+        !_isLive) {
+      return;
+    }
+    unawaited(
+      answers.dispatch(
+        answers.value.react(_post.id, reaction, const Uuid().v4()),
+        sender,
+      ),
+    );
   }
 
   Widget _reactionRow(AppLocalizations l10n) =>
