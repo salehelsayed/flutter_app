@@ -372,6 +372,10 @@ final class _Harness {
   Future<IncomingCallSignalOutcome> receive(CallWireSignal signal) async =>
       handler.handle(await frame(signal));
 
+  Future<void> admitIncoming() async {
+    expect(await receive(_v2()), IncomingCallSignalOutcome.accepted);
+  }
+
   Future<void> outgoing() async {
     contexts.storeOutgoingV2(
       invite: _v2(outgoing: true),
@@ -445,6 +449,7 @@ void main() {
       mailbox: true,
     );
     final peek = await h.handler.peek(invite);
+    expect(peek, isNotNull);
     expect(peek!.isInvite, isTrue);
     expect(peek.videoEvent, CallSignalV2Type.invite);
     expect((await h.handler.peek(terminal))!.isTerminal, isTrue);
@@ -482,7 +487,7 @@ void main() {
     'v2 terminal proves exact mailbox custody and cancels native first',
     () async {
       final h = _Harness();
-      await h.receive(_v2());
+      await h.admitIncoming();
       var nativePrecedesTerminal = false;
       h.native.onCancel = () {
         nativePrecedesTerminal =
@@ -521,7 +526,7 @@ void main() {
     'late v2 accept cannot recreate context after terminal cleanup',
     () async {
       final h = _Harness();
-      await h.receive(_v2());
+      await h.admitIncoming();
       await h.receive(_v2(event: 'terminate', sequence: 2));
       final late = await h.frame(_v2(event: 'accept', sequence: 3));
       final effectCount = h.effects.effects.length;
@@ -633,7 +638,7 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       h.contexts.recordLocalAcceptance(_callId, media: CallMediaKind.video);
       final before = List<CallEffectType>.of(h.effects.effects);
       final signal = _v2(event: event, sequence: 2);
@@ -650,7 +655,7 @@ void main() {
     'unwired v2 media is refused without the legacy media effects',
     () async {
       final h = _Harness();
-      await h.receive(_v2());
+      await h.admitIncoming();
       final before = List<CallEffectType>.of(h.effects.effects);
       expect(
         await h.receive(_v2(event: 'media_request', sequence: 2)),
@@ -674,7 +679,7 @@ void main() {
               : IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       final frame = await h.frame(_v2(event: 'media_request', sequence: 2));
       expect(await h.handler.handle(frame), IncomingCallSignalOutcome.deferred);
       expect(await h.handler.handle(frame), IncomingCallSignalOutcome.accepted);
@@ -696,7 +701,7 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       final frame = await h.frame(_v2(event: 'media_request', sequence: 2));
       final before = List<CallEffectType>.of(h.effects.effects);
       expect(await h.handler.handle(frame), IncomingCallSignalOutcome.deferred);
@@ -714,7 +719,7 @@ void main() {
         return IncomingCallSignalOutcome.accepted;
       },
     );
-    await h.receive(_v2());
+    await h.admitIncoming();
     await h.receive(_v2(event: 'media_request', sequence: 2));
     expect(fence!(), isTrue);
     await h.receive(_v2(event: 'terminate', sequence: 3));
@@ -732,7 +737,7 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       await h.receive(_v2(event: 'media_request', sequence: 2));
       expect(fence!(), isTrue);
       h.native.cancelGate = Completer<void>();
@@ -768,7 +773,7 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       await h.receive(_v2(event: 'media_request', sequence: 2));
       expect(fence!(), isTrue);
       h.nowMs += 45000;
@@ -786,7 +791,7 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.receive(_v2());
+      await h.admitIncoming();
       await h.receive(_v2(event: 'terminate', sequence: 2));
       expect(
         await h.receive(_v2(event: 'media_request', sequence: 3)),
@@ -805,7 +810,7 @@ void main() {
         return IncomingCallSignalOutcome.accepted;
       },
     );
-    await h.receive(_v2());
+    await h.admitIncoming();
     expect(
       await h.receive(
         _v2(event: 'media_request', callId: _otherCall, sequence: 2),
