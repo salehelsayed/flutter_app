@@ -6,6 +6,7 @@ import '../domain/call_engine.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
 import '../domain/call_media.dart';
+import '../domain/call_media_switch.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal_v2.dart';
 import '../domain/call_state.dart';
@@ -34,7 +35,8 @@ typedef SendCallV2MediaSignal =
 /// queue: the coordinator may execute another job before dispatch completes.
 /// Two description slots are reserved separately from the bounded ICE queue,
 /// so ICE arriving before SDP cannot prevent the offer that drains it.
-final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
+final class CallV2NegotiationEffectExecutor
+    implements CallEffectExecutor, CallMediaSwitchHost {
   CallV2NegotiationEffectExecutor({
     required this.callId,
     required this.legacy,
@@ -47,6 +49,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
     this.videoEnabled = false,
     this.maxPendingMedia = 64,
     this.monotonicNowMs,
+    this.onMediaChanged,
     this.timerScheduler = const DartCallTimerScheduler(),
   }) {
     if (maxPendingMedia <= 0 || maxPendingMedia > 128) {
@@ -65,6 +68,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   final bool videoEnabled;
   final int maxPendingMedia;
   final int Function()? monotonicNowMs;
+  final void Function()? onMediaChanged;
   final CallTimerScheduler timerScheduler;
 
   final Stopwatch _elapsed = Stopwatch()..start();
@@ -98,7 +102,402 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   bool _closed = false;
   bool _failed = false;
 
-  CallMediaSwitchEffectExecutor? get mediaSwitch => null;
+  CallMediaSwitchEffectExecutor? _switch;
+  final Map<String, _CachedSwitchSignal> _switchSignals = {};
+  final Map<String, _IncomingSwitchRequest> _switchRequests = {};
+  bool _awaitingOptionalOffer = false;
+  bool _mediaRetired = false;
+  bool Function()? _optionalTokenCurrent;
+
+  CallMediaSwitchEffectExecutor? get mediaSwitch {
+    if (!current) return null;
+    return _switch ??= CallMediaSwitchEffectExecutor(
+      host: this,
+      localIsCaller: _context!.direction == CallDirection.outgoing,
+      initialMedia: _context!.initialAcceptedMedia!,
+      nowMs: () => _monotonicMs,
+      idSource: idSource,
+      videoEnabled: videoEnabled,
+      timerScheduler: timerScheduler,
+      onChanged: onMediaChanged,
+    );
+  }
+
+  @override
+  bool get current =>
+      _ready && _initialCommitted && _snapshot?.state == CallState.connected;
+
+  @override
+  CallVideoSession get session => _session!;
+
+  /// The same tail used by initial SDP and the single ICE listener.
+  @override
+  Future<void> serialize(Future<void> Function() job) {
+    final result = _tail.then<void>((_) async {
+      if (current) await job();
+    });
+    _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
+  }
+
+  @override
+  Future<bool> freshUpgradeAuthority() async {
+    if (!current) return false;
+    try {
+      await _freshAuthority();
+    } catch (_) {
+      return false;
+    }
+    return current;
+  }
+
+  @override
+  CallVideoNegotiation beginNegotiation({
+    required String negotiationId,
+    required int revision,
+    required CallMediaKind media,
+    required bool Function() canApply,
+  }) {
+    if (!current || !_allowed(canApply)) throw const _V2WorkRetired();
+    final preserveRemote = _awaitingOptionalOffer;
+    _awaitingOptionalOffer = false;
+    _mediaRetired = false;
+    _localAnnounced = false;
+    _remoteApplied = false;
+    _localCandidates.clear();
+    if (preserveRemote) {
+      _remoteCandidates.removeWhere(
+        (work) => work.signal.payload['negotiation_id'] != negotiationId,
+      );
+    } else {
+      _remoteCandidates.clear();
+    }
+    final epoch = ++_epoch;
+    _optionalTokenCurrent = canApply;
+    _token = _session!.beginNegotiation(
+      negotiationId: negotiationId,
+      mediaRevision: revision,
+      media: media,
+      canApply: () =>
+          current && _epoch == epoch && !_mediaRetired && _allowed(canApply),
+    );
+    return _token!;
+  }
+
+  @override
+  void expectRemoteOffer() {
+    if (_awaitingOptionalOffer) return;
+    _awaitingOptionalOffer = true;
+    _mediaRetired = true;
+    _localAnnounced = false;
+    _remoteApplied = false;
+    _localCandidates.clear();
+    _remoteCandidates.clear();
+  }
+
+  @override
+  Future<void> remoteDescriptionApplied(CallVideoNegotiation token) async {
+    if (!identical(token, _token) || !_candidateReady) {
+      throw const _V2WorkRetired();
+    }
+    _remoteApplied = true;
+    await _flushRemoteCandidates();
+    if (!identical(token, _token) || !_candidateReady) {
+      throw const _V2WorkRetired();
+    }
+  }
+
+  @override
+  void localDescriptionAnnounced(CallVideoNegotiation token) {
+    if (!identical(token, _token) || !_candidateReady) return;
+    _localAnnounced = true;
+    _scheduleLocalDrain();
+  }
+
+  @override
+  Future<bool> closeVideo() {
+    _mediaRetired = true;
+    _awaitingOptionalOffer = false;
+    _localAnnounced = false;
+    _remoteApplied = false;
+    _localCandidates.clear();
+    _remoteCandidates.clear();
+    return _session?.retireVideo() ?? Future.value(true);
+  }
+
+  @override
+  Future<bool> sendControl(
+    MediaSwitchEffect effect, {
+    required bool Function() canApply,
+  }) {
+    final kind = effect.replayOf ?? effect.kind;
+    final (event, payload) = switch (kind) {
+      MediaSwitchEffectKind.sendRequest => (
+        CallSignalV2Type.mediaRequest,
+        <String, Object?>{
+          'switch_id': effect.switchId,
+          'base_revision': effect.baseRevision,
+          'target_media': effect.media.name,
+          'camera': effect.camera.name,
+        },
+      ),
+      MediaSwitchEffectKind.sendResponse => (
+        CallSignalV2Type.mediaResponse,
+        <String, Object?>{
+          'switch_id': effect.switchId,
+          'base_revision': effect.baseRevision,
+          'decision': effect.response!.name,
+          'camera': effect.camera.name,
+        },
+      ),
+      MediaSwitchEffectKind.sendCommit || MediaSwitchEffectKind.sendAck => (
+        kind == MediaSwitchEffectKind.sendCommit
+            ? CallSignalV2Type.mediaCommit
+            : CallSignalV2Type.mediaCommitAck,
+        <String, Object?>{
+          'switch_id': effect.switchId,
+          'media_revision': effect.revision,
+          'media': effect.media.name,
+        },
+      ),
+      MediaSwitchEffectKind.sendAbort => (
+        CallSignalV2Type.mediaAbort,
+        <String, Object?>{
+          'switch_id': effect.switchId,
+          'base_revision': effect.baseRevision,
+          'media_revision': effect.revision,
+          'media': 'audio',
+          'reason': effect.abortReason!.name,
+        },
+      ),
+      _ => throw const _V2WorkRetired(),
+    };
+    final key =
+        '${effect.switchId}:${kind.name}:${effect.response?.name}:${effect.deadlineMs}';
+    return _sendOptional(
+      key: key,
+      event: event,
+      payload: payload,
+      deadlineMs: effect.deadlineMs,
+      canApply: canApply,
+      reservedAbort: kind == MediaSwitchEffectKind.sendAbort,
+    );
+  }
+
+  @override
+  Future<bool> sendDescription({
+    required String switchId,
+    required CallVideoNegotiation token,
+    required CallSessionDescription description,
+    required bool repair,
+    required int deadlineMs,
+    required bool Function() canApply,
+  }) => _sendOptional(
+    key: '${token.negotiationId}:${description.type.name}',
+    event: description.type == CallSessionDescriptionType.offer
+        ? CallSignalV2Type.offer
+        : CallSignalV2Type.answer,
+    payload: {
+      'negotiation_id': token.negotiationId,
+      'purpose': repair ? 'media_repair' : 'media_switch',
+      'switch_id': switchId,
+      'media_revision': token.mediaRevision,
+      'media': token.media.name,
+      'description': description.value,
+      'fingerprint': description.fingerprint,
+    },
+    deadlineMs: deadlineMs,
+    canApply: () => identical(token, _token) && _allowed(canApply),
+  );
+
+  Future<bool> _sendOptional({
+    required String key,
+    required CallSignalV2Type event,
+    required Map<String, Object?> payload,
+    required int deadlineMs,
+    required bool Function() canApply,
+    bool reservedAbort = false,
+  }) async {
+    if (!current || !_allowed(canApply) || _monotonicMs >= deadlineMs) {
+      return false;
+    }
+    var cached = _switchSignals[key];
+    if (cached == null) {
+      if (_switchSignals.length >= (reservedAbort ? 64 : 60)) return false;
+      final now = _nowMs;
+      final expires = min(
+        _originalEndpoint!.expiresAtMs,
+        now + min(30000, deadlineMs - _monotonicMs),
+      );
+      if (expires <= now) return false;
+      final metadata = contexts.reserveNextMetadata(
+        callId,
+        iceGeneration: legacy.engine.iceGeneration,
+      );
+      final context = _context!;
+      final signal = CallSignalV2.fromMap({
+        'schema': CallSignalV2.schema,
+        'call_id': callId.value,
+        'message_id': idSource(),
+        'event': event.wireName,
+        'sender_account_peer_id': context.localAccountPeerId,
+        'sender_device_peer_id': context.localDevicePeerId,
+        'recipient_account_peer_id': context.remoteAccountPeerId,
+        'recipient_device_peer_id': context.remoteDevicePeerId,
+        'sender_sequence': metadata.senderSequence,
+        'ice_generation': metadata.iceGeneration,
+        'created_at_ms': now,
+        'expires_at_ms': expires,
+        'payload': payload,
+      }, videoEnabled: videoEnabled);
+      cached = _CachedSwitchSignal(signal, deadlineMs, canApply);
+      // Reserving before the first await retains exact IDs through retries.
+      // The shared production adapter reserves the immutable sealed bytes.
+      _switchSignals[key] = cached;
+    } else if (cached.signal.event != event ||
+        cached.deadlineMs != deadlineMs ||
+        cached.signal.payload.length != payload.length ||
+        !payload.keys.every(
+          (key) => cached!.signal.payload[key] == payload[key],
+        )) {
+      return false;
+    }
+    final captured = cached;
+    bool valid() =>
+        current &&
+        _monotonicMs < captured.deadlineMs &&
+        _nowMs < captured.signal.expiresAtMs &&
+        _allowed(captured.canApply) &&
+        _allowed(canApply);
+    if (!valid()) return false;
+    final delivered = await sendSignal(
+      signal: captured.signal,
+      callHandle: _context!.callHandle,
+      admittedEndpoint: _originalEndpoint!,
+      canApply: valid,
+    );
+    return delivered && valid();
+  }
+
+  IncomingCallSignalOutcome _handleSwitch(_V2MediaWork work) {
+    final owner = mediaSwitch;
+    if (owner == null) return IncomingCallSignalOutcome.rejected;
+    final signal = work.signal;
+    final p = signal.payload;
+    final remoteIsCaller = _context!.direction == CallDirection.incoming;
+    bool accepted;
+    switch (signal.event) {
+      case CallSignalV2Type.mediaRequest:
+        final id = p['switch_id']! as String;
+        var known = _switchRequests[id];
+        if (known == null) {
+          if (_switchRequests.length >= owner.maximumTransactions) {
+            return IncomingCallSignalOutcome.deferred;
+          }
+          final age = max(0, _nowMs - signal.createdAtMs);
+          final request = MediaSwitchRequest(
+            id: id,
+            baseRevision: p['base_revision']! as int,
+            target: CallMediaKind.values.byName(p['target_media']! as String),
+            requesterIsCaller: remoteIsCaller,
+            createdAtMs: _monotonicMs - age,
+            deadlineMs:
+                _monotonicMs + min(signal.expiresAtMs - _nowMs, 30000 - age),
+            camera: CallCameraState.values.byName(p['camera']! as String),
+          );
+          known = _IncomingSwitchRequest(
+            request,
+            signal.createdAtMs,
+            signal.expiresAtMs,
+          );
+          _switchRequests[id] = known;
+        } else if (known.createdAtMs != signal.createdAtMs ||
+            known.expiresAtMs != signal.expiresAtMs ||
+            known.request.baseRevision != p['base_revision'] ||
+            known.request.target.name != p['target_media'] ||
+            known.request.camera.name != p['camera']) {
+          return IncomingCallSignalOutcome.rejected;
+        }
+        accepted = owner.request(
+          known.request,
+          canApply: () => _workCurrent(work),
+        );
+      case CallSignalV2Type.mediaResponse:
+        accepted = owner.respond(
+          id: p['switch_id']! as String,
+          baseRevision: p['base_revision']! as int,
+          fromCaller: remoteIsCaller,
+          response: MediaSwitchResponse.values.byName(p['decision']! as String),
+          camera: CallCameraState.values.byName(p['camera']! as String),
+          canApply: () => _workCurrent(work),
+        );
+      case CallSignalV2Type.offer:
+      case CallSignalV2Type.answer:
+        if (p['purpose'] != 'media_switch' && p['purpose'] != 'media_repair') {
+          return IncomingCallSignalOutcome.rejected;
+        }
+        accepted = owner.receiveDescription(
+          id: p['switch_id']! as String,
+          negotiationId: p['negotiation_id']! as String,
+          revision: p['media_revision']! as int,
+          media: CallMediaKind.values.byName(p['media']! as String),
+          description: _description(signal),
+          repair: p['purpose'] == 'media_repair',
+          canApply: () => _workCurrent(work),
+        );
+      case CallSignalV2Type.mediaCommit:
+        accepted = owner.receiveCommit(
+          id: p['switch_id']! as String,
+          revision: p['media_revision']! as int,
+          media: CallMediaKind.values.byName(p['media']! as String),
+        );
+      case CallSignalV2Type.mediaCommitAck:
+        accepted = owner.receiveAck(
+          id: p['switch_id']! as String,
+          revision: p['media_revision']! as int,
+          media: CallMediaKind.values.byName(p['media']! as String),
+        );
+      case CallSignalV2Type.mediaAbort:
+        accepted = owner.abort(
+          id: p['switch_id']! as String,
+          baseRevision: p['base_revision']! as int,
+          revision: p['media_revision']! as int,
+          remote: true,
+          reason: MediaSwitchAbortReason.values.byName(p['reason']! as String),
+        );
+      default:
+        return IncomingCallSignalOutcome.rejected;
+    }
+    if (accepted && _seenIncoming.length < 128) {
+      _seenIncoming.add(signal.messageId);
+    }
+    return accepted
+        ? IncomingCallSignalOutcome.accepted
+        : IncomingCallSignalOutcome.rejected;
+  }
+
+  bool _reservedSwitchControl(CallSignalV2 signal) {
+    final owner = _switch;
+    if (!_initialCommitted || owner == null) return false;
+    final id = signal.payload['switch_id'];
+    return switch (signal.event) {
+      CallSignalV2Type.mediaResponse => id == owner.machine.currentSwitchId,
+      CallSignalV2Type.offer || CallSignalV2Type.answer =>
+        id == owner.machine.selectedSwitchId &&
+            (signal.payload['purpose'] == 'media_switch' ||
+                signal.payload['purpose'] == 'media_repair'),
+      CallSignalV2Type.mediaAbort ||
+      CallSignalV2Type.mediaCommit ||
+      CallSignalV2Type.mediaCommitAck => id == owner.machine.selectedSwitchId,
+      _ => false,
+    };
+  }
+
+  bool get _candidateReady =>
+      _ready &&
+      !_mediaRetired &&
+      !_awaitingOptionalOffer &&
+      (_optionalTokenCurrent == null || _allowed(_optionalTokenCurrent!));
 
   CallVideoSession? get videoSession => _session;
   CallVideoNegotiation? get negotiation => _token;
@@ -110,6 +509,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
       final tail = _tail;
       await tail;
       await Future.wait<void>(_background.toList(growable: false));
+      await _switch?.workSettled;
       if (identical(tail, _tail) && _background.isEmpty) return;
     }
   }
@@ -200,8 +600,13 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
     if (_seenIncoming.contains(signal.messageId)) {
       return IncomingCallSignalOutcome.duplicate;
     }
-    if (_seenIncoming.length >= 128) return IncomingCallSignalOutcome.deferred;
+    if (_seenIncoming.length >= 128 && !_reservedSwitchControl(signal)) {
+      return IncomingCallSignalOutcome.deferred;
+    }
     final work = _V2MediaWork(signal, callHandle, canApply);
+    if (_initialCommitted && signal.event != CallSignalV2Type.ice) {
+      return _handleSwitch(work);
+    }
     switch (signal.event) {
       case CallSignalV2Type.offer:
       case CallSignalV2Type.answer:
@@ -248,7 +653,12 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
         );
         return IncomingCallSignalOutcome.accepted;
       case CallSignalV2Type.ice:
-        final expectedId = _token?.negotiationId ?? _incomingNegotiationId;
+        if (_initialCommitted && _mediaRetired && !_awaitingOptionalOffer) {
+          return IncomingCallSignalOutcome.rejected;
+        }
+        final expectedId = _awaitingOptionalOffer
+            ? null
+            : (_token?.negotiationId ?? _incomingNegotiationId);
         if (expectedId != null &&
             signal.payload['negotiation_id'] != expectedId) {
           return IncomingCallSignalOutcome.rejected;
@@ -277,7 +687,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
     }
     final token = _token;
     if (!videoEnabled ||
-        !_ready ||
+        !_candidateReady ||
         token == null ||
         snapshot.callId != callId ||
         candidate.iceGeneration != legacy.engine.iceGeneration ||
@@ -285,6 +695,10 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
       return true;
     }
     if (_localCandidates.length + _localInFlight >= maxPendingMedia) {
+      if (_initialCommitted && _switch != null) {
+        _switch!.failOptionalMedia();
+        return true;
+      }
       final failure = _failure(snapshot);
       if (failure != null) _track(_dispatchSafely(failure));
       return true;
@@ -451,6 +865,10 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
     _V2MediaWork? work,
   ]) async {
     _check(work);
+    final candidateToken = type == CallSignalV2Type.ice ? _token : null;
+    if (candidateToken != null && !_candidateReady) {
+      throw const _V2WorkRetired();
+    }
     final now = _nowMs;
     final expires = min(
       now + 30000,
@@ -483,6 +901,8 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
       admittedEndpoint: _originalEndpoint!,
       canApply: () =>
           _ready &&
+          (candidateToken == null ||
+              (_candidateReady && identical(candidateToken, _token))) &&
           _nowMs < expires &&
           (_initialCommitted || _budgetOpen) &&
           (work == null || _workCurrent(work)),
@@ -496,7 +916,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   void _scheduleLocalDrain() {
-    if (!_ready ||
+    if (!_candidateReady ||
         !_localAnnounced ||
         _localDrainScheduled ||
         _localCandidates.isEmpty) {
@@ -507,6 +927,9 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
     _localDrainScheduled = true;
     _queueBackground(snapshot, () async {
       try {
+        if (!_candidateReady || !_localAnnounced || _localCandidates.isEmpty) {
+          return null;
+        }
         final pending = _localCandidates.removeFirst();
         _localInFlight = 1;
         if (!identical(pending.token, _token) ||
@@ -530,7 +953,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   void _scheduleRemoteDrain() {
-    if (!_ready ||
+    if (!_candidateReady ||
         !_remoteApplied ||
         _remoteDrainScheduled ||
         _remoteCandidates.isEmpty) {
@@ -551,9 +974,13 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   Future<void> _flushRemoteCandidates() async {
-    if (!_remoteApplied) return;
+    if (!_remoteApplied || !_candidateReady) return;
+    final token = _token;
     while (_remoteCandidates.isNotEmpty) {
       _check();
+      if (!_candidateReady || !identical(token, _token)) {
+        throw const _V2WorkRetired();
+      }
       final batch = <CallIceCandidate>[];
       final works = <_V2MediaWork>[];
       while (_remoteCandidates.isNotEmpty &&
@@ -580,6 +1007,9 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
         if (!works.every(_workCurrent)) continue;
         await legacy.engine.addIceCandidates(batch);
         _check();
+        if (!_candidateReady || !identical(token, _token)) {
+          throw const _V2WorkRetired();
+        }
       } finally {
         _remoteInFlight = 0;
       }
@@ -597,6 +1027,10 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
       } on _V2WorkRetired {
         return null;
       } catch (_) {
+        if (_initialCommitted && _switch != null) {
+          _switch!.failOptionalMedia();
+          return null;
+        }
         return _failure(snapshot);
       }
     });
@@ -850,6 +1284,7 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
 
   Future<void> _close() async {
     _closed = true;
+    _switch?.terminate();
     _epoch++;
     _initialTimer?.cancel();
     _remoteCandidates.clear();
@@ -893,4 +1328,22 @@ bool _allowed(bool Function() predicate) {
   } catch (_) {
     return false;
   }
+}
+
+final class _CachedSwitchSignal {
+  const _CachedSwitchSignal(this.signal, this.deadlineMs, this.canApply);
+  final CallSignalV2 signal;
+  final int deadlineMs;
+  final bool Function() canApply;
+}
+
+final class _IncomingSwitchRequest {
+  const _IncomingSwitchRequest(
+    this.request,
+    this.createdAtMs,
+    this.expiresAtMs,
+  );
+  final MediaSwitchRequest request;
+  final int createdAtMs;
+  final int expiresAtMs;
 }

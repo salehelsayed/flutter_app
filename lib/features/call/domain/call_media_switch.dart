@@ -121,6 +121,7 @@ final class _Transaction {
   bool selected = false;
   bool offerApplied = false;
   bool answerApplied = false;
+  MediaSwitchDescription? pendingDescription;
   MediaSwitchEffect? lastResult;
   int get revision => request.baseRevision + 1;
   bool get open => switch (phase) {
@@ -180,6 +181,16 @@ final class CallMediaSwitchMachine {
   MediaSwitchPhase? get phase => _current?.phase;
   int? get stageDeadlineMs =>
       _current?.open == true ? _current?.stageDeadline : null;
+
+  /// Nearest immutable stage, native-repair or terminal delivery deadline.
+  int? get nextDeadlineMs {
+    final deadlines = [
+      stageDeadlineMs,
+      _repairDeadline,
+      _reconciliationDeadline,
+    ].whereType<int>();
+    return deadlines.isEmpty ? null : deadlines.reduce(_min);
+  }
 
   bool get _available =>
       !_terminal &&
@@ -451,7 +462,25 @@ final class CallMediaSwitchMachine {
     required CallMediaKind media,
     required MediaSwitchDescription description,
     required bool local,
-  }) => MediaSwitchDecision(false, const []);
+  }) {
+    final out = _advance();
+    final t = _current;
+    if (_terminal ||
+        !_bound(t, id, revision, media) ||
+        t!.phase != MediaSwitchPhase.negotiating ||
+        t.pendingDescription != null ||
+        local !=
+            (description == MediaSwitchDescription.offer
+                ? localIsCaller
+                : !localIsCaller) ||
+        (description == MediaSwitchDescription.offer
+            ? t.offerApplied
+            : (!t.offerApplied || t.answerApplied))) {
+      return MediaSwitchDecision(false, out);
+    }
+    t.pendingDescription = description;
+    return MediaSwitchDecision(true, out);
+  }
 
   MediaSwitchDecision descriptionApplied({
     required String id,
@@ -494,6 +523,7 @@ final class CallMediaSwitchMachine {
     }
     if (description == MediaSwitchDescription.offer) {
       if (t.offerApplied) return MediaSwitchDecision(false, out);
+      t.pendingDescription = null;
       t.offerApplied = true;
       if (!localIsCaller) {
         out.add(_effect(t, MediaSwitchEffectKind.createAnswer));
@@ -502,6 +532,7 @@ final class CallMediaSwitchMachine {
       if (!t.offerApplied || t.answerApplied) {
         return MediaSwitchDecision(false, out);
       }
+      t.pendingDescription = null;
       t.answerApplied = true;
       t.phase = localIsCaller
           ? MediaSwitchPhase.acknowledgement
@@ -592,11 +623,11 @@ final class CallMediaSwitchMachine {
     // exact result now, independently of the fixed native repair budget.
     _reconciliationId = t.request.id;
     _reconciliationDeadline = t.lastResult!.deadlineMs;
-    if (t.answerApplied || t.offerApplied) {
+    if (t.answerApplied || t.offerApplied || t.pendingDescription != null) {
       _repairId = t.request.id;
       _repairDeadline = _nowMs() + 15000;
-      _rollbackPending = !t.answerApplied;
-      if (t.answerApplied) {
+      _rollbackPending = !t.answerApplied || t.pendingDescription != null;
+      if (!_rollbackPending) {
         out.add(
           _effect(
             t,
