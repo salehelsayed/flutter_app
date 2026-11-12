@@ -266,6 +266,198 @@ void main() {
     });
   }
 
+  Future<void> expectNoFailure(
+    String command,
+    Map<String, Object?> native,
+  ) async {
+    expect(jsonDecode(await send(command, jsonEncode(native))), native);
+    expect(
+      (await diagnostics.eventsForTesting()).where(
+        (event) => event['outcome'] == 'failed',
+      ),
+      isEmpty,
+    );
+    expect(await diagnostics.exportPreview(), isNot(contains(_privateMarker)));
+    await diagnostics.flush();
+    expect(uploads, isEmpty);
+  }
+
+  test('BL24A causal coded ping rejection remains reported', () async {
+    final native = {
+      'ok': false,
+      'errorCode': 'INTERNAL_ERROR',
+      'error': 'node stopped',
+      'errorMessage': _privateMarker,
+    };
+    expect(jsonDecode(await send('peer:ping', jsonEncode(native))), native);
+    await expectLabels('peer:ping', 'network', 'internal');
+  });
+
+  test('BL24A causal offline ping miss is not a failed diagnostic', () async {
+    await expectNoFailure('peer:ping', {
+      'ok': false,
+      'error': 'offline peer $_privateMarker',
+    });
+  });
+
+  test(
+    'BL24A causal presence publish miss is not a failed diagnostic',
+    () async {
+      await expectNoFailure('relay:presence_set', {
+        'ok': false,
+        'error': 'Unknown action: presence_set $_privateMarker',
+      });
+    },
+  );
+
+  test('BL24A causal profile rejection uses existing internal kind', () async {
+    final native = {
+      'ok': false,
+      'errorCode': 'PROFILE_ERROR',
+      'errorMessage': _privateMarker,
+    };
+    expect(
+      jsonDecode(await send('profile:download', jsonEncode(native))),
+      native,
+    );
+    await expectLabels('profile:download', 'profile', 'internal');
+  });
+
+  test('BL24A causal exact node-stopped stays a not-ready failure', () async {
+    const native = {'ok': false, 'error': 'node stopped'};
+    expect(jsonDecode(await send('peer:ping', jsonEncode(native))), native);
+    await expectLabels('peer:ping', 'network', 'not_ready');
+  });
+
+  for (final command in ['peer:ping', 'relay:presence_set']) {
+    for (final error in [null, '', 'offline $_privateMarker']) {
+      test('BL24A $command ordinary uncoded miss ($error)', () async {
+        await expectNoFailure(command, {
+          'ok': false,
+          if (error != null) 'error': error,
+        });
+      });
+    }
+    for (final sample in const [
+      (code: 'NOT_INITIALIZED', kind: 'not_ready'),
+      (code: 'INVALID_INPUT', kind: 'invalid_argument'),
+      (code: 'INTERNAL_ERROR', kind: 'internal'),
+    ]) {
+      test('BL24A $command preserves coded ${sample.code}', () async {
+        final native = {
+          'ok': false,
+          'errorCode': sample.code,
+          'error': 'node stopped',
+          'errorMessage': _privateMarker,
+        };
+        expect(jsonDecode(await send(command, jsonEncode(native))), native);
+        expect((await failure())['reason'], 'bridge_rejected');
+        await expectLabels(command, 'network', sample.kind);
+      });
+    }
+    for (final code in [null, '', 'UNRECOGNIZED_PRIVATE_CODE']) {
+      test('BL24A $command preserves present unknown code ($code)', () async {
+        final native = {
+          'ok': false,
+          'errorCode': code,
+          'error': 'node stopped',
+        };
+        expect(jsonDecode(await send(command, jsonEncode(native))), native);
+        await expectLabels(command, 'network', 'unknown');
+      });
+    }
+    test(
+      'BL24A $command success cannot become a node-stopped failure',
+      () async {
+        await expectNoFailure(command, {'ok': true, 'error': 'node stopped'});
+      },
+    );
+  }
+
+  test('BL24A presence lookup unknown remains an ordinary hint', () async {
+    await expectNoFailure('relay:presence_get', {
+      'ok': true,
+      'presence': 'unknown',
+      'ageMs': 0,
+    });
+  });
+
+  for (final sample in const [
+    (command: 'message:send', family: 'messaging'),
+    (command: 'relay:probe', family: 'network'),
+    (command: 'relay:presence_get', family: 'network'),
+  ]) {
+    test(
+      'BL24A ${sample.command} uncoded rejection is not a probe miss',
+      () async {
+        final native = {'ok': false, 'error': _privateMarker};
+        expect(
+          jsonDecode(await send(sample.command, jsonEncode(native))),
+          native,
+        );
+        await expectLabels(sample.command, sample.family, 'unknown');
+      },
+    );
+  }
+
+  for (final sample in const [
+    (command: 'message:send', family: 'messaging'),
+    (command: 'relay:presence_set', family: 'network'),
+  ]) {
+    test(
+      'BL24A ${sample.command} exact lifecycle rejection remains visible',
+      () async {
+        const native = {'ok': false, 'error': 'node stopped'};
+        expect(
+          jsonDecode(await send(sample.command, jsonEncode(native))),
+          native,
+        );
+        await expectLabels(sample.command, sample.family, 'not_ready');
+      },
+    );
+  }
+
+  for (final error in [
+    'node stopped $_privateMarker',
+    '$_privateMarker node stopped',
+    'Node stopped',
+    'node stopped\n',
+    'node has stopped',
+  ]) {
+    test(
+      'BL24A near lifecycle text never establishes a closed cause ($error)',
+      () async {
+        final native = {'ok': false, 'error': error};
+        expect(
+          jsonDecode(await send('message:send', jsonEncode(native))),
+          native,
+        );
+        await expectLabels('message:send', 'messaging', 'unknown');
+      },
+    );
+  }
+
+  for (final sample in const [
+    (command: 'profile:upload', family: 'profile'),
+    (command: 'group:join', family: 'group'),
+  ]) {
+    test(
+      'BL24A ${sample.command} PROFILE_ERROR keeps its command family',
+      () async {
+        final native = {
+          'ok': false,
+          'errorCode': 'PROFILE_ERROR',
+          'errorMessage': _privateMarker,
+        };
+        expect(
+          jsonDecode(await send(sample.command, jsonEncode(native))),
+          native,
+        );
+        await expectLabels(sample.command, sample.family, 'internal');
+      },
+    );
+  }
+
   test('new label values remain closed at diagnostic admission', () async {
     expect(
       diagnostics.record(
