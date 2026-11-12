@@ -38,6 +38,7 @@ import 'package:flutter_app/core/database/migrations/097_direct_message_forwarde
 import 'package:flutter_app/core/database/migrations/100_direct_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
 import 'package:flutter_app/core/database/migrations/110_direct_media_custody_intent.dart';
+import 'package:flutter_app/core/database/migrations/131_message_auto_retry_terminal.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
@@ -74,6 +75,7 @@ void main() {
     await runDirectPrivateMediaLifecycleMigration(db);
     await runDirectInboxCustodyOutboxMigration(db);
     await runDirectMediaCustodyIntentMigration(db);
+    await runMessageAutoRetryTerminalMigration(db);
   });
 
   tearDown(() async {

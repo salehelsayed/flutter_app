@@ -2677,6 +2677,33 @@ refusal, and already-encrypted custody still replays its exact envelope with
 no re-encryption when the current contact key is missing. Key acquisition and
 persistence remain separate concerns.
 
+Automatic failed-message recovery treats `invalidMessage` as terminal through
+nullable local `messages.auto_retry_terminal_reason` (DB v131). The loader
+excludes marked rows before its limit; the row retains status `failed`, and
+explicit manual retry clears/bypasses the marker. Exact snapshot qualification
+prevents an intervening row change from marking a different send incarnation.
+Null snapshot fields use `IS NULL` with no null whereArg: the earlier `IS ?`
+matched correctly but produced a sqflite compatibility warning. No wire or UI
+contract changes. Do not install an older build over a v131 phone database.
+
+BL-24(C) source `be40d7bb761ec5a7a069dc2fcededc345855cd5a` has verified
+Claude-Dev host evidence: the original RED produced two causal failures (second
+invalid send and missing migration column); corrected focused cases passed 3/3
+and the complete main retry file passed 55/55 without the warning. Unchanged
+receipts retain 43 tests across the other four failed-retry files, 26 unacked
+retry tests, 18 migration tests and metadata validation. The v130 upgrade test
+preserves all existing values, writes a marker on a null-field row, reopens,
+checks automatic exclusion, clears it, and rejects a stale snapshot. The real
+repository probe preserves the marker through reopen and permits manual retry.
+Raw first failures/warning remain in
+`/Volumes/CrucialX9/flutter_app-claude-dev/build/bl24c-proof/`; the bounded
+compatibility follow-up is in `build/bl24c-sql-proof/` under that same checkout.
+The follow-up began before the narrow review release under the author's packet
+and Kayan's two-run scope; retain that timing disclosure. Migration wrapper
+exit 3 means omitted checks were NOT RUN, while its child passed. Wider
+quiet-recovery/affected-storage checks were deferred to the batch by Kayan;
+these host receipts do not prove native SQLCipher or a signed upgrade.
+
 Committed contact-key updates now wake failed-message recovery directly, without
 waiting for the periodic/reconnect pass or replaying already-encrypted custody.
 The contact-key retrier tests retain updates across startup, active full recovery,

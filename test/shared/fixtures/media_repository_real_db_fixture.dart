@@ -1234,6 +1234,9 @@ MessageRepositoryImpl _buildMessageRepository(
           beforeTimestamp: beforeTimestamp,
         ),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+    dbIsMessageAutoRetryTerminal: (id) => dbIsMessageAutoRetryTerminal(db, id),
+    dbSetMessageAutoRetryTerminalReason: (expected, reason) =>
+        dbSetMessageAutoRetryTerminalReason(db, expected.toMap(), reason),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
     dbLoadConversationThreadSummaries: (contactPeerIds) =>

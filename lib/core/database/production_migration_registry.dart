@@ -130,6 +130,7 @@ import 'migrations/127_call_history_remote_permission_denied.dart';
 import 'migrations/128_media_attachment_sticker_id.dart';
 import 'migrations/129_post_media_caption.dart';
 import 'migrations/130_custom_stickers.dart';
+import 'migrations/131_message_auto_retry_terminal.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -753,6 +754,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '130_custom_stickers',
     runCustomStickersMigration,
   ),
+  ProductionMigrationEntry(
+    131,
+    '131_message_auto_retry_terminal',
+    runMessageAutoRetryTerminalMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1365,6 +1371,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     130,
     '130_custom_stickers',
     runCustomStickersMigration,
+  ),
+  ProductionMigrationEntry(
+    131,
+    '131_message_auto_retry_terminal',
+    runMessageAutoRetryTerminalMigration,
   ),
 ]);
 

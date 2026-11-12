@@ -270,7 +270,8 @@
     "migration": {
       "kind": "flutter",
       "paths": [
-        "test/core/database/integration/full_migration_chain_test.dart"
+        "test/core/database/integration/full_migration_chain_test.dart",
+        "test/core/database/migrations/131_message_auto_retry_terminal_test.dart"
       ],
       "boundary": "Real SQLite FFI migration schema/data preservation, seeded identities/contacts/messages/groups and post-upgrade writes",
       "limitations": "Host SQLite and fake secure keystore; actual previous published signed-build upgrade separate",
