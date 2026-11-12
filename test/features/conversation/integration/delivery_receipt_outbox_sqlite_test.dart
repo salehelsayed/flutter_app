@@ -311,12 +311,17 @@ void main() {
   test('BL24D1 resume uses the shared due drain', () async {
     await outbox.send(targetPeerId: 'sender', messageIds: const ['message']);
     now = now.add(const Duration(seconds: 5));
-    transport.storeInInboxResult = true;
+    final accepted = Completer<void>();
+    transport.onStoreInInbox = (_, _, {timeoutMs}) async {
+      accepted.complete();
+      return true;
+    };
     await handleAppResumed(
       bridge: FakeBridge(),
       p2pService: transport,
       drainDeliveryReceiptOutboxFn: outbox.drain,
     );
+    await accepted.future.timeout(const Duration(seconds: 5));
     await outbox.drain();
     expect(await rows(), isEmpty);
     expect(transport.storeInInboxCallCount, 2);
