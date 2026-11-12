@@ -149,8 +149,7 @@ final class IncomingCallMailboxHandlingResult {
   final AuthenticatedIncomingCallTerminal? authenticatedTerminal;
 }
 
-/// What a mailbox event is, read without consuming it. Lets a drain see that
-/// a terminal signal follows an invite before either is handled.
+/// Authenticated identity that must match before mailbox page coalescing.
 typedef AuthenticatedIncomingCallBinding = ({
   String schema,
   String callHandle,
@@ -160,6 +159,8 @@ typedef AuthenticatedIncomingCallBinding = ({
   String recipientDevicePeerId,
 });
 
+/// What a mailbox event is, read without consuming it. Lets a drain see that
+/// a terminal signal follows an invite before either is handled.
 final class IncomingCallSignalPeek {
   const IncomingCallSignalPeek({
     required this.callId,
@@ -360,6 +361,14 @@ final class HandleIncomingCallSignal {
           CallSignalV2(:final event) => event,
           _ => null,
         },
+        authenticatedBinding: (
+          schema: admitted.signal.wireSchema,
+          callHandle: admitted.callHandle,
+          senderAccountPeerId: admitted.signal.senderAccountPeerId,
+          senderDevicePeerId: admitted.signal.senderDevicePeerId,
+          recipientAccountPeerId: admitted.signal.recipientAccountPeerId,
+          recipientDevicePeerId: admitted.signal.recipientDevicePeerId,
+        ),
       );
     } finally {
       admitted.rollbackReplay();
