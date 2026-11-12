@@ -5254,6 +5254,22 @@ Full product/physical-device and signed-candidate execution: **NOT RUN**.
 No speedup or release acceptance is inferred from fixture timing. Full regression
 is not the default per-plan gate; follow the wave/release cadence in `AGENTS.md`.
 
+Flutter native-asset preparation is serialized per worktree by
+`scripts/flutter_native_asset_lock.py`; the lock is released on the canonical
+Flutter machine `testStart` event, so independent test bodies can overlap after
+setup. BL20 verified source `e9ceb5bf28df840e615102142e259ab0326b447e` with
+`scripts/test/bl20_native_asset_concurrency_proof.py`: three fresh repeats each
+ran four real SQLite test bodies concurrently, with all 12 child exits zero,
+no failed/skipped tests, and scheduler maximum four. Barrier timestamps establish
+four-body overlap in each repeat; they do not establish a throughput speedup.
+The four lock unit tests and manifest validation also passed. Raw proof remains
+under `/Volumes/CrucialX9/flutter_app-ui-update/.audit/wt/bl20/.codex-test-logs/bl20-concurrency-20261112-fresh/`;
+aggregate `results.json` SHA-256 is
+`514495224ac5c5d2572c175739e877732a186d97ef624b8d63f10b07d0b7c3fe`.
+The runner started after observing no batch process, without an explicit
+confirmation that the other runner's batch half had finished; retain this
+scheduling caveat and do not infer an isolated-host timing benchmark.
+
 `.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
 for three distinct acceptance modes. Its final hosted job always runs after
 metadata and selected execution; only a PR emits **`Mknoon regression checks`**,
