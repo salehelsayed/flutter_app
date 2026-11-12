@@ -141,6 +141,7 @@
       "paths": [
         "test/features/conversation/integration/offline_inbox_roundtrip_test.dart",
         "test/features/conversation/integration/direct_text_restart_sqlite_test.dart",
+        "test/features/conversation/integration/delivery_receipt_outbox_sqlite_test.dart",
         "test/core/services/pending_message_retrier_contact_key_test.dart",
         "test/core/services/pending_message_retrier_contact_key_serialization_test.dart"
       ],

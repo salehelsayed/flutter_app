@@ -291,7 +291,7 @@ class DeliveryReceiptOutbox {
           attemptCount: 0,
         ),
       );
-      return _attempt(entry);
+      return await _attempt(entry);
     } catch (error) {
       _recordQueueError(error);
       return false;

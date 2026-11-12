@@ -6025,7 +6025,7 @@ final class ProductionApplicationBootstrap
     // F7: hoisted above the P2PServiceImpl construction so the deletion replay
     // callback below can reference it.
     final deliveryReceiptOutbox = DeliveryReceiptOutbox(
-      repository: SqlDeliveryReceiptOutboxRepository(database),
+      repository: SqlDeliveryReceiptOutboxRepository(db),
       p2pService: () => p2pService,
     );
     Future<void> sendDeliveryReceiptForPeer({
