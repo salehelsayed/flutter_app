@@ -6650,11 +6650,12 @@ visible and cannot become an ordinary first-attempt PASS.
 
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
-  cases. `run_custom_sticker_native_unit_tests.py` requires 43 Android JVM cases:
-  four frame-channel ownership, 21 cutout bridge, six real-host POSIX controls,
-  four cutout engine-registration, and eight runtime, call-teardown and new-intent
-  sentinels. Its caller owns the shared native-build lease. The runner archives
-  old XML, removes only the seven selected class reports before one Gradle
+  cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
+  four frame-channel ownership, four clip-input/RGBA controls, 21 cutout bridge,
+  six real-host POSIX controls, four cutout engine-registration, and eight runtime,
+  call-teardown and new-intent sentinels. Its caller owns the shared native-build
+  lease. The runner archives
+  old XML, removes only the eight selected class reports before one Gradle
   invocation, and requires fresh exact case counts and execution of the selected
   task before reporting success; cached XML is not execution evidence.
   `android-cutout-curated-43-second-verdict.json` records 43 PASS / 0 FAIL /
@@ -6668,6 +6669,19 @@ visible and cannot become an ordinary first-attempt PASS.
   the original references in cleanup. All six bodies and 77 assertion calls,
   production bytes and neighboring cases remained unchanged; the combined run
   verifies that repair without relying on class ordering.
+  The pinned CameraX plugin (`camera_android_camerax` 0.7.6+1) calls
+  `withAudioEnabled(initialMuted: !enableRecordingAudio)` even for silent
+  capture, so its camera source can retain a muted AAC track. Android frame
+  extraction ignores that track while retaining exactly-one-video validation;
+  only video RGBA leaves the helper. `StickerClipFrameInputTest` exercises the
+  real bridge with controlled framework tracks and Bitmap pixels: muted-AAC
+  and video-only acceptance, zero/multiple-video rejection, and opaque dark
+  RGBA preservation. The unchanged acceptance case fails at `0bbd6fdc2`; the
+  47-case suite passes without skips at `e77a19138`. The original RED, fresh
+  eight-class XML and matching source hashes are retained under
+  `/Volumes/CrucialX9/flutter_app-ui-update/.codex-test-logs/codex-ui-bl17-black-clips-20261112/`
+  (`android-red/original-completion/` and `android-green/original-completion/`).
+  This is Android JVM/Robolectric evidence, not real phone decoder proof.
   The five real-helper `StickerClipFramePluginTests` XCTest cases also passed
   at `333a0a3981a4ba464d72af401fcd81dc9de96cc2` on the iPhone 17 / iOS 26.5
   simulator, as recorded in `ios-stickers-native-333-verdict.json`; this
@@ -6681,6 +6695,18 @@ visible and cannot become an ordinary first-attempt PASS.
   `native-registration-host-verdict.json` and the native verdicts named above.
   Initial standalone XCTest setup and fixture compile failures remain retained
   in `native-registration-swift-typecheck-{first,second,third}/`.
+
+- **Wake-token binary gate prerequisites:**
+  `test/core/bridge/wake_token_binary_freshness_test.dart` reads the ignored
+  iOS device/simulator, macOS and Android gomobile payloads through
+  `scripts/check_wake_token_binary_freshness.sh`. Fresh worktrees do not contain
+  those files; its generic stale-binary error also covers missing payloads.
+  Restore existing reviewed payloads with recorded hashes and matching Go
+  source identity before rerunning the unchanged gate. The gate checks two
+  wake-token symbol names; it does not certify a new native build or signed
+  candidate. The first four-file absence failure and the restoration's fresh
+  SHA audit are retained in the BL-17 proof above (`transport-first-audit/`
+  and `native-payload-restoration.json`).
 
 - **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
   cases validate byte/hash and decoded claims, metadata removal/rejection,

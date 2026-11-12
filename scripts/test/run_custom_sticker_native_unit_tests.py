@@ -27,6 +27,7 @@ REPORTS = ROOT / "build/app/test-results/testDebugUnitTest"
 REGISTRATION = "com.mknoon.app.StickerClipFrameRegistrationTest"
 EXPECTED_COUNTS = {
     REGISTRATION: 4,
+    "com.mknoon.app.StickerClipFrameInputTest": 4,
     "com.mknoon.app.NativeRuntimeOwnershipSourceTest": 3,
     "com.mknoon.app.call.MknoonCallBridgeTeardownTest": 3,
     "com.mknoon.app.MainActivityOnNewIntentTest": 2,
@@ -104,7 +105,7 @@ def main():
             raise ValueError("JUnit output directory must not be a symlink")
 
         # Preserve every old XML before Gradle can rewrite its result directory.
-        # Remove only our seven selected reports, so their subsequent presence
+        # Remove only our selected reports, so their subsequent presence
         # proves new publication even on filesystems with coarse mtime precision.
         previous = snapshot(REPORTS.glob("*.xml"), run / "previous-junit")
         save(run / "previous-junit.json", previous)
@@ -182,7 +183,7 @@ def main():
                     registration_methods.append(method)
 
         if dict(observed) != EXPECTED_COUNTS:
-            errors.append("Per-class case counts differ from the 4+3+3+2+21+6+4 inventory")
+            errors.append("Per-class case counts differ from the 4+4+3+3+2+21+6+4 inventory")
         if len(selectors) != len(set(selectors)):
             errors.append("Duplicate JUnit testcase selectors")
         if (len(registration_methods) != 4 or
