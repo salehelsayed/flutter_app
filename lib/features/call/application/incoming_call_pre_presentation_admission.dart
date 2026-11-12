@@ -1,5 +1,7 @@
 import '../domain/call_id.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
+import '../domain/call_wire_signal.dart';
 import '../infrastructure/call_mailbox_client.dart';
 import '../infrastructure/call_trusted_roster_provider.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
@@ -86,22 +88,65 @@ final class IncomingCallPrePresentationAdmissionException implements Exception {
 /// The authenticated signal and its still-provisional replay reservation.
 /// Callers must explicitly commit a terminal decision or roll back a
 /// pre-presentation handoff that foreground canonical handling must replay.
-final class AuthenticatedIncomingCallAdmission {
+sealed class AuthenticatedIncomingCallWireAdmission {
+  CallWireSignal get signal;
+  String get callHandle;
+  CallAdmissionAuthorityWitness? get admissionAuthority;
+
+  void commitReplay();
+  void rollbackReplay();
+}
+
+/// The existing typed v1 admission remains available to audio-only callers.
+final class AuthenticatedIncomingCallAdmission
+    extends AuthenticatedIncomingCallWireAdmission {
   AuthenticatedIncomingCallAdmission._(this._decoded, {this.admissionAuthority})
     : signal = _decoded.signal,
       callHandle = _decoded.callHandle;
 
   final DecodedSecureCallEnvelope _decoded;
+  @override
   final CallSignal signal;
+  @override
   final String callHandle;
+  @override
   final CallAdmissionAuthorityWitness? admissionAuthority;
 
+  @override
   void commitReplay() => _decoded.commitReplay();
 
+  @override
   void rollbackReplay() => _decoded.rollbackReplay();
 
   @override
   String toString() => 'AuthenticatedIncomingCallAdmission(redacted)';
+}
+
+/// Authentication alone neither presents a call nor grants camera consent.
+final class AuthenticatedIncomingCallAdmissionV2
+    extends AuthenticatedIncomingCallWireAdmission {
+  AuthenticatedIncomingCallAdmissionV2._(
+    this._decoded, {
+    this.admissionAuthority,
+  }) : signal = _decoded.signal,
+       callHandle = _decoded.callHandle;
+
+  final DecodedSecureCallEnvelopeV2 _decoded;
+  @override
+  final CallSignalV2 signal;
+  @override
+  final String callHandle;
+  @override
+  final CallAdmissionAuthorityWitness? admissionAuthority;
+
+  @override
+  void commitReplay() => _decoded.commitReplay();
+
+  @override
+  void rollbackReplay() => _decoded.rollbackReplay();
+
+  @override
+  String toString() => 'AuthenticatedIncomingCallAdmissionV2(redacted)';
 }
 
 /// Pure authenticated admission before any coordinator dispatch or system UI.
@@ -112,13 +157,97 @@ final class IncomingCallPrePresentationAdmission {
     required SecureCallEnvelopeCodec codec,
     required CallTrustedRosterProvider trustedRosterProvider,
     required CallLocalAuthorityProvider localAuthorityProvider,
+    bool videoEnabled = false,
   }) : _codec = codec,
        _trustedRosterProvider = trustedRosterProvider,
-       _localAuthorityProvider = localAuthorityProvider;
+       _localAuthorityProvider = localAuthorityProvider,
+       _videoEnabled = videoEnabled;
 
   final SecureCallEnvelopeCodec _codec;
   final CallTrustedRosterProvider _trustedRosterProvider;
   final CallLocalAuthorityProvider _localAuthorityProvider;
+  final bool _videoEnabled;
+
+  /// Versioned entry points are opt-in. Legacy entry points stay v1-only even
+  /// when this admission owner and its codec both enable video parsing.
+  Future<AuthenticatedIncomingCallWireAdmission>
+  authenticateVersionedMailboxInvite({
+    required String nativeCallId,
+    required int wakeExpiresAtMs,
+    required CallMailboxEvent event,
+  }) async {
+    final admitted = await authenticateVersionedMailboxEvent(
+      nativeCallId: nativeCallId,
+      wakeExpiresAtMs: wakeExpiresAtMs,
+      event: event,
+    );
+    if (admitted.signal.eventWireName != 'invite') {
+      admitted.commitReplay();
+      throw const IncomingCallPrePresentationAdmissionException(
+        IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.unexpectedSignal,
+      );
+    }
+    return admitted;
+  }
+
+  /// Wake admission accepts only invite or terminal events, under the same
+  /// exact mailbox/native binding and replay custody as the v1 entry point.
+  Future<AuthenticatedIncomingCallWireAdmission>
+  authenticateVersionedMailboxEvent({
+    required String nativeCallId,
+    required int wakeExpiresAtMs,
+    required CallMailboxEvent event,
+  }) async {
+    if (CallId.tryParse(nativeCallId) == null ||
+        nativeCallId != event.callHandle ||
+        wakeExpiresAtMs <= 0 ||
+        wakeExpiresAtMs != event.expiresAtMs) {
+      throw const IncomingCallPrePresentationAdmissionException(
+        IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.mailboxBinding,
+      );
+    }
+    final admitted = await authenticateVersionedSignal(
+      envelopeJson: event.envelopeJson,
+      authenticatedTransportPeerId: event.authenticatedSenderDevicePeerId,
+      expectedCallHandle: event.callHandle,
+      expectedMessageId: event.messageId,
+      expectedExpiresAtMs: event.expiresAtMs,
+      expectedRecipientDevicePeerId: event.recipientDevicePeerId,
+    );
+    if (const {
+      'invite',
+      'reject',
+      'terminate',
+    }.contains(admitted.signal.eventWireName)) {
+      return admitted;
+    }
+    admitted.commitReplay();
+    throw const IncomingCallPrePresentationAdmissionException(
+      IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+      gate: IncomingCallPrePresentationAdmissionGate.unexpectedSignal,
+    );
+  }
+
+  /// Authentication and provisional replay custody only. Canonical handlers
+  /// still own context, terminal dominance, media admission and presentation.
+  Future<AuthenticatedIncomingCallWireAdmission> authenticateVersionedSignal({
+    required String envelopeJson,
+    required String authenticatedTransportPeerId,
+    String? expectedCallHandle,
+    String? expectedMessageId,
+    int? expectedExpiresAtMs,
+    String? expectedRecipientDevicePeerId,
+  }) => _authenticateSignal(
+    envelopeJson: envelopeJson,
+    authenticatedTransportPeerId: authenticatedTransportPeerId,
+    expectedCallHandle: expectedCallHandle,
+    expectedMessageId: expectedMessageId,
+    expectedExpiresAtMs: expectedExpiresAtMs,
+    expectedRecipientDevicePeerId: expectedRecipientDevicePeerId,
+    allowV2: _videoEnabled,
+  );
 
   /// Authenticates the exact mailbox row selected for one native wake. The
   /// native UUID is the canonical outer call handle; the encrypted domain
@@ -195,6 +324,27 @@ final class IncomingCallPrePresentationAdmission {
     int? expectedExpiresAtMs,
     String? expectedRecipientDevicePeerId,
   }) async {
+    final admitted = await _authenticateSignal(
+      envelopeJson: envelopeJson,
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+      expectedCallHandle: expectedCallHandle,
+      expectedMessageId: expectedMessageId,
+      expectedExpiresAtMs: expectedExpiresAtMs,
+      expectedRecipientDevicePeerId: expectedRecipientDevicePeerId,
+      allowV2: false,
+    );
+    return admitted as AuthenticatedIncomingCallAdmission;
+  }
+
+  Future<AuthenticatedIncomingCallWireAdmission> _authenticateSignal({
+    required String envelopeJson,
+    required String authenticatedTransportPeerId,
+    required bool allowV2,
+    String? expectedCallHandle,
+    String? expectedMessageId,
+    int? expectedExpiresAtMs,
+    String? expectedRecipientDevicePeerId,
+  }) async {
     late final TrustedCallDeviceAuthority? sender;
     try {
       sender = await _trustedRosterProvider.resolveAuthenticatedTransport(
@@ -238,20 +388,26 @@ final class IncomingCallPrePresentationAdmission {
       );
     }
 
-    DecodedSecureCallEnvelope? decoded;
+    DecodedCallWireEnvelope? decoded;
     try {
-      decoded = await _codec.decode(
-        envelopeJson: envelopeJson,
-        authority: CallEnvelopeAuthority(
-          authenticatedTransportPeerId: authenticatedTransportPeerId,
-          expectedSenderAccountPeerId: sender.accountPeerId,
-          expectedSenderDevicePeerId: sender.devicePeerId,
-          expectedRecipientAccountPeerId: local.accountPeerId,
-          expectedRecipientDevicePeerId: local.devicePeerId,
-          senderSigningPublicKey: sender.signingPublicKey,
-          ownMlKemSecretKey: local.mlKemSecretKey,
-        ),
+      final authority = CallEnvelopeAuthority(
+        authenticatedTransportPeerId: authenticatedTransportPeerId,
+        expectedSenderAccountPeerId: sender.accountPeerId,
+        expectedSenderDevicePeerId: sender.devicePeerId,
+        expectedRecipientAccountPeerId: local.accountPeerId,
+        expectedRecipientDevicePeerId: local.devicePeerId,
+        senderSigningPublicKey: sender.signingPublicKey,
+        ownMlKemSecretKey: local.mlKemSecretKey,
       );
+      decoded = allowV2
+          ? await _codec.decodeVersioned(
+              envelopeJson: envelopeJson,
+              authority: authority,
+            )
+          : await _codec.decode(
+              envelopeJson: envelopeJson,
+              authority: authority,
+            );
       final signal = decoded.signal;
       if ((expectedCallHandle != null &&
               expectedCallHandle != decoded.callHandle) ||
@@ -267,10 +423,16 @@ final class IncomingCallPrePresentationAdmission {
           gate: IncomingCallPrePresentationAdmissionGate.expectationMismatch,
         );
       }
-      return AuthenticatedIncomingCallAdmission._(
-        decoded,
-        admissionAuthority: sender.admissionAuthority,
-      );
+      return switch (decoded) {
+        DecodedSecureCallEnvelope() => AuthenticatedIncomingCallAdmission._(
+          decoded,
+          admissionAuthority: sender.admissionAuthority,
+        ),
+        DecodedSecureCallEnvelopeV2() => AuthenticatedIncomingCallAdmissionV2._(
+          decoded,
+          admissionAuthority: sender.admissionAuthority,
+        ),
+      };
     } on IncomingCallPrePresentationAdmissionException {
       rethrow;
     } on CallEnvelopeException catch (error) {

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
+import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 
 enum CallEnvelopeErrorCode {
   invalidSchema,
@@ -182,34 +184,57 @@ final class CallEnvelopeAuthority {
   final String ownMlKemSecretKey;
 }
 
-/// The authenticated domain signal plus the opaque outer routing handle.
-/// Product call state remains exclusively in [CallSignal]/CallCoordinator.
-final class DecodedSecureCallEnvelope {
-  DecodedSecureCallEnvelope({
-    required this.signal,
+/// Authentication and provisional replay custody, without product call state.
+sealed class DecodedCallWireEnvelope {
+  DecodedCallWireEnvelope({
     required this.callHandle,
     required CallReplayProtectionReservation replayReservation,
   }) : _replayReservation = replayReservation;
 
-  final CallSignal signal;
+  CallWireSignal get signal;
   final String callHandle;
   final CallReplayProtectionReservation _replayReservation;
 
-  /// Makes this authenticated signal a replay tombstone only after the call
-  /// coordinator has accepted or permanently rejected its state transition.
+  /// Commit only after acceptance or permanent rejection by the call owner.
   void commitReplay() => _replayReservation.commit();
 
-  /// Releases a provisional admission after a local/transient failure so the
-  /// mailbox can retry the exact signal without losing the call.
+  /// Release provisional custody after a local/transient failure for retry.
   void rollbackReplay() => _replayReservation.rollback();
+
+  @override
+  String toString() => 'DecodedCallWireEnvelope(redacted)';
+}
+
+/// Existing v1 callers retain a statically typed v1 signal.
+final class DecodedSecureCallEnvelope extends DecodedCallWireEnvelope {
+  DecodedSecureCallEnvelope({
+    required this.signal,
+    required super.callHandle,
+    required super.replayReservation,
+  });
+
+  @override
+  final CallSignal signal;
 
   @override
   String toString() => 'DecodedSecureCallEnvelope(redacted)';
 }
 
+/// A strict v2 signal. Authentication alone never grants camera consent.
+final class DecodedSecureCallEnvelopeV2 extends DecodedCallWireEnvelope {
+  DecodedSecureCallEnvelopeV2({
+    required this.signal,
+    required super.callHandle,
+    required super.replayReservation,
+  });
+
+  @override
+  final CallSignalV2 signal;
+}
+
 abstract interface class CallReplayProtectionStore {
   CallReplayProtectionReservation reserve({
-    required CallSignal signal,
+    required CallWireSignal signal,
     required String envelopeDigest,
     required int nowMs,
     required Duration tombstoneTtl,
@@ -226,7 +251,8 @@ final class _ReplayEntry {
   const _ReplayEntry({
     required this.sequenceKey,
     required this.sequence,
-    required this.event,
+    required this.wireSchema,
+    required this.reorderable,
     required this.iceGeneration,
     required this.envelopeDigest,
     required this.expiresAtMs,
@@ -235,7 +261,8 @@ final class _ReplayEntry {
 
   final String sequenceKey;
   final int sequence;
-  final CallSignalType event;
+  final String wireSchema;
+  final bool reorderable;
   final int iceGeneration;
   final String envelopeDigest;
   final int expiresAtMs;
@@ -244,7 +271,8 @@ final class _ReplayEntry {
   _ReplayEntry commit() => _ReplayEntry(
     sequenceKey: sequenceKey,
     sequence: sequence,
-    event: event,
+    wireSchema: wireSchema,
+    reorderable: reorderable,
     iceGeneration: iceGeneration,
     envelopeDigest: envelopeDigest,
     expiresAtMs: expiresAtMs,
@@ -267,7 +295,7 @@ final class InMemoryBoundedCallReplayProtectionStore
 
   @override
   CallReplayProtectionReservation reserve({
-    required CallSignal signal,
+    required CallWireSignal signal,
     required String envelopeDigest,
     required int nowMs,
     required Duration tombstoneTtl,
@@ -318,8 +346,9 @@ final class InMemoryBoundedCallReplayProtectionStore
       final reorderable =
           distance <= CallSignal.maximumNegotiationReorderingDistance &&
           signal.iceGeneration == priorHighWater.iceGeneration &&
-          _isNegotiationSignal(signal.event) &&
-          _isNegotiationSignal(priorHighWater.event);
+          signal.wireSchema == priorHighWater.wireSchema &&
+          _isNegotiationSignal(signal) &&
+          priorHighWater.reorderable;
       if (!reorderable) {
         throw const CallEnvelopeException(
           CallEnvelopeErrorCode.nonMonotonicSequence,
@@ -339,7 +368,8 @@ final class InMemoryBoundedCallReplayProtectionStore
     _entries[signal.messageId] = _ReplayEntry(
       sequenceKey: sequenceKey,
       sequence: signal.senderSequence,
-      event: signal.event,
+      wireSchema: signal.wireSchema,
+      reorderable: _isNegotiationSignal(signal),
       iceGeneration: signal.iceGeneration,
       envelopeDigest: envelopeDigest,
       expiresAtMs: tombstoneExpiresAt,
@@ -361,13 +391,28 @@ final class InMemoryBoundedCallReplayProtectionStore
     }
   }
 
-  static bool _isNegotiationSignal(CallSignalType event) => switch (event) {
-    CallSignalType.offer ||
-    CallSignalType.answer ||
-    CallSignalType.ice ||
-    CallSignalType.iceRestart => true,
-    _ => false,
-  };
+  static bool _isNegotiationSignal(CallWireSignal signal) {
+    if (const {
+      'offer',
+      'answer',
+      'ice',
+      'ice_restart',
+    }.contains(signal.eventWireName)) {
+      return true;
+    }
+    // Optional media transactions use the same bounded authenticated window.
+    // In particular, a late abort must reach the selected transaction owner;
+    // admission here grants neither a revision nor consent. v1 stays unchanged.
+    return signal.wireSchema == CallSignalV2.schema &&
+        const {
+          'media_request',
+          'media_response',
+          'media_commit',
+          'media_commit_ack',
+          'media_abort',
+          'camera_state',
+        }.contains(signal.eventWireName);
+  }
 }
 
 final class _InMemoryCallReplayReservation
@@ -404,6 +449,7 @@ final class SecureCallEnvelopeCodec {
     this.replayTombstoneTtl = const Duration(minutes: 10),
     CallReplayProtectionStore? replayStore,
     this.onEncoded,
+    this.videoEnabled = false,
   }) : _crypto = crypto,
        _nowMs = nowMs,
        _replayStore =
@@ -441,8 +487,52 @@ final class SecureCallEnvelopeCodec {
   final CallReplayProtectionStore _replayStore;
   final CallEncodedEnvelopeObserver? onEncoded;
 
+  /// Explicit runtime admission gate; linking the v2 parser enables nothing.
+  final bool videoEnabled;
+
+  Future<String> encodeV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    required String recipientMlKemPublicKey,
+    required String senderSigningPrivateKey,
+  }) async {
+    if (!videoEnabled) {
+      throw const CallEnvelopeException(
+        CallEnvelopeErrorCode.unsupportedVersion,
+      );
+    }
+    return _encode(
+      signal: signal,
+      callHandle: callHandle,
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
+      senderSigningPrivateKey: senderSigningPrivateKey,
+    );
+  }
+
+  /// Version dispatch occurs only after the existing outer crypto checks.
+  Future<DecodedCallWireEnvelope> decodeVersioned({
+    required String envelopeJson,
+    required CallEnvelopeAuthority authority,
+  }) => _decode(
+    envelopeJson: envelopeJson,
+    authority: authority,
+    allowV2: videoEnabled,
+  );
+
   Future<String> encode({
     required CallSignal signal,
+    required String callHandle,
+    required String recipientMlKemPublicKey,
+    required String senderSigningPrivateKey,
+  }) => _encode(
+    signal: signal,
+    callHandle: callHandle,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    senderSigningPrivateKey: senderSigningPrivateKey,
+  );
+
+  Future<String> _encode({
+    required CallWireSignal signal,
     required String callHandle,
     required String recipientMlKemPublicKey,
     required String senderSigningPrivateKey,
@@ -505,7 +595,8 @@ final class SecureCallEnvelopeCodec {
     });
     _enforceSize(encoded);
     try {
-      onEncoded?.call(signal, encoded);
+      // Preserve the existing observer's exact typed v1 contract.
+      if (signal is CallSignal) onEncoded?.call(signal, encoded);
     } catch (_) {
       // Read-only observation cannot alter the signed wire or transport.
     }
@@ -515,6 +606,20 @@ final class SecureCallEnvelopeCodec {
   Future<DecodedSecureCallEnvelope> decode({
     required String envelopeJson,
     required CallEnvelopeAuthority authority,
+  }) async {
+    // Legacy entry points cannot silently admit a different inner protocol.
+    final decoded = await _decode(
+      envelopeJson: envelopeJson,
+      authority: authority,
+      allowV2: false,
+    );
+    return decoded as DecodedSecureCallEnvelope;
+  }
+
+  Future<DecodedCallWireEnvelope> _decode({
+    required String envelopeJson,
+    required CallEnvelopeAuthority authority,
+    required bool allowV2,
   }) async {
     _enforceSize(envelopeJson);
     final outer = _decodeObject(envelopeJson);
@@ -603,9 +708,17 @@ final class SecureCallEnvelopeCodec {
     }
 
     final inner = _decodeObject(plaintext);
-    late final CallSignal signal;
+    late final CallWireSignal signal;
     try {
-      signal = CallSignal.fromMap(Map<String, Object?>.from(inner));
+      final map = Map<String, Object?>.from(inner);
+      signal = switch (inner['schema']) {
+        CallSignal.schema => CallSignal.fromMap(map),
+        CallSignalV2.schema when allowV2 => CallSignalV2.fromMap(
+          map,
+          videoEnabled: true,
+        ),
+        _ => throw const FormatException('unsupported call signal schema'),
+      };
     } catch (_) {
       throw const CallEnvelopeException(CallEnvelopeErrorCode.invalidSchema);
     }
@@ -622,19 +735,26 @@ final class SecureCallEnvelopeCodec {
       nowMs: _nowMs(),
       tombstoneTtl: replayTombstoneTtl,
     );
+    if (signal is CallSignalV2) {
+      return DecodedSecureCallEnvelopeV2(
+        signal: signal,
+        callHandle: callHandle,
+        replayReservation: replayReservation,
+      );
+    }
     return DecodedSecureCallEnvelope(
-      signal: signal,
+      signal: signal as CallSignal,
       callHandle: callHandle,
       replayReservation: replayReservation,
     );
   }
 
-  void _validateSignal(CallSignal signal, {required bool enforceFreshness}) {
-    final maximumLifetime = switch (signal.event) {
-      CallSignalType.invite ||
-      CallSignalType.ringing ||
-      CallSignalType.accept ||
-      CallSignalType.reject => const Duration(
+  void _validateSignal(
+    CallWireSignal signal, {
+    required bool enforceFreshness,
+  }) {
+    final maximumLifetime = switch (signal.eventWireName) {
+      'invite' || 'ringing' || 'accept' || 'reject' => const Duration(
         milliseconds: CallSignal.maximumPreconnectLifetimeMs,
       ),
       _ => maximumPostconnectLifetime,
@@ -661,7 +781,10 @@ final class SecureCallEnvelopeCodec {
     }
   }
 
-  void _validateAuthority(CallSignal signal, CallEnvelopeAuthority authority) {
+  void _validateAuthority(
+    CallWireSignal signal,
+    CallEnvelopeAuthority authority,
+  ) {
     if (authority.authenticatedTransportPeerId.trim().isEmpty ||
         authority.expectedSenderAccountPeerId.trim().isEmpty ||
         authority.expectedSenderDevicePeerId.trim().isEmpty ||

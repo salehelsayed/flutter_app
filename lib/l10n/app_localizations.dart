@@ -8839,6 +8839,144 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Blue'**
   String get sticker_colour_blue;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video requested'**
+  String get call_video_status_video_requested;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio only'**
+  String get call_video_status_audio_only;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video call'**
+  String get call_video_status_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'They want to turn on video'**
+  String get call_video_status_incoming_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for them to accept'**
+  String get call_video_status_outgoing_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching to video'**
+  String get call_video_status_switching_to_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching to audio'**
+  String get call_video_status_switching_to_audio;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting'**
+  String get call_video_status_reconnecting;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is on'**
+  String get call_video_local_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is off'**
+  String get call_video_local_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is paused'**
+  String get call_video_local_camera_paused;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is on'**
+  String get call_video_remote_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is off'**
+  String get call_video_remote_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is paused'**
+  String get call_video_remote_camera_paused;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Request video'**
+  String get call_video_action_request_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept video'**
+  String get call_video_action_accept_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep audio'**
+  String get call_video_action_decline_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get call_video_action_cancel_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn camera on'**
+  String get call_video_action_turn_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn camera off'**
+  String get call_video_action_turn_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch camera'**
+  String get call_video_action_switch_camera;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Use audio only'**
+  String get call_video_action_use_audio_only;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video controls'**
+  String get call_video_controls_label;
 }
 
 class _AppLocalizationsDelegate

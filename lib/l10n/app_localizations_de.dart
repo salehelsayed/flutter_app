@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -3052,8 +3053,7 @@ class AppLocalizationsDe extends AppLocalizations {
       locale: localeName,
       other:
           '$count Dateien übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
-      one:
-          '1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
+      one: '1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
     );
     return '$_temp0';
   }
@@ -4438,8 +4438,7 @@ class AppLocalizationsDe extends AppLocalizations {
       locale: localeName,
       other:
           '$count Ereignisse wurden verworfen. Berichte sind möglicherweise unvollständig.',
-      one:
-          '1 Ereignis wurde verworfen. Berichte sind möglicherweise unvollständig.',
+      one: '1 Ereignis wurde verworfen. Berichte sind möglicherweise unvollständig.',
     );
     return '$_temp0';
   }
@@ -5419,4 +5418,79 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get sticker_colour_blue => 'Blau';
+
+  @override
+  String get call_video_status_video_requested => 'Video angefragt';
+
+  @override
+  String get call_video_status_audio_only => 'Nur Audio';
+
+  @override
+  String get call_video_status_video => 'Videoanruf';
+
+  @override
+  String get call_video_status_incoming_upgrade =>
+      'Dein Gegenüber möchte Video einschalten';
+
+  @override
+  String get call_video_status_outgoing_upgrade =>
+      'Warten, bis dein Gegenüber zustimmt';
+
+  @override
+  String get call_video_status_switching_to_video => 'Wechsel zu Video';
+
+  @override
+  String get call_video_status_switching_to_audio => 'Wechsel zu Audio';
+
+  @override
+  String get call_video_status_reconnecting =>
+      'Verbindung wird wiederhergestellt';
+
+  @override
+  String get call_video_local_camera_on => 'Deine Kamera ist an';
+
+  @override
+  String get call_video_local_camera_off => 'Deine Kamera ist aus';
+
+  @override
+  String get call_video_local_camera_paused => 'Deine Kamera ist pausiert';
+
+  @override
+  String get call_video_remote_camera_on =>
+      'Die Kamera deines Gegenübers ist an';
+
+  @override
+  String get call_video_remote_camera_off =>
+      'Die Kamera deines Gegenübers ist aus';
+
+  @override
+  String get call_video_remote_camera_paused =>
+      'Die Kamera deines Gegenübers ist pausiert';
+
+  @override
+  String get call_video_action_request_video => 'Video anfragen';
+
+  @override
+  String get call_video_action_accept_upgrade => 'Video annehmen';
+
+  @override
+  String get call_video_action_decline_upgrade => 'Bei Audio bleiben';
+
+  @override
+  String get call_video_action_cancel_upgrade => 'Anfrage abbrechen';
+
+  @override
+  String get call_video_action_turn_camera_on => 'Kamera einschalten';
+
+  @override
+  String get call_video_action_turn_camera_off => 'Kamera ausschalten';
+
+  @override
+  String get call_video_action_switch_camera => 'Kamera wechseln';
+
+  @override
+  String get call_video_action_use_audio_only => 'Nur Audio verwenden';
+
+  @override
+  String get call_video_controls_label => 'Videosteuerung';
 }
