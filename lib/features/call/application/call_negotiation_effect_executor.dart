@@ -946,6 +946,13 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     final callId = snapshot.callId;
     if (callId == null) return;
     _trackedCallIds.add(callId);
+    try {
+      if (consumeLocalCandidate?.call(snapshot, candidate) ?? false) return;
+    } catch (error) {
+      _recordFailure(error, 'candidateOwner');
+      _failCandidateEgress(snapshot);
+      return;
+    }
     if (candidate.iceGeneration != engine.iceGeneration) {
       _failCandidateEgress(snapshot);
       return;
