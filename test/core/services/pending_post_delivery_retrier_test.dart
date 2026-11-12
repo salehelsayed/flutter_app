@@ -85,6 +85,200 @@ void main() {
     posts.dispose();
   });
 
+  Future<void> seedKeylessThought() async {
+    contacts.seed([_contact('peer-bob', 'Bob').copyWith(mlKemPublicKey: '')]);
+    await posts.savePost(_post(id: 'key-waiting', deliveryStatus: 'partial'));
+    await posts.saveRecipientDelivery(
+      const PostRecipientDelivery(
+        postId: 'key-waiting',
+        recipientPeerId: 'peer-bob',
+        deliveryStatus: 'failed',
+        deliveryPath: 'failed',
+        lastAttemptAt: '2026-03-15T10:00:01.000Z',
+        createdAt: '2026-03-15T10:00:01.000Z',
+        updatedAt: '2026-03-15T10:00:01.000Z',
+      ),
+    );
+    p2pService.emitState(
+      const NodeState(
+        isStarted: true,
+        peerId: 'peer-self',
+        circuitAddresses: ['/p2p-circuit/addr1'],
+      ),
+    );
+  }
+
+  test('BL23 key arrival retries failed Thought within debounce without duplicates', () async {
+    await seedKeylessThought();
+    final keys = StreamController<void>.broadcast(sync: true);
+    addTearDown(keys.close);
+    retrier.dispose();
+    retrier = PendingPostDeliveryRetrier(
+      p2pService: p2pService,
+      postRepo: posts,
+      contactRepo: contacts,
+      bridge: bridge,
+      contactKeyUpdatedSignal: keys.stream,
+      retryDebounce: const Duration(milliseconds: 10),
+      periodicRetryInterval: const Duration(minutes: 5),
+    );
+    retrier.start();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+    expect(
+      (await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus,
+      'failed',
+    );
+    contacts.seed([_contact('peer-bob', 'Bob')]);
+    keys.add(null);
+    keys.add(null);
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while ((await posts.getPost('key-waiting'))!.deliveryStatus != 'sent' &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect((await posts.getPost('key-waiting'))!.deliveryStatus, 'sent');
+    expect(p2pService.storeInInboxCallCount, 1);
+    expect(p2pService.lastStoreInInboxPeerId, 'peer-bob');
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+  });
+
+  test('BL23 disposed retrier ignores key arrivals', () async {
+    await seedKeylessThought();
+    final keys = StreamController<void>.broadcast(sync: true);
+    addTearDown(keys.close);
+    retrier.dispose();
+    retrier = PendingPostDeliveryRetrier(
+      p2pService: p2pService,
+      postRepo: posts,
+      contactRepo: contacts,
+      bridge: bridge,
+      contactKeyUpdatedSignal: keys.stream,
+      retryDebounce: const Duration(milliseconds: 10),
+    );
+    retrier.start();
+    retrier.dispose();
+    contacts.seed([_contact('peer-bob', 'Bob')]);
+    keys.add(null);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+    expect(
+      (await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus,
+      'failed',
+    );
+  });
+
+  test('BL23 key and resume requests coalesce behind an active retry', () async {
+    await seedKeylessThought();
+    final keys = StreamController<void>.broadcast(sync: true);
+    addTearDown(keys.close);
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var passes = 0;
+    retrier.dispose();
+    retrier = PendingPostDeliveryRetrier(
+      p2pService: p2pService, postRepo: posts, contactRepo: contacts, bridge: bridge,
+      contactKeyUpdatedSignal: keys.stream,
+      retryDebounce: const Duration(milliseconds: 10),
+      beforeRetry: () async {
+        passes++;
+        if (passes == 1) {
+          entered.complete();
+          await release.future;
+        }
+        return 0;
+      },
+    );
+    retrier.start();
+    await entered.future.timeout(const Duration(seconds: 1));
+    contacts.seed([_contact('peer-bob', 'Bob')]);
+    keys.add(null);
+    keys.add(null);
+    await retrier.retryNow();
+    await retrier.retryNow();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(passes, 1);
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+    release.complete();
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while (passes < 2 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(passes, 2);
+    expect((await posts.getPost('key-waiting'))!.deliveryStatus, 'sent');
+    expect(p2pService.storeInInboxCallCount, 1);
+    expect(p2pService.lastStoreInInboxPeerId, 'peer-bob');
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+  });
+
+  test('BL23 dispose clears a retry queued behind an active pass', () async {
+    await seedKeylessThought();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var passes = 0;
+    retrier.dispose();
+    retrier = PendingPostDeliveryRetrier(
+      p2pService: p2pService, postRepo: posts, contactRepo: contacts, bridge: bridge,
+      retryDebounce: Duration.zero,
+      beforeRetry: () async {
+        passes++;
+        entered.complete();
+        await release.future;
+        return 0;
+      },
+    );
+    final active = retrier.retryNow();
+    await entered.future;
+    await retrier.retryNow();
+    retrier.dispose();
+    contacts.seed([_contact('peer-bob', 'Bob')]);
+    release.complete();
+    await active;
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(passes, 1);
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+  });
+
+  for (final exclusion in ['blocked', 'archived', 'expired']) {
+    test('BL23 key event preserves $exclusion exclusion', () async {
+      await seedKeylessThought();
+      if (exclusion == 'expired') {
+        final post = (await posts.getPost('key-waiting'))!;
+        await posts.savePost(post.copyWith(
+          createdAt: DateTime.now().toUtc().subtract(const Duration(hours: 25)).toIso8601String(),
+        ));
+      }
+      final keys = StreamController<void>.broadcast(sync: true);
+      addTearDown(keys.close);
+      var passes = 0;
+      retrier.dispose();
+      retrier = PendingPostDeliveryRetrier(
+        p2pService: p2pService, postRepo: posts, contactRepo: contacts, bridge: bridge,
+        contactKeyUpdatedSignal: keys.stream,
+        retryDebounce: const Duration(milliseconds: 10),
+        beforeRetry: () async { passes++; return 0; },
+      );
+      retrier.start();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      contacts.seed([_contact('peer-bob', 'Bob').copyWith(
+        isBlocked: exclusion == 'blocked', isArchived: exclusion == 'archived',
+      )]);
+      keys.add(null);
+      final deadline = DateTime.now().add(const Duration(seconds: 1));
+      while (passes < 2 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(passes, 2);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+      expect((await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus, 'failed');
+    });
+  }
+
   test(
     'offline to online transition retries outgoing post deliveries',
     () async {
