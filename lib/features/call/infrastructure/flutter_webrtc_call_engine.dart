@@ -912,14 +912,16 @@ final class FlutterWebRtcPeerConnectionAdapter
   }
 
   Future<void> _closeOnce() async {
+    var releaseFailed = false;
     final video = _videoSession;
     if (video != null) {
-      await video.close();
-      if (!await video.retryCleanup()) {
-        throw const WebRtcAdapterException(WebRtcFailureReason.other);
+      try {
+        await video.close();
+        if (!await video.retryCleanup()) releaseFailed = true;
+      } catch (_) {
+        releaseFailed = true;
       }
     }
-    var releaseFailed = false;
 
     Future<void> attempt(
       Future<void> Function() action,
