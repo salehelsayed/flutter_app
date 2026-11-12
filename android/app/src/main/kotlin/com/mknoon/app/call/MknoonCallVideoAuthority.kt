@@ -34,11 +34,14 @@ internal class MknoonCallVideoAuthority(
     private var videoCapabilityEnabled = false
     private val mediaByCall = mutableMapOf<UUID, MknoonCallMedia>()
     private var cameraLeaseCall: UUID? = null
+    // Revocation fence (NATIVE-VIDEO-1): every revoking action bumps it, so a
+    // camera request that raced a revocation cannot commit a lease afterwards.
+    private var revocationEpoch = 0L
 
     fun setVideoCapability(enabled: Boolean) {
         val released = synchronized(lock) {
             videoCapabilityEnabled = enabled
-            if (enabled) null else takeLease()
+            if (enabled) null else { revocationEpoch += 1; takeLease() }
         }
         released?.let { applier.apply(it, false) }
     }
@@ -58,7 +61,10 @@ internal class MknoonCallVideoAuthority(
     fun setCallMedia(nativeCallId: UUID, media: MknoonCallMedia) {
         val released = synchronized(lock) {
             mediaByCall[nativeCallId] = media
-            if (media == MknoonCallMedia.AUDIO && cameraLeaseCall == nativeCallId) takeLease() else null
+            if (media == MknoonCallMedia.AUDIO) {
+                revocationEpoch += 1
+                if (cameraLeaseCall == nativeCallId) takeLease() else null
+            } else null
         }
         released?.let { applier.apply(it, false) }
     }
@@ -67,12 +73,14 @@ internal class MknoonCallVideoAuthority(
     fun forget(nativeCallId: UUID) {
         val released = synchronized(lock) {
             mediaByCall.remove(nativeCallId)
+            revocationEpoch += 1
             if (cameraLeaseCall == nativeCallId) takeLease() else null
         }
         released?.let { applier.apply(it, false) }
     }
 
     fun requestLocalCamera(nativeCallId: UUID): MknoonCallLocalCameraDecision {
+        val epoch = synchronized(lock) { revocationEpoch }
         val decision = decide(nativeCallId)
         if (decision != MknoonCallLocalCameraDecision.Apply) return decision
         if (!applier.apply(nativeCallId, true)) {
@@ -85,13 +93,25 @@ internal class MknoonCallVideoAuthority(
             applier.apply(nativeCallId, false)
             return recheck
         }
-        synchronized(lock) { cameraLeaseCall = nativeCallId }
+        val committed = synchronized(lock) {
+            if (revocationEpoch == epoch) {
+                cameraLeaseCall = nativeCallId
+                true
+            } else false
+        }
+        if (!committed) {
+            applier.apply(nativeCallId, false)
+            return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
+        }
         return MknoonCallLocalCameraDecision.Apply
     }
 
     /** Always succeeds; no start guards on stop. */
     fun releaseLocalCamera(nativeCallId: UUID) {
-        synchronized(lock) { if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null }
+        synchronized(lock) {
+            revocationEpoch += 1
+            if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null
+        }
         applier.apply(nativeCallId, false)
     }
 
@@ -100,7 +120,10 @@ internal class MknoonCallVideoAuthority(
     /** Drops the lease without touching the platform, for a caller that is
      * itself about to re-apply the service types without the camera. */
     fun dropLease(nativeCallId: UUID) {
-        synchronized(lock) { if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null }
+        synchronized(lock) {
+            revocationEpoch += 1
+            if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null
+        }
     }
 
     private fun takeLease(): UUID? {

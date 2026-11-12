@@ -98,6 +98,37 @@ class MknoonCallVideoAuthorityTest {
     }
 
     @Test
+    fun `a revocation after the final check but before commit cannot leave a lease (NATIVE-VIDEO-1)`() {
+        lateinit var racing: MknoonCallVideoAuthority
+        var manifestReads = 0
+        val racingFacts = object : MknoonCallLocalCameraFacts {
+            override fun audioActive(nativeCallId: UUID) = true
+            override fun uiVisible() = true
+            override fun cameraPermissionGranted() = true
+            override fun sdkInt() = 34
+            override fun manifestDeclaresCameraType(): Boolean {
+                manifestReads += 1
+                // Second read is inside the final check, after media was read
+                // as video: a Telecom disconnect ends the call right here.
+                if (manifestReads == 2) racing.forget(call)
+                return true
+            }
+        }
+        racing = MknoonCallVideoAuthority(racingFacts) { id, withCamera ->
+            applied += id to withCamera
+            true
+        }
+        racing.setVideoCapability(true)
+        racing.setCallMedia(call, MknoonCallMedia.VIDEO)
+
+        val decision = racing.requestLocalCamera(call)
+
+        assertEquals("not_active", (decision as MknoonCallLocalCameraDecision.Refuse).reason.wireValue)
+        assertFalse(racing.holdsCameraLease(call))
+        assertEquals(listOf(call to true, call to false), applied)
+    }
+
+    @Test
     fun `release always removes the camera type even after facts changed`() {
         readyVideoCall()
         authority.requestLocalCamera(call)
