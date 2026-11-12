@@ -79,7 +79,7 @@ void main() {
       CallNegotiationPortErrorCode.permissionDenied: ('preflight', 'permission_denied'),
       CallNegotiationPortErrorCode.mediaUnavailable: ('media', 'media_failed'),
       CallNegotiationPortErrorCode.signalingUnavailable: ('signaling', 'transport_failed'),
-      CallNegotiationPortErrorCode.transportUnavailable: ('media', 'transport_failed'),
+      CallNegotiationPortErrorCode.transportUnavailable: ('signaling', 'transport_failed'),
       CallNegotiationPortErrorCode.iceServersUnavailable: ('turn', 'turn_unavailable'),
     }.entries) {
       final harness = _Harness(snapshot: _snapshot(CallState.accepted));
@@ -531,6 +531,8 @@ void main() {
   test(
     'initial negotiation transport failures remain terminal and release retry bytes',
     () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final timers = _ReadinessTimerScheduler();
       final retry = _FakeSignalRetry();
       final harness = _Harness(
@@ -547,6 +549,13 @@ void main() {
         harness.snapshot,
       );
       expect(result?.type, CallEventType.negotiationFailed);
+      final causes = (await diagnostics.eventsForTesting()).where(
+        (event) => event['action'] == 'finish' && event['outcome'] == 'failed',
+      ).toList();
+      expect(causes, hasLength(1));
+      expect(causes.single['stage'], 'signaling');
+      expect(causes.single['reason'], 'transport_failed');
+      expect(causes.single['values'], {'failureDisposition': 'terminal'});
       expect(retry.closed, isTrue);
       expect(timers.active, isEmpty);
     },

@@ -1507,7 +1507,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       CallNegotiationPortErrorCode.signalingUnavailable =>
         CallSetupFailure.signaling,
       CallNegotiationPortErrorCode.transportUnavailable =>
-        CallSetupFailure.mediaTransport,
+        CallSetupFailure.signaling,
       CallNegotiationPortErrorCode.iceServersUnavailable =>
         CallSetupFailure.turn,
     },
