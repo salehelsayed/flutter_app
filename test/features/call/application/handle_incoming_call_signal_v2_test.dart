@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -358,6 +359,7 @@ final class _Harness {
     int contextCapacity = 4,
     AuthenticatedCallSignalingContextObserver? observer,
     AuthenticatedIncomingCallV2MediaHandler? onMedia,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     contexts = CallSignalingContextStore(
       videoEnabled: true,
@@ -390,6 +392,10 @@ final class _Harness {
       networkEffectsAllowed: () => networkAllowed,
       signalingContextObserver: observer ?? contexts,
       videoEnabled: videoEnabled,
+      resolveV2Endpoint: admittedEndpoint == null
+          ? null
+          : (_) async => admittedEndpoint,
+      nowMs: () => nowMs,
       incomingV2MediaHandler: onMedia,
     );
     addTearDown(coordinator.dispose);
@@ -531,6 +537,39 @@ final class _Harness {
 }
 
 void main() {
+  test(
+    'U3h canonical incoming handler retains authenticated endpoint before presentation',
+    () async {
+      final caps = <String>{'voice_call_v1', 'video_call_v2'};
+      final endpoint = ResolvedCallEndpoint(
+        accountPeerId: 'sender-account',
+        devicePeerId: 'sender-device',
+        signingPublicKey: 'sender-signing-key',
+        mlKemPublicKey: 'sender-mlkem-key',
+        deviceKeyEpoch: 1,
+        preferenceEpoch: 1,
+        platform: CallEndpointPlatform.android,
+        expiresAtMs: _nowMs + 45000,
+        routingHandle: '0123456789abcdef0123456789abcdef',
+        wakeHandle: 'fedcba9876543210fedcba9876543210',
+        capabilities: caps,
+      );
+      final h = _Harness(admittedEndpoint: endpoint);
+      expect(await h.receive(_v2()), IncomingCallSignalOutcome.accepted);
+      caps.clear();
+      expect(
+        h.contexts.admittedV2Endpoint(_callId)?.signingPublicKey,
+        'sender-signing-key',
+      );
+      expect(h.contexts.admittedV2Endpoint(_callId)?.capabilities, {
+        'voice_call_v1',
+        'video_call_v2',
+      });
+      expect(h.presenter.calls, 1);
+      expect(h.coordinator.activeSession?.state, CallState.ringing);
+    },
+  );
+
   test(
     'U3F-VERSION-1 ordinary v1 terminal cannot suppress a v2 page invite',
     () async {

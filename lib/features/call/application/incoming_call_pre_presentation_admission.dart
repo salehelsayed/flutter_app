@@ -139,6 +139,10 @@ final class AuthenticatedIncomingCallAdmissionV2
   @override
   final CallAdmissionAuthorityWitness? admissionAuthority;
 
+  /// Frozen, signed endpoint bound to the authenticated invite sender.
+  /// Authentication-only callers and non-invite frames carry no endpoint.
+  final ResolvedCallEndpoint? admittedEndpoint = null;
+
   @override
   void commitReplay() => _decoded.commitReplay();
 
@@ -158,6 +162,9 @@ final class IncomingCallPrePresentationAdmission {
     required CallTrustedRosterProvider trustedRosterProvider,
     required CallLocalAuthorityProvider localAuthorityProvider,
     bool videoEnabled = false,
+    Future<ResolvedCallEndpoint> Function(String accountPeerId)?
+    resolveV2Endpoint,
+    int Function()? nowMs,
   }) : _codec = codec,
        _trustedRosterProvider = trustedRosterProvider,
        _localAuthorityProvider = localAuthorityProvider,

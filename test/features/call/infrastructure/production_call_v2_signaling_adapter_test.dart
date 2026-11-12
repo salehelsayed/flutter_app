@@ -1,3 +1,9 @@
+import 'package:flutter_app/features/call/application/call_control_effect_executor.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_v2_control_signaling_adapter.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -180,12 +186,14 @@ final class _Rig {
     contexts.storeOutgoingV2(
       invite: _signal(id: 1, invite: true),
       callHandle: _handle,
+      admittedEndpoint: admitted,
     );
   }
 
   int now = _start;
   bool current = true;
   int resolutions = 0;
+  void Function()? afterResolve;
   int keyLoads = 0;
   String signingKey = 'private-signing-key';
   Object? resolutionError;
@@ -217,12 +225,32 @@ final class _Rig {
     videoEnabled: true,
   );
 
+  final legacy = _LegacyControl();
+  CallMediaKind? selectedMedia = CallMediaKind.video;
+  int controlIds = 0;
+  ProductionCallV2ControlSignalingAdapter control({bool enabled = true}) =>
+      ProductionCallV2ControlSignalingAdapter(
+        legacyPort: legacy,
+        contextStore: contexts,
+        signalingAdapter: adapter,
+        resolveCurrentEndpoint: resolve,
+        outgoingMediaFor: (_) => selectedMedia,
+        isOutgoingPreparationCurrent: (_) => current,
+        canSend: (_) => current,
+        nowMs: () => now,
+        idSource: () => CallId.parse(
+          controlIds++ == 0 ? _handle : '77777777-7777-4777-8777-777777777777',
+        ),
+        videoEnabled: enabled,
+      );
+
   Future<ResolvedCallEndpoint> resolve(String account) async {
     resolutions++;
     await endpointGate;
     if (resolutionError case final Object error) {
       throw error;
     }
+    afterResolve?.call();
     return endpoint;
   }
 
@@ -256,11 +284,251 @@ final class _Rig {
   }
 }
 
+final class _LegacyControl implements CallControlSignalingPort {
+  int preparations = 0;
+  int sends = 0;
+  @override
+  Future<OutgoingCallSignalingPreparation> prepareOutgoingInvite(
+    CallSessionSnapshot snapshot,
+  ) async {
+    preparations++;
+    return const OutgoingCallSignalingPreparation(
+      callHandle: _handle,
+      remoteAccountPeerId: 'recipient-account',
+      remoteDevicePeerId: 'recipient-device',
+    );
+  }
+
+  @override
+  Future<CallControlSendResult> send({
+    required CallSignal signal,
+    required String callHandle,
+  }) async {
+    sends++;
+    return CallControlSendResult(
+      directAccepted: true,
+      mailboxStored: false,
+      mailboxStoreSettled: Future<void>.value(),
+    );
+  }
+}
+
+CallSessionSnapshot _preparing() => CallSessionSnapshot.active(
+  callId: CallId.parse(_call),
+  contactPeerId: 'recipient-account',
+  direction: CallDirection.outgoing,
+  state: CallState.preparing,
+  callerAccountPeerId: 'sender-account',
+  callerDeviceId: 'sender-device',
+  startedAt: DateTime.fromMillisecondsSinceEpoch(_start, isUtc: true),
+);
+
+CallSignalV2 _controlSignal({String event = 'ringing'}) =>
+    CallSignalV2.fromMap({
+      ..._signal().toMap(),
+      'event': event,
+      'payload': event == 'terminate' || event == 'reject'
+          ? {'reason': 'unsupported'}
+          : <String, Object?>{},
+    }, videoEnabled: true);
+
 void main() {
   late _Rig r;
   setUp(() => r = _Rig());
   tearDown(() => r.close());
   final rejected = throwsA(isA<CallSignalingException>());
+
+  final controlRejected = throwsA(isA<CallControlSignalingPortException>());
+
+  for (final media in CallMediaKind.values) {
+    test(
+      'U3h prepares explicit v2 ${media.name} with original endpoint and camera off',
+      () async {
+        r.contexts.purge(CallId.parse(_call));
+        r.selectedMedia = media;
+        final prepared = await r.control().prepareOutgoingInvite(_preparing());
+        expect(prepared.preparedV2Invite?.payload['media'], media.name);
+        expect(prepared.preparedV2Invite?.payload['camera'], 'off');
+        expect(prepared.preparedV2Invite?.senderSequence, 1);
+        expect(prepared.nextSenderSequence, 2);
+        expect(
+          r.contexts.admittedV2Endpoint(CallId.parse(_call))?.deviceKeyEpoch,
+          1,
+        );
+        expect(
+          r.contexts.read(CallId.parse(_call))?.preparedOutgoingV2Invite,
+          same(prepared.preparedV2Invite),
+        );
+        expect(r.legacy.preparations, 0);
+        r.expectNoWrites();
+      },
+    );
+  }
+
+  test(
+    'U3h disabled explicit v2 performs no lookup and never falls back',
+    () async {
+      r.contexts.purge(CallId.parse(_call));
+      final port = r.control(enabled: false);
+      await expectLater(
+        port.prepareOutgoingInvite(_preparing()),
+        controlRejected,
+      );
+      await expectLater(
+        port.sendV2(signal: _controlSignal(), callHandle: _handle),
+        controlRejected,
+      );
+      expect(r.resolutions, 0);
+      expect(r.keyLoads, 0);
+      expect(r.legacy.preparations, 0);
+      expect(r.legacy.sends, 0);
+      r.expectNoWrites();
+    },
+  );
+
+  test('U3h ordinary audio delegates to the unchanged legacy port', () async {
+    r.selectedMedia = null;
+    final port = r.control(enabled: false);
+    expect(
+      (await port.prepareOutgoingInvite(_preparing())).preparedV2Invite,
+      isNull,
+    );
+    final signal = CallSignal.fromMap({
+      ..._controlSignal().toMap(),
+      'schema': CallSignal.schema,
+    });
+    expect(
+      (await port.send(signal: signal, callHandle: _handle)).delivered,
+      isTrue,
+    );
+    expect(r.legacy.preparations, 1);
+    expect(r.legacy.sends, 1);
+    expect(r.resolutions, 0);
+  });
+
+  for (final invalid in ['capability', 'expired', 'cancelled']) {
+    test(
+      'U3h outgoing $invalid lookup cannot create authority or downgrade',
+      () async {
+        r.contexts.purge(CallId.parse(_call));
+        if (invalid == 'capability') {
+          r.endpoint = _endpoint(capabilities: {'voice_call_v1'});
+        }
+        if (invalid == 'expired') r.afterResolve = () => r.now += 45000;
+        if (invalid == 'cancelled') r.afterResolve = () => r.current = false;
+        await expectLater(
+          r.control().prepareOutgoingInvite(_preparing()),
+          controlRejected,
+        );
+        expect(r.contexts.length, 0);
+        expect(r.resolutions, 1);
+        expect(r.legacy.preparations, 0);
+        r.expectNoWrites();
+      },
+    );
+  }
+
+  test(
+    'U3h control sends reuse sealed bytes and map direct route/custody',
+    () async {
+      final port = r.control();
+      final signal = _controlSignal();
+      final first = await port.sendV2(signal: signal, callHandle: _handle);
+      await port.sendV2(signal: signal, callHandle: _handle);
+      expect(first.directAccepted, isTrue);
+      expect(first.directRoute, CallRouteClass.direct);
+      await first.mailboxStoreSettled;
+      expect(r.crypto.encryptions, 1);
+      expect(r.direct.envelopes.length, greaterThanOrEqualTo(1));
+      expect(r.direct.envelopes.toSet(), hasLength(1));
+      expect(r.legacy.sends, 0);
+    },
+  );
+
+  test(
+    'U3h admission-only context cannot acquire authority from a later lookup or v1 pin',
+    () async {
+      r.contexts.purge(CallId.parse(_call));
+      r.contexts.storeOutgoingV2(
+        invite: _signal(id: 1, invite: true),
+        callHandle: _handle,
+      );
+      r.contexts.pinEndpoint(CallId.parse(_call), r.endpoint);
+      await expectLater(
+        r.control().sendV2(signal: _controlSignal(), callHandle: _handle),
+        controlRejected,
+      );
+      expect(r.resolutions, 0);
+      expect(r.keyLoads, 0);
+      r.expectNoWrites();
+    },
+  );
+
+  test(
+    'U3h fresh key rotation cannot replace original admitted authority',
+    () async {
+      r.endpoint = _endpoint(epoch: 2);
+      r.contexts.pinEndpoint(CallId.parse(_call), r.endpoint);
+      await expectLater(
+        r.control().sendV2(signal: _controlSignal(), callHandle: _handle),
+        controlRejected,
+      );
+      expect(r.resolutions, greaterThan(0));
+      expect(
+        r.contexts.admittedV2Endpoint(CallId.parse(_call))?.deviceKeyEpoch,
+        1,
+      );
+      expect(r.legacy.sends, 0);
+      r.expectNoWrites();
+    },
+  );
+
+  test(
+    'U3h direct receipt does not claim pending mailbox settlement',
+    () async {
+      final pending = Completer<CallMailboxStoreResult>();
+      r.mailbox.action = (_) => pending.future;
+      final result = await r.control().sendV2(
+        signal: _signal(id: 1, invite: true),
+        callHandle: _handle,
+      );
+      var settled = false;
+      final settlement = result.mailboxStoreSettled.then((_) => settled = true);
+      expect(result.directAccepted, isTrue);
+      expect(settled, isFalse);
+      pending.complete(r.mailbox.result(r.mailbox.requests.single));
+      await settlement;
+      expect(settled, isTrue);
+    },
+  );
+
+  test(
+    'U3h terminal preparation retains original authority across context purge',
+    () async {
+      r.crypto.wait = () async => r.contexts.purge(CallId.parse(_call));
+      final result = await r.control().sendV2(
+        signal: _controlSignal(event: 'terminate'),
+        callHandle: _handle,
+      );
+      expect(result.delivered, isTrue);
+      expect(r.contexts.length, 0);
+      expect(r.contexts.admittedV2Endpoint(CallId.parse(_call)), isNull);
+      expect(r.legacy.sends, 0);
+    },
+  );
+
+  test(
+    'U3h nonterminal preparation is fenced if context is purged during sealing',
+    () async {
+      r.crypto.wait = () async => r.contexts.purge(CallId.parse(_call));
+      await expectLater(
+        r.control().sendV2(signal: _controlSignal(), callHandle: _handle),
+        controlRejected,
+      );
+      expect(r.crypto.encryptions, 1);
+      r.expectNoWrites();
+    },
+  );
 
   test(
     'default-off adapter performs no endpoint/key/crypto/transport work',

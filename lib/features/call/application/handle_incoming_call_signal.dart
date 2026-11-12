@@ -17,6 +17,7 @@ import '../domain/call_state.dart';
 import '../infrastructure/call_trusted_roster_provider.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
 import 'call_coordinator.dart';
+import 'call_endpoint_resolver.dart';
 import 'call_negotiation_material_store.dart';
 import 'call_network_gate.dart';
 import 'call_signaling_context_store.dart';
@@ -295,6 +296,9 @@ final class HandleIncomingCallSignal {
     required IncomingCallPresenter incomingCallPresenter,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     bool videoEnabled = false,
+    Future<ResolvedCallEndpoint> Function(String accountPeerId)?
+    resolveV2Endpoint,
+    int Function()? nowMs,
     AuthenticatedIncomingCallV2MediaHandler? incomingV2MediaHandler,
     CallNegotiationMaterialStore? negotiationMaterialStore,
     AuthenticatedCallSignalingContextObserver? signalingContextObserver,

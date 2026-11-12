@@ -49,6 +49,7 @@ abstract interface class AuthenticatedCallSignalingContextObserverV2
     required CallSignalV2 signal,
     required String callHandle,
     CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
   });
 }
 
@@ -166,12 +167,17 @@ final class CallSignalingContextStore
   ResolvedCallEndpoint? pinnedEndpoint(CallId callId) =>
       _pinnedEndpoints[callId];
 
+  /// Original v2 admission authority, independent of the mutable v1 retry pin.
+  /// Only transport owners may use this; it is never diagnostic/UI data.
+  ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) => null;
+
   /// The immutable prepared invite already owns its first sender sequence.
   /// Fresh capability/permission admission remains the caller's responsibility.
   void storeOutgoingV2({
     required CallSignalV2 invite,
     required String callHandle,
     CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     if (!videoEnabled || invite.event != CallSignalV2Type.invite) {
       throw const CallSignalingContextException(
@@ -200,6 +206,7 @@ final class CallSignalingContextStore
     required CallSignalV2 signal,
     required String callHandle,
     CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     if (!videoEnabled) {
       throw const CallSignalingContextException(

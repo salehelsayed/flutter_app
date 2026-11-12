@@ -199,6 +199,21 @@ final class _Harness {
 }
 
 void main() {
+  test(
+    'U3h cancellation at prepared return purges port-owned original authority',
+    () async {
+      final h = _Harness();
+      h.port.beforePrepare = () async {
+        h.store.storeOutgoingV2(invite: _invite(), callHandle: _handle);
+        h.current = false;
+      };
+      expect(await h.prepare(), isNull);
+      expect(h.store.length, 0);
+      expect(h.registrations, 0);
+      expect(h.v2.signals, isEmpty);
+    },
+  );
+
   for (final enabled in [false, true]) {
     test('v1 control remains unchanged with video flag $enabled', () async {
       final h = _Harness(enabled: enabled, legacyInvite: true);
