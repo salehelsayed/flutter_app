@@ -80,6 +80,7 @@ class SettingsGroupCard extends StatelessWidget {
 class SettingsListRow extends StatelessWidget {
   final IconData icon;
   final String label;
+  final Widget? labelAccessory;
   final String? subtitle;
   final int? subtitleMaxLines;
   final String? value;
@@ -90,6 +91,7 @@ class SettingsListRow extends StatelessWidget {
     super.key,
     required this.icon,
     required this.label,
+    this.labelAccessory,
     this.subtitle,
     this.subtitleMaxLines = 2,
     this.value,
@@ -116,14 +118,32 @@ class SettingsListRow extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: readableColors.textPrimary,
+                  if (labelAccessory == null)
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: readableColors.textPrimary,
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: readableColors.textPrimary,
+                          ),
+                        ),
+                        labelAccessory!,
+                      ],
                     ),
-                  ),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
                     Text(

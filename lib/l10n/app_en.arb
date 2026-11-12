@@ -635,6 +635,10 @@
   "picker_search_all": "Search contacts & groups",
   "settings_title": "Settings",
   "settings_section_identity": "IDENTITY",
+  "settings_badge_new": "new",
+  "@settings_badge_new": {
+    "description": "Badge beside the Translate to preference"
+  },
   "settings_section_preferences": "PREFERENCES",
   "settings_group_exit_diagnostics_section": "SUPPORT",
   "settings_group_exit_diagnostics_title": "Group exit history",

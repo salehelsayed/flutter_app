@@ -492,6 +492,7 @@
   "picker_search_all": "ابحث في جهات الاتصال والمجموعات",
   "settings_title": "الإعدادات",
   "settings_section_identity": "الهوية",
+  "settings_badge_new": "جديد",
   "settings_section_preferences": "التفضيلات",
   "settings_group_exit_diagnostics_section": "الدعم",
   "settings_group_exit_diagnostics_title": "سجل مغادرة المجموعات",

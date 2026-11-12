@@ -1996,6 +1996,12 @@ abstract class AppLocalizations {
   /// **'IDENTITY'**
   String get settings_section_identity;
 
+  /// Badge beside the Translate to preference
+  ///
+  /// In en, this message translates to:
+  /// **'new'**
+  String get settings_badge_new;
+
   /// No description provided for @settings_section_preferences.
   ///
   /// In en, this message translates to:
