@@ -11442,6 +11442,31 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3g-dependent-host-adoption.json`.
   This closes the scoped host unit and its inherited fixture follow-up, without
   certifying production graph wiring, native effects or a combined candidate.
+  **Phase-4 native video preparation:** optional media keys remain strict and
+  inert while the video capability is off. Absent media preserves audio;
+  explicitly invalid media is rejected. Native camera-lease revocation cannot
+  be undone by a stale commit, and CallKit's video flag requires both enabled
+  capability and video media for the exact current call. These are native
+  preparation boundaries, not proof of camera capture or Dart graph wiring.
+  At frozen `11b03bd11101c3d207b5fa8a6965128d3b00a3e0`, Flutter's Kotlin
+  lane passed 651 tests across 49 classes, without failures/errors/skips and
+  with a successful build/child exit 0. This includes the camera-foreground
+  six cases, video-authority ten cases and native-bridge 36 cases, including
+  the `NATIVE-VIDEO-1` and `NATIVE-VIDEO-2` regressions. The unsigned serial
+  iPhone 16e/iOS 26.5 simulator run passed 93 CallKit lifecycle and 18 native
+  bridge cases; all four new `testPhase4*` cases passed and Xcode reported
+  `TEST SUCCEEDED`. The official actor reported child exit 0. The retained
+  iOS command/log pins the simulator and selected classes but does not repeat
+  a Git/source-hash vector or shell exit stamp; the exact head and clean
+  worktree are actor attestations. Kotlin's initial head/clean record and the
+  reviewed 15-file composition remain separate evidence. The first iOS
+  member-order contract failure is retained, with its source correction.
+  Source review, independently parsed raw results and these identity limits
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/native-prep-final-adoption.json`.
+  The video gate stays off and Android manifest commit `afa0e7970` stays
+  unmerged. Live camera/foreground-service behavior, PiP, Telecom C5 and
+  composed or signed candidate proof remain separate available-device legs.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
