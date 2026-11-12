@@ -2075,6 +2075,7 @@ void main() {
 
   Future<void> pumpScreen(
     WidgetTester tester, {
+    ContactModel? contact,
     required FakeIdentityRepository identityRepo,
     required MessageRepository messageRepo,
     required ChatMessageListener chatListener,
@@ -2136,7 +2137,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         theme: themeOverride,
         home: ConversationWired(
-          contact: makeContact(),
+          contact: contact ?? makeContact(),
           identityRepo: identityRepo,
           messageRepo: messageRepo,
           chatMessageListener: chatListener,
@@ -2203,6 +2204,160 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('BL11 requester key readiness', () {
+    const labels = {
+      'en': 'Waiting for secure connection',
+      'ar': 'في انتظار اتصال آمن',
+      'de': 'Warten auf eine sichere Verbindung',
+    };
+    for (final entry in labels.entries) {
+      for (final hasMessage in [false, true]) {
+        testWidgets(
+          'origin marker is a local save (${hasMessage ? "compact" : "empty"}) in ${entry.key}',
+          (tester) async {
+            final messages = FakeMessageRepository();
+            if (hasMessage) {
+              await messages.saveMessage(
+                ConversationMessage(
+                  id: 'bl11-existing-message',
+                  contactPeerId: makeContact().peerId,
+                  text: 'An existing message',
+                  senderPeerId: makeIdentity().peerId,
+                  timestamp: '2026-11-12T10:00:00Z',
+                  isIncoming: false,
+                  status: 'sent',
+                  createdAt: '2026-11-12T10:00:00Z',
+                ),
+              );
+            }
+            final listener = _CallContactUpdateListener(
+              messageRepo: messages,
+              contactRepo: FakeContactRepository(),
+            );
+            addTearDown(listener.dispose);
+            await pumpScreen(
+              tester,
+              identityRepo: FakeIdentityRepository(makeIdentity()),
+              messageRepo: messages,
+              chatListener: listener,
+              sendFn: _instantSuccessSendFn,
+              locale: Locale(entry.key),
+            );
+            final state = tester.state(find.byType(ConversationWired));
+            final l10n = AppLocalizations.of(
+              tester.element(find.byType(ConversationWired)),
+            )!;
+            expect(find.text(l10n.connected_title), findsNothing);
+            final saved = find.text(l10n.qr_added_to_circle);
+            expect(saved, findsOneWidget);
+            final style = tester.widget<Text>(saved).style!;
+            expect(
+              style.color,
+              tester.element(saved).backgroundReadableColors.textMuted,
+            );
+            expect(style.shadows, anyOf(isNull, isEmpty));
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+
+            listener.updates.add(makeContact().copyWith(mlKemPublicKey: 'key'));
+            await tester.pump();
+            expect(tester.state(find.byType(ConversationWired)), same(state));
+            expect(find.text(l10n.qr_added_to_circle), findsNothing);
+            expect(find.text(l10n.connected_title), findsOneWidget);
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+            await tester.pumpWidget(const SizedBox.shrink());
+          },
+        );
+      }
+
+      testWidgets('chat header updates without reopening in ${entry.key}', (
+        tester,
+      ) async {
+        final messages = FakeMessageRepository();
+        final listener = _CallContactUpdateListener(
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(listener.dispose);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+          locale: Locale(entry.key),
+        );
+        final state = tester.state(find.byType(ConversationWired));
+        final header = find.byType(ConversationHeader);
+        expect(
+          find.descendant(of: header, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+
+        listener.updates.add(
+          makeContact().copyWith(
+            peerId: 'unrelated-peer',
+            mlKemPublicKey: 'key',
+          ),
+        );
+        await tester.pump();
+        expect(find.text(entry.value), findsOneWidget);
+
+        listener.updates.add(makeContact().copyWith(mlKemPublicKey: 'key'));
+        await tester.pump();
+        expect(tester.state(find.byType(ConversationWired)), same(state));
+        expect(find.text(entry.value), findsNothing);
+
+        for (final key in ['', '  \n ']) {
+          listener.updates.add(makeContact().copyWith(mlKemPublicKey: key));
+          await tester.pump();
+          expect(find.text(entry.value), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+          locale: Locale(entry.key),
+        );
+        expect(find.text(entry.value), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+
+    testWidgets('ready and blocked chat headers do not claim to be waiting', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final listener = _CallContactUpdateListener(
+        messageRepo: messages,
+        contactRepo: FakeContactRepository(),
+      );
+      addTearDown(listener.dispose);
+      for (final contact in [
+        makeContact().copyWith(mlKemPublicKey: 'key'),
+        makeContact().copyWith(isBlocked: true),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpScreen(
+          tester,
+          contact: contact,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+        );
+        expect(find.text(labels['en']!), findsNothing);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  });
 
   group('405 terminal call rows', () {
     testWidgets('TC-405-30 a missed call from the call source renders in the '
@@ -14269,7 +14424,10 @@ void main() {
 
       expect(find.text('Delete for me only'), findsNothing);
       expect(messageRepo.store.containsKey('delete-for-me-row'), isFalse);
-      expect(find.text('Connected!'), findsWidgets);
+      // The shared contact fixture has no ML-KEM key. Once the last row is
+      // deleted, its approved empty-state marker stays neutral until ready.
+      expect(find.text('Contact saved'), findsWidgets);
+      expect(find.text('Connected!'), findsNothing);
     });
 
     testWidgets('canceling the delete sheet leaves the message unchanged', (

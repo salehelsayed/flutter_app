@@ -1567,6 +1567,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get connected_title => 'Verbunden!';
 
   @override
+  String get contact_waiting_for_secure_connection =>
+      'Warten auf eine sichere Verbindung';
+
+  @override
   String get send_message => 'Nachricht senden';
 
   @override

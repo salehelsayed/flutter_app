@@ -617,6 +617,7 @@
   "settings_recovery_copy": "In die Zwischenablage kopieren",
   "settings_recovery_hide": "Verbergen",
   "connected_title": "Verbunden!",
+  "contact_waiting_for_secure_connection": "Warten auf eine sichere Verbindung",
   "send_message": "Nachricht senden",
   "introduced_by": "Vorgestellt von {username}",
   "@introduced_by": {

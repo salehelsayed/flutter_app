@@ -99,16 +99,22 @@ class _FilterTab extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 250),
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isActive
-                    ? context.backgroundReadableColors.textPrimary
-                    : context.backgroundReadableColors.textMuted,
+            Flexible(
+              child: AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 250),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: isActive
+                      ? context.backgroundReadableColors.textPrimary
+                      : context.backgroundReadableColors.textMuted,
+                ),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              child: Text(label),
             ),
             if (showCount) ...[
               const SizedBox(width: 6),

@@ -310,6 +310,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback onBack;
   final ScrollController? scrollController;
   final bool isBlocked;
+  final bool isWaitingForSecureConnection;
   final VoidCallback? onUnblock;
   final VoidCallback? onOverflow;
   final VoidCallback? onAvatarTap;
@@ -451,6 +452,7 @@ class ConversationScreen extends StatefulWidget {
     required this.onBack,
     this.scrollController,
     this.isBlocked = false,
+    this.isWaitingForSecureConnection = false,
     this.onUnblock,
     this.onOverflow,
     this.onAvatarTap,
@@ -962,6 +964,8 @@ class _ConversationScreenState extends State<ConversationScreen>
                 ConversationHeader(
                   contactPeerId: widget.contactPeerId,
                   contactUsername: widget.contactUsername,
+                  isWaitingForSecureConnection:
+                      widget.isWaitingForSecureConnection,
                   onBack: widget.onBack,
                   onOverflow: widget.onOverflow,
                   onAvatarTap: widget.onAvatarTap,
@@ -1147,6 +1151,7 @@ class _ConversationScreenState extends State<ConversationScreen>
             child: EmptyConversationState(
               contactPeerId: widget.contactPeerId,
               connectionDate: widget.connectionDate,
+              isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
             ),
           ),
         ],
@@ -1156,6 +1161,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       key: const ValueKey('empty'),
       contactPeerId: widget.contactPeerId,
       connectionDate: widget.connectionDate,
+      isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
     );
   }
 
@@ -1204,6 +1210,7 @@ class _ConversationScreenState extends State<ConversationScreen>
             return CompactOriginMarker(
               contactPeerId: widget.contactPeerId,
               connectionDate: widget.connectionDate,
+              isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
             );
           case _ItemType.dateSeparator:
             return DateSeparator(label: item.dateLabel!);
