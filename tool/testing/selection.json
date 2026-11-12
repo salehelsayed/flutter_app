@@ -353,6 +353,7 @@
         "test/features/call/domain/call_state_machine_test.dart",
         "test/features/call/infrastructure/call_signaling_runtime_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart",
+    "test/features/call/infrastructure/flutter_webrtc_video_session_test.dart",
         "test/features/call/infrastructure/call_stats_sampler_test.dart",
         "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart",
         "test/core/bootstrap/call_signaling_composition_test.dart",
