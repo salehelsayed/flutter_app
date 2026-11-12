@@ -58,7 +58,7 @@ Future<ResolvedCallEndpoint> _resolve(
         ),
       ],
       relayCapabilities: [record],
-      wakeHandleGrant: const CallWakeHandleGrant(
+      wakeHandleGrant: CallWakeHandleGrant(
         handle: 'fedcba9876543210fedcba9876543210',
         recipientDevicePeerId: 'device',
         deviceKeyEpoch: 1,
