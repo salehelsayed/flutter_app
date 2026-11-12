@@ -309,8 +309,9 @@ void main() {
     () async {
       final first = r.prepare();
       final second = r.prepare(signal: _signal());
-      expect(identical(first, second), isTrue);
+      final sharedBeforeAwait = identical(first, second);
       final results = await Future.wait([first, second]);
+      expect(sharedBeforeAwait, isTrue);
       expect(identical(results[0], results[1]), isTrue);
       expect(r.crypto.encryptions, 1);
       r.expectNoWrites();
@@ -347,8 +348,8 @@ void main() {
       final resolutions = r.resolutions;
       r.resolutionError = null;
       final second = r.prepare();
-      expect(identical(first, second), isTrue);
       await expectLater(second, rejected);
+      expect(identical(first, second), isTrue);
       expect(r.resolutions, resolutions);
       expect(r.crypto.encryptions, 0);
       r.expectNoWrites();
@@ -606,6 +607,45 @@ void main() {
   });
 
   test(
+    'refused cached preparation permanently retires that owner intent',
+    () async {
+      final prepared = await r.prepare();
+      r.current = false;
+      await expectLater(r.prepare(), rejected);
+      r.current = true;
+      await expectLater(r.send(prepared), rejected);
+      expect(prepared.isAvailable, isFalse);
+      expect(r.crypto.encryptions, 1);
+      r.expectNoWrites();
+    },
+  );
+
+  test(
+    'live-call identity cannot be reused after the minimum replay window',
+    () async {
+      await r.prepare();
+      r.now += 10 * 60 * 1000 + 1;
+      r.endpoint = _endpoint(expires: r.now + 45000);
+      final replacement = CallSignalV2.fromMap({
+        ..._signal().toMap(),
+        'created_at_ms': r.now,
+        'expires_at_ms': r.now + 45000,
+      }, videoEnabled: true);
+      await expectLater(
+        r.adapter.prepare(
+          signal: replacement,
+          callHandle: _handle,
+          admittedEndpoint: r.endpoint,
+          canApply: () => true,
+        ),
+        rejected,
+      );
+      expect(r.crypto.encryptions, 1);
+      r.expectNoWrites();
+    },
+  );
+
+  test(
     'expired message ID cannot acquire a fresh lifetime within replay window',
     () async {
       final prepared = await r.prepare();
@@ -620,32 +660,38 @@ void main() {
     },
   );
 
-  test('optional churn reserves four terminal identities and never reseals an evicted ID', () async {
-    final firstFuture = r.prepare(signal: _signal(id: 2, ice: true));
-    final first = await firstFuture;
-    for (var id = 3; id < 126; id++) {
-      await r.prepare(signal: _signal(id: id, ice: true));
-    }
-    expect(first.isAvailable, isFalse);
-    expect(
-      identical(r.prepare(signal: _signal(id: 2, ice: true)), firstFuture),
-      isTrue,
-    );
-    final encryptions = r.crypto.encryptions;
-    await expectLater(r.prepare(signal: _signal(id: 126, ice: true)), rejected);
-    expect(r.crypto.encryptions, encryptions);
-    for (var id = 200; id < 204; id++) {
-      final terminal = await r.prepare(
-        signal: _signal(id: id, terminal: 'terminate'),
+  test(
+    'optional churn reserves four terminal identities and never reseals an evicted ID',
+    () async {
+      final firstFuture = r.prepare(signal: _signal(id: 2, ice: true));
+      final first = await firstFuture;
+      for (var id = 3; id < 126; id++) {
+        await r.prepare(signal: _signal(id: id, ice: true));
+      }
+      expect(first.isAvailable, isFalse);
+      expect(
+        identical(r.prepare(signal: _signal(id: 2, ice: true)), firstFuture),
+        isTrue,
       );
-      expect(terminal.isAvailable, isTrue);
-    }
-    await expectLater(
-      r.prepare(signal: _signal(id: 204, terminal: 'terminate')),
-      rejected,
-    );
-    r.expectNoWrites();
-  });
+      final encryptions = r.crypto.encryptions;
+      await expectLater(
+        r.prepare(signal: _signal(id: 126, ice: true)),
+        rejected,
+      );
+      expect(r.crypto.encryptions, encryptions);
+      for (var id = 200; id < 204; id++) {
+        final terminal = await r.prepare(
+          signal: _signal(id: id, terminal: 'terminate'),
+        );
+        expect(terminal.isAvailable, isTrue);
+      }
+      await expectLater(
+        r.prepare(signal: _signal(id: 204, terminal: 'terminate')),
+        rejected,
+      );
+      r.expectNoWrites();
+    },
+  );
 
   test(
     'adapter and prepared diagnostics omit identities, authority and payload',
