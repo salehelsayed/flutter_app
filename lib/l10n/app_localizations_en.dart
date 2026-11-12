@@ -3744,6 +3744,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Private media needs one photo or video with no caption.';
 
   @override
+  String get private_media_caption_blocked =>
+      'Remove the caption to keep this private.';
+
+  @override
   String get private_media_notification_body => 'Private media';
 
   @override
@@ -5162,9 +5166,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stickers_drag_to_reorder => 'Drag to reorder';
-
-  @override
-  String get stickers_manage_done => 'Done';
 
   @override
   String get stickers_move_earlier => 'Move earlier';

@@ -3835,6 +3835,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.';
 
   @override
+  String get private_media_caption_blocked =>
+      'Entferne die Bildunterschrift, damit der Inhalt privat bleibt.';
+
+  @override
   String get private_media_notification_body => 'Private Medien';
 
   @override
@@ -5277,9 +5281,6 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get stickers_drag_to_reorder => 'Zum Sortieren ziehen';
-
-  @override
-  String get stickers_manage_done => 'Fertig';
 
   @override
   String get stickers_move_earlier => 'Nach vorne verschieben';

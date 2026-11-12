@@ -88,6 +88,7 @@ run_runner() {
     HOME="${tmp_dir}/host-home" \
     CLAUDE_DOCKER_HOME="${tmp_dir}/claude-home" \
     CLAUDE_DOCKER_IMAGE="claude-code-test" \
+    KAYAN_AGENT="${CONTRACT_KAYAN_AGENT-contract-agent}" \
     "${RUNNER}" "$@"
 }
 
@@ -167,5 +168,40 @@ grep -Fq 'Updated Claude Code version: image-cli' <<<"${image_update_output}" ||
 rm "${tmp_dir}/claude-home/.local/bin/claude"
 fallback_output="$(FAKE_CLAUDE_RESOLVE=1 run_runner --version)"
 grep -Fxq 'image-cli' <<<"${fallback_output}" || fail 'image CLI fallback broke when no persistent CLI exists'
+
+# Agent identity: a stated KAYAN_AGENT reaches the container unchanged.
+: >"${docker_log}"
+run_runner --version >/dev/null
+grep -Fxq $'ARG\tKAYAN_AGENT=contract-agent' "${docker_log}" ||
+  fail 'launch did not pass KAYAN_AGENT into the container'
+
+# Without KAYAN_AGENT, a main checkout (.git directory) defaults to flutter and a
+# git worktree (.git file) refuses to start. Copies of the runner prove both.
+for kind in main worktree; do
+  fake_repo="${tmp_dir}/repo-${kind}"
+  mkdir -p "${fake_repo}/scripts"
+  cp "${RUNNER}" "${fake_repo}/scripts/run_claude_docker.sh"
+  if [ "${kind}" = main ]; then mkdir -p "${fake_repo}/.git"; else printf 'gitdir: /nowhere\n' >"${fake_repo}/.git"; fi
+  : >"${docker_log}"
+  set +e
+  identity_output="$(CONTRACT_KAYAN_AGENT= CLAUDE_DOCKER_ENABLE_HOST_TOOLS=0 RUNNER="${fake_repo}/scripts/run_claude_docker.sh" \
+    PATH="${fake_bin}:${PATH}" CONTRACT_PYTHON_BIN="${contract_python_bin}" FAKE_DOCKER_LOG="${docker_log}" \
+    HOME="${tmp_dir}/host-home" CLAUDE_DOCKER_HOME="${tmp_dir}/claude-home" CLAUDE_DOCKER_IMAGE="claude-code-test" \
+    KAYAN_AGENT= "${fake_repo}/scripts/run_claude_docker.sh" --version 2>&1)"
+  identity_status="$?"
+  set -e
+  if [ "${kind}" = main ]; then
+    [ "${identity_status}" = 0 ] || fail "main checkout launch without KAYAN_AGENT failed: ${identity_output}"
+    grep -Fxq $'ARG\tKAYAN_AGENT=flutter' "${docker_log}" ||
+      fail 'main checkout did not default KAYAN_AGENT to flutter'
+  else
+    [ "${identity_status}" = 2 ] || fail "worktree launch without KAYAN_AGENT did not refuse (status ${identity_status})"
+    grep -Fq 'KAYAN_AGENT is required' <<<"${identity_output}" ||
+      fail 'worktree refusal did not name KAYAN_AGENT'
+    if grep -Fxq $'ARG\trun' "${docker_log}"; then
+      fail 'worktree launch without KAYAN_AGENT still started a container'
+    fi
+  fi
+done
 
 printf 'PASS: Claude Docker update contract\n'

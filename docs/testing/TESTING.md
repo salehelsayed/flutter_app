@@ -3627,12 +3627,26 @@ a missed notification open replays the still-pending request without another
 network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All fourteen shell cases pass, including remount, blocked-peer filtering, duplicate
+All fifteen shell cases pass, including remount, blocked-peer filtering, duplicate
 input/restart and reciprocal acceptance with both Feed and Orbit retained, and
 repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
+
+Overlapping receives can both pass the pending-row admission read before either
+upsert commits. The second upsert replaces the local `received_at`, while the
+presentation queue coalesces that peer into the first snapshot's lease. The
+repository correctly rejects the stale snapshot; after releasing its lease, the
+listener must replay durable pending rows through the existing consent,
+blocked-peer and suppression guards. The BL-19 shell case controls those real SQL
+write boundaries, retains the same Orbit State, and requires one dialog for the
+current row without reattachment or implicit contact creation. It fails with no
+dialog before the fix and passes unchanged afterward; the full shell file is
+15 PASS / 0 FAIL / 0 SKIP. Preserve the initial fixture timeout separately from
+that causal RED. The native CR-003 trace lacks payload and pre-relaunch DB state,
+so this host proof does not establish the device incident's cause or resolution.
+Evidence: `.codex-test-logs/bl19-contact-request-reveal-20261111/`.
 
 Repeated Feed contact acceptance must publish the committed contact through
 `ChatMessageListener.contactUpdatedStream` before opening the conversation,
@@ -5828,10 +5842,30 @@ do not count `test(...)` strings as executions. Runner listings took about
   `.codex-test-logs/r2-5-affected-media.log`.
   Ordinary pending-video summaries and picker disclosure use the existing
   selected media kind and say “Normal video”; photo wording stays unchanged.
-  The full private-media composer widget file passes 14 cases, including one
+  The full private-media composer widget file passes 15 cases, including one
   photo/video distinction case across English, German and Arabic. This is copy
   and kind-wiring proof, not native video preparation or device certification.
   Group composers do not enable this private-media chip.
+
+  Private-media selection must survive caption entry in either action order.
+  A caption disables Send and shows the approved localized inline explanation;
+  clearing it or explicitly choosing Keep in chat removes that restriction.
+  The prior caption-to-ordinary reset silently authorized an ordinary send and
+  is superseded by the BL-22 owner decision. The relevant reset and admission
+  code was identical at store-131 source `3a55bc50e` and `e0a28d94`.
+  Six wired-composer/picker cases cover all three private modes and both action
+  orders. They invoke current-caption and stale empty-text send callbacks:
+  admission must check both submitted text and the live draft caption before
+  any message save, send or staged-media adoption. The stale-empty extension
+  fails before that guard and passes unchanged afterward; caption removal and
+  explicit Keep in chat still unblock. These cases use a local PNG and a fake
+  message repository, so their no-save assertions prove the host boundary.
+  Selection eligibility remains separate from caption-free wire admission;
+  existing policy, boundary and receiver egress tests preserve that distinction.
+  The full 15-case composer file also checks EN/AR/DE inline placement for
+  photos and videos. Native picker, transport and signed store-131 device
+  behavior are not proved by these host tests.
+  Evidence: `.codex-test-logs/bl22-caption-private-policy-20261112/`.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.
@@ -6630,11 +6664,12 @@ visible and cannot become an ordinary first-attempt PASS.
 
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
-  cases. `run_custom_sticker_native_unit_tests.py` requires 43 Android JVM cases:
-  four frame-channel ownership, 21 cutout bridge, six real-host POSIX controls,
-  four cutout engine-registration, and eight runtime, call-teardown and new-intent
-  sentinels. Its caller owns the shared native-build lease. The runner archives
-  old XML, removes only the seven selected class reports before one Gradle
+  cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
+  four frame-channel ownership, four clip-input/RGBA controls, 21 cutout bridge,
+  six real-host POSIX controls, four cutout engine-registration, and eight runtime,
+  call-teardown and new-intent sentinels. Its caller owns the shared native-build
+  lease. The runner archives
+  old XML, removes only the eight selected class reports before one Gradle
   invocation, and requires fresh exact case counts and execution of the selected
   task before reporting success; cached XML is not execution evidence.
   `android-cutout-curated-43-second-verdict.json` records 43 PASS / 0 FAIL /
@@ -6648,6 +6683,19 @@ visible and cannot become an ordinary first-attempt PASS.
   the original references in cleanup. All six bodies and 77 assertion calls,
   production bytes and neighboring cases remained unchanged; the combined run
   verifies that repair without relying on class ordering.
+  The pinned CameraX plugin (`camera_android_camerax` 0.7.6+1) calls
+  `withAudioEnabled(initialMuted: !enableRecordingAudio)` even for silent
+  capture, so its camera source can retain a muted AAC track. Android frame
+  extraction ignores that track while retaining exactly-one-video validation;
+  only video RGBA leaves the helper. `StickerClipFrameInputTest` exercises the
+  real bridge with controlled framework tracks and Bitmap pixels: muted-AAC
+  and video-only acceptance, zero/multiple-video rejection, and opaque dark
+  RGBA preservation. The unchanged acceptance case fails at `0bbd6fdc2`; the
+  47-case suite passes without skips at `e77a19138`. The original RED, fresh
+  eight-class XML and matching source hashes are retained under
+  `/Volumes/CrucialX9/flutter_app-ui-update/.codex-test-logs/codex-ui-bl17-black-clips-20261112/`
+  (`android-red/original-completion/` and `android-green/original-completion/`).
+  This is Android JVM/Robolectric evidence, not real phone decoder proof.
   The five real-helper `StickerClipFramePluginTests` XCTest cases also passed
   at `333a0a3981a4ba464d72af401fcd81dc9de96cc2` on the iPhone 17 / iOS 26.5
   simulator, as recorded in `ios-stickers-native-333-verdict.json`; this
@@ -6661,6 +6709,18 @@ visible and cannot become an ordinary first-attempt PASS.
   `native-registration-host-verdict.json` and the native verdicts named above.
   Initial standalone XCTest setup and fixture compile failures remain retained
   in `native-registration-swift-typecheck-{first,second,third}/`.
+
+- **Wake-token binary gate prerequisites:**
+  `test/core/bridge/wake_token_binary_freshness_test.dart` reads the ignored
+  iOS device/simulator, macOS and Android gomobile payloads through
+  `scripts/check_wake_token_binary_freshness.sh`. Fresh worktrees do not contain
+  those files; its generic stale-binary error also covers missing payloads.
+  Restore existing reviewed payloads with recorded hashes and matching Go
+  source identity before rerunning the unchanged gate. The gate checks two
+  wake-token symbol names; it does not certify a new native build or signed
+  candidate. The first four-file absence failure and the restoration's fresh
+  SHA audit are retained in the BL-17 proof above (`transport-first-audit/`
+  and `native-payload-restoration.json`).
 
 - **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
   cases validate byte/hash and decoded claims, metadata removal/rejection,

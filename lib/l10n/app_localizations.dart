@@ -6194,6 +6194,12 @@ abstract class AppLocalizations {
   /// **'Private media needs one photo or video with no caption.'**
   String get private_media_invalid_shape;
 
+  /// No description provided for @private_media_caption_blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the caption to keep this private.'**
+  String get private_media_caption_blocked;
+
   /// No description provided for @private_media_notification_body.
   ///
   /// In en, this message translates to:
@@ -8575,12 +8581,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Drag to reorder'**
   String get stickers_drag_to_reorder;
-
-  /// Custom stickers copy, same words as you_tags_done
-  ///
-  /// In en, this message translates to:
-  /// **'Done'**
-  String get stickers_manage_done;
 
   /// Custom stickers copy, draft pending Kayan approval
   ///

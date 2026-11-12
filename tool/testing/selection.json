@@ -5309,6 +5309,7 @@
       "references": [
         "scripts/test/run_custom_sticker_native_unit_tests.py",
         "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameRegistrationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameInputTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardownTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
@@ -5321,7 +5322,7 @@
         "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostBlockGuardOsShadow.kt",
         "android/app/src/test/kotlin/com/mknoon/app/StickerCutoutHostPosixShadowTest.kt"
       ],
-      "boundary": "43 exact Android JVM cases: four frame-channel ownership, 21 cutout input/PNG and job-lifecycle, six real-host POSIX fixture controls, four cutout engine-registration, and eight runtime/call/intent preservation cases; every selected class requires fresh JUnit results.",
+      "boundary": "47 exact Android JVM cases: four frame-channel ownership, four frame-input and RGBA conversion controls, 21 cutout input/PNG and job-lifecycle, six real-host POSIX fixture controls, four cutout engine-registration, and eight runtime/call/intent preservation cases; every selected class requires fresh JUnit results.",
       "limitations": "Android JVM/Robolectric with controlled model tasks and serial regular-file POSIX fixtures. This does not establish real ML Kit/provider availability, model download or segmentation quality, phone frame orientation/timestamps, cancellation latency, performance, or iOS native execution.",
       "inspected": true
     },
@@ -7220,6 +7221,7 @@
         "android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt",
         "android/app/src/main/kotlin/com/mknoon/app/StickerClipFrameBridge.kt",
         "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameRegistrationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/StickerClipFrameInputTest.kt",
         "scripts/test/run_custom_sticker_native_unit_tests.py",
         "android/app/src/main/kotlin/com/mknoon/app/StickerCutoutBridge.kt",
         "android/app/src/main/kotlin/com/mknoon/app/MlKitStickerCutoutClient.kt",

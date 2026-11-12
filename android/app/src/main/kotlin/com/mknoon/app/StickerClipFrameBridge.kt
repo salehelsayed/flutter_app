@@ -159,9 +159,10 @@ internal class StickerClipFrameBridge(
         try {
             extractor.setDataSource(clip.path)
             var videos = 0
+            // CameraX can retain a muted AAC track with enableAudio:false.
+            // Only video bitmaps leave this bridge; no source audio is copied.
             for (i in 0 until extractor.trackCount) {
                 val mime = extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME)
-                if (mime?.startsWith("audio/") == true) invalidClip()
                 if (mime?.startsWith("video/") == true) videos++
             }
             if (videos != 1) invalidClip()

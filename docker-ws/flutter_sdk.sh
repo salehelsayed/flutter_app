@@ -9,5 +9,6 @@ if [ ! -x "$SDK/bin/flutter" ]; then
   echo "flutter sdk not found at $SDK" >&2
   exit 2
 fi
-cd /Volumes/CrucialX9/flutter_app
+# Run in the checkout that holds this script (main checkout or a worktree).
+cd "$(cd "$(dirname "$0")/.." && pwd)"
 exec "$SDK/bin/flutter" "$@"

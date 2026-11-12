@@ -19841,6 +19841,7 @@ void main() {
     late FakeMessageRepository repo;
     late FakeMediaPicker picker;
     late int sends;
+    late List<PrivateMediaPolicy> sentPolicies;
 
     setUp(() {
       pickedDir = Directory.systemTemp.createTempSync('composer_draft_1to1_');
@@ -19848,6 +19849,7 @@ void main() {
       repo = FakeMessageRepository();
       picker = FakeMediaPicker();
       sends = 0;
+      sentPolicies = <PrivateMediaPolicy>[];
     });
 
     tearDown(() {
@@ -19917,6 +19919,9 @@ void main() {
             directEventFanout,
           }) async {
             sends++;
+            sentPolicies.add(
+              privateMediaPolicy ?? const PrivateMediaPolicy.ordinary(),
+            );
             return _instantSuccessSendFn(
               p2pService: p2pService,
               messageRepo: messageRepo,
@@ -20024,6 +20029,168 @@ void main() {
       expect(stagedPaths(tester), [photo.path]);
       await leaveChat(tester);
     });
+
+    Future<void> choosePrivacyMode(
+      WidgetTester tester,
+      PrivateMediaPolicy policy,
+    ) async {
+      final selector = find.byKey(const ValueKey('private-media-selector'));
+      expect(selector, findsOneWidget);
+      await tester.tap(selector);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final suffix = switch (policy.mode) {
+        PrivateMediaMode.ordinary => 'ordinary',
+        PrivateMediaMode.protected => 'protected',
+        PrivateMediaMode.viewOnce => 'view-once',
+        PrivateMediaMode.disappearing => 'expiry',
+        PrivateMediaMode.unsupported => throw StateError('unsupported fixture'),
+      };
+      final scrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      final option = find.byKey(ValueKey('private-media-option-$suffix'));
+      await tester.scrollUntilVisible(option, 200, scrollable: scrollable);
+      expect(option.hitTestable(), findsOneWidget);
+      await tester.tap(option);
+      await tester.pump();
+      final confirm = find.byKey(const ValueKey('private-media-use-mode'));
+      await tester.scrollUntilVisible(confirm, 200, scrollable: scrollable);
+      expect(confirm.hitTestable(), findsOneWidget);
+      await tester.tap(confirm);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    GestureDetector sendButton(WidgetTester tester) =>
+        tester.widget<GestureDetector>(
+          find
+              .ancestor(
+                of: find.byIcon(Icons.arrow_upward_rounded),
+                matching: find.byType(GestureDetector),
+              )
+              .first,
+        );
+
+    for (final policy in <PrivateMediaPolicy>[
+      const PrivateMediaPolicy.protected(),
+      const PrivateMediaPolicy.viewOnce(),
+      PrivateMediaPolicy.disappearing(86400),
+    ]) {
+      for (final captionFirst in [false, true]) {
+        testWidgets(
+          'BL-22 ${policy.mode.wireValue} ${captionFirst ? 'caption then mode' : 'mode then caption'} retains private intent',
+          (tester) async {
+            installPrivateMediaProtectionEventChannelStub(tester);
+            addTearDown(() => leaveChat(tester));
+            final photo = pickedPhoto();
+            await openChat(tester);
+            await attachFromLibrary(tester, photo);
+            if (captionFirst) {
+              await tester.enterText(find.byType(TextField), 'Privacy caption');
+              await tester.pump();
+            }
+            await choosePrivacyMode(tester, policy);
+            expect(
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .privateMediaPolicy,
+              policy,
+            );
+
+            if (!captionFirst) {
+              await tester.enterText(find.byType(TextField), 'Privacy caption');
+              await tester.pump();
+            }
+            final policyAfterCaption = tester
+                .widget<ComposeArea>(find.byType(ComposeArea))
+                .privateMediaPolicy;
+            await tester.tap(
+              find.byIcon(Icons.arrow_upward_rounded),
+              warnIfMissed: false,
+            );
+            const hint = 'Remove the caption to keep this private.';
+            for (
+              var attempt = 0;
+              attempt < 100 && sends == 0 && find.text(hint).evaluate().isEmpty;
+              attempt++
+            ) {
+              await tester.runAsync(
+                () => Future<void>.delayed(const Duration(milliseconds: 10)),
+              );
+              await tester.pump(const Duration(milliseconds: 50));
+            }
+
+            expect(
+              sentPolicies,
+              isEmpty,
+              reason:
+                  'Typing a caption must not authorize an ordinary send after '
+                  '${policy.mode.wireValue} was selected; '
+                  'composer became ${policyAfterCaption.mode.wireValue}.',
+            );
+            expect(sends, 0);
+            expect(policyAfterCaption, policy);
+            expect(sendButton(tester).onTap, isNull);
+            expect(find.text(hint), findsOneWidget);
+            expect(find.byType(SnackBar), findsNothing);
+            // Both current and stale empty callbacks must be refused before
+            // an optimistic row while the live caption keeps Send disabled.
+            for (final submittedText in ['Privacy caption', '']) {
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .onSend(submittedText);
+              await tester.pump();
+              expect(
+                repo.saveMessageCallCount,
+                0,
+                reason:
+                    'A callback with "$submittedText" must not save a message '
+                    'while the live private draft still has a caption.',
+              );
+              expect(repo.store, isEmpty);
+              expect(sentPolicies, isEmpty);
+              expect(sends, 0);
+              expect(
+                tester
+                    .widget<ComposeArea>(find.byType(ComposeArea))
+                    .privateMediaPolicy,
+                policy,
+              );
+              expect(composerText(tester), 'Privacy caption');
+              expect(stagedPaths(tester), [photo.path]);
+              expect(sendButton(tester).onTap, isNull);
+              expect(find.text(hint), findsOneWidget);
+              expect(find.byType(SnackBar), findsNothing);
+            }
+
+            await tester.enterText(find.byType(TextField), '');
+            await tester.pump();
+            expect(find.text(hint), findsNothing);
+            expect(sendButton(tester).onTap, isNotNull);
+            expect(
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .privateMediaPolicy,
+              policy,
+            );
+
+            await tester.enterText(find.byType(TextField), 'Privacy caption');
+            await tester.pump();
+            expect(find.text(hint), findsOneWidget);
+            await choosePrivacyMode(
+              tester,
+              const PrivateMediaPolicy.ordinary(),
+            );
+            expect(find.text(hint), findsNothing);
+            expect(sendButton(tester).onTap, isNotNull);
+            expect(composerText(tester), 'Privacy caption');
+            expect(stagedPaths(tester), [photo.path]);
+          },
+        );
+      }
+    }
 
     testWidgets('1:1 draft is gone after it is sent', (tester) async {
       final photo = pickedPhoto();
