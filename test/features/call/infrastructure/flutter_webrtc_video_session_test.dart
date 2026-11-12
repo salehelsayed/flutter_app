@@ -261,11 +261,18 @@ class Renderer implements rtc.RTCVideoRenderer {
   }
 
   @override
-  int get textureId => 42;
+  int get textureId => texture;
+  int texture = 42;
   @override
-  int get videoWidth => 640;
+  Function? onResize;
   @override
-  int get videoHeight => 480;
+  Function? onFirstFrameRendered;
+  @override
+  int get videoWidth => width;
+  int width = 640;
+  @override
+  int get videoHeight => height;
+  int height = 480;
 }
 
 class Fixture {
@@ -273,6 +280,7 @@ class Fixture {
   final track = Track('video');
   late final stream = StreamFake([track]);
   final renderer = Renderer();
+  final renderers = <Renderer>[];
   final association = StreamFake([]);
   late FlutterWebRtcCallEngine engine;
   late CallVideoSession session;
@@ -292,7 +300,8 @@ class Fixture {
         captures++;
         return captureGate == null ? stream : await captureGate!.future;
       },
-      videoRendererFactory: () => renderer,
+      videoRendererFactory: () =>
+          renderers.isEmpty ? renderer : renderers.removeAt(0),
       videoStreamFactory: () async => association,
     );
     engine = FlutterWebRtcCallEngine(adapter: adapter);
@@ -359,6 +368,287 @@ class Fixture {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  group('V2-view', () {
+    const channel = MethodChannel('FlutterWebRTC.Method');
+    CallVideoPresentationSource source(Fixture f) {
+      expect(f.session, isA<CallVideoPresentationSource>());
+      return f.session as CallVideoPresentationSource;
+    }
+
+    CallVideoCameraSwitch camera(Fixture f) {
+      expect(f.session, isA<CallVideoCameraSwitch>());
+      return f.session as CallVideoCameraSwitch;
+    }
+
+    Track remote(Fixture f) {
+      final track = Track('video');
+      f.peer.onTrack!(
+        rtc.RTCTrackEvent(
+          track: track,
+          streams: [
+            StreamFake([track]),
+          ],
+        ),
+      );
+      return track;
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+    test('late remote track publishes availability without capture', () async {
+      final f = Fixture();
+      await f.start();
+      final t = await f.committed();
+      final p = source(f);
+      final events = <CallVideoPresentationState>[];
+      final subscription = p.presentationChanges.listen(events.add);
+      expect(p.presentationFor(CallVideoRendererSlot.remote).hasTrack, isFalse);
+      remote(f);
+      await flush();
+      expect(events.last.slot, CallVideoRendererSlot.remote);
+      expect(events.last.hasTrack, isTrue);
+      expect(events.last.view, isNull);
+      await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+      expect(
+        p.presentationFor(CallVideoRendererSlot.remote).view?.textureId,
+        42,
+      );
+      expect(f.captures, 0);
+      f.preserved();
+      await subscription.cancel();
+    });
+    test(
+      'metadata updates and old renderer callbacks cannot replace current view',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final p = source(f);
+        remote(f);
+        await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+        final oldCallback = f.renderer.onResize;
+        expect(oldCallback, isNotNull);
+        f.renderer.width = 900;
+        f.renderer.onFirstFrameRendered!();
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).view?.width,
+          900,
+        );
+        final next = Renderer()..texture = 43;
+        f.renderers.add(next);
+        remote(f);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view, isNull);
+        await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+        f.renderer.width = 1;
+        oldCallback!();
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).view?.textureId,
+          43,
+        );
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).view?.width,
+          640,
+        );
+        f.preserved();
+      },
+    );
+    test(
+      'local stop invalidates preview before cleanup and preserves remote',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final p = source(f);
+        final track = remote(f);
+        await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+        final local = Renderer()..texture = 44;
+        f.renderers.add(local);
+        await f.session.setLocalCamera(t, f.grant());
+        await f.session.attachRenderer(t, CallVideoRendererSlot.local);
+        f.stream.disposeGate = Completer<void>();
+        final stop = f.session.stopLocalCamera();
+        expect(
+          p.presentationFor(CallVideoRendererSlot.local).hasTrack,
+          isFalse,
+        );
+        expect(p.presentationFor(CallVideoRendererSlot.local).view, isNull);
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).view?.textureId,
+          42,
+        );
+        expect(track.enabled, isTrue);
+        f.stream.disposeGate!.complete();
+        await stop;
+        f.preserved();
+      },
+    );
+    test(
+      'retirement invalidates view even when renderer disposal fails',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final p = source(f);
+        remote(f);
+        await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+        final callback = f.renderer.onResize!;
+        f.renderer.failDispose = true;
+        expect(await f.session.retireVideo(), isFalse);
+        callback();
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view, isNull);
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).hasTrack,
+          isFalse,
+        );
+        expect(f.renderer.onResize, isNull);
+        f.preserved();
+        f.renderer.failDispose = false;
+        await f.session.retryCleanup();
+      },
+    );
+    test(
+      'close publishes invalidation and completes presentation stream',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final p = source(f);
+        remote(f);
+        await f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+        final events = <CallVideoPresentationState>[];
+        final done = Completer<void>();
+        p.presentationChanges.listen(events.add, onDone: done.complete);
+        await f.session.close();
+        await done.future;
+        expect(
+          events.where((e) => e.slot == CallVideoRendererSlot.remote).last.view,
+          isNull,
+        );
+        expect(
+          p.presentationFor(CallVideoRendererSlot.remote).hasTrack,
+          isFalse,
+        );
+      },
+    );
+    test('retired pending renderer never publishes a view', () async {
+      final f = Fixture(); await f.start(); final t = await f.committed(); final p = source(f);
+      remote(f); final events = <CallVideoPresentationState>[];
+      final sub = p.presentationChanges.listen(events.add);
+      f.renderer.gate = Completer<void>();
+      final attaching = f.session.attachRenderer(t, CallVideoRendererSlot.remote);
+      await flush(); final retiring = f.session.retireVideo();
+      f.renderer.gate!.complete();
+      expect(await attaching, isNull); await retiring;
+      expect(events.every((event) => event.view == null), isTrue);
+      expect(f.renderer.onResize, isNull); f.preserved(); await sub.cancel();
+    });
+    test('presentation listener can stop capture without reentrant stream error', () async {
+      final f = Fixture(); await f.start(); final t = await f.committed(); final p = source(f);
+      Future<bool>? stopping;
+      final sub = p.presentationChanges.listen((event) {
+        if (event.slot == CallVideoRendererSlot.local) stopping = f.session.stopLocalCamera();
+      });
+      expect(await f.session.setLocalCamera(t, f.grant()), isFalse);
+      await stopping;
+      expect(p.presentationFor(CallVideoRendererSlot.local).hasTrack, isFalse);
+      expect(f.track.enabled, isFalse); await sub.cancel(); f.preserved();
+    });
+    test('switch rejects stale foreign and denied grants without native mutation', () async {
+      final f = Fixture(); await f.start(); final t = await f.committed(); final c = camera(f);
+      final other = Fixture(); await other.start(); final foreign = await other.committed();
+      await f.session.setLocalCamera(t, f.grant()); var calls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async { calls++; return true; });
+      for (final grant in [f.grant(consent: false), f.grant(permission: false), f.grant(agreed: false), f.grant(fresh: () => false)]) {
+        expect(await c.switchCamera(t, grant), isFalse);
+      }
+      expect(await c.switchCamera(foreign, f.grant()), isFalse);
+      await f.session.retireVideo();
+      expect(await c.switchCamera(t, f.grant()), isFalse);
+      expect(calls, 0); f.preserved();
+    });
+    test('native rear-facing false is completed switch without new capture or signaling', () async {
+      final f = Fixture();
+      await f.start();
+      final t = await f.committed();
+      final c = camera(f);
+      var calls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, 'mediaStreamTrackSwitchCamera');
+            calls++;
+            return false;
+          });
+      expect(await c.switchCamera(t, f.grant()), isFalse);
+      await f.session.setLocalCamera(t, f.grant());
+      final offers = f.peer.offers.length;
+      final local = f.peer.local.length;
+      final remote = f.peer.remote.length;
+      expect(await c.switchCamera(t, f.grant()), isTrue);
+      expect(calls, 1);
+      expect(f.captures, 1);
+      expect(f.track.enabled, isTrue);
+      expect(f.peer.offers.length, offers);
+      expect(f.peer.local.length, local);
+      expect(f.peer.remote.length, remote);
+      f.preserved();
+    });
+    for (final retire in [false, true]) {
+      test(
+        'pending switch cannot revive ${retire ? "retired" : "stopped"} capture',
+        () async {
+          final f = Fixture();
+          await f.start();
+          final t = await f.committed();
+          final c = camera(f);
+          await f.session.setLocalCamera(t, f.grant());
+          final gate = Completer<bool>();
+          final entered = Completer<void>();
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (_) {
+                entered.complete();
+                return gate.future;
+              });
+          final switching = c.switchCamera(t, f.grant());
+          await entered.future;
+          final stopping = retire
+              ? f.session.retireVideo()
+              : f.session.stopLocalCamera();
+          expect(f.track.enabled, isFalse);
+          gate.complete(true);
+          expect(await switching, isFalse);
+          await stopping;
+          expect(f.track.enabled, isFalse);
+          expect(f.captures, 1);
+          f.preserved();
+        },
+      );
+    }
+    test('grant revoked during switch closes capture; native error preserves authorized capture', () async {
+      final f = Fixture();
+      await f.start();
+      final t = await f.committed();
+      final c = camera(f);
+      await f.session.setLocalCamera(t, f.grant());
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async {
+            throw PlatformException(code: 'switch_failed');
+          });
+      expect(await c.switchCamera(t, f.grant()), isFalse);
+      expect(f.track.enabled, isTrue);
+      var fresh = true;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async {
+            fresh = false;
+            return true;
+          });
+      expect(await c.switchCamera(t, f.grant(fresh: () => fresh)), isFalse);
+      expect(f.track.enabled, isFalse);
+      expect(f.track.stops, 1);
+      f.preserved();
+    });
+  });
   test('default-off and v1 bindings reject before video mutation', () async {
     final f = Fixture();
     await f.start(bind: false);
