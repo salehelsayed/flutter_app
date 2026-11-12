@@ -1,3 +1,6 @@
+import 'call_id.dart';
+import 'call_media.dart';
+
 /// App-owned policy for establishing a call connection.
 enum CallTransportPolicy { all, relayOnly }
 
@@ -309,4 +312,103 @@ abstract interface class CallEngine {
   Future<CallConnectionSnapshot> snapshot();
 
   Future<void> close();
+}
+
+/// Explicit opt-in capability. The existing audio engine contract stays v1-only.
+abstract interface class CallVideoEngine {
+  CallVideoSession bindV2Video({
+    required CallId callId,
+    required bool localIsCaller,
+    required CallWireVersion wireVersion,
+    required bool Function() canApply,
+    bool videoEnabled = false,
+  });
+}
+
+/// Session-created identity; implementations reject foreign and retired tokens.
+abstract interface class CallVideoNegotiation {
+  CallId get callId;
+  String get negotiationId;
+  int get mediaRevision;
+  CallMediaKind get media;
+}
+
+/// A fresh local UI decision, never inferred from a peer or native answer.
+/// [isCurrent] must recheck foreground, permission and consent after awaits.
+final class CallLocalCameraGrant {
+  const CallLocalCameraGrant({
+    required this.foregroundConsent,
+    required this.permissionGranted,
+    required this.videoAgreed,
+    required this.isCurrent,
+  });
+
+  final bool foregroundConsent;
+  final bool permissionGranted;
+  final bool videoAgreed;
+  final bool Function() isCurrent;
+}
+
+enum CallVideoRendererSlot { local, remote }
+
+/// Opaque native texture metadata; no plugin, stream or peer handles escape.
+final class CallVideoView {
+  const CallVideoView({
+    required this.textureId,
+    required this.width,
+    required this.height,
+  });
+
+  final int textureId;
+  final int width;
+  final int height;
+}
+
+/// Optional operations fail independently of the live audio connection.
+abstract interface class CallVideoSession {
+  CallId get callId;
+  bool get hasPendingCleanup;
+
+  CallVideoNegotiation beginNegotiation({
+    required String negotiationId,
+    required int mediaRevision,
+    required CallMediaKind media,
+    required bool Function() canApply,
+  });
+
+  Future<CallSessionDescription> createOffer(CallVideoNegotiation token);
+  Future<CallSessionDescription> createAnswer(CallVideoNegotiation token);
+  Future<void> applyLocal(
+    CallVideoNegotiation token,
+    CallSessionDescription description,
+  );
+  Future<void> applyRemote(
+    CallVideoNegotiation token,
+    CallSessionDescription description,
+  );
+
+  /// Called only after authenticated commit/ACK agreement. Never grants camera.
+  Future<void> commit(CallVideoNegotiation token);
+
+  /// True only when an actual pending offer was successfully rolled back.
+  /// A stable answer cannot be rolled back; the caller owns audio repair.
+  Future<bool> rollbackPending(CallVideoNegotiation token);
+
+  Future<bool> setLocalCamera(
+    CallVideoNegotiation token,
+    CallLocalCameraGrant grant,
+  );
+
+  /// Closes the send gate synchronously; remote reception remains independent.
+  Future<bool> stopLocalCamera();
+  Future<CallVideoView?> attachRenderer(
+    CallVideoNegotiation token,
+    CallVideoRendererSlot slot,
+  );
+  Future<bool> detachRenderer(CallVideoRendererSlot slot);
+
+  /// Closes both video gates, retires the token and preserves live audio/ICE.
+  Future<bool> retireVideo();
+  Future<bool> retryCleanup();
+  Future<bool> close();
 }
