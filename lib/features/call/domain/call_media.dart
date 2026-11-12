@@ -28,7 +28,28 @@ final class CallMediaAgreement {
     bool localCameraConsent = false,
     bool cameraPermissionGranted = false,
   }) {
-    // Compiling RED seam. No production caller uses this API yet.
-    throw const FormatException('call media agreement is not implemented');
+    if (wireVersion == CallWireVersion.v2 && !videoEnabled) {
+      throw const FormatException('call signal v2 is disabled');
+    }
+    if (wireVersion == CallWireVersion.v1 &&
+        (requestedMedia != CallMediaKind.audio ||
+            acceptedMedia != CallMediaKind.audio)) {
+      throw const FormatException('v1 calls require audio');
+    }
+    if (requestedMedia == CallMediaKind.audio &&
+        acceptedMedia == CallMediaKind.video) {
+      throw const FormatException('audio invite cannot accept video');
+    }
+    return CallMediaAgreement._(
+      wireVersion: wireVersion,
+      requestedMedia: requestedMedia,
+      acceptedMedia: acceptedMedia,
+      localCamera:
+          acceptedMedia == CallMediaKind.video &&
+              localCameraConsent &&
+              cameraPermissionGranted
+          ? CallCameraState.on
+          : CallCameraState.off,
+    );
   }
 }
