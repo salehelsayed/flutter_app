@@ -11262,6 +11262,96 @@ visible and cannot become an ordinary first-attempt PASS.
   the reported incident's cause, native/provider delivery, device recovery or
   signed-build behavior. The broader wrapper-selected lanes remain unrun for
   this bounded host verification.
+  **Signed video capability admission:** `CallEndpointResolver` snapshots the
+  signed capability set before awaiting signature verification and returns an
+  immutable set. `resolveVideoCallEndpoint` is disabled by default, performs no
+  lookup while disabled, and resolves afresh on each enabled invocation. It
+  requires both `voice_call_v1` and `video_call_v2`, the exact contact account,
+  and an endpoint still unexpired after the asynchronous lookup. These checks
+  do not grant camera permission or replace the caller's later ownership and
+  transaction checks. On U2 `469256e64abc188a6e5ae003e5e03d5c04882a84`, the
+  corrected RED produced 21 passing controls and ten causal failures; GREEN
+  passed all 31 focused cases and 50 preservation cases, with clean changed-path
+  analysis and metadata validation. The first invalid compile fixture remains
+  retained. Raw evidence is in
+  `/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl16u2/out/`; independent
+  adoption and hashes are in
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u2-final-adoption.json`.
+  The v1 byte fixtures and synthetic 126/131 capability matrix prove host
+  compatibility boundaries only, not those installed builds, native cleanup,
+  camera capture, video activation or a signed candidate.
+  **Default-off v2 video foundations:** the model and envelope gates cover the
+  strict inner-v2 schema, immutable initial media agreement, shared authenticated
+  outer envelope and replay handling. Typed legacy decode/admission methods
+  remain v1-only. The context gates bind the wire version and initial accepted
+  media to the call and peers; same-bound legacy unsupported cleanup ends at the
+  first initial offer. Versioned admission authenticates without presenting a
+  call and preserves provisional replay reservation ownership. Transport tests
+  cover prepared-byte reuse, fresh authority checks, bounded retry custody and
+  terminal capacity under optional-media/ICE churn. They do not establish that
+  a production adapter correctly owns the preparation and transaction lifecycle.
+  Media-switch tests cover caller-owned negotiation, consent, immutable
+  deadlines, selected-abort precedence and bounded audio repair. Video-resource
+  ownership tests cover exact call/generation fencing, a close-only send gate,
+  independent remote rendering and retained cleanup failures for explicit retry;
+  they do not exercise a native camera or renderer. Presentation/localization
+  tests cover projection and bound intents, preserved audio controls, approved
+  EN/DE/AR text, RTL, compact widths, large text and semantics.
+
+  | Boundary | Actual GREEN host passes | Behavior GREEN / later correction |
+  | --- | --- | --- |
+  | Model/schema U1 | 54 new + 9 schema in one 63-case run | `c4a0dc0a8` |
+  | Envelope U3a | 36 + 89 preservation | `cae0cf5b8` |
+  | Context U3b | 37 + 73 preservation; corrected 37-case rerun | `2309833e2` / `2f3296aa9` |
+  | Transport U3c | 30 + 30 preservation | `e7ef74de4` / `739a079af` |
+  | Admission U3d | 43 + 134 preservation | `f06da2018` / `b9c2ded0c` |
+  | Media switching U4 | 23 + 53 schema preservation | `df12dad9a` |
+  | Video ownership U5 | 21 + 23 ownership preservation | `3f3323cd6` |
+  | Presentation U6 | 35 new + 28 preservation in one 63-case run | `208cf1c05` / `012b10aa1` |
+  | Localization U6-L10n | 80 new + 41 preservation in one 121-case run | `3462cece4` |
+
+  Every listed GREEN run had zero failures/skips and an actual child exit of
+  zero. U2's capability proof is recorded above. These counts are per recorded
+  command, with overlapping preservation coverage; do not sum them as unique
+  tests or treat them as a combined candidate run. Executable selection remains
+  in `tool/testing/selection.json`; the thirteen new test files are registered
+  under `call-signaling`.
+  First analyzer findings remain in the raw evidence. U3b's correction removes
+  unused private constructor parameters while retaining null/false field
+  defaults; its focused 37 cases and four-path official analysis were rerun.
+  U3c/U3d only added existing test-guard braces and U6 removed a redundant test
+  import. Their original behavior receipts plus clean corrected analysis are
+  the accepted evidence; no behavior rerun at those three correction heads is
+  claimed. U4's initial RED forecast of 21 failures was superseded by one
+  passing negative control and 20 causal failures: empty effects and null
+  deadlines satisfy its duplicate/binding control, which alone proves no media
+  feature. The later abort-delivery/repair RED had 21 passes and two causal
+  failures. Assertions were not changed to force the control to fail.
+  U6-L10n's sole official Claude-UI run preserved the frozen source: both
+  pub-get generation diffs were saved and the three concrete locale files were
+  restored before testing; all nine unit-file hashes matched, the after-test
+  trees were clean, and the helper/test were identical across the pair. With
+  Flutter 3.47.2, author setup and official GREEN setup produced the same
+  `app_localizations_ar/de/en.dart` formatting delta (SHA-256
+  `ba54d2ade04b616c2126abaca1bab738ba3ee839508d69c083288250de53d9ad`):
+  import spacing and three existing plural branches changed, without string
+  changes. The specific formatter/configuration cause was not established.
+  The author six-path analysis also preserved the nine frozen hashes after
+  restoration. If aggregate composition regenerates these files, freeze and
+  record its actual generated formatting before candidate/build identity gates;
+  a frozen unit receipt must not silently certify different generated source.
+  Retain the paired receipts and U6 core correction `012b10aa1`, and preserve
+  conservative executable localization selection. A later Claude-Dev duplicate
+  tested regenerated files and is excluded from certification of the frozen
+  revisions. The official RED retained all 79 causal failures and its passing
+  default-off control. The exact setup and source audit is retained in
+  `/Volumes/CrucialX9/flutter_app-ui-update/.codex-test-logs/codex-ui-u6-localization-20261112/claude-ui-official/`.
+  Full paired/corrected revisions, raw hashes, real exits, source identities,
+  first failures and this excluded duplicate are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/foundation-host-unit-verdicts.json`
+  and its ten unit-adoption receipts. This establishes the individual host
+  boundaries, not combined engine/graph behavior, native SDP/camera integration,
+  platform lifecycle handling, video activation or a signed candidate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

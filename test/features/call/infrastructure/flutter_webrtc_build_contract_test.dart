@@ -519,9 +519,10 @@ void main() {
     },
   );
 
-  test('VC2-01 all seven voice-call rollout flags default false', () {
+  test('VC2-01 all call rollout flags default false', () {
     expect(defaultVoiceCallFeatureFlags(), const <String, bool>{
       'voice_call_capability_v1': false,
+      'video_call_v2_enabled': false,
       'voice_call_outgoing_enabled': false,
       'voice_call_incoming_enabled': false,
       'voice_call_turn_enabled': false,

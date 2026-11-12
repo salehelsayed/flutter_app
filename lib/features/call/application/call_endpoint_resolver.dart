@@ -67,6 +67,7 @@ final class ResolvedCallEndpoint {
     required this.expiresAtMs,
     required this.routingHandle,
     required this.wakeHandle,
+    this.capabilities = const <String>{},
   });
 
   final String accountPeerId;
@@ -80,6 +81,10 @@ final class ResolvedCallEndpoint {
   final int expiresAtMs;
   final String routingHandle;
   final String wakeHandle;
+
+  /// Empty for legacy constructed endpoints; resolver output is a frozen,
+  /// signature-verified snapshot, never a mutable relay record reference.
+  final Set<String> capabilities;
 }
 
 /// Resolves the single endpoint authorized by both local contact state and the
@@ -224,7 +229,24 @@ final class CallEndpointResolver {
         continue;
       }
       for (final endpoint in current) {
-        final record = endpoint.record;
+        // Freeze before the asynchronous signature check. The public record
+        // constructor also accepts mutable sets; later mutations are not signed.
+        final input = endpoint.record;
+        final record = CallEndpointRecord(
+          accountPeerId: input.accountPeerId,
+          devicePeerId: input.devicePeerId,
+          capabilities: Set<String>.unmodifiable(input.capabilities),
+          platform: input.platform,
+          expiresAtMs: input.expiresAtMs,
+          preferenceEpoch: input.preferenceEpoch,
+          deviceKeyEpoch: input.deviceKeyEpoch,
+          routingHandle: input.routingHandle,
+        );
+        final frozenEndpoint = SignedCallEndpointRecord(
+          record: record,
+          signature: endpoint.signature,
+          canonicalRecordBase64: endpoint.canonicalRecordBase64,
+        );
         if (record.devicePeerId != trusted.devicePeerId ||
             record.deviceKeyEpoch != trusted.deviceKeyEpoch ||
             record.preferenceEpoch < 0 ||
@@ -236,7 +258,7 @@ final class CallEndpointResolver {
         var signatureValid = false;
         try {
           signatureValid = await _verifyEndpointSignature(
-            endpoint,
+            frozenEndpoint,
             trusted.signingPublicKey,
           );
         } catch (_) {
@@ -297,6 +319,7 @@ final class CallEndpointResolver {
       expiresAtMs: authorityExpiresAtMs,
       routingHandle: match.record.routingHandle,
       wakeHandle: grant.handle,
+      capabilities: match.record.capabilities,
     );
   }
 }
