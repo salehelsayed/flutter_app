@@ -1,4 +1,8 @@
 import 'dart:math';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 
 import 'package:clock/clock.dart';
 import 'package:synchronized/synchronized.dart';
@@ -160,10 +164,11 @@ Future<int> retryIncompleteKeyExchanges({
         continue;
       }
       final dormantKeyless =
-          contact.mlKemPublicKey == null &&
-          !reannouncePending.contains(contact.peerId) &&
-          !wakeTokenPending.contains(contact.peerId) &&
-          !callWakeHandlePending.contains(contact.peerId);
+          contact.mlKemPublicKey == null && !contact.isArchived;
+      final markerPending =
+          reannouncePending.contains(contact.peerId) ||
+          wakeTokenPending.contains(contact.peerId) ||
+          callWakeHandlePending.contains(contact.peerId);
       final SendContactRequestResult result;
       if (dormantKeyless) {
         final custody = journal;
@@ -173,7 +178,35 @@ Future<int> retryIncompleteKeyExchanges({
           clock.now().millisecondsSinceEpoch,
         );
         if (entry == null) continue;
+        // Marker material may rotate, but its existing contact reservation and
+        // seven-day horizon must not reset. Ordinary E custody stays unchanged.
+        final pinMaterial = markerPending || entry.materialFingerprint != null;
+        Future<CallWakeHandleGrant?> currentGrant() async {
+          final grant = await resolveCallWakeHandle?.call(contact.peerId);
+          return grant != null &&
+                  grant.isValidAt(clock.now().millisecondsSinceEpoch)
+              ? grant
+              : null;
+        }
+
+        String fingerprint(String? token, CallWakeHandleGrant? grant) => sha256
+            .convert(
+              utf8.encode(
+                jsonEncode([
+                  token == null || token.isEmpty ? null : token,
+                  grant?.toCanonicalMap(),
+                ]),
+              ),
+            )
+            .toString();
+        final pinnedGrant = pinMaterial ? await currentGrant() : null;
+        final material = pinMaterial
+            ? fingerprint(wakeToken, pinnedGrant)
+            : null;
         var envelope = entry.envelope;
+        if (pinMaterial && entry.materialFingerprint != material) {
+          envelope = null;
+        }
         if (envelope == null) {
           final marked =
               await shouldMarkAsNewRequest?.call(contact.peerId) ?? false;
@@ -186,7 +219,9 @@ Future<int> retryIncompleteKeyExchanges({
             resolveWakeToken: resolveWakeToken == null
                 ? null
                 : (_) async => wakeToken,
-            resolveCallWakeHandle: resolveCallWakeHandle,
+            resolveCallWakeHandle: pinMaterial
+                ? (_) async => pinnedGrant
+                : resolveCallWakeHandle,
             control: marked
                 ? ContactRequestControl.newRequest(
                     id: const Uuid().v4(),
@@ -200,9 +235,15 @@ Future<int> retryIncompleteKeyExchanges({
             entry,
             envelope,
             clock.now().millisecondsSinceEpoch,
+            materialFingerprint: material,
           )) {
             continue;
           }
+        }
+        if (pinMaterial) {
+          final freshToken = await resolveWakeToken?.call(contact.peerId);
+          final freshGrant = await currentGrant();
+          if (fingerprint(freshToken, freshGrant) != material) continue;
         }
         // Build and secure persistence await external work. Recheck the exact
         // contact generation/consent before a saved envelope can leave custody.

@@ -155,8 +155,9 @@ final class ContactRequestRetryJournal {
   Future<bool> saveEnvelope(
     ContactRequestRetryEntry entry,
     BuiltContactRequestEnvelope envelope,
-    int nowMs,
-  ) async {
+    int nowMs, {
+    String? materialFingerprint,
+  }) async {
     final signedAt = envelope.signedAtMs;
     // A wall-clock rollback during build cannot authorize an older request
     // than this contact generation. Keep its backoff reservation, send nothing.
@@ -171,6 +172,7 @@ final class ContactRequestRetryJournal {
     if (nowMs >= expires) return false;
     entry.expiresAtMs = expires;
     entry.envelope = envelope;
+    entry.materialFingerprint = materialFingerprint;
     await persist();
     return true;
   }
@@ -205,6 +207,7 @@ final class ContactRequestRetryEntry {
     required this.attempts,
     required this.nextAttemptAtMs,
     this.envelope,
+    this.materialFingerprint,
   });
 
   final String peerId;
@@ -214,6 +217,7 @@ final class ContactRequestRetryEntry {
   int attempts;
   int nextAttemptAtMs;
   BuiltContactRequestEnvelope? envelope;
+  String? materialFingerprint;
 
   factory ContactRequestRetryEntry.fromJson(Map<String, dynamic> json) {
     final entry = ContactRequestRetryEntry(
@@ -223,6 +227,7 @@ final class ContactRequestRetryEntry {
       expiresAtMs: json['expiresAtMs'] as int,
       attempts: json['attempts'] as int,
       nextAttemptAtMs: json['nextAttemptAtMs'] as int,
+      materialFingerprint: json['materialFingerprint'] as String?,
       envelope: json['envelope'] == null
           ? null
           : BuiltContactRequestEnvelope.fromJson(
@@ -247,5 +252,6 @@ final class ContactRequestRetryEntry {
     'attempts': attempts,
     'nextAttemptAtMs': nextAttemptAtMs,
     'envelope': envelope?.toJson(),
+    if (materialFingerprint != null) 'materialFingerprint': materialFingerprint,
   };
 }
