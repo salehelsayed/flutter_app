@@ -71,7 +71,7 @@ internal final class MknoonNseAppDiagnosticInbox {
               stage: String, outcome: String, reason: String) -> Bool {
     let uuid = { (text: String) in text.range(of: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", options: .regularExpression) != nil }
     guard uuid(traceId), uuid(runId), ["receive", "process", "presentation"].contains(stage),
-          ["started", "ok", "pending", "timeout", "failed"].contains(outcome), ["none", "timeout", "unknown"].contains(reason) else { return false }
+          ["started", "ok", "pending", "timeout", "failed"].contains(outcome), ["none", "timeout", "unknown", "bridge_unavailable", "recipient_key_missing", "invalid_payload"].contains(reason) else { return false }
     return transaction { state in
       guard state["enabled"] as? Bool == true, let since = self.number(state["since"]), since > 0, beganAt >= since,
             occurredAt >= beganAt, occurredAt <= self.now(), let sequence = self.number(state["sequence"]), sequence < 9_007_199_254_740_991 else { return (false, false) }
@@ -129,7 +129,41 @@ internal final class MknoonNseAppDiagnosticScope {
     let number = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     return "\(version)+\(number)"
   }()
+  private let recordEvent: ((String, String, String) -> Void)?
+  init(recordEvent: ((String, String, String) -> Void)? = nil) {
+    self.recordEvent = recordEvent
+  }
+
+  private let completionLock = NSLock()
+  private var processFinished = false
+  private var observedFailure = false
+
+  func recordDecryptFailure(_ reason: String, publicProof: () -> Void = {}) {
+    completionLock.lock()
+    defer { completionLock.unlock() }
+    guard !processFinished else { return }
+    observedFailure = true
+    // Keep accepted proof and terminal diagnostics ordered for this request.
+    publicProof()
+    record("process", "failed", reason)
+  }
+
+  func finishProcess(expired: Bool, previewFailure: String? = nil) {
+    completionLock.lock()
+    defer { completionLock.unlock() }
+    guard !processFinished else { return }
+    processFinished = true
+    if expired {
+      record("process", "timeout", "timeout")
+    } else if let previewFailure {
+      record("process", "failed", previewFailure)
+    } else if !observedFailure {
+      record("process", "ok")
+    }
+  }
+
   func record(_ stage: String, _ outcome: String, _ reason: String = "none") {
+    if let recordEvent { recordEvent(stage, outcome, reason); return }
     let at = Int64(Date().timeIntervalSince1970 * 1000), elapsed = Int64(ProcessInfo.processInfo.systemUptime * 1000)
     Self.queue.async { [self] in
       _ = MknoonNseAppDiagnosticInbox.production()?.append(traceId: traceId, runId: Self.runId, beganAt: beganAt,
