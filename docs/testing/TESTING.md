@@ -3660,6 +3660,21 @@ one to two to three contacts without avatars. This is host UI/stream/SQL proof,
 not device/native delivery. Evidence:
 `.codex-test-logs/contact-accept-refresh-20261024/`.
 
+Saved-contact connection readiness is presentation state derived from an
+unblocked contact whose ML-KEM public key is null, empty or whitespace. It must
+not imply remote acceptance or decline, or add a persisted consent state. Orbit,
+Feed and the conversation header use the approved localized waiting label;
+empty and compact conversation origin markers use neutral `Contact saved`
+until a key arrives. Mounted Feed, retained Orbit and the conversation header
+must update for the affected peer without reopening, while unrelated peer
+updates and existing previews/actions remain unchanged. The unchanged BL-11
+host cases cover all three locales, ready/blocked controls and mounted updates:
+causal RED 19 expected failures / 2 passes, then 21/21 PASS at `d89d3ff91`. The first
+20/1 candidate result and the German filter overflow it exposed remain retained.
+This is host presentation/stream evidence, not native delivery or consent proof.
+Evidence: `.codex-test-logs/bl11-verified-focused-20261112/`; retained copy and
+SHA256 manifest: `/Users/I560101/.codex/investigations/bl11-requester-pending-20261112/retained-focused-evidence/`.
+
 Contact deletion must also refresh retained Orbit when Conversation opens through
 Feed or a notification, without Orbit's own route-pop callback. The production
 final contact purge publishes a contact-wide `MessageRepositoryRemovalSource`
@@ -5979,6 +5994,30 @@ do not count `test(...)` strings as executions. Runner listings took about
   First RED and fixture-cleanup failures remain under
   `.codex-test-logs/notify004-20261101/`. These host channel mocks do not prove
   installed Android Settings behavior.
+- A connection-readiness label in the conversation header must share the
+  existing action row beneath the contact name. A separate full-width status
+  band added 35 px to the conversation root while the sticker composer was
+  open: the same three sticker cases passed on `98a2a71f1` and failed on
+  `d89d3ff91`. The header-only fix at `04d008861` preserves normal text scaling
+  and a bounded single-line label; those three cases pass, and the full
+  ConversationWired/composition preservation pair passes 274/274 (271 + 3),
+  including all ten BL-11 conversation cases. Keyless empty-conversation
+  markers still use `Contact saved` after deleting the final message; the
+  composition sentinel accounts for the readiness argument without changing
+  its protected API. Analysis of the header and two changed tests is clean.
+  First failures and the same-environment A/B remain retained. Evidence:
+  `.codex-test-logs/bl11-verified-focused-20261112/final04d/`; raw/exits and
+  SHA256 adoption: `/Users/I560101/.codex/investigations/bl11-requester-pending-20261112/affected-failures/final04d-adoption.json`.
+- Orbit filter labels must share their bounded tab width with count badges.
+  Flexible single-line labels with ellipsis preserve counts and tab actions for
+  long translations. The German filter checks at 360 dp include the actual 16 dp
+  side margins, all three counts and 1x/2x text; the retained Feed/Orbit cases
+  exercise en/ar/de at 390 dp. These constraints/tap assertions use the widget
+  host font, so they do not replace the real-font glyph checks below or native
+  rendering evidence. The original main-equivalent filter produced 52 px / 13 px
+  German overflows in the first BL-11 GREEN attempt; the bounded-label fix at
+  `d89d3ff91` passes all 7 filter tests, 3 locale cases and the unchanged 21-case
+  combined run. Evidence: `.codex-test-logs/bl11-verified-focused-20261112/`.
 - The approved UI-25 loading label fits Orbit's existing top-strip reservation;
   skeleton geometry and settled list position are unchanged. Geometry checks
   must advance the existing zero-delay, 400 ms row entrance before comparing
