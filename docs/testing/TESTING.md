@@ -3784,6 +3784,23 @@ RED run and the subsequent layout failure in
 Host tests fake the secure-storage platform boundary; real persistence across
 an application restart and OS notification retirement remain device evidence.
 
+German action-fit coverage mounts the processing IntroRow, Feed's full-conversation
+link, BlockedBanner, the actual 180-pixel unarchive slot and GroupInfoScreen at
+360 by 780 logical pixels, DPR 1 and text scales 1 and 2. Introduction buttons
+wrap inside a finite flex allocation while retaining disabled actions and the
+processing spinner. Other affected labels use a constrained single line with
+ellipsis; wording, icons and callbacks stay unchanged. Check initial group
+header layout errors before scrolling to its lazy add-member action: looking
+for that offscreen action first masked the header overflow with a fixture
+failure in the original baseline. The corrected ten-case RED has nine causal
+RenderFlex failures and one normal-scale group pass; all 75 cases in the five
+existing widget files then pass, with clean analysis of the ten changed Dart
+files. These checks require positive paragraph bounds and full text or clean
+ellipsis, but do not certify native fonts, signed visuals or screen readers.
+Keep the original baseline/fixture failure and final pair under
+`.codex-test-logs/codex-ui-german-overflow-20261112/`; broader integration belongs
+to the batch gate rather than another per-fix sweep.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally
