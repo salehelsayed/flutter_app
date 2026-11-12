@@ -17,6 +17,7 @@ class PendingPostDeliveryRetrier {
   final Bridge? bridge;
   final Future<int> Function()? beforeRetry;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
+  final Stream<void>? contactKeyUpdatedSignal;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
 
@@ -32,6 +33,7 @@ class PendingPostDeliveryRetrier {
     required this.contactRepo,
     this.bridge,
     this.beforeRetry,
+    this.contactKeyUpdatedSignal,
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.retryDebounce = const Duration(seconds: 5),
     this.periodicRetryInterval = const Duration(minutes: 5),
