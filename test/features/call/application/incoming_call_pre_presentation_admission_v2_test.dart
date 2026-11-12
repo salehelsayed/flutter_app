@@ -52,8 +52,9 @@ Matcher _failure(
     'classification',
     code,
   );
-  if (gate != null)
+  if (gate != null) {
     matcher = matcher.having((error) => error.gate, 'gate', gate);
+  }
   if (envelopeCode != null) {
     matcher = matcher.having(
       (error) => error.envelopeCode,
