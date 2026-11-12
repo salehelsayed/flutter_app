@@ -127,16 +127,28 @@ void main() {
       'requestAction': 'admit',
       'requestDisposition': 'ignored',
     };
-    diagnostics.record(
-      feature: 'contact_request',
-      stage: 'verify',
-      outcome: 'rejected',
-      values: {
-        ...detail,
-        'peerId': 'PRIVATE_PEER',
-        'name': 'PRIVATE_NAME',
-        'message': 'PRIVATE_MESSAGE',
-      },
+    expect(
+      diagnostics.record(
+        feature: 'contact_request',
+        stage: 'verify',
+        outcome: 'rejected',
+        values: {
+          ...detail,
+          'peerId': 'PRIVATE_PEER',
+          'name': 'PRIVATE_NAME',
+          'message': 'PRIVATE_MESSAGE',
+        },
+      ),
+      isFalse,
+    );
+    expect(
+      diagnostics.record(
+        feature: 'contact_request',
+        stage: 'verify',
+        outcome: 'rejected',
+        values: detail,
+      ),
+      isTrue,
     );
     final local = (await diagnostics.eventsForTesting()).singleWhere(
       (e) => e['feature'] == 'contact_request',
