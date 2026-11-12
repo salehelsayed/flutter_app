@@ -12022,14 +12022,37 @@ Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
 Bridge failure records use closed `bridgeCommandFamily` and
 `bridgeRejectionKind` values. The command family is required in the existing
-dispatch registry; rejection kinds come only from explicit native error codes,
-with `unknown` for broad or unclassified failures. Raw command strings, payloads,
+dispatch registry; explicit native error codes determine rejection kinds,
+with `unknown` for broad or unclassified failures. The one bounded lifecycle
+exception is an uncoded negative reply whose `error` is exactly `node stopped`;
+it remains a reported failure with the existing `not_ready` kind.
+Raw command strings, payloads,
 peer identifiers and error text are not diagnostic values. Preserve ordinary
 return envelopes, the six network operation reasons, raw background responses,
 and diagnostic-upload recursion suppression. The bridge-label tests exercise
 native-boundary results through collection, export and upload; relay/Python
 fixtures preserve old records and reject free-form enum values. Evidence is
 retained in `.codex-test-logs/bridge-labels-20261101/`.
+
+**BL-24(A) expected bridge misses:** ordinary `ok:false` replies without an
+`errorCode` key from `peer:ping` and `relay:presence_set` are best-effort misses,
+not failed bridge observations. Their return envelopes remain unchanged. A
+present code, including null, empty or unknown, retains the failure path and
+existing mapping; `PROFILE_ERROR` now uses existing `internal`. The exact
+uncoded lifecycle exception above takes precedence over miss suppression.
+Presence lookup already returns a successful `unknown` hint; other uncoded
+command failures remain visible. No rejection vocabulary or schema copy changed.
+Frozen RED `f79367b56db1909484ee15076d1483f52a73fd33` produced one positive-control
+PASS and four causal failures. GREEN `209f48d56103c1ffa6e6825c6102f89354663e8c`
+passed 98 focused and 431 curated bridge/diagnostics cases without failures or
+skips; changed-path analysis, metadata validation and schema parity also passed.
+All sixteen source/schema/localization/lock pins matched at eight recorded
+boundaries; both dependency-setup deltas were empty. Original outcomes and raw
+receipts are retained in
+`.codex-test-logs/codex-ui-bl24a-bridge-telemetry-20261112/official-host-verdict.json`
+and `official-claude-dev/`. This proves the mock bridge and local diagnostics
+privacy/export/upload contract. It does not measure the inferred production
+volume reduction or establish native/device or aggregate candidate behavior.
 
 Native `bgEnd` intentionally completes with a void result. The Dart bridge
 accepts that result only for `bg:end` and returns its normal success envelope;
