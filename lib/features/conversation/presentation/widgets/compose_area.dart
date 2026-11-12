@@ -211,11 +211,6 @@ class _ComposeAreaState extends State<ComposeArea>
       _updateSendButton();
     }
     widget.onDraftChanged?.call(_controller.text);
-    if (hasText && widget.privateMediaPolicy.isPrivate) {
-      widget.onPrivateMediaPolicyChanged?.call(
-        const PrivateMediaPolicy.ordinary(),
-      );
-    }
   }
 
   void _updateSendButton() {
@@ -286,7 +281,7 @@ class _ComposeAreaState extends State<ComposeArea>
   bool _sentThisFrame = false;
 
   void _onSendPressed() {
-    if (_sentThisFrame) return;
+    if (!_canSend || _sentThisFrame) return;
     final text = _controller.text.trim();
     if (text.isEmpty && !widget.hasAttachments) return;
     _sentThisFrame = true;
@@ -450,13 +445,18 @@ class _ComposeAreaState extends State<ComposeArea>
   bool get _shouldShowSendButton =>
       (_hasText || widget.hasAttachments) && !_isRecording;
 
+  bool get _privateCaptionBlocked =>
+      _hasText && widget.privateMediaPolicy.isPrivate;
+
   bool get _canSend =>
       !widget.isProcessing &&
       !widget.isSending &&
       !widget.hasInvalidAttachment &&
+      !_privateCaptionBlocked &&
       (_hasText || widget.hasAttachments);
 
-  Color _sendColor(Color color) => widget.alwaysShowSend && !_canSend
+  Color _sendColor(Color color) =>
+      (widget.alwaysShowSend || _privateCaptionBlocked) && !_canSend
       ? color.withValues(alpha: color.a * .4)
       : color;
 
@@ -582,7 +582,9 @@ class _ComposeAreaState extends State<ComposeArea>
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (!widget.compact &&
-                    widget.privateMediaEligibility.allowsNewPrivateMedia &&
+                    widget
+                        .privateMediaEligibility
+                        .allowsPrivateMediaSelection &&
                     widget.onPrivateMediaPolicyChanged != null)
                   _buildPrivateMediaSelector(context),
                 if (showQuotePreview && !widget.compact)
@@ -927,6 +929,31 @@ class _ComposeAreaState extends State<ComposeArea>
                     ),
                   ],
                 ),
+                if (_privateCaptionBlocked)
+                  Padding(
+                    key: const ValueKey('private-media-caption-hint'),
+                    padding: EdgeInsetsDirectional.only(
+                      start: widget.showAttachButton ? 56 : 0,
+                      end: 56,
+                      top: 6,
+                    ),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          AppLocalizations.of(
+                            context,
+                          )!.private_media_caption_blocked,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: readableColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (widget.onSendAsText != null &&
                     widget.voiceTextNotice != VoiceTextNotice.failed &&
                     (widget.recordingState == VoiceRecordingState.recording ||

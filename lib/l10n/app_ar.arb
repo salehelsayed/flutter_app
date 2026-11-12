@@ -1743,6 +1743,7 @@
   "private_media_disappearing_1d": "تختفي بعد يوم",
   "private_media_disappearing_7d": "تختفي بعد 7 أيام",
   "private_media_invalid_shape": "تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.",
+  "private_media_caption_blocked": "احذف التعليق ليبقى هذا المحتوى خاصًا.",
   "private_media_notification_body": "وسائط خاصة",
   "group_private_media_notification_body": "وسائط خاصة جديدة",
   "private_media_expiry_device_local": "يُحذف من جهازهم بعد هذه المدة.",

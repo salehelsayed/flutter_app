@@ -5842,10 +5842,30 @@ do not count `test(...)` strings as executions. Runner listings took about
   `.codex-test-logs/r2-5-affected-media.log`.
   Ordinary pending-video summaries and picker disclosure use the existing
   selected media kind and say “Normal video”; photo wording stays unchanged.
-  The full private-media composer widget file passes 14 cases, including one
+  The full private-media composer widget file passes 15 cases, including one
   photo/video distinction case across English, German and Arabic. This is copy
   and kind-wiring proof, not native video preparation or device certification.
   Group composers do not enable this private-media chip.
+
+  Private-media selection must survive caption entry in either action order.
+  A caption disables Send and shows the approved localized inline explanation;
+  clearing it or explicitly choosing Keep in chat removes that restriction.
+  The prior caption-to-ordinary reset silently authorized an ordinary send and
+  is superseded by the BL-22 owner decision. The relevant reset and admission
+  code was identical at store-131 source `3a55bc50e` and `e0a28d94`.
+  Six wired-composer/picker cases cover all three private modes and both action
+  orders. They invoke current-caption and stale empty-text send callbacks:
+  admission must check both submitted text and the live draft caption before
+  any message save, send or staged-media adoption. The stale-empty extension
+  fails before that guard and passes unchanged afterward; caption removal and
+  explicit Keep in chat still unblock. These cases use a local PNG and a fake
+  message repository, so their no-save assertions prove the host boundary.
+  Selection eligibility remains separate from caption-free wire admission;
+  existing policy, boundary and receiver egress tests preserve that distinction.
+  The full 15-case composer file also checks EN/AR/DE inline placement for
+  photos and videos. Native picker, transport and signed store-131 device
+  behavior are not proved by these host tests.
+  Evidence: `.codex-test-logs/bl22-caption-private-policy-20261112/`.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.

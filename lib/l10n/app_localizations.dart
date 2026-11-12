@@ -6194,6 +6194,12 @@ abstract class AppLocalizations {
   /// **'Private media needs one photo or video with no caption.'**
   String get private_media_invalid_shape;
 
+  /// No description provided for @private_media_caption_blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the caption to keep this private.'**
+  String get private_media_caption_blocked;
+
   /// No description provided for @private_media_notification_body.
   ///
   /// In en, this message translates to:

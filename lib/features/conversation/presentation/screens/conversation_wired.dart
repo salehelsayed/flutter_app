@@ -3883,6 +3883,15 @@ class _ConversationWiredState extends State<ConversationWired>
     final privateEligibility = _currentPrivateMediaEligibility(
       draftText: sanitizedText,
     );
+    // The composer disables Send and explains this combination inline. Keep
+    // the selected mode if a stale caller still reaches the send boundary,
+    // including an empty argument while the live draft retains its caption.
+    if (sticker == null &&
+        privateMediaPolicy.isPrivate &&
+        (privateEligibility.hasTextOrCaption ||
+            sanitizeMessageText(submittedDraftText).trim().isNotEmpty)) {
+      return;
+    }
     if (sticker == null &&
         (_privateMediaPolicyInvalidated ||
             (privateMediaPolicy.isPrivate &&
@@ -5507,11 +5516,6 @@ class _ConversationWiredState extends State<ConversationWired>
         _clearRestoredFailedDraftTracking();
       }
     });
-    if (sanitizeMessageText(text).trim().isNotEmpty &&
-        _privateMediaPolicy.isPrivate) {
-      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
-      _privateMediaPolicyInvalidated = false;
-    }
     _updateComposerState(
       voiceTextNotice: endsVoiceText ? VoiceTextNotice.none : null,
     );
