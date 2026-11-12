@@ -9753,6 +9753,7 @@ final class ProductionApplicationBootstrap
       // backfill for contacts whose ML-KEM exchange already completed.
       resolveWakeToken: wakeTokenResolver,
       shouldMarkAsNewRequest: contactRepairEligible,
+      readConsent: contactRepairRepository.readConsent,
       beforeRetry: () async {
         final contacts = await contactRepository.getActiveContacts();
         await issueWakeTokensForContacts(

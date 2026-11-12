@@ -582,6 +582,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
       messageJson: jsonEncode(v2Message),
       encrypted: true,
       msgId: msgId,
+      signedAtMs: now.millisecondsSinceEpoch,
       callWakeHandle: callWakeHandle,
       callWakeReceiptChallenge: callWakeReceiptChallenge,
     ),

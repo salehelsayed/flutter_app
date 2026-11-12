@@ -8,6 +8,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -45,6 +46,7 @@ class KeyExchangeRetrier {
     ResolveCallWakeHandle? resolveCallWakeHandle,
     OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
     Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
+    Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
   }) : _coordinator =
            coordinator ??
            KeyExchangeRetryCoordinator(
@@ -62,6 +64,7 @@ class KeyExchangeRetrier {
                  resolveCallWakeHandle: resolveCallWakeHandle,
                  onCallWakeHandleDistributed: onCallWakeHandleDistributed,
                  shouldMarkAsNewRequest: shouldMarkAsNewRequest,
+                 readConsent: readConsent,
                );
              },
            );
