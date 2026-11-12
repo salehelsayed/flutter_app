@@ -151,16 +151,27 @@ final class IncomingCallMailboxHandlingResult {
 
 /// What a mailbox event is, read without consuming it. Lets a drain see that
 /// a terminal signal follows an invite before either is handled.
+typedef AuthenticatedIncomingCallBinding = ({
+  String schema,
+  String callHandle,
+  String senderAccountPeerId,
+  String senderDevicePeerId,
+  String recipientAccountPeerId,
+  String recipientDevicePeerId,
+});
+
 final class IncomingCallSignalPeek {
   const IncomingCallSignalPeek({
     required this.callId,
     required this.event,
     this.videoEvent,
+    this.authenticatedBinding,
   });
 
   final CallId callId;
   final CallSignalType? event;
   final CallSignalV2Type? videoEvent;
+  final AuthenticatedIncomingCallBinding? authenticatedBinding;
 
   bool get isInvite => event == CallSignalType.invite;
 

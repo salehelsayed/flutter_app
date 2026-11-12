@@ -17,7 +17,10 @@ import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
+import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
+import 'package:flutter_app/features/call/infrastructure/call_signaling_runtime.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _nowMs = 2000000;
@@ -79,10 +82,10 @@ final class _Roster implements CallTrustedRosterProvider {
   @override
   Future<TrustedCallDeviceAuthority?> resolveAuthenticatedTransport(
     String transportPeerId,
-  ) async => transportPeerId == 'sender-device'
-      ? const TrustedCallDeviceAuthority(
+  ) async => const {'sender-device', 'other-device'}.contains(transportPeerId)
+      ? TrustedCallDeviceAuthority(
           accountPeerId: 'sender-account',
-          devicePeerId: 'sender-device',
+          devicePeerId: transportPeerId,
           linked: true,
           deviceKeyEpoch: 1,
           signingPublicKey: 'sender-signing-key',
@@ -189,6 +192,7 @@ CallSignalV2 _v2({
   CallId? callId,
   String media = 'video',
   bool outgoing = false,
+  String senderDevice = 'sender-device',
   Map<String, Object?>? payload,
 }) => CallSignalV2.fromMap({
   'schema': CallSignalV2.schema,
@@ -197,7 +201,7 @@ CallSignalV2 _v2({
       'aaaaaaaa-aaaa-4aaa-8aaa-${sequence.toRadixString(16).padLeft(12, '0')}',
   'event': event,
   'sender_account_peer_id': outgoing ? 'recipient-account' : 'sender-account',
-  'sender_device_peer_id': outgoing ? 'recipient-device' : 'sender-device',
+  'sender_device_peer_id': outgoing ? 'recipient-device' : senderDevice,
   'recipient_account_peer_id': outgoing
       ? 'sender-account'
       : 'recipient-account',
@@ -282,6 +286,67 @@ CallSignal _v1Invite() => CallSignal.create(
   },
 );
 
+CallSignal _v1Terminal({
+  int sequence = 2,
+  String reason = 'caller_cancelled',
+}) => CallSignal.create(
+  callId: _callId,
+  messageId:
+      'cccccccc-cccc-4ccc-8ccc-${sequence.toRadixString(16).padLeft(12, '0')}',
+  event: CallSignalType.terminate,
+  senderAccountPeerId: 'sender-account',
+  senderDevicePeerId: 'sender-device',
+  recipientAccountPeerId: 'recipient-account',
+  recipientDevicePeerId: 'recipient-device',
+  senderSequence: sequence,
+  iceGeneration: 0,
+  createdAtMs: _nowMs,
+  expiresAtMs: _nowMs + 45000,
+  payload: {'reason': reason},
+);
+
+final class _MailboxPage implements CallMailboxClient {
+  final events = <CallMailboxEvent>[];
+  final frames = <IncomingCallSignalFrame>[];
+  final outcomes = <IncomingCallSignalOutcome>[];
+  final acknowledged = <String>[];
+  final settled = <CallWireSignal>[];
+
+  @override
+  Future<CallMailboxRetrieveResult> retrieve({
+    String? callHandle,
+    int limit = 64,
+  }) async {
+    final page = List<CallMailboxEvent>.of(events);
+    events.clear();
+    return CallMailboxRetrieveResult(
+      events: page,
+      receiptAtMs: _nowMs,
+      expiresAtMs: _nowMs + 45000,
+      hasMore: false,
+    );
+  }
+
+  @override
+  Future<int> ack({
+    required String callHandle,
+    required List<String> messageIds,
+  }) async {
+    acknowledged.addAll(messageIds);
+    return messageIds.length;
+  }
+
+  @override
+  Future<bool> cancel({
+    required String recipientDevicePeerId,
+    required String callHandle,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) =>
+      throw UnimplementedError();
+}
+
 final class _Harness {
   _Harness({
     bool videoEnabled = true,
@@ -338,27 +403,28 @@ final class _Harness {
   Future<IncomingCallSignalFrame> frame(
     CallWireSignal signal, {
     bool mailbox = false,
+    String callHandle = _callHandle,
     bool terminalFollows = false,
     String? expectedMessageId,
   }) async {
     final envelope = signal is CallSignalV2
         ? await codec.encodeV2(
             signal: signal,
-            callHandle: _callHandle,
+            callHandle: callHandle,
             recipientMlKemPublicKey: 'recipient-mlkem-key',
             senderSigningPrivateKey: 'sender-signing-key',
           )
         : await codec.encode(
             signal: signal as CallSignal,
-            callHandle: _callHandle,
+            callHandle: callHandle,
             recipientMlKemPublicKey: 'recipient-mlkem-key',
             senderSigningPrivateKey: 'sender-signing-key',
           );
     return IncomingCallSignalFrame(
       envelopeJson: envelope,
-      authenticatedTransportPeerId: 'sender-device',
+      authenticatedTransportPeerId: signal.senderDevicePeerId,
       route: mailbox ? CallRouteClass.ephemeralMailbox : CallRouteClass.direct,
-      expectedCallHandle: mailbox ? _callHandle : null,
+      expectedCallHandle: mailbox ? callHandle : null,
       expectedMessageId:
           expectedMessageId ?? (mailbox ? signal.messageId : null),
       expectedExpiresAtMs: mailbox ? signal.expiresAtMs : null,
@@ -374,6 +440,59 @@ final class _Harness {
 
   Future<void> admitIncoming() async {
     expect(await receive(_v2()), IncomingCallSignalOutcome.accepted);
+  }
+
+  Future<_MailboxPage> drainPage(
+    List<({CallWireSignal signal, String handle})> rows,
+  ) async {
+    final mailbox = _MailboxPage();
+    for (final row in rows) {
+      final incoming = await frame(
+        row.signal,
+        mailbox: true,
+        callHandle: row.handle,
+      );
+      mailbox.events.add(
+        CallMailboxEvent(
+          callHandle: row.handle,
+          messageId: row.signal.messageId,
+          authenticatedSenderDevicePeerId: row.signal.senderDevicePeerId,
+          recipientDevicePeerId: row.signal.recipientDevicePeerId,
+          envelopeJson: incoming.envelopeJson,
+          receiptAtMs: nowMs,
+          expiresAtMs: row.signal.expiresAtMs,
+        ),
+      );
+    }
+    final runtime = CallSignalingRuntime(
+      directCallSignalStream: const Stream<ChatMessage>.empty(),
+      mailboxClient: mailbox,
+      handleIncoming: handler.handle,
+      handleMailboxIncoming: (frame) async {
+        mailbox.frames.add(frame);
+        final result = await handler.handleMailbox(frame);
+        mailbox.outcomes.add(result.outcome);
+        return result;
+      },
+      peekIncoming: handler.peek,
+      prepareMailboxSettlement: (_) async =>
+          (terminal, {required canApply}) async {
+            expect(canApply(), isTrue);
+            expect(
+              mailbox.acknowledged,
+              contains(terminal.signal.messageId),
+              reason: 'Native settlement must remain after exact row ACK.',
+            );
+            mailbox.settled.add(terminal.signal);
+          },
+      coordinator: coordinator,
+      networkEffectsAllowed: () => networkAllowed,
+      readCallHandle: (callId) => contexts.read(callId)?.callHandle,
+    );
+    addTearDown(runtime.shutdown);
+    expect(await runtime.start(), isTrue);
+    await runtime.settle();
+    return mailbox;
   }
 
   Future<void> outgoing() async {
@@ -407,6 +526,184 @@ final class _Harness {
 }
 
 void main() {
+  test(
+    'U3F-VERSION-1 ordinary v1 terminal cannot suppress a v2 page invite',
+    () async {
+      final h = _Harness();
+      final invite = _v2();
+      final page = await h.drainPage([
+        (signal: invite, handle: _callHandle),
+        (signal: _v1Terminal(), handle: _callHandle),
+      ]);
+      expect(page.frames.first.terminalFollows, isFalse);
+      expect(page.outcomes, [
+        IncomingCallSignalOutcome.accepted,
+        IncomingCallSignalOutcome.deferred,
+      ]);
+      expect(h.presenter.calls, 1);
+      expect(h.coordinator.activeSession!.state, CallState.ringing);
+      expect(h.contexts.read(_callId)!.wireVersion, CallWireVersion.v2);
+      expect(h.native.cancelled, 0);
+      expect(page.settled, isEmpty);
+      expect(page.acknowledged, [invite.messageId]);
+    },
+  );
+
+  test(
+    'U3F-VERSION-1 matching v2 terminal still supersedes without ringing',
+    () async {
+      final h = _Harness();
+      final invite = _v2();
+      final terminal = _v2(event: 'terminate', sequence: 2);
+      final page = await h.drainPage([
+        (signal: invite, handle: _callHandle),
+        (signal: terminal, handle: _callHandle),
+      ]);
+      expect(page.frames.first.terminalFollows, isTrue);
+      expect(page.outcomes, [
+        IncomingCallSignalOutcome.superseded,
+        IncomingCallSignalOutcome.accepted,
+      ]);
+      expect(h.presenter.calls, 0);
+      expect(h.coordinator.isTerminalCall(_callId), isTrue);
+      expect(h.native.cancelled, 1);
+      expect(page.acknowledged, [invite.messageId, terminal.messageId]);
+      expect(page.settled.single.toMap(), terminal.toMap());
+    },
+  );
+
+  test(
+    'U3F-VERSION-1 unsupported cross-version cleanup uses the bound normal path',
+    () async {
+      final h = _Harness();
+      final terminal = _v1Terminal(reason: 'unsupported');
+      final page = await h.drainPage([
+        (signal: _v2(), handle: _callHandle),
+        (signal: terminal, handle: _callHandle),
+      ]);
+      expect(page.frames.first.terminalFollows, isFalse);
+      expect(page.outcomes, [
+        IncomingCallSignalOutcome.accepted,
+        IncomingCallSignalOutcome.accepted,
+      ]);
+      expect(h.presenter.calls, 1);
+      expect(h.coordinator.isTerminalCall(_callId), isTrue);
+      expect(h.contexts.read(_callId), isNull);
+      expect(h.native.cancelled, 1);
+      expect(page.settled.single.toMap(), terminal.toMap());
+    },
+  );
+
+  for (final initialOfferReceived in [false, true]) {
+    test(
+      'U3F-VERSION-1 accepted cleanup scope initialOffer=$initialOfferReceived',
+      () async {
+        final h = _Harness(
+          onMedia:
+              ({required signal, required callHandle, required canApply}) =>
+                  IncomingCallSignalOutcome.accepted,
+        );
+        await h.admitIncoming();
+        h.contexts.recordLocalAcceptance(_callId, media: CallMediaKind.video);
+        final answer = await h.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.answer,
+            eventId: 'local-answer',
+            callId: _callId,
+            occurredAt: DateTime.fromMillisecondsSinceEpoch(
+              _nowMs,
+              isUtc: true,
+            ),
+          ),
+        );
+        expect(answer.decision, CallEventDecision.applied);
+        if (initialOfferReceived) {
+          expect(
+            await h.receive(_v2(event: 'offer', sequence: 2)),
+            IncomingCallSignalOutcome.accepted,
+          );
+        }
+        expect(
+          h.contexts.read(_callId)!.initialOfferReceived,
+          initialOfferReceived,
+        );
+        final terminal = _v1Terminal(reason: 'unsupported', sequence: 3);
+        final page = await h.drainPage([
+          (signal: terminal, handle: _callHandle),
+        ]);
+        expect(
+          page.outcomes.single,
+          initialOfferReceived
+              ? IncomingCallSignalOutcome.deferred
+              : IncomingCallSignalOutcome.accepted,
+        );
+        expect(h.coordinator.isTerminalCall(_callId), !initialOfferReceived);
+        expect(h.native.cancelled, initialOfferReceived ? 0 : 1);
+        expect(page.settled.length, initialOfferReceived ? 0 : 1);
+        if (initialOfferReceived) {
+          expect(h.contexts.read(_callId)!.wireVersion, CallWireVersion.v2);
+          expect(page.acknowledged, isEmpty);
+        }
+      },
+    );
+  }
+
+  for (final mismatch in ['handle', 'sender_device']) {
+    test(
+      'U3F-VERSION-1 $mismatch mismatch cannot suppress the real invite',
+      () async {
+        final h = _Harness();
+        final invite = _v2();
+        final page = await h.drainPage([
+          (signal: invite, handle: _callHandle),
+          (
+            signal: _v2(
+              event: 'terminate',
+              sequence: 2,
+              senderDevice: mismatch == 'sender_device'
+                  ? 'other-device'
+                  : 'sender-device',
+            ),
+            handle: mismatch == 'handle'
+                ? '88888888-8888-4888-8888-888888888888'
+                : _callHandle,
+          ),
+        ]);
+        expect(page.frames.first.terminalFollows, isFalse);
+        expect(page.outcomes, [
+          IncomingCallSignalOutcome.accepted,
+          IncomingCallSignalOutcome.rejected,
+        ]);
+        expect(h.presenter.calls, 1);
+        expect(h.coordinator.activeSession!.state, CallState.ringing);
+        expect(h.contexts.read(_callId)!.callHandle, _callHandle);
+        expect(h.contexts.read(_callId)!.remoteDevicePeerId, 'sender-device');
+        expect(h.native.cancelled, 0);
+        expect(page.settled, isEmpty);
+      },
+    );
+  }
+
+  test(
+    'U3F-VERSION-1 v2 terminal cannot suppress a v1 page invite either',
+    () async {
+      final h = _Harness();
+      final page = await h.drainPage([
+        (signal: _v1Invite(), handle: _callHandle),
+        (signal: _v2(event: 'terminate', sequence: 2), handle: _callHandle),
+      ]);
+      expect(page.frames.first.terminalFollows, isFalse);
+      expect(page.outcomes, [
+        IncomingCallSignalOutcome.accepted,
+        IncomingCallSignalOutcome.rejected,
+      ]);
+      expect(h.contexts.read(_callId)!.wireVersion, CallWireVersion.v1);
+      expect(h.coordinator.activeSession!.state, CallState.ringing);
+      expect(h.native.cancelled, 0);
+      expect(page.settled, isEmpty);
+    },
+  );
+
   test(
     'default-off rejects v2 before context, presentation or effects',
     () async {

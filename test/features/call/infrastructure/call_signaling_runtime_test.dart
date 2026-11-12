@@ -1972,7 +1972,7 @@ void main() {
     final callA = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     final callB = CallId.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     CallMailboxEvent event(String messageId) => CallMailboxEvent(
-      callHandle: 'handle-$messageId',
+      callHandle: messageId.endsWith('-a') ? 'handle-a' : 'handle-$messageId',
       messageId: messageId,
       authenticatedSenderDevicePeerId: 'sender-device',
       recipientDevicePeerId: 'recipient-device',
@@ -1989,18 +1989,29 @@ void main() {
       },
       peekIncoming: (frame) async {
         peeked.add(frame.expectedMessageId);
+        final binding = (
+          schema: CallSignal.schema,
+          callHandle: frame.expectedCallHandle!,
+          senderAccountPeerId: 'sender-account',
+          senderDevicePeerId: frame.authenticatedTransportPeerId,
+          recipientAccountPeerId: 'recipient-account',
+          recipientDevicePeerId: frame.expectedRecipientDevicePeerId!,
+        );
         return switch (frame.expectedMessageId) {
           'invite-a' => IncomingCallSignalPeek(
             callId: callA,
             event: CallSignalType.invite,
+            authenticatedBinding: binding,
           ),
           'terminate-a' => IncomingCallSignalPeek(
             callId: callA,
             event: CallSignalType.terminate,
+            authenticatedBinding: binding,
           ),
           'invite-b' => IncomingCallSignalPeek(
             callId: callB,
             event: CallSignalType.invite,
+            authenticatedBinding: binding,
           ),
           _ => null,
         };
