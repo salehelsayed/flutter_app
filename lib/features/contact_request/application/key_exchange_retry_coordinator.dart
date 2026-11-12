@@ -1,6 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 typedef PerformKeyExchangeRetry = Future<int> Function();
+
+/// Per-run event authority carried through existing zero-argument callbacks.
+/// Async descendants inherit this context; unrelated periodic runs do not.
+final class KeyExchangeRetryContext {
+  const KeyExchangeRetryContext({
+    required this.trigger,
+    required this.requireFresh,
+  });
+  final String trigger;
+  final bool requireFresh;
+  static final Object _zoneKey = Object();
+  static KeyExchangeRetryContext? get current =>
+      Zone.current[_zoneKey] as KeyExchangeRetryContext?;
+}
 
 /// Coalesces key-exchange repair retries triggered by multiple recovery paths.
 ///
@@ -65,7 +81,7 @@ class KeyExchangeRetryCoordinator {
   /// caller has just durably created new repair work.
   Future<int> _retryFresh(String trigger) {
     final inFlight = _inFlight;
-    if (inFlight == null) return _startRun(trigger);
+    if (inFlight == null) return _startRun(trigger, requireFresh: true);
 
     final queued = _freshAfterInFlight;
     if (queued != null) return queued;
@@ -85,22 +101,22 @@ class KeyExchangeRetryCoordinator {
       if (newerInFlight != null && !identical(newerInFlight, inFlight)) {
         return newerInFlight;
       }
-      return _startRun(trigger);
+      return _startRun(trigger, requireFresh: true);
     }();
     _freshAfterInFlight = followUp;
     return followUp;
   }
 
-  Future<int> _startRun(String trigger) {
+  Future<int> _startRun(String trigger, {bool requireFresh = false}) {
     late final Future<int> future;
-    future = _run(trigger).whenComplete(() {
+    future = _run(trigger, requireFresh: requireFresh).whenComplete(() {
       if (identical(_inFlight, future)) _inFlight = null;
     });
     _inFlight = future;
     return future;
   }
 
-  Future<int> _run(String trigger) async {
+  Future<int> _run(String trigger, {required bool requireFresh}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'KEY_EXCHANGE_RETRY_COORDINATOR_START',
@@ -108,7 +124,15 @@ class KeyExchangeRetryCoordinator {
     );
 
     try {
-      final count = await _performRetry();
+      final count = await runZoned(
+        _performRetry,
+        zoneValues: {
+          KeyExchangeRetryContext._zoneKey: KeyExchangeRetryContext(
+            trigger: trigger,
+            requireFresh: requireFresh,
+          ),
+        },
+      );
       if (count > 0) {
         _lastNonZeroRetryAt = _now();
         _lastNonZeroRetryCount = count;

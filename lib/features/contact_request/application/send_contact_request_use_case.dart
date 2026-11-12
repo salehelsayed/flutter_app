@@ -257,6 +257,9 @@ Future<SendContactRequestResult> sendContactRequest({
   // Soliciting a new remote reply cannot reuse an earlier acknowledgement.
   bool requireFresh = false,
   bool markAsNewRequest = false,
+  // Event-driven repair may await signing/encryption. Recheck authority and
+  // captured material immediately before joining or starting transmission.
+  Future<bool> Function()? canTransmit,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -296,6 +299,10 @@ Future<SendContactRequestResult> sendContactRequest({
   );
   final envelope = build.envelope;
   if (envelope == null) return build.failure!;
+
+  if (canTransmit != null && !await canTransmit()) {
+    return SendContactRequestResult.sendFailed;
+  }
 
   final outcome = await _transmitEquivalentContactRequest(
     p2pService: p2pService,

@@ -13,6 +13,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_retry_journal.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_control.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -169,8 +170,92 @@ Future<int> retryIncompleteKeyExchanges({
           reannouncePending.contains(contact.peerId) ||
           wakeTokenPending.contains(contact.peerId) ||
           callWakeHandlePending.contains(contact.peerId);
+      final freshEvent = KeyExchangeRetryContext.current?.requireFresh == true;
+      // Explicit event runs target pending distribution work only, not every
+      // dormant contact discovered by the periodic recovery scan.
+      if (freshEvent && !markerPending) continue;
       final SendContactRequestResult result;
-      if (dormantKeyless) {
+      if (dormantKeyless && freshEvent) {
+        final nowMs = clock.now().millisecondsSinceEpoch;
+        final scannedAt = DateTime.tryParse(
+          contact.scannedAt,
+        )?.millisecondsSinceEpoch;
+        if (scannedAt == null ||
+            nowMs < scannedAt ||
+            nowMs >= scannedAt + const Duration(days: 7).inMilliseconds) {
+          continue;
+        }
+        // A future reservation/expiry is not reset by fresh events. If this
+        // attempt was already due (or is the first), consume that ordinary
+        // reservation so an immediate periodic pass cannot duplicate it.
+        if (secureKeyStore != null && journal == null) continue;
+        final prior = journal?.entries[contact.peerId];
+        final reservation = prior != null && nowMs < prior.nextAttemptAtMs
+            ? prior
+            : await journal?.reserve(contact, nowMs);
+        if (journal != null && reservation == null) continue;
+        final expiresAt =
+            reservation?.expiresAtMs ??
+            scannedAt + const Duration(days: 7).inMilliseconds;
+        final generation = ContactRequestRetryJournal.generation(
+          identity,
+          contact,
+        );
+        Future<CallWakeHandleGrant?> validGrant() async {
+          final grant = await resolveCallWakeHandle?.call(contact.peerId);
+          return grant != null &&
+                  grant.isValidAt(clock.now().millisecondsSinceEpoch)
+              ? grant
+              : null;
+        }
+
+        final grant = await validGrant();
+        final marked =
+            await shouldMarkAsNewRequest?.call(contact.peerId) ?? false;
+        result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: contact.peerId,
+          recipientPublicKey: contact.publicKey,
+          intent: ContactRequestSendIntent.keyExchangeRetry,
+          resolveWakeToken: resolveWakeToken == null
+              ? null
+              : (_) async => wakeToken,
+          resolveCallWakeHandle: (_) async => grant,
+          onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+          markAsNewRequest: marked,
+          // Coordinator freshness admits this event; it does not disable the
+          // existing equivalent-material transmission coalescer.
+          canTransmit: () async {
+            final current = await contactRepo.getContact(contact.peerId);
+            final currentIdentity = await identityRepo.loadIdentity();
+            final consent = await readConsent?.call(contact.peerId);
+            if (current == null ||
+                currentIdentity == null ||
+                current.mlKemPublicKey != null ||
+                current.isBlocked ||
+                current.isArchived ||
+                !ContactRequestRetryJournal.consentAllows(consent) ||
+                ContactRequestRetryJournal.generation(
+                      currentIdentity,
+                      current,
+                    ) !=
+                    generation ||
+                clock.now().millisecondsSinceEpoch >= expiresAt) {
+              return false;
+            }
+            final token = await resolveWakeToken?.call(contact.peerId);
+            final freshGrant = await validGrant();
+            return (token == null || token.isEmpty ? null : token) ==
+                    (wakeToken == null || wakeToken.isEmpty
+                        ? null
+                        : wakeToken) &&
+                freshGrant == grant &&
+                clock.now().millisecondsSinceEpoch < expiresAt;
+          },
+        );
+      } else if (dormantKeyless) {
         final custody = journal;
         if (custody == null) continue;
         final entry = await custody.reserve(

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:clock/clock.dart';
+import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
@@ -131,6 +132,11 @@ void main() {
       },
     ),
   );
+
+  Future<int> freshRetry() => KeyExchangeRetryCoordinator(
+    now: () => now,
+    performRetry: retry,
+  ).retryNow(trigger: 'wake_token_registered', requireFresh: true);
 
   List<dynamic> entries(String raw) =>
       (jsonDecode(raw) as Map<String, dynamic>)['entries'] as List<dynamic>;
@@ -266,6 +272,85 @@ void main() {
       await retry();
       expect(transport.storeInInboxCallCount, 0);
       expect(await store.read(_journalKey), reserved);
+    },
+  );
+  test(
+    'BL24E2 fresh event sends once and reserves the next periodic pass',
+    () async {
+      await stage('wake');
+      transport.storeInInboxResult = false;
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 1);
+      final reserved = await store.read(_journalKey);
+      expect(reserved, isNotNull);
+      await retry();
+      expect(transport.storeInInboxCallCount, 1);
+      expect(await store.read(_journalKey), reserved);
+    },
+  );
+  test(
+    'BL24E2 fresh event bypasses due time without resetting custody',
+    () async {
+      await stage('wake');
+      transport.storeInInboxResult = false;
+      await retry();
+      final reserved = await store.read(_journalKey);
+      now = now.add(const Duration(minutes: 1));
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 2);
+      expect(await store.read(_journalKey), reserved);
+      await retry();
+      expect(transport.storeInInboxCallCount, 2);
+      expect(await store.read(_journalKey), reserved);
+    },
+  );
+  test(
+    'BL24E2 fresh event never extends the original seven day horizon',
+    () async {
+      await stage('wake');
+      transport.storeInInboxResult = false;
+      await retry();
+      final reserved = await store.read(_journalKey);
+      now = now.add(const Duration(days: 6));
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 2);
+      final before = entries(reserved!).single as Map;
+      final after = entries((await store.read(_journalKey))!).single as Map;
+      expect(after['expiresAtMs'], before['expiresAtMs']);
+      expect(after['scannedAtMs'], before['scannedAtMs']);
+      expect(after['attempts'], 2);
+      await retry();
+      expect(transport.storeInInboxCallCount, 2);
+      now = now.add(const Duration(days: 1));
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 2);
+      expect(await store.read(_journalKey), isNull);
+    },
+  );
+  test(
+    'BL24E2 fresh event rechecks material after final authority callback',
+    () async {
+      await stage('wake');
+      var reads = 0;
+      onReadConsent = () {
+        if (++reads == 2) wakeToken = 'fresh-event-rotated';
+      };
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 0);
+      expect(await store.read(_journalKey), isNotNull);
+      await retry();
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+  test(
+    'BL24E2 fresh event skips peers without pending distribution work',
+    () async {
+      transport.storeInInboxResult = false;
+      await freshRetry();
+      expect(transport.storeInInboxCallCount, 0);
+      expect(await store.read(_journalKey), isNull);
+      await retry();
+      expect(transport.storeInInboxCallCount, 1);
     },
   );
   test(
