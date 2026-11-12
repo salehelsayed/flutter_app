@@ -179,6 +179,30 @@ final class MknoonAppDiagnosticSpoolTests: XCTestCase {
     inbox.append(traceId: trace, runId: UUID().uuidString.lowercased(), beganAt: began, occurredAt: at, elapsedMs: 12,
                  build: build, stage: "receive", outcome: "ok", reason: "none")
   }
+  func testBL9NseFailureReasonsAreAllowlistedAndImportable() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let shared = inbox(directory)
+    XCTAssertTrue(shared.configure(true, epoch: 10))
+    let reasons = ["bridge_unavailable", "recipient_key_missing", "invalid_payload", "unknown"]
+    for reason in reasons {
+      XCTAssertTrue(shared.append(traceId: UUID().uuidString.lowercased(), runId: UUID().uuidString.lowercased(),
+        beganAt: 1_900_000_000_000, occurredAt: 1_900_000_000_000, elapsedMs: 12,
+        build: "1.0.1+112", stage: "process", outcome: "failed", reason: reason))
+    }
+    XCTAssertFalse(shared.append(traceId: UUID().uuidString.lowercased(), runId: UUID().uuidString.lowercased(),
+      beganAt: 1_900_000_000_000, occurredAt: 1_900_000_000_000, elapsedMs: 12,
+      build: "1.0.1+112", stage: "process", outcome: "failed", reason: "private-error-must-not-escape"))
+    let rows = try XCTUnwrap(shared.drain()).events
+    XCTAssertEqual(rows.compactMap { $0["reason"] as? String }, reasons)
+    XCTAssertTrue(rows.allSatisfy { $0["stage"] as? String == "process" && $0["outcome"] as? String == "failed" })
+    XCTAssertFalse(String(describing: rows).contains("must-not-escape"))
+    let app = spool(Memory())
+    XCTAssertTrue(app.configure(true, consentEpoch: 10))
+    XCTAssertEqual(try XCTUnwrap(app.importEvents(rows)).count, reasons.count)
+    XCTAssertEqual(events(app).compactMap { $0["reason"] as? String }, reasons)
+  }
+
   func testNseDefaultOffAndSharedRevocationCannotBeReenabledByStaleEpoch() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
