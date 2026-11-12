@@ -112,6 +112,7 @@ final class _History implements CallHistoryRepository {
 
 final class _Effects implements CallEffectExecutor {
   final effects = <CallEffectType>[];
+  final negotiationStarted = Completer<void>();
 
   @override
   Future<CallEvent?> execute(
@@ -119,6 +120,10 @@ final class _Effects implements CallEffectExecutor {
     CallSessionSnapshot snapshot,
   ) async {
     effects.add(effect.type);
+    if (effect.type == CallEffectType.startNegotiation &&
+        !negotiationStarted.isCompleted) {
+      negotiationStarted.complete();
+    }
     return null;
   }
 }
@@ -948,6 +953,8 @@ void main() {
           await h.receive(_v2(event: 'accept', media: 'video')),
           IncomingCallSignalOutcome.accepted,
         );
+        // Admission returns before the coordinator finishes setup effects.
+        await h.effects.negotiationStarted.future;
       } else {
         await h.admitIncoming();
         h.contexts.recordLocalAcceptance(_callId, media: CallMediaKind.video);
