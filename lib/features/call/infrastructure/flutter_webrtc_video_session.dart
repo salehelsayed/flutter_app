@@ -120,7 +120,10 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
       throw const CallEngineException(CallEngineErrorCode.notReady);
 
   _Negotiation _check(CallVideoNegotiation token) {
-    if (token is! _Negotiation || !_currentToken(token)) _reject();
+    if (token is! _Negotiation || !_currentToken(token)) {
+      if (identical(_current, token)) unawaited(retireVideo());
+      _reject();
+    }
     return token;
   }
 
@@ -407,7 +410,10 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     CallVideoNegotiation raw,
     CallLocalCameraGrant grant,
   ) async {
-    if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) return false;
+    if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) {
+      if (identical(_current, raw)) await stopLocalCamera();
+      return false;
+    }
     await stopLocalCamera();
     if (!_cameraAllowed(raw, grant) || hasPendingCleanup) return false;
     final intent = _owner.beginGrantedCapture(callId);
@@ -570,7 +576,11 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
         );
       }
     });
-    if (!attached || !_currentToken(raw) || prepared == null) return null;
+    if (!attached || prepared == null) return null;
+    if (!_currentToken(raw)) {
+      if (_owner.rendererFor(intent) != null) await _owner.detachRenderer(slot);
+      return null;
+    }
     final native = prepared!.native;
     final id = native.textureId;
     return id == null

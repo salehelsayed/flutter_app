@@ -169,8 +169,23 @@ final class FlutterWebRtcPeerConnectionAdapter
     required CallVideoDescriptionValidator validateDescription,
     required Future<void> Function() remoteDescriptionApplied,
   }) {
-    // RED scaffold: the optional native video capability is not installed yet.
-    throw const CallEngineException(CallEngineErrorCode.configurationRejected);
+    _requireConnection();
+    if (_videoSession != null) {
+      throw const CallEngineException(
+        CallEngineErrorCode.configurationRejected,
+      );
+    }
+    return _videoSession = FlutterWebRtcVideoSession(
+      callId: callId,
+      localIsCaller: localIsCaller,
+      connection: _requireConnection,
+      canApply: () => !_closed && canApply(),
+      validateDescription: validateDescription,
+      remoteDescriptionApplied: remoteDescriptionApplied,
+      capture: videoCaptureFactory,
+      renderer: videoRendererFactory,
+      videoStream: videoStreamFactory,
+    );
   }
 
   webrtc.RTCPeerConnection? _peerConnection;
