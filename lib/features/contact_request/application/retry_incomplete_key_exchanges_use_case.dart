@@ -8,6 +8,7 @@ import 'package:flutter_app/features/contact_request/application/mlkem_reannounc
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 typedef LoadPendingCallWakeHandleContactIds =
@@ -43,6 +44,8 @@ Future<int> retryIncompleteKeyExchanges({
   // Task 12b: peers verified as updated get the signed repair marker, so they
   // answer with one durable repair reply. Others stay unmarked.
   Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
+  // Read-only consent seam; RED introduces the API before policy behavior.
+  Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
 }) async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();

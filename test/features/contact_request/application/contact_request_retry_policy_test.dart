@@ -1,0 +1,318 @@
+import 'dart:convert';
+
+import 'package:clock/clock.dart';
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_cleanup.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../core/services/fake_p2p_service.dart';
+import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart';
+
+const _journalKey = 'contact_request_retry_journal_v1';
+const _peer = 'retry-recipient';
+
+ContactModel _contact(DateTime scannedAt, {String peer = _peer}) =>
+    ContactModel(
+      peerId: peer,
+      publicKey: 'recipient-key-$peer',
+      rendezvous: '/p2p-circuit/relay',
+      username: 'Recipient',
+      signature: 'qr-signature',
+      scannedAt: scannedAt.toUtc().toIso8601String(),
+    );
+
+IdentityModel _identity(String account) => IdentityModel(
+  peerId: account,
+  publicKey: '$account-public-key',
+  privateKey: '$account-private-key',
+  mnemonic12: 'one two three four five six seven eight nine ten eleven twelve',
+  mlKemPublicKey: '$account-mlkem',
+  mlKemSecretKey: '$account-mlkem-secret',
+  createdAt: '2026-11-12T00:00:00Z',
+  updatedAt: '2026-11-12T00:00:00Z',
+);
+
+FakeP2PService _transport() => FakeP2PService(
+  initialState: const NodeState(
+    isStarted: true,
+    peerId: 'sender-account',
+    circuitAddresses: ['/p2p-circuit/relay'],
+  ),
+)..storeInInboxResult = true;
+
+class _FailingJournalStore extends FakeSecureKeyStore {
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == _journalKey) throw StateError('journal write unavailable');
+    return super.write(key, value);
+  }
+}
+
+void main() {
+  late DateTime now;
+  late FakeContactRepository contacts;
+  late FakeIdentityRepository identities;
+  late FakeSecureKeyStore store;
+  late FakeP2PService transport;
+  late FakeBridge bridge;
+  ContactRelationshipState? consent;
+
+  setUp(() {
+    now = DateTime.utc(2026, 11, 12);
+    contacts = FakeContactRepository()..seed([_contact(now)]);
+    identities = FakeIdentityRepository()..seed(_identity('sender-account'));
+    store = FakeSecureKeyStore();
+    transport = _transport();
+    bridge = FakeBridge();
+    bridge.responses['payload.sign'] = {'ok': true, 'signature': 'signature'};
+    bridge.responses['contactrequest.encrypt'] = {
+      'ok': true,
+      'ephemeralPublicKey': 'ephemeral-key',
+      'ciphertext': 'ciphertext',
+      'nonce': 'nonce',
+    };
+    consent = null;
+  });
+  tearDown(() => transport.dispose());
+
+  Future<int> retry({bool durableStore = true}) => withClock(
+    Clock(() => now),
+    () => retryIncompleteKeyExchanges(
+      contactRepo: contacts,
+      identityRepo: identities,
+      p2pService: transport,
+      bridge: bridge,
+      secureKeyStore: durableStore ? store : null,
+      readConsent: (_) async => consent == null
+          ? null
+          : ContactRelationshipConsent(
+              state: consent!,
+              revision: 1,
+              updatedAtMs: now.millisecondsSinceEpoch,
+            ),
+    ),
+  );
+
+  List<dynamic> entries(String raw) =>
+      (jsonDecode(raw) as Map<String, dynamic>)['entries'] as List<dynamic>;
+
+  test('BL24E causal first automatic request remains encrypted v2', () async {
+    expect(await retry(), 1);
+    final envelope = jsonDecode(transport.lastStoreInInboxMessage!) as Map;
+    expect(envelope['type'], 'contact_request');
+    expect(envelope['version'], '2');
+    expect(envelope['intent'], 'key_exchange_retry');
+    expect(envelope['msgId'], isNotEmpty);
+    expect(envelope['encrypted'], isA<Map>());
+  });
+
+  test(
+    'BL24E causal repeated reconnect backs off instead of minting a second id',
+    () async {
+      expect(await retry(), 1);
+      final first = transport.lastStoreInInboxMessage;
+      now = now.add(const Duration(seconds: 31));
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 1);
+      expect(transport.lastStoreInInboxMessage, first);
+    },
+  );
+
+  test(
+    'BL24E causal due retry reuses the exact original envelope and msgId',
+    () async {
+      expect(await retry(), 1);
+      final first = transport.lastStoreInInboxMessage!;
+      now = now.add(const Duration(hours: 1));
+      expect(await retry(), 1);
+      expect(transport.storeInInboxCallCount, 2);
+      expect(transport.lastStoreInInboxMessage, first);
+    },
+  );
+
+  test('BL24E causal restart keeps the persisted envelope identity', () async {
+    expect(await retry(), 1);
+    final first = transport.lastStoreInInboxMessage;
+    transport.dispose();
+    transport = _transport();
+    now = now.add(const Duration(hours: 1));
+    expect(await retry(), 1);
+    expect(transport.lastStoreInInboxMessage, first);
+  });
+
+  test(
+    'BL24E causal older-than-seven-days contacts stop immediately',
+    () async {
+      contacts.seed([_contact(now.subtract(const Duration(days: 7)))]);
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+
+  test('BL24E manual request still sends after automatic expiry', () async {
+    contacts.seed([_contact(now.subtract(const Duration(days: 8)))]);
+    final result = await sendContactRequest(
+      p2pService: transport,
+      identityRepo: identities,
+      bridge: bridge,
+      targetPeerId: _peer,
+      recipientPublicKey: 'recipient-key-$_peer',
+    );
+    expect(result, SendContactRequestResult.success);
+    expect(transport.storeInInboxCallCount, 1);
+    expect(
+      (jsonDecode(transport.lastStoreInInboxMessage!) as Map)['intent'],
+      'new_request',
+    );
+  });
+
+  test('BL24E retries wait 1h then6h then24h then daily', () async {
+    expect(await retry(), 1);
+    for (final gap in [1, 6, 24, 24]) {
+      now = now.add(Duration(hours: gap) - const Duration(seconds: 1));
+      final before = transport.storeInInboxCallCount;
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, before);
+      now = now.add(const Duration(seconds: 1));
+      expect(await retry(), 1);
+      expect(transport.storeInInboxCallCount, before + 1);
+    }
+    expect(
+      transport.storeInInboxLog.map((e) => e.message).toSet(),
+      hasLength(1),
+    );
+  });
+
+  for (final state in [
+    ContactRelationshipState.declined,
+    ContactRelationshipState.withdrawn,
+  ]) {
+    test('BL24E causal $state suppresses automatic requests', () async {
+      consent = state;
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 0);
+    });
+  }
+
+  for (final transition in [
+    'accepted',
+    'declined',
+    'withdrawn',
+    'removed',
+    'expired',
+  ]) {
+    test(
+      'BL24E reconciles stale $transition entry before any resend',
+      () async {
+        expect(await retry(), 1);
+        expect(await store.read(_journalKey), isNotNull);
+        switch (transition) {
+          case 'accepted':
+            contacts.seed([
+              _contact(now).copyWith(mlKemPublicKey: 'completed-key'),
+            ]);
+          case 'declined':
+            consent = ContactRelationshipState.declined;
+          case 'withdrawn':
+            consent = ContactRelationshipState.withdrawn;
+          case 'removed':
+            contacts.seed([]);
+          case 'expired':
+            now = now.add(const Duration(days: 7));
+        }
+        now = now.add(const Duration(hours: 1));
+        expect(await retry(), 0);
+        expect(transport.storeInInboxCallCount, 1);
+        final raw = await store.read(_journalKey);
+        expect(raw == null || entries(raw).isEmpty, isTrue);
+      },
+    );
+  }
+
+  test(
+    'BL24E journal bounds all live entries at200 without sending untracked ids',
+    () {
+      contacts.seed([
+        for (var i = 0; i < 201; i++) _contact(now, peer: 'peer-$i'),
+      ]);
+      fakeAsync((time) {
+        var finished = false;
+        Future<void> inspect() async {
+          expect(await retry(), 200);
+          final raw = await store.read(_journalKey);
+          expect(raw, isNotNull);
+          expect(entries(raw!), hasLength(200));
+          expect(transport.storeInInboxCallCount, 200);
+          finished = true;
+        }
+
+        inspect();
+        time.elapse(const Duration(minutes: 2));
+        expect(finished, isTrue);
+      });
+    },
+  );
+
+  test(
+    'BL24E account change prunes old-account envelopes before sending',
+    () async {
+      expect(await retry(), 1);
+      final first = transport.lastStoreInInboxMessage;
+      identities.seed(_identity('replacement-account'));
+      now = now.add(const Duration(hours: 1));
+      expect(await retry(), 1);
+      expect(transport.lastStoreInInboxMessage, isNot(first));
+      final raw = await store.read(_journalKey);
+      expect(raw, isNotNull);
+      expect(raw, isNot(contains('sender-account')));
+    },
+  );
+
+  test(
+    'BL24E explicit account reset erases the journal through existing inventory',
+    () async {
+      expect(await retry(), 1);
+      expect(await store.read(_journalKey), isNotNull);
+      await MigrationSecureStorageCleanup(
+        staging: MigrationSecureStorageStaging(primaryStore: store),
+      ).eraseAccount(registryKeys: const [], explicitLocalReset: true);
+      expect(await store.read(_journalKey), isNull);
+    },
+  );
+
+  test(
+    'BL24E unavailable durable storage cannot produce an untracked automatic id',
+    () async {
+      expect(await retry(durableStore: false), 0);
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+
+  test(
+    'BL24E corrupt journal fails closed without minting another request',
+    () async {
+      await store.write(_journalKey, 'corrupt-journal');
+      await retry().then<void>((_) {}, onError: (Object _) {});
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+
+  test(
+    'BL24E journal persistence failure precedes every network send',
+    () async {
+      store = _FailingJournalStore();
+      await retry().then<void>((_) {}, onError: (Object _) {});
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+}
