@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/delivery_receipt_outbox_repository.dart';
 
 /// 132 Phase 1 flag (LIVE by default since 2026-06-19, device-verified): when
 /// true, the receiver mints a confirmatory delivery receipt for direct/LAN/
@@ -207,4 +208,29 @@ Future<bool> sendDeliveryReceipt({
   );
   recordOutcome('failed');
   return false;
+}
+
+/// Account-scoped receipt owner shared by minting and lifecycle retry triggers.
+class DeliveryReceiptOutbox {
+  DeliveryReceiptOutbox({
+    required this.repository,
+    required this.p2pService,
+    DateTime Function()? now,
+  });
+
+  final DeliveryReceiptOutboxRepository repository;
+  final P2PService Function() p2pService;
+
+  Future<bool> send({
+    required String targetPeerId,
+    required List<String> messageIds,
+    Map<String, String>? mutationEventIds,
+  }) => sendDeliveryReceipt(
+    p2pService: p2pService(),
+    targetPeerId: targetPeerId,
+    messageIds: messageIds,
+    mutationEventIds: mutationEventIds,
+  );
+
+  Future<int> drain() async => 0;
 }
