@@ -671,6 +671,54 @@ void main() {
       expect(bridge.commandLog, isNot(contains('message.encrypt')));
     });
 
+    test('BL-24(C) terminal invalid send survives reopen and manual retry clears it', () async {
+      final directory = await Directory.systemTemp.createTemp('invalid-retry-');
+      var fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: '${directory.path}/messages.sqlite',
+      );
+      addTearDown(() async {
+        await fixture.dispose();
+        await directory.delete(recursive: true);
+      });
+      identityRepo.seed(makeIdentity());
+      contactRepo.seed([makeContact()]);
+      final pending = makeFailedMessage(id: 'invalid-reopen', text: '');
+      await fixture.db.insert('messages', pending.toMap());
+      final service = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+      Future<List<Map<String, dynamic>>> recover() => captureFlowEvents(() async {
+        expect(await retryFailedMessages(
+          messageRepo: fixture.messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: service,
+          bridge: bridge,
+        ), 0);
+      });
+      final first = await recover();
+      expect(first.where((e) => e['event'] == 'CHAT_MSG_SEND_INVALID'), hasLength(1));
+      fixture = await fixture.reopen();
+      final second = await recover();
+      expect(second.where((e) => e['event'] == 'CHAT_MSG_SEND_INVALID'), isEmpty);
+      expect((await fixture.messageRepo.getMessage(pending.id))!.status, 'failed');
+      // Keep the durable marker but repair the malformed content. Only an
+      // explicit retry may re-arm this row; it must not retain the old marker.
+      await fixture.db.update('messages', {'text': 'Repaired'}, where: 'id = ?', whereArgs: [pending.id]);
+      expect(await fixture.messageRepo.getFailedOutgoingMessages(), isEmpty);
+      expect(await retryFailedMessage(
+        messageId: pending.id,
+        messageRepo: fixture.messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: service,
+        bridge: bridge,
+      ), 1);
+      final row = (await fixture.db.query('messages', where: 'id = ?', whereArgs: [pending.id])).single;
+      expect(row['auto_retry_terminal_reason'], isNull);
+      expect(row['status'], anyOf('sent', 'inboxed', 'delivered'));
+    });
+
     for (final keyCase in <String, String?>{
       'null': null,
       'empty': '',

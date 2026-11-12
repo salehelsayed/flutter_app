@@ -1498,7 +1498,38 @@ Future<int> dbDeleteMessage(Database db, String id) async {
   }
 }
 
-/// Loads all outgoing messages with status='failed', ordered by timestamp ASC.
+Future<bool> dbIsMessageAutoRetryTerminal(Database db, String messageId) async {
+  final rows = await db.query(
+    'messages',
+    columns: ['auto_retry_terminal_reason'],
+    where: 'id = ?',
+    whereArgs: [messageId],
+  );
+  return rows.isNotEmpty && rows.single['auto_retry_terminal_reason'] != null;
+}
+
+Future<void> dbSetMessageAutoRetryTerminalReason(
+  Database db,
+  Map<String, Object?> expected,
+  String? reason,
+) async {
+  if (expected['status'] != 'failed' || expected['is_incoming'] != 0) return;
+  final snapshot = <String, Object?>{
+    ...expected,
+    'quiet_recovery': expected['quiet_recovery'] ?? 0,
+    'direct_event_fanout_generation_id': expected['direct_event_fanout_generation_id'],
+  };
+  // Compare the complete persisted snapshot so an intervening edit, delivery,
+  // or ownership change cannot terminalize a different send incarnation.
+  await db.update(
+    'messages',
+    {'auto_retry_terminal_reason': reason},
+    where: snapshot.keys.map((column) => '$column IS ?').join(' AND '),
+    whereArgs: snapshot.values.toList(),
+  );
+}
+
+/// Loads retryable outgoing failed messages, ordered by timestamp ASC.
 ///
 /// Returns at most [limit] rows (default 50).
 Future<List<Map<String, Object?>>> dbLoadFailedOutgoingMessages(
@@ -1514,7 +1545,7 @@ Future<List<Map<String, Object?>>> dbLoadFailedOutgoingMessages(
   try {
     final results = await db.query(
       'messages',
-      where: "status = ? AND is_incoming = 0",
+      where: "status = ? AND is_incoming = 0 AND auto_retry_terminal_reason IS NULL",
       whereArgs: ['failed'],
       orderBy: 'timestamp ASC',
       limit: limit,
