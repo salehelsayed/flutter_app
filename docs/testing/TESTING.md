@@ -487,6 +487,26 @@ preserve deliberate re-adds and capability follow-ups. Evidence:
 host assertions do not certify a device run or promise one packet when new
 capability material genuinely needs distribution.
 
+
+For inbox storage with a cold node and a nonempty received wake token, startup
+readiness consumes the caller's total timeout budget instead of a separate
+three-second cutoff. The default remains 15 seconds; an explicit three-second
+budget remains three seconds. After startup, the coordinator rechecks account
+network authority and node readiness, then makes at most one bridge store call
+with only the remaining budget. This is a scoped startup fix, not an explanation
+of every background send failure or a measured production failure rate.
+At `98f9599f20c26499c03f7122487dff478c87bfa1`, the complete readiness file passed
+8 cases and five exact preservation files passed 48 cases, with successful
+reporter completion, child exit 0 and no skips. RED
+`a6da15ff2e7482ccef49142ff25d7765c88dfd65` had two passing controls and three
+causal assertion failures (delayed readiness, revoked authority and lost node
+readiness). Two-path analysis and metadata validation passed. All eight
+before/after setup and execution boundaries match the exact heads, trees and
+17 pins with clean status; setup deltas are empty. Commands and raw hashes:
+`/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/D2-raw-facts.json`.
+Host bridge fakes establish this budget and admission behavior; device,
+composed-build and signed-candidate proof remain separate.
+
 Legacy active-contact key recovery must not require a call-wake grant that
 cannot be issued until the missing ML-KEM key is known. The authenticated
 no-grant direct retry may receive the existing quiet key-exchange reply;
