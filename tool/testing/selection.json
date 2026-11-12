@@ -344,6 +344,7 @@
       "test/features/call/infrastructure/production_call_v2_signaling_adapter_test.dart",
         "test/features/call/presentation/call_video_localizations_test.dart",
         "test/features/call/presentation/call_video_presentation_test.dart",
+        "test/features/call/presentation/foreground_call_video_binding_test.dart",
         "test/features/call/presentation/widgets/call_video_controls_test.dart",
         "test/features/call/infrastructure/bridge_call_ice_server_provider_test.dart",
         "test/features/call/application/call_negotiation_effect_executor_test.dart",
