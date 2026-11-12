@@ -3,6 +3,8 @@ import 'dart:collection';
 import '../diagnostics/call_diagnostics.dart';
 
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
+import '../domain/call_signal_v2.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
 import 'call_endpoint_resolver.dart';
@@ -87,6 +89,11 @@ final class CallSignalingContext {
   final int iceGeneration;
   final Map<String, Object?> invitePayload;
 
+  CallWireVersion get wireVersion => CallWireVersion.v1;
+  CallMediaKind get requestedMedia => CallMediaKind.audio;
+  CallMediaKind? get initialAcceptedMedia => null;
+  bool get initialOfferReceived => false;
+
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'direction': direction.name,
     'nextSenderSequence': nextSenderSequence,
@@ -107,13 +114,14 @@ final class CallSignalingContext {
 /// bytes that reducer-approved effects need in order to send one signal.
 final class CallSignalingContextStore
     implements AuthenticatedCallSignalingContextObserver {
-  CallSignalingContextStore({this.maxContexts = 4}) {
+  CallSignalingContextStore({this.maxContexts = 4, this.videoEnabled = false}) {
     if (maxContexts <= 0) {
       throw ArgumentError.value(maxContexts, 'maxContexts', 'must be positive');
     }
   }
 
   final int maxContexts;
+  final bool videoEnabled;
   final LinkedHashMap<CallId, _StoredCallSignalingContext> _contexts =
       LinkedHashMap<CallId, _StoredCallSignalingContext>();
   final ListQueue<CallId> _pendingIncomingInviteIds = ListQueue<CallId>();
@@ -135,6 +143,33 @@ final class CallSignalingContextStore
 
   ResolvedCallEndpoint? pinnedEndpoint(CallId callId) =>
       _pinnedEndpoints[callId];
+
+  void storeOutgoingV2({
+    required CallSignalV2 invite,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+  }) {
+    throw const CallSignalingContextException(
+      CallSignalingContextErrorCode.invalidContext,
+    );
+  }
+
+  void captureAuthenticatedV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+  }) {
+    throw const CallSignalingContextException(
+      CallSignalingContextErrorCode.invalidContext,
+    );
+  }
+
+  /// Records an already-authorized local answer; it never opens capture.
+  void recordLocalAcceptance(CallId callId, {required CallMediaKind media}) {
+    throw const CallSignalingContextException(
+      CallSignalingContextErrorCode.invalidContext,
+    );
+  }
 
   void storeOutgoing({
     required CallId callId,
