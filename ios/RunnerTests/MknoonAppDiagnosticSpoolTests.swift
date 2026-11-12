@@ -179,6 +179,27 @@ final class MknoonAppDiagnosticSpoolTests: XCTestCase {
     inbox.append(traceId: trace, runId: UUID().uuidString.lowercased(), beganAt: began, occurredAt: at, elapsedMs: 12,
                  build: build, stage: "receive", outcome: "ok", reason: "none")
   }
+  func testBL9ScopeDoesNotReportSuccessOrLateFailures() {
+    var records = [String]()
+    var proofs = 0
+    let scope = MknoonNseAppDiagnosticScope(recordEvent: { stage, outcome, reason in
+      records.append("\(stage)/\(outcome)/\(reason)")
+    })
+    scope.recordDecryptFailure("bridge_unavailable") { proofs += 1 }
+    scope.finishProcess(expired: false)
+    scope.recordDecryptFailure("unknown") { proofs += 1 }
+    scope.finishProcess(expired: false)
+    XCTAssertEqual(records, ["process/failed/bridge_unavailable"])
+    XCTAssertEqual(proofs, 1)
+    let expired = MknoonNseAppDiagnosticScope(recordEvent: { stage, outcome, reason in
+      records.append("\(stage)/\(outcome)/\(reason)")
+    })
+    expired.finishProcess(expired: true, previewFailure: "invalid_payload")
+    expired.recordDecryptFailure("bridge_unavailable") { proofs += 1 }
+    XCTAssertEqual(records.last, "process/timeout/timeout")
+    XCTAssertEqual(proofs, 1)
+  }
+
   func testBL9NseFailureReasonsAreAllowlistedAndImportable() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

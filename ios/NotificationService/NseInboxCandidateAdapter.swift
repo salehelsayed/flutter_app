@@ -30,6 +30,18 @@ protocol NseInboxCandidateAdapting {
     _ row: NseInboxRetrievedMessage,
     credential: NseInboxCredential
   ) -> NseInboxCandidate?
+  func adapt(
+    _ row: NseInboxRetrievedMessage,
+    credential: NseInboxCredential,
+    onFailure: (String, String) -> Void
+  ) -> NseInboxCandidate?
+}
+
+extension NseInboxCandidateAdapting {
+  func adapt(_ row: NseInboxRetrievedMessage, credential: NseInboxCredential,
+             onFailure: (String, String) -> Void) -> NseInboxCandidate? {
+    adapt(row, credential: credential)
+  }
 }
 
 /// Strict adapter between raw inbox producer bytes and the incumbent rich
@@ -57,23 +69,29 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
     _ row: NseInboxRetrievedMessage,
     credential: NseInboxCredential
   ) -> NseInboxCandidate? {
+    adapt(row, credential: credential, onFailure: { _, _ in })
+  }
+
+  func adapt(_ row: NseInboxRetrievedMessage, credential: NseInboxCredential,
+             onFailure: (String, String) -> Void) -> NseInboxCandidate? {
     guard !row.quietRecovery,
           let envelope = Self.decodeMap(row.message) else { return nil }
     switch envelope["type"] as? String {
     case "chat_message", "message_reaction":
-      return adaptDirect(row, envelope: envelope, credential: credential)
+      return adaptDirect(row, envelope: envelope, credential: credential, onFailure: onFailure)
     default:
       guard envelope["kind"] as? String == "group_offline_replay" else {
         return nil
       }
-      return adaptGroup(row, envelope: envelope, credential: credential)
+      return adaptGroup(row, envelope: envelope, credential: credential, onFailure: onFailure)
     }
   }
 
   private func adaptDirect(
     _ row: NseInboxRetrievedMessage,
     envelope: [String: Any],
-    credential: NseInboxCredential
+    credential: NseInboxCredential,
+    onFailure: (String, String) -> Void
   ) -> NseInboxCandidate? {
     let isMessage = envelope["type"] as? String == "chat_message"
     let requiredKeys: Set<String> = isMessage
@@ -105,19 +123,25 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
             encrypted["ciphertext"],
             maxBytes: 524_288
           ),
-          let nonce = Self.exactString(encrypted["nonce"], maxBytes: 4_096),
-          let secretKey = keyReader.readString(
-            key: PushSharedKeyNames.identityMlKemSecretKey
-          ),
-          let plaintext = try? decryptor.decryptOneToOne(
-            secretKey: secretKey,
-            kem: kem,
-            ciphertext: ciphertext,
-            nonce: nonce
-          ),
-          let inner = Self.decodeMap(plaintext),
-          Self.exactPeerId(inner["senderPeerId"]) ==
-            logicalSender else {
+          let nonce = Self.exactString(encrypted["nonce"], maxBytes: 4_096) else {
+      return nil
+    }
+    let kind = isMessage ? "chat" : "reaction"
+    guard let secretKey = keyReader.readString(key: PushSharedKeyNames.identityMlKemSecretKey) else {
+      onFailure(kind, isMessage ? "missing_chat_secret" : "missing_reaction_secret")
+      return nil
+    }
+    let plaintext: String
+    do {
+      plaintext = try decryptor.decryptOneToOne(secretKey: secretKey, kem: kem,
+                                               ciphertext: ciphertext, nonce: nonce)
+    } catch {
+      onFailure(kind, nseDecryptFailureReason(error: error, kind: kind))
+      return nil
+    }
+    guard let inner = Self.decodeMap(plaintext),
+          Self.exactPeerId(inner["senderPeerId"]) == logicalSender else {
+      onFailure(kind, isMessage ? "chat_plaintext_parity_mismatch" : "reaction_parity_mismatch")
       return nil
     }
 
@@ -260,27 +284,32 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
   private func adaptGroup(
     _ row: NseInboxRetrievedMessage,
     envelope: [String: Any],
-    credential: NseInboxCredential
+    credential: NseInboxCredential,
+    onFailure: (String, String) -> Void
   ) -> NseInboxCandidate? {
     guard var protected = ProtectedGroupEnvelope.parse(
             envelope,
             rowFrom: row.from,
             credential: credential,
             keyReader: keyReader
-          ),
-          let groupKey = keyReader.readString(
-            key: PushSharedKeyNames.groupKey(
-              groupId: protected.groupId,
-              keyEpoch: protected.keyEpoch
-            )
-          ),
-          let plaintext = try? decryptor.decryptGroup(
-            groupKey: groupKey,
-            ciphertext: protected.ciphertext,
-            nonce: protected.nonce
-          ),
-          Self.sha256(plaintext) == protected.plaintextHash,
+          ) else { return nil }
+    let kind = protected.payloadType == "group_reaction" ? "group_reaction" : "group"
+    guard let groupKey = keyReader.readString(key: PushSharedKeyNames.groupKey(
+      groupId: protected.groupId, keyEpoch: protected.keyEpoch)) else {
+      onFailure(kind, kind == "group" ? "missing_group_key" : "group_reaction_missing_key")
+      return nil
+    }
+    let plaintext: String
+    do {
+      plaintext = try decryptor.decryptGroup(groupKey: groupKey,
+        ciphertext: protected.ciphertext, nonce: protected.nonce)
+    } catch {
+      onFailure(kind, nseDecryptFailureReason(error: error, kind: kind))
+      return nil
+    }
+    guard Self.sha256(plaintext) == protected.plaintextHash,
           let inner = Self.decodeMap(plaintext) else {
+      onFailure(kind, kind == "group" ? "invalid_group_plaintext" : "group_reaction_parity_mismatch")
       return nil
     }
     guard protected.matchesPlaintext(inner, now: now()) else {

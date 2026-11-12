@@ -156,6 +156,7 @@ final class NseMailboxWakeCoordinator {
 
   func resolve(
     requestIdentifier: String,
+    onFailure: @escaping (String, String) -> Void = { _, _ in },
     completion: @escaping (NseMailboxWakeResolution) -> Void
   ) {
     guard let recoveryStore else {
@@ -217,13 +218,20 @@ final class NseMailboxWakeCoordinator {
            page.messages.count == 1,
            let candidate = candidateAdapter.adapt(
              page.messages[0],
-             credential: credential
+             credential: credential,
+             onFailure: { kind, reason in
+               guard !gate.isCompleted else { return }
+               onFailure(kind, reason)
+             }
            ) {
           resolution = .authenticated(candidate: candidate, lease: lease)
         } else {
           resolution = .generic(lease: lease)
         }
       } catch {
+        guard !gate.isCompleted else { return }
+        let reason = error is NseMailboxWakeError ? "mailbox_bridge_unavailable" : "mailbox_decrypt_error"
+        onFailure("mailbox", reason)
         resolution = .generic(lease: lease)
       }
       gate.complete(resolution)

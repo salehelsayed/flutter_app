@@ -362,6 +362,16 @@ final class NotificationPreviewResolverTests: XCTestCase {
     }
   }
 
+  func testBL9MissingReactionInputIsTechnicalFailureNotProcessSuccess() {
+    let resolver = NotificationPreviewResolver(keyReader: MemoryPushKeyReader([:]),
+      decryptor: MemoryPushDecryptor(), dedupeStore: nil,
+      eventEmitter: MemoryPushPreviewEventEmitter())
+    let result = resolver.resolve(userInfo: ["type": "message_reaction", "action": "add"],
+      fallbackTitle: "Reaction", fallbackBody: "Reaction")
+    XCTAssertEqual(result.reason, "missing_reaction_input")
+    XCTAssertEqual(nsePreviewTechnicalFailureReason(result), "invalid_payload")
+  }
+
   func testDecryptsOneToOneFixturePreview() throws {
     let fixture = try loadFixture("one_to_one_text")
     let plaintext = try fixturePlaintextJSON(fixture)
