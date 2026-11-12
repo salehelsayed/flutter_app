@@ -3009,6 +3009,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       widget.p2pService.clearResumeStarted();
       _isResuming = false;
+      widget.pendingMessageRetrier.retryPendingContactKeyUpdates();
       debugPrint('[LIFECYCLE] _onResumed() finished');
     }
   }

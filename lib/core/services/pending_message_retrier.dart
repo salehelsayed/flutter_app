@@ -109,6 +109,9 @@ class PendingMessageRetrier {
 
   bool Function()? _isExternalRecoveryInProgressFn;
 
+  StreamSubscription<void>? _contactKeyUpdatedSubscription;
+  bool _contactKeyRetryRequested = false;
+  bool _started = false;
   StreamSubscription? _stateSubscription;
   StreamSubscription? _networkRestoredSubscription;
   StreamSubscription<void>? _directUploadRetrySubscription;
@@ -175,7 +178,44 @@ class PendingMessageRetrier {
     this.groupContinuitySweepInterval = defaultGroupContinuitySweepInterval,
     this.jitterRandom,
     bool Function()? isExternalRecoveryInProgressFn,
-  }) : _isExternalRecoveryInProgressFn = isExternalRecoveryInProgressFn;
+  }) : _isExternalRecoveryInProgressFn = isExternalRecoveryInProgressFn {
+    // Subscribe before the contact listener starts; retain startup key arrivals
+    // until this retrier is allowed to run.
+    _contactKeyUpdatedSubscription = contactKeyUpdatedSignal?.listen((_) {
+      _contactKeyRetryRequested = true;
+      retryPendingContactKeyUpdates();
+    });
+  }
+
+  /// Reconsider retained key arrivals when an external recovery owner finishes.
+  void retryPendingContactKeyUpdates() {
+    if (!_started ||
+        !_contactKeyRetryRequested ||
+        _isRetrying ||
+        _isExternalRecoveryInProgressFn?.call() == true) {
+      return;
+    }
+    unawaited(_retryAfterContactKeyUpdate());
+  }
+
+  Future<void> _retryAfterContactKeyUpdate() async {
+    _contactKeyRetryRequested = false;
+    _isRetrying = true;
+    try {
+      // Keep the ordinary retry admission/backoff rules. In particular, key
+      // arrival does not make already-sent messages eligible for unacked replay.
+      await _retryFailedMessagesNow();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_ERROR',
+        details: {'error': error.toString()},
+      );
+    } finally {
+      _isRetrying = false;
+      retryPendingContactKeyUpdates();
+    }
+  }
 
   void setExternalRecoveryInProgressProvider(bool Function() provider) {
     _isExternalRecoveryInProgressFn = provider;
@@ -184,6 +224,11 @@ class PendingMessageRetrier {
   /// Starts listening for state transitions.
   void start() {
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_START', details: {});
+    _started = true;
+    groupRecoveryGate.activeDepthListenable.addListener(
+      retryPendingContactKeyUpdates,
+    );
+    retryPendingContactKeyUpdates();
 
     // Plan 370: reopen/cold-start shares the same durable outcome drain owner
     // as reconnect, restored-network, periodic, and resume triggers.
@@ -1088,11 +1133,19 @@ class PendingMessageRetrier {
       );
     } finally {
       _isRetrying = false;
+      retryPendingContactKeyUpdates();
     }
   }
 
   /// Stops listening and cleans up resources.
   void dispose() {
+    _started = false;
+    _contactKeyRetryRequested = false;
+    _contactKeyUpdatedSubscription?.cancel();
+    _contactKeyUpdatedSubscription = null;
+    groupRecoveryGate.activeDepthListenable.removeListener(
+      retryPendingContactKeyUpdates,
+    );
     groupRecoveryGate.invalidateIncomingCompletion();
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_DISPOSE', details: {});
 
