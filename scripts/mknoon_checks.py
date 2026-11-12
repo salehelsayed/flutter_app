@@ -12,6 +12,7 @@ from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import threading
 import device_campaign_preflight as device_preflight
+from flutter_native_asset_lock import FlutterNativeAssetLock
 from owned_run_retention import OwnedRuns, RetentionCapacityError, check_screenshots
 import datetime as dt
 import fnmatch
@@ -592,7 +593,11 @@ def launch(command, cwd, timeout, env=None):
     capacity = None
     capture_path = getattr(_LAUNCH_CONTEXT, 'raw_capture_path', None)
     capture = Path(capture_path).open('a+b') if capture_path else tempfile.TemporaryFile(mode='w+b')
-    with capture as output:
+    with capture as output, FlutterNativeAssetLock(
+            cwd, command, start + timeout,
+            getattr(_LAUNCH_CONTEXT, 'cancel_event', None)) as asset_setup:
+        if not asset_setup.ready:
+            return '', 124, True, round(time.monotonic() - start, 3)
         output.seek(0, os.SEEK_END)
         start_offset = output.tell()
         p = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -605,6 +610,8 @@ def launch(command, cwd, timeout, env=None):
         def save(name, data, final=False):
             nonlocal capacity
             encoded = decoders[name].decode(data, final=final).encode('utf-8')
+            if name == 'stdout':
+                asset_setup.feed_stdout(encoded)
             allowed = min(len(encoded), budget.stream_limit - retained[name])
             saved = budget.claim(allowed)
             # A quota may end inside a code point. Keep a complete UTF-8 prefix;
@@ -1034,7 +1041,8 @@ def host_result_blocks_devices(row):
 
 
 def check_resources(check):
-    resources = set(check.get('resources') or ['unknown'])
+    default = [] if parallel_flutter_check(check) else ['unknown']
+    resources = set(check.get('resources') or default)
     if any(r not in ('performance.global', 'shared-native-build') and not r.startswith(
             ('isolated:', 'device:', 'device-control:', 'build:', 'artifact:', 'relay-mutation:')) for r in resources):
         resources.add('unknown')
@@ -1062,8 +1070,21 @@ def host_only_check(check):
             and not any(r.startswith(('device:', 'device-control:', 'build:', 'artifact:')) for r in resources))
 
 
+def parallel_flutter_check(check):
+    # Restrict overlap to the wrapper's same-configuration whole-file recipe.
+    # Custom flags, filtered commands and explicit unknown resources stay serial.
+    return (host_only_check(check) and whole_flutter_prefix(check) is not None
+            and not {'shared-native-build', 'unknown', 'performance.global'}
+            & set(check.get('resources', [])))
+
+
 def resources_compatible(left, right):
     a, b = check_resources(left), check_resources(right)
+    if (parallel_flutter_check(left) and parallel_flutter_check(right)
+            and left.get('environment', {}) == right.get('environment', {})
+            and not set(left['selected_paths']) & set(right['selected_paths'])):
+        a.discard('shared-native-build')
+        b.discard('shared-native-build')
     return not ({'unknown', 'performance.global'} & (a | b) or a & b)
 
 
