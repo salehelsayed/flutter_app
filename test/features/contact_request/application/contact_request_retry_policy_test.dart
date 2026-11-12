@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:clock/clock.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
@@ -353,6 +354,48 @@ void main() {
       expect(transport.storeInInboxCallCount, 1);
     },
   );
+  test('BL24E2 queued fresh event cannot join a newer periodic run', () async {
+    await stage('wake');
+    transport.storeInInboxResult = false;
+    await retry();
+    now = now.add(const Duration(minutes: 1));
+    final firstGate = Completer<void>();
+    final secondGate = Completer<void>();
+    final contexts = <bool>[];
+    final coordinator = KeyExchangeRetryCoordinator(
+      now: () => now,
+      performRetry: () async {
+        contexts.add(KeyExchangeRetryContext.current?.requireFresh == true);
+        if (contexts.length == 1) await firstGate.future;
+        if (contexts.length == 2) await secondGate.future;
+        return retry();
+      },
+    );
+    final first = coordinator.retryNow(trigger: 'periodic-a');
+    final second = first.then(
+      (_) => coordinator.retryNow(trigger: 'periodic-b'),
+    );
+    final fresh = coordinator.retryNow(
+      trigger: 'wake_token_registered',
+      requireFresh: true,
+    );
+    final sameFresh = coordinator.retryNow(
+      trigger: 'call_grant_issued',
+      requireFresh: true,
+    );
+    expect(identical(fresh, sameFresh), isTrue);
+    firstGate.complete();
+    await first;
+    await Future<void>.delayed(Duration.zero);
+    expect(contexts, [false, false]);
+    secondGate.complete();
+    await second;
+    await fresh;
+    expect(contexts, [false, false, true]);
+    expect(transport.storeInInboxCallCount, 2);
+    await retry();
+    expect(transport.storeInInboxCallCount, 2);
+  });
   test(
     'BL24E2 acquired key drops marker custody and restores original path',
     () async {

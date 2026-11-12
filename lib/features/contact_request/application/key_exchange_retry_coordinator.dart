@@ -37,6 +37,7 @@ class KeyExchangeRetryCoordinator {
   final DateTime Function() _now;
 
   Future<int>? _inFlight;
+  bool _inFlightRequiresFresh = false;
   Future<int>? _freshAfterInFlight;
   DateTime? _lastNonZeroRetryAt;
   int _lastNonZeroRetryCount = 0;
@@ -88,18 +89,28 @@ class KeyExchangeRetryCoordinator {
 
     late final Future<int> followUp;
     followUp = () async {
-      try {
-        await inFlight;
-      } catch (_) {
-        // A fresh repair still owns a post-failure attempt.
+      var waiting = inFlight;
+      while (true) {
+        try {
+          await waiting;
+        } catch (_) {
+          // A fresh repair still owns a post-failure attempt.
+        }
+        final newerInFlight = _inFlight;
+        if (newerInFlight == null || identical(newerInFlight, waiting)) break;
+        if (_inFlightRequiresFresh) {
+          if (identical(_freshAfterInFlight, followUp)) {
+            _freshAfterInFlight = null;
+          }
+          return newerInFlight;
+        }
+        // Another periodic run may have started in an earlier completion
+        // callback. It cannot consume this event's fresh authority. Keep one
+        // coalesced follow-up waiting behind that run as well.
+        waiting = newerInFlight;
       }
       if (identical(_freshAfterInFlight, followUp)) {
         _freshAfterInFlight = null;
-      }
-
-      final newerInFlight = _inFlight;
-      if (newerInFlight != null && !identical(newerInFlight, inFlight)) {
-        return newerInFlight;
       }
       return _startRun(trigger, requireFresh: true);
     }();
@@ -110,9 +121,13 @@ class KeyExchangeRetryCoordinator {
   Future<int> _startRun(String trigger, {bool requireFresh = false}) {
     late final Future<int> future;
     future = _run(trigger, requireFresh: requireFresh).whenComplete(() {
-      if (identical(_inFlight, future)) _inFlight = null;
+      if (identical(_inFlight, future)) {
+        _inFlight = null;
+        _inFlightRequiresFresh = false;
+      }
     });
     _inFlight = future;
+    _inFlightRequiresFresh = requireFresh;
     return future;
   }
 
