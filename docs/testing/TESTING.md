@@ -11543,6 +11543,22 @@ visible and cannot become an ordinary first-attempt PASS.
   retained without inventing evidence or repeating unrelated checks. Raw
   first failures, corrected results, source identities and adoption are indexed
   by `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/live-video-final-host-adoption.json`.
+  The optional presentation stream and active-camera switch are covered at
+  `9af76e2e5e47027f5fb92baff99e1f0ccc9cfae2`: all 35 video-session cases pass,
+  with 72 unchanged owner/engine preservation cases adopted. Snapshot updates
+  follow current renderer ownership; stale callbacks cannot revive cleared
+  views. Camera switching uses the existing capture, checks fresh authority
+  around the native await, and treats the native facing boolean as metadata.
+  RED `454d6481f975859ff76aee08a7ea20ea1e9834b0` retained 12 causal assertion
+  failures. The first GREEN had 34 passes and one failure because the test
+  channel rejected flutter_webrtc initialization before camera switching. The
+  test-only correction accepts initialization and preserves switch assertions;
+  the production library tree is unchanged. Final reporter completion and
+  child exit are successful, with no skips; original two-path analysis and
+  validation passed. All eight original and three correction identity stamps
+  match their exact heads, trees and 13 pins, with clean status and empty setup
+  deltas. Raw hashes and scoped review adoption are recorded in
+  `/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/v2-view-raw-facts.json`.
   These tests use host plugin fakes; real camera/frames, native renderer
   cleanup, native rollback, device lifecycle and composed candidate proof
   remain separate. The video gate stays off.
