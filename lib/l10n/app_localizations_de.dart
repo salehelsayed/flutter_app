@@ -5283,9 +5283,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get stickers_drag_to_reorder => 'Zum Sortieren ziehen';
 
   @override
-  String get stickers_manage_done => 'Fertig';
-
-  @override
   String get stickers_move_earlier => 'Nach vorne verschieben';
 
   @override

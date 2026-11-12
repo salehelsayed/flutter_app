@@ -8582,12 +8582,6 @@ abstract class AppLocalizations {
   /// **'Drag to reorder'**
   String get stickers_drag_to_reorder;
 
-  /// Custom stickers copy, same words as you_tags_done
-  ///
-  /// In en, this message translates to:
-  /// **'Done'**
-  String get stickers_manage_done;
-
   /// Custom stickers copy, draft pending Kayan approval
   ///
   /// In en, this message translates to:

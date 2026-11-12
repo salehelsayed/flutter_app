@@ -5238,9 +5238,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get stickers_drag_to_reorder => 'اسحب لإعادة الترتيب';
 
   @override
-  String get stickers_manage_done => 'تم';
-
-  @override
   String get stickers_move_earlier => 'نقل إلى موضع سابق';
 
   @override

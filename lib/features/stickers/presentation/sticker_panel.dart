@@ -306,7 +306,7 @@ class _StickerPanelState extends State<StickerPanel> {
             key: const ValueKey('my-stickers-done'),
             style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: () => setState(() => _managing = false),
-            child: Text(l10n.stickers_manage_done),
+            child: Text(l10n.you_tags_done),
           ),
         ],
       ),
