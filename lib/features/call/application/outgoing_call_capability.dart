@@ -87,3 +87,30 @@ abstract interface class OutgoingCallCapability {
     OutgoingCallStartRequest? request,
   });
 }
+
+/// Optional explicit video entry on the same process-owned outgoing graph.
+///
+/// The inherited audio commands keep their existing behavior. Implementing
+/// this capability does not enable video: availability remains false while
+/// the video gate is off. [outgoingCallAvailabilityChanges] also invalidates
+/// video availability; cached presentation state never authorizes a call.
+abstract interface class OutgoingVideoCallCapability
+    implements OutgoingCallCapability {
+  bool get isOutgoingVideoCallAvailable;
+
+  /// Resolves this contact afresh and requires the exact trusted, signed
+  /// endpoint to support both voice v1 and video v2. Passive availability
+  /// checks do not request permission, acquire media or place a call.
+  Future<bool> isOutgoingVideoCallAvailableFor(String contactAccountPeerId);
+
+  /// Requests a video call only after fresh admission and ownership checks.
+  ///
+  /// Implementations preserve [OutgoingCallStartRequest] cancellation across
+  /// awaits and never silently fall back to a legacy audio invitation. This
+  /// command alone cannot open a camera: foreground consent, OS permission,
+  /// accepted media and committed negotiation are still required.
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  });
+}
