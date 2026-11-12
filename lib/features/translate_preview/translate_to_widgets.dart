@@ -211,7 +211,7 @@ class ChatTranslateAction extends StatelessWidget {
         builder: (context, _) {
           final on = prefs.showsTranslationIn(peerId);
           return IconButton(
-            tooltip: l10n.translator_settings_title,
+            tooltip: l10n.translate_header_tooltip,
             onPressed: () => menu.isOpen ? menu.close() : menu.open(),
             icon: Stack(
               clipBehavior: Clip.none,
@@ -219,8 +219,8 @@ class ChatTranslateAction extends StatelessWidget {
                 const Icon(Icons.translate),
                 if (on)
                   PositionedDirectional(
-                    top: -1,
-                    end: -2,
+                    top: -2,
+                    end: -3,
                     child: Container(
                       width: 7,
                       height: 7,

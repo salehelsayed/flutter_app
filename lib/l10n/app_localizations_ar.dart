@@ -5056,6 +5056,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_settings_mobile_data => 'التنزيل عبر بيانات الجوال';
 
   @override
+  String get translate_header_tooltip => 'الترجمة';
+
+  @override
   String get translate_to_title => 'ترجمة إلى';
 
   @override

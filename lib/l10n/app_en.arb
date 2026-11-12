@@ -2527,6 +2527,10 @@
   "@translator_remove": {"description": "Settings button and dialog button that remove the translator."},
   "translator_settings_mobile_data": "Download over mobile data",
   "@translator_settings_mobile_data": {"description": "Settings switch."},
+  "translate_header_tooltip": "Translation",
+  "@translate_header_tooltip": {
+    "description": "Chat translation button tooltip and accessible label"
+  },
   "translate_to_title": "Translate to",
   "@translate_to_title": {"description": "Settings row, chat panel row and language list title."},
   "translate_to_subtitle": "The language you read translations in.",

@@ -4990,6 +4990,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_settings_mobile_data => 'Download over mobile data';
 
   @override
+  String get translate_header_tooltip => 'Translation';
+
+  @override
   String get translate_to_title => 'Translate to';
 
   @override
