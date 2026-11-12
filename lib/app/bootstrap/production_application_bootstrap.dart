@@ -9350,6 +9350,8 @@ final class ProductionApplicationBootstrap
     }
 
     final pendingMessageRetrier = PendingMessageRetrier(
+      contactKeyUpdatedSignal:
+          contactRequestListener.contactKeyUpdatedStream.map<void>((_) {}),
       retryFailedMessagesOverride: () => retryFailedMessages(
         directEventFanout: resolveDirectEventFanout(),
         messageRepo: messageRepository,
