@@ -11352,6 +11352,54 @@ visible and cannot become an ordinary first-attempt PASS.
   and its ten unit-adoption receipts. This establishes the individual host
   boundaries, not combined engine/graph behavior, native SDP/camera integration,
   platform lifecycle handling, video activation or a signed candidate.
+  **U3e prepared outgoing v2 signaling:** the production adapter's host tests
+  cover sharing the preparation Future before awaiting, immutable message-ID
+  custody, sealed-byte replay, retained preparation failures, fresh endpoint
+  authority and current-owner checks across awaits, bounded terminal capacity,
+  and retirement/expiry. Retries do not reseal a message or turn a stale
+  authority into a valid send. Frozen RED
+  `c0bdd422d15fd496e71b305167f060ef11fd3af4` produced nine passing controls,
+  23 causal `migrationPaused` errors and one causal assertion failure, with
+  successful loading and exit 1. GREEN
+  `84c56c93ad2cd312c0c582f3be1978c669039645` passed all 33 focused cases and
+  92 cases across the three preservation suites, without failures or skips,
+  with successful reporter completion and child exits 0. Official two-path
+  analysis and metadata validation also exited 0. Four before/after identity
+  snapshots bind both heads and the adapter, identical test and selection
+  manifest; generated locale changes were restored before testing and the
+  after-test trees were clean. The retained RED startup-lock wait line precedes
+  the completed causal run; it is not a test failure. Exact commands, stdout,
+  raw results and hashes are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3e-final-host-adoption.json`.
+  This proves the adapter's host boundary, not its later production graph
+  wiring, live delivery or video activation.
+  **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
+  committed-media checks, stale asynchronous capture/SDP/rendering completion,
+  local-off versus remote reception, caller/callee offer rollback boundaries,
+  relay-only SDP, audio downgrade and retryable resource cleanup. An optional
+  video cleanup failure must not prevent microphone, stream and peer-connection
+  disposal; successful cleanup stages are not repeated on retry. Original
+  feature RED `2e0563a1d646d901f6854b6db56d329b3037fd3e` had one passing
+  control and 21 causal absent-factory errors. Corrected cleanup RED
+  `46466383383a368fa4eef1dff3147e1a9510b0a9` failed because microphone
+  `trackDispose` was never attempted, with exit 1. Final GREEN
+  `ee80fd033e29118e031b2d5906b0a86c4e2f05d0` passed all 23 focused cases,
+  without failures or skips, with successful reporter completion and exit 0.
+  The earlier regression RED `3c4e75a77` and GREEN `6216b5a76` failed an
+  incorrect exception-type expectation; those failures remain visible. The
+  correction asserts the existing `WebRtcAdapterException(other)` contract
+  and leaves the production library tree and preservation suites unchanged.
+  Their previous 90 passing cases, five-path analysis and metadata validation
+  are adopted within that unchanged scope, with fresh corrected-test analysis
+  passing. The corrected run recorded both initial heads and test/engine/lock
+  hashes, pretest locale restoration, and final GREEN hashes/clean status;
+  it did not record post-RED hashes or a final HEAD stamp. Those limits are
+  retained without inventing evidence or repeating unrelated checks. Raw
+  first failures, corrected results, source identities and adoption are indexed
+  by `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/live-video-final-host-adoption.json`.
+  These tests use host plugin fakes; real camera/frames, native renderer
+  cleanup, native rollback, device lifecycle and composed candidate proof
+  remain separate. The video gate stays off.
   **U6 real-screen video binding:** the active, incoming and outgoing screens
   bind video controls to the current foreground projection. Every intent
   rechecks the canonical call and generation; upgrade actions also reject a
