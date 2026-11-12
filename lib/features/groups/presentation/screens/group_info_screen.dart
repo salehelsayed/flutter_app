@@ -173,12 +173,16 @@ class GroupInfoScreen extends StatelessWidget {
             onPressed: onBack,
           ),
           const SizedBox(width: 4),
-          Text(
-            l10n.group_info_title,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: readableColors.textPrimary,
+          Expanded(
+            child: Text(
+              l10n.group_info_title,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -674,12 +678,16 @@ class GroupInfoScreen extends StatelessWidget {
               children: [
                 Icon(Icons.person_add_outlined, size: 20, color: actionBlue),
                 const SizedBox(width: 8),
-                Text(
-                  l10n.group_add_member,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: actionBlue,
+                Flexible(
+                  child: Text(
+                    l10n.group_add_member,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: actionBlue,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],

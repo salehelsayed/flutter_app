@@ -33,12 +33,16 @@ class BlockedBanner extends StatelessWidget {
                 color: Color.fromRGBO(255, 255, 255, 0.35),
               ),
               const SizedBox(width: 8),
-              Text(
-                l10n.conversation_blocked_contact,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w400,
-                  color: Color.fromRGBO(255, 255, 255, 0.5),
+              Flexible(
+                child: Text(
+                  l10n.conversation_blocked_contact,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: Color.fromRGBO(255, 255, 255, 0.5),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
