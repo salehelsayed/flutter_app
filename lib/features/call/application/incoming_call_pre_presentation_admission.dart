@@ -239,13 +239,14 @@ final class IncomingCallPrePresentationAdmission {
     String? expectedMessageId,
     int? expectedExpiresAtMs,
     String? expectedRecipientDevicePeerId,
-  }) => authenticateSignal(
+  }) => _authenticateSignal(
     envelopeJson: envelopeJson,
     authenticatedTransportPeerId: authenticatedTransportPeerId,
     expectedCallHandle: expectedCallHandle,
     expectedMessageId: expectedMessageId,
     expectedExpiresAtMs: expectedExpiresAtMs,
     expectedRecipientDevicePeerId: expectedRecipientDevicePeerId,
+    allowV2: _videoEnabled,
   );
 
   /// Authenticates the exact mailbox row selected for one native wake. The
@@ -323,6 +324,27 @@ final class IncomingCallPrePresentationAdmission {
     int? expectedExpiresAtMs,
     String? expectedRecipientDevicePeerId,
   }) async {
+    final admitted = await _authenticateSignal(
+      envelopeJson: envelopeJson,
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+      expectedCallHandle: expectedCallHandle,
+      expectedMessageId: expectedMessageId,
+      expectedExpiresAtMs: expectedExpiresAtMs,
+      expectedRecipientDevicePeerId: expectedRecipientDevicePeerId,
+      allowV2: false,
+    );
+    return admitted as AuthenticatedIncomingCallAdmission;
+  }
+
+  Future<AuthenticatedIncomingCallWireAdmission> _authenticateSignal({
+    required String envelopeJson,
+    required String authenticatedTransportPeerId,
+    required bool allowV2,
+    String? expectedCallHandle,
+    String? expectedMessageId,
+    int? expectedExpiresAtMs,
+    String? expectedRecipientDevicePeerId,
+  }) async {
     late final TrustedCallDeviceAuthority? sender;
     try {
       sender = await _trustedRosterProvider.resolveAuthenticatedTransport(
@@ -366,20 +388,26 @@ final class IncomingCallPrePresentationAdmission {
       );
     }
 
-    DecodedSecureCallEnvelope? decoded;
+    DecodedCallWireEnvelope? decoded;
     try {
-      decoded = await _codec.decode(
-        envelopeJson: envelopeJson,
-        authority: CallEnvelopeAuthority(
-          authenticatedTransportPeerId: authenticatedTransportPeerId,
-          expectedSenderAccountPeerId: sender.accountPeerId,
-          expectedSenderDevicePeerId: sender.devicePeerId,
-          expectedRecipientAccountPeerId: local.accountPeerId,
-          expectedRecipientDevicePeerId: local.devicePeerId,
-          senderSigningPublicKey: sender.signingPublicKey,
-          ownMlKemSecretKey: local.mlKemSecretKey,
-        ),
+      final authority = CallEnvelopeAuthority(
+        authenticatedTransportPeerId: authenticatedTransportPeerId,
+        expectedSenderAccountPeerId: sender.accountPeerId,
+        expectedSenderDevicePeerId: sender.devicePeerId,
+        expectedRecipientAccountPeerId: local.accountPeerId,
+        expectedRecipientDevicePeerId: local.devicePeerId,
+        senderSigningPublicKey: sender.signingPublicKey,
+        ownMlKemSecretKey: local.mlKemSecretKey,
       );
+      decoded = allowV2
+          ? await _codec.decodeVersioned(
+              envelopeJson: envelopeJson,
+              authority: authority,
+            )
+          : await _codec.decode(
+              envelopeJson: envelopeJson,
+              authority: authority,
+            );
       final signal = decoded.signal;
       if ((expectedCallHandle != null &&
               expectedCallHandle != decoded.callHandle) ||
@@ -395,10 +423,16 @@ final class IncomingCallPrePresentationAdmission {
           gate: IncomingCallPrePresentationAdmissionGate.expectationMismatch,
         );
       }
-      return AuthenticatedIncomingCallAdmission._(
-        decoded,
-        admissionAuthority: sender.admissionAuthority,
-      );
+      return switch (decoded) {
+        DecodedSecureCallEnvelope() => AuthenticatedIncomingCallAdmission._(
+          decoded,
+          admissionAuthority: sender.admissionAuthority,
+        ),
+        DecodedSecureCallEnvelopeV2() => AuthenticatedIncomingCallAdmissionV2._(
+          decoded,
+          admissionAuthority: sender.admissionAuthority,
+        ),
+      };
     } on IncomingCallPrePresentationAdmissionException {
       rethrow;
     } on CallEnvelopeException catch (error) {
