@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
@@ -280,6 +281,9 @@ void main() {
             data: ThemeData(extensions: [colors]),
             child: Scaffold(
               body: ConversationScreen(
+                backgroundPreference: colors.isLightSurface
+                    ? BackgroundPreference.daylightLagoon
+                    : BackgroundPreference.defaultBackground,
                 contactPeerId: 'peer-b',
                 contactUsername: 'User-B',
                 connectionDate: 'October 28, 2026',
@@ -337,13 +341,16 @@ void main() {
       'BL25U2 causal ready header uses Translation tooltip and semantics',
       (tester) async {
         final semantics = tester.ensureSemantics();
-        addTearDown(semantics.dispose);
-        debugTranslatePreviewEnabledOverride = true;
-        await tester.pumpWidget(header());
-        expect(find.byIcon(Icons.translate), findsOneWidget);
-        expect(find.byTooltip('Translation'), findsOneWidget);
-        expect(find.bySemanticsLabel('Translation'), findsOneWidget);
-        await finish(tester);
+        try {
+          debugTranslatePreviewEnabledOverride = true;
+          await tester.pumpWidget(header());
+          expect(find.byIcon(Icons.translate), findsOneWidget);
+          expect(find.byTooltip('Translation'), findsOneWidget);
+          expect(find.bySemanticsLabel('Translation'), findsOneWidget);
+          await finish(tester);
+        } finally {
+          semantics.dispose();
+        }
       },
     );
 
