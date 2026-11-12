@@ -6,6 +6,8 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
@@ -28,6 +30,155 @@ void main() {
 
   tearDown(() {
     service.dispose();
+  });
+
+  Future<void> start() async {
+    bridge.whenCommand(
+      'node:start',
+      (_) => jsonEncode(<String, Object?>{
+        'ok': true,
+        'peerId': 'self-peer',
+        'isStarted': true,
+        'listenAddresses': <String>[],
+        'circuitAddresses': <String>[],
+        'connections': <Object?>[],
+      }),
+    );
+    expect(
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+      isTrue,
+    );
+  }
+
+  group('BL24D2 startup store deferral', () {
+    test(
+      'five second startup uses remaining default budget and never reports failure',
+      () async {
+        final events = <String>[];
+        final previousPrint = debugPrint;
+        final previousLogging = flowEventLoggingEnabled;
+        flowEventLoggingEnabled = true;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) events.add(message);
+        };
+        addTearDown(() {
+          debugPrint = previousPrint;
+          flowEventLoggingEnabled = previousLogging;
+        });
+        const envelope = '  exact background receipt or Thought bytes  ';
+        var completed = false;
+        final pending = service
+            .storeInInboxDetailed('recipient-peer', envelope)
+            .then((value) {
+              completed = true;
+              return value;
+            });
+        await Future<void>.delayed(const Duration(seconds: 5));
+        final completedBeforeReady = completed;
+        await start();
+        final outcome = await pending;
+        expect(
+          completedBeforeReady,
+          isFalse,
+          reason: 'the old three-second cutoff must not finish the store',
+        );
+        expect(outcome.status, InboxStoreStatus.stored);
+        final payload = bridge.payloadsFor('inbox:store').single!;
+        expect(payload['message'], envelope);
+        expect(payload['wakeToken'], 'wake-token-from-peer');
+        expect(payload['timeoutMs'], inInclusiveRange(1, 10500));
+        expect(
+          events.where((e) => e.contains('P2P_SERVICE_INBOX_STORE_ERROR')),
+          isEmpty,
+        );
+      },
+    );
+    test(
+      'explicit three second pause budget expires without a later dispatch',
+      () async {
+        final pending = service.storeInInboxDetailed(
+          'recipient-peer',
+          'pause',
+          timeoutMs: 3000,
+        );
+        final outcome = await pending.timeout(const Duration(seconds: 5));
+        expect(outcome.accepted, isFalse);
+        expect(outcome.errorCode, 'INBOX_STARTUP_NOT_READY');
+        await start();
+        expect(bridge.payloadsFor('inbox:store'), isEmpty);
+      },
+    );
+    test(
+      'authority revoked during startup prevents store after ready',
+      () async {
+        service.dispose();
+        var allowed = true;
+        service = P2PServiceImpl(
+          bridge: bridge,
+          receivedWakeTokenStore: _ReceivedTokenStore('wake-token-from-peer'),
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              operation != 'p2p_store_inbox' || allowed,
+        );
+        final pending = service.storeInInboxDetailed(
+          'recipient-peer',
+          'private',
+          timeoutMs: 1000,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        allowed = false;
+        await start();
+        expect((await pending).accepted, isFalse);
+        expect(bridge.payloadsFor('inbox:store'), isEmpty);
+      },
+    );
+    test('node lost while authority is rechecked prevents store', () async {
+      service.dispose();
+      var checks = 0;
+      bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
+      service = P2PServiceImpl(
+        bridge: bridge,
+        receivedWakeTokenStore: _ReceivedTokenStore('wake-token-from-peer'),
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        accountMigrationNetworkGate: ({peerId, required operation}) async {
+          if (operation == 'p2p_store_inbox' && ++checks == 2) {
+            await service.stopNode();
+          }
+          return true;
+        },
+      );
+      final pending = service.storeInInboxDetailed(
+        'recipient-peer',
+        'private',
+        timeoutMs: 1000,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await start();
+      expect((await pending).accepted, isFalse);
+      expect(bridge.payloadsFor('inbox:store'), isEmpty);
+    });
+    test(
+      'already ready store preserves payload and real relay rejection',
+      () async {
+        await start();
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({'ok': false, 'errorCode': 'INBOX_FULL'}),
+        );
+        final outcome = await service.storeInInboxDetailed(
+          'recipient-peer',
+          '  original  ',
+          timeoutMs: 7000,
+        );
+        expect(outcome.status, InboxStoreStatus.rejectedFull);
+        expect(bridge.payloadsFor('inbox:store').single, {
+          'toPeerId': 'recipient-peer',
+          'message': '  original  ',
+          'timeoutMs': 7000,
+          'wakeToken': 'wake-token-from-peer',
+        });
+      },
+    );
   });
 
   test('buffers store until ready', () async {
