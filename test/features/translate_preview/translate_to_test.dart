@@ -1,6 +1,7 @@
 // ignore_for_file: depend_on_referenced_packages
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
@@ -8,6 +9,8 @@ import 'package:flutter_app/features/translate_preview/model_delivery_contract.d
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_settings_section.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translate_to_widgets.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -263,31 +266,46 @@ void main() {
   });
 
   group('chat header', () {
-    Widget header() => localizedApp(
-      Scaffold(
-        body: ConversationScreen(
-          contactPeerId: 'peer-b',
-          contactUsername: 'User-B',
-          connectionDate: 'October 28, 2026',
-          ownPeerId: 'peer-a',
-          messages: const [],
-          onSend: (_) {},
-          onBack: () {},
-          onOverflow: () {},
-          onCall: () {},
-          showCallAction: true,
-          callActionEnabled: true,
-          search: ChatSearchController(
-            search: (_) async => const [],
-            onShow: (_) {},
+    Widget header({
+      Locale locale = const Locale('en'),
+      BackgroundReadableColors colors = BackgroundReadableColors.dark,
+      double textScale = 1,
+    }) => localizedApp(
+      Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: Theme(
+            data: ThemeData(extensions: [colors]),
+            child: Scaffold(
+              body: ConversationScreen(
+                contactPeerId: 'peer-b',
+                contactUsername: 'User-B',
+                connectionDate: 'October 28, 2026',
+                ownPeerId: 'peer-a',
+                messages: const [],
+                onSend: (_) {},
+                onBack: () {},
+                onOverflow: () {},
+                onCall: () {},
+                showCallAction: true,
+                callActionEnabled: true,
+                search: ChatSearchController(
+                  search: (_) async => const [],
+                  onShow: (_) {},
+                ),
+                hasMoreOlderMessages: false,
+                initialLoadDone: true,
+              ),
+            ),
           ),
-          hasMoreOlderMessages: false,
-          initialLoadDone: true,
         ),
       ),
+      locale: locale,
     );
 
-    testWidgets('translate icon only once the translator is ready, between '
+    testWidgets('BL25U2 causal ready icon stays between '
         'search and the menu', (tester) async {
       debugTranslatePreviewEnabledOverride = true;
       delivery.state.value = const ModelNotDownloaded(
@@ -314,6 +332,105 @@ void main() {
       expect(call < search && search < translate && translate < more, isTrue);
       await finish(tester);
     });
+
+    testWidgets(
+      'BL25U2 causal ready header uses Translation tooltip and semantics',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        addTearDown(semantics.dispose);
+        debugTranslatePreviewEnabledOverride = true;
+        await tester.pumpWidget(header());
+        expect(find.byIcon(Icons.translate), findsOneWidget);
+        expect(find.byTooltip('Translation'), findsOneWidget);
+        expect(find.bySemanticsLabel('Translation'), findsOneWidget);
+        await finish(tester);
+      },
+    );
+
+    for (final (language, label) in [
+      ('en', 'Translation'),
+      ('de', 'Übersetzung'),
+      ('ar', 'الترجمة'),
+    ]) {
+      testWidgets('BL25U2 $language header label fits narrow 2x text', (
+        tester,
+      ) async {
+        await tester.binding.setSurfaceSize(const Size(320, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        debugTranslatePreviewEnabledOverride = true;
+        await tester.pumpWidget(header(locale: Locale(language), textScale: 2));
+        expect(find.byTooltip(label), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await finish(tester);
+      });
+    }
+
+    for (final (tone, colors) in [
+      ('dark', BackgroundReadableColors.dark),
+      ('light', BackgroundReadableColors.representativeLight),
+    ]) {
+      for (final language in ['en', 'ar']) {
+        testWidgets(
+          'BL25U2 $tone $language header uses accent only while on with inset dot',
+          (tester) async {
+            debugTranslatePreviewEnabledOverride = true;
+            await tester.pumpWidget(
+              header(locale: Locale(language), colors: colors),
+            );
+            final button = find.ancestor(
+              of: find.byIcon(Icons.translate),
+              matching: find.byType(IconButton),
+            );
+            final dot = find.descendant(
+              of: find.byType(ChatTranslateAction),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Container &&
+                    widget.decoration is BoxDecoration &&
+                    (widget.decoration! as BoxDecoration).shape ==
+                        BoxShape.circle &&
+                    widget.constraints?.maxWidth == 7,
+              ),
+            );
+            expect(tester.getSize(button), const Size.square(44));
+            expect(tester.widget<IconButton>(button).iconSize, 22);
+            expect(
+              tester.widget<IconButton>(button).color,
+              colors.iconSecondary,
+            );
+            expect(dot, findsNothing);
+            await prefs.setShowTranslation('peer-b', true);
+            await tester.pump();
+            expect(tester.widget<IconButton>(button).color, colors.accent);
+            expect(dot, findsOneWidget);
+            final bounds = tester.getRect(button);
+            final mark = tester.getRect(dot);
+            expect(mark.size, const Size.square(7));
+            expect(mark.top - bounds.top, 9);
+            expect(
+              language == 'ar'
+                  ? mark.left - bounds.left
+                  : bounds.right - mark.right,
+              8,
+            );
+            expect(
+              (tester.widget<Container>(dot).decoration! as BoxDecoration)
+                  .color,
+              colors.accent,
+            );
+            await prefs.setShowTranslation('peer-b', false);
+            await tester.pump();
+            expect(dot, findsNothing);
+            expect(
+              tester.widget<IconButton>(button).color,
+              colors.iconSecondary,
+            );
+            expect(tester.takeException(), isNull);
+            await finish(tester);
+          },
+        );
+      }
+    }
 
     testWidgets('the panel has the language row and a switch for this chat '
         'only', (tester) async {
@@ -367,6 +484,74 @@ void main() {
       expect(find.text(_translated), findsNothing);
       await finish(tester);
     });
+
+    testWidgets(
+      'BL25U2 real message footer preserves directions and uses 8px gaps and 15/21 text',
+      (tester) async {
+        const original = 'مرحبا بك! نلتقي في المكتبة مساء الغد';
+        const translated = 'See you in the library tomorrow.';
+        debugTranslatePreviewEnabledOverride = true;
+        debugOnDeviceAiOverride = _RecordingAi(translated);
+        await prefs.setShowTranslation('peer-b', true);
+        await tester.pumpWidget(
+          _screen([
+            _text('layout-ar', original, incoming: true),
+            _text('out-ar', _arabicOut, incoming: false),
+            _text('in-en', _englishIn, incoming: true),
+          ]),
+        );
+        await tester.pump();
+        await tester.pump();
+        final originalText = find.byWidgetPredicate(
+          (widget) => widget is LinkableText && widget.text == original,
+        );
+        final translatedText = find.byWidgetPredicate(
+          (widget) => widget is LinkableText && widget.text == translated,
+        );
+        expect(originalText, findsOneWidget);
+        expect(translatedText, findsOneWidget);
+        final footer = find.byKey(
+          const ValueKey('message-translation-layout-ar'),
+        );
+        final divider = find.descendant(
+          of: footer,
+          matching: find.byType(Divider),
+        );
+        expect(divider, findsOneWidget);
+        expect(
+          tester.getTopLeft(divider).dy - tester.getBottomLeft(originalText).dy,
+          8,
+        );
+        expect(
+          tester.getTopLeft(translatedText).dy -
+              tester.getBottomLeft(divider).dy,
+          8,
+        );
+        expect(tester.widget<Divider>(divider).thickness, 1);
+        final text = tester.widget<LinkableText>(translatedText);
+        expect(text.style?.fontSize, 15);
+        expect(text.style?.height, 21 / 15);
+        expect(
+          text.style?.color,
+          tester.element(translatedText).backgroundReadableColors.textSecondary,
+        );
+        expect(text.textDirection, TextDirection.ltr);
+        expect(
+          tester.widget<LinkableText>(originalText).textDirection,
+          TextDirection.rtl,
+        );
+        expect(
+          find.byKey(const ValueKey('message-translation-out-ar')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('message-translation-in-en')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+        await finish(tester);
+      },
+    );
 
     testWidgets('a translation made for one account never shows for the '
         'account that replaces it', (tester) async {
