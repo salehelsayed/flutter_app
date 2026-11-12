@@ -361,11 +361,12 @@ void main() {
 
         if (boundary == 'network') r.network = wait;
         if (boundary == 'authority') r.authority = wait;
-        if (boundary == 'crypto')
+        if (boundary == 'crypto') {
           r.crypto.wait = () async {
             entered.complete();
             await release.future;
           };
+        }
         final pending = r.prepare();
         final rejected = expectLater(
           pending,
