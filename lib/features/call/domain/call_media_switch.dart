@@ -175,6 +175,10 @@ final class CallMediaSwitchMachine {
   }
 
   MediaSwitchDecision terminate() => MediaSwitchDecision(false, []);
+  MediaSwitchDecision rollbackCompleted({
+    required String id,
+    required bool success,
+  }) => MediaSwitchDecision(false, []);
   MediaSwitchDecision repairCompleted({
     required String id,
     required bool success,

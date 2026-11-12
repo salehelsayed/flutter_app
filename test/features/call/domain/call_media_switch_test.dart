@@ -565,4 +565,106 @@ void main() {
       isFalse,
     );
   });
+  test('pending rollback finishes before one repair with the original repair deadline', () {
+    final rig = _Rig();
+    rig.select('pending');
+    rig.offer('pending');
+    final abort = rig.machine.abort(
+      id: 'pending',
+      baseRevision: 0,
+      revision: 1,
+    );
+    expect(_kinds(abort), contains(MediaSwitchEffectKind.rollbackOffer));
+    expect(_kinds(abort), isNot(contains(MediaSwitchEffectKind.repairAudio)));
+    rig.now += 14000;
+    final repair = rig.machine.rollbackCompleted(id: 'pending', success: true);
+    expect(_kinds(repair), contains(MediaSwitchEffectKind.repairAudio));
+    expect(
+      _kinds(rig.machine.rollbackCompleted(id: 'pending', success: true)),
+      isEmpty,
+    );
+    rig.now += 1000;
+    expect(
+      _kinds(rig.machine.tick()),
+      contains(MediaSwitchEffectKind.disableSwitching),
+    );
+    expect(rig.machine.settledMedia, _audio);
+  });
+
+  test('callee rolls back locally then awaits caller repair without creating an offer', () {
+    final rig = _Rig(caller: false);
+    rig.select('callee');
+    rig.offer('callee');
+    rig.machine.abort(id: 'callee', baseRevision: 0, revision: 1, remote: true);
+    final repaired = rig.machine.rollbackCompleted(id: 'callee', success: true);
+    expect(_kinds(repaired), contains(MediaSwitchEffectKind.awaitAudioRepair));
+    expect(
+      _kinds(repaired),
+      isNot(contains(MediaSwitchEffectKind.repairAudio)),
+    );
+    expect(
+      _kinds(repaired),
+      isNot(contains(MediaSwitchEffectKind.createOffer)),
+    );
+  });
+
+  test('duplicate commit replays ACK without another gate opening', () {
+    final rig = _Rig(caller: false);
+    rig.select('id');
+    rig.settle('id');
+    final duplicate = rig.machine.receiveCommit(
+      id: 'id',
+      revision: 1,
+      media: _video,
+    );
+    expect(_kinds(duplicate), [MediaSwitchEffectKind.replayRecorded]);
+    expect(duplicate.effects.single.replayOf, MediaSwitchEffectKind.sendAck);
+    expect(rig.machine.settledRevision, 1);
+  });
+
+  test(
+    'repeated uncertain terminal delivery settles audio and disables switching',
+    () {
+      final rig = _Rig();
+      rig.select('uncertain');
+      rig.settle('uncertain');
+      rig.machine.reconnect();
+      rig.machine.reconciliationCompleted(id: 'uncertain', delivered: false);
+      rig.machine.reconnect();
+      final failed = rig.machine.reconciliationCompleted(
+        id: 'uncertain',
+        delivered: false,
+      );
+      expect(_kinds(failed), contains(MediaSwitchEffectKind.disableSwitching));
+      expect(rig.machine.switchingDisabled, isTrue);
+      expect(rig.machine.settledMedia, _audio);
+      expect(rig.machine.videoGatesOpen, isFalse);
+    },
+  );
+
+  test(
+    'an independent negotiation rejects a new request without queueing consent',
+    () {
+      final rig = _Rig(caller: false);
+      final busy = rig.machine.request(
+        rig.req('busy'),
+        freshUpgradeAdmitted: true,
+        negotiationBusy: true,
+      );
+      expect(busy.accepted, isFalse);
+      expect(busy.effects.single.response, MediaSwitchResponse.busy);
+      expect(rig.machine.currentSwitchId, isNull);
+      expect(
+        rig.machine
+            .respond(
+              id: 'busy',
+              baseRevision: 0,
+              fromCaller: false,
+              response: MediaSwitchResponse.accept,
+            )
+            .accepted,
+        isFalse,
+      );
+    },
+  );
 }
