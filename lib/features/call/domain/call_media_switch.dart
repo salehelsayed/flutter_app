@@ -578,8 +578,10 @@ final class CallMediaSwitchMachine {
     out.add(_effect(t, MediaSwitchEffectKind.discardCapture));
     _send(t, MediaSwitchEffectKind.sendAbort, out, reason: reason);
     _requiresReconciliation = true;
-    _reconciliationId = null;
-    _reconciliationDeadline = null;
+    // The connected send path can complete without a reconnect event. Arm its
+    // exact result now, independently of the fixed native repair budget.
+    _reconciliationId = t.request.id;
+    _reconciliationDeadline = t.lastResult!.deadlineMs;
     if (t.answerApplied || t.offerApplied) {
       _repairId = t.request.id;
       _repairDeadline = _nowMs() + 15000;
