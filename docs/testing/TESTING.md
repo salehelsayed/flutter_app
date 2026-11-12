@@ -11924,6 +11924,28 @@ correlation alone does not prove custody, displayed content, or recipient open.
 Only report a checkpoint that the retained instrumentation actually observes.
 State an investigation area separately from a proven root cause.
 
+Incoming direct-chat rejection observations distinguish existing aggregate results
+with closed stage/reason pairs: unknown sender uses `preflight/authority_rejected`,
+unauthorized uses `verify/authority_rejected`, custody refusal uses
+`commit/protection_failed`, and missing original uses `prepare/prepare_failed`.
+These categories do not establish a precise cause or permanent rejection. The
+handler still executes on every pass; authorization, retry, ACK and disposition
+behavior is unchanged. Stable staged entries suppress a repeated terminal
+observation using private recipient/sender/entry/category digests, retained only
+after diagnostic admission. The collector keeps at most 256 digests for five
+monotonic minutes and clears them with its existing clear/consent/dispose paths.
+Keys never enter persistence, export or upload. Suppressed attempts still close;
+unstaged calls remain independent. Start/preflight/decrypt checkpoints still
+describe actual handling, so this is not a measured shipped-volume reduction.
+The BL24B pair `9f8935b5`/`50eede91` produced two positive controls and seven causal
+RED failures, then nine GREEN cases, one core admission/closure case, 134 incoming
+preservation cases, two exact recovery sentinels and 299 diagnostics cases passed.
+Analysis, validation and schema-copy check passed. The scoped diagnostics child
+passed; wrapper exit 3 retains omitted groups as `NOT RUN`, not full-change PASS.
+The host tests do not advance the five-minute expiry clock or prove native or
+signed-candidate behavior. Exact commands, identities and first failures are in
+`/Users/I560101/.codex/investigations/bl24b-incoming-authority-20261112-mb0024a5d/runtime-raw-facts.json`.
+
 Contact-request reports use closed source/action/disposition/consent enums with
 no peer or content fields. Local delete completion reports unknown consent:
 the purge result's `deletedContact` means the contact is absent, not that a row
