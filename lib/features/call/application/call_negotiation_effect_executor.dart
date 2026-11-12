@@ -3,6 +3,8 @@ import 'dart:collection';
 import 'dart:math';
 
 import '../domain/call_engine.dart';
+import '../diagnostics/call_diagnostics.dart';
+import '../diagnostics/call_setup_failure.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -80,8 +82,9 @@ abstract interface class CallNegotiationFencedSignalingPort {
 
 typedef CallNegotiationEventDispatcher = Future<void> Function(CallEvent event);
 typedef CallNegotiationSnapshotReader = CallSessionSnapshot? Function();
-typedef CallStagedIceServerReader =
-    Future<List<CallIceServer>> Function(CallId callId);
+typedef CallStagedIceServerReader = Future<List<CallIceServer>> Function(
+  CallId callId,
+);
 
 /// Executes only reducer-approved media effects and bridges engine state back
 /// through the one process-owned call coordinator.
@@ -252,6 +255,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       _recordFailure(error, 'effect');
       return _failureForSession(
         snapshot,
+        diagnosticFailure: _diagnosticFailure(error),
         endReason: error.code == CallNegotiationPortErrorCode.permissionDenied
             ? CallEndReason.permissionDenied
             : null,
@@ -264,7 +268,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         return null;
       }
       _recordFailure(error, 'effect');
-      return _failureForSession(snapshot);
+      return _failureForSession(
+        snapshot,
+        diagnosticFailure: _diagnosticFailure(error),
+      );
     }
   }
 
@@ -860,7 +867,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       if (heldClose != null && _isCurrentSession(snapshot)) {
         _observeFailure(callId, heldClose.failureReason, true);
       }
-      await _dispatchFailureForSession(snapshot);
+      await _dispatchFailureForSession(
+        snapshot,
+        diagnosticFailure: heldClose == null
+            ? CallSetupFailure.mediaClosed
+            : CallSetupFailure.fromObservation(heldClose.failureReason),
+      );
     }
     if (!_isCurrentSession(snapshot)) {
       throw const CallNegotiationPortException(
@@ -1029,7 +1041,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
             return;
           }
           _recordFailure(error, 'candidateDrain');
-          _failCandidateEgress(current);
+          _failCandidateEgress(
+            current,
+            diagnosticFailure: _diagnosticFailure(error),
+          );
           return;
         } finally {
           _candidateInFlightCount = 0;
@@ -1045,19 +1060,32 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
   }
 
-  void _failCandidateEgress(CallSessionSnapshot snapshot) {
+  void _failCandidateEgress(
+    CallSessionSnapshot snapshot, {
+    CallSetupFailure diagnosticFailure = CallSetupFailure.signaling,
+  }) {
     if (!_isCurrentSession(snapshot)) return;
     if (_candidateEgressFailed) return;
     _candidateEgressFailed = true;
     _pendingLocalCandidates.clear();
-    unawaited(_dispatchFailureForSession(snapshot));
+    unawaited(
+      _dispatchFailureForSession(
+        snapshot,
+        diagnosticFailure: diagnosticFailure,
+      ),
+    );
   }
 
   void _onCandidateStreamError(Object error, StackTrace _) {
     if (_closed) return;
     _recordFailure(error, 'candidateStream');
     final snapshot = _readSnapshotSafely();
-    if (snapshot != null) _failCandidateEgress(snapshot);
+    if (snapshot != null) {
+      _failCandidateEgress(
+        snapshot,
+        diagnosticFailure: _diagnosticFailure(error),
+      );
+    }
   }
 
   void _onEngineEvent(CallEngineEvent event) {
@@ -1184,7 +1212,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         _cancelMediaReadinessWatch();
         return;
       }
-      await _dispatchFailureForSession(session);
+      await _dispatchFailureForSession(
+        session,
+        diagnosticFailure: CallSetupFailure.fromObservation(
+          event.failureReason,
+        ),
+      );
       return;
     }
     if (event.connectionState == CallConnectionState.disconnected) return;
@@ -1202,7 +1235,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     _recordFailure(error, 'engineStream');
     _cancelMediaReadinessWatch(closeActivePhase: true);
-    unawaited(_dispatchFailureForCurrentSnapshot());
+    unawaited(
+      _dispatchFailureForCurrentSnapshot(
+        diagnosticFailure: _diagnosticFailure(error),
+      ),
+    );
   }
 
   void _onEngineStreamDone() {
@@ -1215,12 +1252,17 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     unawaited(_dispatchFailureForCurrentSnapshot());
   }
 
-  Future<void> _dispatchFailureForCurrentSnapshot() async {
+  Future<void> _dispatchFailureForCurrentSnapshot({
+    CallSetupFailure diagnosticFailure = CallSetupFailure.mediaClosed,
+  }) async {
     final snapshot = _readSnapshotSafely();
     if (snapshot == null || snapshot.callId == null || snapshot.isTerminal) {
       return;
     }
-    await _dispatchFailureForSession(snapshot);
+    await _dispatchFailureForSession(
+      snapshot,
+      diagnosticFailure: diagnosticFailure,
+    );
   }
 
   Future<void> _startMediaReadinessWatch(
@@ -1287,7 +1329,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           (error is! CallEngineException ||
               (error.code != CallEngineErrorCode.observationUnavailable &&
                   error.code != CallEngineErrorCode.notReady))) {
-        await _dispatchFailureForSession(session);
+        await _dispatchFailureForSession(
+          session,
+          diagnosticFailure: _diagnosticFailure(error),
+        );
         return;
       }
       if (!awaitingTrickle) _observationFailureCount++;
@@ -1408,6 +1453,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   CallEvent? _failureForSession(
     CallSessionSnapshot session, {
     CallEndReason? endReason,
+    CallSetupFailure diagnosticFailure = CallSetupFailure.mediaStart,
   }) {
     if (!_isCurrentSession(session) ||
         !_failureDispatchedPhases.add((
@@ -1421,11 +1467,18 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       CallEventType.negotiationFailed,
       session,
       endReason: endReason,
+      diagnosticFailure: diagnosticFailure,
     );
   }
 
-  Future<void> _dispatchFailureForSession(CallSessionSnapshot session) async {
-    final event = _failureForSession(session);
+  Future<void> _dispatchFailureForSession(
+    CallSessionSnapshot session, {
+    CallSetupFailure diagnosticFailure = CallSetupFailure.mediaStart,
+  }) async {
+    final event = _failureForSession(
+      session,
+      diagnosticFailure: diagnosticFailure,
+    );
     if (event != null) await _dispatchCanonical(event);
   }
 
@@ -1439,8 +1492,29 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       return;
     }
     _recordFailure(error, stage);
-    await _dispatchFailureForSession(session);
+    await _dispatchFailureForSession(
+      session,
+      diagnosticFailure: _diagnosticFailure(error),
+    );
   }
+
+  static CallSetupFailure _diagnosticFailure(Object error) => switch (error) {
+    CallEngineException(:final code) => CallSetupFailure.fromEngine(code),
+    CallNegotiationPortException(:final code) => switch (code) {
+      CallNegotiationPortErrorCode.permissionDenied =>
+        CallSetupFailure.permission,
+      CallNegotiationPortErrorCode.mediaUnavailable =>
+        CallSetupFailure.mediaStart,
+      CallNegotiationPortErrorCode.signalingUnavailable =>
+        CallSetupFailure.signaling,
+      CallNegotiationPortErrorCode.transportUnavailable =>
+        CallSetupFailure.signaling,
+      CallNegotiationPortErrorCode.iceServersUnavailable =>
+        CallSetupFailure.turn,
+    },
+    TimeoutException() => CallSetupFailure.mediaTimeout,
+    _ => CallSetupFailure.mediaStart,
+  };
 
   void _recordFailure(Object error, String stage) {
     _lastFailureStage = stage;
@@ -1480,21 +1554,39 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallSessionSnapshot snapshot, {
     CallEndReason? endReason,
     String? candidateId,
-  }) => CallEvent(
-    type: type,
-    eventId: 'call-negotiation-${type.name}-${_nextEventSequence++}',
-    occurredAt: clock(),
-    callId: snapshot.callId,
-    endReason: endReason,
-    candidateId: candidateId,
-    reconnectGeneration:
-        type == CallEventType.mediaConnected ||
-            type == CallEventType.mediaRecovered ||
-            (type == CallEventType.negotiationFailed &&
-                snapshot.state == CallState.reconnecting)
-        ? snapshot.reconnectGeneration
-        : null,
-  );
+    CallSetupFailure diagnosticFailure = CallSetupFailure.configuration,
+  }) {
+    if (type == CallEventType.negotiationFailed) {
+      try {
+        final diagnostics = CallDiagnostics.instance;
+        diagnostics.record(
+          stage: diagnosticFailure.stage,
+          action: 'finish',
+          outcome: 'failed',
+          reason: diagnosticFailure.reason,
+          traceId: diagnostics.traceForCall(callId: snapshot.callId?.value),
+          values: const {'failureDisposition': 'terminal'},
+        );
+      } catch (_) {
+        // Diagnostic observation cannot change the failure event or cleanup.
+      }
+    }
+    return CallEvent(
+      type: type,
+      eventId: 'call-negotiation-${type.name}-${_nextEventSequence++}',
+      occurredAt: clock(),
+      callId: snapshot.callId,
+      endReason: endReason,
+      candidateId: candidateId,
+      reconnectGeneration:
+          type == CallEventType.mediaConnected ||
+              type == CallEventType.mediaRecovered ||
+              (type == CallEventType.negotiationFailed &&
+                  snapshot.state == CallState.reconnecting)
+          ? snapshot.reconnectGeneration
+          : null,
+    );
+  }
 
   Future<void> close() {
     final existing = _closeFuture;

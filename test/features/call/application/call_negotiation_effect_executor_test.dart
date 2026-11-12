@@ -15,6 +15,7 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 
 final _callId = CallId.parse('55555555-5555-4555-8555-555555555555');
 final _otherCallId = CallId.parse('66666666-6666-4666-8666-666666666666');
@@ -71,6 +72,37 @@ Future<void> _flushAsync([int turns = 8]) async {
 }
 
 void main() {
+  test('BL5 terminal adapter failures retain safe local causes', () async {
+    final diagnostics = await CallDiagnostics.installForTesting();
+    addTearDown(diagnostics.dispose);
+    for (final entry in const {
+      CallNegotiationPortErrorCode.permissionDenied: ('preflight', 'permission_denied'),
+      CallNegotiationPortErrorCode.mediaUnavailable: ('media', 'media_failed'),
+      CallNegotiationPortErrorCode.signalingUnavailable: ('signaling', 'transport_failed'),
+      CallNegotiationPortErrorCode.transportUnavailable: ('signaling', 'transport_failed'),
+      CallNegotiationPortErrorCode.iceServersUnavailable: ('turn', 'turn_unavailable'),
+    }.entries) {
+      final harness = _Harness(snapshot: _snapshot(CallState.accepted));
+      harness.preparer.error = CallNegotiationPortException(entry.key);
+      final before = (await diagnostics.eventsForTesting()).length;
+      final result = await harness.executor.execute(
+        const CallEffect(CallEffectType.startNegotiation), harness.snapshot,
+      );
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(result?.endReason, entry.key == CallNegotiationPortErrorCode.permissionDenied
+          ? CallEndReason.permissionDenied : null);
+      final causes = (await diagnostics.eventsForTesting()).skip(before).where(
+        (event) => event['action'] == 'finish' && event['outcome'] == 'failed',
+      ).toList();
+      expect(causes, hasLength(1), reason: entry.key.name);
+      expect(causes.single['stage'], entry.value.$1);
+      expect(causes.single['reason'], entry.value.$2);
+      expect(causes.single['values'], {'failureDisposition': 'terminal'});
+      expect(harness.engine.createOfferCalls, 0);
+      await harness.executor.close();
+    }
+  });
+
   test(
     'connected ICE failure without disconnected initiates recovery',
     () async {
@@ -499,6 +531,8 @@ void main() {
   test(
     'initial negotiation transport failures remain terminal and release retry bytes',
     () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final timers = _ReadinessTimerScheduler();
       final retry = _FakeSignalRetry();
       final harness = _Harness(
@@ -515,6 +549,13 @@ void main() {
         harness.snapshot,
       );
       expect(result?.type, CallEventType.negotiationFailed);
+      final causes = (await diagnostics.eventsForTesting()).where(
+        (event) => event['action'] == 'finish' && event['outcome'] == 'failed',
+      ).toList();
+      expect(causes, hasLength(1));
+      expect(causes.single['stage'], 'signaling');
+      expect(causes.single['reason'], 'transport_failed');
+      expect(causes.single['values'], {'failureDisposition': 'terminal'});
       expect(retry.closed, isTrue);
       expect(timers.active, isEmpty);
     },
