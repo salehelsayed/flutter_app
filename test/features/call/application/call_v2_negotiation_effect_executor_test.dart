@@ -34,6 +34,55 @@ const _configuration = CallConnectionConfiguration(
 
 void main() {
   test(
+    'U4 saturated incoming identity ledger retains selected response and abort',
+    () async {
+      final h = _Rig(media: CallMediaKind.audio);
+      addTearDown(h.close);
+      await h.connect();
+      for (var i = 0; i < 127; i++) {
+        expect(
+          h.admit(
+            h.remote('ice', negotiation: h.owner.negotiation!.negotiationId),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+      }
+      expect(h.owner.mediaSwitch, isNotNull);
+      h.owner.mediaSwitch!.request(h.switchRequest);
+      await h.owner.workSettled;
+      expect(
+        h.admit(
+          h.switchWire('media_response', {
+            'switch_id': _otherNegotiation,
+            'base_revision': 0,
+            'decision': 'accept',
+            'camera': 'off',
+          }),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await h.owner.workSettled;
+      expect(
+        h.admit(
+          h.switchWire('media_abort', {
+            'switch_id': _otherNegotiation,
+            'base_revision': 0,
+            'media_revision': 1,
+            'media': 'audio',
+            'reason': 'cancelled',
+          }),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await h.owner.workSettled;
+      expect(h.owner.mediaSwitch!.machine.phase, MediaSwitchPhase.aborted);
+      expect(h.engine.video.retired, greaterThan(0));
+      expect(h.engine.closed, isFalse);
+    },
+  );
+
+  test(
     'U4 switch owner requires completed initial agreement and connected call',
     () async {
       final h = _Rig(media: CallMediaKind.audio);

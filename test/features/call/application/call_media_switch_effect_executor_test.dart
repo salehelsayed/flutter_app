@@ -22,6 +22,33 @@ const _answer = CallSessionDescription(
 final _call = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
 void main() {
+  test(
+    'local stop remains available when transaction custody is full',
+    () async {
+      final r = _Rig(maximumTransactions: 1);
+      await r.select();
+      expect(
+        r.owner.request(
+          MediaSwitchRequest(
+            id: 'stop',
+            baseRevision: 0,
+            target: _audio,
+            requesterIsCaller: true,
+            createdAtMs: r.host.now,
+            deadlineMs: r.host.now + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      expect(r.owner.machine.phase, MediaSwitchPhase.aborted);
+      expect(r.owner.machine.settledMedia, _audio);
+      expect(r.video.events, contains('retire'));
+      await r.owner.workSettled;
+      expect(r.video.captureCalls, 0);
+      expect(r.video.closeCalls, 0);
+    },
+  );
+
   test('disabled switching performs no authority or native work', () async {
     final r = _Rig(enabled: false);
     expect(r.owner.request(r.request()), isFalse);
