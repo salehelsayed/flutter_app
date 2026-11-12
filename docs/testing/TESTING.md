@@ -2675,7 +2675,27 @@ passes and unavailable/opted-out collectors. This proves deferral, not a failed
 send or the root cause of the missing key. Explicit manual retry still reports the normal missing-key
 refusal, and already-encrypted custody still replays its exact envelope with
 no re-encryption when the current contact key is missing. Key acquisition and
-the timing of the next existing recovery pass remain separate concerns.
+persistence remain separate concerns.
+
+Committed contact-key updates now wake failed-message recovery directly, without
+waiting for the periodic/reconnect pass or replaying already-encrypted custody.
+The contact-key retrier tests retain updates across startup, active full recovery,
+and resume/group recovery gates, and ignore them after disposal. The reverse
+ordering matters too: a
+full recovery request arriving during a key-only pass must retain its exact
+initial/periodic/age options and run afterward. Dropping that request reproduced
+a second causal RED even though the original key-arrival case already passed.
+`pending_message_retrier_contact_key_test.dart` and
+`pending_message_retrier_contact_key_serialization_test.dart` cover both orders
+and duplicate events; the transport/key ports remain fakes, so this is host
+recovery evidence, not key persistence or live-device delivery certification.
+Claude-UI verified corrected source `d876998cd` with six focused cases, 126
+preservation cases and clean analysis. Causal RED and GREEN raw evidence is in
+`flutter_app-ui-update/.audit/bl12/{out,out2,green}/`; the reverse RED hash is
+`2bc1bd725f0b999412eea695eb735182e335c5028173bbdf010f073eec4abcaf`
+and the focused GREEN hash is
+`08819e523651f4d78e01a446d4163a3fd6878ddff2ba174a72abdb50659e52da`.
+Batch affected/native acceptance remains separate from this focused result.
 
 Conversation and Feed hold the editable draft and withhold the bubble until
 the intent commit. The UI tests positively hold that write, exercise refusal,
