@@ -618,6 +618,59 @@ void main() {
       );
     });
 
+    test('BL-24(C) invalid payload is attempted once automatically and remains manually retryable', () async {
+      identityRepo.seed(makeIdentity());
+      final pending = makeFailedMessage(id: 'invalid-empty-row', text: '');
+      messageRepo.seed([pending]);
+      contactRepo.seed([makeContact()]);
+      final service = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+      Future<int> recover() => retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: service,
+        bridge: bridge,
+      );
+      Future<List<Map<String, dynamic>>> attempts(
+        Future<int> Function() action,
+      ) async => (await captureFlowEvents(() async {
+        expect(await action(), 0);
+      })).where((event) => event['event'] == 'CHAT_MSG_SEND_INVALID').toList();
+
+      expect(await attempts(recover), hasLength(1));
+      expect(
+        await attempts(recover),
+        isEmpty,
+        reason: 'a second automatic pass must not attempt the invalid send',
+      );
+      final retained = (await messageRepo.getMessage(pending.id))!;
+      expect(retained.status, 'failed');
+      expect(retained.text, pending.text);
+      expect(retained.timestamp, pending.timestamp);
+      expect(retained.createdAt, pending.createdAt);
+      expect(retained.wireEnvelope, isNull);
+      expect(
+        await attempts(
+          () => retryFailedMessage(
+            messageId: pending.id,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: service,
+            bridge: bridge,
+          ),
+        ),
+        hasLength(1),
+        reason: 'explicit manual retry must still reach send validation',
+      );
+      expect((await messageRepo.getMessage(pending.id))!.status, 'failed');
+      expect(service.sendMessageWithReplyCallCount, 0);
+      expect(service.storeInInboxCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+    });
+
     for (final keyCase in <String, String?>{
       'null': null,
       'empty': '',
