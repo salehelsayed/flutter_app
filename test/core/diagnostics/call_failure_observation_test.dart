@@ -131,21 +131,15 @@ void main() {
   }
 
   Future<void> expectObservation({
-    required bool media,
+    required String stage,
+    required String failureReason,
     required bool timeout,
   }) async {
     final events = await records();
     expect(events, hasLength(1));
-    expect(events.single['stage'], media ? 'media' : 'runtime');
+    expect(events.single['stage'], stage);
     expect(events.single['outcome'], timeout ? 'timeout' : 'failed');
-    expect(
-      events.single['reason'],
-      timeout
-          ? 'timeout'
-          : media
-          ? 'negotiation_failed'
-          : 'unknown',
-    );
+    expect(events.single['reason'], timeout ? 'timeout' : failureReason);
     expect(events.single['values'], isEmpty);
   }
 
@@ -178,7 +172,11 @@ void main() {
       expect(executor.completed, 1);
       expect(checkpoints, 4);
       expectTerminal(c, CallEndReason.mediaFailed);
-      await expectObservation(media: false, timeout: false);
+      await expectObservation(
+        stage: 'runtime',
+        failureReason: 'write_failed',
+        timeout: false,
+      );
     },
   );
 
@@ -196,7 +194,11 @@ void main() {
       );
       expect(executor.completed, 2);
       expectTerminal(c, CallEndReason.mediaFailed);
-      await expectObservation(media: true, timeout: false);
+      await expectObservation(
+        stage: 'media',
+        failureReason: 'media_failed',
+        timeout: false,
+      );
     },
   );
 
@@ -254,7 +256,12 @@ void main() {
                 : CallEndReason.signalingFailed,
           );
           await expectObservation(
-            media: target == CallEffectType.startNegotiation,
+            stage: target == CallEffectType.startNegotiation
+                ? 'media'
+                : 'signaling',
+            failureReason: target == CallEffectType.startNegotiation
+                ? 'media_failed'
+                : 'transport_failed',
             timeout: timeout,
           );
         },
@@ -278,7 +285,11 @@ void main() {
           throwsA(same(error)),
         );
         expectTerminal(c, CallEndReason.mediaFailed);
-        await expectObservation(media: false, timeout: timeout);
+        await expectObservation(
+          stage: 'runtime',
+          failureReason: 'write_failed',
+          timeout: timeout,
+        );
       },
     );
   }
@@ -297,7 +308,11 @@ void main() {
       throwsA(isA<TimeoutException>()),
     );
     expectTerminal(c, CallEndReason.mediaFailed);
-    await expectObservation(media: true, timeout: true);
+    await expectObservation(
+      stage: 'media',
+      failureReason: 'media_failed',
+      timeout: true,
+    );
   });
   test('actual checkpoint budget expiry is a runtime timeout', () async {
     final c = coordinator(persist: (_) => Completer<void>().future);
@@ -306,7 +321,11 @@ void main() {
       throwsA(isA<TimeoutException>()),
     );
     expectTerminal(c, CallEndReason.mediaFailed);
-    await expectObservation(media: false, timeout: true);
+    await expectObservation(
+      stage: 'runtime',
+      failureReason: 'write_failed',
+      timeout: true,
+    );
   });
   for (final unavailable in [false, true]) {
     test(
