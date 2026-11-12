@@ -70,18 +70,18 @@ extension MknoonCallProviding {
 }
 
 extension CXProvider: MknoonCallProviding {
-  func setSupportsVideo(_ supported: Bool) {
-    let updated = configuration
-    updated.supportsVideo = supported
-    configuration = updated
-  }
-
   func refreshConfiguration() {
     // Re-register the current AudioSession ID with callservicesd before a new
     // call. Keep this provider/delegate and all existing call configuration.
     // https://developer.apple.com/forums/thread/783870?answerId=852684022
     let currentConfiguration = configuration
     configuration = currentConfiguration
+  }
+
+  func setSupportsVideo(_ supported: Bool) {
+    let updated = configuration
+    updated.supportsVideo = supported
+    configuration = updated
   }
 }
 
