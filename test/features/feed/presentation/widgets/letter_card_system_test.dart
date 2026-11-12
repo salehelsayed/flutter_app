@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_letter.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/letter_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/letter_card_system.dart';
@@ -30,9 +32,10 @@ void main() {
     File('${dir.path}/$peerId.jpg').writeAsBytesSync(<int>[0, 1, 2, 3]);
   }
 
-  Widget mount(Widget card) {
+  Widget mount(Widget card, {Locale locale = const Locale('en')}) {
     return MaterialApp(
       theme: AppTheme.darkTheme,
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: card),
@@ -50,6 +53,93 @@ void main() {
     introducedBy: 'Alice',
     introducedByPeerId: 'peer-alice',
   );
+
+  SystemLetter savedContact(String? key, {bool introduced = false}) =>
+      SystemLetter.fromConnection(
+        ConnectionFeedItem.fromContact(
+          ContactModel(
+            peerId: 'bl11-saved-contact',
+            publicKey: 'identity-key',
+            rendezvous: '/dns4/relay/tcp/443',
+            username: 'Newbie',
+            signature: 'signature',
+            scannedAt: '2026-11-12T10:00:00Z',
+            mlKemPublicKey: key,
+            introducedBy: introduced ? 'Alice' : null,
+          ),
+        ),
+      );
+
+  const waitingLabels = {
+    'en': 'Waiting for secure connection',
+    'ar': 'في انتظار اتصال آمن',
+    'de': 'Warten auf eine sichere Verbindung',
+  };
+  for (final entry in waitingLabels.entries) {
+    testWidgets('BL11 Feed does not verify a keyless contact in ${entry.key}', (
+      tester,
+    ) async {
+      for (final key in <String?>[null, '', '  \n ']) {
+        await tester.pumpWidget(
+          mount(
+            LetterCardSystem(letter: savedContact(key)),
+            locale: Locale(entry.key),
+          ),
+        );
+        await tester.pump();
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(LetterCardSystem)),
+        )!;
+        expect(find.text(entry.value), findsOneWidget);
+        expect(find.text(l10n.feed_connected), findsNothing);
+        expect(find.byIcon(Icons.verified), findsNothing);
+      }
+
+      await tester.pumpWidget(
+        mount(
+          LetterCardSystem(letter: savedContact('reciprocal-key')),
+          locale: Locale(entry.key),
+        ),
+      );
+      await tester.pump();
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(LetterCardSystem)),
+      )!;
+      expect(find.text(entry.value), findsNothing);
+      expect(find.text(l10n.feed_connected), findsOneWidget);
+      expect(find.byIcon(Icons.verified), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        mount(
+          LetterCardSystem(letter: savedContact(null)),
+          locale: Locale(entry.key),
+        ),
+      );
+      await tester.pump();
+      expect(find.text(entry.value), findsOneWidget);
+    });
+  }
+
+  testWidgets('BL11 keyless introduction keeps its provenance and action', (
+    tester,
+  ) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      mount(
+        LetterCardSystem(
+          letter: savedContact(null, introduced: true),
+          onSendMessage: () => taps++,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text(waitingLabels['en']!), findsOneWidget);
+    expect(find.text('Introduced by Alice'), findsOneWidget);
+    expect(find.byIcon(Icons.verified), findsNothing);
+    await tester.tap(find.text('tap to say hi'));
+    expect(taps, 1);
+  });
 
   // B1 + TC-18: new-connection variant renders a size-40 photo-capable
   // UserAvatar, a Connected label, and a single system green LetterBubble.
