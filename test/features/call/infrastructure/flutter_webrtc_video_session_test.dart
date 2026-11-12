@@ -814,9 +814,12 @@ void main() {
     'whole engine close releases audio and peer despite persistent video cleanup failure',
     () async {
       const channel = MethodChannel('FlutterWebRTC.Method');
+      const events = MethodChannel('FlutterWebRTC.Event');
       final calls = <MethodCall>[];
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(events, (_) async => null);
+      addTearDown(() => messenger.setMockMethodCallHandler(events, null));
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
         if (call.method == 'getUserMedia') {
