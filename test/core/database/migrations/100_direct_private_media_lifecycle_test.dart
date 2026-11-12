@@ -137,7 +137,13 @@ void main() {
         expect(registry.where((entry) => entry.version == 118), hasLength(1));
         expect(registry.where((entry) => entry.version == 119), hasLength(1));
         expect(registry.where((entry) => entry.version == 120), hasLength(1));
-        expect(registry.where((entry) => entry.version > 130), isEmpty);
+        expect(registry.where((entry) => entry.version == 131), hasLength(1));
+        expect(
+          registry.where(
+            (entry) => entry.version > currentIdentityDatabaseVersion,
+          ),
+          isEmpty,
+        );
         final index99 = registry.indexWhere((entry) => entry.version == 99);
         final index100 = registry.indexWhere((entry) => entry.version == 100);
         final index101 = registry.indexWhere((entry) => entry.version == 101);
