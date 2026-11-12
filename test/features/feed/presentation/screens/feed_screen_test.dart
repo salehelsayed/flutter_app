@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -62,15 +63,23 @@ void main() {
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     BackgroundReadableTone? readableToneOverride,
+    Locale locale = const Locale('en'),
+    double? textScale,
+    void Function(String contactPeerId)? onOpenFullConversation,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(viewInsets: viewInsets),
+            data: MediaQuery.of(context).copyWith(
+              viewInsets: viewInsets,
+              textScaler: textScale == null
+                  ? MediaQuery.textScalerOf(context)
+                  : TextScaler.linear(textScale),
+            ),
             child: FeedScreen(
               username: 'Alice',
               feedItems: feedItems,
@@ -83,11 +92,57 @@ void main() {
               userPeerId: userPeerId,
               backgroundPreference: backgroundPreference,
               readableToneOverride: readableToneOverride,
+              onOpenFullConversation: onOpenFullConversation,
             ),
           ),
         ),
       ),
     );
+  }
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('GERMAN-OVERFLOW feed conversation link scale $scale', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = buildThreadItem(
+        id: 'german-thread',
+        username: 'Bob',
+        timestamp: DateTime.utc(2026, 11, 12),
+      );
+      String? openedPeer;
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          focusedId: item.contactPeerId,
+          locale: const Locale('de'),
+          textScale: scale,
+          onOpenFullConversation: (peer) => openedPeer = peer,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      final label = find.text('Vollständige Unterhaltung öffnen');
+      expect(label, findsOneWidget);
+      await tester.ensureVisible(label);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final linkBounds = tester.getRect(
+        find.byKey(const ValueKey('feed-open-full-conversation')),
+      );
+      final labelBounds = tester.getRect(label);
+      expect(labelBounds.width, greaterThan(0));
+      expect(labelBounds.left, greaterThanOrEqualTo(linkBounds.left));
+      expect(labelBounds.right, lessThanOrEqualTo(linkBounds.right));
+      final paragraph = tester.renderObject<RenderParagraph>(label);
+      if (paragraph.didExceedMaxLines) {
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+      }
+      await tester.tap(label);
+      expect(openedPeer, item.contactPeerId);
+    });
   }
 
   testWidgets('renders loading placeholders while feed is still loading', (
