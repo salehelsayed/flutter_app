@@ -133,6 +133,7 @@ void main() {
     () async {
       expect(await retry(), 1);
       final first = transport.lastStoreInInboxMessage!;
+      expect((jsonDecode(first) as Map)['intent'], 'key_exchange_retry');
       now = now.add(const Duration(hours: 1));
       expect(await retry(), 1);
       expect(transport.storeInInboxCallCount, 2);
@@ -159,22 +160,84 @@ void main() {
     },
   );
 
-  test('BL24E manual request still sends after automatic expiry', () async {
-    contacts.seed([_contact(now.subtract(const Duration(days: 8)))]);
-    final result = await sendContactRequest(
-      p2pService: transport,
-      identityRepo: identities,
-      bridge: bridge,
-      targetPeerId: _peer,
-      recipientPublicKey: 'recipient-key-$_peer',
-    );
-    expect(result, SendContactRequestResult.success);
-    expect(transport.storeInInboxCallCount, 1);
-    expect(
-      (jsonDecode(transport.lastStoreInInboxMessage!) as Map)['intent'],
-      'new_request',
-    );
-  });
+  test(
+    'BL24E untouched first-send use case still sends after automatic expiry',
+    () async {
+      contacts.seed([_contact(now.subtract(const Duration(days: 8)))]);
+      final result = await sendContactRequest(
+        p2pService: transport,
+        identityRepo: identities,
+        bridge: bridge,
+        targetPeerId: _peer,
+        recipientPublicKey: 'recipient-key-$_peer',
+      );
+      expect(result, SendContactRequestResult.success);
+      expect(transport.storeInInboxCallCount, 1);
+      expect(
+        (jsonDecode(transport.lastStoreInInboxMessage!) as Map)['intent'],
+        'new_request',
+      );
+    },
+  );
+
+  test(
+    'BL24E causal built envelope records the actual signed timestamp locally',
+    () async {
+      final build = await buildContactRequestEnvelope(
+        identityRepo: identities,
+        bridge: bridge,
+        targetPeerId: _peer,
+        recipientPublicKey: 'recipient-key-$_peer',
+        intent: ContactRequestSendIntent.keyExchangeRetry,
+      );
+      final signCommand = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .singleWhere((command) => command['cmd'] == 'payload.sign');
+      final signed =
+          jsonDecode((signCommand['payload'] as Map)['data'] as String) as Map;
+      final signedAt = DateTime.parse(
+        signed['ts'] as String,
+      ).millisecondsSinceEpoch;
+      expect(build.envelope, isNotNull);
+      expect(build.envelope!.signedAtMs, signedAt);
+      expect(
+        (jsonDecode(build.envelope!.messageJson) as Map).containsKey(
+          'signedAtMs',
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'BL24E persisted expiry is the earlier scan or actual signed cutoff',
+    () async {
+      expect(await retry(), 1);
+      final signCommand = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .singleWhere((command) => command['cmd'] == 'payload.sign');
+      final signed =
+          jsonDecode((signCommand['payload'] as Map)['data'] as String) as Map;
+      final signedAt = DateTime.parse(signed['ts'] as String);
+      final earlier = now.isBefore(signedAt) ? now : signedAt;
+      final raw = await store.read(_journalKey);
+      expect(raw, isNotNull);
+      expect(
+        (entries(raw!).single as Map)['expiresAtMs'],
+        earlier.add(const Duration(days: 7)).millisecondsSinceEpoch,
+      );
+    },
+  );
+
+  test(
+    'BL24E clock rollback cannot emit a request signed before its contact scan',
+    () async {
+      now = DateTime.now().toUtc().add(const Duration(hours: 1));
+      contacts.seed([_contact(now)]);
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
 
   test('BL24E retries wait 1h then6h then24h then daily', () async {
     expect(await retry(), 1);

@@ -71,6 +71,7 @@ final class BuiltContactRequestEnvelope {
     required this.messageJson,
     required this.encrypted,
     this.msgId,
+    this.signedAtMs,
     this.callWakeHandle,
     this.callWakeReceiptChallenge,
   });
@@ -80,6 +81,9 @@ final class BuiltContactRequestEnvelope {
   final String messageJson;
   final bool encrypted;
   final String? msgId;
+
+  /// Local persistence metadata only; never added to the wire envelope.
+  final int? signedAtMs;
   final CallWakeHandleGrant? callWakeHandle;
   final String? callWakeReceiptChallenge;
 
@@ -89,6 +93,7 @@ final class BuiltContactRequestEnvelope {
     'messageJson': messageJson,
     'encrypted': encrypted,
     'msgId': msgId,
+    if (signedAtMs != null) 'signedAtMs': signedAtMs,
     'callWakeHandle': callWakeHandle?.toCanonicalMap(),
     'callWakeReceiptChallenge': callWakeReceiptChallenge,
   };
@@ -101,6 +106,7 @@ final class BuiltContactRequestEnvelope {
       messageJson: json['messageJson'] as String,
       encrypted: json['encrypted'] as bool,
       msgId: json['msgId'] as String?,
+      signedAtMs: json['signedAtMs'] as int?,
       callWakeHandle: rawGrant == null
           ? null
           : CallWakeHandleGrant.fromCanonicalMap(rawGrant),
