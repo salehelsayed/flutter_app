@@ -111,6 +111,9 @@ class PendingMessageRetrier {
 
   StreamSubscription<void>? _contactKeyUpdatedSubscription;
   bool _contactKeyRetryRequested = false;
+  bool _isRetryingContactKey = false;
+  final _pendingFullRetries =
+      <({Duration? unackedOlderThan, bool periodic, bool initial})>{};
   bool _started = false;
   StreamSubscription? _stateSubscription;
   StreamSubscription? _networkRestoredSubscription;
@@ -190,16 +193,28 @@ class PendingMessageRetrier {
   /// Reconsider retained key arrivals when an external recovery owner finishes.
   void retryPendingContactKeyUpdates() {
     if (!_started ||
-        !_contactKeyRetryRequested ||
         _isRetrying ||
         _isExternalRecoveryInProgressFn?.call() == true) {
       return;
     }
-    unawaited(_retryAfterContactKeyUpdate());
+    if (_pendingFullRetries.isNotEmpty) {
+      final request = _pendingFullRetries.first;
+      _pendingFullRetries.remove(request);
+      unawaited(
+        _retryIfNeeded(
+          unackedOlderThan: request.unackedOlderThan,
+          periodic: request.periodic,
+          initial: request.initial,
+        ),
+      );
+    } else if (_contactKeyRetryRequested) {
+      unawaited(_retryAfterContactKeyUpdate());
+    }
   }
 
   Future<void> _retryAfterContactKeyUpdate() async {
     _contactKeyRetryRequested = false;
+    _isRetryingContactKey = true;
     _isRetrying = true;
     try {
       // Keep the ordinary retry admission/backoff rules. In particular, key
@@ -212,6 +227,7 @@ class PendingMessageRetrier {
         details: {'error': error.toString()},
       );
     } finally {
+      _isRetryingContactKey = false;
       _isRetrying = false;
       retryPendingContactKeyUpdates();
     }
@@ -823,6 +839,15 @@ class PendingMessageRetrier {
     bool initial = false,
   }) async {
     if (_isRetrying) {
+      // A direct-only pass cannot satisfy a reconnect or periodic full pass.
+      // Coalesce identical requests while preserving each trigger's age policy.
+      if (_isRetryingContactKey) {
+        _pendingFullRetries.add((
+          unackedOlderThan: unackedOlderThan,
+          periodic: periodic,
+          initial: initial,
+        ));
+      }
       unawaited(_drainNotificationCompletedOutcomes());
       return;
     }
@@ -1141,6 +1166,7 @@ class PendingMessageRetrier {
   void dispose() {
     _started = false;
     _contactKeyRetryRequested = false;
+    _pendingFullRetries.clear();
     _contactKeyUpdatedSubscription?.cancel();
     _contactKeyUpdatedSubscription = null;
     groupRecoveryGate.activeDepthListenable.removeListener(
