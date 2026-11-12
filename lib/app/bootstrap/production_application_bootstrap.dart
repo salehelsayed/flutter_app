@@ -9714,6 +9714,8 @@ final class ProductionApplicationBootstrap
           accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     );
     final pendingPostDeliveryRetrier = PendingPostDeliveryRetrier(
+      contactKeyUpdatedSignal:
+          contactRequestListener.contactKeyUpdatedStream.map<void>((_) {}),
       p2pService: p2pService,
       postRepo: postRepository,
       contactRepo: contactRepository,
