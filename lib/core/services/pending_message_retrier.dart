@@ -79,6 +79,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
   final Future<int> Function()? drainDirectInboxCustodyOutboxFn;
+  final Future<int> Function()? drainDeliveryReceiptOutboxFn;
   final Future<int> Function()? verifyInboxCustodyFn;
   final Future<void> Function()? drainNotificationCompletedOutcomesFn;
 
@@ -169,6 +170,7 @@ class PendingMessageRetrier {
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
     this.drainDirectInboxCustodyOutboxFn,
+    this.drainDeliveryReceiptOutboxFn,
     this.verifyInboxCustodyFn,
     this.drainNotificationCompletedOutcomesFn,
     this.contactKeyUpdatedSignal,

@@ -88,6 +88,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryFailedGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? drainDirectInboxCustodyOutboxFn,
+  Future<int> Function()? drainDeliveryReceiptOutboxFn,
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
   Future<int> Function()? verifyInboxCustodyFn,
