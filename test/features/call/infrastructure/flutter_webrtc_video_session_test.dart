@@ -370,6 +370,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   group('V2-view', () {
     const channel = MethodChannel('FlutterWebRTC.Method');
+    void mockSwitch(Future<Object?> Function(MethodCall call) handler) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'initialize') return null;
+            expect(call.method, 'mediaStreamTrackSwitchCamera');
+            return handler(call);
+          });
+    }
+
     CallVideoPresentationSource source(Fixture f) {
       expect(f.session, isA<CallVideoPresentationSource>());
       return f.session as CallVideoPresentationSource;
@@ -559,7 +568,7 @@ void main() {
       final f = Fixture(); await f.start(); final t = await f.committed(); final c = camera(f);
       final other = Fixture(); await other.start(); final foreign = await other.committed();
       await f.session.setLocalCamera(t, f.grant()); var calls = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async { calls++; return true; });
+      mockSwitch((_) async { calls++; return true; });
       for (final grant in [f.grant(consent: false), f.grant(permission: false), f.grant(agreed: false), f.grant(fresh: () => false)]) {
         expect(await c.switchCamera(t, grant), isFalse);
       }
@@ -574,12 +583,11 @@ void main() {
       final t = await f.committed();
       final c = camera(f);
       var calls = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            expect(call.method, 'mediaStreamTrackSwitchCamera');
-            calls++;
-            return false;
-          });
+      mockSwitch((call) async {
+        expect(call.method, 'mediaStreamTrackSwitchCamera');
+        calls++;
+        return false;
+      });
       expect(await c.switchCamera(t, f.grant()), isFalse);
       await f.session.setLocalCamera(t, f.grant());
       final offers = f.peer.offers.length;
@@ -605,11 +613,10 @@ void main() {
           await f.session.setLocalCamera(t, f.grant());
           final gate = Completer<bool>();
           final entered = Completer<void>();
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-              .setMockMethodCallHandler(channel, (_) {
-                entered.complete();
-                return gate.future;
-              });
+          mockSwitch((_) {
+            entered.complete();
+            return gate.future;
+          });
           final switching = c.switchCamera(t, f.grant());
           await entered.future;
           final stopping = retire
@@ -631,18 +638,16 @@ void main() {
       final t = await f.committed();
       final c = camera(f);
       await f.session.setLocalCamera(t, f.grant());
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (_) async {
-            throw PlatformException(code: 'switch_failed');
-          });
+      mockSwitch((_) async {
+        throw PlatformException(code: 'switch_failed');
+      });
       expect(await c.switchCamera(t, f.grant()), isFalse);
       expect(f.track.enabled, isTrue);
       var fresh = true;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (_) async {
-            fresh = false;
-            return true;
-          });
+      mockSwitch((_) async {
+        fresh = false;
+        return true;
+      });
       expect(await c.switchCamera(t, f.grant(fresh: () => fresh)), isFalse);
       expect(f.track.enabled, isFalse);
       expect(f.track.stops, 1);
