@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2978,8 +2979,7 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other:
           'Skipped $count files. Only photos, videos, audio and PDF files can be shared.',
-      one:
-          'Skipped 1 file. Only photos, videos, audio and PDF files can be shared.',
+      one: 'Skipped 1 file. Only photos, videos, audio and PDF files can be shared.',
     );
     return '$_temp0';
   }
@@ -5294,4 +5294,73 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sticker_colour_blue => 'Blue';
+
+  @override
+  String get call_video_status_video_requested => '';
+
+  @override
+  String get call_video_status_audio_only => '';
+
+  @override
+  String get call_video_status_video => '';
+
+  @override
+  String get call_video_status_incoming_upgrade => '';
+
+  @override
+  String get call_video_status_outgoing_upgrade => '';
+
+  @override
+  String get call_video_status_switching_to_video => '';
+
+  @override
+  String get call_video_status_switching_to_audio => '';
+
+  @override
+  String get call_video_status_reconnecting => '';
+
+  @override
+  String get call_video_local_camera_on => '';
+
+  @override
+  String get call_video_local_camera_off => '';
+
+  @override
+  String get call_video_local_camera_paused => '';
+
+  @override
+  String get call_video_remote_camera_on => '';
+
+  @override
+  String get call_video_remote_camera_off => '';
+
+  @override
+  String get call_video_remote_camera_paused => '';
+
+  @override
+  String get call_video_action_request_video => '';
+
+  @override
+  String get call_video_action_accept_upgrade => '';
+
+  @override
+  String get call_video_action_decline_upgrade => '';
+
+  @override
+  String get call_video_action_cancel_upgrade => '';
+
+  @override
+  String get call_video_action_turn_camera_on => '';
+
+  @override
+  String get call_video_action_turn_camera_off => '';
+
+  @override
+  String get call_video_action_switch_camera => '';
+
+  @override
+  String get call_video_action_use_audio_only => '';
+
+  @override
+  String get call_video_controls_label => '';
 }
