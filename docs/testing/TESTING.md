@@ -11373,6 +11373,44 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3e-final-host-adoption.json`.
   This proves the adapter's host boundary, not its later production graph
   wiring, live delivery or video activation.
+  **U3f incoming v2 dispatch and mailbox custody:** same-page terminal
+  suppression requires the same wire schema and exact authenticated call,
+  handle and both account/device peer identities. Cross-version pairs use
+  ordinary context/phase validation; the same-bound unsupported-v1 cleanup
+  exception ends at the first initial offer. Typed media dispatch preserves
+  current-owner, expiry, replay and native-cancellation fences without falling
+  back to legacy media effects. An idle orphan terminal remains rejected with
+  `stateMismatch`: it creates no canonical episode or tombstone. Context
+  cleanup, exact terminal custody proof, native cancellation and mailbox
+  acknowledgement/settlement remain separate from that reducer outcome.
+  The answer fixture must establish an outgoing accepted call and await the
+  fake executor's recorded `startNegotiation` before taking its effects
+  baseline. Handler acceptance alone does not mean its setup effects have
+  completed; allowing a late effect or sleeping would hide that distinction.
+  Original feature RED `c9c796b32a9c168cf9a2afe7729ca783f428b45f` recorded six
+  passes and 27 failures. Corrective RED
+  `1b55bcd687bfe4368361d83e0c23f6163b2382b5` recorded two passes and six
+  failures: five causal schema/binding failures and one invalid orphan-episode
+  expectation. Production GREEN `5b540a6c7e6c38c0e5b2a807d72fbd0ab4b97eb1`
+  initially recorded 38 passes/three failures; the first test-only correction
+  `a2e68b68127ded471d9240c3c0cbad485d989bbe` recorded 40 passes/one setup
+  timing failure. These attempts remain retained and failed. Final test-only
+  GREEN `b6dc44272cdbc653064932958ad71c0278835c0e` passed all 41 cases, with
+  zero failures/errors/skips, successful loading/reporter completion and child
+  exit 0. Its production/configuration is byte-identical to `5b540a6c7`; the
+  earlier 190 passing preservation cases, six-path analysis and metadata
+  validation are adopted unchanged, with fresh corrected-test analysis passing.
+  The sole runner's raw receipt pins the initial HEAD/parent/library tree,
+  before/after test and lock hashes, recorded locale restoration before the
+  test result, and final clean tracked status. It omits the exact CLI, an
+  immediate post-restoration/pretest clean stamp and a repeated final HEAD/tree
+  stamp; the exact command comes from the actor message and frozen handoff.
+  Those evidence limits remain explicit without extra stamps or reruns. Raw
+  first failures, corrected results and the independent source/runtime review
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3f-final-host-adoption.json`.
+  This closes the frozen default-off host unit; production graph, real native
+  effects, live video and combined candidate proof remain separate.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
