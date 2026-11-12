@@ -1743,6 +1743,7 @@
   "private_media_disappearing_1d": "Verschwindet nach 1 Tag",
   "private_media_disappearing_7d": "Verschwindet nach 7 Tagen",
   "private_media_invalid_shape": "Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.",
+  "private_media_caption_blocked": "Entferne die Bildunterschrift, damit der Inhalt privat bleibt.",
   "private_media_notification_body": "Private Medien",
   "group_private_media_notification_body": "Neue private Medien",
   "private_media_expiry_device_local": "Wird nach dieser Zeit von ihrem Gerät gelöscht.",

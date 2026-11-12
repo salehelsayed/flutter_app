@@ -1972,6 +1972,7 @@
   "private_media_disappearing_1d": "Disappears after 1 day",
   "private_media_disappearing_7d": "Disappears after 7 days",
   "private_media_invalid_shape": "Private media needs one photo or video with no caption.",
+  "private_media_caption_blocked": "Remove the caption to keep this private.",
   "private_media_notification_body": "Private media",
   "group_private_media_notification_body": "New private media",
   "private_media_expiry_device_local": "Deleted from their device after this time.",

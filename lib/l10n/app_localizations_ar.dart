@@ -3809,6 +3809,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.';
 
   @override
+  String get private_media_caption_blocked =>
+      'احذف التعليق ليبقى هذا المحتوى خاصًا.';
+
+  @override
   String get private_media_notification_body => 'وسائط خاصة';
 
   @override

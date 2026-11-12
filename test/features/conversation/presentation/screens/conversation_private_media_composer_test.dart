@@ -141,28 +141,31 @@ void main() {
       PrivateMediaAttachmentKind.image,
       PrivateMediaAttachmentKind.video,
     ]) {
-      await tester.pumpWidget(
-        buildComposer(
-          eligibility: PrivateMediaEligibility(
-            attachmentCount: 1,
-            attachmentKind: kind,
+      for (final hasCaption in [false, true]) {
+        await tester.pumpWidget(
+          buildComposer(
+            eligibility: PrivateMediaEligibility(
+              attachmentCount: 1,
+              attachmentKind: kind,
+              hasTextOrCaption: hasCaption,
+            ),
+            onPolicyChanged: (_) {},
           ),
-          onPolicyChanged: (_) {},
-        ),
-      );
-      expect(
-        find.byKey(const ValueKey('private-media-selector')),
-        findsOneWidget,
-        reason: kind.name,
-      );
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('private-media-selector')),
-          matching: find.text('Keep in chat'),
-        ),
-        findsOneWidget,
-        reason: kind.name,
-      );
+        );
+        expect(
+          find.byKey(const ValueKey('private-media-selector')),
+          findsOneWidget,
+          reason: '${kind.name}, caption=$hasCaption',
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('private-media-selector')),
+            matching: find.text('Keep in chat'),
+          ),
+          findsOneWidget,
+          reason: '${kind.name}, caption=$hasCaption',
+        );
+      }
     }
 
     await tester.pumpWidget(
@@ -198,11 +201,6 @@ void main() {
       PrivateMediaEligibility(
         attachmentCount: 1,
         attachmentKind: PrivateMediaAttachmentKind.file,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.image,
-        hasTextOrCaption: true,
       ),
       PrivateMediaEligibility(
         attachmentCount: 1,
@@ -602,7 +600,9 @@ void main() {
     );
   });
 
-  testWidgets('typing text resets a selected private policy', (tester) async {
+  testWidgets('typing text keeps private intent and disables Send', (
+    tester,
+  ) async {
     PrivateMediaPolicy? selected;
     await tester.pumpWidget(
       buildComposer(
@@ -618,7 +618,66 @@ void main() {
     await tester.enterText(find.byType(TextField), 'caption');
     await tester.pump();
 
-    expect(selected, const PrivateMediaPolicy.ordinary());
+    expect(selected, isNull);
+    expect(
+      find.text('Remove the caption to keep this private.'),
+      findsOneWidget,
+    );
+    final send = tester.widget<GestureDetector>(
+      find
+          .ancestor(
+            of: find.byIcon(Icons.arrow_upward_rounded),
+            matching: find.byType(GestureDetector),
+          )
+          .first,
+    );
+    expect(send.onTap, isNull);
+  });
+
+  testWidgets('private caption explanation is localized below the field', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const copy = {
+      'en': 'Remove the caption to keep this private.',
+      'ar': 'احذف التعليق ليبقى هذا المحتوى خاصًا.',
+      'de': 'Entferne die Bildunterschrift, damit der Inhalt privat bleibt.',
+    };
+    for (final entry in copy.entries) {
+      for (final kind in [
+        PrivateMediaAttachmentKind.image,
+        PrivateMediaAttachmentKind.video,
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(
+          buildComposer(
+            locale: Locale(entry.key),
+            eligibility: PrivateMediaEligibility(
+              attachmentCount: 1,
+              attachmentKind: kind,
+            ),
+            policy: const PrivateMediaPolicy.protected(),
+            onPolicyChanged: (_) {},
+          ),
+        );
+        await tester.enterText(find.byType(TextField), 'Caption');
+        await tester.pump();
+        final hint = find.text(entry.value);
+        expect(hint, findsOneWidget);
+        expect(
+          tester.getTopLeft(hint).dy,
+          greaterThanOrEqualTo(tester.getBottomLeft(find.byType(TextField)).dy),
+        );
+        expect(find.byType(SnackBar), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.enterText(find.byType(TextField), '');
+        await tester.pump();
+        expect(hint, findsNothing);
+      }
+    }
   });
 
   test('every stale or ineligible composer shape resets private policy', () {
@@ -647,7 +706,6 @@ void main() {
                     attachmentCount == 1 &&
                     (attachmentKind == PrivateMediaAttachmentKind.image ||
                         attachmentKind == PrivateMediaAttachmentKind.video) &&
-                    !hasTextOrCaption &&
                     !isEdit &&
                     !isForward;
                 final reason =

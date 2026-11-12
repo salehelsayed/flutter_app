@@ -3744,6 +3744,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Private media needs one photo or video with no caption.';
 
   @override
+  String get private_media_caption_blocked =>
+      'Remove the caption to keep this private.';
+
+  @override
   String get private_media_notification_body => 'Private media';
 
   @override
