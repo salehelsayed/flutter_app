@@ -121,8 +121,8 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '117_call_history');
         expect(entries.single.run, same(runCallHistoryMigration));
-        // v118-v130, including Thoughts reset, follow v117.
-        expect(registry[registry.length - 15], same(entries.single));
+        final index117 = registry.indexOf(entries.single);
+        expect(registry[index117 + 1].version, 118);
       }
     },
   );

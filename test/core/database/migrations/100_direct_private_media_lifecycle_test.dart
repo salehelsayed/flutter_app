@@ -170,7 +170,10 @@ void main() {
         expect(index109, index108 + 1);
         expect(index110, index109 + 1);
         expect(index111, index110 + 1);
-        expect(index111, registry.length - 21);
+        expect(
+          index111 + 1,
+          registry.indexWhere((entry) => entry.version == 112),
+        );
         expect(registry[index100].name, '100_direct_private_media_lifecycle');
         expect(
           registry[index100].run,

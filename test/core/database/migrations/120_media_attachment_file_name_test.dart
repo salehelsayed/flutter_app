@@ -82,10 +82,13 @@ void main() {
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((e) => e.version == 120), hasLength(1));
-        final entry = registry[registry.length - 12];
+        final index120 = registry.indexWhere((entry) => entry.version == 120);
+        final entry = registry[index120];
         expect(entry.version, 120);
         expect(entry.name, '120_media_attachment_file_name');
         expect(entry.run, same(runMediaAttachmentFileNameMigration));
+        expect(registry[index120 + 1].version, 121);
+        expect(registry[index120 + 2].version, 122);
         expect(registry.last.version, 132);
       }
     },

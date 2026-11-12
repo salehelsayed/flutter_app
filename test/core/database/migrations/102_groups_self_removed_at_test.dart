@@ -363,7 +363,10 @@ void main() {
         expect(index109, index108 + 1);
         expect(index110, index109 + 1);
         expect(index111, index110 + 1);
-        expect(index111, registry.length - 21);
+        expect(
+          index111 + 1,
+          registry.indexWhere((entry) => entry.version == 112),
+        );
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
         expect(registry[index104].name, '104_group_exit_diagnostics');

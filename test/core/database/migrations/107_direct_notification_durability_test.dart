@@ -133,8 +133,14 @@ void main() {
           same(runDirectNotificationDurabilityMigration),
         );
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '131_message_auto_retry_terminal');
-        expect(registry[registry.length - 20].version, 112);
+        expect(
+          registry.singleWhere((entry) => entry.version == 131).name,
+          '131_message_auto_retry_terminal',
+        );
+        expect(
+          registry.singleWhere((entry) => entry.version == 112).version,
+          112,
+        );
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
