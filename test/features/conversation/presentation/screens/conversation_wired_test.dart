@@ -2212,6 +2212,68 @@ void main() {
       'de': 'Warten auf eine sichere Verbindung',
     };
     for (final entry in labels.entries) {
+      for (final hasMessage in [false, true]) {
+        testWidgets(
+          'origin marker is a local save (${hasMessage ? "compact" : "empty"}) in ${entry.key}',
+          (tester) async {
+            final messages = FakeMessageRepository();
+            if (hasMessage) {
+              await messages.saveMessage(
+                ConversationMessage(
+                  id: 'bl11-existing-message',
+                  contactPeerId: makeContact().peerId,
+                  text: 'An existing message',
+                  senderPeerId: makeIdentity().peerId,
+                  timestamp: '2026-11-12T10:00:00Z',
+                  isIncoming: false,
+                  status: 'sent',
+                  createdAt: '2026-11-12T10:00:00Z',
+                ),
+              );
+            }
+            final listener = _CallContactUpdateListener(
+              messageRepo: messages,
+              contactRepo: FakeContactRepository(),
+            );
+            addTearDown(listener.dispose);
+            await pumpScreen(
+              tester,
+              identityRepo: FakeIdentityRepository(makeIdentity()),
+              messageRepo: messages,
+              chatListener: listener,
+              sendFn: _instantSuccessSendFn,
+              locale: Locale(entry.key),
+            );
+            final state = tester.state(find.byType(ConversationWired));
+            final l10n = AppLocalizations.of(
+              tester.element(find.byType(ConversationWired)),
+            )!;
+            expect(find.text(l10n.connected_title), findsNothing);
+            final saved = find.text(l10n.qr_added_to_circle);
+            expect(saved, findsOneWidget);
+            final style = tester.widget<Text>(saved).style!;
+            expect(
+              style.color,
+              tester.element(saved).backgroundReadableColors.textMuted,
+            );
+            expect(style.shadows, anyOf(isNull, isEmpty));
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+
+            listener.updates.add(makeContact().copyWith(mlKemPublicKey: 'key'));
+            await tester.pump();
+            expect(tester.state(find.byType(ConversationWired)), same(state));
+            expect(find.text(l10n.qr_added_to_circle), findsNothing);
+            expect(find.text(l10n.connected_title), findsOneWidget);
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+            await tester.pumpWidget(const SizedBox.shrink());
+          },
+        );
+      }
+
       testWidgets('chat header updates without reopening in ${entry.key}', (
         tester,
       ) async {
