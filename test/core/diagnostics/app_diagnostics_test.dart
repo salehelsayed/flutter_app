@@ -1036,6 +1036,66 @@ void main() {
   );
 
   test(
+    'BL24B terminal suppression requires admission and closes only its attempt',
+    () async {
+      var diagnostics = await install();
+      const privateKey = 'PRIVATE_BL24B_TERMINAL_KEY';
+      bool finish(
+        String? trace, {
+        String stage = 'preflight',
+        bool valid = true,
+      }) => diagnostics.finishAttempt(
+        feature: 'message',
+        traceId: trace,
+        stage: stage,
+        outcome: 'failed',
+        reason: 'authority_rejected',
+        observationKey: privateKey,
+        values: valid ? const {} : const {'unlisted': privateKey},
+      );
+
+      diagnostics.runWithAttempt(
+        feature: 'message',
+        body: (trace) {
+          expect(finish(trace, valid: false), isFalse);
+          expect(finish(trace), isTrue);
+        },
+      );
+      diagnostics.runWithAttempt(
+        feature: 'message',
+        body: (trace) => expect(finish(trace), isFalse),
+      );
+      diagnostics.runWithAttempt(
+        feature: 'message',
+        body: (trace) => expect(finish(trace, stage: 'verify'), isTrue),
+      );
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.where((e) => e['outcome'] == 'failed').map((e) => e['stage']),
+        ['preflight', 'verify'],
+      );
+      final state =
+          jsonDecode(await File('${directory.path}/state.json').readAsString())
+              as Map;
+      expect(state['open'], isEmpty);
+      expect(jsonEncode(state), isNot(contains(privateKey)));
+      expect(state['bindings'], isEmpty);
+
+      diagnostics = await install();
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (e) => e['reason'] == 'interrupted_before_final_record',
+        ),
+        isEmpty,
+      );
+      diagnostics.runWithAttempt(
+        feature: 'message',
+        body: (trace) => expect(finish(trace), isTrue),
+      );
+    },
+  );
+
+  test(
     'restart classifies durable open attempt as interrupted, never crash',
     () async {
       var diagnostics = await install();
