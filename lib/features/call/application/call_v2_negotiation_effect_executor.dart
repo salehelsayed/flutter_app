@@ -10,6 +10,7 @@ import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal_v2.dart';
 import '../domain/call_state.dart';
 import 'call_coordinator.dart';
+import 'call_media_switch_effect_executor.dart';
 import 'call_endpoint_resolver.dart';
 import 'call_negotiation_effect_executor.dart';
 import 'call_signaling_context_store.dart';
@@ -96,6 +97,8 @@ final class CallV2NegotiationEffectExecutor implements CallEffectExecutor {
   int _epoch = 0;
   bool _closed = false;
   bool _failed = false;
+
+  CallMediaSwitchEffectExecutor? get mediaSwitch => null;
 
   CallVideoSession? get videoSession => _session;
   CallVideoNegotiation? get negotiation => _token;

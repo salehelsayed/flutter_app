@@ -443,6 +443,16 @@ final class CallMediaSwitchMachine {
       t.revision == revision &&
       t.request.target == media;
 
+  /// Records an admitted native apply before awaiting it. This is pending
+  /// work, never evidence that an offer or answer was applied successfully.
+  MediaSwitchDecision descriptionStarted({
+    required String id,
+    required int revision,
+    required CallMediaKind media,
+    required MediaSwitchDescription description,
+    required bool local,
+  }) => MediaSwitchDecision(false, const []);
+
   MediaSwitchDecision descriptionApplied({
     required String id,
     required int revision,

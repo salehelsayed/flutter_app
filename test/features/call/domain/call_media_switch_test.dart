@@ -113,6 +113,250 @@ List<MediaSwitchEffectKind> _kinds(MediaSwitchDecision decision) =>
     decision.effects.map((e) => e.kind).toList();
 
 void main() {
+  for (final caller in [true, false]) {
+    test(
+      'pending native offer abort arms original repair budget caller=$caller',
+      () {
+        final rig = _Rig(caller: caller);
+        rig.select('pending-native');
+        expect(
+          rig.machine
+              .descriptionStarted(
+                id: 'pending-native',
+                revision: 1,
+                media: _video,
+                description: MediaSwitchDescription.offer,
+                local: caller,
+              )
+              .accepted,
+          isTrue,
+        );
+        final abort = rig.machine.abort(
+          id: 'pending-native',
+          baseRevision: 0,
+          revision: 1,
+          remote: !caller,
+        );
+        final rollback = abort.effects.singleWhere(
+          (e) => e.kind == MediaSwitchEffectKind.rollbackOffer,
+        );
+        expect(rollback.deadlineMs, 16000);
+        expect(
+          _kinds(abort),
+          isNot(contains(MediaSwitchEffectKind.repairAudio)),
+        );
+        expect(rig.machine.videoGatesOpen, isFalse);
+        rig.now += 14000;
+        expect(
+          rig.machine
+              .descriptionApplied(
+                id: 'pending-native',
+                revision: 1,
+                media: _video,
+                description: MediaSwitchDescription.offer,
+                local: caller,
+              )
+              .accepted,
+          isFalse,
+        );
+        final proof = rig.machine.rollbackCompleted(
+          id: 'pending-native',
+          success: true,
+        );
+        final repair = proof.effects.singleWhere(
+          (e) =>
+              e.kind ==
+              (caller
+                  ? MediaSwitchEffectKind.repairAudio
+                  : MediaSwitchEffectKind.awaitAudioRepair),
+        );
+        expect(repair.deadlineMs, 16000);
+        rig.now += 1000;
+        expect(
+          _kinds(rig.machine.tick()),
+          contains(MediaSwitchEffectKind.disableSwitching),
+        );
+        expect(
+          rig.machine
+              .repairCompleted(id: 'pending-native', success: true)
+              .accepted,
+          isFalse,
+        );
+      },
+    );
+  }
+
+  test('native answer in flight needs positive reconciliation after abort', () {
+    final rig = _Rig();
+    rig.select('pending-answer');
+    rig.offer('pending-answer');
+    expect(
+      rig.machine
+          .descriptionStarted(
+            id: 'pending-answer',
+            revision: 1,
+            media: _video,
+            description: MediaSwitchDescription.answer,
+            local: false,
+          )
+          .accepted,
+      isTrue,
+    );
+    final abort = rig.machine.abort(
+      id: 'pending-answer',
+      baseRevision: 0,
+      revision: 1,
+    );
+    expect(_kinds(abort), contains(MediaSwitchEffectKind.rollbackOffer));
+    expect(
+      rig.machine.repairCompleted(id: 'pending-answer', success: true).accepted,
+      isFalse,
+    );
+    expect(
+      _kinds(
+        rig.machine.rollbackCompleted(id: 'pending-answer', success: false),
+      ),
+      contains(MediaSwitchEffectKind.disableSwitching),
+    );
+    expect(rig.machine.settledMedia, _audio);
+  });
+
+  test(
+    'description start requires exact selected role and cannot duplicate',
+    () {
+      final rig = _Rig();
+      rig.select('bound');
+      for (final candidate in [
+        (id: 'foreign', revision: 1, local: true),
+        (id: 'bound', revision: 2, local: true),
+        (id: 'bound', revision: 1, local: false),
+      ]) {
+        expect(
+          rig.machine
+              .descriptionStarted(
+                id: candidate.id,
+                revision: candidate.revision,
+                media: _video,
+                description: MediaSwitchDescription.offer,
+                local: candidate.local,
+              )
+              .accepted,
+          isFalse,
+        );
+      }
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'bound',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.answer,
+              local: false,
+            )
+            .accepted,
+        isFalse,
+      );
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'bound',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isTrue,
+      );
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'bound',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isFalse,
+      );
+      rig.offer('bound');
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'bound',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.answer,
+              local: false,
+            )
+            .accepted,
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'pending native start cannot revive an aborted or terminal transaction',
+    () {
+      final rig = _Rig();
+      rig.select('retired');
+      rig.machine.abort(id: 'retired', baseRevision: 0, revision: 1);
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'retired',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isFalse,
+      );
+      rig.machine.terminate();
+      expect(
+        rig.machine
+            .descriptionStarted(
+              id: 'retired',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isFalse,
+      );
+    },
+  );
+
+  test('expired pending native reconciliation never renews repair budget', () {
+    final rig = _Rig();
+    rig.select('expired-native');
+    expect(
+      rig.machine
+          .descriptionStarted(
+            id: 'expired-native',
+            revision: 1,
+            media: _video,
+            description: MediaSwitchDescription.offer,
+            local: true,
+          )
+          .accepted,
+      isTrue,
+    );
+    rig.machine.abort(id: 'expired-native', baseRevision: 0, revision: 1);
+    rig.now += 15000;
+    final late = rig.machine.rollbackCompleted(
+      id: 'expired-native',
+      success: true,
+    );
+    expect(late.accepted, isFalse);
+    expect(_kinds(late), contains(MediaSwitchEffectKind.disableSwitching));
+    expect(_kinds(late), isNot(contains(MediaSwitchEffectKind.repairAudio)));
+    expect(rig.machine.switchingDisabled, isTrue);
+  });
+
   test('only connected enabled v2 sessions admit fresh video requests', () {
     for (final rig in [
       _Rig(version: CallWireVersion.v1),
@@ -180,87 +424,96 @@ void main() {
     },
   );
 
-  test('callee requests but caller alone offers, and callee needs stable answer before commit', () {
-    final rig = _Rig(caller: false);
-    rig.machine.request(
-      rig.req('callee', caller: false),
-      freshUpgradeAdmitted: true,
-    );
-    final accept = rig.machine.respond(
-      id: 'callee',
-      baseRevision: 0,
-      fromCaller: true,
-      response: MediaSwitchResponse.accept,
-    );
-    expect(_kinds(accept), isNot(contains(MediaSwitchEffectKind.createOffer)));
-    expect(
-      rig.machine
-          .receiveCommit(id: 'callee', revision: 1, media: _video)
-          .accepted,
-      isFalse,
-    );
-    rig.offer('callee');
-    rig.answer('callee');
-    final commit = rig.machine.receiveCommit(
-      id: 'callee',
-      revision: 1,
-      media: _video,
-    );
-    expect(_kinds(commit), contains(MediaSwitchEffectKind.sendAck));
-    expect(rig.machine.videoGatesOpen, isTrue);
-  });
+  test(
+    'callee requests but caller alone offers, and callee needs stable answer before commit',
+    () {
+      final rig = _Rig(caller: false);
+      rig.machine.request(
+        rig.req('callee', caller: false),
+        freshUpgradeAdmitted: true,
+      );
+      final accept = rig.machine.respond(
+        id: 'callee',
+        baseRevision: 0,
+        fromCaller: true,
+        response: MediaSwitchResponse.accept,
+      );
+      expect(
+        _kinds(accept),
+        isNot(contains(MediaSwitchEffectKind.createOffer)),
+      );
+      expect(
+        rig.machine
+            .receiveCommit(id: 'callee', revision: 1, media: _video)
+            .accepted,
+        isFalse,
+      );
+      rig.offer('callee');
+      rig.answer('callee');
+      final commit = rig.machine.receiveCommit(
+        id: 'callee',
+        revision: 1,
+        media: _video,
+      );
+      expect(_kinds(commit), contains(MediaSwitchEffectKind.sendAck));
+      expect(rig.machine.videoGatesOpen, isTrue);
+    },
+  );
 
-  test('caller glare winner gets fresh prompt, abandoned consent cannot authorize it', () {
-    final rig = _Rig(caller: false);
-    rig.machine.request(
-      rig.req('loser', caller: false),
-      freshUpgradeAdmitted: true,
-    );
-    final winner = rig.machine.request(
-      rig.req('winner'),
-      freshUpgradeAdmitted: true,
-    );
-    expect(_kinds(winner), contains(MediaSwitchEffectKind.prompt));
-    expect(_kinds(winner), isNot(contains(MediaSwitchEffectKind.sendAbort)));
-    expect(rig.machine.currentSwitchId, 'winner');
-    expect(rig.machine.selectedSwitchId, isNull);
-    expect(
-      rig.machine
-          .respond(
-            id: 'loser',
-            baseRevision: 0,
-            fromCaller: true,
-            response: MediaSwitchResponse.accept,
-          )
-          .accepted,
-      isFalse,
-    );
-    expect(
-      rig.machine
-          .descriptionApplied(
-            id: 'winner',
-            revision: 1,
-            media: _video,
-            description: MediaSwitchDescription.offer,
-            local: false,
-          )
-          .accepted,
-      isFalse,
-    );
-    expect(
-      rig.machine
-          .respond(
-            id: 'winner',
-            baseRevision: 0,
-            fromCaller: false,
-            response: MediaSwitchResponse.decline,
-          )
-          .accepted,
-      isTrue,
-    );
-    expect(rig.machine.settledMedia, _audio);
-    expect(rig.machine.settledRevision, 0);
-  });
+  test(
+    'caller glare winner gets fresh prompt, abandoned consent cannot authorize it',
+    () {
+      final rig = _Rig(caller: false);
+      rig.machine.request(
+        rig.req('loser', caller: false),
+        freshUpgradeAdmitted: true,
+      );
+      final winner = rig.machine.request(
+        rig.req('winner'),
+        freshUpgradeAdmitted: true,
+      );
+      expect(_kinds(winner), contains(MediaSwitchEffectKind.prompt));
+      expect(_kinds(winner), isNot(contains(MediaSwitchEffectKind.sendAbort)));
+      expect(rig.machine.currentSwitchId, 'winner');
+      expect(rig.machine.selectedSwitchId, isNull);
+      expect(
+        rig.machine
+            .respond(
+              id: 'loser',
+              baseRevision: 0,
+              fromCaller: true,
+              response: MediaSwitchResponse.accept,
+            )
+            .accepted,
+        isFalse,
+      );
+      expect(
+        rig.machine
+            .descriptionApplied(
+              id: 'winner',
+              revision: 1,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: false,
+            )
+            .accepted,
+        isFalse,
+      );
+      expect(
+        rig.machine
+            .respond(
+              id: 'winner',
+              baseRevision: 0,
+              fromCaller: false,
+              response: MediaSwitchResponse.decline,
+            )
+            .accepted,
+        isTrue,
+      );
+      expect(rig.machine.settledMedia, _audio);
+      expect(rig.machine.settledRevision, 0);
+    },
+  );
 
   test('selected transaction is busy regardless of requester role', () {
     final rig = _Rig(caller: false);
@@ -274,57 +527,60 @@ void main() {
     expect(rig.machine.selectedSwitchId, 'selected');
   });
 
-  test('duplicates and mismatched bindings do not extend deadlines or repeat capture', () {
-    final rig = _Rig();
-    final request = rig.req('id', deadline: 9000);
-    rig.machine.request(request, freshUpgradeAdmitted: true);
-    final deadline = rig.machine.stageDeadlineMs;
-    rig.now += 1000;
-    expect(
-      _kinds(rig.machine.request(request, freshUpgradeAdmitted: true)),
-      isNot(contains(MediaSwitchEffectKind.prompt)),
-    );
-    expect(rig.machine.stageDeadlineMs, deadline);
-    rig.machine.respond(
-      id: 'id',
-      baseRevision: 0,
-      fromCaller: false,
-      response: MediaSwitchResponse.accept,
-    );
-    final selectedDeadline = rig.machine.stageDeadlineMs;
-    rig.now += 1000;
-    rig.machine.respond(
-      id: 'id',
-      baseRevision: 0,
-      fromCaller: false,
-      response: MediaSwitchResponse.accept,
-    );
-    expect(rig.machine.stageDeadlineMs, selectedDeadline);
-    expect(
-      rig.machine
-          .descriptionApplied(
-            id: 'id',
-            revision: 2,
-            media: _video,
-            description: MediaSwitchDescription.offer,
-            local: true,
-          )
-          .accepted,
-      isFalse,
-    );
-    expect(
-      rig.machine
-          .descriptionApplied(
-            id: 'id',
-            revision: 1,
-            media: _audio,
-            description: MediaSwitchDescription.offer,
-            local: true,
-          )
-          .accepted,
-      isFalse,
-    );
-  });
+  test(
+    'duplicates and mismatched bindings do not extend deadlines or repeat capture',
+    () {
+      final rig = _Rig();
+      final request = rig.req('id', deadline: 9000);
+      rig.machine.request(request, freshUpgradeAdmitted: true);
+      final deadline = rig.machine.stageDeadlineMs;
+      rig.now += 1000;
+      expect(
+        _kinds(rig.machine.request(request, freshUpgradeAdmitted: true)),
+        isNot(contains(MediaSwitchEffectKind.prompt)),
+      );
+      expect(rig.machine.stageDeadlineMs, deadline);
+      rig.machine.respond(
+        id: 'id',
+        baseRevision: 0,
+        fromCaller: false,
+        response: MediaSwitchResponse.accept,
+      );
+      final selectedDeadline = rig.machine.stageDeadlineMs;
+      rig.now += 1000;
+      rig.machine.respond(
+        id: 'id',
+        baseRevision: 0,
+        fromCaller: false,
+        response: MediaSwitchResponse.accept,
+      );
+      expect(rig.machine.stageDeadlineMs, selectedDeadline);
+      expect(
+        rig.machine
+            .descriptionApplied(
+              id: 'id',
+              revision: 2,
+              media: _video,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isFalse,
+      );
+      expect(
+        rig.machine
+            .descriptionApplied(
+              id: 'id',
+              revision: 1,
+              media: _audio,
+              description: MediaSwitchDescription.offer,
+              local: true,
+            )
+            .accepted,
+        isFalse,
+      );
+    },
+  );
 
   test(
     'decision expiry is exact, does not consume revision and cannot be renewed',
@@ -385,37 +641,42 @@ void main() {
     );
   });
 
-  test('pending-offer abort rolls back, stable-answer abort repairs once without rollback', () {
-    final pending = _Rig();
-    pending.select('pending');
-    pending.offer('pending');
-    final rollback = pending.machine.abort(
-      id: 'pending',
-      baseRevision: 0,
-      revision: 1,
-    );
-    expect(_kinds(rollback), contains(MediaSwitchEffectKind.rollbackOffer));
-    final stable = _Rig();
-    stable.select('stable');
-    stable.offer('stable');
-    stable.answer('stable');
-    final repair = stable.machine.abort(
-      id: 'stable',
-      baseRevision: 0,
-      revision: 1,
-    );
-    expect(_kinds(repair), contains(MediaSwitchEffectKind.repairAudio));
-    expect(
-      _kinds(repair),
-      isNot(contains(MediaSwitchEffectKind.rollbackOffer)),
-    );
-    expect(
-      _kinds(stable.machine.abort(id: 'stable', baseRevision: 0, revision: 1)),
-      isNot(contains(MediaSwitchEffectKind.repairAudio)),
-    );
-    expect(stable.machine.settledRevision, 1);
-    expect(stable.machine.settledMedia, _audio);
-  });
+  test(
+    'pending-offer abort rolls back, stable-answer abort repairs once without rollback',
+    () {
+      final pending = _Rig();
+      pending.select('pending');
+      pending.offer('pending');
+      final rollback = pending.machine.abort(
+        id: 'pending',
+        baseRevision: 0,
+        revision: 1,
+      );
+      expect(_kinds(rollback), contains(MediaSwitchEffectKind.rollbackOffer));
+      final stable = _Rig();
+      stable.select('stable');
+      stable.offer('stable');
+      stable.answer('stable');
+      final repair = stable.machine.abort(
+        id: 'stable',
+        baseRevision: 0,
+        revision: 1,
+      );
+      expect(_kinds(repair), contains(MediaSwitchEffectKind.repairAudio));
+      expect(
+        _kinds(repair),
+        isNot(contains(MediaSwitchEffectKind.rollbackOffer)),
+      );
+      expect(
+        _kinds(
+          stable.machine.abort(id: 'stable', baseRevision: 0, revision: 1),
+        ),
+        isNot(contains(MediaSwitchEffectKind.repairAudio)),
+      );
+      expect(stable.machine.settledRevision, 1);
+      expect(stable.machine.settledMedia, _audio);
+    },
+  );
 
   test('abort overrides commit and duplicate ACK never reopens video', () {
     final rig = _Rig();
@@ -472,24 +733,27 @@ void main() {
     );
   });
 
-  test('local audio stop wins during upgrade and repair failure never restores camera', () {
-    final rig = _Rig();
-    rig.select('upgrade');
-    rig.offer('upgrade');
-    rig.answer('upgrade');
-    final stop = rig.machine.request(rig.req('stop', target: _audio));
-    expect(_kinds(stop), contains(MediaSwitchEffectKind.closeVideo));
-    expect(rig.machine.videoGatesOpen, isFalse);
-    rig.machine.repairCompleted(id: 'upgrade', success: false);
-    expect(rig.machine.switchingDisabled, isTrue);
-    expect(rig.machine.settledMedia, _audio);
-    expect(
-      rig.machine
-          .receiveAck(id: 'upgrade', revision: 1, media: _video)
-          .accepted,
-      isFalse,
-    );
-  });
+  test(
+    'local audio stop wins during upgrade and repair failure never restores camera',
+    () {
+      final rig = _Rig();
+      rig.select('upgrade');
+      rig.offer('upgrade');
+      rig.answer('upgrade');
+      final stop = rig.machine.request(rig.req('stop', target: _audio));
+      expect(_kinds(stop), contains(MediaSwitchEffectKind.closeVideo));
+      expect(rig.machine.videoGatesOpen, isFalse);
+      rig.machine.repairCompleted(id: 'upgrade', success: false);
+      expect(rig.machine.switchingDisabled, isTrue);
+      expect(rig.machine.settledMedia, _audio);
+      expect(
+        rig.machine
+            .receiveAck(id: 'upgrade', revision: 1, media: _video)
+            .accepted,
+        isFalse,
+      );
+    },
+  );
 
   test(
     'repair deadline is bounded and stale completion cannot unlock switching',
@@ -509,38 +773,41 @@ void main() {
     },
   );
 
-  test('reconnect replays terminal result before admission, stale reconciliation ignored', () {
-    final rig = _Rig();
-    rig.select('aborted');
-    rig.offer('aborted');
-    rig.answer('aborted');
-    rig.machine.abort(id: 'aborted', baseRevision: 0, revision: 1);
-    rig.machine.repairCompleted(id: 'aborted', success: true);
-    expect(
-      rig.machine
-          .request(rig.req('blocked', base: 1), freshUpgradeAdmitted: true)
-          .accepted,
-      isFalse,
-    );
-    expect(
-      _kinds(rig.machine.reconnect()),
-      contains(MediaSwitchEffectKind.replayRecorded),
-    );
-    expect(
-      rig.machine
-          .reconciliationCompleted(id: 'stale', delivered: true)
-          .accepted,
-      isFalse,
-    );
-    expect(rig.machine.requiresReconciliation, isTrue);
-    rig.machine.reconciliationCompleted(id: 'aborted', delivered: true);
-    expect(
-      rig.machine
-          .request(rig.req('fresh', base: 1), freshUpgradeAdmitted: true)
-          .accepted,
-      isTrue,
-    );
-  });
+  test(
+    'reconnect replays terminal result before admission, stale reconciliation ignored',
+    () {
+      final rig = _Rig();
+      rig.select('aborted');
+      rig.offer('aborted');
+      rig.answer('aborted');
+      rig.machine.abort(id: 'aborted', baseRevision: 0, revision: 1);
+      rig.machine.repairCompleted(id: 'aborted', success: true);
+      expect(
+        rig.machine
+            .request(rig.req('blocked', base: 1), freshUpgradeAdmitted: true)
+            .accepted,
+        isFalse,
+      );
+      expect(
+        _kinds(rig.machine.reconnect()),
+        contains(MediaSwitchEffectKind.replayRecorded),
+      );
+      expect(
+        rig.machine
+            .reconciliationCompleted(id: 'stale', delivered: true)
+            .accepted,
+        isFalse,
+      );
+      expect(rig.machine.requiresReconciliation, isTrue);
+      rig.machine.reconciliationCompleted(id: 'aborted', delivered: true);
+      expect(
+        rig.machine
+            .request(rig.req('fresh', base: 1), freshUpgradeAdmitted: true)
+            .accepted,
+        isTrue,
+      );
+    },
+  );
 
   test('terminal state dominates all late work', () {
     final rig = _Rig();
@@ -565,48 +832,68 @@ void main() {
       isFalse,
     );
   });
-  test('pending rollback finishes before one repair with the original repair deadline', () {
-    final rig = _Rig();
-    rig.select('pending');
-    rig.offer('pending');
-    final abort = rig.machine.abort(
-      id: 'pending',
-      baseRevision: 0,
-      revision: 1,
-    );
-    expect(_kinds(abort), contains(MediaSwitchEffectKind.rollbackOffer));
-    expect(_kinds(abort), isNot(contains(MediaSwitchEffectKind.repairAudio)));
-    rig.now += 14000;
-    final repair = rig.machine.rollbackCompleted(id: 'pending', success: true);
-    expect(_kinds(repair), contains(MediaSwitchEffectKind.repairAudio));
-    expect(
-      _kinds(rig.machine.rollbackCompleted(id: 'pending', success: true)),
-      isEmpty,
-    );
-    rig.now += 1000;
-    expect(
-      _kinds(rig.machine.tick()),
-      contains(MediaSwitchEffectKind.disableSwitching),
-    );
-    expect(rig.machine.settledMedia, _audio);
-  });
+  test(
+    'pending rollback finishes before one repair with the original repair deadline',
+    () {
+      final rig = _Rig();
+      rig.select('pending');
+      rig.offer('pending');
+      final abort = rig.machine.abort(
+        id: 'pending',
+        baseRevision: 0,
+        revision: 1,
+      );
+      expect(_kinds(abort), contains(MediaSwitchEffectKind.rollbackOffer));
+      expect(_kinds(abort), isNot(contains(MediaSwitchEffectKind.repairAudio)));
+      rig.now += 14000;
+      final repair = rig.machine.rollbackCompleted(
+        id: 'pending',
+        success: true,
+      );
+      expect(_kinds(repair), contains(MediaSwitchEffectKind.repairAudio));
+      expect(
+        _kinds(rig.machine.rollbackCompleted(id: 'pending', success: true)),
+        isEmpty,
+      );
+      rig.now += 1000;
+      expect(
+        _kinds(rig.machine.tick()),
+        contains(MediaSwitchEffectKind.disableSwitching),
+      );
+      expect(rig.machine.settledMedia, _audio);
+    },
+  );
 
-  test('callee rolls back locally then awaits caller repair without creating an offer', () {
-    final rig = _Rig(caller: false);
-    rig.select('callee');
-    rig.offer('callee');
-    rig.machine.abort(id: 'callee', baseRevision: 0, revision: 1, remote: true);
-    final repaired = rig.machine.rollbackCompleted(id: 'callee', success: true);
-    expect(_kinds(repaired), contains(MediaSwitchEffectKind.awaitAudioRepair));
-    expect(
-      _kinds(repaired),
-      isNot(contains(MediaSwitchEffectKind.repairAudio)),
-    );
-    expect(
-      _kinds(repaired),
-      isNot(contains(MediaSwitchEffectKind.createOffer)),
-    );
-  });
+  test(
+    'callee rolls back locally then awaits caller repair without creating an offer',
+    () {
+      final rig = _Rig(caller: false);
+      rig.select('callee');
+      rig.offer('callee');
+      rig.machine.abort(
+        id: 'callee',
+        baseRevision: 0,
+        revision: 1,
+        remote: true,
+      );
+      final repaired = rig.machine.rollbackCompleted(
+        id: 'callee',
+        success: true,
+      );
+      expect(
+        _kinds(repaired),
+        contains(MediaSwitchEffectKind.awaitAudioRepair),
+      );
+      expect(
+        _kinds(repaired),
+        isNot(contains(MediaSwitchEffectKind.repairAudio)),
+      );
+      expect(
+        _kinds(repaired),
+        isNot(contains(MediaSwitchEffectKind.createOffer)),
+      );
+    },
+  );
 
   test('duplicate commit replays ACK without another gate opening', () {
     final rig = _Rig(caller: false);
