@@ -172,6 +172,9 @@ final class CallSignalingContextStore
   ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) =>
       _contexts[callId]?.admittedEndpoint;
 
+  /// Immutable initial invitation expiry, never refreshed by ringing/accept.
+  int? originalV2InviteExpiresAtMs(CallId callId) => null;
+
   /// The immutable prepared invite already owns its first sender sequence.
   /// Fresh capability/permission admission remains the caller's responsibility.
   void storeOutgoingV2({

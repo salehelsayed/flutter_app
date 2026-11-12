@@ -106,6 +106,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     this.mediaReadinessPollInterval = const Duration(milliseconds: 100),
     this.maxMediaReadinessSamples,
     this.onFailureObservation,
+    this.consumeLocalCandidate,
     double Function()? retryJitter,
   }) : _mediaReadinessTimerScheduler =
            mediaReadinessTimerScheduler ?? const DartCallTimerScheduler(),
@@ -145,6 +146,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   final int maxPendingLocalCandidates;
   final int maxPendingRemoteCandidates;
   final int maxLocalCandidateBatchSize;
+  /// Optional typed protocol owner. True consumes the candidate exactly once;
+  /// false preserves the existing v1 queue and sender.
+  final bool Function(CallSessionSnapshot, CallIceCandidate)?
+  consumeLocalCandidate;
   final Duration mediaReadinessPollInterval;
 
   /// Optional fail-safe for isolated owners without a canonical setup timer.
