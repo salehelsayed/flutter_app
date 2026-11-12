@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -3053,7 +3052,8 @@ class AppLocalizationsDe extends AppLocalizations {
       locale: localeName,
       other:
           '$count Dateien übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
-      one: '1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
+      one:
+          '1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
     );
     return '$_temp0';
   }
@@ -4438,7 +4438,8 @@ class AppLocalizationsDe extends AppLocalizations {
       locale: localeName,
       other:
           '$count Ereignisse wurden verworfen. Berichte sind möglicherweise unvollständig.',
-      one: '1 Ereignis wurde verworfen. Berichte sind möglicherweise unvollständig.',
+      one:
+          '1 Ereignis wurde verworfen. Berichte sind möglicherweise unvollständig.',
     );
     return '$_temp0';
   }
