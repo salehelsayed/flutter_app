@@ -636,6 +636,7 @@
     "workflow": {
       "kind": "python",
       "paths": [
+        "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
@@ -5696,6 +5697,9 @@
     {
       "id": "workflow",
       "patterns": [
+        "scripts/flutter_native_asset_lock.py",
+        "scripts/test/flutter_native_asset_lock_test.py",
+        "scripts/test/bl20_native_asset_concurrency_proof.py",
         "scripts/mknoon_checks.py",
         "scripts/testing_inventory.py",
         "scripts/test/mknoon_checks_test.py",
