@@ -2,6 +2,8 @@ import 'dart:async';
 
 import '../domain/call_id.dart';
 import '../domain/call_audio_output_device.dart';
+import '../domain/call_engine.dart' show CallVideoView;
+import '../domain/call_media.dart' show CallMediaKind;
 import '../domain/call_session_snapshot.dart';
 import '../presentation/call_video_presentation.dart';
 import 'call_audio_controller.dart';
@@ -14,10 +16,17 @@ final class ForegroundCallVideoProjection {
   const ForegroundCallVideoProjection({
     required this.generation,
     required this.presentation,
+    this.localView,
+    this.remoteView,
   });
 
   final int generation;
   final CallVideoPresentation presentation;
+
+  /// Current opaque texture metadata, published by the canonical media owner.
+  /// Null means no current view; presentation never owns a native renderer.
+  final CallVideoView? localView;
+  final CallVideoView? remoteView;
 }
 
 /// Canonical call and audio truth exposed together to foreground presentation.
@@ -98,6 +107,19 @@ abstract interface class ForegroundCallVideoCapability {
     CallId callId, {
     required int generation,
     required CallVideoIntent intent,
+  });
+}
+
+/// Optional explicit incoming-media choice, separate from ordinary audio Answer.
+///
+/// The root revalidates the incoming offer, call and generation, then owns
+/// permission and media effects. This choice alone never grants camera capture.
+/// Existing/native [ForegroundCallCapability.answer] remains audio-only.
+abstract interface class ForegroundCallMediaAnswerCapability {
+  Future<ForegroundCallActionResult> answerWithMedia(
+    CallId callId, {
+    required int generation,
+    required CallMediaKind acceptedMedia,
   });
 }
 
