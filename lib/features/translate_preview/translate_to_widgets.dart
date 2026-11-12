@@ -210,31 +210,43 @@ class ChatTranslateAction extends StatelessWidget {
         listenable: prefs.chats,
         builder: (context, _) {
           final on = prefs.showsTranslationIn(peerId);
-          return IconButton(
-            tooltip: l10n.translate_header_tooltip,
-            onPressed: () => menu.isOpen ? menu.close() : menu.open(),
-            icon: Stack(
+          void activate() => menu.isOpen ? menu.close() : menu.open();
+          return Semantics(
+            container: true,
+            identifier: 'chat_translation_button',
+            button: true,
+            enabled: true,
+            label: l10n.translate_header_tooltip,
+            onTap: activate,
+            excludeSemantics: true,
+            child: Stack(
               clipBehavior: Clip.none,
               children: [
-                const Icon(Icons.translate),
+                IconButton(
+                  tooltip: l10n.translate_header_tooltip,
+                  onPressed: activate,
+                  icon: const Icon(Icons.translate),
+                  iconSize: 22,
+                  color: on ? colors.accent : colors.iconSecondary,
+                  style: IconButton.styleFrom(fixedSize: const Size.square(44)),
+                ),
                 if (on)
                   PositionedDirectional(
-                    top: -2,
-                    end: -3,
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: colors.accent,
-                        shape: BoxShape.circle,
+                    top: 9,
+                    end: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: colors.accent,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
                   ),
               ],
             ),
-            iconSize: 22,
-            color: on ? colors.accent : colors.iconSecondary,
-            style: IconButton.styleFrom(fixedSize: const Size.square(44)),
           );
         },
       ),

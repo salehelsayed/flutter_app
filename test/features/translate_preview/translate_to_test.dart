@@ -392,7 +392,7 @@ void main() {
                     widget.constraints?.maxWidth == 7,
               ),
             );
-            expect(tester.getSize(button), const Size.square(44));
+            expect(tester.getSize(button), const Size.square(48));
             expect(tester.widget<IconButton>(button).iconSize, 22);
             expect(
               tester.widget<IconButton>(button).color,
