@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:collection';
 
 import '../domain/call_id.dart';
 
 /// An explicitly transferred video resource, never an audio or call bundle.
+///
+/// [resource] is its stable ownership identity. A current or retiring resource
+/// cannot be transferred again; capture and renderer handles have distinct
+/// identities. [dispose] must release only this video resource.
 final class CallVideoResource {
   CallVideoResource({
     required this.callId,
@@ -16,6 +21,7 @@ final class CallVideoResource {
 }
 
 /// Preparation is asynchronous; these exact-binding commits are synchronous.
+/// Detach must affect only this binding, even after a replacement has attached.
 final class CallVideoRendererBinding {
   CallVideoRendererBinding({
     required this.resource,
@@ -57,30 +63,39 @@ final class CallVideoRendererIntent {
 }
 
 /// Executes granted video intents without owning consent, audio, or the engine.
+///
+/// The caller supplies a fresh grant after its consent/permission checks and
+/// opens its send gate only while [captureFor] still returns that capture. This
+/// owner only closes the gate. Off/pause uses [stopCapture]; abort/audio fallback
+/// uses [retireVideo]; terminal teardown uses [close]. Failed cleanup remains
+/// owned until an explicit [retryCleanup] succeeds, including after close.
 final class CallVideoMediaOwner {
   CallVideoMediaOwner({
     required this.callId,
     required void Function() closeLocalVideoSendGate,
   }) : _closeLocalVideoSendGate = closeLocalVideoSendGate {
-    _closeLocalVideoSendGate();
+    _closeGate();
   }
 
   final CallId callId;
   final void Function() _closeLocalVideoSendGate;
   final Map<Object, CallVideoRendererIntent> _rendererIntents = {};
   final Map<Object, CallVideoRendererBinding> _renderers = {};
-  final List<Future<bool>> _cleanupAttempts = [];
+  final Map<Object, _VideoCleanup> _cleanup = HashMap.identity();
+  final Set<Object> _released = HashSet.identity();
   CallVideoCaptureIntent? _captureIntent;
   CallVideoResource? _capture;
   int _captureGeneration = 0;
   int _rendererGeneration = 0;
   bool _closed = false;
+  bool _gateCloseFailed = false;
 
-  bool get hasPendingCleanup => false;
+  bool get hasPendingCleanup => _gateCloseFailed || _cleanup.isNotEmpty;
 
   CallVideoCaptureIntent? beginGrantedCapture(CallId expectedCallId) {
     if (_closed || expectedCallId != callId) return null;
     unawaited(stopCapture().then<void>((_) {}));
+    if (_closed || _gateCloseFailed) return null;
     return _captureIntent = CallVideoCaptureIntent._(
       this,
       callId,
@@ -92,31 +107,46 @@ final class CallVideoMediaOwner {
     CallVideoCaptureIntent intent,
     FutureOr<CallVideoResource> Function() acquire,
   ) {
-    if (_closed ||
-        !identical(intent._owner, this) ||
-        !identical(_captureIntent, intent)) {
-      return Future<bool>.value(false);
-    }
-    return intent._attempt ??= _acquire(acquire);
+    if (!_isCurrentCapture(intent)) return Future<bool>.value(false);
+    final pending = intent._attempt;
+    if (pending != null) return pending;
+    final result = Completer<bool>();
+    intent._attempt = result.future;
+    unawaited(_acquire(intent, acquire).then<void>(result.complete));
+    return result.future;
   }
 
-  Future<bool> _acquire(FutureOr<CallVideoResource> Function() acquire) async {
+  Future<bool> _acquire(
+    CallVideoCaptureIntent intent,
+    FutureOr<CallVideoResource> Function() acquire,
+  ) async {
     try {
       final resource = await Future<CallVideoResource>.sync(acquire);
       if (resource.callId != callId) return false;
+      if (!_isCurrentCapture(intent) || !_canAdopt(resource)) {
+        _queueCleanup(resource);
+        await _drainCleanup();
+        return false;
+      }
       _capture = resource;
       return true;
     } catch (_) {
+      if (_isCurrentCapture(intent)) {
+        unawaited(stopCapture().then<void>((_) {}));
+      }
       return false;
     }
   }
 
   CallVideoResource? captureFor(CallVideoCaptureIntent intent) =>
+      _isCurrentCapture(intent) ? _capture : null;
+
+  bool _isCurrentCapture(CallVideoCaptureIntent intent) =>
       !_closed &&
-          identical(intent._owner, this) &&
-          identical(_captureIntent, intent)
-      ? _capture
-      : null;
+      !_gateCloseFailed &&
+      intent.callId == callId &&
+      identical(intent._owner, this) &&
+      identical(_captureIntent, intent);
 
   CallVideoRendererIntent? beginRenderer(
     CallId expectedCallId,
@@ -126,6 +156,10 @@ final class CallVideoMediaOwner {
     if (_closed || expectedCallId != callId) return null;
     if (captureIntent != null && captureFor(captureIntent) == null) return null;
     unawaited(detachRenderer(slot).then<void>((_) {}));
+    if (_closed ||
+        (captureIntent != null && captureFor(captureIntent) == null)) {
+      return null;
+    }
     return _rendererIntents[slot] = CallVideoRendererIntent._(
       this,
       callId,
@@ -139,66 +173,101 @@ final class CallVideoMediaOwner {
     CallVideoRendererIntent intent,
     FutureOr<CallVideoRendererBinding> Function() prepare,
   ) {
-    if (_closed ||
-        !identical(intent._owner, this) ||
-        !identical(_rendererIntents[intent.slot], intent)) {
-      return Future<bool>.value(false);
-    }
-    return intent._attempt ??= _attach(intent, prepare);
+    if (!_isCurrentRenderer(intent)) return Future<bool>.value(false);
+    final pending = intent._attempt;
+    if (pending != null) return pending;
+    final result = Completer<bool>();
+    intent._attempt = result.future;
+    unawaited(_attach(intent, prepare).then<void>(result.complete));
+    return result.future;
   }
 
   Future<bool> _attach(
     CallVideoRendererIntent intent,
     FutureOr<CallVideoRendererBinding> Function() prepare,
   ) async {
+    CallVideoRendererBinding? binding;
     try {
-      final binding = await Future<CallVideoRendererBinding>.sync(prepare);
+      binding = await Future<CallVideoRendererBinding>.sync(prepare);
       if (binding.resource.callId != callId) return false;
+      if (!_isCurrentRenderer(intent) || !_canAdopt(binding.resource)) {
+        _queueCleanup(binding.resource, binding: binding);
+        await _drainCleanup();
+        return false;
+      }
+      // Even a throwing attach may have changed the native binding.
       binding._attached = true;
       binding._attach();
+      if (!_isCurrentRenderer(intent)) {
+        _queueCleanup(binding.resource, binding: binding);
+        await _drainCleanup();
+        return false;
+      }
       _renderers[intent.slot] = binding;
       return true;
     } catch (_) {
+      if (identical(_rendererIntents[intent.slot], intent)) {
+        _rendererIntents.remove(intent.slot);
+      }
+      if (binding != null) {
+        _queueCleanup(binding.resource, binding: binding);
+        await _drainCleanup();
+      }
       return false;
     }
   }
 
   CallVideoRendererBinding? rendererFor(CallVideoRendererIntent intent) {
-    if (_closed ||
-        !identical(intent._owner, this) ||
-        !identical(_rendererIntents[intent.slot], intent)) {
-      return null;
-    }
-    if (intent.captureIntent != null &&
-        captureFor(intent.captureIntent!) == null) {
-      return null;
-    }
-    return _renderers[intent.slot];
+    return _isCurrentRenderer(intent) ? _renderers[intent.slot] : null;
   }
 
-  Future<bool> stopCapture() async {
+  bool _isCurrentRenderer(CallVideoRendererIntent intent) =>
+      !_closed &&
+      intent.callId == callId &&
+      identical(intent._owner, this) &&
+      identical(_rendererIntents[intent.slot], intent) &&
+      (intent.captureIntent == null ||
+          captureFor(intent.captureIntent!) != null);
+
+  Future<bool> stopCapture() {
     final resource = _capture;
-    final okay = resource == null ? true : await _release(resource);
     _capture = null;
-    _closeLocalVideoSendGate();
-    return okay;
-  }
-
-  Future<bool> detachRenderer(Object slot) async {
-    final binding = _renderers[slot];
-    final okay = binding == null
-        ? true
-        : await _release(binding.resource, binding: binding);
-    _renderers.remove(slot);
-    return okay;
-  }
-
-  Future<bool> retireVideo() async {
-    var okay = await stopCapture();
-    for (final slot in _renderers.keys.toList()) {
-      if (!await detachRenderer(slot)) okay = false;
+    _captureIntent = null;
+    final previews = <CallVideoRendererBinding>[];
+    for (final entry in _rendererIntents.entries.toList()) {
+      if (entry.value.captureIntent == null) continue;
+      _rendererIntents.remove(entry.key);
+      final binding = _renderers.remove(entry.key);
+      if (binding != null) previews.add(binding);
     }
-    return okay;
+    _closeGate();
+    for (final binding in previews) {
+      _queueCleanup(binding.resource, binding: binding);
+    }
+    if (resource != null) _queueCleanup(resource);
+    return _drainCleanup();
+  }
+
+  Future<bool> detachRenderer(Object slot) {
+    _rendererIntents.remove(slot);
+    final binding = _renderers.remove(slot);
+    if (binding != null) _queueCleanup(binding.resource, binding: binding);
+    return _drainCleanup();
+  }
+
+  Future<bool> retireVideo() {
+    final capture = _capture;
+    final renderers = _renderers.values.toList();
+    _capture = null;
+    _captureIntent = null;
+    _rendererIntents.clear();
+    _renderers.clear();
+    _closeGate();
+    for (final binding in renderers) {
+      _queueCleanup(binding.resource, binding: binding);
+    }
+    if (capture != null) _queueCleanup(capture);
+    return _drainCleanup();
   }
 
   Future<bool> close() {
@@ -206,26 +275,109 @@ final class CallVideoMediaOwner {
     return retireVideo();
   }
 
-  Future<bool> retryCleanup() async =>
-      (await Future.wait(_cleanupAttempts)).every((okay) => okay);
+  Future<bool> retryCleanup() {
+    if (_gateCloseFailed) _closeGate();
+    return _drainCleanup(retry: true);
+  }
 
-  Future<bool> _release(
+  void _closeGate() {
+    try {
+      _closeLocalVideoSendGate();
+      _gateCloseFailed = false;
+    } catch (_) {
+      _gateCloseFailed = true;
+    }
+  }
+
+  bool _isOwned(Object resource) =>
+      identical(_capture?.resource, resource) ||
+      _renderers.values.any(
+        (binding) => identical(binding.resource.resource, resource),
+      );
+
+  bool _canAdopt(CallVideoResource resource) =>
+      !_isOwned(resource.resource) &&
+      !_cleanup.containsKey(resource.resource) &&
+      !_released.contains(resource.resource);
+
+  void _queueCleanup(
     CallVideoResource resource, {
     CallVideoRendererBinding? binding,
   }) {
-    final attempt = Future<bool>.sync(() async {
-      try {
-        if (binding != null && binding._attached) {
-          binding._detach();
-          binding._attached = false;
+    // A late alias does not transfer ownership away from a current resource.
+    if (resource.callId != callId ||
+        _isOwned(resource.resource) ||
+        _released.contains(resource.resource)) {
+      return;
+    }
+    _cleanup.putIfAbsent(
+      resource.resource,
+      () => _VideoCleanup(resource, binding),
+    );
+  }
+
+  Future<bool> _drainCleanup({bool retry = false}) async {
+    final results = await Future.wait(
+      _cleanup.entries.toList().map((entry) async {
+        final okay = await entry.value.attempt(retry: retry);
+        if (okay && identical(_cleanup[entry.key], entry.value)) {
+          _cleanup.remove(entry.key);
+          _released.add(entry.key);
         }
-        await Future<void>.sync(resource._dispose);
-        return true;
+        return okay;
+      }),
+    );
+    return !_gateCloseFailed && results.every((okay) => okay);
+  }
+}
+
+/// One retired handle, with successful cleanup stages memoized independently.
+final class _VideoCleanup {
+  _VideoCleanup(this.resource, this.binding)
+    : _detached = binding == null || !binding._attached;
+
+  final CallVideoResource resource;
+  final CallVideoRendererBinding? binding;
+  bool _detached;
+  bool _disposed = false;
+  bool _attempted = false;
+  Future<bool>? _pending;
+
+  Future<bool> attempt({required bool retry}) {
+    if (_detached && _disposed) return Future<bool>.value(true);
+    final pending = _pending;
+    if (pending != null) return pending;
+    if (_attempted && !retry) return Future<bool>.value(false);
+    _attempted = true;
+    final result = Completer<bool>();
+    _pending = result.future;
+    unawaited(
+      _run().then<void>((okay) {
+        _pending = null;
+        result.complete(okay);
+      }),
+    );
+    return result.future;
+  }
+
+  Future<bool> _run() async {
+    if (!_detached) {
+      try {
+        binding!._detach();
+        binding!._attached = false;
+        _detached = true;
       } catch (_) {
-        return false;
+        // Retain detach for an explicit retry, but still release the resource.
       }
-    });
-    _cleanupAttempts.add(attempt);
-    return attempt;
+    }
+    if (!_disposed) {
+      try {
+        await Future<void>.sync(resource._dispose);
+        _disposed = true;
+      } catch (_) {
+        // A failed dispose remains owned; successful stages never repeat.
+      }
+    }
+    return _detached && _disposed;
   }
 }
