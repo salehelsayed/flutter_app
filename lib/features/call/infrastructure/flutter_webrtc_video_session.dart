@@ -40,7 +40,11 @@ final class _Negotiation implements CallVideoNegotiation {
 
 /// Concrete optional resources on an existing audio peer. No method owns the
 /// microphone, audio route, ICE generation, or the peer connection lifetime.
-final class FlutterWebRtcVideoSession implements CallVideoSession {
+final class FlutterWebRtcVideoSession
+    implements
+        CallVideoSession,
+        CallVideoPresentationSource,
+        CallVideoCameraSwitch {
   FlutterWebRtcVideoSession({
     required this.callId,
     required this.localIsCaller,
@@ -96,6 +100,91 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
   bool _receiveOpen = false;
   int _operations = 0;
   Future<void> _tail = Future<void>.value();
+
+  final _presentation = StreamController<CallVideoPresentationState>.broadcast(
+    sync: true,
+  );
+  final _pendingPresentation = <CallVideoPresentationState>[];
+  bool _publishing = false;
+  final _lastPresentation =
+      <CallVideoRendererSlot, CallVideoPresentationState>{};
+
+  @override
+  Stream<CallVideoPresentationState> get presentationChanges =>
+      _presentation.stream;
+
+  @override
+  CallVideoPresentationState presentationFor(CallVideoRendererSlot slot) {
+    final token = _current;
+    final active =
+        token != null &&
+        _currentToken(token) &&
+        token.committed &&
+        token.media == CallMediaKind.video;
+    final capture = _captureIntent == null
+        ? null
+        : _owner.captureFor(_captureIntent!)?.resource as _Capture?;
+    final hasTrack =
+        active &&
+        (slot == CallVideoRendererSlot.remote
+            ? _receiveOpen && _remoteTrack != null && _remoteStream != null
+            : capture != null &&
+                  capture.tracks.length == 1 &&
+                  capture.tracks.single.enabled);
+    final native = hasTrack ? _views[slot]?.native : null;
+    final id = native?.textureId;
+    return CallVideoPresentationState(
+      callId: callId,
+      negotiation: token != null && _currentToken(token) ? token : null,
+      slot: slot,
+      hasTrack: hasTrack,
+      view: id == null
+          ? null
+          : CallVideoView(
+              textureId: id,
+              width: native!.videoWidth,
+              height: native.videoHeight,
+            ),
+    );
+  }
+
+  void _publish(CallVideoRendererSlot slot) {
+    if (_presentation.isClosed) return;
+    final state = presentationFor(slot);
+    final last = _lastPresentation[slot];
+    if (last != null &&
+        identical(last.negotiation, state.negotiation) &&
+        last.hasTrack == state.hasTrack &&
+        last.view?.textureId == state.view?.textureId &&
+        last.view?.width == state.view?.width &&
+        last.view?.height == state.view?.height) {
+      return;
+    }
+    _lastPresentation[slot] = state;
+    _pendingPresentation.add(state);
+    if (_publishing) return;
+    _publishing = true;
+    try {
+      while (_pendingPresentation.isNotEmpty && !_presentation.isClosed) {
+        _presentation.add(_pendingPresentation.removeAt(0));
+      }
+    } finally {
+      _publishing = false;
+    }
+  }
+
+  void _invalidate(CallVideoRendererSlot slot) {
+    final renderer = _views.remove(slot);
+    renderer?.native.onResize = null;
+    renderer?.native.onFirstFrameRendered = null;
+    _publish(slot);
+  }
+
+  void _invalidateAll() {
+    for (final slot in CallVideoRendererSlot.values) {
+      _invalidate(slot);
+    }
+  }
 
   bool _allowed() {
     try {
@@ -175,6 +264,7 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     if (!_currentGrant(canApply)) _reject();
     previous?.retired = true;
     _captureIntent = null;
+    _invalidateAll();
     unawaited(_owner.retireVideo());
     _closeSendGate();
     _receiveOpen = false;
@@ -349,6 +439,7 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     token.committed = true;
     _receiveOpen = token.media == CallMediaKind.video;
     _remoteTrack?.enabled = _receiveOpen;
+    _publish(CallVideoRendererSlot.remote);
   });
 
   @override
@@ -358,6 +449,7 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     }
     raw.retired = true;
     _captureIntent = null;
+    _invalidateAll();
     unawaited(_owner.retireVideo());
     _closeSendGate();
     _receiveOpen = false;
@@ -455,13 +547,49 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
           return false;
         }
         capture.tracks.single.enabled = true;
-        return true;
+        _publish(CallVideoRendererSlot.local);
+        return _cameraAllowed(raw, grant) && identical(_captureIntent, intent);
       });
     } catch (_) {
       return false;
     } finally {
       if ((!_cameraAllowed(raw, grant) || !capture.tracks.single.enabled) &&
           identical(_captureIntent, intent)) {
+        await stopLocalCamera();
+      }
+    }
+  }
+
+  @override
+  Future<bool> switchCamera(
+    CallVideoNegotiation raw,
+    CallLocalCameraGrant grant,
+  ) async {
+    if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) return false;
+    final intent = _captureIntent;
+    if (intent == null) return false;
+    final capture = _owner.captureFor(intent)?.resource as _Capture?;
+    if (capture == null ||
+        capture.tracks.length != 1 ||
+        capture.tracks.single.kind != 'video') {
+      return false;
+    }
+    bool valid() =>
+        _cameraAllowed(raw, grant) &&
+        identical(_captureIntent, intent) &&
+        identical(_owner.captureFor(intent)?.resource, capture) &&
+        capture.tracks.single.enabled;
+    try {
+      return await _serial(() async {
+        if (!valid()) return false;
+        // Native bool denotes front/rear facing, not success. Completion is success.
+        await webrtc.Helper.switchCamera(capture.tracks.single);
+        return valid();
+      });
+    } catch (_) {
+      return false;
+    } finally {
+      if (!_cameraAllowed(raw, grant) && identical(_captureIntent, intent)) {
         await stopLocalCamera();
       }
     }
@@ -476,6 +604,8 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
   @override
   Future<bool> stopLocalCamera() {
     _captureIntent = null;
+    _closeSendGate();
+    _invalidate(CallVideoRendererSlot.local);
     return _owner.stopCapture();
   }
 
@@ -524,6 +654,7 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
         (slot == CallVideoRendererSlot.remote && !_receiveOpen)) {
       return null;
     }
+    _invalidate(slot);
     final intent = _owner.beginRenderer(
       callId,
       slot,
@@ -562,9 +693,18 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
           attach: () {
             _check(raw);
             _views[slot] = renderer;
+            void changed() {
+              if (_currentToken(raw) && identical(_views[slot], renderer)) {
+                _publish(slot);
+              }
+            }
+
+            renderer.native.onResize = changed;
+            renderer.native.onFirstFrameRendered = changed;
+            _publish(slot);
           },
           detach: () {
-            if (identical(_views[slot], renderer)) _views.remove(slot);
+            if (identical(_views[slot], renderer)) _invalidate(slot);
           },
         );
       } catch (_) {
@@ -593,8 +733,10 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
   }
 
   @override
-  Future<bool> detachRenderer(CallVideoRendererSlot slot) =>
-      _owner.detachRenderer(slot);
+  Future<bool> detachRenderer(CallVideoRendererSlot slot) {
+    _invalidate(slot);
+    return _owner.detachRenderer(slot);
+  }
 
   @override
   Future<bool> retireVideo() {
@@ -602,6 +744,8 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     _receiveOpen = false;
     _remoteTrack?.enabled = false;
     _captureIntent = null;
+    _closeSendGate();
+    _invalidateAll();
     return _owner.retireVideo();
   }
 
@@ -642,6 +786,7 @@ final class FlutterWebRtcVideoSession implements CallVideoSession {
     final owned = await cleanup;
     await _owner.close();
     await _disposeSendStream();
+    unawaited(_presentation.close());
     return owned && !hasPendingCleanup;
   }
 }
