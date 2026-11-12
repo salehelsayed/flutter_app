@@ -134,6 +134,16 @@ final class CallSignalingService {
     required bool Function() canApply,
     bool videoEnabled = false,
   }) async {
+    // RED scaffold reaches controlled async boundaries so causal tests do not
+    // wait for a boundary that an unconditional throw would skip.
+    await callNetworkEffectsAreAllowed(_networkEffectsAllowed);
+    await authorize();
+    await _codec.encodeV2(
+      signal: signal,
+      callHandle: callHandle,
+      recipientMlKemPublicKey: endpoint.mlKemPublicKey,
+      senderSigningPrivateKey: senderSigningPrivateKey,
+    );
     throw const CallSignalingException(
       CallSignalingErrorCode.transportUnavailable,
     );
