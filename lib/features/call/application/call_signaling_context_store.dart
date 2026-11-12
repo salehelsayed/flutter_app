@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:convert';
 
 import '../diagnostics/call_diagnostics.dart';
 
@@ -85,6 +86,7 @@ final class CallSignalingContext {
     required this.remoteSenderSequence,
     required this.iceGeneration,
     required Map<String, Object?> invitePayload,
+    required this.preparedOutgoingV2Invite,
     required this.wireVersion,
     required this.requestedMedia,
     required this.initialAcceptedMedia,
@@ -105,7 +107,7 @@ final class CallSignalingContext {
   final Map<String, Object?> invitePayload;
 
   /// Exact outgoing v2 invite, retained only for this bounded context lifetime.
-  CallSignalV2? get preparedOutgoingV2Invite => null;
+  final CallSignalV2? preparedOutgoingV2Invite;
 
   final CallWireVersion wireVersion;
   final CallMediaKind requestedMedia;
@@ -189,6 +191,7 @@ final class CallSignalingContextStore
       invitePayload: invite.payload,
       wireVersion: CallWireVersion.v2,
       requestedMedia: _media(invite.payload['media']),
+      preparedOutgoingV2Invite: invite,
     );
   }
 
@@ -267,6 +270,7 @@ final class CallSignalingContextStore
     int nextSenderSequence = 1,
     int iceGeneration = 0,
     Map<String, Object?> invitePayload = const <String, Object?>{},
+    CallSignalV2? preparedOutgoingV2Invite,
   }) {
     _validateBindings(
       callHandle: callHandle,
@@ -286,7 +290,10 @@ final class CallSignalingContextStore
           existing.wireVersion == wireVersion &&
           existing.requestedMedia == requestedMedia &&
           (wireVersion == CallWireVersion.v1 ||
-              existing.invitePayload['camera'] == invitePayload['camera']) &&
+              (existing.preparedOutgoingV2Invite != null &&
+                  preparedOutgoingV2Invite != null &&
+                  jsonEncode(existing.preparedOutgoingV2Invite!.toMap()) ==
+                      jsonEncode(preparedOutgoingV2Invite.toMap()))) &&
           existing.callHandle == callHandle &&
           existing.localAccountPeerId == localAccountPeerId &&
           existing.localDevicePeerId == localDevicePeerId &&
@@ -315,6 +322,7 @@ final class CallSignalingContextStore
       remoteHighWaterEvent: null,
       iceGeneration: iceGeneration,
       invitePayload: _copyPayload(invitePayload),
+      preparedOutgoingV2Invite: preparedOutgoingV2Invite,
     );
     final diagnostics = CallDiagnostics.instance;
     final traceId =
@@ -701,6 +709,7 @@ final class _StoredCallSignalingContext {
     required this.remoteHighWaterEvent,
     required this.iceGeneration,
     required this.invitePayload,
+    this.preparedOutgoingV2Invite,
   });
 
   final CallId callId;
@@ -720,6 +729,7 @@ final class _StoredCallSignalingContext {
   String? remoteHighWaterEvent;
   int iceGeneration;
   final Map<String, Object?> invitePayload;
+  final CallSignalV2? preparedOutgoingV2Invite;
 
   CallSignalingContext snapshot() => CallSignalingContext._(
     callId: callId,
@@ -738,5 +748,6 @@ final class _StoredCallSignalingContext {
     remoteSenderSequence: remoteSenderSequence,
     iceGeneration: iceGeneration,
     invitePayload: invitePayload,
+    preparedOutgoingV2Invite: preparedOutgoingV2Invite,
   );
 }

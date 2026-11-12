@@ -5,9 +5,11 @@ import '../diagnostics/call_diagnostics.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
 import '../domain/call_signal_v2.dart';
+import '../domain/call_wire_signal.dart';
 import '../domain/call_state.dart';
 import 'call_coordinator.dart';
 import 'call_endpoint_resolver.dart' show CallAdmissionAuthorityWitness;
@@ -412,18 +414,36 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
         );
       }
       step = _OutgoingPreparationStep.context;
-      contextStore.storeOutgoing(
-        callId: callId,
-        callHandle: prepared.callHandle,
-        localAccountPeerId: snapshot.callerAccountPeerId!,
-        localDevicePeerId: snapshot.callerDeviceId!,
-        remoteAccountPeerId: prepared.remoteAccountPeerId,
-        remoteDevicePeerId: prepared.remoteDevicePeerId,
-        admissionAuthority: prepared.admissionAuthority,
-        nextSenderSequence: prepared.nextSenderSequence,
-        iceGeneration: prepared.iceGeneration,
-        invitePayload: prepared.invitePayload,
-      );
+      final v2Invite = prepared.preparedV2Invite;
+      if (v2Invite != null) {
+        _requireV2Port();
+        if (v2Invite.callId != callId ||
+            v2Invite.senderAccountPeerId != snapshot.callerAccountPeerId ||
+            v2Invite.senderDevicePeerId != snapshot.callerDeviceId) {
+          throw const CallControlSignalingPortException(
+            CallControlSignalingPortErrorCode.endpointMismatch,
+          );
+        }
+        _requireFreshV2Invite(v2Invite);
+        contextStore.storeOutgoingV2(
+          invite: v2Invite,
+          callHandle: prepared.callHandle,
+          admissionAuthority: prepared.admissionAuthority,
+        );
+      } else {
+        contextStore.storeOutgoing(
+          callId: callId,
+          callHandle: prepared.callHandle,
+          localAccountPeerId: snapshot.callerAccountPeerId!,
+          localDevicePeerId: snapshot.callerDeviceId!,
+          remoteAccountPeerId: prepared.remoteAccountPeerId,
+          remoteDevicePeerId: prepared.remoteDevicePeerId,
+          admissionAuthority: prepared.admissionAuthority,
+          nextSenderSequence: prepared.nextSenderSequence,
+          iceGeneration: prepared.iceGeneration,
+          invitePayload: prepared.invitePayload,
+        );
+      }
       step = _OutgoingPreparationStep.nativeRegistration;
       final registered = await _registerOutgoingBeforeInvite(callId);
       if (isOutgoingPreparationCurrent?.call(callId) == false) {
@@ -435,6 +455,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
           CallControlSignalingPortErrorCode.preparationUnavailable,
         );
       }
+      if (v2Invite != null) _requireFreshV2Invite(v2Invite);
       return _followUp(
         type: CallEventType.outgoingInviteReady,
         snapshot: snapshot,
@@ -559,42 +580,57 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
     required CallSignalingContext context,
     required CallEndReason? endReason,
   }) async {
-    final metadata = contextStore.reserveNextMetadata(
-      context.callId,
-      iceGeneration: context.iceGeneration,
-    );
-    final now = clock().toUtc();
-    final signal = CallSignal.create(
-      callId: context.callId,
-      messageId: idSource().value,
-      event: _signalType(effectType),
-      senderAccountPeerId: context.localAccountPeerId,
-      senderDevicePeerId: context.localDevicePeerId,
-      recipientAccountPeerId: context.remoteAccountPeerId,
-      recipientDevicePeerId: context.remoteDevicePeerId,
-      senderSequence: metadata.senderSequence,
-      iceGeneration: metadata.iceGeneration,
-      createdAtMs: now.millisecondsSinceEpoch,
-      expiresAtMs: now.add(signalLifetime).millisecondsSinceEpoch,
-      payload: _payload(effectType, context.invitePayload, endReason),
-    );
+    final CallWireSignal signal;
+    if (context.wireVersion == CallWireVersion.v2) {
+      _requireV2Port();
+      signal = _v2ControlSignal(effectType, context, endReason);
+    } else {
+      final metadata = contextStore.reserveNextMetadata(
+        context.callId,
+        iceGeneration: context.iceGeneration,
+      );
+      final now = clock().toUtc();
+      signal = CallSignal.create(
+        callId: context.callId,
+        messageId: idSource().value,
+        event: _signalType(effectType),
+        senderAccountPeerId: context.localAccountPeerId,
+        senderDevicePeerId: context.localDevicePeerId,
+        recipientAccountPeerId: context.remoteAccountPeerId,
+        recipientDevicePeerId: context.remoteDevicePeerId,
+        senderSequence: metadata.senderSequence,
+        iceGeneration: metadata.iceGeneration,
+        createdAtMs: now.millisecondsSinceEpoch,
+        expiresAtMs: now.add(signalLifetime).millisecondsSinceEpoch,
+        payload: _payload(effectType, context.invitePayload, endReason),
+      );
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'CALL_CONTROL_SIGNAL_SEND_ATTEMPT',
-      details: <String, Object?>{'type': signal.event.wireName},
+      details: <String, Object?>{'type': signal.eventWireName},
     );
     late final CallControlSendResult result;
     try {
-      result = await signalingPort.send(
-        signal: signal,
-        callHandle: context.callHandle,
-      );
+      result = switch (signal) {
+        CallSignalV2() => await _requireV2Port().sendV2(
+          signal: signal,
+          callHandle: context.callHandle,
+        ),
+        CallSignal() => await signalingPort.send(
+          signal: signal,
+          callHandle: context.callHandle,
+        ),
+        _ => throw const CallControlSignalingPortException(
+          CallControlSignalingPortErrorCode.preparationUnavailable,
+        ),
+      };
     } on CallControlSignalingPortException catch (error) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CALL_CONTROL_SIGNAL_SEND_FAILED',
         details: <String, Object?>{
-          'type': signal.event.wireName,
+          'type': signal.eventWireName,
           'code': error.code.name,
         },
       );
@@ -604,7 +640,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
         layer: 'FL',
         event: 'CALL_CONTROL_SIGNAL_SEND_FAILED',
         details: <String, Object?>{
-          'type': signal.event.wireName,
+          'type': signal.eventWireName,
           'code': 'unexpected',
         },
       );
@@ -614,7 +650,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       layer: 'FL',
       event: 'CALL_CONTROL_SIGNAL_SEND_RESULT',
       details: <String, Object?>{
-        'type': signal.event.wireName,
+        'type': signal.eventWireName,
         'delivered': result.delivered,
         'directAccepted': result.directAccepted,
         'mailboxStored': result.mailboxStored,
@@ -626,6 +662,78 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       );
     }
     return result;
+  }
+
+  CallControlSignalingPortV2 _requireV2Port() {
+    final port = signalingPort;
+    if (!videoEnabled || port is! CallControlSignalingPortV2) {
+      throw const CallControlSignalingPortException(
+        CallControlSignalingPortErrorCode.preparationUnavailable,
+      );
+    }
+    return port;
+  }
+
+  void _requireFreshV2Invite(CallSignalV2 invite) {
+    final nowMs = clock().toUtc().millisecondsSinceEpoch;
+    if (invite.event != CallSignalV2Type.invite ||
+        invite.createdAtMs > nowMs ||
+        invite.expiresAtMs <= nowMs) {
+      throw const CallControlSignalingPortException(
+        CallControlSignalingPortErrorCode.preparationUnavailable,
+      );
+    }
+  }
+
+  CallSignalV2 _v2ControlSignal(
+    CallEffectType effectType,
+    CallSignalingContext context,
+    CallEndReason? endReason,
+  ) {
+    if (effectType == CallEffectType.sendInvite) {
+      final invite = context.preparedOutgoingV2Invite;
+      if (invite == null) {
+        throw const CallControlSignalingPortException(
+          CallControlSignalingPortErrorCode.preparationUnavailable,
+        );
+      }
+      _requireFreshV2Invite(invite);
+      return invite;
+    }
+    final Map<String, Object?> payload;
+    if (effectType == CallEffectType.sendAccept) {
+      final media = context.initialAcceptedMedia;
+      if (media == null) {
+        throw const CallControlSignalingPortException(
+          CallControlSignalingPortErrorCode.preparationUnavailable,
+        );
+      }
+      // Sending an answer never grants camera capture. The media owner needs
+      // separate foreground consent and committed negotiation before capture.
+      payload = {'media': media.name, 'camera': 'off'};
+    } else {
+      payload = _payload(effectType, context.invitePayload, endReason);
+    }
+    final metadata = contextStore.reserveNextMetadata(
+      context.callId,
+      iceGeneration: context.iceGeneration,
+    );
+    final now = clock().toUtc();
+    return CallSignalV2.fromMap({
+      'schema': CallSignalV2.schema,
+      'call_id': context.callId.value,
+      'message_id': idSource().value,
+      'event': _signalType(effectType).wireName,
+      'sender_account_peer_id': context.localAccountPeerId,
+      'sender_device_peer_id': context.localDevicePeerId,
+      'recipient_account_peer_id': context.remoteAccountPeerId,
+      'recipient_device_peer_id': context.remoteDevicePeerId,
+      'sender_sequence': metadata.senderSequence,
+      'ice_generation': metadata.iceGeneration,
+      'created_at_ms': now.millisecondsSinceEpoch,
+      'expires_at_ms': now.add(signalLifetime).millisecondsSinceEpoch,
+      'payload': payload,
+    }, videoEnabled: true);
   }
 
   CallEvent _signalingFailure(CallSessionSnapshot snapshot) => _followUp(
