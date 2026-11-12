@@ -27,12 +27,13 @@ const _failed = CallDirectSendResult(
 CallSignalV2 _signal({
   int id = 1,
   bool ice = false,
+  String? terminal,
   int expires = _start + 45000,
 }) => CallSignalV2.fromMap({
   'schema': CallSignalV2.schema,
   'call_id': _call,
   'message_id': '33333333-3333-4333-8333-${id.toString().padLeft(12, '0')}',
-  'event': ice ? 'ice' : 'media_commit',
+  'event': terminal ?? (ice ? 'ice' : 'media_commit'),
   'sender_account_peer_id': 'sender-account',
   'sender_device_peer_id': 'sender-device',
   'recipient_account_peer_id': 'recipient-account',
@@ -41,7 +42,9 @@ CallSignalV2 _signal({
   'ice_generation': 0,
   'created_at_ms': _start,
   'expires_at_ms': expires,
-  'payload': ice
+  'payload': terminal != null
+      ? {'reason': 'unsupported'}
+      : ice
       ? {
           'negotiation_id': '44444444-4444-4444-8444-444444444444',
           'candidate': 'private-candidate',
@@ -485,6 +488,51 @@ void main() {
       expect(r.service.pendingTransmissionRetryCount, 4);
     },
   );
+  for (final terminal in ['reject', 'terminate']) {
+    test(
+      '$terminal takes custody despite full protected optional results',
+      () async {
+        final optional = <CallSignalTransmissionRetry>[];
+        for (var i = 1; i <= 4; i++) {
+          optional.add(await r.prepare(signal: _signal(id: i)));
+        }
+        final retry = await r.prepare(
+          signal: _signal(id: 5, terminal: terminal),
+        );
+        expect((await r.send(retry)).delivered, isTrue);
+        expect(r.service.pendingTransmissionRetryCount, 4);
+        expect(optional.where((entry) => entry.isAvailable), hasLength(3));
+        expect(r.mailbox.requests.single.messageId, _signal(id: 5).messageId);
+      },
+    );
+    test('$terminal retains exact bytes through optional ICE churn', () async {
+      final retry = await r.prepare(signal: _signal(terminal: terminal));
+      await r.send(retry);
+      final envelope = r.direct.envelopes.single;
+      for (var i = 2; i < 10; i++) {
+        await r.prepare(signal: _signal(id: i, ice: true));
+      }
+      expect(retry.isAvailable, isTrue);
+      expect((await r.send(retry)).delivered, isTrue);
+      expect(r.direct.envelopes, [envelope, envelope]);
+      expect(r.mailbox.requests.map((entry) => entry.messageId).toSet(), {
+        _signal().messageId,
+      });
+    });
+  }
+  test('optional identity tombstones cannot consume terminal admission reserve', () async {
+    for (var i = 1; i <= 128; i++) {
+      try {
+        await r.prepare(signal: _signal(id: i, ice: true));
+      } on CallSignalingException {
+        // Bounded optional capacity may refuse work before terminal admission.
+      }
+    }
+    final terminal = await r.prepare(
+      signal: _signal(id: 129, terminal: 'terminate'),
+    );
+    expect((await r.send(terminal)).delivered, isTrue);
+  });
   test('stop retries fences prepared and new transmissions', () async {
     final retry = await r.prepare();
     r.service.stopRetries();
