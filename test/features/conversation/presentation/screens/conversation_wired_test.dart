@@ -20135,22 +20135,35 @@ void main() {
             expect(sendButton(tester).onTap, isNull);
             expect(find.text(hint), findsOneWidget);
             expect(find.byType(SnackBar), findsNothing);
-            // A stale caller must also be refused before an optimistic row,
-            // even though the rendered Send control is disabled.
-            tester
-                .widget<ComposeArea>(find.byType(ComposeArea))
-                .onSend('Privacy caption');
-            await tester.pump();
-            expect(sentPolicies, isEmpty);
-            expect(
+            // Both current and stale empty callbacks must be refused before
+            // an optimistic row while the live caption keeps Send disabled.
+            for (final submittedText in ['Privacy caption', '']) {
               tester
                   .widget<ComposeArea>(find.byType(ComposeArea))
-                  .privateMediaPolicy,
-              policy,
-            );
-            expect(composerText(tester), 'Privacy caption');
-            expect(stagedPaths(tester), [photo.path]);
-            expect(find.byType(SnackBar), findsNothing);
+                  .onSend(submittedText);
+              await tester.pump();
+              expect(
+                repo.saveMessageCallCount,
+                0,
+                reason:
+                    'A callback with "$submittedText" must not save a message '
+                    'while the live private draft still has a caption.',
+              );
+              expect(repo.store, isEmpty);
+              expect(sentPolicies, isEmpty);
+              expect(sends, 0);
+              expect(
+                tester
+                    .widget<ComposeArea>(find.byType(ComposeArea))
+                    .privateMediaPolicy,
+                policy,
+              );
+              expect(composerText(tester), 'Privacy caption');
+              expect(stagedPaths(tester), [photo.path]);
+              expect(sendButton(tester).onTap, isNull);
+              expect(find.text(hint), findsOneWidget);
+              expect(find.byType(SnackBar), findsNothing);
+            }
 
             await tester.enterText(find.byType(TextField), '');
             await tester.pump();

@@ -3884,10 +3884,12 @@ class _ConversationWiredState extends State<ConversationWired>
       draftText: sanitizedText,
     );
     // The composer disables Send and explains this combination inline. Keep
-    // the selected mode if a stale caller still reaches the send boundary.
+    // the selected mode if a stale caller still reaches the send boundary,
+    // including an empty argument while the live draft retains its caption.
     if (sticker == null &&
         privateMediaPolicy.isPrivate &&
-        privateEligibility.hasTextOrCaption) {
+        (privateEligibility.hasTextOrCaption ||
+            sanitizeMessageText(submittedDraftText).trim().isNotEmpty)) {
       return;
     }
     if (sticker == null &&
