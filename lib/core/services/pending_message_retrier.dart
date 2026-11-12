@@ -92,6 +92,7 @@ class PendingMessageRetrier {
   /// the relay exists (~2s) instead of after node recovery + the 5s node-edge
   /// debounce (~8s, report 192 S3). Null (default) keeps node-edge-only
   /// behavior.
+  final Stream<void>? contactKeyUpdatedSignal;
   final Stream<void>? networkRestoredSignal;
   final Stream<void>? directUploadRetrySignal;
   final Stream<void>? groupUploadRetrySignal;
@@ -164,6 +165,7 @@ class PendingMessageRetrier {
     this.drainDirectInboxCustodyOutboxFn,
     this.verifyInboxCustodyFn,
     this.drainNotificationCompletedOutcomesFn,
+    this.contactKeyUpdatedSignal,
     this.networkRestoredSignal,
     this.directUploadRetrySignal,
     this.groupUploadRetrySignal,
