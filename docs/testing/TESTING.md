@@ -11203,6 +11203,24 @@ visible and cannot become an ordinary first-attempt PASS.
   the reported incident's cause, native/provider delivery, device recovery or
   signed-build behavior. The broader wrapper-selected lanes remain unrun for
   this bounded host verification.
+  **Signed video capability admission:** `CallEndpointResolver` snapshots the
+  signed capability set before awaiting signature verification and returns an
+  immutable set. `resolveVideoCallEndpoint` is disabled by default, performs no
+  lookup while disabled, and resolves afresh on each enabled invocation. It
+  requires both `voice_call_v1` and `video_call_v2`, the exact contact account,
+  and an endpoint still unexpired after the asynchronous lookup. These checks
+  do not grant camera permission or replace the caller's later ownership and
+  transaction checks. On U2 `469256e64abc188a6e5ae003e5e03d5c04882a84`, the
+  corrected RED produced 21 passing controls and ten causal failures; GREEN
+  passed all 31 focused cases and 50 preservation cases, with clean changed-path
+  analysis and metadata validation. The first invalid compile fixture remains
+  retained. Raw evidence is in
+  `/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl16u2/out/`; independent
+  adoption and hashes are in
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u2-final-adoption.json`.
+  The v1 byte fixtures and synthetic 126/131 capability matrix prove host
+  compatibility boundaries only, not those installed builds, native cleanup,
+  camera capture, video activation or a signed candidate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
