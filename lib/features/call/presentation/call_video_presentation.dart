@@ -84,17 +84,126 @@ final class CallVideoPresentation {
   final bool mayTurnCameraOn;
   final bool maySwitchCamera;
 
-  bool get isVisible => false;
+  bool get isVisible => videoEnabled && wireVersion == CallWireVersion.v2;
 
   bool get isInitialAudioOnlyAnswer =>
       requestedMedia == CallMediaKind.video &&
       acceptedMedia == CallMediaKind.audio;
 
-  CallVideoStatus get status => CallVideoStatus.audioOnly;
+  CallVideoStatus get status {
+    if (isReconnecting) return CallVideoStatus.reconnecting;
+    if (switchingTo == CallMediaKind.video) {
+      return CallVideoStatus.switchingToVideo;
+    }
+    if (switchingTo == CallMediaKind.audio) {
+      return CallVideoStatus.switchingToAudio;
+    }
+    if (_hasIncoming) return CallVideoStatus.incomingUpgrade;
+    if (_hasOutgoing) return CallVideoStatus.outgoingUpgrade;
+    if (acceptedMedia == null) {
+      return requestedMedia == CallMediaKind.video
+          ? CallVideoStatus.videoRequested
+          : CallVideoStatus.audioOnly;
+    }
+    return agreedMedia == CallMediaKind.video
+        ? CallVideoStatus.video
+        : CallVideoStatus.audioOnly;
+  }
 
-  List<CallVideoAction> get actions => const [];
+  List<CallVideoAction> get actions {
+    if (!isVisible) return const [];
+    final result = <CallVideoAction>[];
+    if (acceptedMedia != null && agreedMedia == CallMediaKind.video) {
+      if (localCamera != CallCameraState.on) {
+        result.add(CallVideoAction.turnCameraOn);
+      }
+      if (localCamera != CallCameraState.off) {
+        result.add(CallVideoAction.turnCameraOff);
+      }
+      result.add(CallVideoAction.switchCamera);
+    } else if (_hasIncoming) {
+      result.addAll([
+        CallVideoAction.acceptUpgrade,
+        CallVideoAction.declineUpgrade,
+      ]);
+    } else if (_hasOutgoing) {
+      result.add(CallVideoAction.cancelUpgrade);
+    } else if (acceptedMedia != null) {
+      result.add(CallVideoAction.requestVideo);
+    }
+    if (localCamera != CallCameraState.off &&
+        !result.contains(CallVideoAction.turnCameraOff)) {
+      result.add(CallVideoAction.turnCameraOff);
+    }
+    if (_hasVideoActivity) result.add(CallVideoAction.useAudioOnly);
+    return List.unmodifiable(result);
+  }
 
-  bool isAvailable(CallVideoAction action) => false;
+  bool isAvailable(CallVideoAction action) {
+    if (!isVisible) return false;
+    return switch (action) {
+      CallVideoAction.requestVideo =>
+        _readyForStart && agreedMedia == CallMediaKind.audio && mayRequestVideo,
+      CallVideoAction.acceptUpgrade =>
+        _stable && agreedMedia == CallMediaKind.audio && _hasIncoming,
+      CallVideoAction.declineUpgrade =>
+        acceptedMedia != null &&
+            agreedMedia == CallMediaKind.audio &&
+            _hasIncoming &&
+            !videoActionPending,
+      CallVideoAction.cancelUpgrade =>
+        acceptedMedia != null &&
+            agreedMedia == CallMediaKind.audio &&
+            _hasOutgoing &&
+            !_hasIncoming &&
+            !videoActionPending,
+      CallVideoAction.turnCameraOn =>
+        _readyForStart &&
+            agreedMedia == CallMediaKind.video &&
+            localCamera != CallCameraState.on &&
+            mayTurnCameraOn,
+      // Stopping local video is never held behind an optional negotiation.
+      CallVideoAction.turnCameraOff => localCamera != CallCameraState.off,
+      CallVideoAction.switchCamera =>
+        _readyForStart &&
+            agreedMedia == CallMediaKind.video &&
+            localCamera == CallCameraState.on &&
+            maySwitchCamera,
+      CallVideoAction.useAudioOnly => _hasVideoActivity,
+    };
+  }
 
-  CallVideoIntent? intentFor(CallVideoAction action) => null;
+  CallVideoIntent? intentFor(CallVideoAction action) {
+    if (!isAvailable(action)) return null;
+    return CallVideoIntent(
+      action,
+      upgradeId: switch (action) {
+        CallVideoAction.acceptUpgrade ||
+        CallVideoAction.declineUpgrade => incomingUpgradeId,
+        CallVideoAction.cancelUpgrade => outgoingUpgradeId,
+        _ => null,
+      },
+    );
+  }
+
+  bool get _hasIncoming => incomingUpgradeId?.trim().isNotEmpty ?? false;
+  bool get _hasOutgoing => outgoingUpgradeId?.trim().isNotEmpty ?? false;
+
+  bool get _stable =>
+      acceptedMedia != null &&
+      isConnected &&
+      !isReconnecting &&
+      switchingTo == null &&
+      !videoActionPending;
+
+  bool get _readyForStart => _stable && !_hasIncoming && !_hasOutgoing;
+
+  bool get _hasVideoActivity =>
+      agreedMedia == CallMediaKind.video ||
+      (acceptedMedia == null && requestedMedia == CallMediaKind.video) ||
+      localCamera != CallCameraState.off ||
+      remoteCamera != CallCameraState.off ||
+      switchingTo == CallMediaKind.video ||
+      _hasIncoming ||
+      _hasOutgoing;
 }
