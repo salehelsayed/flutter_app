@@ -1,6 +1,9 @@
 import 'dart:convert';
 
 import 'package:clock/clock.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_cleanup.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
@@ -77,6 +80,9 @@ void main() {
   late FakeP2PService transport;
   late FakeBridge bridge;
   ContactRelationshipState? consent;
+  String? wakeToken;
+  CallWakeHandleGrant? callGrant;
+  var pendingCall = false;
 
   setUp(() {
     now = DateTime.utc(2026, 11, 12);
@@ -93,6 +99,9 @@ void main() {
       'nonce': 'nonce',
     };
     consent = null;
+    wakeToken = null;
+    callGrant = null;
+    pendingCall = false;
   });
   tearDown(() => transport.dispose());
 
@@ -104,6 +113,10 @@ void main() {
       p2pService: transport,
       bridge: bridge,
       secureKeyStore: durableStore ? store : null,
+      resolveWakeToken: (_) async => wakeToken,
+      resolveCallWakeHandle: (_) async => callGrant,
+      loadPendingCallWakeHandleContactIds: () async =>
+          pendingCall ? [_peer] : [],
       readConsent: (_) async => consent == null
           ? null
           : ContactRelationshipConsent(
@@ -116,6 +129,149 @@ void main() {
 
   List<dynamic> entries(String raw) =>
       (jsonDecode(raw) as Map<String, dynamic>)['entries'] as List<dynamic>;
+
+  CallWakeHandleGrant grant(int generation) => CallWakeHandleGrant(
+    handle: generation == 1
+        ? '0123456789abcdef0123456789abcdef'
+        : 'fedcba9876543210fedcba9876543210',
+    recipientDevicePeerId: 'recipientdevice123',
+    deviceKeyEpoch: 7,
+    generation: generation,
+    issuedAtMs: 1,
+    expiresAtMs: CallWakeHandleGrant.maxSafeInteger,
+  );
+  Future<void> stage(String marker) async {
+    switch (marker) {
+      case 'mlkem':
+        await queueMlKemReannouncePeer(store, _peer);
+      case 'wake':
+        wakeToken = 'wake-one';
+        await reconcileWakeTokenDistribution(
+          secureKeyStore: store,
+          registeredTokens: {_peer: wakeToken!},
+        );
+      case 'call':
+        pendingCall = true;
+        callGrant = grant(1);
+    }
+  }
+
+  for (final marker in ['mlkem', 'wake', 'call']) {
+    test(
+      'BL24E2 $marker dormant retries keep exact id back off and expire',
+      () async {
+        await stage(marker);
+        transport.storeInInboxResult = false;
+        await retry();
+        expect(transport.storeInInboxCallCount, 1);
+        final first = transport.lastStoreInInboxMessage;
+        now = now.add(const Duration(minutes: 1));
+        await retry();
+        expect(
+          transport.storeInInboxCallCount,
+          1,
+          reason: 'marker jobs share dormant backoff',
+        );
+        now = now.add(const Duration(minutes: 59));
+        await retry();
+        expect(transport.storeInInboxCallCount, 2);
+        expect(transport.lastStoreInInboxMessage, first);
+        expect((jsonDecode(first!) as Map)['intent'], 'key_exchange_retry');
+        now = now.add(const Duration(days: 7));
+        await retry();
+        expect(transport.storeInInboxCallCount, 2);
+      },
+    );
+    test(
+      'BL24E2 $marker keyed marker keeps original fresh send path',
+      () async {
+        contacts.seed([
+          _contact(now).copyWith(mlKemPublicKey: 'completed-key'),
+        ]);
+        await stage(marker);
+        transport.storeInInboxResult = false;
+        await retry();
+        final first = transport.lastStoreInInboxMessage;
+        expect(transport.storeInInboxCallCount, 1);
+        now = now.add(const Duration(minutes: 1));
+        await retry();
+        expect(transport.storeInInboxCallCount, 2);
+        expect(transport.lastStoreInInboxMessage, isNot(first));
+        expect(await store.read(_journalKey), isNull);
+      },
+    );
+  }
+  for (final marker in ['wake', 'call']) {
+    test(
+      'BL24E2 $marker rotation replaces bytes only at reserved retry time',
+      () async {
+        await stage(marker);
+        transport.storeInInboxResult = false;
+        await retry();
+        final first = transport.lastStoreInInboxMessage;
+        wakeToken = 'wake-two';
+        if (marker == 'call') callGrant = grant(2);
+        now = now.add(const Duration(minutes: 30));
+        await retry();
+        expect(transport.storeInInboxCallCount, 1);
+        now = now.add(const Duration(minutes: 30));
+        await retry();
+        expect(transport.storeInInboxCallCount, 2);
+        expect(transport.lastStoreInInboxMessage, isNot(first));
+        final second = transport.lastStoreInInboxMessage;
+        now = now.add(const Duration(hours: 6));
+        await retry();
+        expect(transport.storeInInboxCallCount, 3);
+        expect(transport.lastStoreInInboxMessage, second);
+        if (marker == 'call') {
+          final entry = entries((await store.read(_journalKey))!).single as Map;
+          expect((entry['envelope'] as Map)['callWakeHandle']['generation'], 2);
+        }
+      },
+    );
+  }
+  test(
+    'BL24E2 token rotation while building never transmits stale material',
+    () async {
+      await stage('wake');
+      bridge = _SigningHookBridge(() => wakeToken = 'rotated-during-build')
+        ..responses.addAll(bridge.responses);
+      await retry();
+      expect(transport.storeInInboxCallCount, 0);
+      now = now.add(const Duration(minutes: 1));
+      await retry();
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+  test(
+    'BL24E2 acquired key drops marker custody and restores original path',
+    () async {
+      await stage('mlkem');
+      transport.storeInInboxResult = false;
+      await retry();
+      expect(await store.read(_journalKey), isNotNull);
+      contacts.seed([_contact(now).copyWith(mlKemPublicKey: 'completed-key')]);
+      await retry();
+      expect(await store.read(_journalKey), isNull);
+      expect(transport.storeInInboxCallCount, 2);
+    },
+  );
+  test(
+    'BL24E2 archived granted call-wake recipient remains uncapped',
+    () async {
+      contacts.seed([
+        _contact(
+          now.subtract(const Duration(days: 8)),
+        ).copyWith(isArchived: true),
+      ]);
+      await stage('call');
+      transport.storeInInboxResult = false;
+      await retry();
+      await retry();
+      expect(transport.storeInInboxCallCount, 2);
+      expect(await store.read(_journalKey), isNull);
+    },
+  );
 
   test('BL24E causal first automatic request remains encrypted v2', () async {
     expect(await retry(), 1);
