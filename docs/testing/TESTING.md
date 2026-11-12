@@ -11494,6 +11494,39 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3g-dependent-host-adoption.json`.
   This closes the scoped host unit and its inherited fixture follow-up, without
   certifying production graph wiring, native effects or a combined candidate.
+  **U3h original endpoint custody and production v2 control:** authenticated
+  invitation admission freezes the full signed endpoint separately from the
+  mutable legacy pin. Neither later directory lookup nor duplicate context
+  capture can replace or retrofit that original authority. The production
+  control bridge rechecks fresh authority against that original, retains sealed
+  signaling bytes and terminal custody, and purges port-owned context when
+  outgoing preparation is cancelled. Accepted media remains explicit and
+  camera remains off. Frozen RED
+  `607dd01157cb6090db15de19be81c4bb4b1dfa39` recorded six passing controls,
+  27 assertion failures and seven causal stub/missing-authority errors, without
+  loader failures and with child exit 1. Its direct GREEN child
+  `22306cedc0e27e57246963c9e5dcd3a09b5308ff` passed 232 cases in the five
+  complete focused suites and 120 cases in six preservation suites, without
+  failures/errors/skips and with successful reporter completion/child exits 0.
+  All five test files are identical across RED/GREEN. Official 11-path analysis,
+  metadata validation and selection preview exited 0. The preview compared
+  shared base `726a8a48f14f17a43bbb521d72aa94ab855b80da`, mapped all 11
+  changed paths and selected 11 broader checks; those checks remain unrun for
+  the later batch. The first author preview was interrupted during source
+  identity file reading with exit -2 and remains incomplete, distinct from
+  the later passing official preview. Six runtime stamps record exact heads,
+  clean tracked status and 20 matching source/test/configuration hashes; setup
+  produced no generated locale delta. Runtime receipts omit explicit tree and
+  library-tree hashes, the six preservation-file hashes and a separate stamp
+  between focused and preservation runs. Source review verified the reference
+  preservation hashes; exact commands come from the frozen handoff and runner
+  acknowledgement rather than repeated raw argv stamps. These limits remain
+  explicit without fabricated stamps or additional runs. Codex-2 closed the
+  scoped source and host review with zero required findings. Retained raw
+  results, hashes and final review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3h-final-host-adoption.json`.
+  This closes the default-off unit; graph composition, native/live behavior,
+  broader batch checks, activation and signed candidate proof remain separate.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
