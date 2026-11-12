@@ -11,6 +11,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 class ConversationHeader extends StatelessWidget {
   final String contactPeerId;
   final String contactUsername;
+  final bool isWaitingForSecureConnection;
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
@@ -33,6 +34,7 @@ class ConversationHeader extends StatelessWidget {
     super.key,
     required this.contactPeerId,
     required this.contactUsername,
+    this.isWaitingForSecureConnection = false,
     required this.onBack,
     this.onOverflow,
     this.onAvatarTap,
@@ -81,99 +83,120 @@ class ConversationHeader extends StatelessWidget {
                 stops: [0.0, 0.8, 1.0],
               ),
             ),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Back button
-                ActionSemantics(
-                  label: AppLocalizations.of(context)!.action_back,
-                  enabled: true,
-                  child: GestureDetector(
-                    onTap: onBack,
-                    behavior: HitTestBehavior.opaque,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Icon(
-                          Icons.chevron_left,
-                          size: 24,
-                          color: readableColors.iconSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // Avatar + name (tappable → contact profile)
-                Expanded(
-                  child: _profileAction(
-                    context,
-                    GestureDetector(
-                      onTap: onAvatarTap,
-                      behavior: HitTestBehavior.opaque,
-                      child: Row(
-                        children: [
-                          UserAvatar(peerId: contactPeerId, size: 36),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Text(
-                              contactUsername,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: readableColors.textPrimary,
-                              ),
+                Row(
+                  children: [
+                    // Back button
+                    ActionSemantics(
+                      label: AppLocalizations.of(context)!.action_back,
+                      enabled: true,
+                      child: GestureDetector(
+                        onTap: onBack,
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: Icon(
+                              Icons.chevron_left,
+                              size: 24,
+                              color: readableColors.iconSecondary,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (showCallAction)
-                  _ConversationCallAction(
-                    enabled: callActionEnabled && onCall != null,
-                    inFlight: callActionInFlight,
-                    unavailableMessage: callUnavailableMessage,
-                    onCall: onCall,
-                    onRetry: onCallRetry,
-                  ),
-                if (onSearch != null)
-                  IconButton(
-                    tooltip: AppLocalizations.of(context)!.chat_search_action,
-                    onPressed: onSearch,
-                    icon: const Icon(Icons.search_rounded),
-                    iconSize: 22,
-                    color: readableColors.iconSecondary,
-                    style: IconButton.styleFrom(
-                      fixedSize: const Size.square(44),
-                    ),
-                  ),
-                ?translateAction,
-                // Overflow button
-                ActionSemantics(
-                  label: AppLocalizations.of(
-                    context,
-                  )!.action_conversation_options,
-                  enabled: onOverflow != null,
-                  child: GestureDetector(
-                    onTap: onOverflow,
-                    behavior: HitTestBehavior.opaque,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Icon(
-                          Icons.more_vert,
-                          size: 20,
-                          color: readableColors.iconMuted,
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 6),
+                    // Avatar + name (tappable → contact profile)
+                    Expanded(
+                      child: _profileAction(
+                        context,
+                        GestureDetector(
+                          onTap: onAvatarTap,
+                          behavior: HitTestBehavior.opaque,
+                          child: Row(
+                            children: [
+                              UserAvatar(peerId: contactPeerId, size: 36),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Text(
+                                  contactUsername,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: readableColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (showCallAction)
+                      _ConversationCallAction(
+                        enabled: callActionEnabled && onCall != null,
+                        inFlight: callActionInFlight,
+                        unavailableMessage: callUnavailableMessage,
+                        onCall: onCall,
+                        onRetry: onCallRetry,
+                      ),
+                    if (onSearch != null)
+                      IconButton(
+                        tooltip: AppLocalizations.of(
+                          context,
+                        )!.chat_search_action,
+                        onPressed: onSearch,
+                        icon: const Icon(Icons.search_rounded),
+                        iconSize: 22,
+                        color: readableColors.iconSecondary,
+                        style: IconButton.styleFrom(
+                          fixedSize: const Size.square(44),
+                        ),
+                      ),
+                    ?translateAction,
+                    // Overflow button
+                    ActionSemantics(
+                      label: AppLocalizations.of(
+                        context,
+                      )!.action_conversation_options,
+                      enabled: onOverflow != null,
+                      child: GestureDetector(
+                        onTap: onOverflow,
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: Icon(
+                              Icons.more_vert,
+                              size: 20,
+                              color: readableColors.iconMuted,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                if (isWaitingForSecureConnection)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, left: 12, right: 12),
+                    child: Text(
+                      AppLocalizations.of(
+                        context,
+                      )!.contact_waiting_for_secure_connection,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: readableColors.textMuted,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

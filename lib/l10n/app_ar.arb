@@ -616,6 +616,7 @@
   "settings_recovery_copy": "نسخ إلى الحافظة",
   "settings_recovery_hide": "إخفاء",
   "connected_title": "تمت الإضافة!",
+  "contact_waiting_for_secure_connection": "في انتظار اتصال آمن",
   "send_message": "إرسال رسالة",
   "introduced_by": "تم التعريف بواسطة {username}",
   "@introduced_by": {

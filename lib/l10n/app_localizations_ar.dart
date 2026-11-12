@@ -1553,6 +1553,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get connected_title => 'تمت الإضافة!';
 
   @override
+  String get contact_waiting_for_secure_connection => 'في انتظار اتصال آمن';
+
+  @override
   String get send_message => 'إرسال رسالة';
 
   @override

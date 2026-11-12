@@ -27,15 +27,22 @@ class LetterCardSystem extends StatelessWidget {
     final tokens = context.feedTokens;
     final l10n = AppLocalizations.of(context)!;
     final isIntroduction = letter.isIntroduction;
+    final isWaiting = letter.isWaitingForSecureConnection;
 
     final labelText = isIntroduction
         ? l10n.feed_introduced_by(letter.introducedBy!)
+        : isWaiting
+        ? l10n.contact_waiting_for_secure_connection
         : l10n.feed_connected;
 
-    final IconData labelIcon =
-        isIntroduction ? Icons.handshake : Icons.verified;
-    final Color labelIconColor =
-        isIntroduction ? tokens.textMeta.color! : tokens.green500;
+    final IconData labelIcon = isIntroduction
+        ? Icons.handshake
+        : isWaiting
+        ? Icons.hourglass_empty
+        : Icons.verified;
+    final Color labelIconColor = isIntroduction || isWaiting
+        ? tokens.textMeta.color!
+        : tokens.green500;
 
     final label = Row(
       mainAxisSize: MainAxisSize.min,
@@ -77,6 +84,13 @@ class LetterCardSystem extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               label,
+              if (isIntroduction && isWaiting) ...[
+                SizedBox(height: tokens.space3 * 0.5),
+                Text(
+                  l10n.contact_waiting_for_secure_connection,
+                  style: tokens.textMeta,
+                ),
+              ],
               SizedBox(height: tokens.space3 * 0.5),
               bubble,
             ],

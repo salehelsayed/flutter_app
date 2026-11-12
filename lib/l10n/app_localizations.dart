@@ -2572,6 +2572,12 @@ abstract class AppLocalizations {
   /// **'Connected!'**
   String get connected_title;
 
+  /// No description provided for @contact_waiting_for_secure_connection.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for secure connection'**
+  String get contact_waiting_for_secure_connection;
+
   /// No description provided for @send_message.
   ///
   /// In en, this message translates to:

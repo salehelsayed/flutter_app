@@ -759,6 +759,7 @@
   "settings_recovery_copy": "Copy to clipboard",
   "settings_recovery_hide": "Hide",
   "connected_title": "Connected!",
+  "contact_waiting_for_secure_connection": "Waiting for secure connection",
   "send_message": "Send Message",
   "introduced_by": "Introduced by {username}",
   "@introduced_by": {

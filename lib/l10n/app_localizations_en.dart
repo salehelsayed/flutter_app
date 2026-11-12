@@ -1532,6 +1532,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connected_title => 'Connected!';
 
   @override
+  String get contact_waiting_for_secure_connection =>
+      'Waiting for secure connection';
+
+  @override
   String get send_message => 'Send Message';
 
   @override

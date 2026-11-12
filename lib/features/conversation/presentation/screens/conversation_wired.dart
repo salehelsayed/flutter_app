@@ -9365,6 +9365,9 @@ class _ConversationWiredState extends State<ConversationWired>
           onBack: _handleBackNavigation,
           scrollController: _scrollController,
           isBlocked: _contact.isBlocked,
+          isWaitingForSecureConnection:
+              !_contact.isBlocked &&
+              (_contact.mlKemPublicKey?.trim().isEmpty ?? true),
           onUnblock: _onUnblock,
           onOverflow: widget.contactRepo != null ? _onOverflow : null,
           onAvatarTap: () => ContactProfileScreen.open(

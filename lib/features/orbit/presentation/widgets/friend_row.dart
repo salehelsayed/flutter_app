@@ -34,6 +34,9 @@ class FriendRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final isWaitingForSecureConnection =
+        !friend.isBlocked &&
+        (friend.contact.mlKemPublicKey?.trim().isEmpty ?? true);
     // 409: a call can be the newest thing here, so the row's time follows the
     // newest activity rather than the newest message.
     final activityAt = friend.lastActivityAt;
@@ -191,6 +194,16 @@ class FriendRow extends StatelessWidget {
                               ],
                             ],
                           ),
+                        if (isWaitingForSecureConnection) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            l10n.contact_waiting_for_secure_connection,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: readableColors.textMuted,
+                            ),
+                          ),
+                        ],
                         if (previewText.isNotEmpty) ...[
                           const SizedBox(height: 4),
                           Text(
