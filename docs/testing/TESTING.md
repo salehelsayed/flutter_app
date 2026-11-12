@@ -5270,6 +5270,25 @@ The runner started after observing no batch process, without an explicit
 confirmation that the other runner's batch half had finished; retain this
 scheduling caveat and do not infer an isolated-host timing benchmark.
 
+The concurrency proof did not establish full-workflow composition. Batch2
+exposed two integration regressions: the new lock test was absent from the
+mirrored `full-workflow` paths/command, and the disposable legacy CLI fixture
+did not copy the newly imported lock module. Preserve both registration mirrors
+when extending the canonical workflow, and copy imported wrapper dependencies
+into disposable CLI fixtures. The two failures reproduce on original BL20 and
+Batch2 but pass on main `d58446b31`; raw bisect evidence remains under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/batch2/out/bisect/`.
+Correction `3394a2e879897c45540d5da37a54b0ef2789e4d0` adds only those three
+entries. Claude-UI verified both complete focused files (44 tests), validation,
+and the workflow lane (335 passed, zero failed/skipped, child exit zero), with
+matching before/after source hashes and a clean worktree. Raw evidence is under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl20fix/out/`; the workflow
+`results.json` is in that runner's `.audit/wt/bl20fix/build/bl20-batch-fix-3394/workflow/`.
+The separate planning command stalled and was stopped with exit 143; its log is
+retained, not counted as a result. The workflow-only wrapper exited 3 because
+other change-selected checks remained NOT RUN. This is scoped workflow proof,
+not full-change, batch integration, native, or release acceptance.
+
 `.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
 for three distinct acceptance modes. Its final hosted job always runs after
 metadata and selected execution; only a PR emits **`Mknoon regression checks`**,
