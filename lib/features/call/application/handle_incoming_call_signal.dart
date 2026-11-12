@@ -11,6 +11,7 @@ import '../domain/call_event.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
 import '../domain/call_state.dart';
 import '../infrastructure/call_trusted_roster_provider.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
@@ -33,6 +34,17 @@ enum IncomingCallSignalOutcome {
   /// page. It is acknowledged without ringing or dispatch.
   superseded,
 }
+
+/// Synchronously adopts authenticated v2 media work into its bounded call-owned
+/// queue. It must not wait for SDP, permission or transport, nor treat a remote
+/// signal as local camera consent. Deferred work has not taken replay custody.
+/// The owner rechecks [canApply] after every await and before each effect.
+typedef AuthenticatedIncomingCallV2MediaHandler =
+    IncomingCallSignalOutcome Function({
+      required CallSignalV2 signal,
+      required String callHandle,
+      required bool Function() canApply,
+    });
 
 /// Flow event recorded once for every incoming call signal that does not end
 /// [IncomingCallSignalOutcome.accepted]. Its details hold fixed codes only:
@@ -136,10 +148,15 @@ final class IncomingCallMailboxHandlingResult {
 /// What a mailbox event is, read without consuming it. Lets a drain see that
 /// a terminal signal follows an invite before either is handled.
 final class IncomingCallSignalPeek {
-  const IncomingCallSignalPeek({required this.callId, required this.event});
+  const IncomingCallSignalPeek({
+    required this.callId,
+    required this.event,
+    this.videoEvent,
+  });
 
   final CallId callId;
-  final CallSignalType event;
+  final CallSignalType? event;
+  final CallSignalV2Type? videoEvent;
 
   bool get isInvite => event == CallSignalType.invite;
 
@@ -261,6 +278,8 @@ final class HandleIncomingCallSignal {
     required CallLocalAuthorityProvider localAuthorityProvider,
     required IncomingCallPresenter incomingCallPresenter,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
+    bool videoEnabled = false,
+    AuthenticatedIncomingCallV2MediaHandler? incomingV2MediaHandler,
     CallNegotiationMaterialStore? negotiationMaterialStore,
     AuthenticatedCallSignalingContextObserver? signalingContextObserver,
     ProvisionalNativeIncomingCallLifecycle? provisionalNativeLifecycle,

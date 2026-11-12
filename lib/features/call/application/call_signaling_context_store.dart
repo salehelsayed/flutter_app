@@ -41,6 +41,16 @@ abstract interface class AuthenticatedCallSignalingContextObserver {
   void purge(CallId callId);
 }
 
+/// Optional typed v2 context capture. Legacy observers retain their v1 API.
+abstract interface class AuthenticatedCallSignalingContextObserverV2
+    implements AuthenticatedCallSignalingContextObserver {
+  void captureAuthenticatedV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+  });
+}
+
 /// One reserved local sender sequence and its non-regressing ICE generation.
 final class CallSignalingMetadata {
   const CallSignalingMetadata({
@@ -120,7 +130,7 @@ final class CallSignalingContext {
 /// exclusively in [CallCoordinator]/[CallReducer]; this store only supplies
 /// bytes that reducer-approved effects need in order to send one signal.
 final class CallSignalingContextStore
-    implements AuthenticatedCallSignalingContextObserver {
+    implements AuthenticatedCallSignalingContextObserverV2 {
   CallSignalingContextStore({this.maxContexts = 4, this.videoEnabled = false}) {
     if (maxContexts <= 0) {
       throw ArgumentError.value(maxContexts, 'maxContexts', 'must be positive');
@@ -179,6 +189,7 @@ final class CallSignalingContextStore
     );
   }
 
+  @override
   void captureAuthenticatedV2({
     required CallSignalV2 signal,
     required String callHandle,
