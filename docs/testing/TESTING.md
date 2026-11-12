@@ -3404,6 +3404,36 @@ proofs; native delivery and signed artifacts remain separate. Sender-side
 authored-message recovery is a different producer and is not changed by this
 receiver guard.
 
+Dormant keyless contact-request retries retain one encrypted, silent
+`key_exchange_retry` envelope in a bounded secure-store journal before sending.
+The same ID, signed body and ciphertext survive reconnects and process restart;
+regenerating a signed body under its old operation ID would conflict with the
+receiver's digest guard. Reservations pace attempts at 1 hour, 6 hours,
+24 hours, then daily, and stop at the earlier scan or signed-timestamp
+seven-day cutoff. The journal holds at most 200 live contact generations and
+defers new work rather than evicting a live ID. Reconciliation removes accepted,
+declined, withdrawn, removed, expired or replaced generations before retry;
+after an asynchronous build, current account and contact authority are checked
+again. Existing account-reset inventory erases the journal. First-send and
+acceptance wire payloads remain unchanged; `signedAtMs` is local envelope
+metadata, not a new wire field. Explicit ML-KEM, notification wake-token and
+call-wake marker jobs are outside this E unit and remain a separate E2 change.
+There is no manual resend UI in this baseline.
+
+Live-retry preservation fixtures need a current `scannedAt` and durable fake
+secure storage; old 2024/January fixtures now intentionally represent expired
+contacts. Explicit call-grant distribution fixtures retain their pending-grant
+owner instead of becoming ordinary dormant retries. Keep their assertions and
+deadlines intact. The causal policy file produces one passing v2 control and
+seven assertion failures before the fix; 156 focused and 1,105 curated identity
+case executions pass afterwards without failures or skips. Evidence is in
+`.codex-test-logs/codex-ui-bl24e-contact-request-retry-20261112/` at
+`21bfa4986` / `c4a74d8d8`. Three retained RED hash-command exits are caused only
+by the new GREEN-only journal file being absent from the RED tree: all existing
+RED pins and all GREEN pins match at eight clean ref/tree boundaries. These
+exits are not loader failures or substitute causal failures. The evidence does
+not measure production relay rows, battery/data use, devices or signed artifacts.
+
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
 stored row; `receivedAt` is not authenticated sender-time ordering. A new contact
