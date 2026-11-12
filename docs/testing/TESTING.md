@@ -3627,12 +3627,26 @@ a missed notification open replays the still-pending request without another
 network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All fourteen shell cases pass, including remount, blocked-peer filtering, duplicate
+All fifteen shell cases pass, including remount, blocked-peer filtering, duplicate
 input/restart and reciprocal acceptance with both Feed and Orbit retained, and
 repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
+
+Overlapping receives can both pass the pending-row admission read before either
+upsert commits. The second upsert replaces the local `received_at`, while the
+presentation queue coalesces that peer into the first snapshot's lease. The
+repository correctly rejects the stale snapshot; after releasing its lease, the
+listener must replay durable pending rows through the existing consent,
+blocked-peer and suppression guards. The BL-19 shell case controls those real SQL
+write boundaries, retains the same Orbit State, and requires one dialog for the
+current row without reattachment or implicit contact creation. It fails with no
+dialog before the fix and passes unchanged afterward; the full shell file is
+15 PASS / 0 FAIL / 0 SKIP. Preserve the initial fixture timeout separately from
+that causal RED. The native CR-003 trace lacks payload and pre-relaunch DB state,
+so this host proof does not establish the device incident's cause or resolution.
+Evidence: `.codex-test-logs/bl19-contact-request-reveal-20261111/`.
 
 Repeated Feed contact acceptance must publish the committed contact through
 `ChatMessageListener.contactUpdatedStream` before opening the conversation,
