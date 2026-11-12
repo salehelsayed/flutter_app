@@ -402,6 +402,28 @@ abstract interface class CallVideoCameraSwitch {
   );
 }
 
+/// Positive native SDP reconciliation proof for an exact session-owned token.
+enum CallVideoSdpReconciliationOutcome {
+  rolledBack,
+  alreadyStable,
+  unreconciled,
+}
+
+/// Optional capability on the bound [CallVideoSession]. Closes video gates and
+/// reconciles the exact current token, including a retired token, on the native
+/// serial queue. A positive result requires a native stable-state observation.
+/// [canApply] must retain the selected operation and its original time budget;
+/// it and session/token ownership are rechecked after every native await.
+/// Stale ownership, expired authority or native failure returns unreconciled.
+/// Live audio/ICE remain owned by the session. The existing rollback bool and
+/// error contract is unchanged; a stable answer is never rolled back.
+abstract interface class CallVideoSdpReconciler {
+  Future<CallVideoSdpReconciliationOutcome> reconcilePending(
+    CallVideoNegotiation token, {
+    required bool Function() canApply,
+  });
+}
+
 /// Optional operations fail independently of the live audio connection.
 abstract interface class CallVideoSession {
   CallId get callId;
