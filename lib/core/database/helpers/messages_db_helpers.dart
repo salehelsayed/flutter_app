@@ -1524,8 +1524,12 @@ Future<void> dbSetMessageAutoRetryTerminalReason(
   await db.update(
     'messages',
     {'auto_retry_terminal_reason': reason},
-    where: snapshot.keys.map((column) => '$column IS ?').join(' AND '),
-    whereArgs: snapshot.values.toList(),
+    where: snapshot.entries
+        .map((entry) => entry.value == null
+            ? '${entry.key} IS NULL'
+            : '${entry.key} IS ?')
+        .join(' AND '),
+    whereArgs: snapshot.values.where((value) => value != null).toList(),
   );
 }
 
