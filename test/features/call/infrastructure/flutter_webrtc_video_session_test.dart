@@ -4,6 +4,7 @@ import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
+import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
@@ -848,7 +849,16 @@ void main() {
         isNotNull,
       );
       f.renderer.failDispose = true;
-      await expectLater(f.engine.close(), throwsA(isA<CallEngineException>()));
+      await expectLater(
+        f.engine.close(),
+        throwsA(
+          isA<WebRtcAdapterException>().having(
+            (error) => error.reason,
+            'reason',
+            WebRtcFailureReason.other,
+          ),
+        ),
+      );
       expect(f.session.hasPendingCleanup, isTrue);
       expect(
         calls.where(
