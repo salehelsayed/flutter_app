@@ -667,4 +667,45 @@ void main() {
       );
     },
   );
+  for (final deliveryFirst in [true, false]) {
+    test(
+      'abort delivery and repair independently unblock fresh consent (delivery first=$deliveryFirst)',
+      () {
+        final rig = _Rig();
+        rig.select('aborted');
+        rig.offer('aborted');
+        rig.answer('aborted');
+        rig.machine.abort(id: 'aborted', baseRevision: 0, revision: 1);
+        MediaSwitchDecision delivered() =>
+            rig.machine.reconciliationCompleted(id: 'aborted', delivered: true);
+        MediaSwitchDecision repaired() =>
+            rig.machine.repairCompleted(id: 'aborted', success: true);
+        expect((deliveryFirst ? delivered() : repaired()).accepted, isTrue);
+        expect(
+          rig.machine
+              .request(
+                rig.req('too-early', base: 1),
+                freshUpgradeAdmitted: true,
+              )
+              .accepted,
+          isFalse,
+        );
+        expect((deliveryFirst ? repaired() : delivered()).accepted, isTrue);
+        expect(rig.machine.requiresReconciliation, isFalse);
+        final fresh = rig.machine.request(
+          rig.req('fresh-consent', base: 1),
+          freshUpgradeAdmitted: true,
+        );
+        expect(fresh.accepted, isTrue);
+        expect(rig.machine.phase, MediaSwitchPhase.decision);
+        expect(rig.machine.videoGatesOpen, isFalse);
+        expect(
+          rig.machine
+              .reconciliationCompleted(id: 'aborted', delivered: true)
+              .accepted,
+          isFalse,
+        );
+      },
+    );
+  }
 }
