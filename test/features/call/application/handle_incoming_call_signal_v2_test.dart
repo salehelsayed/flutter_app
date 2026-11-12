@@ -560,12 +560,16 @@ void main() {
         (signal: terminal, handle: _callHandle),
       ]);
       expect(page.frames.first.terminalFollows, isTrue);
+      // The invite never created a canonical call. The idle reducer rejects
+      // its terminal while authenticated native cleanup and ACK still settle.
       expect(page.outcomes, [
         IncomingCallSignalOutcome.superseded,
-        IncomingCallSignalOutcome.accepted,
+        IncomingCallSignalOutcome.rejected,
       ]);
       expect(h.presenter.calls, 0);
-      expect(h.coordinator.isTerminalCall(_callId), isTrue);
+      expect(h.coordinator.activeSession, isNull);
+      expect(h.coordinator.isTerminalCall(_callId), isFalse);
+      expect(h.contexts.length, 0);
       expect(h.native.cancelled, 1);
       expect(page.acknowledged, [invite.messageId, terminal.messageId]);
       expect(page.settled.single.toMap(), terminal.toMap());
@@ -775,7 +779,10 @@ void main() {
         await h.frame(_v2(event: 'terminate', sequence: 2), mailbox: true),
       );
       expect(terminal.authenticatedTerminal!.signal, isA<CallSignalV2>());
-      expect(h.coordinator.isTerminalCall(_callId), isTrue);
+      expect(terminal.outcome, IncomingCallSignalOutcome.rejected);
+      expect(h.coordinator.activeSession, isNull);
+      expect(h.coordinator.isTerminalCall(_callId), isFalse);
+      expect(h.contexts.length, 0);
       expect(h.native.cancelled, 1);
     },
   );
@@ -935,8 +942,16 @@ void main() {
           return IncomingCallSignalOutcome.accepted;
         },
       );
-      await h.admitIncoming();
-      h.contexts.recordLocalAcceptance(_callId, media: CallMediaKind.video);
+      if (event == 'answer') {
+        await h.outgoing();
+        expect(
+          await h.receive(_v2(event: 'accept', media: 'video')),
+          IncomingCallSignalOutcome.accepted,
+        );
+      } else {
+        await h.admitIncoming();
+        h.contexts.recordLocalAcceptance(_callId, media: CallMediaKind.video);
+      }
       final before = List<CallEffectType>.of(h.effects.effects);
       final signal = _v2(event: event, sequence: 2);
       expect(await h.receive(signal), IncomingCallSignalOutcome.accepted);
