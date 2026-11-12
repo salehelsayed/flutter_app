@@ -18,8 +18,21 @@ Future<ResolvedCallEndpoint> resolveVideoCallEndpoint({
   if (!videoEnabled) {
     throw const CallVideoAdmissionException(CallVideoAdmissionFailure.disabled);
   }
-  // RED interface scaffold: no video authority is admitted yet.
-  throw const CallVideoAdmissionException(
-    CallVideoAdmissionFailure.unsupported,
-  );
+  final endpoint = await resolveEndpoint(contactAccountPeerId);
+  if (endpoint.accountPeerId != contactAccountPeerId) {
+    throw const CallVideoAdmissionException(
+      CallVideoAdmissionFailure.mismatched,
+    );
+  }
+  // Lookup and signature verification can cross the lease boundary.
+  if (endpoint.expiresAtMs <= nowMs()) {
+    throw const CallVideoAdmissionException(CallVideoAdmissionFailure.expired);
+  }
+  if (!endpoint.capabilities.contains(CallEndpointResolver.voiceCapability) ||
+      !endpoint.capabilities.contains('video_call_v2')) {
+    throw const CallVideoAdmissionException(
+      CallVideoAdmissionFailure.unsupported,
+    );
+  }
+  return endpoint;
 }
