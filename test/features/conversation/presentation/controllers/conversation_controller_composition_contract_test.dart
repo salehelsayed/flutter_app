@@ -165,7 +165,10 @@ const _expectedGroupApiFingerprint = '2b594730';
 // the wired-owned search controller. Wired APIs are unchanged; without it the
 // fingerprint is the previous c2e5142a.
 // BL-17 (5b8bee021, e09ee8637): both handoffs add only reviewed sticker callbacks.
-const _expectedDirectHandoffFingerprint = '38fc7512';
+// BL-11: the direct handoff adds only isWaitingForSecureConnection, derived
+// from an unblocked contact's missing ML-KEM key for the approved readiness
+// label and origin markers. Wired APIs and the group handoff are unchanged.
+const _expectedDirectHandoffFingerprint = '80f91789';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing

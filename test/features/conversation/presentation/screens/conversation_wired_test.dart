@@ -14424,7 +14424,10 @@ void main() {
 
       expect(find.text('Delete for me only'), findsNothing);
       expect(messageRepo.store.containsKey('delete-for-me-row'), isFalse);
-      expect(find.text('Connected!'), findsWidgets);
+      // The shared contact fixture has no ML-KEM key. Once the last row is
+      // deleted, its approved empty-state marker stays neutral until ready.
+      expect(find.text('Contact saved'), findsWidgets);
+      expect(find.text('Connected!'), findsNothing);
     });
 
     testWidgets('canceling the delete sheet leaves the message unchanged', (
