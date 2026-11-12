@@ -18,7 +18,7 @@ OrbitFriend _makeFriend({
   int unreadCount = 3,
   String? lastActivity,
   String username = 'Alice',
-  String? mlKemPublicKey = 'fixture-ml-kem-public-key',
+  String? mlKemPublicKey,
   String? lastMessageTimestamp,
   MediaPreviewDescriptor? latestMedia,
   bool isLatestDeleted = false,
@@ -317,6 +317,7 @@ void main() {
               child: FriendRow(
                 friend: _makeFriend(
                   username: name,
+                  mlKemPublicKey: 'fixture-ml-kem-public-key',
                   lastActivity: 'Voice message',
                 ),
                 onTap: () => taps++,
