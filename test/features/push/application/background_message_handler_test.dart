@@ -6531,8 +6531,8 @@ void main() {
                   'snapshot': <String, Object?>{
                     'post_id': postId,
                     'author_peer_id': sender,
-                    if (createdAt != null) 'post_created_at': createdAt,
-                    if (expiresAt != null) 'expires_at': expiresAt,
+                    'post_created_at': ?createdAt,
+                    'expires_at': ?expiresAt,
                     'text': 'Thought $postId',
                     'media_kind': 'none',
                     'media': <Object?>[],
@@ -6741,7 +6741,7 @@ void main() {
               'post_id': 'routing-only-thought',
               'title': 'New thought',
               'body': 'A friend shared a thought',
-              if (expiresAt != null) 'expires_at': expiresAt,
+              'expires_at': ?expiresAt,
             },
           );
 

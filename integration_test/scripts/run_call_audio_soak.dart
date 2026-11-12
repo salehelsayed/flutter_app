@@ -160,8 +160,9 @@ Map<String, Object?> evaluateCallAudioSoakResources(
       'rss30SampleAtMs': lateRss.atMs,
       'maximumSampleGapMs': 15000,
     });
-    if (rss30 > rssLimit)
+    if (rss30 > rssLimit) {
       failures.add('minute-30 RSS exceeds its growth bound');
+    }
 
     final idleCpu = _cpuMedian(samples, connected - _minuteMs, connected);
     final postCpu = _cpuMedian(
@@ -175,8 +176,9 @@ Map<String, Object?> evaluateCallAudioSoakResources(
       'postCpuOneCorePct': postCpu,
       'postCpuLimitOneCorePct': idleCpu + 5,
     });
-    if (postCpu > idleCpu + 5)
+    if (postCpu > idleCpu + 5) {
       failures.add('post-idle CPU exceeds idle plus five percentage points');
+    }
 
     final windows = _rows(capture['inCallCpuWindows'], 'in-call CPU windows');
     _require(
@@ -215,8 +217,9 @@ Map<String, Object?> evaluateCallAudioSoakResources(
         'lateCpuOneCorePct': lateCpu,
         'limitCpuOneCorePct': limit,
       };
-      if (lateCpu > limit)
+      if (lateCpu > limit) {
         failures.add('$route in-call CPU exceeds its growth bound');
+      }
     }
   } on FormatException catch (error) {
     failures.add(error.message);
@@ -280,8 +283,9 @@ void _require(bool condition, String message) {
 }
 
 double _number(Object? value, String name) {
-  if (value is! num || !value.isFinite || value < 0)
+  if (value is! num || !value.isFinite || value < 0) {
     throw FormatException('invalid $name');
+  }
   return value.toDouble();
 }
 
