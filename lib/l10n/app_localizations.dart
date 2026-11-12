@@ -1678,6 +1678,12 @@ abstract class AppLocalizations {
   /// **'Delete chat?'**
   String get conversation_delete_chat;
 
+  /// No description provided for @block_contact_body.
+  ///
+  /// In en, this message translates to:
+  /// **'They won\'t be able to send you messages. You can unblock them later.'**
+  String get block_contact_body;
+
   /// No description provided for @delete_contact_body.
   ///
   /// In en, this message translates to:

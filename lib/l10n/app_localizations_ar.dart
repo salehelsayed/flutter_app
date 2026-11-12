@@ -1042,6 +1042,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_delete_chat => 'حذف المحادثة؟';
 
   @override
+  String get block_contact_body =>
+      'لن يتمكن من إرسال رسائل إليك. يمكنك إلغاء الحظر لاحقًا.';
+
+  @override
   String delete_contact_body(String username) {
     return 'سيؤدي هذا إلى إزالة $username والرسائل وسجل المكالمات بينكما نهائيًا. لا يمكن التراجع عن ذلك.';
   }

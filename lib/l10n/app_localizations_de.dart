@@ -1035,6 +1035,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_delete_chat => 'Chat löschen?';
 
   @override
+  String get block_contact_body =>
+      'Diese Person kann dir dann keine Nachrichten mehr senden. Du kannst sie später wieder entsperren.';
+
+  @override
   String delete_contact_body(String username) {
     return 'Dadurch werden $username, deine Nachrichten und dein Anrufverlauf mit dieser Person dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.';
   }

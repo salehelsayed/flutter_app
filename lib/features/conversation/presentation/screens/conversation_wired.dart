@@ -8246,14 +8246,12 @@ class _ConversationWiredState extends State<ConversationWired>
     final contactRepo = widget.contactRepo;
     if (contactRepo == null) return;
 
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: AppLocalizations.of(
-        context,
-      )!.conversation_block(_contact.username),
-      description:
-          'They won\'t be able to send you messages. You can unblock them later.',
-      confirmLabel: 'Block',
+      title: l10n.conversation_block(_contact.username),
+      description: l10n.block_contact_body,
+      confirmLabel: l10n.orbit_block_action,
     );
     if (!confirmed || !mounted) return;
 
