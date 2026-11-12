@@ -104,6 +104,9 @@ final class CallSignalingContext {
   final int iceGeneration;
   final Map<String, Object?> invitePayload;
 
+  /// Exact outgoing v2 invite, retained only for this bounded context lifetime.
+  CallSignalV2? get preparedOutgoingV2Invite => null;
+
   final CallWireVersion wireVersion;
   final CallMediaKind requestedMedia;
 

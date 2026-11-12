@@ -7,6 +7,7 @@ import '../domain/call_event.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
 import '../domain/call_state.dart';
 import 'call_coordinator.dart';
 import 'call_endpoint_resolver.dart' show CallAdmissionAuthorityWitness;
@@ -74,7 +75,20 @@ final class OutgoingCallSignalingPreparation {
     this.nextSenderSequence = 1,
     this.iceGeneration = 0,
     this.invitePayload = const <String, Object?>{},
-  });
+  }) : preparedV2Invite = null;
+
+  /// The prepared immutable invite already owns its message id and sequence.
+  /// Fresh endpoint/capability admission remains the port's responsibility.
+  OutgoingCallSignalingPreparation.v2({
+    required this.callHandle,
+    required CallSignalV2 invite,
+    this.admissionAuthority,
+  }) : remoteAccountPeerId = invite.recipientAccountPeerId,
+       remoteDevicePeerId = invite.recipientDevicePeerId,
+       nextSenderSequence = invite.senderSequence + 1,
+       iceGeneration = invite.iceGeneration,
+       invitePayload = invite.payload,
+       preparedV2Invite = invite;
 
   final String callHandle;
   final String remoteAccountPeerId;
@@ -83,6 +97,7 @@ final class OutgoingCallSignalingPreparation {
   final int nextSenderSequence;
   final int iceGeneration;
   final Map<String, Object?> invitePayload;
+  final CallSignalV2? preparedV2Invite;
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'nextSenderSequence': nextSenderSequence,
@@ -106,6 +121,17 @@ abstract interface class CallControlSignalingPort {
 
   Future<CallControlSendResult> send({
     required CallSignal signal,
+    required String callHandle,
+  });
+}
+
+/// Optional v2 control transport. It must revalidate current call authority
+/// after awaits and keep terminal retries bound to their original call.
+/// Absence of this port must never downgrade a v2 context to v1 signaling.
+abstract interface class CallControlSignalingPortV2
+    implements CallControlSignalingPort {
+  Future<CallControlSendResult> sendV2({
+    required CallSignalV2 signal,
     required String callHandle,
   });
 }
@@ -147,6 +173,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
     OutgoingPreInviteRegistrar? registerOutgoingBeforeInvite,
     OutgoingMailboxInviteCanceller? cancelOutgoingMailboxInvite,
     this.isOutgoingPreparationCurrent,
+    this.videoEnabled = false,
     this.signalLifetime = defaultSignalLifetime,
     this.maxAttemptedEffects = 64,
   }) : _registerOutgoingBeforeInvite =
@@ -179,6 +206,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
   final OutgoingPreInviteRegistrar _registerOutgoingBeforeInvite;
   final OutgoingMailboxInviteCanceller _cancelOutgoingMailboxInvite;
   final bool Function(CallId callId)? isOutgoingPreparationCurrent;
+  final bool videoEnabled;
   final Duration signalLifetime;
   final int maxAttemptedEffects;
 
