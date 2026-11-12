@@ -534,7 +534,9 @@ internal class MknoonCallNativeBridge(
         if (!validVersion(map["version"])) return badArguments(result)
         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
-        val media = MknoonCallMedia.parse(map["media"]) ?: return badArguments(result)
+        val media = if (map.containsKey("media")) {
+            (map["media"] as? String)?.let { MknoonCallMedia.parse(it) } ?: return badArguments(result)
+        } else MknoonCallMedia.AUDIO
         val display = if (map.containsKey("display")) {
             MknoonIncomingCallDisplay.parse(map["display"]) ?: return badArguments(result)
         } else null
@@ -634,7 +636,9 @@ internal class MknoonCallNativeBridge(
         if (!validVersion(map["version"])) return badArguments(result)
         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
-        val media = MknoonCallMedia.parse(map["media"]) ?: return badArguments(result)
+        val media = if (map.containsKey("media")) {
+            (map["media"] as? String)?.let { MknoonCallMedia.parse(it) } ?: return badArguments(result)
+        } else MknoonCallMedia.AUDIO
         val descriptor = controller.snapshot()
         val alreadyRegistered = descriptor != null &&
             descriptor.direction == PendingNativeCallDirection.OUTGOING &&

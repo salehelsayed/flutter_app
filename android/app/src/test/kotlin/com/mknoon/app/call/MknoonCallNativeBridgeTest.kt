@@ -1218,11 +1218,38 @@ class MknoonCallNativeBridgeTest {
         val invalid = CapturingCallBridgeResult()
         bridge.onMethodCall(MethodCall("presentAuthenticated", base + ("media" to "screen")), invalid)
         assertEquals("bad_args", invalid.errorCode)
+        val explicitNull = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("presentAuthenticated", base + ("media" to null)), explicitNull)
+        assertEquals("explicit null media is not absent media (NATIVE-VIDEO-2)", "bad_args", explicitNull.errorCode)
+        assertEquals(null, rig.controller.snapshot())
         assertBridgeSuccess(bridge, "presentAuthenticated", base + ("media" to "video"), true)
         assertEquals(MknoonCallMedia.VIDEO, authority.effectiveMedia(rig.payload.nativeCallId))
         assertBridgeSuccess(bridge, "presentAuthenticated", base, true)
         assertEquals(MknoonCallMedia.AUDIO, authority.effectiveMedia(rig.payload.nativeCallId))
         assertTrue(applied.isEmpty())
+    }
+
+    @Test
+    fun `phase-4 outgoing registration rejects explicit null media without registering (NATIVE-VIDEO-2)`() {
+        val rig = LifecycleRig()
+        var registrations = 0
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { _, _ -> true }
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller, messenger = null,
+            authenticatedOutgoingRegistrar = { _, _ -> registrations += 1; true },
+            videoAuthority = authority,
+        )
+        val base = mapOf(
+            "version" to 1, "callHandle" to rig.payload.callHandle, "expiresAtMs" to rig.payload.expiresAtMs,
+        )
+        for (bad in listOf<Any?>(null, "screen", true)) {
+            val malformed = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("registerOutgoingAuthenticated", base + ("media" to bad)), malformed)
+            assertEquals("bad_args", malformed.errorCode)
+        }
+        assertEquals(0, registrations)
+        assertBridgeSuccess(bridge, "registerOutgoingAuthenticated", base, true)
+        assertEquals(1, registrations)
     }
 
     @Test
