@@ -364,6 +364,44 @@ final class CallVideoView {
   final int height;
 }
 
+/// One session-owned presentation snapshot, including renderer invalidation.
+/// A null negotiation means no live video negotiation owns this slot.
+final class CallVideoPresentationState {
+  const CallVideoPresentationState({
+    required this.callId,
+    required this.negotiation,
+    required this.slot,
+    required this.hasTrack,
+    required this.view,
+  });
+
+  final CallId callId;
+  final CallVideoNegotiation? negotiation;
+  final CallVideoRendererSlot slot;
+  final bool hasTrack;
+  final CallVideoView? view;
+}
+
+/// Optional capability on the bound [CallVideoSession], not a global feed.
+/// Read the current snapshot after subscribing. Publish track arrival or
+/// replacement, renderer metadata changes, and a null view before retiring its
+/// texture. Notifications never attach a renderer or grant camera permission.
+abstract interface class CallVideoPresentationSource {
+  Stream<CallVideoPresentationState> get presentationChanges;
+  CallVideoPresentationState presentationFor(CallVideoRendererSlot slot);
+}
+
+/// Optional capability on the bound [CallVideoSession]. Only switches an
+/// already-active local capture owned by the current committed token. Recheck
+/// [grant] after native awaits; never enable a stopped camera or alter audio,
+/// SDP, or ICE. False means unsupported, stale, revoked, or no switch completed.
+abstract interface class CallVideoCameraSwitch {
+  Future<bool> switchCamera(
+    CallVideoNegotiation token,
+    CallLocalCameraGrant grant,
+  );
+}
+
 /// Optional operations fail independently of the live audio connection.
 abstract interface class CallVideoSession {
   CallId get callId;
