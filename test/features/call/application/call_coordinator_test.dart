@@ -8,6 +8,8 @@ import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
+import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -241,7 +243,73 @@ final class _FakeTimerScheduler implements CallTimerScheduler {
   }
 }
 
+final class _DiagnosticFailureExecutor implements CallEffectExecutor {
+  _DiagnosticFailureExecutor(this.effect, this.error);
+  final CallEffectType effect;
+  final Object error;
+
+  @override
+  Future<CallEvent?> execute(
+    CallEffect next,
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (next.type == effect) throw error;
+    return null;
+  }
+}
+
 void main() {
+  for (final failure in [
+    (
+      name: 'ICE',
+      effect: CallEffectType.startNegotiation,
+      error: const CallEngineException(CallEngineErrorCode.iceConnectionFailed),
+      stage: 'media',
+      reason: 'ice_failed',
+    ),
+    (
+      name: 'signaling',
+      effect: CallEffectType.sendInvite,
+      error: StateError('secret peer-id 192.0.2.1 must never be logged'),
+      stage: 'signaling',
+      reason: 'transport_failed',
+    ),
+  ]) {
+    test('BL5 records distinct safe ${failure.name} failure cause', () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
+      final coordinator = _coordinator(
+        history: _MemoryHistoryRepository(),
+        executor: _DiagnosticFailureExecutor(failure.effect, failure.error),
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.dispatch(_event(CallEventType.place));
+      final trigger = failure.effect == CallEffectType.sendInvite
+          ? CallEventType.outgoingInviteReady
+          : CallEventType.remoteAccept;
+      if (trigger == CallEventType.remoteAccept) {
+        await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+      }
+      await expectLater(
+        coordinator.dispatch(_event(trigger)),
+        throwsA(same(failure.error)),
+      );
+      final causes = (await diagnostics.eventsForTesting())
+          .where(
+            (event) =>
+                event['action'] == 'finish' && event['outcome'] == 'failed',
+          )
+          .toList();
+      expect(causes, hasLength(1));
+      expect(causes.single['stage'], failure.stage);
+      expect(causes.single['reason'], failure.reason);
+      expect(causes.toString(), isNot(contains('secret')));
+      expect(causes.toString(), isNot(contains('192.0.2.1')));
+      expect(causes.single['values'], isEmpty);
+      expect(coordinator.activeSession?.isTerminal ?? true, isTrue);
+    });
+  }
+
   test(
     'VC-026 quiet connected 31s refreshes the last checkpoint observation',
     () {
