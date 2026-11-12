@@ -582,8 +582,9 @@ void main() {
         final p = source(f);
         Future<bool>? stopping;
         final sub = p.presentationChanges.listen((event) {
-          if (event.slot == CallVideoRendererSlot.local)
+          if (event.slot == CallVideoRendererSlot.local) {
             stopping = f.session.stopLocalCamera();
+          }
         });
         expect(await f.session.setLocalCamera(t, f.grant()), isFalse);
         await stopping;
@@ -1096,8 +1097,9 @@ void main() {
         if (failure == 'rollback-error' || failure == 'not-stable') {
           await f.session.applyLocal(token, await f.session.createOffer(token));
         }
-        if (failure == 'probe-error')
+        if (failure == 'probe-error') {
           f.peer.probe = () async => throw StateError('probe');
+        }
         if (failure == 'null') f.peer.probe = () async => null;
         if (failure == 'unowned') {
           f.peer.signalingState =
