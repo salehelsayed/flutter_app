@@ -65,6 +65,21 @@ void main() {
       await h.owner.workSettled;
       expect(
         h.admit(
+          h.switchWire('answer', {
+            'switch_id': _otherNegotiation,
+            'negotiation_id': h.owner.negotiation!.negotiationId,
+            'purpose': 'media_switch',
+            'media_revision': 1,
+            'media': 'video',
+            'description': 'switch-answer',
+            'fingerprint': 'fingerprint',
+          }),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await h.owner.workSettled;
+      expect(
+        h.admit(
           h.switchWire('media_abort', {
             'switch_id': _otherNegotiation,
             'base_revision': 0,
