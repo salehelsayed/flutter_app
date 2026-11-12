@@ -5367,71 +5367,73 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sticker_colour_blue => 'أزرق';
 
   @override
-  String get call_video_status_video_requested => '';
+  String get call_video_status_video_requested => 'تم طلب الفيديو';
 
   @override
-  String get call_video_status_audio_only => '';
+  String get call_video_status_audio_only => 'صوت فقط';
 
   @override
-  String get call_video_status_video => '';
+  String get call_video_status_video => 'مكالمة فيديو';
 
   @override
-  String get call_video_status_incoming_upgrade => '';
+  String get call_video_status_incoming_upgrade =>
+      'الطرف الآخر يريد تشغيل الفيديو';
 
   @override
-  String get call_video_status_outgoing_upgrade => '';
+  String get call_video_status_outgoing_upgrade => 'بانتظار قبول الطرف الآخر';
 
   @override
-  String get call_video_status_switching_to_video => '';
+  String get call_video_status_switching_to_video => 'جارٍ التبديل إلى الفيديو';
 
   @override
-  String get call_video_status_switching_to_audio => '';
+  String get call_video_status_switching_to_audio => 'جارٍ التبديل إلى الصوت';
 
   @override
-  String get call_video_status_reconnecting => '';
+  String get call_video_status_reconnecting => 'جارٍ إعادة الاتصال';
 
   @override
-  String get call_video_local_camera_on => '';
+  String get call_video_local_camera_on => 'كاميرتك قيد التشغيل';
 
   @override
-  String get call_video_local_camera_off => '';
+  String get call_video_local_camera_off => 'كاميرتك متوقفة';
 
   @override
-  String get call_video_local_camera_paused => '';
+  String get call_video_local_camera_paused => 'كاميرتك متوقفة مؤقتًا';
 
   @override
-  String get call_video_remote_camera_on => '';
+  String get call_video_remote_camera_on => 'كاميرا الطرف الآخر قيد التشغيل';
 
   @override
-  String get call_video_remote_camera_off => '';
+  String get call_video_remote_camera_off => 'كاميرا الطرف الآخر متوقفة';
 
   @override
-  String get call_video_remote_camera_paused => '';
+  String get call_video_remote_camera_paused =>
+      'كاميرا الطرف الآخر متوقفة مؤقتًا';
 
   @override
-  String get call_video_action_request_video => '';
+  String get call_video_action_request_video => 'طلب الفيديو';
 
   @override
-  String get call_video_action_accept_upgrade => '';
+  String get call_video_action_accept_upgrade => 'قبول الفيديو';
 
   @override
-  String get call_video_action_decline_upgrade => '';
+  String get call_video_action_decline_upgrade => 'الاستمرار بالصوت فقط';
 
   @override
-  String get call_video_action_cancel_upgrade => '';
+  String get call_video_action_cancel_upgrade => 'إلغاء الطلب';
 
   @override
-  String get call_video_action_turn_camera_on => '';
+  String get call_video_action_turn_camera_on => 'تشغيل الكاميرا';
 
   @override
-  String get call_video_action_turn_camera_off => '';
+  String get call_video_action_turn_camera_off => 'إيقاف الكاميرا';
 
   @override
-  String get call_video_action_switch_camera => '';
+  String get call_video_action_switch_camera => 'تبديل الكاميرا';
 
   @override
-  String get call_video_action_use_audio_only => '';
+  String get call_video_action_use_audio_only => 'استخدام الصوت فقط';
 
   @override
-  String get call_video_controls_label => '';
+  String get call_video_controls_label => 'عناصر التحكم بالفيديو';
 }

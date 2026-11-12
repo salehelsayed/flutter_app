@@ -5296,71 +5296,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sticker_colour_blue => 'Blue';
 
   @override
-  String get call_video_status_video_requested => '';
+  String get call_video_status_video_requested => 'Video requested';
 
   @override
-  String get call_video_status_audio_only => '';
+  String get call_video_status_audio_only => 'Audio only';
 
   @override
-  String get call_video_status_video => '';
+  String get call_video_status_video => 'Video call';
 
   @override
-  String get call_video_status_incoming_upgrade => '';
+  String get call_video_status_incoming_upgrade => 'They want to turn on video';
 
   @override
-  String get call_video_status_outgoing_upgrade => '';
+  String get call_video_status_outgoing_upgrade => 'Waiting for them to accept';
 
   @override
-  String get call_video_status_switching_to_video => '';
+  String get call_video_status_switching_to_video => 'Switching to video';
 
   @override
-  String get call_video_status_switching_to_audio => '';
+  String get call_video_status_switching_to_audio => 'Switching to audio';
 
   @override
-  String get call_video_status_reconnecting => '';
+  String get call_video_status_reconnecting => 'Reconnecting';
 
   @override
-  String get call_video_local_camera_on => '';
+  String get call_video_local_camera_on => 'Your camera is on';
 
   @override
-  String get call_video_local_camera_off => '';
+  String get call_video_local_camera_off => 'Your camera is off';
 
   @override
-  String get call_video_local_camera_paused => '';
+  String get call_video_local_camera_paused => 'Your camera is paused';
 
   @override
-  String get call_video_remote_camera_on => '';
+  String get call_video_remote_camera_on => 'Their camera is on';
 
   @override
-  String get call_video_remote_camera_off => '';
+  String get call_video_remote_camera_off => 'Their camera is off';
 
   @override
-  String get call_video_remote_camera_paused => '';
+  String get call_video_remote_camera_paused => 'Their camera is paused';
 
   @override
-  String get call_video_action_request_video => '';
+  String get call_video_action_request_video => 'Request video';
 
   @override
-  String get call_video_action_accept_upgrade => '';
+  String get call_video_action_accept_upgrade => 'Accept video';
 
   @override
-  String get call_video_action_decline_upgrade => '';
+  String get call_video_action_decline_upgrade => 'Keep audio';
 
   @override
-  String get call_video_action_cancel_upgrade => '';
+  String get call_video_action_cancel_upgrade => 'Cancel request';
 
   @override
-  String get call_video_action_turn_camera_on => '';
+  String get call_video_action_turn_camera_on => 'Turn camera on';
 
   @override
-  String get call_video_action_turn_camera_off => '';
+  String get call_video_action_turn_camera_off => 'Turn camera off';
 
   @override
-  String get call_video_action_switch_camera => '';
+  String get call_video_action_switch_camera => 'Switch camera';
 
   @override
-  String get call_video_action_use_audio_only => '';
+  String get call_video_action_use_audio_only => 'Use audio only';
 
   @override
-  String get call_video_controls_label => '';
+  String get call_video_controls_label => 'Video controls';
 }
