@@ -240,11 +240,6 @@ Future<int> retryIncompleteKeyExchanges({
             continue;
           }
         }
-        if (pinMaterial) {
-          final freshToken = await resolveWakeToken?.call(contact.peerId);
-          final freshGrant = await currentGrant();
-          if (fingerprint(freshToken, freshGrant) != material) continue;
-        }
         // Build and secure persistence await external work. Recheck the exact
         // contact generation/consent before a saved envelope can leave custody.
         final current = await contactRepo.getContact(contact.peerId);
@@ -261,6 +256,11 @@ Future<int> retryIncompleteKeyExchanges({
             clock.now().millisecondsSinceEpoch >= entry.expiresAtMs) {
           await custody.remove(contact.peerId);
           continue;
+        }
+        if (pinMaterial) {
+          final freshToken = await resolveWakeToken?.call(contact.peerId);
+          final freshGrant = await currentGrant();
+          if (fingerprint(freshToken, freshGrant) != material) continue;
         }
         final outcome = await transmitContactRequestEnvelope(
           p2pService: p2pService,
