@@ -255,6 +255,9 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
       guard rendered.didDecrypt,
             rendered.markAsShown,
             rendered.recoveryIdentity == recoveryIdentity else {
+        if nsePreviewTechnicalFailureReason(rendered) != nil {
+          onFailure(kind, rendered.reason)
+        }
         return nil
       }
       preview = rendered
@@ -400,6 +403,9 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
       guard rendered.didDecrypt,
             rendered.markAsShown,
             rendered.recoveryIdentity == recoveryIdentity else {
+        if nsePreviewTechnicalFailureReason(rendered) != nil {
+          onFailure(kind, rendered.reason)
+        }
         return nil
       }
       preview = rendered
