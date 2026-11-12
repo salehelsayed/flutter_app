@@ -73,23 +73,27 @@ void main() {
   Future<List<Map<String, Object?>>> rows() =>
       database.query('delivery_receipt_outbox');
 
-  PendingMessageRetrier retrier({Stream<void>? restored, bool held = false}) =>
-      PendingMessageRetrier(
-        p2pService: transport,
-        messageRepo: FakeMessageRepository(),
-        identityRepo: FakeIdentityRepository(),
-        contactRepo: FakeContactRepository(),
-        bridge: FakeBridge(),
-        drainDeliveryReceiptOutboxFn: outbox.drain,
-        networkRestoredSignal: restored,
-        isExternalRecoveryInProgressFn: () => held,
-        retryFailedMessagesOverride: () async => 0,
-        retryUnackedMessagesOverride: () async => 0,
-        retryDebounce: Duration.zero,
-        networkRestoredDebounce: Duration.zero,
-        periodicRetryInterval: const Duration(days: 1),
-        groupContinuitySweepInterval: const Duration(days: 1),
-      );
+  PendingMessageRetrier retrier({
+    Stream<void>? restored,
+    bool held = false,
+    Duration retryDebounce = Duration.zero,
+    Duration periodic = const Duration(days: 1),
+  }) => PendingMessageRetrier(
+    p2pService: transport,
+    messageRepo: FakeMessageRepository(),
+    identityRepo: FakeIdentityRepository(),
+    contactRepo: FakeContactRepository(),
+    bridge: FakeBridge(),
+    drainDeliveryReceiptOutboxFn: outbox.drain,
+    networkRestoredSignal: restored,
+    isExternalRecoveryInProgressFn: () => held,
+    retryFailedMessagesOverride: () async => 0,
+    retryUnackedMessagesOverride: () async => 0,
+    retryDebounce: retryDebounce,
+    networkRestoredDebounce: Duration.zero,
+    periodicRetryInterval: periodic,
+    groupContinuitySweepInterval: const Duration(days: 1),
+  );
 
   test(
     'BL24D1 failed receipt survives SQLite reopen then online settles once',
@@ -326,6 +330,119 @@ void main() {
     expect(await rows(), isEmpty);
     expect(transport.storeInInboxCallCount, 2);
   });
+
+  for (final periodic in [false, true]) {
+    test(
+      'BL24D1 ${periodic ? 'periodic' : 'startup'} drains independently of full recovery',
+      () async {
+        await outbox.send(
+          targetPeerId: 'sender',
+          messageIds: const ['message'],
+        );
+        if (periodic) {
+          transport.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'receiver',
+              circuitAddresses: ['/relay'],
+            ),
+          );
+        } else {
+          now = now.add(const Duration(seconds: 5));
+        }
+        final accepted = Completer<void>();
+        transport.onStoreInInbox = (_, _, {timeoutMs}) async {
+          accepted.complete();
+          return true;
+        };
+        final owner = retrier(
+          held: true,
+          retryDebounce: const Duration(days: 1),
+          periodic: periodic
+              ? const Duration(milliseconds: 10)
+              : const Duration(days: 1),
+        );
+        addTearDown(owner.dispose);
+        owner.start();
+        if (periodic) {
+          await outbox.drain();
+          expect(transport.storeInInboxCallCount, 1);
+          now = now.add(const Duration(seconds: 5));
+        }
+        await accepted.future.timeout(const Duration(seconds: 5));
+        owner.dispose();
+        await outbox.drain();
+        expect(await rows(), isEmpty);
+        expect(transport.storeInInboxCallCount, 2);
+      },
+    );
+  }
+
+  test(
+    'BL24D1 receipt backoff caps at fifteen minutes without dropping custody',
+    () async {
+      await outbox.send(targetPeerId: 'sender', messageIds: const ['message']);
+      for (var attempt = 2; attempt <= 10; attempt++) {
+        final prior = (await rows()).single;
+        now = DateTime.fromMillisecondsSinceEpoch(
+          prior['next_attempt_at_ms'] as int,
+          isUtc: true,
+        );
+        expect(await outbox.drain(), 0);
+        final retained = (await rows()).single;
+        expect(retained['attempt_count'], attempt);
+        if (attempt >= 9) {
+          expect(
+            (retained['next_attempt_at_ms'] as int) -
+                now.millisecondsSinceEpoch,
+            900000,
+          );
+        }
+        expect(retained['receipt_key'], prior['receipt_key']);
+        expect(retained['receipt_payload'], prior['receipt_payload']);
+        expect(retained['expires_at_ms'], prior['expires_at_ms']);
+      }
+      expect(transport.storeInInboxCallCount, 10);
+    },
+  );
+
+  test(
+    'BL24D1 one pending receipt has one flight across mint and drain triggers',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<SendMessageResult>();
+      transport.onSendMessageWithReply = (_, _, {timeoutMs}) {
+        entered.complete();
+        return release.future;
+      };
+      final sending = outbox.send(
+        targetPeerId: 'sender',
+        messageIds: const ['message'],
+      );
+      try {
+        await entered.future.timeout(const Duration(seconds: 5));
+        now = now.add(const Duration(minutes: 1));
+        expect(
+          await outbox.send(
+            targetPeerId: 'sender',
+            messageIds: const ['message'],
+          ),
+          isFalse,
+        );
+        final first = outbox.drain();
+        final second = outbox.drain();
+        expect(identical(first, second), isTrue);
+        expect(await first, 0);
+        expect(transport.sendMessageWithReplyCallCount, 1);
+        expect((await rows()).single['attempt_count'], 1);
+      } finally {
+        release.complete(const SendMessageResult(sent: true, acked: true));
+        await sending;
+      }
+      expect(await rows(), isEmpty);
+      expect(transport.storeInInboxCallCount, 0);
+    },
+  );
 
   test('BL24D1 a database refusal cannot send an unowned receipt', () async {
     await database.close();

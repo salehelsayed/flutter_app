@@ -217,7 +217,8 @@ import 'package:flutter_app/features/conversation/application/direct_private_med
 import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
-    show sendDeliveryReceipt;
+    show DeliveryReceiptOutbox;
+import 'package:flutter_app/features/conversation/data/repositories/delivery_receipt_outbox_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -1580,7 +1581,8 @@ final class ProductionApplicationBootstrap
             beforeTimestamp: beforeTimestamp,
           ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
-      dbIsMessageAutoRetryTerminal: (id) => dbIsMessageAutoRetryTerminal(db, id),
+      dbIsMessageAutoRetryTerminal: (id) =>
+          dbIsMessageAutoRetryTerminal(db, id),
       dbSetMessageAutoRetryTerminalReason: (expected, reason) =>
           dbSetMessageAutoRetryTerminalReason(db, expected.toMap(), reason),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
@@ -6022,13 +6024,16 @@ final class ProductionApplicationBootstrap
     // message sender (live send first, inbox fallback inside the use case).
     // F7: hoisted above the P2PServiceImpl construction so the deletion replay
     // callback below can reference it.
+    final deliveryReceiptOutbox = DeliveryReceiptOutbox(
+      repository: SqlDeliveryReceiptOutboxRepository(database),
+      p2pService: () => p2pService,
+    );
     Future<void> sendDeliveryReceiptForPeer({
       required String contactPeerId,
       required List<String> messageIds,
       Map<String, String>? mutationEventIds,
     }) {
-      return sendDeliveryReceipt(
-        p2pService: p2pService,
+      return deliveryReceiptOutbox.send(
         targetPeerId: contactPeerId,
         messageIds: messageIds,
         mutationEventIds: mutationEventIds,
@@ -9353,8 +9358,8 @@ final class ProductionApplicationBootstrap
     }
 
     final pendingMessageRetrier = PendingMessageRetrier(
-      contactKeyUpdatedSignal:
-          contactRequestListener.contactKeyUpdatedStream.map<void>((_) {}),
+      contactKeyUpdatedSignal: contactRequestListener.contactKeyUpdatedStream
+          .map<void>((_) {}),
       retryFailedMessagesOverride: () => retryFailedMessages(
         directEventFanout: resolveDirectEventFanout(),
         messageRepo: messageRepository,
@@ -9581,6 +9586,7 @@ final class ProductionApplicationBootstrap
       // reconnecting clients do not stampede the relay in lockstep.
       jitterRandom: Random(),
       drainDirectInboxCustodyOutboxFn: drainDirectInboxCustodyFamilies,
+      drainDeliveryReceiptOutboxFn: deliveryReceiptOutbox.drain,
       drainNotificationCompletedOutcomesFn: drainNotificationCompletedOutcomes,
       verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_inbox_custody_verify',
@@ -9726,8 +9732,8 @@ final class ProductionApplicationBootstrap
           accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     );
     final pendingPostDeliveryRetrier = PendingPostDeliveryRetrier(
-      contactKeyUpdatedSignal:
-          contactRequestListener.contactKeyUpdatedStream.map<void>((_) {}),
+      contactKeyUpdatedSignal: contactRequestListener.contactKeyUpdatedStream
+          .map<void>((_) {}),
       p2pService: p2pService,
       postRepo: postRepository,
       contactRepo: contactRepository,
@@ -10411,6 +10417,7 @@ final class ProductionApplicationBootstrap
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
         drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
+        drainDeliveryReceiptOutbox: deliveryReceiptOutbox.drain,
         drainNotificationCompletedOutcomes: drainNotificationCompletedOutcomes,
         // 361: blob-free fanout authoring plus the restricted linked runtime
         // seams. The resolver builds the authoring owner at route-push time so

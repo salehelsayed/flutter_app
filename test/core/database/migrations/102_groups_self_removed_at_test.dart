@@ -337,7 +337,7 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,

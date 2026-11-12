@@ -70,7 +70,7 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       expect(await _userVersion(upgraded), currentIdentityDatabaseVersion);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(

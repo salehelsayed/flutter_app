@@ -43,7 +43,7 @@ void main() {
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
       );
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       expect(await db.query(kCallHistoryTable), isEmpty);
 

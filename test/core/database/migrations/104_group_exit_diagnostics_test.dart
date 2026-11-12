@@ -103,7 +103,7 @@ void main() {
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         104,
       );
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,

@@ -287,6 +287,24 @@ Future<bool?> handleAppResumed({
       );
     }
 
+    // Receipt retries share one owner and stay independent of inbox/group
+    // recovery and UI readiness. The existing migration gate above still owns
+    // admission; the transport rechecks that gate on every send/store.
+    final drainReceipts = drainDeliveryReceiptOutboxFn;
+    if (drainReceipts != null) {
+      unawaited(
+        Future<void>.sync(() async {
+          await drainReceipts();
+        }).catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DELIVERY_RECEIPT_RESUME_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }),
+      );
+    }
+
     // Plan 370: resume reuses the bootstrap-owned, in-flight-coalesced v116
     // drain. It starts only after bridge health is restored and remains outside
     // the latency-critical canonical inbox ordering below.

@@ -115,7 +115,7 @@ void main() {
   test(
     'v100 remains the sole successor to v99 and later versions follow it',
     () {
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
