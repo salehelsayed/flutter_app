@@ -481,7 +481,9 @@ const _productionBootstrapNormalizedSha256 =
     // no owner moves.
     // BL-17 adds the reviewed lazy library and export/import/erase/shutdown
     // barriers at this same bootstrap owner; no relocation URI changes.
-    '90b8daf1645696fb64630c050de2db18e83e74acb9b230711c6b5c0383ce7379';
+    // BL-14: the existing Thought expiry sweep callback also cancels the
+    // cards of Thoughts kept hidden for the clock grace; no owner moves.
+    '133271196302a7d778079d34bba793b0288a7c166e508412a0781a1874b9eea8';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -523,8 +525,9 @@ const _productionBootstrapNormalizedSha256 =
 // The same item 9 viewer and keep-replaced callbacks leave it exact too.
 // BL-17 rebases the same reviewed composition. The historical notification
 // callback remains byte-identical and unique; no existing owner relocates.
+// The same BL-14 sweep callback change leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '1440941faffef1a65c7e2cd7a448689a5f893d1395c3722850c929f4b0bbf21a';
+    'a663abb2a1c76454631df4d59a6d51273d284d972afad5f7d1f5b22ea88b3026';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

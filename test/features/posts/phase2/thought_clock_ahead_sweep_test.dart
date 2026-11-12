@@ -92,4 +92,18 @@ void main() {
       expect(files.deletedPostIds, ['friend-live']);
     },
   );
+
+  test('a sweep reports each hidden Thought it keeps', () async {
+    final kept = <String>[];
+
+    await sweepExpiredPosts(
+      postRepo: posts,
+      mediaFileManager: files,
+      nowProvider: () => _created.add(const Duration(hours: 25)),
+      onExpiredKept: kept.add,
+    );
+
+    expect(kept, ['friend-live']);
+    expect(await posts.getPost('friend-live'), isNotNull);
+  });
 }

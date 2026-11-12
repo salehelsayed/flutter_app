@@ -587,11 +587,27 @@ Future<void> _deleteRequiredPostRows(
 }
 
 /// Includes hidden incoming thoughts; the author's own history is retained.
-Future<DateTime?> dbLoadNextPostExpiry(Database db) async {
+/// The next moment a received Thought needs the sweep: its expiry while it is
+/// still live, else its delete deadline [ThoughtLifetime.deleteGrace] later.
+Future<DateTime?> dbLoadNextPostExpiry(
+  Database db, {
+  DateTime Function()? nowProvider,
+}) async {
+  final nowIso = (nowProvider ?? DateTime.now)().toUtc().toIso8601String();
   final rows = await db.rawQuery(
-    'SELECT MIN(expires_at) AS expires_at FROM posts WHERE is_incoming = 1',
+    '''
+      SELECT MIN(
+        CASE WHEN julianday(expires_at) > julianday(?)
+          THEN strftime('%Y-%m-%dT%H:%M:%fZ', expires_at)
+          ELSE strftime('%Y-%m-%dT%H:%M:%fZ', expires_at,
+            '+${ThoughtLifetime.deleteGrace.inSeconds} seconds')
+        END
+      ) AS next_at
+      FROM posts WHERE is_incoming = 1
+    ''',
+    [nowIso],
   );
-  final value = rows.first['expires_at'] as String?;
+  final value = rows.first['next_at'] as String?;
   return value == null ? null : DateTime.tryParse(value)?.toUtc();
 }
 

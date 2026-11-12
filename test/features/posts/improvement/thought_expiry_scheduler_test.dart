@@ -41,7 +41,8 @@ void main() {
         clock.flushMicrotasks();
         scheduler.start();
         clock.flushMicrotasks();
-        now = created.add(const Duration(hours: 24));
+        // Past the expiry and its clock grace, so the sweep deletes.
+        now = created.add(const Duration(hours: 72));
         // The app-root's existing sweep wins before the scheduler timer fires.
         sweepExpiredPosts(
           postRepo: posts,
@@ -93,11 +94,12 @@ void main() {
   );
 
   test(
-    'foreground expiry removes thought and media without resume and cancels its card',
+    'foreground expiry retires the card at expiry and deletes after the clock grace',
     () {
       fakeAsync((clock) {
         final created = DateTime.utc(2026, 10, 20, 9);
         final expiry = created.add(const Duration(hours: 24));
+        final deleteAt = expiry.add(const Duration(hours: 48));
         final posts = InMemoryPostRepository();
         final files = FakeMediaFileManager();
         final cancelled = <String>[];
@@ -115,6 +117,10 @@ void main() {
               postRepo: posts,
               mediaFileManager: files,
               nowProvider: now,
+              onExpiredKept: (id) {
+                cancelled.add(id);
+                nextExpiry = deleteAt;
+              },
             );
             if (ids.isNotEmpty) nextExpiry = null;
           },
@@ -141,11 +147,15 @@ void main() {
         clock.elapse(
           const Duration(hours: 24) - const Duration(milliseconds: 1),
         );
-        expect(files.deletedPostIds, isEmpty);
+        expect(cancelled, isEmpty);
         clock.elapse(const Duration(milliseconds: 1));
         clock.flushMicrotasks();
-        expect(files.deletedPostIds, ['thought']);
         expect(cancelled, ['thought']);
+        expect(files.deletedPostIds, isEmpty);
+        expect(nextExpiry, deleteAt);
+        clock.elapse(const Duration(hours: 48));
+        clock.flushMicrotasks();
+        expect(files.deletedPostIds, ['thought']);
         expect(nextExpiry, isNull);
         scheduler.dispose();
         posts.dispose();
