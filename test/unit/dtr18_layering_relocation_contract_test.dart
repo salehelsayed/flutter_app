@@ -269,7 +269,7 @@ const _applicationRootNormalizedSha256 =
     // hook at this same app owner; the six-line reverse diff is exact.
     // BL-17 piece 4 forwards that library to routes as CustomStickerScope
     // around the existing route child only; no owner or resume dispatch moves.
-    '8c9534b2fcc0cf32cc06033f402581f73cd54a55d5383f8a0ef0d55e533b61d2';
+    '64ff4f50a6c7fd949ab8cb6cb3616493689e2c334c525e5796b0c9b103606c57';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -483,7 +483,7 @@ const _productionBootstrapNormalizedSha256 =
     // barriers at this same bootstrap owner; no relocation URI changes.
     // BL-14: the existing Thought expiry sweep callback also cancels the
     // cards of Thoughts kept hidden for the clock grace; no owner moves.
-    '133271196302a7d778079d34bba793b0288a7c166e508412a0781a1874b9eea8';
+    '5a4ddeaa74ee37ae5f65375ab61d23534aa4f1efaee72b67cb3d007e2fe15f51';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -527,7 +527,7 @@ const _productionBootstrapNormalizedSha256 =
 // callback remains byte-identical and unique; no existing owner relocates.
 // The same BL-14 sweep callback change leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'a663abb2a1c76454631df4d59a6d51273d284d972afad5f7d1f5b22ea88b3026';
+    '6c38f541964ce80465f9cff3f2dbc7d580693ea0525d8c559a214a2b168b3407';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
