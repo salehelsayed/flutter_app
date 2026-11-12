@@ -142,11 +142,15 @@ final class _Presenter implements IncomingCallPresenter {
 final class _Native implements ProvisionalNativeIncomingCallLifecycle {
   int cancelled = 0;
   void Function()? onCancel;
+  Completer<void>? cancelGate;
+  final cancelStarted = Completer<void>();
 
   @override
   Future<void> remoteCancel(String callHandle) async {
     cancelled++;
     onCancel?.call();
+    if (!cancelStarted.isCompleted) cancelStarted.complete();
+    await cancelGate?.future;
   }
 
   @override
@@ -717,6 +721,42 @@ void main() {
     expect(fence!(), isFalse);
     expect(h.contexts.read(_callId), isNull);
   });
+
+  test(
+    'adopted media stops while authenticated native cancellation waits',
+    () async {
+      bool Function()? fence;
+      final h = _Harness(
+        onMedia: ({required signal, required callHandle, required canApply}) {
+          fence = canApply;
+          return IncomingCallSignalOutcome.accepted;
+        },
+      );
+      await h.receive(_v2());
+      await h.receive(_v2(event: 'media_request', sequence: 2));
+      expect(fence!(), isTrue);
+      h.native.cancelGate = Completer<void>();
+      final terminal = h.receive(_v2(event: 'terminate', sequence: 3));
+      addTearDown(() async {
+        if (!h.native.cancelGate!.isCompleted) h.native.cancelGate!.complete();
+        await terminal;
+      });
+      await Future.any<void>([
+        h.native.cancelStarted.future,
+        terminal.then<void>((_) {}),
+      ]);
+      expect(h.native.cancelled, 1);
+      expect(h.coordinator.activeSession!.isTerminal, isFalse);
+      expect(fence!(), isFalse);
+      expect(
+        await h.receive(_v2(event: 'accept', sequence: 4)),
+        IncomingCallSignalOutcome.duplicate,
+      );
+      h.native.cancelGate!.complete();
+      expect(await terminal, IncomingCallSignalOutcome.accepted);
+      expect(fence!(), isFalse);
+    },
+  );
 
   test(
     'adopted media current fence closes when the envelope expires',
