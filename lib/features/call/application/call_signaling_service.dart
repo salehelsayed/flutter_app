@@ -160,10 +160,16 @@ final class CallSignalingService {
         CallSignalingErrorCode.endpointMismatch,
       );
     }
+    final terminalPriority =
+        signal.event == CallSignalV2Type.reject ||
+        signal.event == CallSignalV2Type.terminate;
     final key = '${signal.callId.value}:${signal.messageId}';
     _v2Identities.removeWhere((_, expiry) => _nowMs() >= expiry);
+    // Optional churn cannot fill the last terminal identity slots either.
+    final identityLimit =
+        _maxV2Identities - (terminalPriority ? 0 : _maxPendingTerminalRetries);
     if (_v2Identities.containsKey(key) ||
-        _v2Identities.length >= _maxV2Identities) {
+        _v2Identities.length >= identityLimit) {
       throw const CallSignalingException(
         CallSignalingErrorCode.transportUnavailable,
       );
@@ -200,8 +206,11 @@ final class CallSignalingService {
       endpoint: endpoint,
       envelope: envelope,
       replayable: true,
+      terminalPriority: terminalPriority,
       localDeadlineMs: localDeadlineMs,
       protectedResult: switch (signal.event) {
+        CallSignalV2Type.reject ||
+        CallSignalV2Type.terminate ||
         CallSignalV2Type.mediaResponse ||
         CallSignalV2Type.mediaCommit ||
         CallSignalV2Type.mediaCommitAck ||
@@ -496,6 +505,7 @@ final class CallSignalingService {
     required String envelope,
     bool replayable = false,
     bool protectedResult = false,
+    bool terminalPriority = false,
     int? localDeadlineMs,
   }) {
     final deadlineMs = min(
@@ -514,13 +524,14 @@ final class CallSignalingService {
     while (entries.length >= _maxPendingTerminalRetries) {
       CallSignalTransmissionRetry? victim;
       for (final entry in entries.values) {
-        if (!entry._protectedResult) {
+        if (!entry._protectedResult ||
+            (terminalPriority && !entry._terminalPriority)) {
           victim = entry;
           break;
         }
       }
-      // ICE churn must never silently erase the selected result needed for
-      // transaction reconciliation. Bounded capacity instead fails closed.
+      // Optional churn cannot erase selected results or terminal custody.
+      // Terminal delivery takes priority over optional reconciliation material.
       if (victim == null) return null;
       victim.close();
     }
@@ -538,6 +549,7 @@ final class CallSignalingService {
       ),
       replayable: replayable,
       protectedResult: protectedResult,
+      terminalPriority: terminalPriority,
     );
     entries[key] = retry;
     retry._expiryTimer = Timer(
@@ -992,14 +1004,17 @@ final class CallSignalTransmissionRetry {
     this._transmission, {
     bool replayable = false,
     bool protectedResult = false,
+    bool terminalPriority = false,
   }) : _replayable = replayable,
-       _protectedResult = protectedResult;
+       _protectedResult = protectedResult,
+       _terminalPriority = terminalPriority;
 
   final CallSignalingService _owner;
   final String _key;
   final int _deadlineMs;
   final bool _replayable;
   final bool _protectedResult;
+  final bool _terminalPriority;
   Future<CallDirectSendResult>? _pendingDirect;
   Future<_MailboxLegResult>? _pendingMailbox;
   _CallRetryTransmission? _transmission;
