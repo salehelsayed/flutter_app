@@ -83,6 +83,7 @@ void main() {
   String? wakeToken;
   CallWakeHandleGrant? callGrant;
   var pendingCall = false;
+  void Function()? onReadConsent;
 
   setUp(() {
     now = DateTime.utc(2026, 11, 12);
@@ -102,6 +103,7 @@ void main() {
     wakeToken = null;
     callGrant = null;
     pendingCall = false;
+    onReadConsent = null;
   });
   tearDown(() => transport.dispose());
 
@@ -117,13 +119,16 @@ void main() {
       resolveCallWakeHandle: (_) async => callGrant,
       loadPendingCallWakeHandleContactIds: () async =>
           pendingCall ? [_peer] : [],
-      readConsent: (_) async => consent == null
-          ? null
-          : ContactRelationshipConsent(
-              state: consent!,
-              revision: 1,
-              updatedAtMs: now.millisecondsSinceEpoch,
-            ),
+      readConsent: (_) async {
+        onReadConsent?.call();
+        return consent == null
+            ? null
+            : ContactRelationshipConsent(
+                state: consent!,
+                revision: 1,
+                updatedAtMs: now.millisecondsSinceEpoch,
+              );
+      },
     ),
   );
 
@@ -241,6 +246,26 @@ void main() {
       now = now.add(const Duration(minutes: 1));
       await retry();
       expect(transport.storeInInboxCallCount, 0);
+    },
+  );
+  test(
+    'BL24E2 token rotation during final authority read retains reservation',
+    () async {
+      await stage('wake');
+      consent = ContactRelationshipState.active;
+      var consentReads = 0;
+      onReadConsent = () {
+        if (++consentReads == 2) wakeToken = 'rotated-during-final-authority';
+      };
+      await retry();
+      expect(consentReads, 2);
+      expect(transport.storeInInboxCallCount, 0);
+      final reserved = await store.read(_journalKey);
+      expect(reserved, isNotNull);
+      now = now.add(const Duration(minutes: 1));
+      await retry();
+      expect(transport.storeInInboxCallCount, 0);
+      expect(await store.read(_journalKey), reserved);
     },
   );
   test(
