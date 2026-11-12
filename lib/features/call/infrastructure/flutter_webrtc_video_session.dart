@@ -447,7 +447,54 @@ final class FlutterWebRtcVideoSession
   Future<CallVideoSdpReconciliationOutcome> reconcilePending(
     CallVideoNegotiation token, {
     required bool Function() canApply,
-  }) async => CallVideoSdpReconciliationOutcome.unreconciled;
+  }) {
+    const failed = CallVideoSdpReconciliationOutcome.unreconciled;
+    if (token is! _Negotiation) return Future.value(failed);
+    bool current() =>
+        _allowed() && identical(_current, token) && _currentGrant(canApply);
+    if (!current()) return Future.value(failed);
+    // Retirement is immediate; native reconciliation waits for any owned apply
+    // to record its result. A retired token remains the exact current owner.
+    unawaited(retireVideo());
+    return _serial(() async {
+      try {
+        if (!current()) return failed;
+        final connection = _connection();
+        final state = await connection.getSignalingState();
+        if (!current()) return failed;
+        if (state == webrtc.RTCSignalingState.RTCSignalingStateStable) {
+          token.local = null;
+          token.remote = null;
+          return CallVideoSdpReconciliationOutcome.alreadyStable;
+        }
+        if (state == webrtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer &&
+            token.local?.type == CallSessionDescriptionType.offer) {
+          await connection.setLocalDescription(
+            webrtc.RTCSessionDescription('', 'rollback'),
+          );
+        } else if (state ==
+                webrtc.RTCSignalingState.RTCSignalingStateHaveRemoteOffer &&
+            token.remote?.type == CallSessionDescriptionType.offer) {
+          await connection.setRemoteDescription(
+            webrtc.RTCSessionDescription('', 'rollback'),
+          );
+        } else {
+          return failed;
+        }
+        if (!current()) return failed;
+        final stable = await connection.getSignalingState();
+        if (!current() ||
+            stable != webrtc.RTCSignalingState.RTCSignalingStateStable) {
+          return failed;
+        }
+        token.local = null;
+        token.remote = null;
+        return CallVideoSdpReconciliationOutcome.rolledBack;
+      } catch (_) {
+        return failed;
+      }
+    });
+  }
 
   @override
   Future<bool> rollbackPending(CallVideoNegotiation raw) {
