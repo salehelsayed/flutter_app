@@ -897,7 +897,7 @@ void main() {
             );
             expect(terminal.callHandle, frame.expectedCallHandle);
             expect(terminal.signal.messageId, frame.expectedMessageId);
-            expect(terminal.signal.event, CallSignalType.terminate);
+            expect(terminal.signal.eventWireName, 'terminate');
             settlements++;
             admissionForeground = false;
           };

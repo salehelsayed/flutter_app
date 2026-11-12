@@ -320,7 +320,7 @@ final class CallSignalingRuntime {
         while (_terminalSettlements.length > maxPendingTerminalSettlements) {
           _terminalSettlements.remove(_terminalSettlements.keys.first);
         }
-        _settlementDiagnostic('authenticated', terminal.signal.event.name);
+        _settlementDiagnostic('authenticated', terminal.signal.eventWireName);
       } else if (outcome != IncomingCallSignalOutcome.duplicate) {
         // A retained proof may cover only its byte-identical replay. A
         // newly rejected row cannot borrow prior authenticated authority.
@@ -340,7 +340,10 @@ final class CallSignalingRuntime {
     }
     if (fingerprint != null) _terminalSettlements.remove(fingerprint);
     if (pending != null && !_disposed && !_shuttingDown) {
-      _settlementDiagnostic('acknowledged', pending.terminal.signal.event.name);
+      _settlementDiagnostic(
+        'acknowledged',
+        pending.terminal.signal.eventWireName,
+      );
       try {
         await pending.commit(
           pending.terminal,
@@ -348,7 +351,7 @@ final class CallSignalingRuntime {
         );
       } catch (_) {
         // The durable ACK remains complete; native custody fails closed.
-        _settlementDiagnostic('failed', pending.terminal.signal.event.name);
+        _settlementDiagnostic('failed', pending.terminal.signal.eventWireName);
       }
     }
     return true;
