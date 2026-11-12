@@ -60,10 +60,12 @@ Future<int> retryIncompleteKeyExchanges({
   // A local decline/withdrawal cannot authorize another automatic request.
   Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
   String? interestPeerId,
+  void Function(ContactRetryStatus status)? onRetryStatus,
 }) => _incompleteKeyExchangeRetryLock.synchronized(() async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
   if (identity == null || identity.mlKemPublicKey == null) {
+    onRetryStatus?.call((stoppedPeerIds: const {}, nextChangeAtMs: null));
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_KEY_EXCHANGE_SKIP_NO_OWN_KEY',
@@ -73,7 +75,7 @@ Future<int> retryIncompleteKeyExchanges({
   }
 
   // 2. Guard: node must be running
-  if (!p2pService.currentState.isStarted) {
+  if (interestPeerId == null && !p2pService.currentState.isStarted) {
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_KEY_EXCHANGE_SKIP_NODE_NOT_RUNNING',
@@ -115,6 +117,38 @@ Future<int> retryIncompleteKeyExchanges({
       );
     }
   }
+  void publishStatus() => onRetryStatus?.call(
+    journal?.status(contacts, consents, clock.now().millisecondsSinceEpoch) ??
+        (stoppedPeerIds: const {}, nextChangeAtMs: null),
+  );
+  if (interestPeerId != null) {
+    final target = contacts
+        .where((c) => c.peerId == interestPeerId)
+        .firstOrNull;
+    if (target == null ||
+        target.mlKemPublicKey != null ||
+        target.isBlocked ||
+        target.isArchived ||
+        !ContactRequestRetryJournal.consentAllows(consents[target.peerId]) ||
+        journal == null) {
+      publishStatus();
+      return 0;
+    }
+    try {
+      if (!await journal.restartOnInterest(
+        target,
+        clock.now().millisecondsSinceEpoch,
+      )) {
+        publishStatus();
+        return 0;
+      }
+    } on Object {
+      // A failed durable write cannot authorize network work or clear the hint.
+      return 0;
+    }
+  }
+  publishStatus();
+  if (!p2pService.currentState.isStarted) return 0;
   final markerStore = secureKeyStore;
   var reannouncePending = markerStore != null
       ? await readMlKemReannounceMarker(markerStore)
@@ -126,6 +160,7 @@ Future<int> retryIncompleteKeyExchanges({
       ? await readWakeTokenPendingMarker(markerStore)
       : const <String>[];
   final eligible = contacts.where((c) {
+    if (interestPeerId != null && c.peerId != interestPeerId) return false;
     if (c.isBlocked ||
         !ContactRequestRetryJournal.consentAllows(consents[c.peerId])) {
       return false;
@@ -171,7 +206,9 @@ Future<int> retryIncompleteKeyExchanges({
           reannouncePending.contains(contact.peerId) ||
           wakeTokenPending.contains(contact.peerId) ||
           callWakeHandlePending.contains(contact.peerId);
-      final freshEvent = KeyExchangeRetryContext.current?.requireFresh == true;
+      final freshEvent =
+          interestPeerId == null &&
+          KeyExchangeRetryContext.current?.requireFresh == true;
       // Explicit event runs target pending distribution work only, not every
       // dormant contact discovered by the periodic recovery scan.
       if (freshEvent && !markerPending) continue;
@@ -183,7 +220,9 @@ Future<int> retryIncompleteKeyExchanges({
         )?.millisecondsSinceEpoch;
         if (scannedAt == null ||
             nowMs < scannedAt ||
-            nowMs >= scannedAt + const Duration(days: 7).inMilliseconds) {
+            nowMs >=
+                (journal?.entries[contact.peerId]?.expiresAtMs ??
+                    scannedAt + const Duration(days: 7).inMilliseconds)) {
           continue;
         }
         // A future reservation/expiry is not reset by fresh events. If this
@@ -314,6 +353,9 @@ Future<int> retryIncompleteKeyExchanges({
                     to: contact.peerId,
                   )
                 : null,
+            // An interest-owned cycle uses the retry owner's clock for both
+            // signed and encrypted timestamps. Other send paths are unchanged.
+            signingTime: entry.interestStartedAtMs == null ? null : clock.now(),
           );
           envelope = build.envelope;
           if (envelope == null) continue;
@@ -341,6 +383,7 @@ Future<int> retryIncompleteKeyExchanges({
                 entry.generation ||
             clock.now().millisecondsSinceEpoch >= entry.expiresAtMs) {
           await custody.remove(contact.peerId);
+          publishStatus();
           continue;
         }
         if (pinMaterial) {
@@ -452,4 +495,35 @@ Future<int> retryIncompleteKeyExchanges({
   );
 
   return sent;
+});
+
+/// Refreshes the local stopped-cycle projection without preparing or sending
+/// requests. Shares the retry lock so a view never races a new reservation.
+Future<ContactRetryStatus> readContactRetryStatus({
+  required ContactRepository contactRepo,
+  required IdentityRepository identityRepo,
+  required SecureKeyStore? secureKeyStore,
+  Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
+}) => _incompleteKeyExchangeRetryLock.synchronized(() async {
+  final identity = await identityRepo.loadIdentity();
+  if (identity == null ||
+      identity.mlKemPublicKey == null ||
+      secureKeyStore == null) {
+    return (stoppedPeerIds: const <String>{}, nextChangeAtMs: null);
+  }
+  final contacts = await contactRepo.getAllContacts();
+  final consents = <String, ContactRelationshipConsent?>{
+    if (readConsent != null)
+      for (final contact in contacts)
+        contact.peerId: await readConsent(contact.peerId),
+  };
+  final nowMs = clock.now().millisecondsSinceEpoch;
+  final journal = await ContactRequestRetryJournal.reconcile(
+    store: secureKeyStore,
+    identity: identity,
+    contacts: contacts,
+    consents: consents,
+    nowMs: nowMs,
+  );
+  return journal.status(contacts, consents, nowMs);
 });

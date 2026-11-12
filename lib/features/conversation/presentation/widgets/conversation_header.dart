@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -202,6 +203,20 @@ class ConversationHeader extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (isWaitingForSecureConnection &&
+                    PendingContactRetryScope.isStopped(
+                      context,
+                      contactPeerId,
+                    )) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    AppLocalizations.of(context)!.contact_retry_stopped_hint,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: readableColors.textMuted,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

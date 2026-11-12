@@ -5442,4 +5442,8 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'عناصر التحكم بالفيديو';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'لم يكتمل الاتصال بعد. يمكن للطرف الآخر مسح رمزك مجددًا.';
 }

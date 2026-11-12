@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
@@ -203,6 +204,19 @@ class FriendRow extends StatelessWidget {
                               color: readableColors.textMuted,
                             ),
                           ),
+                          if (PendingContactRetryScope.isStopped(
+                            context,
+                            friend.peerId,
+                          )) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              l10n.contact_retry_stopped_hint,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: readableColors.textMuted,
+                              ),
+                            ),
+                          ],
                         ],
                         if (previewText.isNotEmpty) ...[
                           const SizedBox(height: 4),

@@ -2345,5 +2345,6 @@
   "call_video_action_turn_camera_off": "Kamera ausschalten",
   "call_video_action_switch_camera": "Kamera wechseln",
   "call_video_action_use_audio_only": "Nur Audio verwenden",
-  "call_video_controls_label": "Videosteuerung"
+  "call_video_controls_label": "Videosteuerung",
+  "contact_retry_stopped_hint": "Noch nicht verbunden. Bitte dein Gegenüber, deinen Code erneut zu scannen."
 }

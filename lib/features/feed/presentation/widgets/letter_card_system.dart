@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_letter.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/letter_bubble.dart';
@@ -16,11 +17,7 @@ class LetterCardSystem extends StatelessWidget {
   final SystemLetter letter;
   final VoidCallback? onSendMessage;
 
-  const LetterCardSystem({
-    super.key,
-    required this.letter,
-    this.onSendMessage,
-  });
+  const LetterCardSystem({super.key, required this.letter, this.onSendMessage});
 
   @override
   Widget build(BuildContext context) {
@@ -92,6 +89,14 @@ class LetterCardSystem extends StatelessWidget {
                 ),
               ],
               SizedBox(height: tokens.space3 * 0.5),
+              if (isWaiting &&
+                  PendingContactRetryScope.isStopped(
+                    context,
+                    letter.contactPeerId,
+                  )) ...[
+                Text(l10n.contact_retry_stopped_hint, style: tokens.textMeta),
+                SizedBox(height: tokens.space3 * 0.5),
+              ],
               bubble,
             ],
           ),

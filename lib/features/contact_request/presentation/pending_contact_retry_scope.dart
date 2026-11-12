@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 
@@ -20,5 +22,12 @@ class PendingContactRetryScope extends InheritedNotifier {
           .contains(peerId) ??
       false;
 
-  static void noteInterest(BuildContext context, String peerId) {}
+  static void noteInterest(BuildContext context, String peerId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      final scope = context
+          .getInheritedWidgetOfExactType<PendingContactRetryScope>();
+      if (scope != null) unawaited(scope.retrier.retryOnInterest(peerId));
+    });
+  }
 }

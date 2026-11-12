@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:clock/clock.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_retry_journal.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
@@ -25,15 +27,53 @@ class KeyExchangeRetrier {
 
   ValueListenable<Set<String>> get stoppedPeerIds => _stoppedPeerIds;
 
-  Future<void> refreshRetryStatus() async {}
+  Timer? _statusExpiryTimer;
+  bool _disposed = false;
+  late final Future<ContactRetryStatus> Function() _readStatus;
+  late final Future<int> Function(String peerId) _retryInterest;
 
-  Future<int> retryOnInterest(String peerId) async => 0;
+  Future<void> refreshRetryStatus() async {
+    if (_disposed) return;
+    try {
+      _publishStatus(await _readStatus());
+    } on Object {
+      _publishStatus((stoppedPeerIds: const {}, nextChangeAtMs: null));
+    }
+  }
+
+  Future<int> retryOnInterest(String peerId) async {
+    if (_disposed || !await _allowsKeyExchangeRetry('contact_interest')) {
+      return 0;
+    }
+    try {
+      return await _retryInterest(peerId);
+    } on Object {
+      return 0;
+    }
+  }
+
+  void _publishStatus(ContactRetryStatus status) {
+    if (_disposed) return;
+    _statusExpiryTimer?.cancel();
+    if (!setEquals(_stoppedPeerIds.value, status.stoppedPeerIds)) {
+      _stoppedPeerIds.value = status.stoppedPeerIds;
+    }
+    final next = status.nextChangeAtMs;
+    if (next != null) {
+      final delay = next - clock.now().millisecondsSinceEpoch;
+      _statusExpiryTimer = Timer(
+        Duration(milliseconds: delay > 0 ? delay : 1),
+        refreshRetryStatus,
+      );
+    }
+  }
+
   final P2PService p2pService;
   final ContactRepository contactRepo;
   final IdentityRepository identityRepo;
   final Bridge bridge;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
-  final KeyExchangeRetryCoordinator _coordinator;
+  late final KeyExchangeRetryCoordinator _coordinator;
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
@@ -56,27 +96,51 @@ class KeyExchangeRetrier {
     OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
     Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
     Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
-  }) : _coordinator =
-           coordinator ??
-           KeyExchangeRetryCoordinator(
-             performRetry: () async {
-               await beforeRetry?.call();
-               return retryIncompleteKeyExchanges(
-                 contactRepo: contactRepo,
-                 identityRepo: identityRepo,
-                 p2pService: p2pService,
-                 bridge: bridge,
-                 secureKeyStore: secureKeyStore,
-                 resolveWakeToken: resolveWakeToken,
-                 loadPendingCallWakeHandleContactIds:
-                     loadPendingCallWakeHandleContactIds,
-                 resolveCallWakeHandle: resolveCallWakeHandle,
-                 onCallWakeHandleDistributed: onCallWakeHandleDistributed,
-                 shouldMarkAsNewRequest: shouldMarkAsNewRequest,
-                 readConsent: readConsent,
-               );
-             },
-           );
+  }) {
+    _readStatus = () => readContactRetryStatus(
+      contactRepo: contactRepo,
+      identityRepo: identityRepo,
+      secureKeyStore: secureKeyStore,
+      readConsent: readConsent,
+    );
+    _retryInterest = (peerId) => retryIncompleteKeyExchanges(
+      contactRepo: contactRepo,
+      identityRepo: identityRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      secureKeyStore: secureKeyStore,
+      resolveWakeToken: resolveWakeToken,
+      loadPendingCallWakeHandleContactIds: loadPendingCallWakeHandleContactIds,
+      resolveCallWakeHandle: resolveCallWakeHandle,
+      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+      shouldMarkAsNewRequest: shouldMarkAsNewRequest,
+      readConsent: readConsent,
+      interestPeerId: peerId,
+      onRetryStatus: _publishStatus,
+    );
+    _coordinator =
+        coordinator ??
+        KeyExchangeRetryCoordinator(
+          performRetry: () async {
+            await beforeRetry?.call();
+            return retryIncompleteKeyExchanges(
+              contactRepo: contactRepo,
+              identityRepo: identityRepo,
+              p2pService: p2pService,
+              bridge: bridge,
+              secureKeyStore: secureKeyStore,
+              resolveWakeToken: resolveWakeToken,
+              loadPendingCallWakeHandleContactIds:
+                  loadPendingCallWakeHandleContactIds,
+              resolveCallWakeHandle: resolveCallWakeHandle,
+              onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+              shouldMarkAsNewRequest: shouldMarkAsNewRequest,
+              readConsent: readConsent,
+              onRetryStatus: _publishStatus,
+            );
+          },
+        );
+  }
 
   /// Starts listening for state transitions.
   void start() {
@@ -98,6 +162,7 @@ class KeyExchangeRetrier {
       }
 
       _wasOnline = nowOnline;
+      unawaited(refreshRetryStatus());
     });
   }
 
@@ -154,6 +219,9 @@ class KeyExchangeRetrier {
 
   /// Stops listening and cleans up resources.
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _statusExpiryTimer?.cancel();
     _stoppedPeerIds.dispose();
     emitFlowEvent(
       layer: 'FL',

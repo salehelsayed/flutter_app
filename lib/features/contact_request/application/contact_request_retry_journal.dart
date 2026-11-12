@@ -12,6 +12,11 @@ const contactRequestRetryJournalKey = 'contact_request_retry_journal_v1';
 const _maxEntries = 200;
 const _ttl = Duration(days: 7);
 
+typedef ContactRetryStatus = ({
+  Set<String> stoppedPeerIds,
+  int? nextChangeAtMs,
+});
+
 /// Local custody for dormant, keyless retries only. The retry owner serializes
 /// reconciliation, reservation and publication before doing network work.
 final class ContactRequestRetryJournal {
@@ -82,7 +87,7 @@ final class ContactRequestRetryJournal {
                   wire['version'] != '2' ||
                   wire['msgId'] != envelope.msgId ||
                   envelope.msgId!.isEmpty ||
-                  envelope.signedAtMs! < entry.scannedAtMs ||
+                  envelope.signedAtMs! < entry.cycleStartedAtMs ||
                   entry.expiresAtMs >
                       envelope.signedAtMs! + _ttl.inMilliseconds) {
                 throw const FormatException();
@@ -119,12 +124,13 @@ final class ContactRequestRetryJournal {
     final scannedAt = DateTime.tryParse(
       contact.scannedAt,
     )?.millisecondsSinceEpoch;
-    if (scannedAt == null ||
-        nowMs < scannedAt ||
-        nowMs >= scannedAt + _ttl.inMilliseconds) {
+    var entry = entries[contact.peerId];
+    final startedAt = entry?.cycleStartedAtMs ?? scannedAt;
+    if (startedAt == null ||
+        nowMs < startedAt ||
+        nowMs >= (entry?.expiresAtMs ?? startedAt + _ttl.inMilliseconds)) {
       return null;
     }
-    var entry = entries[contact.peerId];
     if (entry != null && nowMs < entry.nextAttemptAtMs) return null;
     if (entry == null) {
       // Never evict a live ID to admit another one. Expired/retired entries
@@ -133,8 +139,8 @@ final class ContactRequestRetryJournal {
       entry = ContactRequestRetryEntry(
         peerId: contact.peerId,
         generation: generation(identity, contact),
-        scannedAtMs: scannedAt,
-        expiresAtMs: scannedAt + _ttl.inMilliseconds,
+        scannedAtMs: scannedAt!,
+        expiresAtMs: startedAt + _ttl.inMilliseconds,
         attempts: 0,
         nextAttemptAtMs: nowMs,
       );
@@ -152,6 +158,61 @@ final class ContactRequestRetryJournal {
     return entry;
   }
 
+  /// A local interest event can restart only an expired cycle. Persist its
+  /// intent before network readiness, so reconnect can perform the first send.
+  Future<bool> restartOnInterest(ContactModel contact, int nowMs) async {
+    final scannedAt = DateTime.tryParse(
+      contact.scannedAt,
+    )?.millisecondsSinceEpoch;
+    if (scannedAt == null ||
+        nowMs < scannedAt + _ttl.inMilliseconds ||
+        entries.containsKey(contact.peerId) ||
+        entries.length >= _maxEntries) {
+      return false;
+    }
+    entries[contact.peerId] = ContactRequestRetryEntry(
+      peerId: contact.peerId,
+      generation: generation(identity, contact),
+      scannedAtMs: scannedAt,
+      interestStartedAtMs: nowMs,
+      expiresAtMs: nowMs + _ttl.inMilliseconds,
+      attempts: 0,
+      nextAttemptAtMs: nowMs,
+    );
+    await persist();
+    return true;
+  }
+
+  ContactRetryStatus status(
+    List<ContactModel> contacts,
+    Map<String, ContactRelationshipConsent?> consents,
+    int nowMs,
+  ) {
+    final stopped = <String>{};
+    int? next;
+    for (final contact in contacts) {
+      if (contact.mlKemPublicKey != null ||
+          contact.isBlocked ||
+          contact.isArchived ||
+          !consentAllows(consents[contact.peerId])) {
+        continue;
+      }
+      final scannedAt = DateTime.tryParse(
+        contact.scannedAt,
+      )?.millisecondsSinceEpoch;
+      if (scannedAt == null || nowMs < scannedAt) continue;
+      final expires =
+          entries[contact.peerId]?.expiresAtMs ??
+          scannedAt + _ttl.inMilliseconds;
+      if (nowMs >= expires) {
+        stopped.add(contact.peerId);
+      } else {
+        next = next == null ? expires : min(next, expires);
+      }
+    }
+    return (stoppedPeerIds: Set.unmodifiable(stopped), nextChangeAtMs: next);
+  }
+
   Future<bool> saveEnvelope(
     ContactRequestRetryEntry entry,
     BuiltContactRequestEnvelope envelope,
@@ -162,7 +223,7 @@ final class ContactRequestRetryJournal {
     // A wall-clock rollback during build cannot authorize an older request
     // than this contact generation. Keep its backoff reservation, send nothing.
     if (signedAt == null ||
-        signedAt < entry.scannedAtMs ||
+        signedAt < entry.cycleStartedAtMs ||
         envelope.senderPeerId != identity.peerId ||
         envelope.targetPeerId != entry.peerId ||
         !envelope.encrypted) {
@@ -208,11 +269,14 @@ final class ContactRequestRetryEntry {
     required this.nextAttemptAtMs,
     this.envelope,
     this.materialFingerprint,
+    this.interestStartedAtMs,
   });
 
   final String peerId;
   final String generation;
   final int scannedAtMs;
+  final int? interestStartedAtMs;
+  int get cycleStartedAtMs => interestStartedAtMs ?? scannedAtMs;
   int expiresAtMs;
   int attempts;
   int nextAttemptAtMs;
@@ -228,6 +292,7 @@ final class ContactRequestRetryEntry {
       attempts: json['attempts'] as int,
       nextAttemptAtMs: json['nextAttemptAtMs'] as int,
       materialFingerprint: json['materialFingerprint'] as String?,
+      interestStartedAtMs: json['interestStartedAtMs'] as int?,
       envelope: json['envelope'] == null
           ? null
           : BuiltContactRequestEnvelope.fromJson(
@@ -236,9 +301,15 @@ final class ContactRequestRetryEntry {
     );
     if (entry.peerId.isEmpty ||
         entry.generation.isEmpty ||
-        entry.attempts < 1 ||
-        entry.expiresAtMs > entry.scannedAtMs + _ttl.inMilliseconds ||
-        entry.expiresAtMs <= entry.scannedAtMs) {
+        entry.attempts < (entry.interestStartedAtMs == null ? 1 : 0) ||
+        (entry.interestStartedAtMs != null &&
+            entry.interestStartedAtMs! <
+                entry.scannedAtMs + _ttl.inMilliseconds) ||
+        (entry.attempts == 0 &&
+            (entry.envelope != null ||
+                entry.nextAttemptAtMs != entry.cycleStartedAtMs)) ||
+        entry.expiresAtMs > entry.cycleStartedAtMs + _ttl.inMilliseconds ||
+        entry.expiresAtMs <= entry.cycleStartedAtMs) {
       throw const FormatException();
     }
     return entry;
@@ -253,5 +324,6 @@ final class ContactRequestRetryEntry {
     'nextAttemptAtMs': nextAttemptAtMs,
     'envelope': envelope?.toJson(),
     if (materialFingerprint != null) 'materialFingerprint': materialFingerprint,
+    if (interestStartedAtMs != null) 'interestStartedAtMs': interestStartedAtMs,
   };
 }
