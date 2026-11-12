@@ -12017,6 +12017,28 @@ are unchanged through the final source. Its `android-call-jvm.log` SHA-256 is
 under `/Volumes/CrucialX9/flutter_app/.codex-test-logs/bl5-native-20261112/`.
 These receipts establish the scoped per-fix result; integration-batch checks and
 device or signed-candidate behavior require their own evidence.
+
+The core sentinel `test/core/diagnostics/call_failure_observation_test.dart` also
+pins these classifications. It is covered by the diagnostics lane but sits
+outside the call-feature test directory; the original four-file BL5 preservation
+set omitted it. Batch bisect retained 15 passes before BL5 versus 7 passes and
+8 stale-expectation failures after it. Test-only `4cdd902c4` updates those expected
+stage/reason pairs while preserving exception identity, single observations,
+redaction, timeout outcomes, interruption fencing, terminal reason, cleanup and
+history. The generic media fixtures throw untyped `StateError`, so they assert
+`media/media_failed`; typed configuration/SDP failures still retain
+`media/negotiation_failed`. Checkpoints assert `runtime/write_failed`, and signaling
+failures/timeouts assert their signaling boundary.
+On clean integrated head `d58446b319a826922573381d0a7e4507f00433af`, the 15 distinct sentinel
+cases and all four requested preservation files passed: the combined run
+(including FriendRow) reported 173 passes, and the separate call-diagnostics run
+reported 63, both with actual child exit zero. The five requested test files
+match the author revision. Raw output is retained in
+`/Volumes/CrucialX9/flutter_app/.codex-test-logs/batch1-20261112/final/tests.log`
+and `final2/tests.log`. Global analysis exited 1 for seven existing infos in the
+audio-soak script and background-message-handler tests, with zero errors or
+warnings and no diagnostic in the changed sentinel; this is not a clean global
+analysis claim. Those separate infos are covered by the batch-2 cleanup.
 Permission observations use
 the existing posting-admission result, preserve original requester exceptions,
 and separately mark caught OS-check failures without changing fail-open policy.
