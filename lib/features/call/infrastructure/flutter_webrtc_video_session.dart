@@ -44,7 +44,8 @@ final class FlutterWebRtcVideoSession
     implements
         CallVideoSession,
         CallVideoPresentationSource,
-        CallVideoCameraSwitch {
+        CallVideoCameraSwitch,
+        CallVideoSdpReconciler {
   FlutterWebRtcVideoSession({
     required this.callId,
     required this.localIsCaller,
@@ -441,6 +442,12 @@ final class FlutterWebRtcVideoSession
     _remoteTrack?.enabled = _receiveOpen;
     _publish(CallVideoRendererSlot.remote);
   });
+
+  @override
+  Future<CallVideoSdpReconciliationOutcome> reconcilePending(
+    CallVideoNegotiation token, {
+    required bool Function() canApply,
+  }) async => CallVideoSdpReconciliationOutcome.unreconciled;
 
   @override
   Future<bool> rollbackPending(CallVideoNegotiation raw) {

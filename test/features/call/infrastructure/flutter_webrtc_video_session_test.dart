@@ -128,6 +128,9 @@ class Peer implements rtc.RTCPeerConnection {
   int closes = 0, restarts = 0, disposals = 0;
   Completer<void>? offerGate;
   bool failRollback = false;
+  Future<rtc.RTCSignalingState?> Function()? probe;
+  Future<void> Function(rtc.RTCSessionDescription, bool)? beforeApply;
+  int probes = 0;
   @override
   rtc.RTCSignalingState signalingState =
       rtc.RTCSignalingState.RTCSignalingStateStable;
@@ -136,7 +139,11 @@ class Peer implements rtc.RTCPeerConnection {
   Transceiver get video =>
       nativeTransceivers.firstWhere((t) => t.receiver.track.kind == 'video');
   @override
-  Future<rtc.RTCSignalingState?> getSignalingState() async => signalingState;
+  Future<rtc.RTCSignalingState?> getSignalingState() async {
+    probes++;
+    return probe == null ? signalingState : await probe!();
+  }
+
   @override
   Future<rtc.RTCRtpTransceiver> addTransceiver({
     rtc.MediaStreamTrack? track,
@@ -179,6 +186,7 @@ class Peer implements rtc.RTCPeerConnection {
   ]) async => rtc.RTCSessionDescription(nativeSdp(), 'answer');
   @override
   Future<void> setLocalDescription(rtc.RTCSessionDescription d) async {
+    await beforeApply?.call(d, true);
     if (d.type == 'rollback' && failRollback) throw StateError('rollback');
     local.add(d);
     signalingState = d.type == 'offer'
@@ -188,6 +196,7 @@ class Peer implements rtc.RTCPeerConnection {
 
   @override
   Future<void> setRemoteDescription(rtc.RTCSessionDescription d) async {
+    await beforeApply?.call(d, false);
     if (d.type == 'rollback' && failRollback) throw StateError('rollback');
     remote.add(d);
     if (d.type == 'offer' &&
@@ -542,66 +551,110 @@ void main() {
       },
     );
     test('retired pending renderer never publishes a view', () async {
-      final f = Fixture(); await f.start(); final t = await f.committed(); final p = source(f);
-      remote(f); final events = <CallVideoPresentationState>[];
-      final sub = p.presentationChanges.listen(events.add);
-      f.renderer.gate = Completer<void>();
-      final attaching = f.session.attachRenderer(t, CallVideoRendererSlot.remote);
-      await flush(); final retiring = f.session.retireVideo();
-      f.renderer.gate!.complete();
-      expect(await attaching, isNull); await retiring;
-      expect(events.every((event) => event.view == null), isTrue);
-      expect(f.renderer.onResize, isNull); f.preserved(); await sub.cancel();
-    });
-    test('presentation listener can stop capture without reentrant stream error', () async {
-      final f = Fixture(); await f.start(); final t = await f.committed(); final p = source(f);
-      Future<bool>? stopping;
-      final sub = p.presentationChanges.listen((event) {
-        if (event.slot == CallVideoRendererSlot.local) stopping = f.session.stopLocalCamera();
-      });
-      expect(await f.session.setLocalCamera(t, f.grant()), isFalse);
-      await stopping;
-      expect(p.presentationFor(CallVideoRendererSlot.local).hasTrack, isFalse);
-      expect(f.track.enabled, isFalse); await sub.cancel(); f.preserved();
-    });
-    test('switch rejects stale foreign and denied grants without native mutation', () async {
-      final f = Fixture(); await f.start(); final t = await f.committed(); final c = camera(f);
-      final other = Fixture(); await other.start(); final foreign = await other.committed();
-      await f.session.setLocalCamera(t, f.grant()); var calls = 0;
-      mockSwitch((_) async { calls++; return true; });
-      for (final grant in [f.grant(consent: false), f.grant(permission: false), f.grant(agreed: false), f.grant(fresh: () => false)]) {
-        expect(await c.switchCamera(t, grant), isFalse);
-      }
-      expect(await c.switchCamera(foreign, f.grant()), isFalse);
-      await f.session.retireVideo();
-      expect(await c.switchCamera(t, f.grant()), isFalse);
-      expect(calls, 0); f.preserved();
-    });
-    test('native rear-facing false is completed switch without new capture or signaling', () async {
       final f = Fixture();
       await f.start();
       final t = await f.committed();
-      final c = camera(f);
-      var calls = 0;
-      mockSwitch((call) async {
-        expect(call.method, 'mediaStreamTrackSwitchCamera');
-        calls++;
-        return false;
-      });
-      expect(await c.switchCamera(t, f.grant()), isFalse);
-      await f.session.setLocalCamera(t, f.grant());
-      final offers = f.peer.offers.length;
-      final local = f.peer.local.length;
-      final remote = f.peer.remote.length;
-      expect(await c.switchCamera(t, f.grant()), isTrue);
-      expect(calls, 1);
-      expect(f.captures, 1);
-      expect(f.track.enabled, isTrue);
-      expect(f.peer.offers.length, offers);
-      expect(f.peer.local.length, local);
-      expect(f.peer.remote.length, remote);
+      final p = source(f);
+      remote(f);
+      final events = <CallVideoPresentationState>[];
+      final sub = p.presentationChanges.listen(events.add);
+      f.renderer.gate = Completer<void>();
+      final attaching = f.session.attachRenderer(
+        t,
+        CallVideoRendererSlot.remote,
+      );
+      await flush();
+      final retiring = f.session.retireVideo();
+      f.renderer.gate!.complete();
+      expect(await attaching, isNull);
+      await retiring;
+      expect(events.every((event) => event.view == null), isTrue);
+      expect(f.renderer.onResize, isNull);
       f.preserved();
+      await sub.cancel();
     });
+    test(
+      'presentation listener can stop capture without reentrant stream error',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final p = source(f);
+        Future<bool>? stopping;
+        final sub = p.presentationChanges.listen((event) {
+          if (event.slot == CallVideoRendererSlot.local)
+            stopping = f.session.stopLocalCamera();
+        });
+        expect(await f.session.setLocalCamera(t, f.grant()), isFalse);
+        await stopping;
+        expect(
+          p.presentationFor(CallVideoRendererSlot.local).hasTrack,
+          isFalse,
+        );
+        expect(f.track.enabled, isFalse);
+        await sub.cancel();
+        f.preserved();
+      },
+    );
+    test(
+      'switch rejects stale foreign and denied grants without native mutation',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final c = camera(f);
+        final other = Fixture();
+        await other.start();
+        final foreign = await other.committed();
+        await f.session.setLocalCamera(t, f.grant());
+        var calls = 0;
+        mockSwitch((_) async {
+          calls++;
+          return true;
+        });
+        for (final grant in [
+          f.grant(consent: false),
+          f.grant(permission: false),
+          f.grant(agreed: false),
+          f.grant(fresh: () => false),
+        ]) {
+          expect(await c.switchCamera(t, grant), isFalse);
+        }
+        expect(await c.switchCamera(foreign, f.grant()), isFalse);
+        await f.session.retireVideo();
+        expect(await c.switchCamera(t, f.grant()), isFalse);
+        expect(calls, 0);
+        f.preserved();
+      },
+    );
+    test(
+      'native rear-facing false is completed switch without new capture or signaling',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final c = camera(f);
+        var calls = 0;
+        mockSwitch((call) async {
+          expect(call.method, 'mediaStreamTrackSwitchCamera');
+          calls++;
+          return false;
+        });
+        expect(await c.switchCamera(t, f.grant()), isFalse);
+        await f.session.setLocalCamera(t, f.grant());
+        final offers = f.peer.offers.length;
+        final local = f.peer.local.length;
+        final remote = f.peer.remote.length;
+        expect(await c.switchCamera(t, f.grant()), isTrue);
+        expect(calls, 1);
+        expect(f.captures, 1);
+        expect(f.track.enabled, isTrue);
+        expect(f.peer.offers.length, offers);
+        expect(f.peer.local.length, local);
+        expect(f.peer.remote.length, remote);
+        f.preserved();
+      },
+    );
     for (final retire in [false, true]) {
       test(
         'pending switch cannot revive ${retire ? "retired" : "stopped"} capture',
@@ -632,27 +685,30 @@ void main() {
         },
       );
     }
-    test('grant revoked during switch closes capture; native error preserves authorized capture', () async {
-      final f = Fixture();
-      await f.start();
-      final t = await f.committed();
-      final c = camera(f);
-      await f.session.setLocalCamera(t, f.grant());
-      mockSwitch((_) async {
-        throw PlatformException(code: 'switch_failed');
-      });
-      expect(await c.switchCamera(t, f.grant()), isFalse);
-      expect(f.track.enabled, isTrue);
-      var fresh = true;
-      mockSwitch((_) async {
-        fresh = false;
-        return true;
-      });
-      expect(await c.switchCamera(t, f.grant(fresh: () => fresh)), isFalse);
-      expect(f.track.enabled, isFalse);
-      expect(f.track.stops, 1);
-      f.preserved();
-    });
+    test(
+      'grant revoked during switch closes capture; native error preserves authorized capture',
+      () async {
+        final f = Fixture();
+        await f.start();
+        final t = await f.committed();
+        final c = camera(f);
+        await f.session.setLocalCamera(t, f.grant());
+        mockSwitch((_) async {
+          throw PlatformException(code: 'switch_failed');
+        });
+        expect(await c.switchCamera(t, f.grant()), isFalse);
+        expect(f.track.enabled, isTrue);
+        var fresh = true;
+        mockSwitch((_) async {
+          fresh = false;
+          return true;
+        });
+        expect(await c.switchCamera(t, f.grant(fresh: () => fresh)), isFalse);
+        expect(f.track.enabled, isFalse);
+        expect(f.track.stops, 1);
+        f.preserved();
+      },
+    );
   });
   test('default-off and v1 bindings reject before video mutation', () async {
     final f = Fixture();
@@ -855,6 +911,239 @@ void main() {
     expect(await f.session.retryCleanup(), isTrue);
     expect(f.renderer.disposals, 2);
     f.preserved();
+  });
+  group('SDP reconciliation', () {
+    Future<CallVideoSdpReconciliationOutcome> reconcile(
+      Fixture f,
+      CallVideoNegotiation token, {
+      bool Function()? canApply,
+    }) => (f.session as CallVideoSdpReconciler).reconcilePending(
+      token,
+      canApply: canApply ?? () => true,
+    );
+
+    for (final answered in [false, true]) {
+      test(
+        'native stable proof with answered=$answered preserves audio',
+        () async {
+          final f = Fixture();
+          await f.start();
+          final token = answered ? await f.committed() : f.begin();
+          if (answered) await f.session.setLocalCamera(token, f.grant());
+          final probes = f.peer.probes;
+          final result = reconcile(f, token);
+          if (answered) expect(f.track.enabled, isFalse);
+          expect(await result, CallVideoSdpReconciliationOutcome.alreadyStable);
+          expect(f.peer.probes, probes + 1);
+          expect(f.peer.local.where((d) => d.type == 'rollback'), isEmpty);
+          expect(f.peer.remote.where((d) => d.type == 'rollback'), isEmpty);
+          final repair = f.begin(media: CallMediaKind.audio, id: 'repair');
+          await f.session.createOffer(repair);
+          f.preserved();
+        },
+      );
+    }
+
+    for (final caller in [true, false]) {
+      test(
+        'owned pending offer caller=$caller proves stable after rollback',
+        () async {
+          final f = Fixture();
+          await f.start(caller: caller);
+          final token = f.begin();
+          if (caller) {
+            await f.session.applyLocal(
+              token,
+              await f.session.createOffer(token),
+            );
+          } else {
+            await f.session.applyRemote(
+              token,
+              description(CallSessionDescriptionType.offer, video: 'sendrecv'),
+            );
+          }
+          final probes = f.peer.probes;
+          expect(
+            await reconcile(f, token),
+            CallVideoSdpReconciliationOutcome.rolledBack,
+          );
+          expect(f.peer.probes, probes + 2);
+          expect((caller ? f.peer.local : f.peer.remote).last.type, 'rollback');
+          f.begin(media: CallMediaKind.audio, id: 'repair');
+          f.preserved();
+        },
+      );
+      test(
+        'retired pending native apply caller=$caller settles before reconciliation',
+        () async {
+          final f = Fixture();
+          await f.start(caller: caller);
+          final token = f.begin();
+          final entered = Completer<void>();
+          final gate = Completer<void>();
+          f.peer.beforeApply = (description, _) async {
+            if (description.type != 'rollback') {
+              entered.complete();
+              await gate.future;
+            }
+          };
+          final pending = caller
+              ? f.session.applyLocal(token, await f.session.createOffer(token))
+              : f.session.applyRemote(
+                  token,
+                  description(
+                    CallSessionDescriptionType.offer,
+                    video: 'sendrecv',
+                  ),
+                );
+          final stale = expectLater(
+            pending,
+            throwsA(isA<CallEngineException>()),
+          );
+          await entered.future;
+          final result = reconcile(f, token);
+          await flush();
+          expect(f.peer.probes, 0);
+          gate.complete();
+          await stale;
+          expect(await result, CallVideoSdpReconciliationOutcome.rolledBack);
+          expect((caller ? f.peer.local : f.peer.remote).map((d) => d.type), [
+            'offer',
+            'rollback',
+          ]);
+          f.begin(media: CallMediaKind.audio, id: 'repair');
+          f.preserved();
+        },
+      );
+    }
+
+    for (final boundary in ['probe', 'rollback', 'stable-recheck']) {
+      test('expired budget during $boundary cannot authorize repair', () async {
+        final f = Fixture();
+        await f.start();
+        final token = f.begin();
+        await f.session.applyLocal(token, await f.session.createOffer(token));
+        final entered = Completer<void>();
+        final gate = Completer<void>();
+        var allowed = true;
+        var probeCount = 0;
+        f.peer.probe = () async {
+          probeCount++;
+          if ((boundary == 'probe' && probeCount == 1) ||
+              (boundary == 'stable-recheck' && probeCount == 2)) {
+            entered.complete();
+            await gate.future;
+          }
+          return f.peer.signalingState;
+        };
+        f.peer.beforeApply = (description, _) async {
+          if (boundary == 'rollback' && description.type == 'rollback') {
+            entered.complete();
+            await gate.future;
+          }
+        };
+        final result = reconcile(f, token, canApply: () => allowed);
+        // A missing capability must fail causally rather than hang the fixture.
+        await Future.any([entered.future, result.then((_) {})]);
+        expect(entered.isCompleted, isTrue);
+        allowed = false;
+        gate.complete();
+        expect(await result, CallVideoSdpReconciliationOutcome.unreconciled);
+        expect(
+          () => f.begin(media: CallMediaKind.audio, id: 'repair'),
+          throwsA(isA<CallEngineException>()),
+        );
+        f.preserved();
+      });
+    }
+
+    for (final invalid in ['false', 'throws', 'replaced']) {
+      test(
+        'invalid $invalid admission cannot probe or retire another owner',
+        () async {
+          final f = Fixture();
+          await f.start();
+          final token = f.begin();
+          if (invalid == 'replaced') f.begin(id: 'replacement');
+          expect(
+            await reconcile(
+              f,
+              token,
+              canApply: () {
+                if (invalid == 'throws') throw StateError('expired');
+                return invalid != 'false';
+              },
+            ),
+            CallVideoSdpReconciliationOutcome.unreconciled,
+          );
+          expect(f.peer.probes, 0);
+          f.preserved();
+        },
+      );
+    }
+
+    for (final failure in [
+      'probe-error',
+      'null',
+      'unowned',
+      'rollback-error',
+      'not-stable',
+    ]) {
+      test('$failure remains unreconciled and preserves audio', () async {
+        final f = Fixture();
+        await f.start();
+        final token = f.begin();
+        if (failure == 'rollback-error' || failure == 'not-stable') {
+          await f.session.applyLocal(token, await f.session.createOffer(token));
+        }
+        if (failure == 'probe-error')
+          f.peer.probe = () async => throw StateError('probe');
+        if (failure == 'null') f.peer.probe = () async => null;
+        if (failure == 'unowned') {
+          f.peer.signalingState =
+              rtc.RTCSignalingState.RTCSignalingStateHaveRemoteOffer;
+        }
+        if (failure == 'rollback-error') f.peer.failRollback = true;
+        if (failure == 'not-stable') {
+          f.peer.probe = () async =>
+              rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer;
+        }
+        expect(
+          await reconcile(f, token),
+          CallVideoSdpReconciliationOutcome.unreconciled,
+        );
+        f.preserved();
+      });
+    }
+
+    for (final invalidation in ['session', 'close']) {
+      test(
+        '$invalidation during stable probe cannot certify retired token',
+        () async {
+          final f = Fixture();
+          await f.start();
+          final token = f.begin();
+          final entered = Completer<void>();
+          final gate = Completer<void>();
+          f.peer.probe = () async {
+            entered.complete();
+            await gate.future;
+            return rtc.RTCSignalingState.RTCSignalingStateStable;
+          };
+          final result = reconcile(f, token);
+          await Future.any([entered.future, result.then((_) {})]);
+          expect(entered.isCompleted, isTrue);
+          if (invalidation == 'close') {
+            await f.session.close();
+          } else {
+            f.current = false;
+          }
+          gate.complete();
+          expect(await result, CallVideoSdpReconciliationOutcome.unreconciled);
+          f.preserved();
+        },
+      );
+    }
   });
   test(
     'caller offer rollback preserves audio and does not restart ICE',
