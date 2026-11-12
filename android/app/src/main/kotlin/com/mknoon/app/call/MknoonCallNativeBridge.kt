@@ -162,6 +162,7 @@ internal class MknoonCallNativeBridge(
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
     private val registrationExecutor: Executor? = null,
     private val diagnostics: MknoonCallDiagnostics? = null,
+    private val videoAuthority: MknoonCallVideoAuthority? = null,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     companion object {
         const val METHOD_CHANNEL = "mknoon/android_call_lifecycle"
@@ -267,6 +268,8 @@ internal class MknoonCallNativeBridge(
             "setCapability" -> setCapabilityEnabled(call.arguments, result)
             "setCapabilityEnabled" -> setCapabilityEnabled(call.arguments, result)
             "readCapability" -> readCapability(call.arguments, result)
+            "setCallMedia" -> setCallMedia(call.arguments, result)
+            "setLocalCameraActive" -> setLocalCameraActive(call.arguments, result)
             "failClosed" -> failClosed(call.arguments, result)
             "startRingback" -> withRingbackHandle(call.arguments, result, ringbackStarter)
             "stopRingback" -> withRingbackHandle(call.arguments, result, ringbackStopper)
@@ -523,13 +526,15 @@ internal class MknoonCallNativeBridge(
 
     private fun presentAuthenticated(arguments: Any?, result: MethodChannel.Result) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
-        if (map.keys != setOf("version", "callHandle", "expiresAtMs") &&
-            map.keys != setOf("version", "callHandle", "expiresAtMs", "display")) {
+        val registrationKeys = setOf("version", "callHandle", "expiresAtMs")
+        if (map.keys - "media" != registrationKeys &&
+            map.keys - "media" != registrationKeys + "display") {
             return badArguments(result)
         }
         if (!validVersion(map["version"])) return badArguments(result)
         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
+        val media = MknoonCallMedia.parse(map["media"]) ?: return badArguments(result)
         val display = if (map.containsKey("display")) {
             MknoonIncomingCallDisplay.parse(map["display"]) ?: return badArguments(result)
         } else null
@@ -540,6 +545,7 @@ internal class MknoonCallNativeBridge(
                 descriptor.terminalEvent == null
         if (alreadyPresented) {
             controller.markUiAdopted(descriptor!!.nativeCallId)
+            videoAuthority?.setCallMedia(descriptor.nativeCallId, media)
             return result.success(true)
         }
         dispatchRegistration(result) {
@@ -548,7 +554,10 @@ internal class MknoonCallNativeBridge(
             } else authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
             if (presented) {
                 controller.snapshot()?.takeIf { it.callHandle == callHandle }
-                    ?.let { controller.markUiAdopted(it.nativeCallId) }
+                    ?.let {
+                        controller.markUiAdopted(it.nativeCallId)
+                        videoAuthority?.setCallMedia(it.nativeCallId, media)
+                    }
             }
             presented
         }
@@ -619,12 +628,13 @@ internal class MknoonCallNativeBridge(
 
     private fun registerOutgoingAuthenticated(arguments: Any?, result: MethodChannel.Result) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
-        if (map.keys != setOf("version", "callHandle", "expiresAtMs")) {
+        if (map.keys - "media" != setOf("version", "callHandle", "expiresAtMs")) {
             return badArguments(result)
         }
         if (!validVersion(map["version"])) return badArguments(result)
         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
+        val media = MknoonCallMedia.parse(map["media"]) ?: return badArguments(result)
         val descriptor = controller.snapshot()
         val alreadyRegistered = descriptor != null &&
             descriptor.direction == PendingNativeCallDirection.OUTGOING &&
@@ -632,20 +642,58 @@ internal class MknoonCallNativeBridge(
             descriptor.expiresAtMs == expiresAtMs &&
             descriptor.terminalEvent == null &&
             descriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED }
-        if (alreadyRegistered) return result.success(true)
+        if (alreadyRegistered) {
+            videoAuthority?.setCallMedia(descriptor!!.nativeCallId, media)
+            return result.success(true)
+        }
         dispatchRegistration(result) {
-            authenticatedOutgoingRegistrar?.invoke(callHandle, expiresAtMs) == true
+            val registered = authenticatedOutgoingRegistrar?.invoke(callHandle, expiresAtMs) == true
+            if (registered) {
+                controller.snapshot()?.takeIf { it.callHandle == callHandle }
+                    ?.let { videoAuthority?.setCallMedia(it.nativeCallId, media) }
+            }
+            registered
         }
     }
 
     private fun setCapabilityEnabled(arguments: Any?, result: MethodChannel.Result) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
-        if (map.keys != setOf("version", "enabled") || !validVersion(map["version"])) {
+        if (map.keys - "video" != setOf("version", "enabled") || !validVersion(map["version"])) {
             return badArguments(result)
         }
         val enabled = map["enabled"] as? Boolean ?: return badArguments(result)
+        val video = if (map.containsKey("video")) {
+            map["video"] as? Boolean ?: return badArguments(result)
+        } else false
         val setter = capabilitySetter ?: return result.success(false)
-        result.success(setter(enabled))
+        val applied = setter(enabled)
+        videoAuthority?.setVideoCapability(enabled && video && applied)
+        result.success(applied)
+    }
+
+    /** Settled media for the exact current call. Never starts capture;
+     * audio releases this call's camera lease. */
+    private fun setCallMedia(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments, setOf("media")) ?: return badArguments(result)
+        val media = (map["media"] as? String)?.let { MknoonCallMedia.parse(it) } ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return result.success(false)
+        val authority = videoAuthority ?: return result.success(false)
+        authority.setCallMedia(nativeCallId, media)
+        result.success(true)
+    }
+
+    /** Camera foreground-type lease. true must come back before Dart starts
+     * capture; false means no capture. active=false always releases. */
+    private fun setLocalCameraActive(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments, setOf("active")) ?: return badArguments(result)
+        val active = map["active"] as? Boolean ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return result.success(!active)
+        val authority = videoAuthority ?: return result.success(!active)
+        if (!active) {
+            authority.releaseLocalCamera(nativeCallId)
+            return result.success(true)
+        }
+        result.success(authority.requestLocalCamera(nativeCallId) == MknoonCallLocalCameraDecision.Apply)
     }
 
     private fun readCapability(arguments: Any?, result: MethodChannel.Result) {

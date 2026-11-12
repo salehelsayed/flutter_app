@@ -1,6 +1,8 @@
 package com.mknoon.app.call
 
 import android.Manifest
+import android.app.ActivityManager
+import android.content.ComponentName
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.Service
@@ -215,6 +217,43 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
     private val applicationContext = context.applicationContext
     private val diagnostics = MknoonCallDiagnostics.get(applicationContext)
+
+    @Volatile
+    private var liveForegroundRuntime: AndroidMknoonCallForegroundRuntime? = null
+
+    /** Phase-4 video truth. Inert until Dart enables the video capability and
+     * sends video media; the camera type also needs the manifest declaration,
+     * which is held out until the build that enables video. */
+    internal val videoAuthority = MknoonCallVideoAuthority(
+        facts = object : MknoonCallLocalCameraFacts {
+            override fun audioActive(nativeCallId: UUID): Boolean =
+                controller.activeNativeCallId() == nativeCallId && controller.audioState().active
+
+            override fun uiVisible(): Boolean {
+                val state = ActivityManager.RunningAppProcessInfo()
+                ActivityManager.getMyMemoryState(state)
+                return state.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            }
+
+            override fun cameraPermissionGranted(): Boolean =
+                ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.CAMERA) ==
+                    PackageManager.PERMISSION_GRANTED
+
+            override fun sdkInt(): Int = Build.VERSION.SDK_INT
+
+            override fun manifestDeclaresCameraType(): Boolean =
+                Build.VERSION.SDK_INT >= MKNOON_CALL_CAMERA_TYPE_MIN_SDK && runCatching {
+                    val service = applicationContext.packageManager.getServiceInfo(
+                        ComponentName(applicationContext, MknoonCallForegroundService::class.java),
+                        0,
+                    )
+                    service.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA != 0
+                }.getOrDefault(false)
+        },
+        applier = { nativeCallId, withCamera ->
+            liveForegroundRuntime?.applyCameraType(nativeCallId, withCamera) ?: !withCamera
+        },
+    )
     private val incomingCallRinger = MknoonIncomingCallRinger(
         AndroidMknoonCallRingtoneStarter(applicationContext),
     )
@@ -512,10 +551,11 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             ringbackStopper = ::stopOutgoingRingback,
             registrationExecutor = registrationExecutor,
             diagnostics = diagnostics,
+            videoAuthority = videoAuthority,
         )
 
     fun foregroundRuntime(service: Service): MknoonCallForegroundRuntime =
-        AndroidMknoonCallForegroundRuntime(service)
+        AndroidMknoonCallForegroundRuntime(service).also { liveForegroundRuntime = it }
 
     private fun startOutgoingRingback(callHandle: String): Boolean {
         val started = outgoingRingback.start(callHandle)
@@ -701,8 +741,11 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         return controller.activeNativeCallId() != nativeCallId
     }
 
-    private fun recordTerminalTombstone(nativeCallId: UUID, expiresAtMs: Long): Boolean =
-        terminalTombstones.record(nativeCallId, expiresAtMs, System.currentTimeMillis())
+    private fun recordTerminalTombstone(nativeCallId: UUID, expiresAtMs: Long): Boolean {
+        val recorded = terminalTombstones.record(nativeCallId, expiresAtMs, System.currentTimeMillis())
+        videoAuthority.forget(nativeCallId)
+        return recorded
+    }
 
     private fun hasTerminalTombstone(nativeCallId: UUID, observedNow: Long): Boolean =
         terminalTombstones.contains(nativeCallId, observedNow)
@@ -820,7 +863,28 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         override fun startInactive(nativeCallId: UUID) {
             stopIncomingRingtone(nativeCallId, "inactive")
+            // Inactive audio never keeps the camera; a later reactivation must
+            // not re-add it from the background. Dart asks again when visible.
+            videoAuthority.dropLease(nativeCallId)
             beginOngoingNotificationHandover(nativeCallId, withMicrophone = false)
+        }
+
+        /** Synchronous camera-type change on this running ACTIVE service. */
+        fun applyCameraType(nativeCallId: UUID, withCamera: Boolean): Boolean {
+            if (notificationOwnerDestroyed || !isAudioActive(nativeCallId)) return !withCamera
+            val id = foregroundNotificationId ?: return !withCamera
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return !withCamera
+            return try {
+                service.startForeground(
+                    id,
+                    notifications.createOngoing(nativeCallId),
+                    mknoonCallOngoingForegroundTypes(withMicrophone = true, withCamera = withCamera),
+                )
+                true
+            } catch (failure: Exception) {
+                emitMknoonCallNotificationDiagnostic("camera_type_refused with_camera=$withCamera", failure)
+                false
+            }
         }
 
         private fun beginOngoingNotificationHandover(nativeCallId: UUID, withMicrophone: Boolean) {
@@ -843,8 +907,10 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                     foregroundNotificationId = foregroundNotificationId ?: MknoonCallNotificationFactory.NOTIFICATION_ID,
                     startForeground = { id ->
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                                (if (withMicrophone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+                            val types = mknoonCallOngoingForegroundTypes(
+                                withMicrophone = withMicrophone,
+                                withCamera = withMicrophone && videoAuthority.holdsCameraLease(nativeCallId),
+                            )
                             service.startForeground(id, foregroundNotification, types)
                         } else {
                             service.startForeground(id, foregroundNotification)
@@ -880,6 +946,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         }
 
         override fun onServiceDestroyed() {
+            if (liveForegroundRuntime === this) liveForegroundRuntime = null
             notificationOwnerDestroyed = true
             invalidateNotificationHandover("service_destroyed")
             foregroundNotificationId = null
