@@ -370,8 +370,9 @@ void main() {
       'same-bound v1 cleanup is admitted before offer with local accept=$accepted',
       () {
         _incoming(store);
-        if (accepted)
+        if (accepted) {
           store.recordLocalAcceptance(_call, media: CallMediaKind.video);
+        }
         store.captureAuthenticated(signal: _v1(), callHandle: _handle);
         final context = store.read(_call)!;
         expect(context.wireVersion, CallWireVersion.v2);

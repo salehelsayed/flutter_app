@@ -676,8 +676,6 @@ final class _StoredCallSignalingContext {
     required this.direction,
     required this.wireVersion,
     required this.requestedMedia,
-    this.initialAcceptedMedia,
-    this.initialOfferReceived = false,
     required this.callHandle,
     required this.localAccountPeerId,
     required this.localDevicePeerId,
@@ -696,7 +694,7 @@ final class _StoredCallSignalingContext {
   final CallWireVersion wireVersion;
   final CallMediaKind requestedMedia;
   CallMediaKind? initialAcceptedMedia;
-  bool initialOfferReceived;
+  bool initialOfferReceived = false;
   final String callHandle;
   final String localAccountPeerId;
   final String localDevicePeerId;
