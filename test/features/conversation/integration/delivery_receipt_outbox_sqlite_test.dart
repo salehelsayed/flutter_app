@@ -186,15 +186,9 @@ void main() {
     () async {
       final entered = Completer<void>();
       final release = Completer<SendMessageResult>();
+      late List<Map<String, Object?>> observedBeforeNetwork;
       transport.onSendMessageWithReply = (peer, wire, {timeoutMs}) async {
-        final pending = (await rows()).single;
-        expect(pending['recipient_peer_id'], peer);
-        expect(pending['receipt_payload'], wire);
-        expect(pending['attempt_count'], 1);
-        expect(
-          pending['next_attempt_at_ms'],
-          now.millisecondsSinceEpoch + 5000,
-        );
+        observedBeforeNetwork = await rows();
         entered.complete();
         return release.future;
       };
@@ -204,7 +198,15 @@ void main() {
       );
       try {
         await entered.future.timeout(const Duration(seconds: 5));
-        expect((await rows()).single['attempt_count'], 1);
+        expect(observedBeforeNetwork, hasLength(1));
+        final pending = observedBeforeNetwork.single;
+        expect(pending['recipient_peer_id'], 'sender');
+        expect(pending['receipt_payload'], transport.lastSendMessageContent);
+        expect(pending['attempt_count'], 1);
+        expect(
+          pending['next_attempt_at_ms'],
+          now.millisecondsSinceEpoch + 5000,
+        );
       } finally {
         release.complete(const SendMessageResult(sent: true, acked: true));
         await sending;
