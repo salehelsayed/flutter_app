@@ -90,4 +90,59 @@ void main() {
       });
     });
   }
+  test('BL-12 reconnect recovery survives an in-flight key send', () {
+    fakeAsync((async) {
+      final keys = StreamController<void>.broadcast();
+      final service = FakeP2PService();
+      final held = Completer<int>();
+      var failedPasses = 0;
+      var unacked = 0;
+      var introductions = 0;
+      final retrier = PendingMessageRetrier(
+        p2pService: service,
+        messageRepo: FakeMessageRepository(),
+        identityRepo: FakeIdentityRepository(),
+        contactRepo: FakeContactRepository(),
+        bridge: FakeBridge(),
+        contactKeyUpdatedSignal: keys.stream,
+        retryDebounce: const Duration(milliseconds: 1),
+        retryFailedMessagesOverride: () {
+          failedPasses++;
+          return failedPasses == 1 ? held.future : Future.value(0);
+        },
+        retryUnackedMessagesOverride: () async {
+          unacked++;
+          return 0;
+        },
+        retryPendingIntroductionDeliveriesFn: () async {
+          introductions++;
+          return 0;
+        },
+      );
+      retrier.start();
+      keys.add(null);
+      async.flushMicrotasks();
+      expect(failedPasses, 1);
+      service.emitState(
+        const NodeState(
+          isStarted: true,
+          peerId: 'self',
+          circuitAddresses: ['/relay'],
+        ),
+      );
+      async.elapse(const Duration(milliseconds: 2));
+      expect(unacked, 0);
+      expect(introductions, 0);
+      held.complete(0);
+      async.flushMicrotasks();
+      expect(failedPasses, 2);
+      expect(unacked, 1);
+      expect(introductions, 1);
+      retrier.dispose();
+      unawaited(keys.close());
+      service.dispose();
+      groupRecoveryGate.resetForTest();
+      async.flushMicrotasks();
+    });
+  });
 }
