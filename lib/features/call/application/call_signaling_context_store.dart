@@ -169,7 +169,8 @@ final class CallSignalingContextStore
 
   /// Original v2 admission authority, independent of the mutable v1 retry pin.
   /// Only transport owners may use this; it is never diagnostic/UI data.
-  ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) => null;
+  ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) =>
+      _contexts[callId]?.admittedEndpoint;
 
   /// The immutable prepared invite already owns its first sender sequence.
   /// Fresh capability/permission admission remains the caller's responsibility.
@@ -198,6 +199,7 @@ final class CallSignalingContextStore
       wireVersion: CallWireVersion.v2,
       requestedMedia: _media(invite.payload['media']),
       preparedOutgoingV2Invite: invite,
+      admittedEndpoint: admittedEndpoint,
     );
   }
 
@@ -217,6 +219,7 @@ final class CallSignalingContextStore
       signal: signal,
       callHandle: callHandle,
       admissionAuthority: admissionAuthority,
+      admittedEndpoint: admittedEndpoint,
     );
   }
 
@@ -278,6 +281,7 @@ final class CallSignalingContextStore
     int iceGeneration = 0,
     Map<String, Object?> invitePayload = const <String, Object?>{},
     CallSignalV2? preparedOutgoingV2Invite,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     _validateBindings(
       callHandle: callHandle,
@@ -292,6 +296,14 @@ final class CallSignalingContextStore
       );
     }
     final existing = _contexts[callId];
+    _validateAdmittedEndpoint(
+      admittedEndpoint,
+      existing: existing,
+      wireVersion: wireVersion,
+      remoteAccountPeerId: remoteAccountPeerId,
+      remoteDevicePeerId: remoteDevicePeerId,
+      admissionAuthority: admissionAuthority,
+    );
     if (existing != null) {
       if (existing.direction == CallDirection.outgoing &&
           existing.wireVersion == wireVersion &&
@@ -330,6 +342,9 @@ final class CallSignalingContextStore
       iceGeneration: iceGeneration,
       invitePayload: _copyPayload(invitePayload),
       preparedOutgoingV2Invite: preparedOutgoingV2Invite,
+      admittedEndpoint: admittedEndpoint == null
+          ? null
+          : ResolvedCallEndpoint.frozen(admittedEndpoint),
     );
     final diagnostics = CallDiagnostics.instance;
     final traceId =
@@ -359,6 +374,7 @@ final class CallSignalingContextStore
     required CallWireSignal signal,
     required String callHandle,
     CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     final version = signal is CallSignalV2
         ? CallWireVersion.v2
@@ -372,6 +388,19 @@ final class CallSignalingContextStore
       remoteDevicePeerId: signal.senderDevicePeerId,
     );
     final existing = _contexts[signal.callId];
+    if (admittedEndpoint != null && event != 'invite') {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+    _validateAdmittedEndpoint(
+      admittedEndpoint,
+      existing: existing,
+      wireVersion: version,
+      remoteAccountPeerId: signal.senderAccountPeerId,
+      remoteDevicePeerId: signal.senderDevicePeerId,
+      admissionAuthority: admissionAuthority,
+    );
     if (existing != null) {
       if (existing.callHandle != callHandle ||
           existing.localAccountPeerId != signal.recipientAccountPeerId ||
@@ -462,6 +491,9 @@ final class CallSignalingContextStore
       invitePayload: event == 'invite'
           ? _copyPayload(signal.payload)
           : const <String, Object?>{},
+      admittedEndpoint: admittedEndpoint == null
+          ? null
+          : ResolvedCallEndpoint.frozen(admittedEndpoint),
     );
     if (event == 'invite') {
       _pendingIncomingInviteIds.addLast(signal.callId);
@@ -652,6 +684,48 @@ final class CallSignalingContextStore
     }
   }
 
+  static void _validateAdmittedEndpoint(
+    ResolvedCallEndpoint? endpoint, {
+    required _StoredCallSignalingContext? existing,
+    required CallWireVersion wireVersion,
+    required String remoteAccountPeerId,
+    required String remoteDevicePeerId,
+    required CallAdmissionAuthorityWitness? admissionAuthority,
+  }) {
+    if (endpoint == null) return;
+    final original = existing?.admittedEndpoint;
+    if (wireVersion != CallWireVersion.v2 ||
+        endpoint.accountPeerId != remoteAccountPeerId ||
+        endpoint.devicePeerId != remoteDevicePeerId ||
+        endpoint.admissionAuthority != admissionAuthority ||
+        !endpoint.capabilities.contains(CallEndpointResolver.voiceCapability) ||
+        !endpoint.capabilities.contains('video_call_v2') ||
+        (existing != null &&
+            (original == null || !_sameAdmittedEndpoint(original, endpoint)))) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+  }
+
+  static bool _sameAdmittedEndpoint(
+    ResolvedCallEndpoint first,
+    ResolvedCallEndpoint next,
+  ) =>
+      first.accountPeerId == next.accountPeerId &&
+      first.devicePeerId == next.devicePeerId &&
+      first.signingPublicKey == next.signingPublicKey &&
+      first.mlKemPublicKey == next.mlKemPublicKey &&
+      first.deviceKeyEpoch == next.deviceKeyEpoch &&
+      first.preferenceEpoch == next.preferenceEpoch &&
+      first.admissionAuthority == next.admissionAuthority &&
+      first.platform == next.platform &&
+      first.expiresAtMs == next.expiresAtMs &&
+      first.routingHandle == next.routingHandle &&
+      first.wakeHandle == next.wakeHandle &&
+      first.capabilities.length == next.capabilities.length &&
+      first.capabilities.containsAll(next.capabilities);
+
   static void _validateBindings({
     required String callHandle,
     required String localAccountPeerId,
@@ -717,6 +791,7 @@ final class _StoredCallSignalingContext {
     required this.iceGeneration,
     required this.invitePayload,
     this.preparedOutgoingV2Invite,
+    this.admittedEndpoint,
   });
 
   final CallId callId;
@@ -737,6 +812,7 @@ final class _StoredCallSignalingContext {
   int iceGeneration;
   final Map<String, Object?> invitePayload;
   final CallSignalV2? preparedOutgoingV2Invite;
+  final ResolvedCallEndpoint? admittedEndpoint;
 
   CallSignalingContext snapshot() => CallSignalingContext._(
     callId: callId,

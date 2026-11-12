@@ -42,6 +42,8 @@ enum IncomingCallPrePresentationAdmissionGate {
   expectationMismatch('expectation_mismatch'),
   mailboxBinding('mailbox_binding_mismatch'),
   unexpectedSignal('unexpected_signal'),
+  endpointUnavailable('endpoint_unavailable'),
+  endpointMismatch('endpoint_mismatch'),
   authenticationFailed('authentication_failed');
 
   const IncomingCallPrePresentationAdmissionGate(this.wireName);
@@ -128,6 +130,7 @@ final class AuthenticatedIncomingCallAdmissionV2
   AuthenticatedIncomingCallAdmissionV2._(
     this._decoded, {
     this.admissionAuthority,
+    this.admittedEndpoint,
   }) : signal = _decoded.signal,
        callHandle = _decoded.callHandle;
 
@@ -141,7 +144,7 @@ final class AuthenticatedIncomingCallAdmissionV2
 
   /// Frozen, signed endpoint bound to the authenticated invite sender.
   /// Authentication-only callers and non-invite frames carry no endpoint.
-  final ResolvedCallEndpoint? admittedEndpoint = null;
+  final ResolvedCallEndpoint? admittedEndpoint;
 
   @override
   void commitReplay() => _decoded.commitReplay();
@@ -168,12 +171,23 @@ final class IncomingCallPrePresentationAdmission {
   }) : _codec = codec,
        _trustedRosterProvider = trustedRosterProvider,
        _localAuthorityProvider = localAuthorityProvider,
-       _videoEnabled = videoEnabled;
+       _videoEnabled = videoEnabled,
+       _resolveV2Endpoint = resolveV2Endpoint,
+       _nowMs = nowMs ?? _systemNowMs;
 
   final SecureCallEnvelopeCodec _codec;
   final CallTrustedRosterProvider _trustedRosterProvider;
   final CallLocalAuthorityProvider _localAuthorityProvider;
   final bool _videoEnabled;
+
+  // Optional for authentication-only/headless callers. Production v2 invite
+  // admission supplies the signed resolver; a transport cannot send without
+  // the original endpoint retained by that admission.
+  final Future<ResolvedCallEndpoint> Function(String accountPeerId)?
+  _resolveV2Endpoint;
+  final int Function() _nowMs;
+
+  static int _systemNowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
 
   /// Versioned entry points are opt-in. Legacy entry points stay v1-only even
   /// when this admission owner and its codec both enable video parsing.
@@ -430,6 +444,61 @@ final class IncomingCallPrePresentationAdmission {
           gate: IncomingCallPrePresentationAdmissionGate.expectationMismatch,
         );
       }
+      ResolvedCallEndpoint? admittedEndpoint;
+      final resolve = _resolveV2Endpoint;
+      if (decoded is DecodedSecureCallEnvelopeV2 &&
+          decoded.signal.event == CallSignalV2Type.invite &&
+          resolve != null) {
+        // Non-invite frames, especially terminal cleanup, must not depend on
+        // a fresh capability lookup. They retain the original call binding.
+        try {
+          admittedEndpoint = ResolvedCallEndpoint.frozen(
+            await resolve(sender.accountPeerId),
+          );
+        } on CallEndpointResolutionException catch (error) {
+          final transient =
+              error.code == CallEndpointResolutionCode.unavailable;
+          if (transient) {
+            decoded.rollbackReplay();
+          } else {
+            decoded.commitReplay();
+          }
+          throw IncomingCallPrePresentationAdmissionException(
+            transient
+                ? IncomingCallPrePresentationAdmissionFailureCode.deferred
+                : IncomingCallPrePresentationAdmissionFailureCode
+                      .permanentReject,
+            gate: transient
+                ? IncomingCallPrePresentationAdmissionGate.endpointUnavailable
+                : IncomingCallPrePresentationAdmissionGate.endpointMismatch,
+          );
+        } catch (_) {
+          decoded.rollbackReplay();
+          throw const IncomingCallPrePresentationAdmissionException(
+            IncomingCallPrePresentationAdmissionFailureCode.deferred,
+            gate: IncomingCallPrePresentationAdmissionGate.endpointUnavailable,
+          );
+        }
+        final now = _nowMs();
+        if (signal.expiresAtMs <= now ||
+            admittedEndpoint.expiresAtMs <= now ||
+            admittedEndpoint.accountPeerId != sender.accountPeerId ||
+            admittedEndpoint.devicePeerId != sender.devicePeerId ||
+            admittedEndpoint.deviceKeyEpoch != sender.deviceKeyEpoch ||
+            admittedEndpoint.signingPublicKey != sender.signingPublicKey ||
+            admittedEndpoint.mlKemPublicKey != sender.mlKemPublicKey ||
+            admittedEndpoint.admissionAuthority != sender.admissionAuthority ||
+            !admittedEndpoint.capabilities.contains(
+              CallEndpointResolver.voiceCapability,
+            ) ||
+            !admittedEndpoint.capabilities.contains('video_call_v2')) {
+          decoded.commitReplay();
+          throw const IncomingCallPrePresentationAdmissionException(
+            IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+            gate: IncomingCallPrePresentationAdmissionGate.endpointMismatch,
+          );
+        }
+      }
       return switch (decoded) {
         DecodedSecureCallEnvelope() => AuthenticatedIncomingCallAdmission._(
           decoded,
@@ -438,6 +507,7 @@ final class IncomingCallPrePresentationAdmission {
         DecodedSecureCallEnvelopeV2() => AuthenticatedIncomingCallAdmissionV2._(
           decoded,
           admissionAuthority: sender.admissionAuthority,
+          admittedEndpoint: admittedEndpoint,
         ),
       };
     } on IncomingCallPrePresentationAdmissionException {

@@ -312,6 +312,8 @@ final class HandleIncomingCallSignal {
          trustedRosterProvider: trustedRosterProvider,
          localAuthorityProvider: localAuthorityProvider,
          videoEnabled: videoEnabled,
+         resolveV2Endpoint: resolveV2Endpoint,
+         nowMs: nowMs,
        ),
        _coordinator = coordinator,
        _incomingCallPresenter = incomingCallPresenter,
@@ -579,6 +581,8 @@ final class HandleIncomingCallSignal {
             signal: signal,
             callHandle: admitted.callHandle,
             admissionAuthority: admitted.admissionAuthority,
+            admittedEndpoint: (admitted as AuthenticatedIncomingCallAdmissionV2)
+                .admittedEndpoint,
           );
         } on CallSignalingContextException catch (error) {
           // Capacity may recover. A binding/version/order refusal cannot be

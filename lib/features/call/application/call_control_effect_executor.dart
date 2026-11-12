@@ -407,7 +407,11 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
     var step = _OutgoingPreparationStep.endpoint;
     try {
       final prepared = await signalingPort.prepareOutgoingInvite(snapshot);
-      if (isOutgoingPreparationCurrent?.call(callId) == false) return null;
+      if (isOutgoingPreparationCurrent?.call(callId) == false) {
+        // A v2 port may already own the original endpoint in the context.
+        contextStore.purge(callId);
+        return null;
+      }
       if (prepared.remoteAccountPeerId != snapshot.contactPeerId) {
         throw const CallControlSignalingPortException(
           CallControlSignalingPortErrorCode.endpointMismatch,
