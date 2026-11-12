@@ -9677,10 +9677,19 @@ final class ProductionApplicationBootstrap
       ),
       loadNextExpiry: () => dbLoadNextPostExpiry(db),
       sweep: () async {
+        // Expired Thoughts kept for the clock grace are already hidden;
+        // retire their cards now instead of at the later delete.
+        final kept = <String>[];
         await sweepExpiredPosts(
           postRepo: postRepository,
           mediaFileManager: mediaFileManager,
+          onExpiredKept: kept.add,
         );
+        for (final postId in kept) {
+          await notificationService.cancelConversationNotification(
+            NotificationRouteTarget.post(postId).toPayload(),
+          );
+        }
       },
     );
     final postExpiryLifecycle = PostExpiryLifecycleBinding(postExpiryScheduler);

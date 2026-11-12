@@ -2,6 +2,11 @@
 abstract final class ThoughtLifetime {
   static const duration = Duration(hours: 24);
 
+  /// A received Thought stays on disk, hidden, this long past its expiry.
+  /// A viewer clock set ahead by less than this must not delete a Thought
+  /// that is still live by real time (BL-14).
+  static const deleteGrace = Duration(hours: 48);
+
   static DateTime expiresAt(DateTime createdAt) =>
       createdAt.toUtc().add(duration);
 
