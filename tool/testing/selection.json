@@ -7681,6 +7681,7 @@
     {
       "kind": "python",
       "paths": [
+        "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
@@ -7716,6 +7717,7 @@
         "-m",
         "unittest",
         "-v",
+        "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
