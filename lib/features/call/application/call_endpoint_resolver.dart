@@ -67,6 +67,7 @@ final class ResolvedCallEndpoint {
     required this.expiresAtMs,
     required this.routingHandle,
     required this.wakeHandle,
+    this.capabilities = const <String>{},
   });
 
   final String accountPeerId;
@@ -80,6 +81,7 @@ final class ResolvedCallEndpoint {
   final int expiresAtMs;
   final String routingHandle;
   final String wakeHandle;
+  final Set<String> capabilities;
 }
 
 /// Resolves the single endpoint authorized by both local contact state and the
