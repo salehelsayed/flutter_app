@@ -11352,6 +11352,34 @@ visible and cannot become an ordinary first-attempt PASS.
   and its ten unit-adoption receipts. This establishes the individual host
   boundaries, not combined engine/graph behavior, native SDP/camera integration,
   platform lifecycle handling, video activation or a signed candidate.
+  **U6 real-screen video binding:** the active, incoming and outgoing screens
+  bind video controls to the current foreground projection. Every intent
+  rechecks the canonical call and generation; upgrade actions also reject a
+  stale upgrade ID. Covered, minimized and disposed surfaces cannot dispatch
+  retained video actions. Existing Answer remains audio-only, including the
+  locked projection; presenting a video request does not grant camera consent.
+  Host widget evidence covers control/status semantics, EN/DE/AR at 320 and
+  360 logical pixels with 2x text, and the compact 600x320 layout. It does not
+  prove live video frames, camera capture, native effects or device behavior.
+  At frozen RED `f784c2ca1847e737aff461a38d164dbea0c37fb6`, the default-off
+  incoming Answer control passed and enabled active-screen binding failed
+  causally because `CallVideoControls` was absent. Flutter reported that
+  assertion as a widget-test error, with child exit 1, not a setup/load failure.
+  Frozen GREEN `049d15c4b483952fa982cd4bb5666afa7bcdcae5` passed all 45 focused
+  cases and 84 cases in the seven-file audio preservation run, without failures
+  or skips; both reporters completed successfully and both children exited 0.
+  Official eight-path analysis and metadata validation also exited 0. The
+  sole runner was Claude-Dev after Claude-UI explicitly released its unstarted
+  assignment. Three identity snapshots at each revision preserve the source,
+  seven localization files and lockfile, including restoration of generated
+  locale formatting before tests. RED's identity-command exit 1 is retained:
+  only the intentionally GREEN-only layout file was absent, while all 15
+  existing pins matched; all 16 GREEN pins matched throughout the recorded
+  boundaries. Exact commands, raw reports, hashes and independent adoption are
+  retained under
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u6-real-screen-host-adoption.json`
+  and its `u6-real-screen-retained-host/` evidence directory. This is a scoped
+  host result for the frozen unit, not a combined integration or release gate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
