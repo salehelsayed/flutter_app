@@ -1,4 +1,5 @@
 import '../diagnostics/call_diagnostics.dart';
+
 import 'dart:async';
 import 'dart:math';
 
@@ -7,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../domain/call_event.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
 import '../infrastructure/call_mailbox_client.dart';
 import '../infrastructure/p2p_call_transport.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
@@ -121,6 +123,21 @@ final class CallSignalingService {
   static const _maxTerminalRetries = 5;
   static const _maxPendingTerminalRetries = 4;
   static int _systemNowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
+
+  /// Prepares one v2 envelope without writing either transport leg.
+  Future<CallSignalTransmissionRetry> prepareV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    required ResolvedCallEndpoint endpoint,
+    required String senderSigningPrivateKey,
+    required Future<bool> Function() authorize,
+    required bool Function() canApply,
+    bool videoEnabled = false,
+  }) async {
+    throw const CallSignalingException(
+      CallSignalingErrorCode.transportUnavailable,
+    );
+  }
 
   /// Only fixed counts are exposed; retained signaling bytes stay private.
   int get pendingTerminalRetryCount => _terminalRetries.length;
