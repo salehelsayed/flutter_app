@@ -18778,6 +18778,100 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
     });
 
+    for (final locale in const [Locale('en'), Locale('ar'), Locale('de')]) {
+      testWidgets(
+        'block confirmation localizes body and actions in ${locale.languageCode}',
+        (tester) async {
+          final expectedBody = switch (locale.languageCode) {
+            'ar' => 'لن يتمكن من إرسال رسائل إليك. يمكنك إلغاء الحظر لاحقًا.',
+            'de' =>
+              'Diese Person kann dir dann keine Nachrichten mehr senden. '
+                  'Du kannst sie später wieder entsperren.',
+            _ =>
+              'They won\'t be able to send you messages. You can unblock '
+                  'them later.',
+          };
+          final identityRepo = FakeIdentityRepository(makeIdentity());
+          final messageRepo = FakeMessageRepository();
+          final contactRepo = FakeContactRepository();
+          final chatListener = ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+
+          await pumpScreen(
+            tester,
+            identityRepo: identityRepo,
+            messageRepo: messageRepo,
+            chatListener: chatListener,
+            sendFn: _instantSuccessSendFn,
+            contactRepo: contactRepo,
+            locale: locale,
+          );
+          await tester.pump(const Duration(milliseconds: 400));
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(ConversationWired)),
+          )!;
+
+          await tester.tap(find.byIcon(Icons.more_vert));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.tap(
+            find.text(l10n.conversation_block_contact(makeContact().username)),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+
+          final description = find.text(expectedBody);
+          expect(description, findsOneWidget);
+          expect(
+            Directionality.of(tester.element(description)),
+            locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          final dialog = find
+              .ancestor(of: description, matching: find.byType(Material))
+              .first;
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(
+                l10n.conversation_block(makeContact().username),
+              ),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(l10n.orbit_block_action),
+            ),
+            findsOneWidget,
+          );
+          if (locale.languageCode != 'en') {
+            expect(
+              find.text(
+                'They won\'t be able to send you messages. You can unblock '
+                'them later.',
+              ),
+              findsNothing,
+            );
+            expect(
+              find.descendant(of: dialog, matching: find.text('Block')),
+              findsNothing,
+            );
+          }
+
+          await tester.tap(
+            find.descendant(of: dialog, matching: find.text(l10n.btn_cancel)),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(description, findsNothing);
+        },
+      );
+    }
+
     testWidgets(
       'Signal delete sheet uses warm roles and cancel leaves message unchanged',
       (tester) async {

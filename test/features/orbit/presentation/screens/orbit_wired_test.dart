@@ -4518,6 +4518,80 @@ void main() {
       );
     });
 
+    for (final locale in const [Locale('en'), Locale('ar'), Locale('de')]) {
+      testWidgets(
+        'block confirmation localizes body and actions in ${locale.languageCode}',
+        (tester) async {
+          final expectedBody = switch (locale.languageCode) {
+            'ar' => 'لن يتمكن من إرسال رسائل إليك. يمكنك إلغاء الحظر لاحقًا.',
+            'de' =>
+              'Diese Person kann dir dann keine Nachrichten mehr senden. '
+                  'Du kannst sie später wieder entsperren.',
+            _ =>
+              'They won\'t be able to send you messages. You can unblock '
+                  'them later.',
+          };
+          setLargeTestSurface(tester);
+          identityRepo.seed(testIdentity);
+          contactRepo.seed([testContact]);
+
+          await tester.pumpWidget(buildOrbitWired(locale: locale));
+          await pumpOrbitFrames(tester);
+          final screen = tester.widget<OrbitScreen>(find.byType(OrbitScreen));
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(OrbitScreen)),
+          )!;
+          screen.onBlockFriend(
+            screen.listProjectionListenable.value.allFriends.single,
+          );
+          await pumpOrbitFrames(tester, count: 6);
+
+          final description = find.text(expectedBody);
+          expect(description, findsOneWidget);
+          expect(
+            Directionality.of(tester.element(description)),
+            locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          final dialog = find
+              .ancestor(of: description, matching: find.byType(Material))
+              .first;
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(l10n.orbit_block_title(testContact.username)),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(l10n.orbit_block_action),
+            ),
+            findsOneWidget,
+          );
+          if (locale.languageCode != 'en') {
+            expect(
+              find.text(
+                'They won\'t be able to send you messages. You can unblock '
+                'them later.',
+              ),
+              findsNothing,
+            );
+            expect(
+              find.descendant(of: dialog, matching: find.text('Block')),
+              findsNothing,
+            );
+          }
+
+          await tester.tap(
+            find.descendant(of: dialog, matching: find.text(l10n.btn_cancel)),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(description, findsNothing);
+        },
+      );
+    }
+
     testWidgets('cold load batches friend thread summaries', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
