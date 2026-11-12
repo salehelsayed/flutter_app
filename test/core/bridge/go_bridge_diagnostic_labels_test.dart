@@ -332,10 +332,7 @@ void main() {
   for (final command in ['peer:ping', 'relay:presence_set']) {
     for (final error in [null, '', 'offline $_privateMarker']) {
       test('BL24A $command ordinary uncoded miss ($error)', () async {
-        await expectNoFailure(command, {
-          'ok': false,
-          if (error != null) 'error': error,
-        });
+        await expectNoFailure(command, {'ok': false, 'error': ?error});
       });
     }
     for (final sample in const [
