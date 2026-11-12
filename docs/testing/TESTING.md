@@ -11411,6 +11411,37 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3f-final-host-adoption.json`.
   This closes the frozen default-off host unit; production graph, real native
   effects, live video and combined candidate proof remain separate.
+  **U3g typed v2 control effects:** the optional v2 port preserves the prepared
+  outgoing invitation and its identity/sequence, rejects expired preparation,
+  and retains existing native cancellation, current-call and mailbox custody
+  boundaries. Accepted media is explicit and local camera remains off; an
+  absent v2 port cannot downgrade a v2 context to legacy signaling. Frozen
+  RED `278e4621478e70aad1a8a3f1b7d8f48d97ab8676` recorded five passes,
+  26 failures and seven errors with successful loading and child exit 1.
+  GREEN `aba7844ab3852a1aea64c18a06f7db4b292b740b` passed all 38 focused
+  cases without failures/errors/skips, with successful reporter completion
+  and child exit 0; three-path analysis and metadata validation also passed.
+  Its original preservation run recorded 132 passes and three inherited U3f
+  fixture failures, including 94 passing cases in the other four suites.
+  Both baseline/serial diagnostics retained the same three failures; those
+  diagnostics overlapped and do not establish an idle-host result.
+  Final source-equivalent composition
+  `bcdf6648b9cde8d9eac2071341b88ef75e54065d` has parent U3f `b6dc44272`
+  and preserves the original four U3g source/test/selection blobs. Only the
+  dependent incoming-handler test changes to the reviewed U3f fixture. The
+  sole Claude-Dev follow-up ran that one file once: 41 authored passes, zero
+  failures/errors/skips, successful loading/reporter completion and child
+  exit 0. All three identity boundaries (before setup, restored before test,
+  after test) match the exact HEAD, library tree, test/lock/locale hashes and
+  clean tracked status. The saved generated-locale delta was restored before
+  execution. The earlier 38 focused and 94 other preservation passes, analysis
+  and metadata are adopted unchanged; this is not a fresh full preservation
+  run. Original failed receipts remain retained. The superseded `062f032ed`
+  composition on the first U3f fixture correction was never run. Exact command,
+  retained raw reports and final independent review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3g-dependent-host-adoption.json`.
+  This closes the scoped host unit and its inherited fixture follow-up, without
+  certifying production graph wiring, native effects or a combined candidate.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
