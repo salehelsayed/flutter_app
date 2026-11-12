@@ -3604,12 +3604,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _onBlockFriend(OrbitFriend friend) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: AppLocalizations.of(context)!.orbit_block_title(friend.username),
-      description:
-          'They won\'t be able to send you messages. You can unblock them later.',
-      confirmLabel: 'Block',
+      title: l10n.orbit_block_title(friend.username),
+      description: l10n.block_contact_body,
+      confirmLabel: l10n.orbit_block_action,
     );
     if (!confirmed || !mounted) return;
 

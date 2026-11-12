@@ -381,6 +381,7 @@
     }
   },
   "conversation_delete_chat": "Chat löschen?",
+  "block_contact_body": "Diese Person kann dir dann keine Nachrichten mehr senden. Du kannst sie später wieder entsperren.",
   "delete_contact_body": "Dadurch werden {username}, deine Nachrichten und dein Anrufverlauf mit dieser Person dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.",
   "@delete_contact_body": {
     "placeholders": {
