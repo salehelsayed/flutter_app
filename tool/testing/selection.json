@@ -340,6 +340,7 @@
         "test/features/call/domain/call_signal_v2_test.dart",
         "test/features/call/domain/video_v1_preservation_test.dart",
         "test/features/call/infrastructure/secure_call_envelope_v2_test.dart",
+      "test/features/call/infrastructure/production_call_v2_signaling_adapter_test.dart",
         "test/features/call/presentation/call_video_localizations_test.dart",
         "test/features/call/presentation/call_video_presentation_test.dart",
         "test/features/call/presentation/widgets/call_video_controls_test.dart",
