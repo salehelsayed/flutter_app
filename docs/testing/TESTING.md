@@ -853,6 +853,26 @@ hashes; absent or mismatched native phase still rejects it. Legacy typed markers
 remain supported, with exact kind boundaries. Production logging is unchanged.
 Evidence is retained under `ios-nse-probe-001/` in the same run directory.
 
+BL-9 adds fixed public NSE failure classes and allowlisted diagnostic-spool
+reasons while preserving the empty success details above. The native regressions
+cover per-kind failure classification, bridge availability versus decrypt
+failure, private-detail exclusion, generic fallback, and a renderer failure after
+the first decrypt that must report once without changing safe content.
+On 2026-11-12, unsigned simulator execution on iPhone 16e / iOS 26.5
+(`DBE8C32E-9F19-4593-860A-B41113791D79`) recorded three causal RED test-case
+failures (47 assertion failures, xcodebuild exit 65) at
+`1d59a5026dab28ec50927c3aaebf606cbc818ca8`. GREEN
+`a4e861e9cb4a86e7e51e0b16bd8e9527cd7baa91` passed 110 tests with no failures
+or skips, exit 0: resolver 74, diagnostic spool 23, mailbox coordinator 8 and
+configuration 5. Both scratch trees match these revisions and remain clean;
+the runner rebuilt Go iOS bindings in each worktree. Raw logs, commands and
+xcresult bundles are retained under `.codex-test-logs/bl9-20261112/`, with
+actual exits in `red-focused/xctest.log` and `green-full/xctest.log`.
+This is simulator/source evidence. The controlled missing-bridge build,
+`bridge_unavailable` device flows and normal-build `PUSH_NSE_DECRYPT_OK` proof
+on iPhone 13 remain outstanding; no signed-candidate or APNs delivery pass is
+claimed by this receipt.
+
 The group notification setup stops the Android app before clearing its private
 entries. An in-place install can restart background writers: attempt
 `ios-group-deployed-009/` failed deleting `shared_prefs` while the app was still
