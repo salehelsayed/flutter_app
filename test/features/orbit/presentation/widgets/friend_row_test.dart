@@ -18,6 +18,7 @@ OrbitFriend _makeFriend({
   int unreadCount = 3,
   String? lastActivity,
   String username = 'Alice',
+  String? mlKemPublicKey = 'fixture-ml-kem-public-key',
   String? lastMessageTimestamp,
   MediaPreviewDescriptor? latestMedia,
   bool isLatestDeleted = false,
@@ -26,6 +27,7 @@ OrbitFriend _makeFriend({
     contact: ContactModel(
       peerId: peerId,
       publicKey: 'pk-1',
+      mlKemPublicKey: mlKemPublicKey,
       rendezvous: '/dns4/relay/tcp/443',
       username: username,
       signature: 'sig-1',
@@ -340,6 +342,43 @@ void main() {
       );
       await tester.tap(title);
       expect(taps, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('BL11 keyless readiness and metadata retain readable spacing', (
+      tester,
+    ) async {
+      const name = 'Keyless friend';
+      await tester.pumpWidget(
+        wrap(
+          Center(
+            child: SizedBox(
+              width: 360,
+              child: FriendRow(
+                friend: _makeFriend(
+                  username: name,
+                  mlKemPublicKey: null,
+                  lastActivity: 'Voice message',
+                ),
+                onTap: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      final l10n = AppLocalizations.of(tester.element(find.byType(FriendRow)))!;
+      final readiness = find.text(l10n.contact_waiting_for_secure_connection);
+      expect(readiness, findsOneWidget);
+      final titleBounds = tester.getRect(find.text(name));
+      final readinessBounds = tester.getRect(readiness);
+      final previewBounds = tester.getRect(find.text('Voice message'));
+      expect(readinessBounds.top - titleBounds.bottom, closeTo(4, 0.01));
+      expect(previewBounds.top - readinessBounds.bottom, closeTo(4, 0.01));
+      expect(readinessBounds.height, greaterThan(0));
+      expect(
+        readinessBounds.right,
+        lessThanOrEqualTo(tester.getRect(find.byType(FriendRow)).right),
+      );
       expect(tester.takeException(), isNull);
     });
 
