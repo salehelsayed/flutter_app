@@ -868,10 +868,26 @@ configuration 5. Both scratch trees match these revisions and remain clean;
 the runner rebuilt Go iOS bindings in each worktree. Raw logs, commands and
 xcresult bundles are retained under `.codex-test-logs/bl9-20261112/`, with
 actual exits in `red-focused/xctest.log` and `green-full/xctest.log`.
-This is simulator/source evidence. The controlled missing-bridge build,
-`bridge_unavailable` device flows and normal-build `PUSH_NSE_DECRYPT_OK` proof
-on iPhone 13 remain outstanding; no signed-candidate or APNs delivery pass is
-claimed by this receipt.
+Flutter subsequently exercised the same source on iPhone 13 with in-place
+Release installs preserving identity and data. Controlled build 262 omitted the
+NSE Go bridge: public proof explicitly records chat and group
+`bridge_unavailable`, followed by unauthorized, sanitized content handoff.
+Normal build 263 records two `PUSH_NSE_DECRYPT_OK` events followed by authorized,
+active handoff; the runner identifies those pushes as chat and group, while the
+success events intentionally omit kind. The public runner receipt records the
+controlled/normal binary-link gate results; review verified redacted flow and
+install/build metadata without independently remeasuring those binaries.
+The first controlled attempt failed at the Pods copy step (exit 65); explicit
+pod installation corrected setup before the successful build. Both outcomes
+remain in `device-controlled-262.fail1/`, `device-controlled-262/` and
+`device-normal-263/` under the same evidence root. Scoped adoption is indexed by
+`/Users/I560101/.codex/investigations/bl9-simulator-adoption-20261112/device-verification.json`.
+The fixed mailbox wake path is unreachable on production iOS devices: iPhones
+do not advertise `opaque_wake_v1` and receive rich pushes instead. That path has
+simulator proof only (`IosNseMailboxWakeCoordinatorTests`, 8/8); no crafted APNs
+fixed-wake or device mailbox proof is claimed. These receipts establish the
+specified source/build flows, not a subsequently integrated signed candidate
+or general APNs delivery certification.
 
 The group notification setup stops the Android app before clearing its private
 entries. An in-place install can restart background writers: attempt
