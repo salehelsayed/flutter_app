@@ -125,6 +125,7 @@ void main() {
     retrier.start();
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
     expect(
       (await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus,
       'failed',
@@ -138,7 +139,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect((await posts.getPost('key-waiting'))!.deliveryStatus, 'sent');
-    expect(p2pService.sendMessageWithReplyCallCount, 1);
+    expect(p2pService.storeInInboxCallCount, 1);
+    expect(p2pService.lastStoreInInboxPeerId, 'peer-bob');
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
   });
 
   test('BL23 disposed retrier ignores key arrivals', () async {
@@ -160,6 +163,7 @@ void main() {
     keys.add(null);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
     expect(
       (await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus,
       'failed',
@@ -197,6 +201,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(passes, 1);
     expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
     release.complete();
     final deadline = DateTime.now().add(const Duration(seconds: 1));
     while (passes < 2 && DateTime.now().isBefore(deadline)) {
@@ -204,7 +209,9 @@ void main() {
     }
     expect(passes, 2);
     expect((await posts.getPost('key-waiting'))!.deliveryStatus, 'sent');
-    expect(p2pService.sendMessageWithReplyCallCount, 1);
+    expect(p2pService.storeInInboxCallCount, 1);
+    expect(p2pService.lastStoreInInboxPeerId, 'peer-bob');
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
   });
 
   test('BL23 dispose clears a retry queued behind an active pass', () async {
@@ -233,6 +240,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(passes, 1);
     expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
   });
 
   for (final exclusion in ['blocked', 'archived', 'expired']) {
@@ -266,6 +274,7 @@ void main() {
       }
       expect(passes, 2);
       expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
       expect((await posts.getRecipientDeliveries('key-waiting')).single.deliveryStatus, 'failed');
     });
   }
