@@ -1080,11 +1080,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     _recordFailure(error, 'candidateStream');
     final snapshot = _readSnapshotSafely();
-    if (snapshot != null)
+    if (snapshot != null) {
       _failCandidateEgress(
         snapshot,
         diagnosticFailure: _diagnosticFailure(error),
       );
+    }
   }
 
   void _onEngineEvent(CallEngineEvent event) {
