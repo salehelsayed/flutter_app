@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
@@ -43,6 +44,8 @@ void main() {
     bool isProcessing = false,
     BackgroundReadableColors? readableColors,
     List<String>? introducerAttributionNames,
+    Locale? locale,
+    double? textScale,
   }) {
     final body = IntroRow(
       introduction: introduction,
@@ -61,8 +64,17 @@ void main() {
     );
 
     return MaterialApp(
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => textScale == null
+          ? child!
+          : MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: child!,
+            ),
       home: Scaffold(
         body: readableColors == null
             ? body
@@ -72,6 +84,48 @@ void main() {
               ),
       ),
     );
+  }
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('GERMAN-OVERFLOW intro processing scale $scale', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        buildWidget(
+          introduction: makeIntro(),
+          showActions: true,
+          isProcessing: true,
+          locale: const Locale('de'),
+          textScale: scale,
+          onAccept: () {},
+          onPass: () {},
+        ),
+      );
+      // The indeterminate progress ticker must not be pumped to settlement.
+      await tester.pump(const Duration(milliseconds: 400));
+      final label = find.text('Wird angenommen...');
+      expect(label, findsOneWidget);
+      expect(find.text('Weitergeben'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final labelBounds = tester.getRect(label);
+      final buttonBounds = tester.getRect(
+        find.byKey(const ValueKey('intro-accept-intro-1')),
+      );
+      expect(labelBounds.width, greaterThan(0));
+      expect(labelBounds.left, greaterThanOrEqualTo(buttonBounds.left));
+      expect(labelBounds.right, lessThanOrEqualTo(buttonBounds.right));
+      expect(labelBounds.top, greaterThanOrEqualTo(buttonBounds.top));
+      expect(labelBounds.bottom, lessThanOrEqualTo(buttonBounds.bottom));
+      final paragraph = tester.renderObject<RenderParagraph>(label);
+      if (paragraph.didExceedMaxLines) {
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+      }
+    });
   }
 
   group('IntroRow', () {

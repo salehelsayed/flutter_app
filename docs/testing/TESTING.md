@@ -3819,6 +3819,23 @@ RED run and the subsequent layout failure in
 Host tests fake the secure-storage platform boundary; real persistence across
 an application restart and OS notification retirement remain device evidence.
 
+German action-fit coverage mounts the processing IntroRow, Feed's full-conversation
+link, BlockedBanner, the actual 180-pixel unarchive slot and GroupInfoScreen at
+360 by 780 logical pixels, DPR 1 and text scales 1 and 2. Introduction buttons
+wrap inside a finite flex allocation while retaining disabled actions and the
+processing spinner. Other affected labels use a constrained single line with
+ellipsis; wording, icons and callbacks stay unchanged. Check initial group
+header layout errors before scrolling to its lazy add-member action: looking
+for that offscreen action first masked the header overflow with a fixture
+failure in the original baseline. The corrected ten-case RED has nine causal
+RenderFlex failures and one normal-scale group pass; all 75 cases in the five
+existing widget files then pass, with clean analysis of the ten changed Dart
+files. These checks require positive paragraph bounds and full text or clean
+ellipsis, but do not certify native fonts, signed visuals or screen readers.
+Keep the original baseline/fixture failure and final pair under
+`.codex-test-logs/codex-ui-german-overflow-20261112/`; broader integration belongs
+to the batch gate rather than another per-fix sweep.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally
@@ -5288,6 +5305,41 @@ are hash-bound so adding assertions to those files requires ownership review.
 Full product/physical-device and signed-candidate execution: **NOT RUN**.
 No speedup or release acceptance is inferred from fixture timing. Full regression
 is not the default per-plan gate; follow the wave/release cadence in `AGENTS.md`.
+
+Flutter native-asset preparation is serialized per worktree by
+`scripts/flutter_native_asset_lock.py`; the lock is released on the canonical
+Flutter machine `testStart` event, so independent test bodies can overlap after
+setup. BL20 verified source `e9ceb5bf28df840e615102142e259ab0326b447e` with
+`scripts/test/bl20_native_asset_concurrency_proof.py`: three fresh repeats each
+ran four real SQLite test bodies concurrently, with all 12 child exits zero,
+no failed/skipped tests, and scheduler maximum four. Barrier timestamps establish
+four-body overlap in each repeat; they do not establish a throughput speedup.
+The four lock unit tests and manifest validation also passed. Raw proof remains
+under `/Volumes/CrucialX9/flutter_app-ui-update/.audit/wt/bl20/.codex-test-logs/bl20-concurrency-20261112-fresh/`;
+aggregate `results.json` SHA-256 is
+`514495224ac5c5d2572c175739e877732a186d97ef624b8d63f10b07d0b7c3fe`.
+The runner started after observing no batch process, without an explicit
+confirmation that the other runner's batch half had finished; retain this
+scheduling caveat and do not infer an isolated-host timing benchmark.
+
+The concurrency proof did not establish full-workflow composition. Batch2
+exposed two integration regressions: the new lock test was absent from the
+mirrored `full-workflow` paths/command, and the disposable legacy CLI fixture
+did not copy the newly imported lock module. Preserve both registration mirrors
+when extending the canonical workflow, and copy imported wrapper dependencies
+into disposable CLI fixtures. The two failures reproduce on original BL20 and
+Batch2 but pass on main `d58446b31`; raw bisect evidence remains under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/batch2/out/bisect/`.
+Correction `3394a2e879897c45540d5da37a54b0ef2789e4d0` adds only those three
+entries. Claude-UI verified both complete focused files (44 tests), validation,
+and the workflow lane (335 passed, zero failed/skipped, child exit zero), with
+matching before/after source hashes and a clean worktree. Raw evidence is under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl20fix/out/`; the workflow
+`results.json` is in that runner's `.audit/wt/bl20fix/build/bl20-batch-fix-3394/workflow/`.
+The separate planning command stalled and was stopped with exit 143; its log is
+retained, not counted as a result. The workflow-only wrapper exited 3 because
+other change-selected checks remained NOT RUN. This is scoped workflow proof,
+not full-change, batch integration, native, or release acceptance.
 
 `.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
 for three distinct acceptance modes. Its final hosted job always runs after
@@ -12244,6 +12296,28 @@ are unchanged through the final source. Its `android-call-jvm.log` SHA-256 is
 under `/Volumes/CrucialX9/flutter_app/.codex-test-logs/bl5-native-20261112/`.
 These receipts establish the scoped per-fix result; integration-batch checks and
 device or signed-candidate behavior require their own evidence.
+
+The core sentinel `test/core/diagnostics/call_failure_observation_test.dart` also
+pins these classifications. It is covered by the diagnostics lane but sits
+outside the call-feature test directory; the original four-file BL5 preservation
+set omitted it. Batch bisect retained 15 passes before BL5 versus 7 passes and
+8 stale-expectation failures after it. Test-only `4cdd902c4` updates those expected
+stage/reason pairs while preserving exception identity, single observations,
+redaction, timeout outcomes, interruption fencing, terminal reason, cleanup and
+history. The generic media fixtures throw untyped `StateError`, so they assert
+`media/media_failed`; typed configuration/SDP failures still retain
+`media/negotiation_failed`. Checkpoints assert `runtime/write_failed`, and signaling
+failures/timeouts assert their signaling boundary.
+On clean integrated head `d58446b319a826922573381d0a7e4507f00433af`, the 15 distinct sentinel
+cases and all four requested preservation files passed: the combined run
+(including FriendRow) reported 173 passes, and the separate call-diagnostics run
+reported 63, both with actual child exit zero. The five requested test files
+match the author revision. Raw output is retained in
+`/Volumes/CrucialX9/flutter_app/.codex-test-logs/batch1-20261112/final/tests.log`
+and `final2/tests.log`. Global analysis exited 1 for seven existing infos in the
+audio-soak script and background-message-handler tests, with zero errors or
+warnings and no diagnostic in the changed sentinel; this is not a clean global
+analysis claim. Those separate infos are covered by the batch-2 cleanup.
 Permission observations use
 the existing posting-admission result, preserve original requester exceptions,
 and separately mark caught OS-check failures without changing fail-open policy.

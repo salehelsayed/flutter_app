@@ -122,28 +122,31 @@ class IntroRow extends StatelessWidget {
 
           // Actions or status
           if (showActions && !isOtherBlocked)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Pass button
-                _ActionButton(
-                  buttonKey: ValueKey('intro-pass-${introduction.id}'),
-                  label: l10n.intro_pass,
-                  onTap: isProcessing ? null : onPass,
-                  isPrimary: false,
-                ),
-                const SizedBox(width: 8),
-                // Accept button
-                _ActionButton(
-                  buttonKey: ValueKey('intro-accept-${introduction.id}'),
-                  label: isProcessing
-                      ? l10n.intro_accepting
-                      : l10n.intro_accept,
-                  onTap: isProcessing ? null : onAccept,
-                  isPrimary: true,
-                  isProcessing: isProcessing,
-                ),
-              ],
+            Flexible(
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  // Pass button
+                  _ActionButton(
+                    buttonKey: ValueKey('intro-pass-${introduction.id}'),
+                    label: l10n.intro_pass,
+                    onTap: isProcessing ? null : onPass,
+                    isPrimary: false,
+                  ),
+                  // Accept button
+                  _ActionButton(
+                    buttonKey: ValueKey('intro-accept-${introduction.id}'),
+                    label: isProcessing
+                        ? l10n.intro_accepting
+                        : l10n.intro_accept,
+                    onTap: isProcessing ? null : onAccept,
+                    isPrimary: true,
+                    isProcessing: isProcessing,
+                  ),
+                ],
+              ),
             )
           else if (showActions && isOtherBlocked)
             Text(
@@ -247,10 +250,16 @@ class _ActionButton extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(label),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           )
-        : Text(label);
+        : Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
 
     if (isPrimary) {
       return FilledButton(

@@ -297,12 +297,16 @@ class UnarchiveActionButton extends StatelessWidget {
           children: [
             const Icon(Icons.unarchive_outlined, color: Colors.white, size: 16),
             const SizedBox(width: 6),
-            Text(
-              AppLocalizations.of(context)!.orbit_unarchive_action,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                AppLocalizations.of(context)!.orbit_unarchive_action,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],

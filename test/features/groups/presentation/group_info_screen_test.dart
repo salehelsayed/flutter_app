@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -66,10 +67,21 @@ void main() {
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     GroupSecurityStatusViewState? securityStatus,
+    Locale? locale,
+    double? textScale,
   }) {
     return MaterialApp(
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => textScale == null
+          ? child!
+          : MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: child!,
+            ),
       home: GroupInfoScreen(
         group: group ?? testGroup,
         members: members,
@@ -95,6 +107,49 @@ void main() {
         securityStatus: securityStatus,
       ),
     );
+  }
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('GERMAN-OVERFLOW add member scale $scale', (tester) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var addedMember = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          isAdmin: true,
+          locale: const Locale('de'),
+          textScale: scale,
+          onAddMember: () => addedMember = true,
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final label = find.text('Mitglied hinzufügen');
+      await tester.scrollUntilVisible(
+        label,
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(label, findsOneWidget);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      final button = find
+          .ancestor(of: label, matching: find.byType(GestureDetector))
+          .first;
+      final labelBounds = tester.getRect(label);
+      final buttonBounds = tester.getRect(button);
+      expect(labelBounds.width, greaterThan(0));
+      expect(labelBounds.left, greaterThanOrEqualTo(buttonBounds.left));
+      expect(labelBounds.right, lessThanOrEqualTo(buttonBounds.right));
+      final paragraph = tester.renderObject<RenderParagraph>(label);
+      if (paragraph.didExceedMaxLines) {
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+      }
+      await tester.tap(label);
+      expect(addedMember, isTrue);
+    });
   }
 
   testWidgets(

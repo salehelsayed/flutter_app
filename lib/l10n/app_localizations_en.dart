@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2987,7 +2986,8 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other:
           'Skipped $count files. Only photos, videos, audio and PDF files can be shared.',
-      one: 'Skipped 1 file. Only photos, videos, audio and PDF files can be shared.',
+      one:
+          'Skipped 1 file. Only photos, videos, audio and PDF files can be shared.',
     );
     return '$_temp0';
   }
