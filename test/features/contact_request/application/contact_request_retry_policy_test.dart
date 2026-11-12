@@ -58,6 +58,17 @@ class _FailingJournalStore extends FakeSecureKeyStore {
   }
 }
 
+class _SigningHookBridge extends FakeBridge {
+  _SigningHookBridge(this.onSign);
+  final void Function() onSign;
+
+  @override
+  Future<String> send(String message) {
+    if ((jsonDecode(message) as Map)['cmd'] == 'payload.sign') onSign();
+    return super.send(message);
+  }
+}
+
 void main() {
   late DateTime now;
   late FakeContactRepository contacts;
@@ -338,6 +349,34 @@ void main() {
       final raw = await store.read(_journalKey);
       expect(raw, isNotNull);
       expect(raw, isNot(contains('sender-account')));
+    },
+  );
+
+  test(
+    'BL24E decline during envelope build suppresses the pending send',
+    () async {
+      final hooked = _SigningHookBridge(
+        () => consent = ContactRelationshipState.declined,
+      );
+      hooked.responses.addAll(bridge.responses);
+      bridge = hooked;
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 0);
+      final raw = await store.read(_journalKey);
+      expect(raw == null || entries(raw).isEmpty, isTrue);
+    },
+  );
+
+  test(
+    'BL24E account change during build cannot send the previous account envelope',
+    () async {
+      final hooked = _SigningHookBridge(
+        () => identities.seed(_identity('replacement-account')),
+      );
+      hooked.responses.addAll(bridge.responses);
+      bridge = hooked;
+      expect(await retry(), 0);
+      expect(transport.storeInInboxCallCount, 0);
     },
   );
 
