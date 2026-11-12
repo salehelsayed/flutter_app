@@ -3,6 +3,8 @@ import 'dart:collection';
 
 import '../../../core/media/media_audio_session.dart';
 import '../diagnostics/call_diagnostics.dart';
+import '../diagnostics/call_setup_failure.dart';
+import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -451,7 +453,7 @@ final class CallCoordinator {
       try {
         await persist(snapshot).timeout(effectTimeout);
       } catch (error) {
-        _recordFailure(error, snapshot);
+        _recordFailure(error, snapshot, checkpoint: true);
         await _dispatchNow(
           CallEvent(
             type: CallEventType.negotiationFailed,
@@ -510,7 +512,7 @@ final class CallCoordinator {
                 Object error,
                 StackTrace stackTrace,
               ) {
-                _recordFailure(error, snapshot);
+                _recordFailure(error, snapshot, effect: effect.type);
                 firstEffectError ??= error;
                 firstEffectStack ??= stackTrace;
               }),
@@ -537,11 +539,7 @@ final class CallCoordinator {
             break;
           }
           if (executionFailed) {
-            _recordFailure(
-              error,
-              snapshot,
-              negotiation: _isNegotiationEffect(effect.type),
-            );
+            _recordFailure(error, snapshot, effect: effect.type);
           }
           firstEffectError ??= error;
           firstEffectStack ??= stackTrace;
@@ -704,20 +702,33 @@ final class CallCoordinator {
   void _recordFailure(
     Object error,
     CallSessionSnapshot snapshot, {
-    bool negotiation = false,
+    CallEffectType? effect,
+    bool checkpoint = false,
   }) {
     try {
       final diagnostics = CallDiagnostics.instance;
       final timeout = error is TimeoutException;
+      final media = effect != null && _isNegotiationEffect(effect);
+      final failure = error is CallEngineException
+          ? CallSetupFailure.fromEngine(error.code)
+          : timeout
+          ? (media
+                ? CallSetupFailure.mediaTimeout
+                : effect != null
+                ? CallSetupFailure.signalingTimeout
+                : CallSetupFailure.runtimeTimeout)
+          : checkpoint
+          ? CallSetupFailure.checkpoint
+          : media
+          ? CallSetupFailure.mediaStart
+          : effect != null
+          ? CallSetupFailure.signaling
+          : CallSetupFailure.runtime;
       diagnostics.record(
-        stage: negotiation ? 'media' : 'runtime',
+        stage: failure.stage,
         action: 'finish',
         outcome: timeout ? 'timeout' : 'failed',
-        reason: timeout
-            ? 'timeout'
-            : negotiation
-            ? 'negotiation_failed'
-            : 'unknown',
+        reason: failure.reason,
         traceId: diagnostics.traceForCall(callId: snapshot.callId?.value),
       );
     } catch (_) {

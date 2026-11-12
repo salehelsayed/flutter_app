@@ -20,6 +20,7 @@ import '../../features/call/application/call_network_path_binding.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/diagnostics/call_setup_failure.dart';
 import '../../features/call/diagnostics/routine_authority_publication.dart';
 import '../../features/call/infrastructure/call_stats_sampler.dart';
 import '../../features/call/application/blocked_call_media_release.dart';
@@ -2112,13 +2113,12 @@ CallSignalingComposition createProductionCallSignalingComposition({
           );
           final negotiationExecutor = CallNegotiationEffectExecutor(
             onFailureObservation: (id, reason, disposition) {
+              final failure = CallSetupFailure.fromObservation(reason);
               CallDiagnostics.instance.record(
-                stage: 'media',
+                stage: failure.stage,
                 action: 'check',
                 outcome: 'failed',
-                reason: reason == CallFailureReason.iceConnectionFailed
-                    ? 'ice_failed'
-                    : 'transport_failed',
+                reason: failure.reason,
                 traceId: CallDiagnostics.instance.traceForCall(
                   callId: id.value,
                 ),

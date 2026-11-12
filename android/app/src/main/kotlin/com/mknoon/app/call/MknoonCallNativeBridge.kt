@@ -214,7 +214,11 @@ internal class MknoonCallNativeBridge(
             handleCore(cleaned, object : MethodChannel.Result {
                 override fun success(value: Any?) {
                     diagnostics?.record(handle, stage, action, if (value == false) "rejected" else "ok",
-                        if (value == false && stage == "answer") "native_answer_refused" else reason,
+                        when {
+                            value == false && call.method == "activateAudio" -> "audio_activation_failed"
+                            value == false && stage == "answer" -> "native_answer_refused"
+                            else -> reason
+                        },
                         values = if (value is Boolean) mapOf("accepted" to value) else emptyMap(), context = metadata)
                     result.success(value)
                 }
