@@ -11885,10 +11885,14 @@ while preserving existing decisions and reads. These coarse app observations
 omit optional trace/attempt handles and requestAction; legacy projection remains
 unchanged.
 
-Call effect observations distinguish an observed TimeoutException from other
-caught failures before reducer failure mapping. Only known negotiation effects
-use media/negotiation_failed; other effects and checkpoint writes remain runtime
-with timeout/unknown. A successful effect's returned follow-up reduction owns
+Call setup observations use the closed `CallSetupFailure` classifications and
+existing diagnostic schema vocabulary. Signaling-port transport failures remain
+signaling/transport_failed; engine transport failures are media/transport_failed.
+ICE, configuration, media start, permission, TURN and checkpoint failures retain
+their bounded causal classifications, including runtime/write_failed for a failed
+checkpoint. Timeout classification follows the failing boundary. Exception text
+never becomes a diagnostic reason or a peer-facing call end reason. BL5 supersedes
+the earlier generic media/negotiation_failed and runtime/unknown classification. A successful effect's returned follow-up reduction owns
 its own checkpoint/effect failure observation: do not relabel a propagated
 checkpoint failure as media failure or count a nested effect failure twice.
 Retain the outer interruption fence before observing an actual execution error.
@@ -11896,6 +11900,22 @@ Coordinator tests preserve original exceptions, terminal reason, cleanup, histor
 and interruption behavior. The causal REDs, complete frozen host results and
 correction evidence are retained in `.codex-test-logs/diagnostic-gaps-131/`;
 passing the original diagnostic lane did not cover the missing nested case.
+BL5 final per-fix review passed source `404dbfff5243883817f128480d652072bd6b9497`:
+Claude-Dev retained two causal RED failures, two focused GREEN passes, 182 passes
+across four preservation files, and clean seven-path analysis with child exit 0.
+The three earlier test child exits were not retained; Kayan explicitly accepted
+the actual Flutter final summaries without a rerun. Raw receipts remain under
+`/Volumes/CrucialX9/flutter_app-claude-dev/build/bl5-proof/`; the final analysis
+`analyze-404dbfff5.log` SHA-256 is
+`17acc8d7833ac6f5e05a87a3390fd9eb579339ce72c0327e5e25b47a7edaaac3`.
+Flutter's native run on `899d6b9fa9bf3274db9fa292115854a02ab1fd6f` passed
+630 tests in 47 classes with zero failures, errors or skips and child exit 0.
+This component evidence was adopted because the Android tree and native runner
+are unchanged through the final source. Its `android-call-jvm.log` SHA-256 is
+`4252f8ca020e3b1287efc0c21018df37c34e1edd49074ff046dea2bed20a214e`
+under `/Volumes/CrucialX9/flutter_app/.codex-test-logs/bl5-native-20261112/`.
+These receipts establish the scoped per-fix result; integration-batch checks and
+device or signed-candidate behavior require their own evidence.
 Permission observations use
 the existing posting-admission result, preserve original requester exceptions,
 and separately mark caught OS-check failures without changing fail-open policy.
