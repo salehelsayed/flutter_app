@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -19,6 +21,13 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 /// to online state (isStarted && circuitAddresses.isNotEmpty).
 /// Debounces by 5 seconds to avoid retrying during rapid state changes.
 class KeyExchangeRetrier {
+  final ValueNotifier<Set<String>> _stoppedPeerIds = ValueNotifier(const {});
+
+  ValueListenable<Set<String>> get stoppedPeerIds => _stoppedPeerIds;
+
+  Future<void> refreshRetryStatus() async {}
+
+  Future<int> retryOnInterest(String peerId) async => 0;
   final P2PService p2pService;
   final ContactRepository contactRepo;
   final IdentityRepository identityRepo;
@@ -145,6 +154,7 @@ class KeyExchangeRetrier {
 
   /// Stops listening and cleans up resources.
   void dispose() {
+    _stoppedPeerIds.dispose();
     emitFlowEvent(
       layer: 'FL',
       event: 'KEY_EXCHANGE_RETRIER_DISPOSE',

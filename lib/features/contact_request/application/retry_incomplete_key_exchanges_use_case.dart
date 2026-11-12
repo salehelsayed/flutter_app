@@ -59,6 +59,7 @@ Future<int> retryIncompleteKeyExchanges({
   Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
   // A local decline/withdrawal cannot authorize another automatic request.
   Future<ContactRelationshipConsent?> Function(String peerId)? readConsent,
+  String? interestPeerId,
 }) => _incompleteKeyExchangeRetryLock.synchronized(() async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
