@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
+import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 
 enum CallEnvelopeErrorCode {
   invalidSchema,
@@ -182,29 +184,52 @@ final class CallEnvelopeAuthority {
   final String ownMlKemSecretKey;
 }
 
-/// The authenticated domain signal plus the opaque outer routing handle.
-/// Product call state remains exclusively in [CallSignal]/CallCoordinator.
-final class DecodedSecureCallEnvelope {
-  DecodedSecureCallEnvelope({
-    required this.signal,
+/// Authentication and provisional replay custody, without product call state.
+sealed class DecodedCallWireEnvelope {
+  DecodedCallWireEnvelope({
     required this.callHandle,
     required CallReplayProtectionReservation replayReservation,
   }) : _replayReservation = replayReservation;
 
-  final CallSignal signal;
+  CallWireSignal get signal;
   final String callHandle;
   final CallReplayProtectionReservation _replayReservation;
 
-  /// Makes this authenticated signal a replay tombstone only after the call
-  /// coordinator has accepted or permanently rejected its state transition.
+  /// Commit only after acceptance or permanent rejection by the call owner.
   void commitReplay() => _replayReservation.commit();
 
-  /// Releases a provisional admission after a local/transient failure so the
-  /// mailbox can retry the exact signal without losing the call.
+  /// Release provisional custody after a local/transient failure for retry.
   void rollbackReplay() => _replayReservation.rollback();
 
   @override
+  String toString() => 'DecodedCallWireEnvelope(redacted)';
+}
+
+/// Existing v1 callers retain a statically typed v1 signal.
+final class DecodedSecureCallEnvelope extends DecodedCallWireEnvelope {
+  DecodedSecureCallEnvelope({
+    required this.signal,
+    required super.callHandle,
+    required super.replayReservation,
+  });
+
+  @override
+  final CallSignal signal;
+
+  @override
   String toString() => 'DecodedSecureCallEnvelope(redacted)';
+}
+
+/// A strict v2 signal. Authentication alone never grants camera consent.
+final class DecodedSecureCallEnvelopeV2 extends DecodedCallWireEnvelope {
+  DecodedSecureCallEnvelopeV2({
+    required this.signal,
+    required super.callHandle,
+    required super.replayReservation,
+  });
+
+  @override
+  final CallSignalV2 signal;
 }
 
 abstract interface class CallReplayProtectionStore {
@@ -404,6 +429,7 @@ final class SecureCallEnvelopeCodec {
     this.replayTombstoneTtl = const Duration(minutes: 10),
     CallReplayProtectionStore? replayStore,
     this.onEncoded,
+    this.videoEnabled = false,
   }) : _crypto = crypto,
        _nowMs = nowMs,
        _replayStore =
@@ -440,6 +466,23 @@ final class SecureCallEnvelopeCodec {
   final Duration replayTombstoneTtl;
   final CallReplayProtectionStore _replayStore;
   final CallEncodedEnvelopeObserver? onEncoded;
+
+  /// Explicit runtime admission gate; linking the v2 parser enables nothing.
+  final bool videoEnabled;
+
+  Future<String> encodeV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    required String recipientMlKemPublicKey,
+    required String senderSigningPrivateKey,
+  }) async {
+    throw const CallEnvelopeException(CallEnvelopeErrorCode.unsupportedVersion);
+  }
+
+  Future<DecodedCallWireEnvelope> decodeVersioned({
+    required String envelopeJson,
+    required CallEnvelopeAuthority authority,
+  }) => decode(envelopeJson: envelopeJson, authority: authority);
 
   Future<String> encode({
     required CallSignal signal,

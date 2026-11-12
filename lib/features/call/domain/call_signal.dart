@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'call_end_reason.dart';
 import 'call_id.dart';
+import 'call_wire_signal.dart';
 
 enum CallSignalType {
   invite('invite'),
@@ -28,7 +29,7 @@ enum CallSignalType {
 
 /// The one canonical decrypted `mknoon.call_signal.v1` inner event. The secure
 /// outer wrapper may add only its random call handle and cryptographic fields.
-final class CallSignal {
+final class CallSignal implements CallWireSignal {
   CallSignal._({
     required this.callId,
     required this.messageId,
@@ -66,17 +67,34 @@ final class CallSignal {
     'payload',
   };
 
+  @override
+  String get wireSchema => schema;
+
+  @override
+  String get eventWireName => event.wireName;
+
+  @override
   final CallId callId;
+  @override
   final String messageId;
   final CallSignalType event;
+  @override
   final String senderAccountPeerId;
+  @override
   final String senderDevicePeerId;
+  @override
   final String recipientAccountPeerId;
+  @override
   final String recipientDevicePeerId;
+  @override
   final int senderSequence;
+  @override
   final int iceGeneration;
+  @override
   final int createdAtMs;
+  @override
   final int expiresAtMs;
+  @override
   final Map<String, Object?> payload;
 
   factory CallSignal.create({
@@ -186,6 +204,7 @@ final class CallSignal {
     return signal;
   }
 
+  @override
   Map<String, Object?> toMap() => <String, Object?>{
     'schema': schema,
     'call_id': callId.value,

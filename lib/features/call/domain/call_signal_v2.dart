@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'call_end_reason.dart';
 import 'call_id.dart';
+import 'call_wire_signal.dart';
 import 'call_signal.dart';
 
 /// This version has its own closed event vocabulary; v1 is unchanged.
@@ -34,7 +35,7 @@ enum CallSignalV2Type {
 }
 
 /// Strict encrypted v2 data. Parsing alone cannot authorize capture or a call.
-final class CallSignalV2 {
+final class CallSignalV2 implements CallWireSignal {
   CallSignalV2._({
     required this.callId,
     required this.messageId,
@@ -72,17 +73,34 @@ final class CallSignalV2 {
     'payload',
   };
 
+  @override
+  String get wireSchema => schema;
+
+  @override
+  String get eventWireName => event.wireName;
+
+  @override
   final CallId callId;
+  @override
   final String messageId;
   final CallSignalV2Type event;
+  @override
   final String senderAccountPeerId;
+  @override
   final String senderDevicePeerId;
+  @override
   final String recipientAccountPeerId;
+  @override
   final String recipientDevicePeerId;
+  @override
   final int senderSequence;
+  @override
   final int iceGeneration;
+  @override
   final int createdAtMs;
+  @override
   final int expiresAtMs;
+  @override
   final Map<String, Object?> payload;
 
   factory CallSignalV2.fromMap(
@@ -179,6 +197,7 @@ final class CallSignalV2 {
     return signal;
   }
 
+  @override
   Map<String, Object?> toMap() => {
     'schema': schema,
     'call_id': callId.value,
