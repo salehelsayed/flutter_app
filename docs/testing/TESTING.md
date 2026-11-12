@@ -11901,9 +11901,18 @@ early and queued suppression gates and actual dialog route admission. A joined
 queue or a presenter callback by itself is not proof of a dialog, and suppression
 does not prove decline. The host tests in `test/core/diagnostics/` plus the FTE
 widget test exercise private-export canaries, consent and unavailable collectors,
-while preserving existing decisions and reads. These coarse app observations
-omit optional trace/attempt handles and requestAction; legacy projection remains
-unchanged.
+while preserving existing decisions and reads. These coarse producers omit
+optional trace/attempt handles and requestAction. Relay upload retains the
+`contact_request` feature and admitted closed `requestSource`, `consentClass`,
+`requestAction` and `requestDisposition` values. Unknown keys or unlisted enum
+values reject the entire event before local retention; they are not sanitized
+into an accepted record. Other app kinds retain their existing relay projection,
+including legacy call controls, and ACK/retry behavior is unchanged. The BL8
+causal RED/GREEN pair and 108-case six-file diagnostics preservation run retain
+their raw outcomes under
+`.codex-test-logs/codex-ui-bl8-contact-request-relay-20261112/`.
+Compatibility was checked offline against relay schema `88157ef6e`; host payload
+and privacy checks do not certify live relay acceptance or a signed application.
 
 Call setup observations use the closed `CallSetupFailure` classifications and
 existing diagnostic schema vocabulary. Signaling-port transport failures remain

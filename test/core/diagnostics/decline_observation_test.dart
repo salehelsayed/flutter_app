@@ -139,8 +139,8 @@ void main() {
       final wire = uploaded.singleWhere(
         (e) => e['eventId'] == event['eventId'],
       );
-      expect(wire['feature'], 'runtime');
-      expect(wire['values'], isEmpty);
+      expect(wire['feature'], 'contact_request');
+      expect(wire['values'], event['values']);
       expect((await observations()).single['values'], event['values']);
     },
   );
