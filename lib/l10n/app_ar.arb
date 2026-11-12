@@ -2279,7 +2279,6 @@
   "stickers_create": "إنشاء",
   "stickers_delete": "حذف",
   "stickers_drag_to_reorder": "اسحب لإعادة الترتيب",
-  "stickers_manage_done": "تم",
   "stickers_move_earlier": "نقل إلى موضع سابق",
   "stickers_move_later": "نقل إلى موضع لاحق",
   "stickers_mine_semantics": "ملصق {position} من {count}",

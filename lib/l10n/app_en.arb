@@ -2608,8 +2608,6 @@
   "@stickers_delete": {"description": "Custom stickers copy, Kayan-approved 2026-11-11"},
   "stickers_drag_to_reorder": "Drag to reorder",
   "@stickers_drag_to_reorder": {"description": "Custom stickers copy, Kayan-approved 2026-11-11"},
-  "stickers_manage_done": "Done",
-  "@stickers_manage_done": {"description": "Custom stickers copy, same words as you_tags_done"},
   "stickers_move_earlier": "Move earlier",
   "@stickers_move_earlier": {"description": "Custom stickers copy, draft pending Kayan approval"},
   "stickers_move_later": "Move later",
