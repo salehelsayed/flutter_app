@@ -122,15 +122,33 @@ class ConversationHeader extends StatelessWidget {
                               UserAvatar(peerId: contactPeerId, size: 36),
                               const SizedBox(width: 14),
                               Expanded(
-                                child: Text(
-                                  contactUsername,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: readableColors.textPrimary,
-                                  ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      contactUsername,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: readableColors.textPrimary,
+                                      ),
+                                    ),
+                                    if (isWaitingForSecureConnection)
+                                      Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.contact_waiting_for_secure_connection,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: readableColors.textMuted,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ],
@@ -184,19 +202,6 @@ class ConversationHeader extends StatelessWidget {
                     ),
                   ],
                 ),
-                if (isWaitingForSecureConnection)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6, left: 12, right: 12),
-                    child: Text(
-                      AppLocalizations.of(
-                        context,
-                      )!.contact_waiting_for_secure_connection,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: readableColors.textMuted,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
