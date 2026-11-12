@@ -5,6 +5,7 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 const fingerprint =
@@ -123,7 +124,7 @@ class Peer implements rtc.RTCPeerConnection {
   final offers = <Map<String, dynamic>>[];
   final local = <rtc.RTCSessionDescription>[];
   final remote = <rtc.RTCSessionDescription>[];
-  int closes = 0, restarts = 0;
+  int closes = 0, restarts = 0, disposals = 0;
   Completer<void>? offerGate;
   bool failRollback = false;
   @override
@@ -202,6 +203,15 @@ class Peer implements rtc.RTCPeerConnection {
   Future<List<rtc.RTCRtpTransceiver>> getTransceivers() async =>
       nativeTransceivers;
   @override
+  Future<rtc.RTCRtpSender> addTrack(
+    rtc.MediaStreamTrack track, [
+    rtc.MediaStream? stream,
+  ]) async {
+    audio.track = track;
+    return audio;
+  }
+
+  @override
   Future<void> addCandidate(rtc.RTCIceCandidate c) async {}
   @override
   Future<void> close() async {
@@ -209,7 +219,10 @@ class Peer implements rtc.RTCPeerConnection {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    disposals++;
+  }
+
   @override
   Future<void> restartIce() async {
     restarts++;
@@ -268,6 +281,7 @@ class Fixture {
   Future<void> start({
     bool caller = true,
     bool bind = true,
+    bool captureAudio = false,
     CallTransportPolicy policy = CallTransportPolicy.all,
   }) async {
     final adapter = FlutterWebRtcPeerConnectionAdapter(
@@ -286,7 +300,7 @@ class Fixture {
         transportPolicy: policy,
         receiveAudio: true,
         receiveVideo: false,
-        captureAudio: false,
+        captureAudio: captureAudio,
         captureVideo: false,
       ),
     );
@@ -343,6 +357,7 @@ class Fixture {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('default-off and v1 bindings reject before video mutation', () async {
     final f = Fixture();
     await f.start(bind: false);
@@ -793,6 +808,88 @@ void main() {
       expect(await second, isTrue);
       expect(f.association.disposals, 1);
       f.preserved();
+    },
+  );
+  test(
+    'whole engine close releases audio and peer despite persistent video cleanup failure',
+    () async {
+      const channel = MethodChannel('FlutterWebRTC.Method');
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method == 'getUserMedia') {
+          return <String, Object>{
+            'streamId': 'microphone-stream',
+            'audioTracks': [
+              <String, Object>{
+                'id': 'microphone',
+                'label': 'microphone',
+                'kind': 'audio',
+                'enabled': true,
+              },
+            ],
+            'videoTracks': <Object>[],
+          };
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final f = Fixture();
+      await f.start(captureAudio: true);
+      final token = await f.committed();
+      expect(await f.session.setLocalCamera(token, f.grant()), isTrue);
+      expect(
+        await f.session.attachRenderer(token, CallVideoRendererSlot.local),
+        isNotNull,
+      );
+      f.renderer.failDispose = true;
+      await expectLater(f.engine.close(), throwsA(isA<CallEngineException>()));
+      expect(f.session.hasPendingCleanup, isTrue);
+      expect(
+        calls.where(
+          (call) =>
+              call.method == 'trackDispose' &&
+              call.arguments['trackId'] == 'microphone',
+        ),
+        hasLength(1),
+      );
+      expect(
+        calls.where(
+          (call) =>
+              call.method == 'streamDispose' &&
+              call.arguments['streamId'] == 'microphone-stream',
+        ),
+        hasLength(1),
+      );
+      expect(f.peer.closes, 1);
+      expect(f.peer.disposals, 1);
+      expect(f.track.stops, 1);
+      expect(f.stream.disposals, 1);
+      f.renderer.failDispose = false;
+      await f.engine.close();
+      expect(f.session.hasPendingCleanup, isFalse);
+      expect(
+        calls.where(
+          (call) =>
+              call.method == 'trackDispose' &&
+              call.arguments['trackId'] == 'microphone',
+        ),
+        hasLength(1),
+      );
+      expect(
+        calls.where(
+          (call) =>
+              call.method == 'streamDispose' &&
+              call.arguments['streamId'] == 'microphone-stream',
+        ),
+        hasLength(1),
+      );
+      expect(f.peer.closes, 1);
+      expect(f.peer.disposals, 1);
+      expect(f.track.stops, 1);
+      expect(f.stream.disposals, 1);
     },
   );
 }
