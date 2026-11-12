@@ -2691,15 +2691,20 @@ class _P2PInboxCoordinator {
       if (totalBudgetMs <= 0) {
         return _inboxStoreReadinessFailure('startup_budget_exhausted');
       }
-      final readinessBudgetMs = totalBudgetMs < 3000 ? totalBudgetMs : 3000;
+      // Startup shares the caller's budget with the single STORE below. A
+      // separate three-second cutoff dropped background stores during startup.
       final started = await _waitForNodeStart(
-        Duration(milliseconds: readinessBudgetMs),
+        Duration(milliseconds: totalBudgetMs),
       );
+      if (started &&
+          !await _port.allowsAccountNetworkSideEffects('p2p_store_inbox')) {
+        return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+      }
       final remainingMs =
           totalBudgetMs - readinessStopwatch.elapsedMilliseconds;
-      if (!started || remainingMs <= 0) {
+      if (!started || !_port.readNodeState().isStarted || remainingMs <= 0) {
         return _inboxStoreReadinessFailure(
-          started ? 'startup_budget_exhausted' : 'startup_not_ready',
+          remainingMs <= 0 ? 'startup_budget_exhausted' : 'startup_not_ready',
         );
       }
       bridgeTimeoutMs = remainingMs;
