@@ -98,6 +98,85 @@ void main() {
   );
 
   test(
+    'U4 saturated ledger coalesces exact answer replay until native success',
+    () async {
+      final h = _Rig(media: CallMediaKind.audio);
+      addTearDown(h.close);
+      await h.connect();
+      for (var i = 0; i < 127; i++) {
+        expect(
+          h.admit(
+            h.remote('ice', negotiation: h.owner.negotiation!.negotiationId),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+      }
+      h.owner.mediaSwitch!.request(h.switchRequest);
+      await h.owner.workSettled;
+      expect(
+        h.admit(
+          h.switchWire('media_response', {
+            'switch_id': _otherNegotiation,
+            'base_revision': 0,
+            'decision': 'accept',
+            'camera': 'off',
+          }),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await h.owner.workSettled;
+      final answer = h.switchWire('answer', {
+        'switch_id': _otherNegotiation,
+        'negotiation_id': h.owner.negotiation!.negotiationId,
+        'purpose': 'media_switch',
+        'media_revision': 1,
+        'media': 'video',
+        'description': 'held-switch-answer',
+        'fingerprint': 'fingerprint',
+      });
+      final applied = Completer<void>();
+      h.engine.video.remoteApplyGate = applied;
+      expect(h.admit(answer), IncomingCallSignalOutcome.accepted);
+      await _turn();
+      try {
+        expect(
+          h.engine.video.remote.where((d) => d.value == 'held-switch-answer'),
+          hasLength(1),
+        );
+        h.admit(answer);
+        h.admit(answer);
+        await _turn();
+        expect(
+          h.sent.where((s) => s.event == CallSignalV2Type.mediaCommit),
+          isEmpty,
+        );
+        expect(h.engine.video.cameraStarts, 0);
+      } finally {
+        applied.complete();
+        await h.owner.workSettled;
+      }
+      final commit = h.sent.singleWhere(
+        (s) => s.event == CallSignalV2Type.mediaCommit,
+      );
+      h.admit(answer);
+      await h.owner.workSettled;
+      final commits = h.sent
+          .where((s) => s.event == CallSignalV2Type.mediaCommit)
+          .toList();
+      expect(commits, hasLength(2));
+      expect(identical(commits.last, commit), isTrue);
+      expect(commits.last.toMap(), commit.toMap());
+      expect(
+        h.engine.video.remote.where((d) => d.value == 'held-switch-answer'),
+        hasLength(1),
+      );
+      expect(h.engine.candidateListeners, 1);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
+  test(
     'U4 switch owner requires completed initial agreement and connected call',
     () async {
       final h = _Rig(media: CallMediaKind.audio);
@@ -817,6 +896,12 @@ ResolvedCallEndpoint _endpoint({String signing = 'signing'}) =>
       capabilities: const {'voice_call_v1', 'video_call_v2'},
     );
 
+Future<void> _turn() async {
+  for (var i = 0; i < 8; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
 final class _Rig {
   _Rig({
     this.incoming = false,
@@ -1204,6 +1289,7 @@ final class _Token implements CallVideoNegotiation {
 
 final class _Video implements CallVideoSession {
   Completer<void>? offerGate;
+  Completer<void>? remoteApplyGate;
   void Function()? onOffer;
   int offers = 0;
   int answers = 0;
@@ -1262,6 +1348,7 @@ final class _Video implements CallVideoSession {
     CallSessionDescription description,
   ) async {
     remote.add(description);
+    await remoteApplyGate?.future;
   }
 
   @override

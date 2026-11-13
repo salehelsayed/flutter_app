@@ -141,6 +141,89 @@ void main() {
     },
   );
 
+  for (final succeeds in [true, false]) {
+    test(
+      'pending duplicate answer cannot commit before native ${succeeds ? 'success' : 'failure'}',
+      () async {
+        final r = _Rig();
+        await r.select();
+        final deadline = r.owner.machine.stageDeadlineMs;
+        final applied = Completer<void>();
+        r.video.applyGate = applied;
+        expect(
+          r.owner.receiveDescription(
+            id: 'switch',
+            negotiationId: r.token.negotiationId,
+            revision: 1,
+            media: _video,
+            description: _answer,
+          ),
+          isTrue,
+        );
+        await _turn();
+        try {
+          expect(
+            r.video.events.where((e) => e == 'remote:answer'),
+            hasLength(1),
+          );
+          expect(
+            r.owner.receiveDescription(
+              id: 'switch',
+              negotiationId: r.token.negotiationId,
+              revision: 1,
+              media: _video,
+              description: _answer,
+            ),
+            isFalse,
+          );
+          await _turn();
+          expect(
+            r.host.controls.where(
+              (e) => e.kind == MediaSwitchEffectKind.sendCommit,
+            ),
+            isEmpty,
+          );
+          expect(r.owner.machine.stageDeadlineMs, deadline);
+          expect(
+            r.owner.receiveAck(id: 'switch', revision: 1, media: _video),
+            isFalse,
+          );
+          expect(r.video.captureCalls, 0);
+        } finally {
+          r.video.applyGate = null;
+          if (succeeds) {
+            applied.complete();
+          } else {
+            applied.completeError(StateError('native answer rejected'));
+          }
+          await r.owner.workSettled;
+        }
+        final commits = r.host.controls
+            .where((e) => e.kind == MediaSwitchEffectKind.sendCommit)
+            .toList();
+        expect(commits, hasLength(succeeds ? 1 : 0));
+        expect(r.video.events.where((e) => e == 'remote:answer'), hasLength(1));
+        expect(r.video.captureCalls, 0);
+        if (succeeds) {
+          r.owner.receiveDescription(
+            id: 'switch',
+            negotiationId: r.token.negotiationId,
+            revision: 1,
+            media: _video,
+            description: _answer,
+          );
+          await r.owner.workSettled;
+          final replay = r.host.controls.last;
+          expect(replay.kind, MediaSwitchEffectKind.replayRecorded);
+          expect(replay.replayOf, MediaSwitchEffectKind.sendCommit);
+          expect(replay.deadlineMs, commits.single.deadlineMs);
+        } else {
+          expect(r.owner.machine.phase, MediaSwitchPhase.aborted);
+        }
+      },
+    );
+  }
+
   test(
     'callee answers only selected offer and opens after commit custody',
     () async {
