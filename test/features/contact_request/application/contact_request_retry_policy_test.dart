@@ -63,6 +63,17 @@ class _FailingJournalStore extends FakeSecureKeyStore {
   }
 }
 
+class _JournalWriteHookStore extends FakeSecureKeyStore {
+  _JournalWriteHookStore(this.onJournalWrite);
+  final void Function(String value) onJournalWrite;
+
+  @override
+  Future<void> write(String key, String value) async {
+    await super.write(key, value);
+    if (key == _journalKey) onJournalWrite(value);
+  }
+}
+
 class _SigningHookBridge extends FakeBridge {
   _SigningHookBridge(this.onSign);
   final void Function() onSign;
@@ -583,10 +594,28 @@ void main() {
   test(
     'BL24E clock rollback cannot emit a request signed before its contact scan',
     () async {
-      now = DateTime.now().toUtc().add(const Duration(hours: 1));
-      contacts.seed([_contact(now)]);
+      final scannedAt = now;
+      contacts.seed([_contact(scannedAt)]);
+      var rolledBack = false;
+      store = _JournalWriteHookStore((raw) {
+        if (!rolledBack && entries(raw).isNotEmpty) {
+          // The reservation was admitted before the clock moved backwards.
+          now = scannedAt.subtract(const Duration(hours: 1));
+          rolledBack = true;
+        }
+      });
       expect(await retry(), 0);
       expect(transport.storeInInboxCallCount, 0);
+      expect(rolledBack, isTrue);
+      final signCommand = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .singleWhere((command) => command['cmd'] == 'payload.sign');
+      final signed =
+          jsonDecode((signCommand['payload'] as Map)['data'] as String) as Map;
+      expect(DateTime.parse(signed['ts'] as String), now);
+      final reservation = entries((await store.read(_journalKey))!).single as Map;
+      expect(reservation['envelope'], isNull);
+      expect(reservation['attempts'], 1);
     },
   );
 
