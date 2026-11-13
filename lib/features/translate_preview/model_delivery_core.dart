@@ -378,7 +378,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _network = network,
        _transport = transport,
        _appBuild = appBuild,
-       _supported = supported,
+       _supported = ValueNotifier(supported),
        _readAvailableMemory = readAvailableMemory ?? (() async => false),
        _readCapability = readCapability,
        _spaceReserveBytes = spaceReserveBytes,
@@ -409,7 +409,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   ModelSafetyRecord _safety = const ModelSafetyRecord();
   bool _inferenceActive = false;
   ModelDeliveryRecord _record = const ModelDeliveryRecord();
-  bool _supported;
+  final ValueNotifier<bool> _supported;
   bool _onWifi = false;
   bool _disposed = false;
   int _build = 0;
@@ -421,6 +421,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
 
   @override
   ValueListenable<ModelDeliveryState> get state => _state;
+
+  @override
+  ValueListenable<bool> get deviceSupported => _supported;
 
   @override
   ValueListenable<bool> get allowMobileData => _allowMobileData;
@@ -531,7 +534,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
 
   void setCapability(bool supported, {bool insufficientMemory = false}) {
     if (_disposed) return;
-    _supported = supported;
+    _supported.value = supported;
     if (!supported) {
       _generation++;
       _verifiedPath = null;
@@ -666,8 +669,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       await _saveSafety(const ModelSafetyRecord());
       final facts =
           await _readCapability?.call() ??
-          (supported: _supported, insufficientMemory: false);
-      _supported = facts.supported;
+          (supported: _supported.value, insufficientMemory: false);
+      _supported.value = facts.supported;
       if (facts.insufficientMemory) {
         await _saveSafety(
           const ModelSafetyRecord(
@@ -675,7 +678,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             noticePending: true,
           ),
         );
-      } else if (_supported) {
+      } else if (_supported.value) {
         try {
           temporary = !await _readAvailableMemory();
         } on Object {
@@ -1095,7 +1098,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       max(0, _totalBytes - _record.receivedBytes) + _spaceReserveBytes;
   int _clamp(int bytes) => bytes.clamp(0, _totalBytes);
   bool get _canRun =>
-      _supported &&
+      _supported.value &&
       _safety.blockedReason == null &&
       (_record.manifest?.minAppBuild ?? 0) <= _build;
 
@@ -1198,6 +1201,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     await _safetyTail;
     await _transport.dispose();
     _state.dispose();
+    _supported.dispose();
     _allowMobileData.dispose();
     _memoryNoticePending.dispose();
   }

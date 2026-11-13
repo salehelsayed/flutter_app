@@ -1499,12 +1499,13 @@ void main() {
       debugModelDeliveryOverride = null;
     });
 
-    testWidgets('without the flag a foreign thought has no Translate', (
+    testWidgets('disabled preview keeps a foreign thought untranslated', (
       tester,
     ) async {
       tester.platformDispatcher.localeTestValue = const Locale('de');
       addTearDown(tester.platformDispatcher.clearLocaleTestValue);
-      expect(kTranslatePreviewEnabled, isFalse);
+      debugTranslatePreviewEnabledOverride = false;
+      expect(translatePreviewEnabled, isFalse);
       final thought = _thought(initialNow);
       await posts.savePost(thought);
 

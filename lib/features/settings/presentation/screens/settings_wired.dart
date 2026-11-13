@@ -1207,9 +1207,10 @@ class _SettingsWiredState extends State<SettingsWired>
         : null;
     final manager = widget.mediaStorageManager;
     final scopesProvider = widget.mediaStorageScopesProvider;
-    final screen = SettingsScreen(
+    Widget buildScreen() => SettingsScreen(
       username: identity?.username ?? 'Username',
-      privateTranslatorSection: translator == null
+      privateTranslatorSection:
+          translator == null || !translator.deviceSupported.value
           ? null
           : PrivateTranslatorSettingsSection(
               controller: translator,
@@ -1308,6 +1309,12 @@ class _SettingsWiredState extends State<SettingsWired>
       activeTab: widget.appShellController.activeTab,
       showNavigationBar: widget.showNavigationBar,
     );
+    final screen = translator == null
+        ? buildScreen()
+        : ListenableBuilder(
+            listenable: translator.deviceSupported,
+            builder: (_, _) => buildScreen(),
+          );
     final body = widget.showNavigationBar
         ? GestureDetector(
             behavior: HitTestBehavior.translucent,
