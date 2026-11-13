@@ -25,6 +25,7 @@ class ConversationHeader extends StatelessWidget {
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
+  final String callStartingMessage;
   final String callUnavailableMessage;
 
   /// Invoked when the avatar / name block is tapped (opens the contact profile).
@@ -45,6 +46,7 @@ class ConversationHeader extends StatelessWidget {
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
+    this.callStartingMessage = '',
     this.callUnavailableMessage = '',
   });
 
@@ -160,6 +162,7 @@ class ConversationHeader extends StatelessWidget {
                       _ConversationCallAction(
                         enabled: callActionEnabled && onCall != null,
                         inFlight: callActionInFlight,
+                        startingMessage: callStartingMessage,
                         unavailableMessage: callUnavailableMessage,
                         onCall: onCall,
                         onRetry: onCallRetry,
@@ -224,6 +227,7 @@ class _ConversationCallAction extends StatelessWidget {
   const _ConversationCallAction({
     required this.enabled,
     required this.inFlight,
+    required this.startingMessage,
     required this.unavailableMessage,
     required this.onCall,
     this.onRetry,
@@ -231,6 +235,7 @@ class _ConversationCallAction extends StatelessWidget {
 
   final bool enabled;
   final bool inFlight;
+  final String startingMessage;
   final String unavailableMessage;
   final VoidCallback? onCall;
   final VoidCallback? onRetry;
@@ -247,7 +252,9 @@ class _ConversationCallAction extends StatelessWidget {
     final colors = context.backgroundReadableColors;
     final canRetry = !inFlight && onRetry != null;
     final tooltip = inFlight
-        ? AppLocalizations.of(context)!.action_starting_voice_call
+        ? startingMessage.isEmpty
+              ? AppLocalizations.of(context)!.action_starting_voice_call
+              : startingMessage
         : enabled
         ? AppLocalizations.of(context)!.action_start_voice_call
         : _truthfulUnavailableMessage(context);

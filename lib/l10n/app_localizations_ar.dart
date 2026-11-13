@@ -5442,4 +5442,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'عناصر التحكم بالفيديو';
+
+  @override
+  String get call_video_entry_incoming => 'مكالمة فيديو واردة';
+
+  @override
+  String get call_video_entry_starting => 'جارٍ بدء مكالمة الفيديو';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'مكالمات الفيديو غير متاحة حاليًا.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.';
 }

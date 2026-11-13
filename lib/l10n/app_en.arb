@@ -2775,5 +2775,9 @@
   "call_video_controls_label": "Video controls",
   "@call_video_controls_label": {
     "description": "U6 call video presentation label. User action wording does not grant camera permission or remote consent."
-  }
+  },
+  "call_video_entry_incoming": "Incoming video call",
+  "call_video_entry_starting": "Starting video call",
+  "call_video_entry_unavailable": "Video calling is unavailable right now.",
+  "call_video_entry_start_failed": "Couldn't start the video call. Please try again."
 }

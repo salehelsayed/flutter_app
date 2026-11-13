@@ -5371,4 +5371,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'Video controls';
+
+  @override
+  String get call_video_entry_incoming => 'Incoming video call';
+
+  @override
+  String get call_video_entry_starting => 'Starting video call';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'Video calling is unavailable right now.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'Couldn\'t start the video call. Please try again.';
 }

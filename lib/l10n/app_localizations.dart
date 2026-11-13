@@ -8977,6 +8977,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Video controls'**
   String get call_video_controls_label;
+
+  /// No description provided for @call_video_entry_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming video call'**
+  String get call_video_entry_incoming;
+
+  /// No description provided for @call_video_entry_starting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting video call'**
+  String get call_video_entry_starting;
+
+  /// No description provided for @call_video_entry_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Video calling is unavailable right now.'**
+  String get call_video_entry_unavailable;
+
+  /// No description provided for @call_video_entry_start_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start the video call. Please try again.'**
+  String get call_video_entry_start_failed;
 }
 
 class _AppLocalizationsDelegate

@@ -2345,5 +2345,9 @@
   "call_video_action_turn_camera_off": "إيقاف الكاميرا",
   "call_video_action_switch_camera": "تبديل الكاميرا",
   "call_video_action_use_audio_only": "استخدام الصوت فقط",
-  "call_video_controls_label": "عناصر التحكم بالفيديو"
+  "call_video_controls_label": "عناصر التحكم بالفيديو",
+  "call_video_entry_incoming": "مكالمة فيديو واردة",
+  "call_video_entry_starting": "جارٍ بدء مكالمة الفيديو",
+  "call_video_entry_unavailable": "مكالمات الفيديو غير متاحة حاليًا.",
+  "call_video_entry_start_failed": "تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا."
 }

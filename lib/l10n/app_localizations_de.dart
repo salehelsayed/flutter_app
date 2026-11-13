@@ -5494,4 +5494,18 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'Videosteuerung';
+
+  @override
+  String get call_video_entry_incoming => 'Eingehender Videoanruf';
+
+  @override
+  String get call_video_entry_starting => 'Videoanruf wird gestartet';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'Videoanrufe sind gerade nicht verfügbar.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.';
 }
