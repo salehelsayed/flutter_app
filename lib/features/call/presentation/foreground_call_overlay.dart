@@ -682,7 +682,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                     child: GestureDetector(
                       onPanUpdate: (details) {
                         if (!isCurrent()) return;
-                        final previous = _pictureInPictureOffset ?? position;
+                        // A resize can clamp the visible tile before the next
+                        // gesture; apply its delta from that visible position.
+                        final stored = _pictureInPictureOffset ?? position;
+                        final previous = Offset(
+                          stored.dx.clamp(0.0, maxX).toDouble(),
+                          stored.dy.clamp(0.0, maxY).toDouble(),
+                        );
                         setState(() {
                           _pictureInPictureOffset = Offset(
                             (previous.dx + details.delta.dx)
