@@ -11945,6 +11945,31 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/video-u3j-l-20261113/runtime-verified.json`.
   This is scoped host evidence, not graph composition, native/device or
   activation proof. Video remains off and the Android manifest remains held.
+
+  **U3j-QN read-only video quality inputs:** the platform source behind API
+  `007a5a6a0668739cb8ab59d72162565351ea6db5` stays inert while video is
+  disabled: `start` never listens, so neither platform registers a callback
+  or reads state. Snapshots are strict maps; missing, malformed or failing
+  fields stay unknown, and a channel error becomes an unknown snapshot rather
+  than a stream error. `close` fences late events synchronously and cannot
+  restart. Android reads the default network (a VPN stays unknown), Data
+  Saver (an allowlisted app still counts as active) and API 29+ thermal
+  status; iOS reads NWPath and ProcessInfo thermal state. No permission,
+  entitlement, manifest, wire or schema change. RED
+  `f11f8b96959be2966b54df86b800097d07dc6005` (compiling scaffold) recorded
+  two passing controls and five causal listen-count assertion failures, with
+  no loader error. GREEN `b577d2fa21819ce8b209a7d348e18caeb1142347` passed
+  all seven Dart cases with zero failures, errors or skips and child exit 0.
+  Two-path analysis and metadata validation exited 0; seven clean runtime
+  checkpoints pin HEAD/tree/library tree and the frozen 12-file vector. The
+  bounded preview against the API base selected 38 checks, none run here.
+  Flutter's native lanes at the same GREEN reported the five Kotlin mapping
+  cases passing inside a 656-test call run and the five XCTest mapping cases
+  passing with `TEST SUCCEEDED` (Flutter receipt `m-ca9cbd72`). Codex closed
+  source and scoped host review; the packet is
+  `build/qn-save/handoff.json` (sha256 `7fd80926...`). These are mapping and
+  contract proofs only: live network/thermal transitions on devices, Q/G
+  consumption and activation remain separate, and the video gate stays off.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
