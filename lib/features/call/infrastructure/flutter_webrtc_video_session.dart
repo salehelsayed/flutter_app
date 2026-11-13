@@ -916,8 +916,9 @@ final class FlutterWebRtcVideoSession
       codecs: previous.codecs,
       degradationPreference: previous.degradationPreference,
     );
-    // The pinned SDK caches this request before native acceptance. Only the
-    // native true result permits opening the video track gate.
+    // The pinned SDK caches this request before returning its acknowledgement.
+    // Require true before opening the video track gate. On iOS the SDK returns
+    // true unconditionally; native acceptance needs separate outbound-RTP proof.
     return await sender.setParameters(parameters) == true;
   }
 
