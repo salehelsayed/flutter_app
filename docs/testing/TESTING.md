@@ -11681,6 +11681,36 @@ visible and cannot become an ordinary first-attempt PASS.
   takeover remains a separate required unit before activation. Graph and
   lifecycle wiring, native/live delivery, aggregate validation and signed
   candidate proof remain separate; the video gate stays off.
+  **U3j-T pending-switch takeover:** recovery retains the same switch machine,
+  SDP tail, engine/candidate listeners and canonical reconnect deadline. An
+  unselected request retires without consuming a media revision; selected
+  unfinished work consumes its revision and repairs to audio before a new ICE
+  generation. Committed agreements and older terminal tombstones survive, and
+  an earlier repair deadline is never restarted. The production graph must
+  observe the canonical reconnect timer synchronously before recovery effects;
+  that graph wiring is a separate unit, and its gate-off path must preserve the
+  original observer reference, including null.
+  A local audio request closes camera immediately but still needs the peer's
+  acceptance before SDP selection. Three original fixtures omitted that response.
+  Original RED `24ceed3d9` retained 3 passes, 25 assertion failures and one error;
+  original GREEN `8482c8345` retained 119 passes, two assertion failures and one
+  null-token error. The test-only correction preserves revision, media,
+  tombstone and deadline assertions and establishes peer acceptance first.
+  With identical corrected tests, RED `718a3ce99` fails exactly three cases by
+  assertion, without loader/compile errors; GREEN `ef983cce6` passes all 122
+  cases in both full executor files (37 switch and 85 v2), with zero failures,
+  errors or skips, successful reporter completion and child exit 0. Eight clean
+  HEAD/parent/tree/library-tree boundaries and all 200 file pins were checked.
+  Locked offline/enforced-lockfile setup exited 0 at both refs with no tracked
+  delta. Earlier 293 preservation passes remain applicable because the complete
+  production library tree, seven preservation tests and dependency/configuration
+  pins are unchanged; they were not rerun. Source analysis and the single
+  corrected-base metadata preview passed; its six broader selections remain
+  unrun. All first failures and the final independent source/host verdict are
+  indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jt-fixture-correction-runtime-adoption.json`.
+  This closes the host takeover boundary, not production graph wiring, native
+  camera/device behavior, activation or combined/signed candidate proof.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
