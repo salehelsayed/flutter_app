@@ -12,6 +12,7 @@ import '../domain/call_audio_output_device.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_audio_route_adapter.dart';
@@ -101,6 +102,13 @@ abstract interface class NativeCallLifecycleAdapter
   Future<void> close();
 }
 
+/// Optional native video metadata and Android camera-lease port.
+/// A successful lease is not user consent and never starts camera capture.
+abstract interface class NativeCallVideoLifecycleAdapter {
+  Future<bool> setCallMedia(CallId callId, CallMediaKind media);
+  Future<bool> setLocalCameraActive(CallId callId, bool active);
+}
+
 /// The persisted native capability is authorized only when the same complete
 /// gate set can construct the canonical Dart call graph.
 bool isAndroidNativeCallCapabilityAuthorized(Map<String, bool> featureFlags) =>
@@ -182,6 +190,7 @@ final class AndroidCallLifecycleAdapter
     implements
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
+        NativeCallVideoLifecycleAdapter,
         AndroidCallAdmissionSettlementPort,
         IncomingCallPresenter,
         CallForegroundAudioSession,
@@ -194,6 +203,7 @@ final class AndroidCallLifecycleAdapter
     required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
     DateTime Function()? clock,
     this.maxEventsPerBatch = 32,
+    this.videoEnabled = false,
     NativeCallStateProjector? projectState,
     this.projectTerminalBeforeEnd = false,
     this.requireAdoptionForAudio = false,
@@ -234,6 +244,7 @@ final class AndroidCallLifecycleAdapter
   final AuthenticatedCallHandleResolver _resolveAuthenticatedHandle;
   final DateTime Function() _clock;
   final int maxEventsPerBatch;
+  final bool videoEnabled;
   final NativeCallStateProjector _projectState;
   final bool projectTerminalBeforeEnd;
   final bool requireAdoptionForAudio;
@@ -390,6 +401,12 @@ final class AndroidCallLifecycleAdapter
   @override
   bool isBoundTo(CallId callId) =>
       !_closed && !_invalid && _boundCallId == callId && _boundHandle != null;
+
+  @override
+  Future<bool> setCallMedia(CallId callId, CallMediaKind media) async => false;
+
+  @override
+  Future<bool> setLocalCameraActive(CallId callId, bool active) async => false;
 
   /// Debug observation only; never resolves or adopts a missing native owner.
   String? debugBoundNativeHandle(CallId callId) =>
