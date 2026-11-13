@@ -36,6 +36,8 @@ import '../../features/call/application/call_negotiation_effect_executor.dart';
 import '../../features/call/application/call_v2_negotiation_effect_executor.dart';
 import '../../features/call/domain/call_media.dart';
 import '../../features/call/domain/call_video_quality_environment.dart';
+import '../../features/call/domain/call_video_quality_policy.dart';
+import '../../features/call/infrastructure/platform_call_video_quality_environment_source.dart';
 import '../../features/call/domain/call_media_switch.dart';
 import '../../features/call/domain/call_signal_v2.dart';
 import '../../features/call/application/call_video_presentation.dart';
@@ -173,6 +175,7 @@ final class ProductionCallSignalingGraph
     this.closeVideoSignaling,
     this.videoContexts,
     this.videoOwners,
+    this.qualityEnvironmentSource,
     bool Function()? isForeground,
     Future<bool> Function()? requestCameraPermission,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
@@ -351,6 +354,7 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<bool> start() async {
+    _startQualityEnvironment();
     await _nativeCallLifecycleAdapter?.start();
     await iosVoipTokenCoordinator?.start();
     // Beta O6 (2026-10-08): publishing the FCM call token is a relay round
@@ -385,6 +389,13 @@ final class ProductionCallSignalingGraph
 
   final CallSignalingContextStore? videoContexts;
   final Map<CallId, CallV2NegotiationEffectExecutor>? videoOwners;
+  final CallVideoQualityEnvironmentSource? qualityEnvironmentSource;
+  bool _qualityObservationStarted = false;
+  StreamSubscription<CallVideoQualityEnvironment>? _qualitySubscription;
+  CallVideoQualityEnvironment _qualityEnvironment =
+      CallVideoQualityEnvironment.unknown;
+  CallVideoSession? _qualityAppliedSession;
+  CallVideoQualityEnvironment? _qualityAppliedEnvironment;
   final bool Function() _isVideoForeground;
   final Future<bool> Function() _requestCameraPermission;
   bool _videoForegroundAllowed = true;
@@ -505,6 +516,7 @@ final class ProductionCallSignalingGraph
             if (!cameraCurrent() || token == null || session == null) {
               return ForegroundCallActionResult.unavailable;
             }
+            _applyQualityEnvironment();
             // Switching an already-granted camera needs no new permission prompt.
             final permission = intent.action == CallVideoAction.switchCamera
                 ? identical(_localCameraToken, token)
@@ -563,6 +575,80 @@ final class ProductionCallSignalingGraph
     } catch (_) {
       return ForegroundCallActionResult.failed;
     }
+  }
+
+  void _startQualityEnvironment() {
+    final source = qualityEnvironmentSource;
+    if (!videoEnabled ||
+        _shuttingDown ||
+        _qualityObservationStarted ||
+        source == null) {
+      return;
+    }
+    _qualityObservationStarted = true;
+    try {
+      _qualitySubscription = source.changes.listen(
+        _acceptQualityEnvironment,
+        onError: (Object _) =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+        onDone: () =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+      );
+      _acceptQualityEnvironment(source.current);
+    } catch (_) {
+      _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown);
+    }
+    // Optional OS observation never holds up call admission or audio runtime.
+    // close owns the source independently of a pending start completion.
+    unawaited(
+      Future<void>.sync(source.start).then<void>(
+        (_) {},
+        onError: (Object _) =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+      ),
+    );
+  }
+
+  void _acceptQualityEnvironment(CallVideoQualityEnvironment environment) {
+    if (!videoEnabled || _shuttingDown) return;
+    _qualityEnvironment = environment;
+    _applyQualityEnvironment();
+  }
+
+  void _applyQualityEnvironment() {
+    if (!videoEnabled || _shuttingDown) return;
+    final active = coordinator.activeSession;
+    if (active == null || active.isTerminal) return;
+    final owner = videoOwners?[active.callId];
+    final session = owner?.videoSession;
+    if (owner?.current != true ||
+        session is! CallVideoQualityEnvironmentConsumer) {
+      return;
+    }
+    if (identical(_qualityAppliedSession, session) &&
+        identical(_qualityAppliedEnvironment, _qualityEnvironment)) {
+      return;
+    }
+    // Publish the cache before the consumer can synchronously invalidate a
+    // presentation view and reenter the graph's existing refresh callback.
+    _qualityAppliedSession = session;
+    _qualityAppliedEnvironment = _qualityEnvironment;
+    (session as CallVideoQualityEnvironmentConsumer).updateQualityEnvironment(
+      _qualityEnvironment,
+    );
+  }
+
+  Future<void> _closeQualityEnvironment() async {
+    final subscription = _qualitySubscription;
+    _qualitySubscription = null;
+    _qualityAppliedSession = null;
+    _qualityAppliedEnvironment = null;
+    _qualityEnvironment = CallVideoQualityEnvironment.unknown;
+    final source = qualityEnvironmentSource;
+    await Future.wait<void>([
+      if (subscription != null) Future<void>.sync(subscription.cancel),
+      if (source != null) Future<void>.sync(source.close),
+    ]);
   }
 
   bool get _videoForeground =>
@@ -699,6 +785,8 @@ final class ProductionCallSignalingGraph
     final previous = _videoSubscription;
     _videoSubscription = null;
     _observedVideoSession = session;
+    _qualityAppliedSession = null;
+    _qualityAppliedEnvironment = null;
     _rendererToken = null;
     _rendererRequests.clear();
     if (previous != null) unawaited(previous.cancel());
@@ -729,6 +817,7 @@ final class ProductionCallSignalingGraph
     }
     final session = owner?.videoSession;
     _bindVideoSource(session);
+    _applyQualityEnvironment();
     final token = owner?.negotiation;
     if (!identical(_rendererToken, token)) {
       _rendererToken = token;
@@ -1948,6 +2037,7 @@ final class ProductionCallSignalingGraph
       }
     }
 
+    final qualityClose = attempt(_closeQualityEnvironment);
     await attempt(runtime.shutdown);
     signalingService.close();
     final networkPathBinding = _networkPathBinding;
@@ -2033,6 +2123,8 @@ final class ProductionCallSignalingGraph
         // Revocation is best effort; the signed endpoint also has a short TTL.
       }
     }
+    // Observe optional teardown only after native/audio/call authority release.
+    await qualityClose;
     if (firstError != null) {
       Error.throwWithStackTrace(firstError!, firstStack!);
     }
@@ -3053,7 +3145,18 @@ CallSignalingComposition createProductionCallSignalingComposition({
         coordinator: coordinator,
         networkEffectsAllowed: networkEffectsAllowed,
       );
+      CallVideoQualityEnvironmentSource? qualitySource;
+      if (videoEnabled) {
+        try {
+          qualitySource = qualityEnvironmentSourceFactory != null
+              ? qualityEnvironmentSourceFactory()
+              : PlatformCallVideoQualityEnvironmentSource(videoEnabled: true);
+        } catch (_) {
+          // Optional environment construction cannot disable ordinary calls.
+        }
+      }
       final graph = ProductionCallSignalingGraph(
+        qualityEnvironmentSource: qualitySource,
         videoEnabled: videoEnabled,
         onOutgoingVideoAdmitted: videoEnabled
             ? (callId) => outgoingVideoCallId = callId
