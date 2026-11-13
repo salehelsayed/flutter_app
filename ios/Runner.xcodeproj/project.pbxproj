@@ -69,12 +69,15 @@
 		E7D1A00173A0000000000001 /* IosNotificationOpenRouteShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D1A00173A0000000000002 /* IosNotificationOpenRouteShape.swift */; };
 		E7D1B00173A0000000000001 /* IosNotificationOpenRouteShapeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D1B00173A0000000000002 /* IosNotificationOpenRouteShapeTests.swift */; };
 		F25011010000000000000001 /* VoipPayloadParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010010000000000000001 /* VoipPayloadParser.swift */; };
+		F2C1A1010000000000000001 /* CallPipLeaseCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2C1A0010000000000000001 /* CallPipLeaseCore.swift */; };
+		F2C1C1010000000000000001 /* CallPictureInPictureController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2C1C0010000000000000001 /* CallPictureInPictureController.swift */; };
 		F25011020000000000000002 /* PendingNativeCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010020000000000000002 /* PendingNativeCallStore.swift */; };
 		F25011030000000000000003 /* OpaqueCallContactResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010030000000000000003 /* OpaqueCallContactResolver.swift */; };
 		F25011040000000000000004 /* MknoonCallKitController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010040000000000000004 /* MknoonCallKitController.swift */; };
 		F25011050000000000000005 /* MknoonCallNativeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010050000000000000005 /* MknoonCallNativeBridge.swift */; };
 		F25011060000000000000006 /* MknoonVoipPushRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010060000000000000006 /* MknoonVoipPushRegistry.swift */; };
 		F25021010000000000000001 /* VoipPayloadParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020010000000000000001 /* VoipPayloadParserTests.swift */; };
+		F2C1B1010000000000000001 /* CallPipLeaseCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2C1B0010000000000000001 /* CallPipLeaseCoreTests.swift */; };
 		F25021020000000000000002 /* PendingNativeCallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020020000000000000002 /* PendingNativeCallStoreTests.swift */; };
 		F25021030000000000000003 /* OpaqueCallContactResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020030000000000000003 /* OpaqueCallContactResolverTests.swift */; };
 		F25021040000000000000004 /* MknoonCallKitLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */; };
@@ -232,12 +235,15 @@
 		E7D1A00173A0000000000002 /* IosNotificationOpenRouteShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationOpenRouteShape.swift; sourceTree = "<group>"; };
 		E7D1B00173A0000000000002 /* IosNotificationOpenRouteShapeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationOpenRouteShapeTests.swift; sourceTree = "<group>"; };
 		F25010010000000000000001 /* VoipPayloadParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoipPayloadParser.swift; sourceTree = "<group>"; };
+		F2C1A0010000000000000001 /* CallPipLeaseCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallPipLeaseCore.swift; sourceTree = "<group>"; };
+		F2C1C0010000000000000001 /* CallPictureInPictureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallPictureInPictureController.swift; sourceTree = "<group>"; };
 		F25010020000000000000002 /* PendingNativeCallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingNativeCallStore.swift; sourceTree = "<group>"; };
 		F25010030000000000000003 /* OpaqueCallContactResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpaqueCallContactResolver.swift; sourceTree = "<group>"; };
 		F25010040000000000000004 /* MknoonCallKitController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallKitController.swift; sourceTree = "<group>"; };
 		F25010050000000000000005 /* MknoonCallNativeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallNativeBridge.swift; sourceTree = "<group>"; };
 		F25010060000000000000006 /* MknoonVoipPushRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonVoipPushRegistry.swift; sourceTree = "<group>"; };
 		F25020010000000000000001 /* VoipPayloadParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoipPayloadParserTests.swift; sourceTree = "<group>"; };
+		F2C1B0010000000000000001 /* CallPipLeaseCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallPipLeaseCoreTests.swift; sourceTree = "<group>"; };
 		F25020020000000000000002 /* PendingNativeCallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingNativeCallStoreTests.swift; sourceTree = "<group>"; };
 		F25020030000000000000003 /* OpaqueCallContactResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpaqueCallContactResolverTests.swift; sourceTree = "<group>"; };
 		F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallKitLifecycleTests.swift; sourceTree = "<group>"; };
@@ -345,6 +351,7 @@
 			isa = PBXGroup;
 			children = (
 				F25020010000000000000001 /* VoipPayloadParserTests.swift */,
+				F2C1B0010000000000000001 /* CallPipLeaseCoreTests.swift */,
 				F25020020000000000000002 /* PendingNativeCallStoreTests.swift */,
 				F25020030000000000000003 /* OpaqueCallContactResolverTests.swift */,
 				F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */,
@@ -453,6 +460,8 @@
 			isa = PBXGroup;
 			children = (
 				F25010010000000000000001 /* VoipPayloadParser.swift */,
+				F2C1A0010000000000000001 /* CallPipLeaseCore.swift */,
+				F2C1C0010000000000000001 /* CallPictureInPictureController.swift */,
 				F25010020000000000000002 /* PendingNativeCallStore.swift */,
 				F25010030000000000000003 /* OpaqueCallContactResolver.swift */,
 				F25010040000000000000004 /* MknoonCallKitController.swift */,
@@ -865,6 +874,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F25021010000000000000001 /* VoipPayloadParserTests.swift in Sources */,
+				F2C1B1010000000000000001 /* CallPipLeaseCoreTests.swift in Sources */,
 				F25021020000000000000002 /* PendingNativeCallStoreTests.swift in Sources */,
 				F25021030000000000000003 /* OpaqueCallContactResolverTests.swift in Sources */,
 				F25021040000000000000004 /* MknoonCallKitLifecycleTests.swift in Sources */,
@@ -928,6 +938,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				F25011010000000000000001 /* VoipPayloadParser.swift in Sources */,
+				F2C1A1010000000000000001 /* CallPipLeaseCore.swift in Sources */,
+				F2C1C1010000000000000001 /* CallPictureInPictureController.swift in Sources */,
 				F25011020000000000000002 /* PendingNativeCallStore.swift in Sources */,
 				F25011030000000000000003 /* OpaqueCallContactResolver.swift in Sources */,
 				F25011040000000000000004 /* MknoonCallKitController.swift in Sources */,

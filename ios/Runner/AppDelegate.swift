@@ -902,6 +902,7 @@ final class IosSetupReadinessEntryCoordinator {
   private var stickerCutoutPlugin: StickerCutoutPlugin?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
   private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment?
+  private var callPictureInPictureController: CallPictureInPictureController?
   private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
   private var iosSetupReadinessEntryChannel: FlutterMethodChannel?
   private lazy var iosSetupReadinessEntryCoordinator: IosSetupReadinessEntryCoordinator = {
@@ -1960,7 +1961,16 @@ final class IosSetupReadinessEntryCoordinator {
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
     setupCallVideoQualityBridge(messenger: controller.binaryMessenger)
+    setupCallPictureInPictureBridge(controller: controller)
     setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
+  }
+
+  /// BL-16 live-call PiP bridge (contract v1). Inert until Dart arms a lease.
+  private func setupCallPictureInPictureBridge(controller: FlutterViewController) {
+    guard callPictureInPictureController == nil else { return }
+    callPictureInPictureController = CallPictureInPictureController(
+      messenger: controller.binaryMessenger
+    ) { [weak controller] in controller?.view }
   }
 
   private func setupIosCallLifecycleBridges(

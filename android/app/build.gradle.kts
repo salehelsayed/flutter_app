@@ -420,6 +420,9 @@ dependencies {
     // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
     // interface + does its own SRV/TXT/A resolution. See MdnsResolver.kt.
     implementation("org.jmdns:jmdns:3.5.9")
+    // Same webrtc-sdk as flutter_webrtc 1.6.0 ships at runtime; compile-only for the
+    // live-call PiP remote sink (BL-16 unit 3). Adds nothing to the APK.
+    compileOnly("io.github.webrtc-sdk:android:144.7559.09")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.work:work-testing:2.11.2")

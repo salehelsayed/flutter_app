@@ -42,6 +42,7 @@ class MainActivity : FlutterActivity() {
     private var privateMediaProtectionHandler: PrivateMediaProtectionHandler? = null
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
+    private var callPictureInPictureHandler: com.mknoon.app.call.CallPictureInPictureHandler? = null
     private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
     private var callNativeBridge: MknoonCallNativeBridge? = null
@@ -130,6 +131,11 @@ class MainActivity : FlutterActivity() {
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
         pictureInPictureHandler = PictureInPictureHandler(
+            activity = this,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
+        callPictureInPictureHandler?.dispose()
+        callPictureInPictureHandler = com.mknoon.app.call.CallPictureInPictureHandler(
             activity = this,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
@@ -362,18 +368,39 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         incomingCallPresentation?.onResume()
         receivedMediaEgressHandler?.onResume()
+        callPictureInPictureHandler?.onResume()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        callPictureInPictureHandler?.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        callPictureInPictureHandler?.onPictureInPictureModeChanged(isInPictureInPictureMode)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        callPictureInPictureHandler?.onWindowFocusChanged(hasFocus)
     }
 
     override fun onPause() {
         // A delayed Dart route write must observe this newer generation and lose.
         visibilityLifecycleCoordinator().onPause()
         super.onPause()
+        callPictureInPictureHandler?.onPause()
     }
 
     override fun onStop() {
         visibilityLifecycleCoordinator().onStop()
         super.onStop()
         incomingCallPresentation?.onStop()
+        callPictureInPictureHandler?.onStop()
     }
 
     @Suppress("DEPRECATION")
@@ -632,6 +659,8 @@ class MainActivity : FlutterActivity() {
         incomingCallPresentation = null
         pictureInPictureHandler?.dispose("host_destroyed")
         pictureInPictureHandler = null
+        callPictureInPictureHandler?.dispose()
+        callPictureInPictureHandler = null
         callVideoQualityEnvironment?.dispose()
         callVideoQualityEnvironment = null
         val engine = privateMediaProtectionEngine
