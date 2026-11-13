@@ -4,6 +4,10 @@ import 'dart:io';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// Release define keys that would turn video calling on. RED stub.
+List<String> releaseDefinesEnablingVideo(Map<Object?, Object?> defines) =>
+    const <String>[];
+
 void main() {
   test('release offers privacy mode without forcing it for normal calls', () {
     final defines =
@@ -45,4 +49,36 @@ void main() {
       }
     },
   );
+
+  // VC-GATE-GUARD: video stays off in every release build until the owner
+  // decides to enable it. Adding VIDEO_CALL_V2_ENABLED here is that decision.
+  test('VC-GATE-GUARD a defines file that sets the video gate is caught', () {
+    final fixture = <String, String>{
+      'VOICE_CALL_CAPABILITY_V1': 'true',
+      'VIDEO_CALL_V2_ENABLED': 'true',
+    };
+    expect(releaseDefinesEnablingVideo(fixture), ['VIDEO_CALL_V2_ENABLED']);
+  });
+
+  test('VC-GATE-GUARD release defines never enable video', () {
+    final defines =
+        jsonDecode(
+              File(
+                'tool/build/voice_call_release_defines.json',
+              ).readAsStringSync(),
+            )
+            as Map;
+    expect(
+      releaseDefinesEnablingVideo(defines),
+      isEmpty,
+      reason:
+          'Video calling stays off for testers and the store until the '
+          'owner decides to enable it.',
+    );
+    expect(defaultVoiceCallFeatureFlags()['video_call_v2_enabled'], isFalse);
+    expect(
+      productionVoiceCallFeatureFlags()['video_call_v2_enabled'],
+      const bool.fromEnvironment('VIDEO_CALL_V2_ENABLED'),
+    );
+  });
 }
