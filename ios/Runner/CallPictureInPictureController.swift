@@ -33,8 +33,6 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   private var pip: AVPictureInPictureController?
   private var content: AVPictureInPictureVideoCallViewController?
   private var restoring = false
-  // Triple captured when the current OS entry began (PIP-NATIVE-2).
-  private var entry: CallPipIdentity?
   private var observers: [NSObjectProtocol] = []
 
   /// Test observation only: true once an armed lease created the AVKit controller.
@@ -61,10 +59,10 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
     observers.append(
       center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) {
         [weak self] _ in
-        // Keep `entry`: on restore this can arrive before didStop, and the core
+        // Keep the capture: on restore this can arrive before didStop, and the core
         // ignores it for an entered lease.
-        guard let self, self.pip?.isPictureInPictureActive != true, let started = self.entry else { return }
-        self.core.onReturnedWithoutEntry(started)
+        guard let self, self.pip?.isPictureInPictureActive != true else { return }
+        self.core.osReturnedWithoutEntry(settled: false)
       })
   }
 
@@ -168,21 +166,19 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
 
   // AVPictureInPictureControllerDelegate.
   func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
-    entry = core.beginEntry()
+    _ = core.beginEntry()
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-    let started = entry ?? core.beginEntry()
-    entry = started
-    if let started { core.onEntered(started) }
+    // Never attribute a completion to whatever lease is current now.
+    if !core.osEntered() { controller.stopPictureInPicture() }
   }
 
   func pictureInPictureController(
     _ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error
   ) {
     // Async start rejection: report it and retire that lease (PIP-NATIVE-6).
-    if let started = entry { core.onEntryFailed(started) }
-    entry = nil
+    core.osEntryFailed()
   }
 
   func pictureInPictureController(
@@ -196,7 +192,6 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
     let restored = restoring
     restoring = false
-    if let started = entry { core.onExited(started, restored: restored) }
-    entry = nil
+    core.osExited(restored: restored)
   }
 }

@@ -98,6 +98,9 @@ final class CallPipLeaseCore {
   private var retiredInstances = Set<String>()
   private var pendingSinks: [String: AnyObject] = [:]
   private var pendingAutoOff: CallPipIdentity?
+  // The lease an in-flight OS entry belongs to, captured when it began; never
+  // resolved from the current lease at completion time.
+  private var pendingEntry: CallPipIdentity?
 
   init(platform: CallPipPlatform, emit: @escaping ([String: Any]) -> Void) {
     self.platform = platform
@@ -136,7 +139,12 @@ final class CallPipLeaseCore {
 
   func enter(_ id: CallPipIdentity) -> Bool {
     guard let target = current(id) else { return false }
-    return target.entered || platform.requestEnter()
+    if target.entered { return true }
+    let previous = pendingEntry
+    pendingEntry = id
+    if platform.requestEnter() { return true }
+    pendingEntry = previous
+    return false
   }
 
   /// Retires a current triple, then retries any cleanup it still owns. True once
@@ -150,8 +158,38 @@ final class CallPipLeaseCore {
   /// adapter must pass to every later entry/exit callback.
   func beginEntry() -> CallPipIdentity? {
     guard let target = lease else { return nil }
-    if target.sink == nil { target.sink = platform.attachSink(target.source) }
-    return target.id
+    // An explicit request already in flight keeps its own identity.
+    let owner = pendingEntry ?? target.id
+    pendingEntry = owner
+    if owner == target.id && target.sink == nil { target.sink = platform.attachSink(target.source) }
+    return owner
+  }
+
+  // OS-level callbacks: attributed only to the captured in-flight entry.
+
+  /// False when the completion has no captured entry or a stale one; the
+  /// adapter must then leave PiP.
+  func osEntered() -> Bool {
+    guard let owner = pendingEntry else { return false }
+    onEntered(owner)
+    guard let target = lease else { return false }
+    return target.id == owner && target.entered
+  }
+
+  func osExited(restored: Bool) {
+    if let owner = pendingEntry { onExited(owner, restored: restored) }
+    pendingEntry = nil
+  }
+
+  func osEntryFailed() {
+    if let owner = pendingEntry { onEntryFailed(owner) }
+    pendingEntry = nil
+  }
+
+  /// `settled` false keeps the capture (iOS can report active before stop).
+  func osReturnedWithoutEntry(settled: Bool) {
+    if let owner = pendingEntry { onReturnedWithoutEntry(owner) }
+    if settled { pendingEntry = nil }
   }
 
   func onEntered(_ id: CallPipIdentity) {
@@ -234,6 +272,8 @@ final class CallPipLeaseCore {
   private func drop(_ target: Lease) {
     lease = nil
     target.entered = false
+    // A late OS completion for this lease now finds no capture and is rejected.
+    if pendingEntry == target.id { pendingEntry = nil }
     if (try? platform.setAutoEnter(nil, nil)) == nil { pendingAutoOff = target.id }
     guard let sink = target.sink else { return }
     target.sink = nil

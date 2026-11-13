@@ -41,8 +41,6 @@ internal class CallPictureInPictureHandler(
     private val liveSinks = mutableSetOf<CallPipRemoteSink>()
     private var controls: CallPipControls? = null
     private var exit: PictureInPictureExitClassifier? = null
-    // Triple captured when the current OS entry began (PIP-NATIVE-2).
-    private var entry: CallPipIdentity? = null
     private var armedLease: CallPipIdentity? = null
     private var receiverRegistered = false
 
@@ -72,7 +70,6 @@ internal class CallPictureInPictureHandler(
     fun dispose() {
         // Retire the lease and turn auto entry off before the channels go.
         core.shutdown()
-        entry = null
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
         eventSink = null
@@ -119,21 +116,18 @@ internal class CallPictureInPictureHandler(
 
     // MainActivity lifecycle forwarding.
     fun onUserLeaveHint() {
-        val started = core.beginEntry() ?: return
-        entry = started
+        core.beginEntry() ?: return
         val wanted = controls ?: return
         if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S && !enter(wanted)) {
-            core.onEntryFailed(started)
-            entry = null
+            core.osEntryFailed()
         }
     }
 
     fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) {
         if (inPictureInPicture) {
             exit = PictureInPictureExitClassifier().also { it.onPictureInPictureModeChanged(true) }
-            val started = entry ?: core.beginEntry()
-            entry = started
-            started?.let(core::onEntered)
+            // Never attribute a completion to whatever lease is current now.
+            if (!core.osEntered()) leavePip()
             return
         }
         val classifier = exit ?: return
@@ -146,8 +140,7 @@ internal class CallPictureInPictureHandler(
         if (classifier != null) {
             settle(classifier.onResume())
         } else {
-            entry?.let(core::onReturnedWithoutEntry)
-            entry = null
+            core.osReturnedWithoutEntry(settled = true)
         }
         if (controls != null && !pipAllowed()) core.onBlocked("userDisabled")
     }
@@ -165,14 +158,12 @@ internal class CallPictureInPictureHandler(
     }
 
     private fun settle(reason: String?) {
-        val started = entry
         when (reason) {
-            "system_return" -> started?.let { core.onExited(it, restored = true) }
-            "system_close" -> started?.let { core.onExited(it, restored = false) }
+            "system_return" -> core.osExited(restored = true)
+            "system_close" -> core.osExited(restored = false)
             else -> return
         }
         exit = null
-        entry = null
     }
 
     // CallPipPlatform.

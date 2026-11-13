@@ -20,12 +20,19 @@ class CallPictureInPictureHandlerTest {
     class RecordingActivity : Activity() {
         var paramsSet = 0
         var enterRequests = 0
+        var inPip = false
+        var movedBack = 0
         override fun setPictureInPictureParams(params: PictureInPictureParams) {
             paramsSet++
         }
         override fun enterPictureInPictureMode(params: PictureInPictureParams): Boolean {
             enterRequests++
             return false
+        }
+        override fun isInPictureInPictureMode(): Boolean = inPip
+        override fun moveTaskToBack(nonRoot: Boolean): Boolean {
+            movedBack++
+            return true
         }
     }
 
@@ -65,6 +72,17 @@ class CallPictureInPictureHandlerTest {
         assertEquals(0, activity.enterRequests)
         handler.dispose()
         assertEquals(null, messenger.handlers[CallPictureInPictureHandler.METHOD_CHANNEL])
+    }
+
+    @Test
+    fun `an OS PiP completion with no captured lease entry leaves PiP at once`() {
+        val activity = Robolectric.buildActivity(RecordingActivity::class.java).setup().get()
+        val handler = CallPictureInPictureHandler(activity, Messenger())
+        activity.inPip = true
+        handler.onPictureInPictureModeChanged(true) // late or foreign completion
+        assertEquals(1, activity.movedBack) // no unbound window stays visible
+        assertEquals(0, activity.paramsSet)
+        handler.dispose()
     }
 
     @Test

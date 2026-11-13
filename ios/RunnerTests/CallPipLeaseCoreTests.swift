@@ -253,6 +253,45 @@ final class CallPipLeaseCoreTests: XCTestCase {
     XCTAssertEqual(platform.log.filter { $0 == "enter" }.count, requests)
   }
 
+  func testLateCompletionOfExplicitEnterIsNeverCreditedToSuccessor() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    XCTAssertTrue(core.enter(id(1)))
+    _ = core.arm(id(2), source: source, controls: controls)
+    XCTAssertFalse(core.osEntered())
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertEqual(platform.live, [])
+    XCTAssertEqual(platform.autoLease, id(2))
+    core.osExited(restored: false)
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertEqual(core.beginEntry(), id(2))
+    XCTAssertTrue(core.osEntered())
+    XCTAssertEqual(types(), ["2:1:entered"])
+  }
+
+  func testCompletionWithNoCapturedEntryIsRejected() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    XCTAssertFalse(core.osEntered())
+    core.osEntryFailed()
+    core.osExited(restored: true)
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertEqual(platform.live, [])
+  }
+
+  func testOsCallbacksFollowTheCapturedEntry() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    XCTAssertTrue(core.enter(id(1)))
+    XCTAssertEqual(core.beginEntry(), id(1))
+    XCTAssertTrue(core.osEntered())
+    core.osReturnedWithoutEntry(settled: false) // iOS active-before-stop: inert
+    core.osExited(restored: true)
+    XCTAssertEqual(types(), ["1:1:entered", "1:2:exited"])
+    _ = core.arm(id(2), source: source, controls: controls)
+    _ = core.beginEntry()
+    core.osEntryFailed()
+    XCTAssertEqual(events.last?["code"] as? String, "enterRejected")
+    XCTAssertFalse(core.osEntered())
+  }
+
   /// Guard for Kayan m-69a3dbc5 condition 2: without an arm no PiP controller exists.
   func testControllerCreatesNoPipBeforeArmAndFailsClosed() {
     let controller = CallPictureInPictureController(messenger: MockFlutterBinaryMessenger()) { UIView() }

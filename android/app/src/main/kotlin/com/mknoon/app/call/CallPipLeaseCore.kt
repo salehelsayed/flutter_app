@@ -95,6 +95,10 @@ class CallPipLeaseCore(
     private val retiredInstances = mutableSetOf<String>()
     private val pendingSinks = mutableMapOf<CallPipIdentity, Any>()
     private var pendingAutoOff: CallPipIdentity? = null
+    // The lease an in-flight OS entry belongs to, captured when it began
+    // (explicit enter or user leave); never resolved from the current lease
+    // at completion time.
+    private var pendingEntry: CallPipIdentity? = null
 
     fun availability(): Map<String, Any> {
         val supported = platform.supported()
@@ -126,7 +130,12 @@ class CallPipLeaseCore(
 
     fun enter(id: CallPipIdentity): Boolean {
         val target = current(id) ?: return false
-        return target.entered || platform.requestEnter()
+        if (target.entered) return true
+        val previous = pendingEntry
+        pendingEntry = id
+        if (platform.requestEnter()) return true
+        pendingEntry = previous
+        return false
     }
 
     /** Retires a current triple, then retries any cleanup it still owns. True
@@ -140,8 +149,37 @@ class CallPipLeaseCore(
      * the adapter must pass to every later entry/exit callback. */
     fun beginEntry(): CallPipIdentity? {
         val target = lease ?: return null
-        if (target.sink == null) target.sink = platform.attachSink(target.source)
-        return target.id
+        // An explicit request already in flight keeps its own identity.
+        val owner = pendingEntry ?: target.id
+        pendingEntry = owner
+        if (owner == target.id && target.sink == null) target.sink = platform.attachSink(target.source)
+        return owner
+    }
+
+    // OS-level callbacks: attributed only to the captured in-flight entry.
+
+    /** False when the completion has no captured entry or a stale one; the
+     * adapter must then leave PiP so no unbound window stays visible. */
+    fun osEntered(): Boolean {
+        val owner = pendingEntry ?: return false
+        onEntered(owner)
+        return lease?.let { it.id == owner && it.entered } == true
+    }
+
+    fun osExited(restored: Boolean) {
+        pendingEntry?.let { onExited(it, restored) }
+        pendingEntry = null
+    }
+
+    fun osEntryFailed() {
+        pendingEntry?.let(::onEntryFailed)
+        pendingEntry = null
+    }
+
+    /** [settled] false keeps the capture (iOS can report active before stop). */
+    fun osReturnedWithoutEntry(settled: Boolean) {
+        pendingEntry?.let(::onReturnedWithoutEntry)
+        if (settled) pendingEntry = null
     }
 
     fun onEntered(id: CallPipIdentity) {
@@ -226,6 +264,8 @@ class CallPipLeaseCore(
     private fun drop(target: Lease) {
         lease = null
         target.entered = false
+        // A late OS completion for this lease now finds no capture and is rejected.
+        if (pendingEntry == target.id) pendingEntry = null
         try {
             platform.setAutoEnter(null, null)
         } catch (_: Exception) {

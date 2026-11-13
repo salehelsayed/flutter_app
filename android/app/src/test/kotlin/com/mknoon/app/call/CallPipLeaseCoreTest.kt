@@ -339,4 +339,55 @@ class CallPipLeaseCoreTest {
         core.onEntered(id(2))
         assertEquals(listOf("1:1:entered", "1:2:exited", "2:1:entered"), types())
     }
+
+    @Test
+    fun `a late OS completion for an explicit enter is never credited to a successor`() {
+        core.arm(id(1), source, controls)
+        assertTrue(core.enter(id(1))) // explicit request captures lease 1
+        core.arm(id(2), source, controls) // replaces 1 before the OS answers
+        assertFalse(core.osEntered()) // delayed completion: rejected, adapter leaves PiP
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        assertEquals(emptyList<Any>(), platform.live) // successor sink never attached
+        assertEquals(controls, platform.autoEnter)
+        core.osExited(restored = false)
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        // The successor still enters through its own captured user leave.
+        assertEquals(id(2), core.beginEntry())
+        assertTrue(core.osEntered())
+        assertEquals(listOf("2:1:entered"), types())
+    }
+
+    @Test
+    fun `an OS completion with no captured entry is rejected`() {
+        core.arm(id(1), source, controls)
+        assertFalse(core.osEntered())
+        core.osEntryFailed()
+        core.osExited(restored = true)
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        assertEquals(emptyList<Any>(), platform.live)
+    }
+
+    @Test
+    fun `OS callbacks follow the captured entry through exit and failure`() {
+        core.arm(id(1), source, controls)
+        assertTrue(core.enter(id(1)))
+        assertEquals(id(1), core.beginEntry()) // user leave during the request keeps it
+        assertTrue(core.osEntered())
+        core.osExited(restored = true)
+        assertEquals(listOf("1:1:entered", "1:2:exited"), types())
+        core.arm(id(2), source, controls)
+        core.beginEntry()
+        core.osEntryFailed()
+        assertEquals("enterRejected", events.last()["code"])
+        assertFalse(core.osEntered())
+    }
+
+    @Test
+    fun `a too-late explicit enter leaves no capture behind`() {
+        core.arm(id(1), source, controls)
+        platform.enterAllowed = false
+        assertFalse(core.enter(id(1)))
+        assertFalse(core.osEntered())
+        assertEquals(emptyList<Map<String, Any>>(), events)
+    }
 }
