@@ -1643,6 +1643,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   bool Function()? isForeground,
   int Function()? nowMs,
   CallEngine Function(CallId)? callEngineFactory,
+  Future<bool> Function()? requestCameraPermission,
   Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) {
   final clock = nowMs ?? () => DateTime.now().toUtc().millisecondsSinceEpoch;

@@ -51,6 +51,9 @@ import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/application/call_video_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
@@ -3404,6 +3407,853 @@ void main() {
   });
 
   setUpAll(sqfliteFfiInit);
+
+  for (final enabled in [false, true]) {
+    test(
+      'U3j-G signed endpoint advertises video only when enabled=$enabled',
+      () async {
+        final fixture = await _createProductionIosFixture(
+          privacyFlags: {'video_call_v2_enabled': enabled},
+        );
+        await fixture.composition.start();
+        final record =
+            fixture.bridge.requests.singleWhere(
+                  (r) => r['cmd'] == 'call_endpoint_set_v1',
+                )['payload']
+                as Map;
+        expect(
+          record['capabilities'],
+          enabled ? ['video_call_v2', 'voice_call_v1'] : ['voice_call_v1'],
+        );
+        expect(record['signature'], isNotEmpty);
+        expect(
+          fixture.capabilityArguments.single['video'],
+          enabled ? true : null,
+        );
+      },
+    );
+  }
+
+  test(
+    'U3j-G background during microphone prompt cancels video admission',
+    () async {
+      final permission = Completer<MicPermissionStatus>();
+      final microphone = _VideoEntryMicrophonePermission(gate: permission);
+      addTearDown(() {
+        if (!permission.isCompleted) {
+          permission.complete(MicPermissionStatus.denied);
+        }
+      });
+      final fixture = await _createProductionIosFixture(
+        microphonePermission: microphone,
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(
+        fixture,
+        'video-contact',
+        video: true,
+      );
+      final Object capability = fixture.composition;
+      expect(capability, isA<OutgoingVideoCallCapability>());
+      final video = capability as OutgoingVideoCallCapability;
+      final pending = video.startOutgoingVideoCall('video-contact');
+      await _untilComposition(() => microphone.requests == 1);
+      await fixture.composition.onBackgrounded();
+      permission.complete(MicPermissionStatus.granted);
+      expect(await pending, OutgoingCallStartResult.canceled);
+      expect(video.isOutgoingVideoCallAvailable, isFalse);
+      expect(fixture.graphs.single.coordinator.activeSession, isNull);
+      expect(
+        fixture.bridge.commands.where((c) => c == 'message.encrypt'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'U3j-G refreshed endpoint can withdraw passive video availability',
+    () async {
+      final fixture = await _createProductionIosFixture(
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(
+        fixture,
+        'video-contact',
+        video: true,
+      );
+      final Object capability = fixture.composition;
+      expect(capability, isA<OutgoingVideoCallCapability>());
+      final video = capability as OutgoingVideoCallCapability;
+      expect(
+        await video.isOutgoingVideoCallAvailableFor('video-contact'),
+        isTrue,
+      );
+      final response = fixture.bridge.responses['call_endpoint_get_v1']!;
+      final endpoint = Map<String, Object?>.from(response['endpoint']! as Map);
+      endpoint['capabilities'] = ['voice_call_v1'];
+      final canonical = Map<String, Object?>.from(endpoint)
+        ..remove('signature');
+      fixture.bridge.responses['call_endpoint_get_v1'] = {
+        ...response,
+        'endpoint': endpoint,
+        'canonicalRecord': base64Encode(utf8.encode(jsonEncode(canonical))),
+      };
+      expect(
+        await video.isOutgoingVideoCallAvailableFor('video-contact'),
+        isFalse,
+      );
+      expect(fixture.graphs.single.coordinator.activeSession, isNull);
+    },
+  );
+
+  test(
+    'U3j-G authenticated incoming video projects choice without capture',
+    () async {
+      var engineBuilds = 0;
+      final fixture = await _createProductionIosFixture(
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+        callEngineFactory: (_) {
+          engineBuilds++;
+          return _ProductionSpeakerRouteEngine(const []);
+        },
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(
+        fixture,
+        'video-contact',
+        video: true,
+      );
+      await _deliverGraphVideoInvite(fixture);
+      final graph = fixture.graphs.single;
+      final video = graph.current!.video;
+      expect(video, isNotNull);
+      expect(video!.presentation.requestedMedia, CallMediaKind.video);
+      expect(video.presentation.acceptedMedia, isNull);
+      expect(video.presentation.localCamera, CallCameraState.off);
+      expect(video.localView, isNull);
+      expect(video.remoteView, isNull);
+      expect(engineBuilds, 0);
+      final Object capability = fixture.composition;
+      expect(capability, isA<ForegroundCallVideoCapability>());
+      expect(
+        await (capability as ForegroundCallVideoCapability).applyVideoIntent(
+          _callA,
+          generation: video.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ),
+        ForegroundCallActionResult.unavailable,
+      );
+      expect(capability, isA<ForegroundCallMediaAnswerCapability>());
+      final stale = await (capability as ForegroundCallMediaAnswerCapability)
+          .answerWithMedia(
+            _callA,
+            generation: video.generation + 1,
+            acceptedMedia: CallMediaKind.video,
+          );
+      expect(stale, ForegroundCallActionResult.unavailable);
+      expect(fixture.lifecycleMethods, isNot(contains('answer')));
+      expect(fixture.lifecycleMethods, isNot(contains('setLocalCameraActive')));
+      expect(graph.coordinator.activeSession!.state, CallState.ringing);
+    },
+  );
+
+  for (final media in CallMediaKind.values) {
+    test(
+      'U3j-G explicit incoming ${media.name} choice waits for native journal',
+      () async {
+        final fixture = await _createProductionIosFixture(
+          microphonePermission: const _GrantedCallMicrophonePermission(),
+          outgoingContactAccountPeerId: 'video-contact',
+          privacyFlags: const {'video_call_v2_enabled': true},
+        );
+        await fixture.composition.start();
+        await _configureCancellationEndpoint(
+          fixture,
+          'video-contact',
+          video: true,
+        );
+        await _deliverGraphVideoInvite(fixture);
+        final graph = fixture.graphs.single;
+        final video = graph.current!.video;
+        expect(video, isNotNull);
+        final Object capability = fixture.composition;
+        expect(capability, isA<ForegroundCallMediaAnswerCapability>());
+        final result = await (capability as ForegroundCallMediaAnswerCapability)
+            .answerWithMedia(
+              _callA,
+              generation: video!.generation,
+              acceptedMedia: media,
+            );
+        expect(result, ForegroundCallActionResult.applied);
+        expect(fixture.lifecycleMethods, contains('answer'));
+        expect(graph.coordinator.activeSession!.state, CallState.ringing);
+        expect(graph.current!.video!.presentation.acceptedMedia, isNull);
+        expect(
+          fixture.lifecycleMethods,
+          isNot(contains('setLocalCameraActive')),
+        );
+        final signals = fixture.bridge.requests
+            .where((r) => r['cmd'] == 'message.encrypt')
+            .map(
+              (r) =>
+                  jsonDecode((r['payload'] as Map)['plaintext'] as String)
+                      as Map,
+            );
+        expect(signals.where((s) => s['event'] == 'accept'), isEmpty);
+      },
+    );
+  }
+
+  for (final choice in ['video', 'audio', 'native-audio']) {
+    test(
+      'U3j-G native journal emits the selected v2 accept media choice=$choice',
+      () async {
+        final events = StreamController<Object?>.broadcast(sync: true);
+        addTearDown(events.close);
+        var audioActive = false;
+        final engines = <_InitialVideoGraphEngine>[];
+        final fixture = await _createProductionIosFixture(
+          microphonePermission: const _GrantedCallMicrophonePermission(),
+          outgoingContactAccountPeerId: 'video-contact',
+          privacyFlags: const {'video_call_v2_enabled': true},
+          lifecycleEventStream: events.stream,
+          callEngineFactory: (_) {
+            final engine = _InitialVideoGraphEngine();
+            engines.add(engine);
+            return engine;
+          },
+          lifecycleOverride: (method, _) async {
+            if (method == 'activateAudio') audioActive = true;
+            if (method == 'deactivateAudio' || method == 'end') {
+              audioActive = false;
+            }
+            if (method == 'readAudioState') {
+              return {
+                'version': 1,
+                'active': audioActive,
+                'muted': false,
+                'route': 'system_default',
+                'availableRoutes': ['system_default', 'speaker'],
+              };
+            }
+            return null;
+          },
+        );
+        await fixture.composition.start();
+        await _configureCancellationEndpoint(
+          fixture,
+          'video-contact',
+          video: true,
+        );
+        final wallNow = DateTime.now().millisecondsSinceEpoch;
+        final credentials = <String, Object?>{
+          'ok': true,
+          'schema': 'turn_credentials',
+          'version': 1,
+          'urls': ['turn:relay.invalid:3478?transport=udp'],
+          'username': 'fixture-user',
+          'password': 'fixture-secret',
+          'ttlSeconds': 600,
+          'serverTimeMs': wallNow,
+          'expiresAtMs': wallNow + 600000,
+        };
+        fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+        fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+            credentials;
+        await _deliverGraphVideoInvite(fixture);
+        final graph = fixture.graphs.single;
+        expect(graph.current!.video, isNotNull);
+        if (choice != 'native-audio') {
+          final Object capability = fixture.composition;
+          expect(capability, isA<ForegroundCallMediaAnswerCapability>());
+          expect(
+            await (capability as ForegroundCallMediaAnswerCapability)
+                .answerWithMedia(
+                  _callA,
+                  generation: graph.current!.video!.generation,
+                  acceptedMedia: choice == 'video'
+                      ? CallMediaKind.video
+                      : CallMediaKind.audio,
+                ),
+            ForegroundCallActionResult.applied,
+          );
+        }
+        const handle = '33333333-3333-4333-8333-333333333333';
+        events.add({
+          'version': 1,
+          'descriptor': {
+            'callHandle': handle,
+            'expiresAtMs': 2040000,
+            'presented': true,
+            'phase': 'journal',
+            'direction': 'incoming',
+          },
+          'nativeCallId': handle,
+          'highestSequence': 2,
+          'events': [
+            {
+              'callHandle': handle,
+              'sequence': 1,
+              'eventId': '55555555-5555-4555-8555-555555555555',
+              'type': 'presented',
+              'occurredAtMs': 2000000,
+            },
+            {
+              'callHandle': handle,
+              'sequence': 2,
+              'eventId': '66666666-6666-4666-8666-666666666666',
+              'type': 'answer',
+              'occurredAtMs': 2000001,
+            },
+          ],
+        });
+        List<Map> accepts() => fixture.bridge.requests
+            .where((r) => r['cmd'] == 'message.encrypt')
+            .map(
+              (r) =>
+                  jsonDecode((r['payload'] as Map)['plaintext'] as String)
+                      as Map,
+            )
+            .where((s) => s['event'] == 'accept')
+            .toList();
+        await _untilComposition(
+          () =>
+              accepts().isNotEmpty ||
+              graph.coordinator.activeSession?.isTerminal == true,
+        );
+        expect(accepts(), hasLength(1));
+        expect(accepts().single['schema'], CallSignalV2.schema);
+        expect(
+          (accepts().single['payload'] as Map)['media'],
+          choice == 'video' ? 'video' : 'audio',
+        );
+        expect((accepts().single['payload'] as Map)['camera'], 'off');
+        expect(engines, hasLength(1));
+        expect(
+          engines.single.binds,
+          0,
+          reason:
+              'Answer prepares audio; only an authenticated offer binds v2 SDP',
+        );
+        expect(engines.single.configuration!.captureVideo, isFalse);
+        expect(
+          fixture.lifecycleMethods.where((m) => m == 'setLocalCameraActive'),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  for (final platform in [
+    CallEndpointPlatform.ios,
+    CallEndpointPlatform.android,
+  ]) {
+    test(
+      'U3j-G explicit camera consent captures once on ${platform.name}',
+      () async {
+        var permissions = 0;
+        final leases = <bool>[];
+        final (fixture, engine) = await _connectedGraphVideo(
+          platform: platform,
+          permission: () async {
+            permissions++;
+            return true;
+          },
+          nativeOverride: (method, args) async {
+            if (method == 'setLocalCameraActive') {
+              leases.add(args['active']! as bool);
+            }
+            return null;
+          },
+        );
+        final graph = fixture.graphs.single;
+        final Object capability = fixture.composition;
+        expect(capability, isA<ForegroundCallVideoCapability>());
+        final video = capability as ForegroundCallVideoCapability;
+        expect(permissions, 0);
+        expect(engine.video!.cameraStarts, 0);
+        final generation = graph.current!.video!.generation;
+        expect(
+          await video.applyVideoIntent(
+            _callA,
+            generation: generation,
+            intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        expect(permissions, 1);
+        expect(engine.video!.cameraStarts, 1);
+        expect(engine.binds, 1);
+        expect(engine.video!.cameraOn, isTrue);
+        expect(graph.current!.video!.localView, isNotNull);
+        expect(
+          leases.where((v) => v),
+          platform == CallEndpointPlatform.android ? [true] : isEmpty,
+        );
+        expect(
+          await video.applyVideoIntent(
+            _callA,
+            generation: generation,
+            intent: const CallVideoIntent(CallVideoAction.switchCamera),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        expect(permissions, 1);
+        expect(engine.video!.cameraStarts, 1);
+        expect(engine.video!.cameraSwitches, 1);
+        expect(engine.video!.readsBeforeSubscription, 0);
+      },
+    );
+  }
+
+  test(
+    'U3j-G background fences a late camera permission without capture',
+    () async {
+      final gate = Completer<bool>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete(false);
+      });
+      var permissions = 0;
+      final (fixture, engine) = await _connectedGraphVideo(
+        permission: () {
+          permissions++;
+          return gate.future;
+        },
+      );
+      final graph = fixture.graphs.single;
+      final video =
+          (fixture.composition as Object) as ForegroundCallVideoCapability;
+      final pending = video.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+      );
+      await _untilComposition(() => permissions == 1);
+      await fixture.composition.onBackgrounded();
+      gate.complete(true);
+      expect(await pending, ForegroundCallActionResult.unavailable);
+      expect(engine.video!.cameraStarts, 0);
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      await fixture.composition.onResume();
+      expect(engine.video!.cameraStarts, 0);
+      expect(permissions, 1);
+    },
+  );
+
+  test('U3j-G Android refused camera lease cannot start capture', () async {
+    final (fixture, engine) = await _connectedGraphVideo(
+      platform: CallEndpointPlatform.android,
+      nativeOverride: (method, args) async =>
+          method == 'setLocalCameraActive' && args['active'] == true
+          ? false
+          : null,
+    );
+    final graph = fixture.graphs.single;
+    final video =
+        (fixture.composition as Object) as ForegroundCallVideoCapability;
+    expect(
+      await video.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+      ),
+      ForegroundCallActionResult.unavailable,
+    );
+    expect(engine.video!.cameraStarts, 0);
+    expect(graph.coordinator.activeSession!.state, CallState.connected);
+  });
+
+  test(
+    'U3j-G background releases Android lease before slow capture cleanup',
+    () async {
+      final leases = <bool>[];
+      final (fixture, engine) = await _connectedGraphVideo(
+        platform: CallEndpointPlatform.android,
+        nativeOverride: (method, args) async {
+          if (method == 'setLocalCameraActive') {
+            leases.add(args['active']! as bool);
+          }
+          return null;
+        },
+      );
+      final graph = fixture.graphs.single;
+      final video =
+          (fixture.composition as Object) as ForegroundCallVideoCapability;
+      expect(
+        await video.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      final cleanup = Completer<bool>();
+      engine.video!.stopGate = cleanup;
+      addTearDown(() {
+        if (!cleanup.isCompleted) cleanup.complete(true);
+      });
+      await fixture.composition.onBackgrounded();
+      expect(engine.video!.cameraOn, isFalse);
+      await _untilComposition(() => leases.isNotEmpty && leases.last == false);
+      expect(cleanup.isCompleted, isFalse);
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      cleanup.complete(true);
+    },
+  );
+
+  test(
+    'U3j-G remote track replacement republishes owner views without another engine',
+    () async {
+      final (fixture, engine) = await _connectedGraphVideo();
+      final graph = fixture.graphs.single;
+      engine.video!.replaceRemoteTrack();
+      await _untilComposition(() => graph.current!.video!.remoteView != null);
+      final first = graph.current!.video!.remoteView!.textureId;
+      engine.video!.replaceRemoteTrack();
+      await _untilComposition(
+        () => graph.current!.video!.remoteView?.textureId != first,
+      );
+      expect(
+        engine.video!.attachments.where(
+          (s) => s == CallVideoRendererSlot.remote,
+        ),
+        hasLength(2),
+      );
+      expect(engine.video!.readsBeforeSubscription, 0);
+      expect(engine.binds, 1);
+      expect(engine.video!.cameraStarts, 0);
+    },
+  );
+
+  test('U3j-G stale generation refuses camera before permission', () async {
+    var permissions = 0;
+    final (fixture, engine) = await _connectedGraphVideo(
+      permission: () async {
+        permissions++;
+        return true;
+      },
+    );
+    final graph = fixture.graphs.single;
+    final video =
+        (fixture.composition as Object) as ForegroundCallVideoCapability;
+    expect(
+      await video.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation + 1,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+      ),
+      ForegroundCallActionResult.unavailable,
+    );
+    expect(permissions, 0);
+    expect(engine.video!.cameraStarts, 0);
+  });
+
+  test(
+    'U3j-G sole candidate listener routes v2 ICE with no legacy duplicate',
+    () async {
+      final (fixture, engine) = await _connectedGraphVideo();
+      expect(engine.eventSubscriptions, 1);
+      expect(engine.candidateSubscriptions, 1);
+      engine.candidateController.add(
+        const CallIceCandidate(
+          value: 'fixture-candidate',
+          mediaId: 'video',
+          mediaLineIndex: 1,
+        ),
+      );
+      List<Map> ice() => fixture.bridge.requests
+          .where((r) => r['cmd'] == 'message.encrypt')
+          .map(
+            (r) =>
+                jsonDecode((r['payload'] as Map)['plaintext'] as String) as Map,
+          )
+          .where((s) => s['event'] == 'ice')
+          .toList();
+      await _untilGraphVideo(() => ice().isNotEmpty);
+      expect(ice(), hasLength(1));
+      expect(ice().single['schema'], CallSignalV2.schema);
+      expect(
+        (ice().single['payload'] as Map)['negotiation_id'],
+        engine.video!.token!.negotiationId,
+      );
+      expect(engine.binds, 1);
+    },
+  );
+
+  test(
+    'U3j-G reconnect observer runs after capture revocation and keeps one bundle',
+    () async {
+      _InitialVideoGraphEngine? engine;
+      final cameraAtObserver = <bool>[];
+      final (fixture, connectedEngine) = await _connectedGraphVideo(
+        timerObserver: (id, kind, scheduledAt, requested, effective) {
+          if (kind == CallTimeoutKind.reconnect) {
+            expect(id, _callA);
+            expect(effective, lessThanOrEqualTo(requested));
+            cameraAtObserver.add(engine!.video!.cameraOn);
+            throw StateError(
+              'external observer cannot interrupt owned recovery',
+            );
+          }
+        },
+      );
+      engine = connectedEngine;
+      final graph = fixture.graphs.single;
+      final generation = graph.current!.video!.generation;
+      final capability =
+          (fixture.composition as Object) as ForegroundCallVideoCapability;
+      expect(
+        await capability.applyVideoIntent(
+          _callA,
+          generation: generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.audioInterrupted,
+          eventId: 'graph-video-focus-loss',
+          occurredAt: graph.coordinator.clock(),
+          callId: _callA,
+        ),
+      );
+      expect(cameraAtObserver, [false]);
+      expect(graph.coordinator.activeSession!.state, CallState.reconnecting);
+      expect(graph.current!.video!.generation, generation);
+      expect(engine.binds, 1);
+      expect(engine.eventSubscriptions, 1);
+      expect(engine.candidateSubscriptions, 1);
+    },
+  );
+
+  test('U3j-G terminal call fences a late camera permission', () async {
+    final permission = Completer<bool>();
+    addTearDown(() {
+      if (!permission.isCompleted) permission.complete(false);
+    });
+    var requested = false;
+    final (fixture, engine) = await _connectedGraphVideo(
+      permission: () {
+        requested = true;
+        return permission.future;
+      },
+    );
+    final graph = fixture.graphs.single;
+    final capability =
+        (fixture.composition as Object) as ForegroundCallVideoCapability;
+    final pending = capability.applyVideoIntent(
+      _callA,
+      generation: graph.current!.video!.generation,
+      intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+    );
+    await _untilGraphVideo(() => requested);
+    expect(
+      await fixture.composition.end(_callA),
+      ForegroundCallActionResult.applied,
+    );
+    permission.complete(true);
+    expect(await pending, ForegroundCallActionResult.unavailable);
+    expect(engine.video!.cameraStarts, 0);
+    expect(graph.current, isNull);
+  });
+
+  test(
+    'U3j-G disabled video entry has no permission or endpoint effects',
+    () async {
+      final microphone = _VideoEntryMicrophonePermission();
+      final fixture = await _createProductionIosFixture(
+        microphonePermission: microphone,
+        outgoingContactAccountPeerId: 'video-contact',
+      );
+      await fixture.composition.start();
+      final Object capability = fixture.composition;
+      expect(capability, isA<OutgoingVideoCallCapability>());
+      final video = capability as OutgoingVideoCallCapability;
+      final prior = fixture.bridge.requests.length;
+      expect(video.isOutgoingVideoCallAvailable, isFalse);
+      expect(
+        await video.isOutgoingVideoCallAvailableFor('video-contact'),
+        isFalse,
+      );
+      expect(
+        await video.startOutgoingVideoCall('video-contact'),
+        OutgoingCallStartResult.unavailable,
+      );
+      expect(microphone.requests, 0);
+      expect(fixture.bridge.requests, hasLength(prior));
+      expect(fixture.graphs.single.coordinator.activeSession, isNull);
+      expect(fixture.capabilityArguments.single.containsKey('video'), isFalse);
+    },
+  );
+
+  for (final supported in [false, true]) {
+    test(
+      'U3j-G passive video availability uses fresh signed capabilities video=$supported',
+      () async {
+        final microphone = _VideoEntryMicrophonePermission();
+        var engineBuilds = 0;
+        final fixture = await _createProductionIosFixture(
+          microphonePermission: microphone,
+          outgoingContactAccountPeerId: 'video-contact',
+          privacyFlags: const {'video_call_v2_enabled': true},
+          callEngineFactory: (_) {
+            engineBuilds++;
+            return _ProductionSpeakerRouteEngine(const []);
+          },
+        );
+        await fixture.composition.start();
+        await _configureCancellationEndpoint(
+          fixture,
+          'video-contact',
+          video: supported,
+        );
+        final Object capability = fixture.composition;
+        expect(capability, isA<OutgoingVideoCallCapability>());
+        final video = capability as OutgoingVideoCallCapability;
+        expect(video.isOutgoingVideoCallAvailable, isTrue);
+        for (var attempt = 0; attempt < 2; attempt++) {
+          expect(
+            await video.isOutgoingVideoCallAvailableFor('video-contact'),
+            supported,
+          );
+        }
+        expect(
+          fixture.bridge.commands.where((c) => c == 'call_endpoint_get_v1'),
+          hasLength(2),
+        );
+        expect(microphone.requests, 0);
+        expect(engineBuilds, 0);
+        expect(fixture.graphs.single.coordinator.activeSession, isNull);
+      },
+    );
+  }
+
+  for (final mode in ['legacy', 'enabled-audio', 'explicit-video']) {
+    test(
+      'U3j-G production invitation preserves explicit media choice mode=$mode',
+      () async {
+        final fixture = await _createProductionIosFixture(
+          microphonePermission: const _GrantedCallMicrophonePermission(),
+          outgoingContactAccountPeerId: 'video-contact',
+          privacyFlags: {'video_call_v2_enabled': mode != 'legacy'},
+        );
+        await fixture.composition.start();
+        await _configureCancellationEndpoint(
+          fixture,
+          'video-contact',
+          video: true,
+        );
+        final Future<OutgoingCallStartResult> starting;
+        if (mode == 'explicit-video') {
+          final Object capability = fixture.composition;
+          expect(capability, isA<OutgoingVideoCallCapability>());
+          starting = (capability as OutgoingVideoCallCapability)
+              .startOutgoingVideoCall('video-contact');
+        } else {
+          starting = fixture.composition.startOutgoingCall('video-contact');
+        }
+        expect(await starting, OutgoingCallStartResult.started);
+        final invitations = fixture.bridge.requests
+            .where((r) => r['cmd'] == 'message.encrypt')
+            .map(
+              (r) =>
+                  jsonDecode((r['payload'] as Map)['plaintext'] as String)
+                      as Map,
+            )
+            .where((r) => r['event'] == 'invite')
+            .toList();
+        expect(invitations, hasLength(1));
+        final invite = invitations.single;
+        expect(
+          invite['schema'],
+          mode == 'explicit-video'
+              ? 'mknoon.call_signal.v2'
+              : 'mknoon.call_signal.v1',
+        );
+        final payload = invite['payload'] as Map;
+        if (mode == 'explicit-video') {
+          expect(payload['media'], 'video');
+          expect(payload['camera'], 'off');
+        } else {
+          expect(payload.containsKey('media'), isFalse);
+          expect(payload.containsKey('camera'), isFalse);
+        }
+        expect(
+          fixture.lifecycleMethods.where((m) => m == 'setLocalCameraActive'),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  test(
+    'U3j-G unsupported video endpoint cannot fall back to an audio invite',
+    () async {
+      final fixture = await _createProductionIosFixture(
+        microphonePermission: const _GrantedCallMicrophonePermission(),
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(fixture, 'video-contact');
+      final Object capability = fixture.composition;
+      expect(capability, isA<OutgoingVideoCallCapability>());
+      expect(
+        await (capability as OutgoingVideoCallCapability)
+            .startOutgoingVideoCall('video-contact'),
+        isNot(OutgoingCallStartResult.started),
+      );
+      expect(
+        fixture.bridge.commands.where((c) => c == 'message.encrypt'),
+        isEmpty,
+      );
+      expect(fixture.graphs.single.coordinator.activeSession, isNull);
+    },
+  );
+
+  test(
+    'U3j-G canceled video permission wait cannot admit an invitation',
+    () async {
+      final permission = Completer<MicPermissionStatus>();
+      addTearDown(() {
+        if (!permission.isCompleted) {
+          permission.complete(MicPermissionStatus.denied);
+        }
+      });
+      final microphone = _VideoEntryMicrophonePermission(gate: permission);
+      final fixture = await _createProductionIosFixture(
+        microphonePermission: microphone,
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(
+        fixture,
+        'video-contact',
+        video: true,
+      );
+      final Object capability = fixture.composition;
+      expect(capability, isA<OutgoingVideoCallCapability>());
+      final request = OutgoingCallStartRequest();
+      final pending = (capability as OutgoingVideoCallCapability)
+          .startOutgoingVideoCall('video-contact', request: request);
+      await _untilComposition(() => microphone.requests == 1);
+      request.cancel();
+      permission.complete(MicPermissionStatus.granted);
+      expect(await pending, OutgoingCallStartResult.canceled);
+      expect(
+        fixture.bridge.commands.where((c) => c == 'message.encrypt'),
+        isEmpty,
+      );
+      expect(fixture.graphs.single.coordinator.activeSession, isNull);
+    },
+  );
 
   test(
     'default-off flags construct no runtime and install no subscription',
@@ -7325,8 +8175,7 @@ void main() {
     expect(
       source,
       contains(
-        'Future<void> onResume() async {\n'
-        '    await runtime.onResume();\n'
+        'await runtime.onResume();\n'
         '    final active = coordinator.activeSession;\n'
         '    if (active != null) _onSessionSnapshot(active);\n'
         '  }',
@@ -7619,10 +8468,245 @@ final class _GatedIssuedWakeStore implements IssuedCallWakeHandleStore {
   Future<void> clear() => delegate.clear();
 }
 
+Future<void> _untilGraphVideo(bool Function() predicate) async {
+  final elapsed = Stopwatch()..start();
+  while (!predicate() && elapsed.elapsed < const Duration(seconds: 5)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  expect(
+    predicate(),
+    isTrue,
+    reason: 'production graph fixture did not reach the expected boundary',
+  );
+}
+
+Future<void> _deliverGraphVideoInvite(_ProductionIosFixture fixture) async {
+  final graph = fixture.graphs.single;
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    'video-contact',
+  )).devices.single;
+  final signal = CallSignalV2.fromMap({
+    'schema': CallSignalV2.schema,
+    'call_id': _callA.value,
+    'message_id': '00000000-0000-4000-8000-000000000023',
+    'event': 'invite',
+    'sender_account_peer_id': 'video-contact',
+    'sender_device_peer_id': device.devicePeerId,
+    'recipient_account_peer_id': 'local-account',
+    'recipient_device_peer_id': 'local-account',
+    'sender_sequence': 1,
+    'ice_generation': 0,
+    'created_at_ms': 2_000_000,
+    'expires_at_ms': 2_040_000,
+    'payload': {
+      'media': 'video',
+      'camera': 'off',
+      'capabilities': ['audio', 'video'],
+    },
+  }, videoEnabled: true);
+  fixture.bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(signal.toMap()),
+  };
+  fixture.p2p.messages.add(
+    ChatMessage(
+      from: device.devicePeerId,
+      to: 'local-account',
+      content: jsonEncode({
+        'type': 'call_signal',
+        'version': '1',
+        'message_id': signal.messageId,
+        'call_handle': '33333333-3333-4333-8333-333333333333',
+        'expires_at_ms': signal.expiresAtMs,
+        'kem': base64Encode([1]),
+        'ciphertext': base64Encode([2]),
+        'nonce': base64Encode([3]),
+        'signature': base64Encode([4]),
+      }),
+      timestamp: _callNow.toIso8601String(),
+      isIncoming: true,
+      transport: 'direct',
+    ),
+  );
+  await _untilComposition(
+    () => graph.coordinator.activeSession?.state == CallState.ringing,
+  );
+}
+
+Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
+  CallEndpointPlatform platform = CallEndpointPlatform.ios,
+  Future<bool> Function()? permission,
+  Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
+  CallScheduledTimerObserver? timerObserver,
+}) async {
+  final events = StreamController<Object?>.broadcast(sync: true);
+  addTearDown(events.close);
+  var audioActive = false;
+  final engine = _InitialVideoGraphEngine();
+  final fixture = await _createProductionIosFixture(
+    nativePlatform: platform,
+    microphonePermission: const _GrantedCallMicrophonePermission(),
+    requestCameraPermission: permission ?? () async => true,
+    onCallTimerScheduled: timerObserver,
+    outgoingContactAccountPeerId: 'video-contact',
+    privacyFlags: const {'video_call_v2_enabled': true},
+    lifecycleEventStream: events.stream,
+    callEngineFactory: (_) => engine,
+    lifecycleOverride: (method, arguments) async {
+      final overridden = await nativeOverride?.call(method, arguments);
+      if (overridden != null) return overridden;
+      if (method == 'activateAudio') audioActive = true;
+      if (method == 'deactivateAudio' || method == 'end') audioActive = false;
+      if (method == 'readAudioState') {
+        return {
+          'version': 1,
+          'active': audioActive,
+          'muted': false,
+          'route': 'system_default',
+          'availableRoutes': ['system_default', 'speaker'],
+        };
+      }
+      return null;
+    },
+  );
+  await fixture.composition.start();
+  await _configureCancellationEndpoint(fixture, 'video-contact', video: true);
+  final wall = DateTime.now().millisecondsSinceEpoch;
+  final credentials = <String, Object?>{
+    'ok': true,
+    'schema': 'turn_credentials',
+    'version': 1,
+    'urls': ['turn:relay.invalid:3478?transport=udp'],
+    'username': 'fixture-user',
+    'password': 'fixture-secret',
+    'ttlSeconds': 600,
+    'serverTimeMs': wall,
+    'expiresAtMs': wall + 600000,
+  };
+  fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+  fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+      credentials;
+  await _deliverGraphVideoInvite(fixture);
+  final graph = fixture.graphs.single;
+  expect(graph.current!.video, isNotNull);
+  final Object capability = fixture.composition;
+  expect(capability, isA<ForegroundCallMediaAnswerCapability>());
+  expect(
+    await (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
+      _callA,
+      generation: graph.current!.video!.generation,
+      acceptedMedia: CallMediaKind.video,
+    ),
+    ForegroundCallActionResult.applied,
+  );
+  const handle = '33333333-3333-4333-8333-333333333333';
+  events.add({
+    'version': 1,
+    'descriptor': {
+      'callHandle': handle,
+      'expiresAtMs': 2040000,
+      'presented': true,
+      'phase': 'journal',
+      'direction': 'incoming',
+    },
+    'nativeCallId': handle,
+    'highestSequence': 2,
+    'events': [
+      {
+        'callHandle': handle,
+        'sequence': 1,
+        'eventId': '55555555-5555-4555-8555-555555555555',
+        'type': 'presented',
+        'occurredAtMs': 2000000,
+      },
+      {
+        'callHandle': handle,
+        'sequence': 2,
+        'eventId': '66666666-6666-4666-8666-666666666666',
+        'type': 'answer',
+        'occurredAtMs': 2000001,
+      },
+    ],
+  });
+  await _untilGraphVideo(
+    () => fixture.bridge.requests
+        .where((r) => r['cmd'] == 'message.encrypt')
+        .any(
+          (r) =>
+              (jsonDecode((r['payload'] as Map)['plaintext'] as String)
+                  as Map)['event'] ==
+              'accept',
+        ),
+  );
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    'video-contact',
+  )).devices.single;
+  final offer = CallSignalV2.fromMap({
+    'schema': CallSignalV2.schema,
+    'call_id': _callA.value,
+    'message_id': '00000000-0000-4000-8000-000000000024',
+    'event': 'offer',
+    'sender_account_peer_id': 'video-contact',
+    'sender_device_peer_id': device.devicePeerId,
+    'recipient_account_peer_id': 'local-account',
+    'recipient_device_peer_id': 'local-account',
+    'sender_sequence': 2,
+    'ice_generation': 0,
+    'created_at_ms': 2000000,
+    'expires_at_ms': 2040000,
+    'payload': {
+      'negotiation_id': '77777777-7777-4777-8777-777777777777',
+      'purpose': 'initial',
+      'switch_id': null,
+      'media_revision': 0,
+      'media': 'video',
+      'description': 'fixture-sdp',
+      'fingerprint': 'fixture-fingerprint',
+    },
+  }, videoEnabled: true);
+  fixture.bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(offer.toMap()),
+  };
+  fixture.p2p.messages.add(
+    ChatMessage(
+      from: device.devicePeerId,
+      to: 'local-account',
+      content: jsonEncode({
+        'type': 'call_signal',
+        'version': '1',
+        'message_id': offer.messageId,
+        'call_handle': handle,
+        'expires_at_ms': offer.expiresAtMs,
+        'kem': base64Encode([1]),
+        'ciphertext': base64Encode([2]),
+        'nonce': base64Encode([3]),
+        'signature': base64Encode([4]),
+      }),
+      timestamp: _callNow.toIso8601String(),
+      isIncoming: true,
+      transport: 'direct',
+    ),
+  );
+  await _untilGraphVideo(() => engine.video?.commits == 1);
+  await graph.coordinator.dispatch(
+    CallEvent(
+      type: CallEventType.mediaConnected,
+      eventId: 'graph-video-media-connected',
+      occurredAt: graph.coordinator.clock(),
+      callId: _callA,
+    ),
+  );
+  expect(graph.coordinator.activeSession!.state, CallState.connected);
+  expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.video);
+  return (fixture, engine);
+}
+
 Future<void> _configureCancellationEndpoint(
   _ProductionIosFixture fixture,
-  String contact,
-) async {
+  String contact, {
+  bool video = false,
+}) async {
   const nowMs = 2_000_000;
   final graph = fixture.graphs.single;
   final device = (await graph.trustedRosterProvider.loadForContact(
@@ -7663,7 +8747,7 @@ Future<void> _configureCancellationEndpoint(
   final endpoint = CallEndpointRecord(
     accountPeerId: contact,
     devicePeerId: device.devicePeerId,
-    capabilities: const <String>{'voice_call_v1'},
+    capabilities: <String>{'voice_call_v1', if (video) 'video_call_v2'},
     platform: CallEndpointPlatform.android,
     expiresAtMs: nowMs + 60_000,
     preferenceEpoch: 1,
@@ -7739,6 +8823,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   int Function()? clockMs,
   CallEngine Function(CallId)? callEngineFactory,
   void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
+  CallScheduledTimerObserver? onCallTimerScheduled,
   Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
   Map<String, Object?>? tokenSetResponse,
@@ -7748,6 +8833,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   CallNetworkEffectsAllowed? networkEffectsAllowed,
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
+  Future<bool> Function()? requestCameraPermission,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   RepairCallEndpoint? repairMissingEndpoint,
   String? nativeHandleOverride,
@@ -7826,8 +8912,10 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     networkEffectsAllowed: networkEffectsAllowed ?? () => true,
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
+    requestCameraPermission: requestCameraPermission,
     callEngineFactory: callEngineFactory,
     onCallHistoryProjected: onCallHistoryProjected,
+    onCallTimerScheduled: onCallTimerScheduled,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     repairMissingEndpoint: repairMissingEndpoint,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
@@ -7838,6 +8926,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
           required resolveAuthenticatedHandle,
           required clock,
         }) => AndroidCallLifecycleAdapter(
+          videoEnabled: privacyFlags['video_call_v2_enabled'] == true,
           invokeMethod: (method, arguments) async {
             lifecycleMethods.add(method);
             final overridden = await lifecycleOverride?.call(method, arguments);
@@ -7868,6 +8957,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
           required resolveAuthenticatedHandle,
           required clock,
         }) => IosCallLifecycleAdapter(
+          videoEnabled: privacyFlags['video_call_v2_enabled'] == true,
           invokeMethod: (method, arguments) async {
             lifecycleMethods.add(method);
             if (lifecycleOverride != null) {
@@ -7897,7 +8987,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
             }
             return true;
           },
-          nativeEvents: const Stream<Object?>.empty(),
+          nativeEvents: lifecycleEventStream ?? const Stream<Object?>.empty(),
           coordinator: coordinator,
           resolveAuthenticatedHandle: nativeHandleOverride == null
               ? resolveAuthenticatedHandle
@@ -8128,7 +9218,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
   );
 }
 
-final class _ProductionSpeakerRouteEngine implements CallEngine {
+class _ProductionSpeakerRouteEngine implements CallEngine {
   _ProductionSpeakerRouteEngine(List<CallAudioOutputRoute> supportedRoutes)
     : supportedRoutes = List<CallAudioOutputRoute>.unmodifiable(
         supportedRoutes,
@@ -8216,6 +9306,258 @@ final class _ProductionSpeakerRouteEngine implements CallEngine {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _InitialVideoGraphEngine extends _ProductionSpeakerRouteEngine
+    implements CallVideoEngine {
+  _InitialVideoGraphEngine()
+    : super(const [
+        CallAudioOutputRoute.systemDefault,
+        CallAudioOutputRoute.speaker,
+      ]);
+  final eventController = StreamController<CallEngineEvent>.broadcast(
+    sync: true,
+  );
+  final candidateController = StreamController<CallIceCandidate>.broadcast(
+    sync: true,
+  );
+  int eventSubscriptions = 0;
+  int candidateSubscriptions = 0;
+  @override
+  Stream<CallEngineEvent> get events {
+    eventSubscriptions++;
+    return eventController.stream;
+  }
+
+  @override
+  Stream<CallIceCandidate> get localCandidates {
+    candidateSubscriptions++;
+    return candidateController.stream;
+  }
+
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    await super.close();
+    await eventController.close();
+    await candidateController.close();
+  }
+
+  int binds = 0;
+  _GraphVideoSession? video;
+  @override
+  CallVideoSession bindV2Video({
+    required CallId callId,
+    required bool localIsCaller,
+    required CallWireVersion wireVersion,
+    required bool Function() canApply,
+    bool videoEnabled = false,
+  }) {
+    expect(videoEnabled, isTrue);
+    expect(wireVersion, CallWireVersion.v2);
+    binds++;
+    return video ??= _GraphVideoSession(callId, canApply);
+  }
+}
+
+final class _GraphVideoToken implements CallVideoNegotiation {
+  _GraphVideoToken(
+    this.callId,
+    this.negotiationId,
+    this.mediaRevision,
+    this.media,
+  );
+  @override
+  final CallId callId;
+  @override
+  final String negotiationId;
+  @override
+  final int mediaRevision;
+  @override
+  final CallMediaKind media;
+}
+
+final class _GraphVideoSession
+    implements
+        CallVideoSession,
+        CallVideoPresentationSource,
+        CallVideoCameraSwitch {
+  _GraphVideoSession(this.callId, this.canApply);
+  @override
+  final CallId callId;
+  final bool Function() canApply;
+  final controller = StreamController<CallVideoPresentationState>.broadcast(
+    sync: true,
+  );
+  final views = <CallVideoRendererSlot, CallVideoView>{};
+  final attachments = <CallVideoRendererSlot>[];
+  CallVideoNegotiation? token;
+  int commits = 0;
+  int cameraStarts = 0;
+  int cameraSwitches = 0;
+  int readsBeforeSubscription = 0;
+  bool cameraOn = false;
+  bool remoteTrack = false;
+  bool closed = false;
+  Completer<bool>? stopGate;
+  @override
+  bool get hasPendingCleanup => stopGate != null && !stopGate!.isCompleted;
+  @override
+  Stream<CallVideoPresentationState> get presentationChanges =>
+      controller.stream;
+  CallVideoPresentationState _state(CallVideoRendererSlot slot) =>
+      CallVideoPresentationState(
+        callId: callId,
+        negotiation: token,
+        slot: slot,
+        hasTrack: slot == CallVideoRendererSlot.local ? cameraOn : remoteTrack,
+        view: views[slot],
+      );
+  @override
+  CallVideoPresentationState presentationFor(CallVideoRendererSlot slot) {
+    if (!controller.hasListener) readsBeforeSubscription++;
+    return _state(slot);
+  }
+
+  void emit(CallVideoRendererSlot slot) {
+    if (!controller.isClosed) controller.add(_state(slot));
+  }
+
+  void replaceRemoteTrack() {
+    views.remove(CallVideoRendererSlot.remote);
+    remoteTrack = true;
+    emit(CallVideoRendererSlot.remote);
+  }
+
+  @override
+  CallVideoNegotiation beginNegotiation({
+    required String negotiationId,
+    required int mediaRevision,
+    required CallMediaKind media,
+    required bool Function() canApply,
+  }) => token = _GraphVideoToken(callId, negotiationId, mediaRevision, media);
+  CallSessionDescription _description(CallSessionDescriptionType type) =>
+      CallSessionDescription(
+        type: type,
+        value: 'fixture-sdp',
+        fingerprint: 'fixture-fingerprint',
+      );
+  @override
+  Future<CallSessionDescription> createOffer(
+    CallVideoNegotiation token,
+  ) async => _description(CallSessionDescriptionType.offer);
+  @override
+  Future<CallSessionDescription> createAnswer(
+    CallVideoNegotiation token,
+  ) async => _description(CallSessionDescriptionType.answer);
+  @override
+  Future<void> applyLocal(
+    CallVideoNegotiation token,
+    CallSessionDescription description,
+  ) async {}
+  @override
+  Future<void> applyRemote(
+    CallVideoNegotiation token,
+    CallSessionDescription description,
+  ) async {}
+  @override
+  Future<void> commit(CallVideoNegotiation token) async {
+    commits++;
+  }
+
+  @override
+  Future<bool> rollbackPending(CallVideoNegotiation token) async => true;
+  @override
+  Future<bool> setLocalCamera(
+    CallVideoNegotiation token,
+    CallLocalCameraGrant grant,
+  ) async {
+    if (!canApply() || !identical(this.token, token) || !grant.isCurrent()) {
+      return false;
+    }
+    cameraStarts++;
+    cameraOn = true;
+    emit(CallVideoRendererSlot.local);
+    return true;
+  }
+
+  @override
+  Future<bool> stopLocalCamera() {
+    cameraOn = false;
+    views.remove(CallVideoRendererSlot.local);
+    emit(CallVideoRendererSlot.local);
+    return stopGate?.future ?? Future.value(true);
+  }
+
+  @override
+  Future<CallVideoView?> attachRenderer(
+    CallVideoNegotiation token,
+    CallVideoRendererSlot slot,
+  ) async {
+    if (closed || !identical(this.token, token)) return null;
+    attachments.add(slot);
+    final view = CallVideoView(
+      textureId: 100 + attachments.length,
+      width: 640,
+      height: 480,
+    );
+    views[slot] = view;
+    emit(slot);
+    return view;
+  }
+
+  @override
+  Future<bool> detachRenderer(CallVideoRendererSlot slot) async {
+    views.remove(slot);
+    emit(slot);
+    return true;
+  }
+
+  @override
+  Future<bool> switchCamera(
+    CallVideoNegotiation token,
+    CallLocalCameraGrant grant,
+  ) async {
+    if (!cameraOn || !grant.isCurrent() || !identical(this.token, token)) {
+      return false;
+    }
+    cameraSwitches++;
+    return true;
+  }
+
+  @override
+  Future<bool> retireVideo() async {
+    cameraOn = false;
+    remoteTrack = false;
+    token = null;
+    views.clear();
+    for (final slot in CallVideoRendererSlot.values) {
+      emit(slot);
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> retryCleanup() async => !hasPendingCleanup;
+  @override
+  Future<bool> close() async {
+    closed = true;
+    await retireVideo();
+    await controller.close();
+    return true;
+  }
+}
+
+final class _VideoEntryMicrophonePermission
+    implements CallMicrophonePermission {
+  _VideoEntryMicrophonePermission({this.gate});
+  final Completer<MicPermissionStatus>? gate;
+  int requests = 0;
+  @override
+  Future<MicPermissionStatus> request() async {
+    requests++;
+    return gate == null ? MicPermissionStatus.granted : await gate!.future;
+  }
 }
 
 final class _GrantedCallMicrophonePermission
