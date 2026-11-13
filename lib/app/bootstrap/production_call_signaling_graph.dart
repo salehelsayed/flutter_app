@@ -41,6 +41,7 @@ import '../../features/call/infrastructure/platform_call_video_quality_environme
 import '../../features/call/domain/call_media_switch.dart';
 import '../../features/call/domain/call_signal_v2.dart';
 import '../../features/call/application/call_video_presentation.dart';
+import '../../features/call/application/call_picture_in_picture.dart';
 import '../../features/call/infrastructure/production_call_v2_signaling_adapter.dart';
 import '../../features/call/infrastructure/production_call_v2_control_signaling_adapter.dart';
 import '../../features/call/application/call_negotiation_material_store.dart';
@@ -2333,6 +2334,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallEngine Function(CallId)? callEngineFactory,
   Future<bool> Function()? requestCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
+  CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
+  Future<bool> Function()? checkCameraPermission,
   Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) {
   final clock = nowMs ?? () => DateTime.now().toUtc().millisecondsSinceEpoch;

@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/features/call/application/call_picture_in_picture.dart';
+import '../../features/call/support/fake_call_picture_in_picture_bridge.dart';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -513,6 +516,261 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  Future<void> flushPip() async {
+    for (var i = 0; i < 12; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  Future<void> turnCameraOn(_ProductionIosFixture fixture) async {
+    final graph = fixture.graphs.single;
+    expect(
+      await graph.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+      ),
+      ForegroundCallActionResult.applied,
+    );
+  }
+
+  test('PiP graph gate OFF never constructs the bridge', () async {
+    var factories = 0;
+    final fixture = await _createProductionIosFixture(
+      pictureInPictureBridgeFactory: () {
+        factories++;
+        return FakeCallPictureInPictureBridge();
+      },
+    );
+    await fixture.composition.start();
+    await fixture.composition.onBackgrounded();
+    expect(factories, 0);
+  });
+
+  test(
+    'PiP graph OS-paused user camera resumes without a permission prompt',
+    () async {
+      final pip = FakeCallPictureInPictureBridge();
+      var prompts = 0;
+      var reads = 0;
+      final (fixture, engine) = await _connectedGraphVideo(
+        pictureInPictureBridgeFactory: () => pip,
+        permission: () async {
+          prompts++;
+          return true;
+        },
+        checkCameraPermission: () async {
+          reads++;
+          return true;
+        },
+      );
+      engine.video!.replaceRemoteTrack();
+      await turnCameraOn(fixture);
+      await flushPip();
+      expect(pip.arms, hasLength(1));
+      await fixture.composition.onBackgrounded();
+      await flushPip();
+      expect(pip.enters, hasLength(1));
+      expect(engine.video!.cameraOn, isFalse);
+      expect(
+        fixture.graphs.single.coordinator.activeSession!.isTerminal,
+        isFalse,
+      );
+      await fixture.composition.onResume();
+      await flushPip();
+      expect(engine.video!.cameraOn, isTrue);
+      expect(engine.video!.cameraStarts, 2);
+      expect(prompts, 1);
+      expect(reads, greaterThan(0));
+    },
+  );
+
+  test(
+    'PiP graph supported continuation keeps existing camera authority',
+    () async {
+      final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
+      final (fixture, engine) = await _connectedGraphVideo(
+        pictureInPictureBridgeFactory: () => pip,
+        checkCameraPermission: () async => true,
+      );
+      engine.video!.replaceRemoteTrack();
+      await turnCameraOn(fixture);
+      await flushPip();
+      expect(pip.arms, hasLength(1));
+      await fixture.composition.onBackgrounded();
+      await flushPip();
+      expect(engine.video!.cameraOn, isTrue);
+      expect(engine.video!.lastCameraGrant!.isCurrent(), isTrue);
+      await fixture.composition.onResume();
+      expect(engine.video!.cameraStarts, 1);
+    },
+  );
+
+  test('PiP graph permission loss keeps an OS-paused camera off', () async {
+    final pip = FakeCallPictureInPictureBridge();
+    var granted = true;
+    var prompts = 0;
+    final (fixture, engine) = await _connectedGraphVideo(
+      pictureInPictureBridgeFactory: () => pip,
+      permission: () async {
+        prompts++;
+        return true;
+      },
+      checkCameraPermission: () async => granted,
+    );
+    engine.video!.replaceRemoteTrack();
+    await turnCameraOn(fixture);
+    await flushPip();
+    expect(pip.arms, hasLength(1));
+    await fixture.composition.onBackgrounded();
+    granted = false;
+    await fixture.composition.onResume();
+    await flushPip();
+    expect(engine.video!.cameraOn, isFalse);
+    expect(engine.video!.cameraStarts, 1);
+    expect(prompts, 1);
+  });
+
+  test('PiP graph explicit off fences a late automatic resume', () async {
+    final pip = FakeCallPictureInPictureBridge();
+    final permission = Completer<bool>();
+    final (fixture, engine) = await _connectedGraphVideo(
+      pictureInPictureBridgeFactory: () => pip,
+      checkCameraPermission: () => permission.future,
+    );
+    engine.video!.replaceRemoteTrack();
+    await turnCameraOn(fixture);
+    await flushPip();
+    expect(pip.arms, hasLength(1));
+    await fixture.composition.onBackgrounded();
+    final resume = fixture.composition.onResume();
+    await flushPip();
+    final graph = fixture.graphs.single;
+    expect(
+      await graph.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOff),
+      ),
+      ForegroundCallActionResult.applied,
+    );
+    permission.complete(true);
+    await resume;
+    await flushPip();
+    expect(engine.video!.cameraOn, isFalse);
+    expect(engine.video!.cameraStarts, 1);
+  });
+
+  test('PiP graph critical thermal state prevents OS-pause resume', () async {
+    final pip = FakeCallPictureInPictureBridge();
+    final quality = _GraphQualitySource(initial: _graphCellularQuality);
+    final (fixture, engine) = await _connectedGraphVideo(
+      pictureInPictureBridgeFactory: () => pip,
+      qualityEnvironmentSourceFactory: () => quality,
+      checkCameraPermission: () async => true,
+    );
+    engine.video!.replaceRemoteTrack();
+    await turnCameraOn(fixture);
+    await flushPip();
+    expect(pip.arms, hasLength(1));
+    await fixture.composition.onBackgrounded();
+    quality.emit(_graphCriticalQuality);
+    await fixture.composition.onResume();
+    await flushPip();
+    expect(engine.video!.cameraOn, isFalse);
+    expect(engine.video!.cameraStarts, 1);
+  });
+
+  test('PiP graph enter and restore never supply camera consent', () async {
+    final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
+    var prompts = 0;
+    final (fixture, engine) = await _connectedGraphVideo(
+      pictureInPictureBridgeFactory: () => pip,
+      permission: () async {
+        prompts++;
+        return true;
+      },
+      checkCameraPermission: () async => true,
+    );
+    engine.video!.replaceRemoteTrack();
+    await flushPip();
+    expect(pip.arms, hasLength(1));
+    final id = pip.arms.single;
+    await fixture.composition.onBackgrounded();
+    pip.emit(id, 1, CallPipEventType.entered);
+    pip.emit(id, 2, CallPipEventType.exited, 'restored');
+    await fixture.composition.onResume();
+    await flushPip();
+    expect(engine.video!.cameraStarts, 0);
+    expect(prompts, 0);
+  });
+
+  test(
+    'PiP graph close keeps audio call; explicit End terminates it',
+    () async {
+      final pip = FakeCallPictureInPictureBridge();
+      final (fixture, engine) = await _connectedGraphVideo(
+        pictureInPictureBridgeFactory: () => pip,
+        checkCameraPermission: () async => true,
+      );
+      engine.video!.replaceRemoteTrack();
+      await flushPip();
+      expect(pip.arms, hasLength(1));
+      final first = pip.arms.single;
+      await fixture.composition.onBackgrounded();
+      pip.emit(first, 1, CallPipEventType.entered);
+      pip.emit(first, 2, CallPipEventType.exited, 'closed');
+      await flushPip();
+      expect(
+        fixture.graphs.single.coordinator.activeSession!.isTerminal,
+        isFalse,
+      );
+      await fixture.composition.onResume();
+      await flushPip();
+      expect(pip.arms, hasLength(2));
+      final current = pip.arms.last;
+      await fixture.composition.onBackgrounded();
+      pip.emit(current, 1, CallPipEventType.entered);
+      pip.emit(current, 2, CallPipEventType.action, 'end');
+      await flushPip();
+      expect(
+        fixture.graphs.single.coordinator.activeSession?.isTerminal ?? true,
+        isTrue,
+      );
+      expect(pip.disarms, contains(current));
+    },
+  );
+
+  for (final supported in [false, true]) {
+    test(
+      'PiP graph explicit camera tap requires background capability=$supported',
+      () async {
+        final pip = FakeCallPictureInPictureBridge()..cameraInPip = supported;
+        var prompts = 0;
+        final (fixture, engine) = await _connectedGraphVideo(
+          pictureInPictureBridgeFactory: () => pip,
+          permission: () async {
+            prompts++;
+            return true;
+          },
+          checkCameraPermission: () async => true,
+        );
+        engine.video!.replaceRemoteTrack();
+        await flushPip();
+        expect(pip.arms, hasLength(1));
+        await fixture.composition.onBackgrounded();
+        final id = pip.arms.single;
+        pip.emit(id, 1, CallPipEventType.entered);
+        expect(engine.video!.cameraStarts, 0);
+        pip.emit(id, 2, CallPipEventType.action, 'camera');
+        await flushPip();
+        expect(engine.video!.cameraOn, supported);
+        expect(engine.video!.cameraStarts, supported ? 1 : 0);
+        expect(prompts, 0);
+      },
+    );
+  }
+
   for (final enabled in [false, true]) {
     test(
       'U3j-GQ default platform source follows video gate=$enabled',
@@ -8810,6 +9068,8 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
   CallScheduledTimerObserver? timerObserver,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
+  CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
+  Future<bool> Function()? checkCameraPermission,
 }) async {
   final events = StreamController<Object?>.broadcast(sync: true);
   addTearDown(events.close);
@@ -8821,6 +9081,8 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     requestCameraPermission: permission ?? () async => true,
     onCallTimerScheduled: timerObserver,
     qualityEnvironmentSourceFactory: qualityEnvironmentSourceFactory,
+    pictureInPictureBridgeFactory: pictureInPictureBridgeFactory,
+    checkCameraPermission: checkCameraPermission,
     outgoingContactAccountPeerId: 'video-contact',
     privacyFlags: const {'video_call_v2_enabled': true},
     lifecycleEventStream: events.stream,
@@ -9108,6 +9370,8 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   CallMicrophonePermission? microphonePermission,
   Future<bool> Function()? requestCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
+  CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
+  Future<bool> Function()? checkCameraPermission,
   bool usePlatformQualityEnvironment = false,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   RepairCallEndpoint? repairMissingEndpoint,
@@ -9188,6 +9452,8 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
     requestCameraPermission: requestCameraPermission,
+    pictureInPictureBridgeFactory: pictureInPictureBridgeFactory,
+    checkCameraPermission: checkCameraPermission,
     qualityEnvironmentSourceFactory: usePlatformQualityEnvironment
         ? null
         : qualityEnvironmentSourceFactory ?? () => _GraphQualitySource(),
@@ -9658,10 +9924,33 @@ final class _GraphVideoToken implements CallVideoNegotiation {
 final class _GraphVideoSession
     implements
         CallVideoSession,
+        CallVideoPictureInPictureSource,
         CallVideoPresentationSource,
         CallVideoCameraSwitch,
         CallVideoQualityEnvironmentConsumer {
   _GraphVideoSession(this.callId, this.canApply);
+  int pipEpoch = 0;
+  @override
+  Stream<void> get pictureInPictureSourceChanges =>
+      controller.stream.map((_) {});
+  @override
+  CallPipSource? get pictureInPictureSource {
+    final current = token;
+    final epoch = pipEpoch;
+    if (closed || current == null || !remoteTrack) return null;
+    return CallPipSource(
+      negotiation: current,
+      rendererEpoch: epoch,
+      peerConnectionId: 'graph-peer',
+      remoteTrackId: 'remote-$epoch',
+      isCurrent: () =>
+          !closed &&
+          identical(token, current) &&
+          remoteTrack &&
+          pipEpoch == epoch,
+    );
+  }
+
   final qualityEnvironments = <CallVideoQualityEnvironment>[];
   CallVideoQualityEnvironment? environmentAtCameraStart;
   @override
@@ -9680,6 +9969,7 @@ final class _GraphVideoSession
   CallVideoNegotiation? token;
   int commits = 0;
   int cameraStarts = 0;
+  CallLocalCameraGrant? lastCameraGrant;
   int cameraSwitches = 0;
   int readsBeforeSubscription = 0;
   bool cameraOn = false;
@@ -9710,6 +10000,7 @@ final class _GraphVideoSession
   }
 
   void replaceRemoteTrack() {
+    pipEpoch++;
     views.remove(CallVideoRendererSlot.remote);
     remoteTrack = true;
     emit(CallVideoRendererSlot.remote);
@@ -9762,6 +10053,7 @@ final class _GraphVideoSession
       return false;
     }
     environmentAtCameraStart = qualityEnvironments.lastOrNull;
+    lastCameraGrant = grant;
     cameraStarts++;
     cameraOn = true;
     emit(CallVideoRendererSlot.local);
