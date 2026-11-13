@@ -11672,6 +11672,25 @@ visible and cannot become an ordinary first-attempt PASS.
   The video gate stays off and Android manifest commit `afa0e7970` stays
   unmerged. Live camera/foreground-service behavior, PiP, Telecom C5 and
   composed or signed candidate proof remain separate available-device legs.
+  **U3j-L Dart native video lifecycle port:** the optional port defaults off
+  and preserves the existing native capability map without a video key. Enabled
+  commands use only the bound call handle and strict native video argument
+  maps. A release, audio downgrade, audio deactivation, terminal observation,
+  invalidation or close fences an in-flight camera request; a late stale native
+  success releases its captured handle. iOS preserves its native refusal of an
+  Android-only camera lease. This port neither grants user consent nor starts
+  capture; ordinary Answer and audio APIs are unchanged.
+  At RED `11d913cef08b5c3599afa68aa56084ec5b11b877`, Claude-Dev's exact
+  `U3j-L` filter across both lifecycle adapter files produced eight passing
+  controls and seven causal assertion failures, without loader/timeout errors.
+  At GREEN `9046ac9b448f733c7dc4fd3d8bfc4f601ad3a2c3`, both complete adapter
+  files passed all 147 cases, with no failures/errors/skips, successful done
+  and child exit 0. Six clean HEAD/tree/lib checkpoints each printed and
+  matched all 17 individual file hashes; both setup deltas were empty. Raw
+  results and identity verification are retained in
+  `/Users/I560101/.codex/investigations/video-u3j-l-20261113/runtime-verified.json`.
+  This is scoped host evidence, not graph composition, native/device or
+  activation proof. Video remains off and the Android manifest remains held.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
