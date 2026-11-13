@@ -28,7 +28,7 @@ typedef SendCallV2MediaSignal =
       required bool Function() canApply,
     });
 
-/// One call's initial v2 SDP/ICE owner. The legacy executor retains microphone,
+/// One call's v2 SDP/ICE owner. The legacy executor retains microphone,
 /// engine-event and v1 ownership; its single candidate listener routes here.
 ///
 /// Native jobs share one queue, but canonical dispatch never waits inside that
@@ -108,6 +108,14 @@ final class CallV2NegotiationEffectExecutor
   bool _awaitingOptionalOffer = false;
   bool _mediaRetired = false;
   bool Function()? _optionalTokenCurrent;
+  int _optionalJobs = 0;
+  int _optionalSends = 0;
+  int _optionalAuthority = 0;
+  bool _optionalCommitPending = false;
+  bool _pendingTakeoverBlocked = false;
+  _V2Recovery? _recovery;
+  final Map<CallSignalV2Type, _V2MediaWork> _recoveryIngress = {};
+  int? _recoveryIngressEpisode;
 
   CallMediaSwitchEffectExecutor? get mediaSwitch {
     if (!current) return null;
@@ -125,7 +133,10 @@ final class CallV2NegotiationEffectExecutor
 
   @override
   bool get current =>
-      _ready && _initialCommitted && _snapshot?.state == CallState.connected;
+      _ready &&
+      _initialCommitted &&
+      !_pendingTakeoverBlocked &&
+      _snapshot?.state == CallState.connected;
 
   @override
   CallVideoSession get session => _session!;
@@ -133,8 +144,23 @@ final class CallV2NegotiationEffectExecutor
   /// The same tail used by initial SDP and the single ICE listener.
   @override
   Future<void> serialize(Future<void> Function() job) {
+    _optionalJobs++;
     final result = _tail.then<void>((_) async {
-      if (current) await job();
+      final completingCommit =
+          _optionalCommitPending &&
+          _switch?.machine.phase == MediaSwitchPhase.committed;
+      var completed = false;
+      try {
+        if (current) {
+          await job();
+          completed = true;
+        }
+      } finally {
+        _optionalJobs--;
+        if (completed && completingCommit && current) {
+          _optionalCommitPending = false;
+        }
+      }
     });
     _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return result;
@@ -143,12 +169,15 @@ final class CallV2NegotiationEffectExecutor
   @override
   Future<bool> freshUpgradeAuthority() async {
     if (!current) return false;
+    _optionalAuthority++;
     try {
       await _freshAuthority();
+      return current;
     } catch (_) {
       return false;
+    } finally {
+      _optionalAuthority--;
     }
-    return current;
   }
 
   @override
@@ -231,6 +260,9 @@ final class CallV2NegotiationEffectExecutor
     required bool Function() canApply,
   }) {
     final kind = effect.replayOf ?? effect.kind;
+    if (effect.kind == MediaSwitchEffectKind.sendAck) {
+      _optionalCommitPending = true;
+    }
     final (event, payload) = switch (kind) {
       MediaSwitchEffectKind.sendRequest => (
         CallSignalV2Type.mediaRequest,
@@ -370,13 +402,18 @@ final class CallV2NegotiationEffectExecutor
         _allowed(captured.canApply) &&
         _allowed(canApply);
     if (!valid()) return false;
-    final delivered = await sendSignal(
-      signal: captured.signal,
-      callHandle: _context!.callHandle,
-      admittedEndpoint: _originalEndpoint!,
-      canApply: valid,
-    );
-    return delivered && valid();
+    _optionalSends++;
+    try {
+      final delivered = await sendSignal(
+        signal: captured.signal,
+        callHandle: _context!.callHandle,
+        admittedEndpoint: _originalEndpoint!,
+        canApply: valid,
+      );
+      return delivered && valid();
+    } finally {
+      _optionalSends--;
+    }
   }
 
   IncomingCallSignalOutcome _handleSwitch(_V2MediaWork work) {
@@ -452,11 +489,14 @@ final class CallV2NegotiationEffectExecutor
           media: CallMediaKind.values.byName(p['media']! as String),
         );
       case CallSignalV2Type.mediaCommitAck:
+        final alreadyCommitted =
+            owner.machine.phase == MediaSwitchPhase.committed;
         accepted = owner.receiveAck(
           id: p['switch_id']! as String,
           revision: p['media_revision']! as int,
           media: CallMediaKind.values.byName(p['media']! as String),
         );
+        if (accepted && !alreadyCommitted) _optionalCommitPending = true;
       case CallSignalV2Type.mediaAbort:
         accepted = owner.abort(
           id: p['switch_id']! as String,
@@ -525,6 +565,10 @@ final class CallV2NegotiationEffectExecutor
       return await legacy.execute(effect, snapshot);
     }
     if (!videoEnabled || !_callCurrent() || _failed) return null;
+    if (_initialCommitted && snapshot.state == CallState.reconnecting) {
+      _executeRecovery(effect, snapshot);
+      return null;
+    }
     if (context?.initialAcceptedMedia == null ||
         !_initialPhase(snapshot.state)) {
       return null;
@@ -563,8 +607,7 @@ final class CallV2NegotiationEffectExecutor
           return null;
         });
       default:
-        // Later switch/recovery work must use this same owner. Until its unit
-        // supplies that behavior, v2 never falls through to v1 signaling.
+        // V2 effects never fall through to v1 signaling.
         return null;
     }
   }
@@ -585,8 +628,29 @@ final class CallV2NegotiationEffectExecutor
         !_bindContext(context) ||
         !_sameSignalBinding(signal, callHandle) ||
         !_allowed(canApply) ||
-        signal.expiresAtMs <= _nowMs ||
-        signal.iceGeneration != legacy.engine.iceGeneration ||
+        signal.expiresAtMs <= _nowMs) {
+      return IncomingCallSignalOutcome.rejected;
+    }
+    if (_initialCommitted &&
+        (signal.event == CallSignalV2Type.iceRestart ||
+            ((signal.event == CallSignalV2Type.offer ||
+                    signal.event == CallSignalV2Type.answer) &&
+                signal.payload['purpose'] == 'ice_restart'))) {
+      return _handleRecovery(_V2MediaWork(signal, callHandle, canApply));
+    }
+    if (_initialCommitted &&
+        signal.event == CallSignalV2Type.ice &&
+        context.direction == CallDirection.incoming &&
+        signal.iceGeneration == legacy.engine.iceGeneration + 1 &&
+        _recoveryIngress.values.any(
+          (work) =>
+              work.signal.iceGeneration == signal.iceGeneration &&
+              work.signal.payload['negotiation_id'] ==
+                  signal.payload['negotiation_id'],
+        )) {
+      return IncomingCallSignalOutcome.deferred;
+    }
+    if (signal.iceGeneration != legacy.engine.iceGeneration ||
         (_negotiationIceGeneration != null &&
             signal.iceGeneration != _negotiationIceGeneration)) {
       return IncomingCallSignalOutcome.rejected;
@@ -707,6 +771,522 @@ final class CallV2NegotiationEffectExecutor
     _localCandidates.addLast(_V2LocalCandidate(token, candidate));
     _scheduleLocalDrain();
     return true;
+  }
+
+  IncomingCallSignalOutcome _handleRecovery(_V2MediaWork work) {
+    final snapshot = _snapshot;
+    final signal = work.signal;
+    final payload = signal.payload;
+    if (snapshot == null ||
+        (snapshot.state != CallState.connected &&
+            snapshot.state != CallState.reconnecting) ||
+        _token == null) {
+      return IncomingCallSignalOutcome.rejected;
+    }
+    final recovery = _recovery;
+    final caller = _context!.direction == CallDirection.outgoing;
+    final revision = _switch?.machine.settledRevision ?? _token!.mediaRevision;
+    final media = _switch?.machine.settledMedia ?? _token!.media;
+    if (payload['media_revision'] != revision ||
+        (signal.event != CallSignalV2Type.iceRestart &&
+            payload['media'] != media.name)) {
+      return IncomingCallSignalOutcome.rejected;
+    }
+    final negotiation = payload['negotiation_id'];
+    final generation = legacy.engine.iceGeneration;
+    if (signal.event == CallSignalV2Type.answer) {
+      if (!caller ||
+          recovery == null ||
+          recovery.negotiationId != negotiation ||
+          signal.iceGeneration != recovery.oldGeneration + 1 ||
+          recovery.localDescription == null) {
+        return IncomingCallSignalOutcome.rejected;
+      }
+      if (recovery.completed && snapshot.state == CallState.connected) {
+        return IncomingCallSignalOutcome.duplicate;
+      }
+    } else if (caller) {
+      if (signal.event != CallSignalV2Type.iceRestart ||
+          signal.iceGeneration != generation ||
+          negotiation != _token!.negotiationId) {
+        return IncomingCallSignalOutcome.rejected;
+      }
+    } else {
+      final matching =
+          recovery != null &&
+          recovery.negotiationId == negotiation &&
+          signal.iceGeneration == recovery.oldGeneration + 1;
+      if (matching &&
+          recovery.completed &&
+          snapshot.state == CallState.connected) {
+        return IncomingCallSignalOutcome.duplicate;
+      }
+      if (!matching && signal.iceGeneration != generation + 1) {
+        return IncomingCallSignalOutcome.rejected;
+      }
+      if (recovery != null &&
+          snapshot.state == CallState.reconnecting &&
+          recovery.negotiationId != null &&
+          !matching) {
+        return IncomingCallSignalOutcome.rejected;
+      }
+    }
+    final episode =
+        snapshot.reconnectGeneration +
+        (snapshot.state == CallState.connected ? 1 : 0);
+    if (_recoveryIngressEpisode != episode) {
+      _recoveryIngress.clear();
+      _recoveryIngressEpisode = episode;
+    }
+    final existing = _recoveryIngress[signal.event];
+    if (existing != null) {
+      final previous = existing.signal;
+      return previous.iceGeneration == signal.iceGeneration &&
+              previous.payload.length == payload.length &&
+              payload.keys.every((key) => previous.payload[key] == payload[key])
+          ? IncomingCallSignalOutcome.duplicate
+          : IncomingCallSignalOutcome.rejected;
+    }
+    if (!caller &&
+        _recoveryIngress.values.any(
+          (other) =>
+              other.signal.payload['negotiation_id'] != negotiation ||
+              other.signal.iceGeneration != signal.iceGeneration,
+        )) {
+      return IncomingCallSignalOutcome.rejected;
+    }
+    _recoveryIngress[signal.event] = work;
+    if (_seenIncoming.length < 128) _seenIncoming.add(signal.messageId);
+    _track(
+      Future<void>.microtask(() async {
+        final current = _snapshot;
+        if (!_callCurrent() ||
+            !_allowed(work.canApply) ||
+            signal.expiresAtMs <= _nowMs ||
+            current == null ||
+            !((current.state == CallState.connected &&
+                    current.reconnectGeneration + 1 == episode) ||
+                (current.state == CallState.reconnecting &&
+                    current.reconnectGeneration == episode))) {
+          return;
+        }
+        await legacy.dispatchEvent(_remoteEvent(work));
+      }).catchError((Object _) async {
+        final current = _snapshot;
+        if (current == null ||
+            !((current.state == CallState.connected &&
+                    current.reconnectGeneration + 1 == episode) ||
+                (current.state == CallState.reconnecting &&
+                    current.reconnectGeneration == episode))) {
+          return;
+        }
+        final failure = _failure(snapshot);
+        if (failure != null) await _dispatchSafely(failure);
+      }),
+    );
+    return IncomingCallSignalOutcome.accepted;
+  }
+
+  void _executeRecovery(CallEffect effect, CallSessionSnapshot snapshot) {
+    if (!_ready || _session == null || _token == null) return;
+    if (!const {
+      CallEffectType.restartIce,
+      CallEffectType.requestIceRestart,
+      CallEffectType.resumeRecoverySignals,
+      CallEffectType.deliverOffer,
+      CallEffectType.deliverAnswer,
+    }.contains(effect.type)) {
+      return;
+    }
+    var recovery = _recovery;
+    if (recovery == null ||
+        recovery.snapshot.reconnectGeneration != snapshot.reconnectGeneration) {
+      final machine = _switch?.machine;
+      final settled =
+          machine == null ||
+          const {
+            null,
+            MediaSwitchPhase.committed,
+            MediaSwitchPhase.declined,
+            MediaSwitchPhase.superseded,
+          }.contains(machine.phase);
+      final pending =
+          !settled ||
+          machine?.requiresReconciliation == true ||
+          _optionalJobs != 0 ||
+          _optionalSends != 0 ||
+          _optionalAuthority != 0 ||
+          _optionalCommitPending;
+      _pendingTakeoverBlocked = _pendingTakeoverBlocked || pending;
+      _recovery?.timer?.cancel();
+      final old = _token!;
+      recovery = _V2Recovery(
+        snapshot: snapshot,
+        oldToken: old,
+        epoch: ++_epoch,
+        oldGeneration: legacy.engine.iceGeneration,
+        media: machine?.settledMedia ?? old.media,
+        revision: machine?.settledRevision ?? old.mediaRevision,
+        deadlineMs: _monotonicMs + 15000,
+        blocked: _pendingTakeoverBlocked,
+      );
+      _recovery = recovery;
+      _mediaRetired = true;
+      _awaitingOptionalOffer = false;
+      _optionalTokenCurrent = null;
+      _localAnnounced = false;
+      _remoteApplied = false;
+      _localCandidates.clear();
+      _remoteCandidates.clear();
+      legacy.rearmMediaRecoveryObservation(snapshot);
+      // Retirement closes capture synchronously, even behind pending native work.
+      recovery.retirement = _session!.retireVideo().then(
+        (closed) => closed,
+        onError: (Object _, StackTrace _) => false,
+      );
+      _track(recovery.retirement!.then<void>((_) {}));
+    }
+    if (recovery.blocked) return;
+    final id = snapshot.recentEventIds.isEmpty
+        ? null
+        : snapshot.recentEventIds.last;
+    final incoming = _recoveryIngress.values.where(
+      (work) => work.signal.messageId == id,
+    );
+    final work = incoming.isEmpty ? null : incoming.first;
+    recovery.authorityWork ??= work;
+    if (_context!.direction == CallDirection.incoming && work != null) {
+      recovery.negotiationId ??=
+          work.signal.payload['negotiation_id']! as String;
+    }
+    if (work?.signal.event == CallSignalV2Type.offer ||
+        work?.signal.event == CallSignalV2Type.answer) {
+      recovery.remoteWork ??= work;
+    }
+    _scheduleRecovery(recovery);
+  }
+
+  bool _recoveryCurrent(_V2Recovery recovery) {
+    final snapshot = _snapshot;
+    final authority = recovery.authorityWork;
+    return identical(recovery, _recovery) &&
+        !_closed &&
+        !_failed &&
+        !recovery.blocked &&
+        !_pendingTakeoverBlocked &&
+        _epoch == recovery.epoch &&
+        _callCurrent() &&
+        !legacy.engine.isClosed &&
+        (authority == null ||
+            (_allowed(authority.canApply) &&
+                authority.signal.expiresAtMs > _nowMs &&
+                _sameSignalBinding(authority.signal, authority.callHandle))) &&
+        _validEndpoint(_originalEndpoint!) &&
+        snapshot?.state == CallState.reconnecting &&
+        snapshot?.reconnectGeneration ==
+            recovery.snapshot.reconnectGeneration &&
+        _monotonicMs < recovery.deadlineMs;
+  }
+
+  bool _recoveryTokenCurrent(_V2Recovery recovery) =>
+      _epoch == recovery.epoch &&
+      legacy.engine.iceGeneration == recovery.oldGeneration + 1 &&
+      (_recoveryCurrent(recovery) ||
+          (recovery.completed &&
+              _ready &&
+              !_pendingTakeoverBlocked &&
+              _snapshot?.state == CallState.connected &&
+              _snapshot?.reconnectGeneration ==
+                  recovery.snapshot.reconnectGeneration));
+
+  void _checkRecovery(_V2Recovery recovery, [_V2MediaWork? work]) {
+    if (!_recoveryCurrent(recovery) ||
+        (work != null &&
+            (!_allowed(work.canApply) ||
+                work.signal.expiresAtMs <= _nowMs ||
+                !_sameSignalBinding(work.signal, work.callHandle) ||
+                work.signal.iceGeneration != recovery.oldGeneration + 1 ||
+                work.signal.payload['negotiation_id'] !=
+                    recovery.negotiationId))) {
+      throw const _V2WorkRetired();
+    }
+  }
+
+  void _scheduleRecovery(_V2Recovery recovery) {
+    if (!_recoveryCurrent(recovery)) return;
+    recovery.needsDrive = true;
+    if (recovery.scheduled) return;
+    recovery.scheduled = true;
+    final result = _tail.then<CallEvent?>((_) async {
+      try {
+        while (_recoveryCurrent(recovery) && recovery.needsDrive) {
+          recovery.needsDrive = false;
+          await _driveRecovery(recovery);
+        }
+      } on _V2WorkRetired {
+        // Canonical End, timeout or successor episode owns retirement.
+      } catch (_) {
+        if (_recoveryCurrent(recovery)) return _failure(recovery.snapshot);
+      } finally {
+        recovery.scheduled = false;
+      }
+      return null;
+    });
+    _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _track(
+      result.then<void>((failure) async {
+        if (failure != null) await _dispatchSafely(failure);
+      }),
+    );
+  }
+
+  Future<void> _prepareRecovery(_V2Recovery recovery) async {
+    if (recovery.prepared) return;
+    _checkRecovery(recovery);
+    if (!await recovery.retirement!) {
+      recovery.blocked = true;
+      return;
+    }
+    _checkRecovery(recovery);
+    final session = _session!;
+    if (session is! CallVideoSdpReconciler) {
+      recovery.blocked = true;
+      return;
+    }
+    final proof = await (session as CallVideoSdpReconciler).reconcilePending(
+      recovery.oldToken,
+      canApply: () => _recoveryCurrent(recovery),
+    );
+    _checkRecovery(recovery);
+    if (proof == CallVideoSdpReconciliationOutcome.unreconciled) {
+      recovery.blocked = true;
+      return;
+    }
+    await _freshAuthority();
+    _checkRecovery(recovery);
+    final staged = await legacy.readStagedIceServers(callId);
+    _checkRecovery(recovery);
+    final now = legacy.clock().toUtc();
+    final servers = [
+      ...legacy.configuration.iceServers,
+      ...staged,
+    ].where((server) => server.expiresAt.isAfter(now)).toList(growable: false);
+    if (legacy.configuration.transportPolicy == CallTransportPolicy.relayOnly &&
+        !servers.any((server) => server.containsTurnUrl)) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.iceServersUnavailable,
+      );
+    }
+    final generation = await legacy.engine.restartIce(iceServers: servers);
+    _checkRecovery(recovery);
+    if (generation != recovery.oldGeneration + 1) throw const _V2WorkRetired();
+    _negotiationIceGeneration = generation;
+    // Prior-generation media messages are rejected before custody. Retire their
+    // bounded identity ledger so later recovery episodes can admit fresh ICE.
+    _seenIncoming.clear();
+    recovery.negotiationId ??= idSource();
+    _token = session.beginNegotiation(
+      negotiationId: recovery.negotiationId!,
+      mediaRevision: recovery.revision,
+      media: recovery.media,
+      canApply: () => _recoveryTokenCurrent(recovery),
+    );
+    _optionalTokenCurrent = () => _recoveryTokenCurrent(recovery);
+    _mediaRetired = false;
+    recovery.prepared = true;
+  }
+
+  Future<void> _driveRecovery(_V2Recovery recovery) async {
+    _checkRecovery(recovery);
+    final candidate = recovery.candidateSignal;
+    if (candidate != null && await _deliverRecovery(recovery, candidate)) {
+      recovery.candidateSignal = null;
+      _scheduleLocalDrain();
+    }
+    if (recovery.completed) return;
+    final caller = _context!.direction == CallDirection.outgoing;
+    if (!caller && recovery.negotiationId == null) {
+      recovery.requestSignal ??=
+          _recoverySignal(recovery, CallSignalV2Type.iceRestart, {
+            'negotiation_id': recovery.oldToken.negotiationId,
+            'media_revision': recovery.revision,
+          }, generation: recovery.oldGeneration);
+      if (!recovery.requestDelivered) {
+        recovery.requestDelivered = await _deliverRecovery(
+          recovery,
+          recovery.requestSignal!,
+        );
+      }
+      return;
+    }
+    await _prepareRecovery(recovery);
+    if (recovery.blocked) return;
+    _checkRecovery(recovery);
+    final token = _token!;
+    if (caller) {
+      recovery.announcement ??=
+          _recoverySignal(recovery, CallSignalV2Type.iceRestart, {
+            'negotiation_id': token.negotiationId,
+            'media_revision': token.mediaRevision,
+          });
+      if (!recovery.announcementDelivered) {
+        if (!await _deliverRecovery(recovery, recovery.announcement!)) return;
+        recovery.announcementDelivered = true;
+      }
+      if (recovery.localDescription == null) {
+        final offer = await _session!.createOffer(token);
+        _checkRecovery(recovery);
+        _validateDescription(offer, CallSessionDescriptionType.offer);
+        await _session!.applyLocal(token, offer);
+        _checkRecovery(recovery);
+        recovery.localDescription = offer;
+      }
+      if (!await _publishRecoveryDescription(recovery)) return;
+      final work = recovery.remoteWork;
+      if (work == null) return;
+      if (!recovery.remoteApplied) {
+        _checkRecovery(recovery, work);
+        await _session!.applyRemote(token, _description(work.signal));
+        _checkRecovery(recovery, work);
+        recovery.remoteApplied = true;
+        _remoteApplied = true;
+        await _flushRemoteCandidates();
+        _checkRecovery(recovery, work);
+      }
+    } else {
+      final work = recovery.remoteWork;
+      if (work == null) return;
+      _checkRecovery(recovery, work);
+      if (!recovery.remoteApplied) {
+        await _session!.applyRemote(token, _description(work.signal));
+        _checkRecovery(recovery, work);
+        recovery.remoteApplied = true;
+        _remoteApplied = true;
+        await _flushRemoteCandidates();
+        _checkRecovery(recovery, work);
+      }
+      if (recovery.localDescription == null) {
+        final answer = await _session!.createAnswer(token);
+        _checkRecovery(recovery, work);
+        _validateDescription(answer, CallSessionDescriptionType.answer);
+        await _session!.applyLocal(token, answer);
+        _checkRecovery(recovery, work);
+        recovery.localDescription = answer;
+      }
+      if (!await _publishRecoveryDescription(recovery)) return;
+    }
+    await _session!.commit(token);
+    _checkRecovery(recovery, recovery.remoteWork);
+    recovery.completed = true;
+    if (recovery.candidateSignal == null) {
+      recovery.timer?.cancel();
+      recovery.timer = null;
+    }
+    legacy.deferMediaRecoveryObservation(
+      recovery.snapshot,
+      legacy.engine.iceGeneration,
+    );
+  }
+
+  Future<bool> _publishRecoveryDescription(_V2Recovery recovery) async {
+    if (recovery.localDelivered) return true;
+    final description = recovery.localDescription!;
+    recovery.descriptionSignal ??= _recoverySignal(
+      recovery,
+      description.type == CallSessionDescriptionType.offer
+          ? CallSignalV2Type.offer
+          : CallSignalV2Type.answer,
+      {
+        'negotiation_id': recovery.negotiationId!,
+        'purpose': 'ice_restart',
+        'switch_id': null,
+        'media_revision': recovery.revision,
+        'media': recovery.media.name,
+        'description': description.value,
+        'fingerprint': description.fingerprint,
+      },
+    );
+    if (!await _deliverRecovery(recovery, recovery.descriptionSignal!)) {
+      return false;
+    }
+    recovery.localDelivered = true;
+    _localAnnounced = true;
+    _scheduleLocalDrain();
+    return true;
+  }
+
+  CallSignalV2 _recoverySignal(
+    _V2Recovery recovery,
+    CallSignalV2Type event,
+    Map<String, Object?> payload, {
+    int? generation,
+  }) {
+    _checkRecovery(recovery);
+    final now = _nowMs;
+    final expires = min(
+      _originalEndpoint!.expiresAtMs,
+      now + recovery.deadlineMs - _monotonicMs,
+    );
+    if (expires <= now) throw const _V2WorkRetired();
+    final metadata = contexts.reserveNextMetadata(
+      callId,
+      iceGeneration: generation ?? legacy.engine.iceGeneration,
+    );
+    final context = _context!;
+    return CallSignalV2.fromMap({
+      'schema': CallSignalV2.schema,
+      'call_id': callId.value,
+      'message_id': idSource(),
+      'event': event.wireName,
+      'sender_account_peer_id': context.localAccountPeerId,
+      'sender_device_peer_id': context.localDevicePeerId,
+      'recipient_account_peer_id': context.remoteAccountPeerId,
+      'recipient_device_peer_id': context.remoteDevicePeerId,
+      'sender_sequence': metadata.senderSequence,
+      'ice_generation': metadata.iceGeneration,
+      'created_at_ms': now,
+      'expires_at_ms': expires,
+      'payload': payload,
+    }, videoEnabled: videoEnabled);
+  }
+
+  Future<bool> _deliverRecovery(
+    _V2Recovery recovery,
+    CallSignalV2 signal,
+  ) async {
+    _checkRecovery(recovery);
+    bool valid() =>
+        _recoveryCurrent(recovery) &&
+        signal.expiresAtMs > _nowMs &&
+        signal.iceGeneration == legacy.engine.iceGeneration;
+    var delivered = false;
+    try {
+      delivered = await sendSignal(
+        signal: signal,
+        callHandle: _context!.callHandle,
+        admittedEndpoint: _originalEndpoint!,
+        canApply: valid,
+      );
+    } on CallNegotiationPortException catch (error) {
+      if (error.code != CallNegotiationPortErrorCode.transportUnavailable) {
+        rethrow;
+      }
+    }
+    _checkRecovery(recovery);
+    if (delivered && valid()) return true;
+    if (recovery.timer?.isActive != true) {
+      final remaining = recovery.deadlineMs - _monotonicMs;
+      if (remaining > 0) {
+        recovery.timer = timerScheduler.schedule(
+          Duration(milliseconds: min(remaining, 500)),
+          () async {
+            recovery.timer = null;
+            _scheduleRecovery(recovery);
+          },
+        );
+      }
+    }
+    return false;
   }
 
   Future<CallEvent?> _startInitial(CallSessionSnapshot snapshot) async {
@@ -869,6 +1449,16 @@ final class CallV2NegotiationEffectExecutor
     if (candidateToken != null && !_candidateReady) {
       throw const _V2WorkRetired();
     }
+    final recovery = _recovery;
+    if (type == CallSignalV2Type.ice &&
+        recovery != null &&
+        _recoveryCurrent(recovery)) {
+      recovery.candidateSignal ??= _recoverySignal(recovery, type, payload);
+      if (await _deliverRecovery(recovery, recovery.candidateSignal!)) {
+        recovery.candidateSignal = null;
+      }
+      return;
+    }
     final now = _nowMs;
     final expires = min(
       now + 30000,
@@ -908,6 +1498,10 @@ final class CallV2NegotiationEffectExecutor
           (work == null || _workCurrent(work)),
     );
     _check(work);
+    if (candidateToken != null &&
+        (!_candidateReady || !identical(candidateToken, _token))) {
+      throw const _V2WorkRetired();
+    }
     if (!sent) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.transportUnavailable,
@@ -919,6 +1513,8 @@ final class CallV2NegotiationEffectExecutor
     if (!_candidateReady ||
         !_localAnnounced ||
         _localDrainScheduled ||
+        (_recovery?.candidateSignal != null &&
+            _snapshot?.state == CallState.reconnecting) ||
         _localCandidates.isEmpty) {
       return;
     }
@@ -1224,9 +1820,11 @@ final class CallV2NegotiationEffectExecutor
       );
 
   CallEvent _remoteEvent(_V2MediaWork work) => CallEvent(
-    type: work.signal.event == CallSignalV2Type.offer
-        ? CallEventType.remoteOffer
-        : CallEventType.remoteAnswer,
+    type: switch (work.signal.event) {
+      CallSignalV2Type.iceRestart => CallEventType.remoteIceRestart,
+      CallSignalV2Type.offer => CallEventType.remoteOffer,
+      _ => CallEventType.remoteAnswer,
+    },
     eventId: work.signal.messageId,
     occurredAt: DateTime.fromMillisecondsSinceEpoch(
       work.signal.createdAtMs,
@@ -1284,6 +1882,8 @@ final class CallV2NegotiationEffectExecutor
 
   Future<void> _close() async {
     _closed = true;
+    _recovery?.timer?.cancel();
+    _recoveryIngress.clear();
     _switch?.terminate();
     _epoch++;
     _initialTimer?.cancel();
@@ -1303,6 +1903,45 @@ final class CallV2NegotiationEffectExecutor
 
   @override
   String toString() => 'CallV2NegotiationEffectExecutor';
+}
+
+final class _V2Recovery {
+  _V2Recovery({
+    required this.snapshot,
+    required this.oldToken,
+    required this.epoch,
+    required this.oldGeneration,
+    required this.media,
+    required this.revision,
+    required this.deadlineMs,
+    required this.blocked,
+  });
+  final CallSessionSnapshot snapshot;
+  final CallVideoNegotiation oldToken;
+  final int epoch;
+  final int oldGeneration;
+  final CallMediaKind media;
+  final int revision;
+  final int deadlineMs;
+  bool blocked;
+  bool scheduled = false;
+  bool needsDrive = false;
+  bool prepared = false;
+  bool requestDelivered = false;
+  bool announcementDelivered = false;
+  bool remoteApplied = false;
+  bool localDelivered = false;
+  bool completed = false;
+  String? negotiationId;
+  Future<bool>? retirement;
+  _V2MediaWork? remoteWork;
+  _V2MediaWork? authorityWork;
+  CallSessionDescription? localDescription;
+  CallSignalV2? requestSignal;
+  CallSignalV2? announcement;
+  CallSignalV2? descriptionSignal;
+  CallSignalV2? candidateSignal;
+  CallTimerHandle? timer;
 }
 
 final class _V2MediaWork {
