@@ -528,6 +528,12 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
+    final terminalRetryRepo = messageRepo is MessageAutoRetryTerminalRepository
+        ? messageRepo as MessageAutoRetryTerminalRepository
+        : null;
+    if (manualRetry) {
+      await terminalRetryRepo?.setAutoRetryTerminalReason(msg, null);
+    }
     // 356: an exact mutation outbox owner is stronger than the older v108
     // direct-event owner. Resolve the list-loaded event first so an ownerless
     // deletion refuses without any weaker lookup, while a surviving edit gets
@@ -1239,6 +1245,10 @@ Future<bool> _retryFailedMessageCandidate({
     // preserves the receiver staleness-gate ordering), and plain rows keep
     // their original createdAt instead of re-minting it.
     final retryAction = deriveRetryAction(msg);
+    if (!manualRetry &&
+        await terminalRetryRepo?.isAutoRetryTerminal(msg.id) == true) {
+      return false;
+    }
     final (result, _) = await sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -1278,6 +1288,9 @@ Future<bool> _retryFailedMessageCandidate({
       return true;
     }
 
+    if (result == SendChatMessageResult.invalidMessage) {
+      await terminalRetryRepo?.setAutoRetryTerminalReason(msg, 'invalid_message');
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_FAILED_MESSAGE_STILL_FAILED',

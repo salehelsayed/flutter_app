@@ -33,6 +33,7 @@ import '../../domain/repositories/message_repository.dart';
 class MessageRepositoryImpl
     implements
         MessageRepository,
+        MessageAutoRetryTerminalRepository,
         AuthoredDirectTextIntentRepository,
         IncomingQuietRecoveryRepository,
         DirectPrivateMediaLifecycleRepository,
@@ -73,6 +74,9 @@ class MessageRepositoryImpl
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
   final Future<void> Function(ConversationMessage expected)?
   dbMarkIncomingQuietRecovery;
+  final Future<bool> Function(String messageId)? dbIsMessageAutoRetryTerminal;
+  final Future<void> Function(ConversationMessage expected, String? reason)?
+  dbSetMessageAutoRetryTerminalReason;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
   final Future<int> Function(String contactPeerId) dbMarkConversationAsRead;
   final Future<int> Function(String contactPeerId)? projectConversationRead;
@@ -490,6 +494,8 @@ class MessageRepositoryImpl
     required this.dbUpdateMessageStatus,
     required this.dbLoadMessage,
     this.dbMarkIncomingQuietRecovery,
+    this.dbIsMessageAutoRetryTerminal,
+    this.dbSetMessageAutoRetryTerminalReason,
     required this.dbCountMessagesForContact,
     required this.dbMarkConversationAsRead,
     this.projectConversationRead,
@@ -2261,6 +2267,18 @@ class MessageRepositoryImpl
         details: {'error': error.toString()},
       );
     }
+  }
+
+  @override
+  Future<bool> isAutoRetryTerminal(String messageId) async =>
+      await dbIsMessageAutoRetryTerminal?.call(messageId) ?? false;
+
+  @override
+  Future<void> setAutoRetryTerminalReason(
+    ConversationMessage expected,
+    String? reason,
+  ) async {
+    await dbSetMessageAutoRetryTerminalReason?.call(expected, reason);
   }
 
   @override

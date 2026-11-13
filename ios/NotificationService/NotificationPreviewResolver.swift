@@ -180,6 +180,83 @@ func sanitizeNotificationContentForUnresolvedExpiry(
   }
 }
 
+// Closed local diagnostic vocabulary. No bridge text, identifiers or payloads.
+func nseDecryptFailureReason(error: Error, kind: String) -> String {
+  switch error {
+  case NotificationPreviewError.bridgeUnavailable:
+    return "\(kind)_bridge_unavailable"
+  case NotificationPreviewError.invalidBridgeInput,
+       NotificationPreviewError.invalidBridgeResponse:
+    return "\(kind)_bridge_invalid"
+  default:
+    return "\(kind)_decrypt_error"
+  }
+}
+
+func nseDecryptFailureClass(kind: String, reason: String) -> String? {
+  let reasons: [String: [String: Set<String>]] = [
+    "chat": [
+      "missing_key": ["missing_chat_secret"],
+      "missing_input": ["missing_chat_decrypt_input"],
+      "plaintext": ["chat_plaintext_parity_mismatch"],
+      "policy": ["chat_recipient_policy_rejected", "chat_preview_unavailable_route_rejected"],
+    ],
+    "thought": [
+      "missing_key": ["missing_thought_secret"],
+      "missing_input": ["missing_thought_decrypt_input", "missing_thought_post_id"],
+      "plaintext": ["thought_plaintext_parity_mismatch"],
+      "policy": ["thought_recipient_policy_rejected", "thoughts_hidden", "thought_notifications_disabled", "thought_expired"],
+    ],
+    "reaction": [
+      "missing_key": ["missing_reaction_secret"],
+      "missing_input": ["missing_reaction_input"],
+      "plaintext": ["reaction_parity_mismatch"],
+      "policy": ["reaction_not_add", "reaction_unknown_contact", "reaction_blocked_contact", "reaction_recipient_projection_rejected", "reaction_archived_contact", "reaction_target_not_locally_authored"],
+    ],
+    "group_reaction": [
+      "missing_key": ["group_reaction_missing_key"],
+      "missing_input": ["group_reaction_missing_input"],
+      "plaintext": ["group_reaction_parity_mismatch", "group_reaction_invalid_extension"],
+      "policy": ["group_reaction_not_add", "group_reaction_missing_projection", "group_reaction_unknown_group", "group_reaction_invalid_group_type", "group_reaction_muted", "group_reaction_archived", "group_reaction_dissolved", "group_reaction_key_epoch_mismatch", "group_reaction_local_member_missing", "group_reaction_self", "group_reaction_actor_missing", "group_reaction_target_not_locally_authored", "group_reaction_stale_state"],
+    ],
+    "group": [
+      "missing_key": ["missing_group_key"],
+      "missing_input": ["missing_group_decrypt_input"],
+      "plaintext": ["invalid_group_plaintext", "group_plaintext_parity_mismatch"],
+      "policy": ["group_recipient_policy_rejected", "group_sender_not_authorized", "group_preview_unavailable_route_rejected"],
+    ],
+    "mailbox": [:],
+  ]
+  guard let classes = reasons[kind] else { return nil }
+  if reason == "\(kind)_bridge_unavailable" { return "bridge_unavailable" }
+  if reason == "\(kind)_bridge_invalid" { return "plaintext" }
+  if reason == "\(kind)_decrypt_error" { return "crypto" }
+  for (failureClass, values) in classes where values.contains(reason) {
+    return failureClass
+  }
+  return "unknown"
+}
+
+func nseAppDecryptFailureReason(kind: String, reason: String) -> String {
+  switch nseDecryptFailureClass(kind: kind, reason: reason) {
+  case "bridge_unavailable": return "bridge_unavailable"
+  case "missing_key": return "recipient_key_missing"
+  case "missing_input", "plaintext": return "invalid_payload"
+  default: return "unknown"
+  }
+}
+
+func nsePreviewTechnicalFailureReason(_ preview: NotificationPreviewResult?) -> String? {
+  guard let preview, !preview.didDecrypt else { return nil }
+  for kind in ["chat", "thought", "reaction", "group_reaction", "group"] {
+    if let failureClass = nseDecryptFailureClass(kind: kind, reason: preview.reason),
+       !["unknown", "policy"].contains(failureClass) {
+      return nseAppDecryptFailureReason(kind: kind, reason: preview.reason)
+    }
+  }
+  return nil
+}
+
 func nsePublicProofPayload(
   event: String,
   details: [String: String]
@@ -214,31 +291,9 @@ func nsePublicProofPayload(
     }
   case "PUSH_NSE_DECRYPT_OK", "PUSH_NSE_DECRYPT_FAIL", "PUSH_NSE_TIMEOUT":
     if event == "PUSH_NSE_DECRYPT_FAIL",
-       details["kind"] == "group" {
-      let failureClass: String?
-      switch details["reason"] {
-      case "missing_group_decrypt_input":
-        failureClass = "missing_input"
-      case "missing_group_key":
-        failureClass = "missing_key"
-      case "group_decrypt_error":
-        failureClass = "crypto"
-      case "invalid_group_plaintext", "group_plaintext_parity_mismatch":
-        failureClass = "plaintext"
-      case "group_recipient_policy_rejected", "group_sender_not_authorized",
-        "group_preview_unavailable_route_rejected":
-        failureClass = "policy"
-      default:
-        failureClass = nil
-      }
-      if let failureClass {
-        publicDetails = [
-          "failureClass": failureClass,
-          "kind": "group",
-        ]
-      } else {
-        publicDetails = [:]
-      }
+       let kind = details["kind"],
+       let failureClass = nseDecryptFailureClass(kind: kind, reason: details["reason"] ?? "") {
+      publicDetails = ["failureClass": failureClass, "kind": kind]
     } else {
       publicDetails = [:]
     }
@@ -761,7 +816,7 @@ final class NotificationPreviewResolver {
         title: contact.username,
         body: "New message",
         threadIdentifier: senderPeerId,
-        reason: "chat_decrypt_error",
+        reason: nseDecryptFailureReason(error: error, kind: "chat"),
         eventKind: "chat"
       )
     }
@@ -849,7 +904,7 @@ final class NotificationPreviewResolver {
         nonce: nonce
       )
     } catch {
-      return suppress("thought_decrypt_error")
+      return suppress(nseDecryptFailureReason(error: error, kind: "thought"))
     }
     guard let thought = ThoughtPreviewPlaintext(json: plaintext),
           thought.authorPeerId == senderPeerId,
@@ -1029,7 +1084,7 @@ final class NotificationPreviewResolver {
       return reactionFallback(
         threadIdentifier: senderPeerId,
         eventId: eventId,
-        reason: "reaction_decrypt_error",
+        reason: nseDecryptFailureReason(error: error, kind: "reaction"),
         trustedTitle: contact.username
       )
     }
@@ -1320,7 +1375,7 @@ final class NotificationPreviewResolver {
       return groupReactionFallback(
         groupId: groupId,
         eventId: eventId,
-        reason: "group_reaction_decrypt_error",
+        reason: nseDecryptFailureReason(error: error, kind: "group_reaction"),
         trustedGroupName: group.name,
         trustedActorName: reactor.username
       )
@@ -1560,7 +1615,7 @@ final class NotificationPreviewResolver {
         title: group.name,
         body: "New message",
         threadIdentifier: groupId,
-        reason: "group_decrypt_error",
+        reason: nseDecryptFailureReason(error: error, kind: "group"),
         eventKind: "group"
       )
     }

@@ -483,7 +483,9 @@ const _productionBootstrapNormalizedSha256 =
     // barriers at this same bootstrap owner; no relocation URI changes.
     // BL-14: the existing Thought expiry sweep callback also cancels the
     // cards of Thoughts kept hidden for the clock grace; no owner moves.
-    '5a4ddeaa74ee37ae5f65375ab61d23534aa4f1efaee72b67cb3d007e2fe15f51';
+    // BL-24C passes the durable invalid-retry marker store into the existing
+    // message retry wiring at this bootstrap owner (3 lines); no owner moves.
+    '09e170bb3d543a17cd98c70d2ade367b0a6c6b3ab3c195040f7c4601ae9d1d55';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -526,8 +528,9 @@ const _productionBootstrapNormalizedSha256 =
 // BL-17 rebases the same reviewed composition. The historical notification
 // callback remains byte-identical and unique; no existing owner relocates.
 // The same BL-14 sweep callback change leaves the historical callback exact.
+// The same BL-24C retry-marker wiring leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '6c38f541964ce80465f9cff3f2dbc7d580693ea0525d8c559a214a2b168b3407';
+    '69b140c3d2a08a52077461f035a63becd535933980b6a96073a1c41f3425e3fb';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

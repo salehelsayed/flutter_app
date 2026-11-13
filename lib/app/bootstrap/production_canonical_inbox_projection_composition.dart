@@ -1036,6 +1036,9 @@ MessageRepositoryImpl _buildMessageRepository(
         beforeTimestamp: beforeTimestamp,
       ),
   dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(database),
+  dbIsMessageAutoRetryTerminal: (id) => dbIsMessageAutoRetryTerminal(database, id),
+  dbSetMessageAutoRetryTerminalReason: (expected, reason) =>
+      dbSetMessageAutoRetryTerminalReason(database, expected.toMap(), reason),
   dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
       dbLoadUnackedOutgoingMessages(
         database,

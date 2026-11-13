@@ -70,7 +70,7 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 130);
+    expect(currentIdentityDatabaseVersion, 131);
     expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Registered exactly once in both registries, immediately after v111.
@@ -94,11 +94,17 @@ void main() {
       expect(registry.indexOf(entries.single), index111 + 1);
     }
 
-    // Every durable row survives byte-identically. The v113 successor appends
-    // nullable fanout columns to messages/v108, so those two compare on the
-    // v111 projection with the appended columns proven NULL.
+    // Every historical column survives byte-identically. Later migrations may
+    // append message fields; compare the captured v111 projection while still
+    // proving v113's owned fields NULL and quiet recovery's historical default.
     expect(await db.query('contacts'), v111Contacts);
-    expect(_withoutNullV113Columns(await db.query('messages')), v111Messages);
+    expect(
+      _withoutNullV113Columns(
+        await db.query('messages'),
+        historicalColumns: v111Messages.single.keys,
+      ),
+      v111Messages,
+    );
     expect(
       _withoutNullV113Columns(await db.query('direct_inbox_custody_outbox')),
       v111Custody,
@@ -209,8 +215,9 @@ const _v113Columns = <String>{
 };
 
 List<Map<String, Object?>> _withoutNullV113Columns(
-  List<Map<String, Object?>> rows,
-) => rows
+  List<Map<String, Object?>> rows, {
+  Iterable<String>? historicalColumns,
+}) => rows
     .map((row) {
       final projected = Map<String, Object?>.from(row);
       if (projected.containsKey('quiet_recovery')) {
@@ -226,6 +233,9 @@ List<Map<String, Object?>> _withoutNullV113Columns(
           isNull,
           reason: 'v113 never promotes historical rows ($column)',
         );
+      }
+      if (historicalColumns != null) {
+        projected.removeWhere((key, _) => !historicalColumns.contains(key));
       }
       return projected;
     })
