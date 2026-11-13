@@ -13,6 +13,7 @@ class CallVideoScreenLayout extends StatelessWidget {
     required this.presentation,
     required this.onIntent,
     this.topPadding = 16,
+    this.videoViews,
   });
 
   final Widget profile;
@@ -20,6 +21,7 @@ class CallVideoScreenLayout extends StatelessWidget {
   final CallVideoPresentation presentation;
   final ValueChanged<CallVideoIntent> onIntent;
   final double topPadding;
+  final Widget? videoViews;
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +36,10 @@ class CallVideoScreenLayout extends StatelessWidget {
           children: [
             profile,
             const SizedBox(height: 16),
+            if (videoViews != null) ...[
+              videoViews!,
+              const SizedBox(height: 16),
+            ],
             CallVideoControls(
               presentation: presentation,
               audioControls: audioControls,
