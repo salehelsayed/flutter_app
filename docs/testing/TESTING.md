@@ -11728,13 +11728,31 @@ visible and cannot become an ordinary first-attempt PASS.
   probe. The test-only correction starts close, releases the gate, then awaits
   the unreconciled result and close with every assertion retained. Production
   remains byte-identical to `711e7423d`.
-  Known limit: production close retires gates/token synchronously but waits
-  behind an in-flight native state probe in its serial tail. A hanging native
-  operation can delay close. The separate SDP-C unit must address read-only
-  probe waiting before activation; this fixture correction does not do so.
+  That fixture correction retained a known close-wait limit, subsequently
+  addressed by SDP-C at `eef24565e57e1f7b4c4c95cde9ad8af435c3e2a5`.
+  One idempotent close signal releases all five read-only signaling probes
+  (commit and both probes in legacy rollback and reconciliation). Each existing
+  post-await authority check still rejects a closed token; late native results
+  cannot publish or certify state, and late errors are consumed. Native
+  mutations, capture detach and resource cleanup remain serialized: close may
+  still wait for those operations. The native query itself is not cancelled.
+  The ten held-read cases require close and queued work to settle before the
+  probe is released, then cover late success/error, repeated close and owned
+  camera/renderer cleanup. Four controls preserve native rollback ordering and
+  errors that arrive before close. RED `513d89a3c` gives ten causal assertion
+  failures and four passing controls, without loader failures or timeouts.
+  GREEN passes all 68 session and 72 owner/engine cases, with zero
+  failures/errors/skips, successful reporter completion and child exits zero.
+  Eight clean HEAD/tree/lib boundaries match all 15 individual pins; both setup
+  deltas are empty. Analysis, metadata validation and explicit-base selection
+  preview pass; broader selected lanes remain unrun under the bounded scope.
+  Raw evidence is in the Claude-Dev checkout's `build/sdpc-proof/`, verified in
+  `/Users/I560101/.codex/investigations/video-sdp-c-20261113/runtime-verified.json`.
+  This resolves the read-probe wait within host proof, not native/device or
+  composed-video certification. The video gate remains off.
   All eight initial and three correction HEAD/tree/clean identity boundaries
   match 15 individual pins; correction boundaries also print the library tree.
-  Both setup deltas are empty. Initial analysis and metadata validation passed;
+  All setup deltas are empty. Initial analysis and metadata validation passed;
   corrected-test analysis passed. Raw evidence is in the Claude-Dev checkout's
   `build/sdp-proof/` and `build/sdpfix-proof/`, with independent verification in
   `/Users/I560101/.codex/investigations/video-sdp-reconcile-20261113/first-runtime-verified.json`

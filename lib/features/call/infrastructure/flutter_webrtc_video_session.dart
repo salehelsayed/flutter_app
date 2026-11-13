@@ -98,6 +98,7 @@ final class FlutterWebRtcVideoSession
   _Capture? _senderCapture;
   CallVideoCaptureIntent? _captureIntent;
   bool _closed = false;
+  final _closeSignal = Completer<void>();
   bool _receiveOpen = false;
   int _operations = 0;
   Future<void> _tail = Future<void>.value();
@@ -226,6 +227,18 @@ final class FlutterWebRtcVideoSession
     });
     _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return result;
+  }
+
+  // State reads need not delay hangup. Native mutations remain serialized;
+  // callers recheck session/token authority before using any returned state.
+  Future<webrtc.RTCSignalingState?> _readSignalingState(
+    webrtc.RTCPeerConnection connection,
+  ) {
+    if (_closed) return Future.value(null);
+    return Future.any<webrtc.RTCSignalingState?>([
+      connection.getSignalingState(),
+      _closeSignal.future.then((_) => null),
+    ]);
   }
 
   @override
@@ -434,7 +447,7 @@ final class FlutterWebRtcVideoSession
   Future<void> commit(CallVideoNegotiation raw) => _serial(() async {
     final token = _check(raw);
     if (token.local == null || token.remote == null) _reject();
-    final state = await _connection().getSignalingState();
+    final state = await _readSignalingState(_connection());
     _check(token);
     if (state != webrtc.RTCSignalingState.RTCSignalingStateStable) _reject();
     token.committed = true;
@@ -460,7 +473,7 @@ final class FlutterWebRtcVideoSession
       try {
         if (!current()) return failed;
         final connection = _connection();
-        final state = await connection.getSignalingState();
+        final state = await _readSignalingState(connection);
         if (!current()) return failed;
         if (state == webrtc.RTCSignalingState.RTCSignalingStateStable) {
           token.local = null;
@@ -482,7 +495,7 @@ final class FlutterWebRtcVideoSession
           return failed;
         }
         if (!current()) return failed;
-        final stable = await connection.getSignalingState();
+        final stable = await _readSignalingState(connection);
         if (!current() ||
             stable != webrtc.RTCSignalingState.RTCSignalingStateStable) {
           return failed;
@@ -511,7 +524,7 @@ final class FlutterWebRtcVideoSession
     return _serial(() async {
       if (_closed || !identical(_current, raw)) return false;
       final connection = _connection();
-      final state = await connection.getSignalingState();
+      final state = await _readSignalingState(connection);
       if (_closed || !identical(_current, raw)) return false;
       final localOffer = raw.local?.type == CallSessionDescriptionType.offer;
       final remoteOffer = raw.remote?.type == CallSessionDescriptionType.offer;
@@ -530,7 +543,7 @@ final class FlutterWebRtcVideoSession
         return false;
       }
       if (_closed || !identical(_current, raw)) return false;
-      final stable = await connection.getSignalingState();
+      final stable = await _readSignalingState(connection);
       if (_closed ||
           !identical(_current, raw) ||
           stable != webrtc.RTCSignalingState.RTCSignalingStateStable) {
@@ -835,6 +848,7 @@ final class FlutterWebRtcVideoSession
   @override
   Future<bool> close() async {
     _closed = true;
+    if (!_closeSignal.isCompleted) _closeSignal.complete();
     final cleanup = retireVideo();
     await _serial(() async {});
     final owned = await cleanup;
