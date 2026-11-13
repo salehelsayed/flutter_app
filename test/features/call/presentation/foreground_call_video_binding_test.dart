@@ -363,6 +363,79 @@ Future<void> _minimizePip(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 300));
 }
 
+ForegroundCallProjection _viewProjection({
+  _Phase phase = _Phase.active,
+  CallId? callId,
+  int generation = 7,
+  bool enabled = true,
+  CallWireVersion wire = CallWireVersion.v2,
+  CallMediaKind? accepted = CallMediaKind.video,
+  CallMediaKind agreed = CallMediaKind.video,
+  CallCameraState localCamera = CallCameraState.on,
+  CallCameraState remoteCamera = CallCameraState.on,
+  bool reconnecting = false,
+  CallState? state,
+  CallVideoView? local = const CallVideoView(
+    textureId: 11,
+    width: 640,
+    height: 480,
+  ),
+  CallVideoView? remote = const CallVideoView(
+    textureId: 22,
+    width: 1280,
+    height: 720,
+  ),
+}) {
+  final base = _projection(
+    phase: phase,
+    callId: callId,
+    state: state,
+    media: CallVideoPresentation.project(
+      videoEnabled: enabled,
+      wireVersion: wire,
+      requestedMedia: CallMediaKind.video,
+      acceptedMedia: accepted,
+      agreedMedia: agreed,
+      localCamera: localCamera,
+      remoteCamera: remoteCamera,
+      isConnected: !reconnecting,
+      isReconnecting: reconnecting,
+    ),
+  );
+  return ForegroundCallProjection(
+    session: base.session,
+    audio: base.audio,
+    video: ForegroundCallVideoProjection(
+      generation: generation,
+      presentation: base.video!.presentation,
+      localView: local,
+      remoteView: remote,
+    ),
+  );
+}
+
+List<int> _viewTextureIds(WidgetTester tester) => tester
+    .widgetList<Texture>(find.byType(Texture))
+    .map((texture) => texture.textureId)
+    .toList();
+
+Map<String, Object?> _viewAudioSignature(WidgetTester tester) {
+  final screen = find.byType(ActiveCallScreen);
+  final controls = tester.widget<CallControls>(find.byType(CallControls));
+  return {
+    'texts': tester
+        .widgetList<Text>(
+          find.descendant(of: screen, matching: find.byType(Text)),
+        )
+        .map((text) => text.data)
+        .toList(),
+    'controlsRect': tester.getRect(find.byType(CallControls)),
+    'muted': controls.isMuted,
+    'speaker': controls.isSpeakerOn,
+    'route': controls.selectedRoute,
+  };
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -948,7 +1021,11 @@ void main() {
           await tester.pump();
           expect(find.byType(ActiveCallScreen), findsOneWidget);
           expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
-          expect(find.byType(Texture), findsNothing);
+          expect(
+            find.byKey(const ValueKey('call-video-views')),
+            findsOneWidget,
+          );
+          expect(_viewTextureIds(tester), unorderedEquals([41, 99]));
           expect(
             tester.state<NavigatorState>(find.byType(Navigator).first),
             same(navigator),
@@ -1169,7 +1246,8 @@ void main() {
         cap.emit(_pipProjection(callId: _callB, generation: 8));
         await tester.pump();
         expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
-        expect(find.byType(Texture), findsNothing);
+        expect(find.byKey(const ValueKey('call-video-views')), findsOneWidget);
+        expect(_viewTextureIds(tester), unorderedEquals([41, 99]));
         expect(find.byType(ActiveCallScreen), findsOneWidget);
         expect(cap.audioCalls, isEmpty);
         expect(cap.videoCalls, isEmpty);
@@ -1379,5 +1457,369 @@ void main() {
         expect(cap.videoCalls, isEmpty);
       });
     });
+  });
+
+  group('U6-view screen', () {
+    testWidgets('renders both current owner textures without media effects', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_viewProjection());
+      await _withOverlay(tester, cap, (_) async {
+        expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+        expect(
+          find.bySemanticsIdentifier('call_video_view_local'),
+          findsOneWidget,
+        );
+        expect(
+          find.bySemanticsIdentifier('call_video_view_remote'),
+          findsOneWidget,
+        );
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+
+    testWidgets('local camera off preserves independent remote video', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_viewProjection());
+      await _withOverlay(tester, cap, (l10n) async {
+        expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+        cap.emit(_viewProjection(localCamera: CallCameraState.off));
+        await tester.pump();
+        expect(_viewTextureIds(tester), [22]);
+        expect(
+          tester
+              .getSemantics(find.bySemanticsIdentifier('call_video_view_local'))
+              .label,
+          l10n.call_video_local_camera_off,
+        );
+        cap.emit(
+          _viewProjection(
+            localCamera: CallCameraState.off,
+            remoteCamera: CallCameraState.paused,
+          ),
+        );
+        await tester.pump();
+        expect(_viewTextureIds(tester), isEmpty);
+        expect(
+          tester
+              .getSemantics(
+                find.bySemanticsIdentifier('call_video_view_remote'),
+              )
+              .label,
+          l10n.call_video_remote_camera_paused,
+        );
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+
+    testWidgets('replacement and null retirement remove prior metadata', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_viewProjection());
+      await _withOverlay(tester, cap, (_) async {
+        expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+        cap.emit(
+          _viewProjection(
+            generation: 8,
+            local: const CallVideoView(textureId: 33, width: 480, height: 640),
+            remote: const CallVideoView(
+              textureId: 44,
+              width: 720,
+              height: 1280,
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(_viewTextureIds(tester), unorderedEquals([33, 44]));
+        cap.emit(_viewProjection(generation: 8, local: null, remote: null));
+        await tester.pump();
+        expect(_viewTextureIds(tester), isEmpty);
+        expect(
+          find.bySemanticsIdentifier('call_video_view_local'),
+          findsOneWidget,
+        );
+        expect(
+          find.bySemanticsIdentifier('call_video_view_remote'),
+          findsOneWidget,
+        );
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+
+    testWidgets('false gate keeps the existing audio layout and controls', (
+      tester,
+    ) async {
+      final base = _viewProjection();
+      final cap = _VideoCapability(
+        ForegroundCallProjection(session: base.session, audio: base.audio),
+      );
+      await _withOverlay(tester, cap, (_) async {
+        final audio = _viewAudioSignature(tester);
+        cap.emit(_viewProjection(enabled: false));
+        await tester.pump();
+        expect(_viewAudioSignature(tester), audio);
+        expect(find.byType(Texture), findsNothing);
+        expect(find.byType(CallVideoControls), findsNothing);
+        expect(
+          find.bySemanticsIdentifier('call_video_view_local'),
+          findsNothing,
+        );
+        expect(
+          find.bySemanticsIdentifier('call_video_view_remote'),
+          findsNothing,
+        );
+        expect(cap.videoCalls, isEmpty);
+        await _audioTap(tester, _Phase.active);
+        expect(cap.audioCalls, [(_audioAction(_Phase.active), _callA)]);
+      });
+    });
+
+    testWidgets(
+      'missing optional video capability never exposes retained metadata',
+      (tester) async {
+        final cap = _AudioCapability(_viewProjection());
+        await _withOverlay(tester, cap, (_) async {
+          expect(find.byType(Texture), findsNothing);
+          expect(find.byType(CallVideoControls), findsNothing);
+          await _audioTap(tester, _Phase.active);
+          expect(cap.audioCalls, [(_audioAction(_Phase.active), _callA)]);
+        });
+      },
+    );
+
+    for (final control in ['initial', 'audio', 'legacy']) {
+      testWidgets(
+        '$control never exposes owner textures before video agreement',
+        (tester) async {
+          final cap = _VideoCapability(
+            _viewProjection(
+              accepted: control == 'initial' ? null : CallMediaKind.video,
+              agreed: control == 'audio'
+                  ? CallMediaKind.audio
+                  : CallMediaKind.video,
+              wire: control == 'legacy'
+                  ? CallWireVersion.v1
+                  : CallWireVersion.v2,
+            ),
+          );
+          await _withOverlay(tester, cap, (_) async {
+            expect(find.byType(Texture), findsNothing);
+            expect(
+              find.bySemanticsIdentifier('call_video_view_local'),
+              findsNothing,
+            );
+            expect(
+              find.bySemanticsIdentifier('call_video_view_remote'),
+              findsNothing,
+            );
+            expect(cap.audioCalls, isEmpty);
+            expect(cap.videoCalls, isEmpty);
+          });
+        },
+      );
+    }
+
+    for (final phase in [_Phase.incoming, _Phase.outgoing]) {
+      testWidgets(
+        '$phase cannot expose textures before an accepted active call',
+        (tester) async {
+          final cap = _VideoCapability(_viewProjection(phase: phase));
+          await _withOverlay(tester, cap, (_) async {
+            expect(find.byType(_screen(phase)), findsOneWidget);
+            expect(find.byType(Texture), findsNothing);
+            expect(
+              find.bySemanticsIdentifier('call_video_view_local'),
+              findsNothing,
+            );
+            expect(
+              find.bySemanticsIdentifier('call_video_view_remote'),
+              findsNothing,
+            );
+            expect(cap.audioCalls, isEmpty);
+            expect(cap.videoCalls, isEmpty);
+          });
+        },
+      );
+    }
+
+    for (final change in ['ending', 'ended', 'gone', 'idle']) {
+      testWidgets('$change removes both prior textures', (tester) async {
+        final cap = _VideoCapability(_viewProjection());
+        await _withOverlay(tester, cap, (_) async {
+          expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+          if (change == 'gone') {
+            cap.emit(null);
+          } else if (change == 'idle') {
+            final current = cap.current!;
+            cap.emit(
+              ForegroundCallProjection(
+                session: CallSessionSnapshot.idle(now: _now),
+                audio: current.audio,
+                video: current.video,
+              ),
+            );
+          } else {
+            cap.emit(
+              _viewProjection(
+                state: change == 'ending' ? CallState.ending : CallState.ended,
+              ),
+            );
+          }
+          await tester.pump();
+          expect(find.byType(Texture), findsNothing);
+          expect(
+            find.bySemanticsIdentifier('call_video_view_local'),
+            findsNothing,
+          );
+          expect(
+            find.bySemanticsIdentifier('call_video_view_remote'),
+            findsNothing,
+          );
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+        });
+      });
+    }
+
+    for (final language in ['en', 'ar', 'de']) {
+      testWidgets('$language 320px2x tiles remain bounded and named', (
+        tester,
+      ) async {
+        _viewport(tester, 320, 640);
+        final cap = _VideoCapability(_viewProjection());
+        await _withOverlay(
+          tester,
+          cap,
+          (l10n) async {
+            final views = find.byKey(const ValueKey('call-video-views'));
+            expect(views, findsOneWidget);
+            await tester.ensureVisible(views);
+            await tester.pump();
+            final remote = find.bySemanticsIdentifier('call_video_view_remote');
+            final local = find.bySemanticsIdentifier('call_video_view_local');
+            final remoteRect = tester.getRect(remote);
+            final localRect = tester.getRect(local);
+            expect(remoteRect.left, greaterThanOrEqualTo(16));
+            expect(remoteRect.right, lessThanOrEqualTo(304));
+            expect(remoteRect.top, greaterThanOrEqualTo(0));
+            expect(remoteRect.bottom, lessThanOrEqualTo(640));
+            expect(remoteRect.contains(localRect.topLeft), isTrue);
+            expect(remoteRect.contains(localRect.bottomRight), isTrue);
+            expect(
+              localRect.center.dx,
+              language == 'ar'
+                  ? lessThan(remoteRect.center.dx)
+                  : greaterThan(remoteRect.center.dx),
+            );
+            expect(
+              tester.getSemantics(local).label,
+              l10n.call_video_local_camera_on,
+            );
+            expect(
+              tester.getSemantics(remote).label,
+              l10n.call_video_remote_camera_on,
+            );
+            expect(
+              Directionality.of(tester.element(local)),
+              language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+            );
+            expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+            expect(tester.takeException(), isNull);
+            await _audioTap(tester, _Phase.active);
+            expect(cap.audioCalls, [(_audioAction(_Phase.active), _callA)]);
+            expect(cap.videoCalls, isEmpty);
+          },
+          locale: Locale(language),
+          scale: 2,
+        );
+      });
+    }
+
+    testWidgets(
+      'minimize and restore use the latest owner views without media work',
+      (tester) async {
+        final cap = _VideoCapability(_viewProjection());
+        await _withOverlay(tester, cap, (_) async {
+          expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+          await tester.tap(find.byKey(const ValueKey('call-minimize')));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('call-video-views')), findsNothing);
+          expect(find.byKey(const ValueKey('call-pip-view')), findsOneWidget);
+          expect(_viewTextureIds(tester), [22]);
+          cap.emit(
+            _viewProjection(
+              generation: 8,
+              local: const CallVideoView(
+                textureId: 33,
+                width: 640,
+                height: 480,
+              ),
+              remote: const CallVideoView(
+                textureId: 44,
+                width: 1280,
+                height: 720,
+              ),
+            ),
+          );
+          await tester.pump();
+          expect(find.byKey(const ValueKey('call-video-views')), findsNothing);
+          expect(find.byKey(const ValueKey('call-pip-view')), findsOneWidget);
+          expect(_viewTextureIds(tester), [44]);
+          await tester.tap(find.byType(CallReturnBar));
+          await tester.pumpAndSettle();
+          expect(_viewTextureIds(tester), unorderedEquals([33, 44]));
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+        });
+      },
+    );
+
+    testWidgets(
+      'replacement capability cannot retain the previous owner views',
+      (tester) async {
+        final cap = _VideoCapability(_viewProjection());
+        final next = _VideoCapability(
+          _viewProjection(
+            local: const CallVideoView(textureId: 55, width: 640, height: 480),
+            remote: const CallVideoView(
+              textureId: 66,
+              width: 1280,
+              height: 720,
+            ),
+          ),
+        );
+        addTearDown(next.close);
+        await _withOverlay(tester, cap, (_) async {
+          expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+          await tester.pumpWidget(_app(next));
+          await tester.pumpAndSettle();
+          expect(_viewTextureIds(tester), unorderedEquals([55, 66]));
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+          expect(next.audioCalls, isEmpty);
+          expect(next.videoCalls, isEmpty);
+        });
+      },
+    );
+
+    testWidgets(
+      'disposed screen releases all view widgets without media work',
+      (tester) async {
+        final cap = _VideoCapability(_viewProjection());
+        await _withOverlay(tester, cap, (_) async {
+          expect(_viewTextureIds(tester), unorderedEquals([11, 22]));
+          await tester.pumpWidget(const SizedBox.shrink());
+          cap.emit(_viewProjection(generation: 9));
+          await tester.pump();
+          expect(find.byType(Texture), findsNothing);
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+        });
+      },
+    );
   });
 }

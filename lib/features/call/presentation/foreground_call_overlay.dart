@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ import 'screens/outgoing_call_screen.dart';
 import 'widgets/call_controls.dart';
 import 'widgets/call_audio_output_picker.dart';
 import 'widgets/call_return_bar.dart';
+import 'widgets/call_video_view_surface.dart';
 
 typedef ContactDisplayNameLoader =
     Future<String?> Function(String contactPeerId);
@@ -364,6 +366,31 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         peerId != null) {
       final video = _visibleVideo(projection, capability);
       pictureInPictureVideo = _pictureInPictureVideo(projection, capability);
+      final videoViews =
+          surfaceKind == _ForegroundCallSurface.active &&
+              session!.state != CallState.ending &&
+              video != null &&
+              video.presentation.acceptedMedia != null &&
+              video.presentation.agreedMedia == CallMediaKind.video
+          ? Stack(
+              key: const ValueKey('call-video-views'),
+              children: [
+                CallVideoViewSurface(
+                  projection: projection,
+                  slot: CallVideoRendererSlot.remote,
+                ),
+                PositionedDirectional(
+                  end: 8,
+                  bottom: 8,
+                  width: 112,
+                  child: CallVideoViewSurface(
+                    projection: projection,
+                    slot: CallVideoRendererSlot.local,
+                  ),
+                ),
+              ],
+            )
+          : null;
       final capabilityGeneration = _capabilityGeneration;
       final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
           ? null
@@ -432,6 +459,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
             projection.audio,
             constrainLabels: video != null,
           ),
+          videoViews: videoViews,
           videoPresentation: video?.presentation,
           onVideoIntent: onVideoIntent,
         ),
