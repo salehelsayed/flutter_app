@@ -71,6 +71,7 @@ final class BuiltContactRequestEnvelope {
     required this.messageJson,
     required this.encrypted,
     this.msgId,
+    this.signedAtMs,
     this.callWakeHandle,
     this.callWakeReceiptChallenge,
   });
@@ -80,6 +81,9 @@ final class BuiltContactRequestEnvelope {
   final String messageJson;
   final bool encrypted;
   final String? msgId;
+
+  /// Local persistence metadata only; never added to the wire envelope.
+  final int? signedAtMs;
   final CallWakeHandleGrant? callWakeHandle;
   final String? callWakeReceiptChallenge;
 
@@ -89,6 +93,7 @@ final class BuiltContactRequestEnvelope {
     'messageJson': messageJson,
     'encrypted': encrypted,
     'msgId': msgId,
+    if (signedAtMs != null) 'signedAtMs': signedAtMs,
     'callWakeHandle': callWakeHandle?.toCanonicalMap(),
     'callWakeReceiptChallenge': callWakeReceiptChallenge,
   };
@@ -101,6 +106,7 @@ final class BuiltContactRequestEnvelope {
       messageJson: json['messageJson'] as String,
       encrypted: json['encrypted'] as bool,
       msgId: json['msgId'] as String?,
+      signedAtMs: json['signedAtMs'] as int?,
       callWakeHandle: rawGrant == null
           ? null
           : CallWakeHandleGrant.fromCanonicalMap(rawGrant),
@@ -251,6 +257,9 @@ Future<SendContactRequestResult> sendContactRequest({
   // Soliciting a new remote reply cannot reuse an earlier acknowledgement.
   bool requireFresh = false,
   bool markAsNewRequest = false,
+  // Event-driven repair may await signing/encryption. Recheck authority and
+  // captured material immediately before joining or starting transmission.
+  Future<bool> Function()? canTransmit,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -290,6 +299,10 @@ Future<SendContactRequestResult> sendContactRequest({
   );
   final envelope = build.envelope;
   if (envelope == null) return build.failure!;
+
+  if (canTransmit != null && !await canTransmit()) {
+    return SendContactRequestResult.sendFailed;
+  }
 
   final outcome = await _transmitEquivalentContactRequest(
     p2pService: p2pService,
@@ -576,6 +589,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
       messageJson: jsonEncode(v2Message),
       encrypted: true,
       msgId: msgId,
+      signedAtMs: now.millisecondsSinceEpoch,
       callWakeHandle: callWakeHandle,
       callWakeReceiptChallenge: callWakeReceiptChallenge,
     ),

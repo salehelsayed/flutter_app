@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -48,7 +49,7 @@ ContactModel _makeContact(
     rendezvous: '/p2p-circuit/rendezvous',
     username: 'user-$peerId',
     signature: 'sig-$peerId',
-    scannedAt: '2024-01-01T00:00:00Z',
+    scannedAt: clock.now().toUtc().toIso8601String(),
     mlKemPublicKey: mlKemPublicKey,
     isBlocked: isBlocked,
     blockedAt: isBlocked ? '2024-01-01T00:00:00Z' : null,
@@ -71,6 +72,7 @@ void main() {
   late FakeContactRepository contactRepo;
   late FakeIdentityRepository identityRepo;
   late FakeBridge bridge;
+  late FakeSecureKeyStore retryJournalStore;
 
   setUp(() {
     p2pService = FakeP2PService(
@@ -86,6 +88,7 @@ void main() {
     contactRepo = FakeContactRepository();
     identityRepo = FakeIdentityRepository();
     bridge = FakeBridge();
+    retryJournalStore = FakeSecureKeyStore();
     // sendContactRequest calls callSignPayload → bridge.send with cmd 'payload.sign'
     // Must return a signature for the sign response to succeed
     bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
@@ -127,6 +130,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, 0);
@@ -141,6 +145,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, 0);
@@ -157,6 +162,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, 0);
@@ -174,6 +180,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, 0);
@@ -195,6 +202,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, equals(1));
@@ -212,6 +220,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // Only the active peer should have been attempted
@@ -231,6 +240,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // getActiveContacts() excludes archived, so nothing to retry
@@ -250,6 +260,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // Each sendContactRequest calls bridge.send twice (payload.sign + contactrequest.encrypt)
@@ -266,6 +277,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(result, 1);
@@ -290,6 +302,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // Only 2 contacts should be attempted (the ones without keys)
@@ -322,6 +335,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: failingBridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // First fails (bridge throw → caught as error), second succeeds
@@ -689,6 +703,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
         loadPendingCallWakeHandleContactIds: () async => [blockedPeerId],
         resolveCallWakeHandle: (_) async => _callWakeHandleGrant,
         onCallWakeHandleDistributed: (_, _) async {

@@ -266,7 +266,9 @@ void main() {
     // signed-marker choices. The remote still has us as a contact: our local
     // delete did not revoke that independent retry obligation.
     final senderContacts = buildWidgetContactRepository(senderDb);
-    await senderContacts.addContact(contactFor(receiver));
+    await senderContacts.addContact(
+      contactFor(receiver, scannedAt: DateTime.now().toUtc().toIso8601String()),
+    );
     final senderIdentity = buildWidgetIdentityRepository(
       senderDb,
       FakeSecureKeyStore(),
@@ -299,6 +301,7 @@ void main() {
         identityRepo: senderIdentity,
         p2pService: senderTransport,
         bridge: senderBridge,
+        secureKeyStore: FakeSecureKeyStore(),
         shouldMarkAsNewRequest: (_) async => marked,
       ),
       1,
