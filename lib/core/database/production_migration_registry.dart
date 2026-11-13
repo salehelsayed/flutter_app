@@ -131,6 +131,7 @@ import 'migrations/128_media_attachment_sticker_id.dart';
 import 'migrations/129_post_media_caption.dart';
 import 'migrations/130_custom_stickers.dart';
 import 'migrations/131_message_auto_retry_terminal.dart';
+import 'migrations/132_delivery_receipt_outbox.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -759,6 +760,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '131_message_auto_retry_terminal',
     runMessageAutoRetryTerminalMigration,
   ),
+  ProductionMigrationEntry(
+    132,
+    '132_delivery_receipt_outbox',
+    runDeliveryReceiptOutboxMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1376,6 +1382,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     131,
     '131_message_auto_retry_terminal',
     runMessageAutoRetryTerminalMigration,
+  ),
+  ProductionMigrationEntry(
+    132,
+    '132_delivery_receipt_outbox',
+    runDeliveryReceiptOutboxMigration,
   ),
 ]);
 

@@ -79,6 +79,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
   final Future<int> Function()? drainDirectInboxCustodyOutboxFn;
+  final Future<int> Function()? drainDeliveryReceiptOutboxFn;
   final Future<int> Function()? verifyInboxCustodyFn;
   final Future<void> Function()? drainNotificationCompletedOutcomesFn;
 
@@ -169,6 +170,7 @@ class PendingMessageRetrier {
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
     this.drainDirectInboxCustodyOutboxFn,
+    this.drainDeliveryReceiptOutboxFn,
     this.verifyInboxCustodyFn,
     this.drainNotificationCompletedOutcomesFn,
     this.contactKeyUpdatedSignal,
@@ -249,6 +251,7 @@ class PendingMessageRetrier {
     // Plan 370: reopen/cold-start shares the same durable outcome drain owner
     // as reconnect, restored-network, periodic, and resume triggers.
     unawaited(_drainNotificationCompletedOutcomes());
+    unawaited(_drainDeliveryReceiptOutbox());
 
     _wasOnline = _isOnline(p2pService.currentState);
     _wasGroupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
@@ -365,6 +368,7 @@ class PendingMessageRetrier {
     _isNetworkRestoredFlushing = true;
     try {
       unawaited(_drainNotificationCompletedOutcomes());
+      unawaited(_drainDeliveryReceiptOutbox());
       await _drainDirectMediaBlobCustody();
       // TC-343-05: the shared text+reaction exact-envelope custody composite is
       // the first retry family on the OS-restored light pass. Its internal
@@ -589,6 +593,18 @@ class PendingMessageRetrier {
       // pass null → the use case default (60s anti-race window).
       olderThan: olderThan ?? const Duration(seconds: 60),
     );
+  }
+
+  Future<void> _drainDeliveryReceiptOutbox() async {
+    try {
+      await drainDeliveryReceiptOutboxFn?.call();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_RECEIPT_DRAIN_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   Future<void> _drainDirectInboxCustodyOutbox() async {
@@ -838,6 +854,9 @@ class PendingMessageRetrier {
     bool periodic = false,
     bool initial = false,
   }) async {
+    // Receipt custody is independent of the full/group recovery pass. Its
+    // shared owner coalesces startup/online/periodic/resume/restored triggers.
+    unawaited(_drainDeliveryReceiptOutbox());
     if (_isRetrying) {
       // A direct-only pass cannot satisfy a reconnect or periodic full pass.
       // Coalesce identical requests while preserving each trigger's age policy.

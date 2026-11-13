@@ -2812,6 +2812,44 @@ and the focused GREEN hash is
 `08819e523651f4d78e01a446d4163a3fd6878ddff2ba174a72abdb50659e52da`.
 Batch affected/native acceptance remains separate from this focused result.
 
+BL-24(D1) retains existing v1 delivery/mutation receipt envelopes in the
+DB v132 `delivery_receipt_outbox`. Durable staging finishes before transport;
+queue admission alone still returns false, and only existing live ACK or inbox
+store acceptance settles custody. Retries preserve the original recipient,
+serialized payload and stable receipt key. The existing lifecycle owns one
+drain and per-key flight, with an attempt claimed before transport, five-second
+to fifteen-minute backoff and seven-day expiry. Startup/online/periodic/resume
+and the OS-restored light pass use that same drain. These tests do not certify
+atomic canonical receive plus receipt enqueue across a crash.
+
+The isolated original GREEN `0c975200f` has 12 focused receipt cases and
+41 plus 11 preservation cases passing. Keep its original RED classifications
+(zero passes, two assertion failures and five errors, plus a separate passing
+migration control) and the first importer/schema results: five importer
+expectations still assumed v130. The historical fixture follow-up `ec50a47c5`
+passed 25 cases across nine files. Its three clean HEAD/tree/lib captures
+checked eleven pins in aggregate; the individual hashes were printed only
+in a later clean-scratch read. That later read is not a run-time capture.
+
+The main rebase `b14e2775cc9822da60c8c19ede691ae388516f24` onto
+`c2da32fab21e28b61d412b1deea764faea4e2299` preserves the reviewed production
+patch (stable patch ID `23e3dda16b101427a82004c6b56a667cbc19c264`). Keep v132
+and the landed importer's `currentIdentityDatabaseVersion` expectations;
+retain historical version lookups, C's explicit v131 presence check and its
+message-column projections. On this composed source, the complete importer
+plus those nine migration files pass 38/38 (13 plus 25), with zero
+failures/errors/skips, successful reporter completion and child exit zero.
+Three clean HEAD/tree/lib checkpoints print all 50 pins individually, 150
+matching entries. Raw evidence is in
+`flutter_app-ui-update/.audit/bl24d1rb/out/`; independent source/runtime
+review is in
+`/Users/I560101/.codex/investigations/bl24d1-source-review-codex2-20261112/main-rebase-final-scoped-verdict.json`.
+Resolved-test analysis, metadata validation and the explicit main-base preview
+pass. The preview selects 56 checks with no unmapped changes; broader checks
+remain unrun for the batch. Original causal/preservation results remain scoped
+to their original candidate. This closes the authorized rebase gate, not the
+whole batch, device/native or signed-candidate gate.
+
 Conversation and Feed hold the editable draft and withhold the bubble until
 the intent commit. The UI tests positively hold that write, exercise refusal,
 preserve text typed during the write, then hold `bg:begin` after admission.

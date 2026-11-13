@@ -70,7 +70,7 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       expect(await _userVersion(upgraded), currentIdentityDatabaseVersion);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
@@ -224,26 +224,11 @@ void main() {
           'test/core/database/migrations/102_groups_self_removed_at_test.dart',
           'final index107 = registry.indexWhere((entry) => entry.version == $historicalVersion);',
         ): 1,
-        // 360: DB v112 appended one registry entry, so the v107 offset in the
-        // v104 test shifted from `length - 5` to `length - 6`.
-        // 361: DB v113 appended another entry, shifting it to `length - 7`.
-        // 362: DB v114 appended another entry, shifting it to `length - 8`.
-        // 365: DB v115 appended another entry, shifting it to `length - 9`.
-        // 369: DB v116 appended another entry, shifting it to `length - 10`.
-        // VC2-02: DB v117 appends another entry, shifting it to `length - 11`.
-        // DB v118 and quiet recovery v119 shift it to `length - 13`.
-        // Task 12b: DB v121 appends another entry, shifting it to `length - 15`.
-        // Plan 407: DB v122 appends Thoughts reset, shifting it to `length - 16`.
-        // DB v123 to v126 shift it to `length - 20`.
-        // DB v127 shifts it to `length - 21`.
-        // DB v128 shifts it to `length - 22`.
-        // DB v129 shifts it to `length - 23`.
-        // DB v130 shifts it to `length - 24`.
-        // BL-24(C): DB v131 shifts it to `length - 25`.
-        // The assertion itself is unchanged; only its position moved.
+        // The v104 test pins its historical contiguous range independently of
+        // later registry additions; this literal remains a historical entry.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 25].version, $historicalVersion);',
+          '$historicalVersion,',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

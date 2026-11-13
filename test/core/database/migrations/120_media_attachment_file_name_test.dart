@@ -76,17 +76,20 @@ void main() {
   test(
     'v120 appears once before v121 and Thoughts v122 in both registries',
     () {
-      expect(currentIdentityDatabaseVersion, 131);
+      expect(currentIdentityDatabaseVersion, 132);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((e) => e.version == 120), hasLength(1));
-        final entry = registry[registry.length - 12];
+        final index120 = registry.indexWhere((entry) => entry.version == 120);
+        final entry = registry[index120];
         expect(entry.version, 120);
         expect(entry.name, '120_media_attachment_file_name');
         expect(entry.run, same(runMediaAttachmentFileNameMigration));
-        expect(registry.last.version, 131);
+        expect(registry[index120 + 1].version, 121);
+        expect(registry[index120 + 2].version, 122);
+        expect(registry.last.version, 132);
       }
     },
   );

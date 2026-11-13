@@ -515,6 +515,7 @@ class MyApp extends StatefulWidget {
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
   final Future<int> Function()? drainDirectInboxCustodyOutbox;
+  final Future<int> Function()? drainDeliveryReceiptOutbox;
   final Future<int> Function()? drainDirectMediaBlobCustody;
   final Future<void> Function()? drainNotificationCompletedOutcomes;
   final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
@@ -701,6 +702,7 @@ class MyApp extends StatefulWidget {
     required this.messageRouter,
     required this.pendingMessageRetrier,
     this.drainDirectInboxCustodyOutbox,
+    this.drainDeliveryReceiptOutbox,
     this.drainDirectMediaBlobCustody,
     this.drainNotificationCompletedOutcomes,
     required this.pendingPostMediaUploadRetrier,
@@ -2919,6 +2921,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           requireOsConnectivity: true,
         ),
         drainDirectInboxCustodyOutboxFn: widget.drainDirectInboxCustodyOutbox,
+        drainDeliveryReceiptOutboxFn: widget.drainDeliveryReceiptOutbox,
         retryFailedMessagesFn: () => retryFailedMessages(
           directEventFanout: _directRouteAuthority.resolvedDirectEventFanout,
           messageRepo: widget.messageRepository,

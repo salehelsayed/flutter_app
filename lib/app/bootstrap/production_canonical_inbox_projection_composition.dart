@@ -63,6 +63,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_display_outbox_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/delivery_receipt_outbox_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_reaction_terminal_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_read_acknowledgement_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_reconciliation_outbox_repository_impl.dart';
@@ -311,13 +312,16 @@ buildProductionCanonicalInboxProjectionComposition({
     late final ContactRequestListener contactRequestListener;
     late final GroupKeyRepairRequestSender groupKeyRepairRequestSender;
 
+    final deliveryReceiptOutbox = DeliveryReceiptOutbox(
+      repository: SqlDeliveryReceiptOutboxRepository(database),
+      p2pService: () => p2pService,
+    );
     Future<void> sendReceipt({
       required String contactPeerId,
       required List<String> messageIds,
       Map<String, String>? mutationEventIds,
     }) async {
-      await sendDeliveryReceipt(
-        p2pService: p2pService,
+      await deliveryReceiptOutbox.send(
         targetPeerId: contactPeerId,
         messageIds: messageIds,
         mutationEventIds: mutationEventIds,
@@ -841,6 +845,7 @@ buildProductionCanonicalInboxProjectionComposition({
         )) {
           throw StateError('recovery-only node health failed');
         }
+        unawaited(deliveryReceiptOutbox.drain());
       },
       drainDirectInbox: () async {
         final result = await p2pService.drainOfflineInboxFully();
@@ -1036,7 +1041,8 @@ MessageRepositoryImpl _buildMessageRepository(
         beforeTimestamp: beforeTimestamp,
       ),
   dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(database),
-  dbIsMessageAutoRetryTerminal: (id) => dbIsMessageAutoRetryTerminal(database, id),
+  dbIsMessageAutoRetryTerminal: (id) =>
+      dbIsMessageAutoRetryTerminal(database, id),
   dbSetMessageAutoRetryTerminalReason: (expected, reason) =>
       dbSetMessageAutoRetryTerminalReason(database, expected.toMap(), reason),
   dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>

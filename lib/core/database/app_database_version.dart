@@ -100,4 +100,5 @@
 // v130 adds the account-owned custom sticker library and its portable user
 // ordering. The schema exists even when custom-sticker actions are disabled.
 // BL-24(C): nullable local terminal-auto-retry reason; no historical backfill.
-const int currentIdentityDatabaseVersion = 131;
+// v132 retains delivery/mutation receipt envelopes across transport failures.
+const int currentIdentityDatabaseVersion = 132;

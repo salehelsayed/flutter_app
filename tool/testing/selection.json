@@ -141,6 +141,7 @@
       "paths": [
         "test/features/conversation/integration/offline_inbox_roundtrip_test.dart",
         "test/features/conversation/integration/direct_text_restart_sqlite_test.dart",
+        "test/features/conversation/integration/delivery_receipt_outbox_sqlite_test.dart",
         "test/core/services/pending_message_retrier_contact_key_test.dart",
         "test/core/services/pending_message_retrier_contact_key_serialization_test.dart"
       ],
@@ -271,7 +272,8 @@
       "kind": "flutter",
       "paths": [
         "test/core/database/integration/full_migration_chain_test.dart",
-        "test/core/database/migrations/131_message_auto_retry_terminal_test.dart"
+        "test/core/database/migrations/131_message_auto_retry_terminal_test.dart",
+        "test/core/database/migrations/132_delivery_receipt_outbox_test.dart"
       ],
       "boundary": "Real SQLite FFI migration schema/data preservation, seeded identities/contacts/messages/groups and post-upgrade writes",
       "limitations": "Host SQLite and fake secure keystore; actual previous published signed-build upgrade separate",
