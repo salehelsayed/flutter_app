@@ -142,10 +142,16 @@ class ChatTranslateAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = delivery;
     if (controller == null) return const SizedBox.shrink();
-    return ValueListenableBuilder<ModelDeliveryState>(
-      valueListenable: controller.state,
-      builder: (context, state, _) =>
-          state is ModelReady ? _panel(context) : const SizedBox.shrink(),
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        controller.deviceSupported,
+        controller.state,
+      ]),
+      builder: (context, _) =>
+          controller.deviceSupported.value &&
+              controller.state.value is ModelReady
+          ? _panel(context)
+          : const SizedBox.shrink(),
     );
   }
 

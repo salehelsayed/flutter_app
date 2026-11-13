@@ -10,6 +10,7 @@ class FakeModelDeliveryController implements ModelDeliveryController {
   @override
   final ValueNotifier<ModelDeliveryState> state;
 
+  @override
   final ValueNotifier<bool> deviceSupported = ValueNotifier(true);
 
   @override

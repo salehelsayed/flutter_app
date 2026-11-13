@@ -13132,9 +13132,16 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   four-test census suite passed after that addition; exact equality, production
   source hashes and architecture guards remain unchanged. Preserve its first
   failure under `tdd-change-investigation/layering-census-assessment.json`.
-- **Translation/transcription preview host boundary:** `TRANSLATE_PREVIEW`
-  defaults to false. The Thought viewer returns its original text widget and
-  direct voice messages retain their original player subtree when disabled.
+- **Translation/transcription device gate:** Ordinary builds enable the feature
+  without `TRANSLATE_PREVIEW`. The delivery controller exposes static device
+  eligibility separately from model delivery and inference safety, using the
+  existing `supportsOnDeviceTranslation` policy below; unknown facts fail closed.
+  Settings hides the entire translator section on static rejection, while an
+  eligible phone blocked by inference or memory safety keeps manual recovery.
+  This boundary follows owner decisions 6-7 and Kayan clarification m-9e12cb44.
+  Disabled-rendering preservation tests explicitly set the test override: the
+  Thought viewer keeps its original text widget and direct voice messages keep
+  their original player subtree. Model download and consent are unchanged.
   `affected-translate-preview` in the selection manifest covers the preview
   module and its exact Thought/chat entrypoints. New feature folders also need
   critical ownership in `tool/sims/critical_features.json`; check selection alone
@@ -13142,7 +13149,8 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
-  Chat-header translation remains `ModelReady`-only. In the pinned Material
+  Chat-header translation requires static device eligibility and `ModelReady`.
+  Group-chat translation remains deferred. In the pinned Material
   theme, call/search/translation buttons use a 44-pixel style inside matching
   48-pixel padded touch targets. Assert the actual shared target, not the style
   value, and keep the 7-pixel active dot's 9-top/8-end geometry checks in both
