@@ -11,6 +11,7 @@ import com.mknoon.app.call.MknoonCallBridgeTeardown
 import com.mknoon.app.call.MknoonCallNativeBridge
 import com.mknoon.app.call.MknoonCallRuntime
 import com.mknoon.app.call.MknoonCallTaskChannelHandler
+import com.mknoon.app.call.MknoonCallVideoQualityEnvironment
 import com.mknoon.app.call.MknoonIncomingCallPresentation
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -41,6 +42,7 @@ class MainActivity : FlutterActivity() {
     private var privateMediaProtectionHandler: PrivateMediaProtectionHandler? = null
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
+    private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
     private var callNativeBridge: MknoonCallNativeBridge? = null
     // F3 (beta 2026-09-25): the bridge's detach ends a live Telecom call
@@ -129,6 +131,11 @@ class MainActivity : FlutterActivity() {
         )
         pictureInPictureHandler = PictureInPictureHandler(
             activity = this,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
+        callVideoQualityEnvironment?.dispose()
+        callVideoQualityEnvironment = MknoonCallVideoQualityEnvironment(
+            context = applicationContext,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
         canonicalRuntimeLeaseBridge = CanonicalRuntimeLeaseBridge(
@@ -417,6 +424,8 @@ class MainActivity : FlutterActivity() {
         )
         PictureInPictureEngineCleanupCoordinator.cleanUpFlutterEngine()
         pictureInPictureHandler = null
+        callVideoQualityEnvironment?.dispose()
+        callVideoQualityEnvironment = null
         droppedPushRecoveryBridge?.dispose()
         droppedPushRecoveryBridge = null
         callTaskHandler?.dispose()
@@ -623,6 +632,8 @@ class MainActivity : FlutterActivity() {
         incomingCallPresentation = null
         pictureInPictureHandler?.dispose("host_destroyed")
         pictureInPictureHandler = null
+        callVideoQualityEnvironment?.dispose()
+        callVideoQualityEnvironment = null
         val engine = privateMediaProtectionEngine
         if (engine != null) {
             privateMediaProtectionRegistry.detach(
