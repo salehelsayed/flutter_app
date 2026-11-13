@@ -1135,13 +1135,15 @@ void main() {
           final result = reconcile(f, token);
           await Future.any([entered.future, result.then((_) {})]);
           expect(entered.isCompleted, isTrue);
+          Future<bool>? closing;
           if (invalidation == 'close') {
-            await f.session.close();
+            closing = f.session.close();
           } else {
             f.current = false;
           }
           gate.complete();
           expect(await result, CallVideoSdpReconciliationOutcome.unreconciled);
+          await closing;
           f.preserved();
         },
       );
