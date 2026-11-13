@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_video_screen_layout.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -17,6 +18,9 @@ class IncomingCallScreen extends StatelessWidget {
     required this.contactUsername,
     required this.state,
     required this.onAnswer,
+    this.onAcceptVideo,
+    this.onUseAudioOnly,
+    this.mediaChoiceInFlight = false,
     required this.onDecline,
     this.videoPresentation,
     this.onVideoIntent,
@@ -26,6 +30,9 @@ class IncomingCallScreen extends StatelessWidget {
   final String contactUsername;
   final CallState state;
   final VoidCallback onAnswer;
+  final VoidCallback? onAcceptVideo;
+  final VoidCallback? onUseAudioOnly;
+  final bool mediaChoiceInFlight;
   final VoidCallback onDecline;
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
@@ -36,13 +43,20 @@ class IncomingCallScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
-    final status = _canRespond
-        ? l10n.call_status_incoming
-        : l10n.call_status_checking_incoming;
-
     final video = videoPresentation;
     final onVideo = onVideoIntent;
     final hasVideo = video != null && video.isVisible && onVideo != null;
+    final initialVideoChoice =
+        hasVideo &&
+        video.requestedMedia == CallMediaKind.video &&
+        video.acceptedMedia == null &&
+        onAcceptVideo != null &&
+        onUseAudioOnly != null;
+    final status = _canRespond
+        ? initialVideoChoice
+              ? l10n.call_video_entry_incoming
+              : l10n.call_status_incoming
+        : l10n.call_status_checking_incoming;
     Widget fitAction(Widget action) =>
         hasVideo ? Expanded(child: action) : action;
     final profile = <Widget>[
@@ -94,22 +108,55 @@ class IncomingCallScreen extends StatelessWidget {
             enabled: _canRespond,
             onPressed: onDecline,
             constrainLabel: hasVideo,
+            wrapLabel: initialVideoChoice,
           ),
         ),
-        fitAction(
-          _IncomingAction(
-            identifier: 'call_answer',
-            tooltip: _canRespond
-                ? l10n.call_answer
-                : l10n.call_answer_unavailable,
-            label: l10n.call_answer,
-            icon: Icons.call_rounded,
-            backgroundColor: colors.accent,
-            enabled: _canRespond,
-            onPressed: onAnswer,
-            constrainLabel: hasVideo,
+        if (initialVideoChoice) ...[
+          fitAction(
+            _IncomingAction(
+              identifier: 'call_accept_video',
+              tooltip: _canRespond && !mediaChoiceInFlight
+                  ? l10n.call_video_action_accept_upgrade
+                  : l10n.call_answer_unavailable,
+              label: l10n.call_video_action_accept_upgrade,
+              icon: Icons.videocam_outlined,
+              backgroundColor: colors.accent,
+              enabled: _canRespond && !mediaChoiceInFlight,
+              onPressed: onAcceptVideo!,
+              constrainLabel: true,
+              wrapLabel: true,
+            ),
           ),
-        ),
+          fitAction(
+            _IncomingAction(
+              identifier: 'call_accept_audio',
+              tooltip: _canRespond && !mediaChoiceInFlight
+                  ? l10n.call_video_action_use_audio_only
+                  : l10n.call_answer_unavailable,
+              label: l10n.call_video_action_use_audio_only,
+              icon: Icons.call_rounded,
+              backgroundColor: colors.accent,
+              enabled: _canRespond && !mediaChoiceInFlight,
+              onPressed: onUseAudioOnly!,
+              constrainLabel: true,
+              wrapLabel: true,
+            ),
+          ),
+        ] else
+          fitAction(
+            _IncomingAction(
+              identifier: 'call_answer',
+              tooltip: _canRespond
+                  ? l10n.call_answer
+                  : l10n.call_answer_unavailable,
+              label: l10n.call_answer,
+              icon: Icons.call_rounded,
+              backgroundColor: colors.accent,
+              enabled: _canRespond,
+              onPressed: onAnswer,
+              constrainLabel: hasVideo,
+            ),
+          ),
       ],
     );
     final videoLayout = hasVideo
@@ -122,6 +169,7 @@ class IncomingCallScreen extends StatelessWidget {
             audioControls: audioControls,
             presentation: video,
             onIntent: onVideo,
+            showVideoControls: !initialVideoChoice,
           )
         : null;
 
@@ -163,6 +211,7 @@ class _IncomingAction extends StatelessWidget {
     required this.enabled,
     required this.onPressed,
     this.constrainLabel = false,
+    this.wrapLabel = false,
   });
 
   final String identifier;
@@ -173,6 +222,7 @@ class _IncomingAction extends StatelessWidget {
   final bool enabled;
   final VoidCallback onPressed;
   final bool constrainLabel;
+  final bool wrapLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -207,8 +257,10 @@ class _IncomingAction extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             label,
-            maxLines: constrainLabel ? 2 : null,
-            overflow: constrainLabel ? TextOverflow.ellipsis : null,
+            maxLines: constrainLabel && !wrapLabel ? 2 : null,
+            overflow: constrainLabel && !wrapLabel
+                ? TextOverflow.ellipsis
+                : null,
             textAlign: constrainLabel ? TextAlign.center : null,
             style: TextStyle(
               color: enabled ? colors.textSecondary : colors.disabledForeground,

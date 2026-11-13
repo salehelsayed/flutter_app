@@ -5452,4 +5452,18 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get contact_retry_stopped_hint =>
       'لم يكتمل الاتصال بعد. يمكن للطرف الآخر مسح رمزك مجددًا.';
+
+  @override
+  String get call_video_entry_incoming => 'مكالمة فيديو واردة';
+
+  @override
+  String get call_video_entry_starting => 'جارٍ بدء مكالمة الفيديو';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'مكالمات الفيديو غير متاحة حاليًا.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.';
 }

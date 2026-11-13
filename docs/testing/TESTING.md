@@ -12012,6 +12012,24 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u6-real-screen-host-adoption.json`
   and its `u6-real-screen-retained-host/` evidence directory. This is a scoped
   host result for the frozen unit, not a combined integration or release gate.
+  **U6 explicit video entry:** the conversation menu uses a fresh same-contact
+  video-capability check and the shared cancellable call preflight. Initial
+  validated v2 offers expose explicit video or audio-only acceptance bound to
+  the current call/generation; native/default Answer remains audio-only and
+  the video gate remains off. In widget fixtures, start the popup animation
+  with an initial zero-duration `pump()` before advancing its existing 400 ms
+  budget. Finding the menu text alone does not prove that a tap can reach it:
+  all four initial entry errors included the same missed-tap warning before
+  any call action ran. The one-line fixture correction
+  `075555500513f315f106d5237ff66dabf82811e6` preserves every assertion and
+  production byte. All 179 cases in the five focused files and one-path
+  analysis passed, with four clean matching 16-pin stamps and empty setup
+  delta. Retain RED 4 passes/15 binding errors and first GREEN 175 passes/
+  4 binding errors, plus the original 26 voice-preflight, 118 audio/UI and
+  2112 affected-call passes under
+  `.codex-test-logs/codex-ui-u6-entry-20261113/`. This host evidence does not
+  certify native camera effects, frames, device lifecycle or a combined
+  candidate; no broader family rerun was performed for the fixture fix.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

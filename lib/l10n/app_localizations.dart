@@ -8995,6 +8995,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Still waiting. Ask them to scan your code again.'**
   String get contact_retry_stopped_hint;
+
+  /// No description provided for @call_video_entry_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming video call'**
+  String get call_video_entry_incoming;
+
+  /// No description provided for @call_video_entry_starting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting video call'**
+  String get call_video_entry_starting;
+
+  /// No description provided for @call_video_entry_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Video calling is unavailable right now.'**
+  String get call_video_entry_unavailable;
+
+  /// No description provided for @call_video_entry_start_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start the video call. Please try again.'**
+  String get call_video_entry_start_failed;
 }
 
 class _AppLocalizationsDelegate

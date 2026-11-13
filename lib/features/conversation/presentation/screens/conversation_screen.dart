@@ -324,6 +324,7 @@ class ConversationScreen extends StatefulWidget {
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
+  final String callStartingMessage;
   final String callUnavailableMessage;
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
@@ -462,6 +463,7 @@ class ConversationScreen extends StatefulWidget {
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
+    this.callStartingMessage = '',
     this.callUnavailableMessage = '',
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
@@ -986,6 +988,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                   callUnavailableMessage: widget.callUnavailableMessage.isEmpty
                       ? AppLocalizations.of(context)!.voice_call_unavailable
                       : widget.callUnavailableMessage,
+                  callStartingMessage: widget.callStartingMessage,
                 ),
               // Intro banner above messages (when messages exist)
               if (!compactForKeyboard)

@@ -209,6 +209,24 @@ final class _LockedVideoCapability extends _VideoCapability
   ) async => presentations.add(presentation);
 }
 
+final class _MediaAnswerCapability extends _VideoCapability
+    implements ForegroundCallMediaAnswerCapability {
+  _MediaAnswerCapability(super.current);
+  final mediaAnswers = <(CallId, int, CallMediaKind)>[];
+  Completer<ForegroundCallActionResult>? pendingAnswer;
+
+  @override
+  Future<ForegroundCallActionResult> answerWithMedia(
+    CallId callId, {
+    required int generation,
+    required CallMediaKind acceptedMedia,
+  }) async {
+    // Record every dispatch: presentation must provide its own stale/duplicate fence.
+    mediaAnswers.add((callId, generation, acceptedMedia));
+    return pendingAnswer?.future ?? ForegroundCallActionResult.applied;
+  }
+}
+
 Widget _app(
   _AudioCapability capability, {
   Locale locale = const Locale('en'),
@@ -288,6 +306,140 @@ Future<void> _audioTap(WidgetTester tester, _Phase phase) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final media in [CallMediaKind.video, CallMediaKind.audio]) {
+    testWidgets('U6-entry initial $media answer reaches exact owner once', (
+      tester,
+    ) async {
+      final cap = _MediaAnswerCapability(_projection(phase: _Phase.incoming));
+      await _withOverlay(tester, cap, (_) async {
+        final action = media == CallMediaKind.video
+            ? 'call_accept_video'
+            : 'call_accept_audio';
+        final button = find.bySemanticsIdentifier(action);
+        expect(button, findsOneWidget);
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pump();
+        expect(cap.mediaAnswers, [(_callA, 7, media)]);
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+  }
+
+  for (final stale in ['call', 'generation', 'gate', 'accepted', 'ended']) {
+    testWidgets(
+      'U6-entry retained initial answer rejects changed $stale before stream',
+      (tester) async {
+        final cap = _MediaAnswerCapability(_projection(phase: _Phase.incoming));
+        await _withOverlay(tester, cap, (_) async {
+          final screen = tester.widget<IncomingCallScreen>(
+            find.byType(IncomingCallScreen),
+          );
+          expect(screen.onAcceptVideo, isNotNull);
+          cap.emit(
+            _projection(
+              phase: _Phase.incoming,
+              callId: stale == 'call' ? _callB : _callA,
+              generation: stale == 'generation' ? 8 : 7,
+              enabled: stale != 'gate',
+              state: stale == 'ended' ? CallState.ended : CallState.ringing,
+              media: stale == 'accepted' ? _video() : null,
+            ),
+            notify: false,
+          );
+          screen.onAcceptVideo!();
+          await tester.pump();
+          expect(cap.mediaAnswers, isEmpty);
+          expect(cap.audioCalls, isEmpty);
+        });
+      },
+    );
+  }
+
+  testWidgets(
+    'U6-entry pending choice fences duplicate answers without optimistic media',
+    (tester) async {
+      final cap = _MediaAnswerCapability(_projection(phase: _Phase.incoming));
+      final pending = Completer<ForegroundCallActionResult>();
+      cap.pendingAnswer = pending;
+      await _withOverlay(tester, cap, (_) async {
+        try {
+          final screen = tester.widget<IncomingCallScreen>(
+            find.byType(IncomingCallScreen),
+          );
+          expect(screen.onAcceptVideo, isNotNull);
+          screen.onAcceptVideo!();
+          screen.onUseAudioOnly!();
+          screen.onAcceptVideo!();
+          await tester.pump();
+          expect(cap.mediaAnswers, [(_callA, 7, CallMediaKind.video)]);
+          expect(cap.current!.video!.presentation.acceptedMedia, isNull);
+          expect(cap.audioCalls, isEmpty);
+        } finally {
+          pending.complete(ForegroundCallActionResult.applied);
+          await tester.pump();
+        }
+      });
+    },
+  );
+
+  testWidgets(
+    'U6-entry ordinary/native Answer remains audio with initial video choice',
+    (tester) async {
+      final cap = _MediaAnswerCapability(_projection(phase: _Phase.incoming));
+      await _withOverlay(tester, cap, (_) async {
+        final screen = tester.widget<IncomingCallScreen>(
+          find.byType(IncomingCallScreen),
+        );
+        screen.onAnswer();
+        await tester.pump();
+        expect(cap.audioCalls, [('answer', _callA)]);
+        expect(cap.mediaAnswers, isEmpty);
+      });
+    },
+  );
+
+  for (final locale in const [Locale('en'), Locale('ar'), Locale('de')]) {
+    testWidgets(
+      'U6-entry incoming choices ${locale.languageCode}320px2x are fully visible',
+      (tester) async {
+        _viewport(tester, 320, 800);
+        final cap = _MediaAnswerCapability(_projection(phase: _Phase.incoming));
+        await _withOverlay(
+          tester,
+          cap,
+          (l10n) async {
+            for (final text in [
+              l10n.call_video_action_accept_upgrade,
+              l10n.call_video_action_use_audio_only,
+            ]) {
+              final finder = find.text(text);
+              expect(finder, findsOneWidget);
+              final paragraph = tester.renderObject<RenderParagraph>(finder);
+              expect(paragraph.didExceedMaxLines, isFalse);
+              final rect = tester.getRect(finder);
+              expect(rect.left, greaterThanOrEqualTo(0));
+              expect(rect.right, lessThanOrEqualTo(320));
+              expect(rect.bottom, lessThanOrEqualTo(800));
+            }
+            expect(
+              find.bySemanticsIdentifier('call_accept_video'),
+              findsOneWidget,
+            );
+            expect(
+              find.bySemanticsIdentifier('call_accept_audio'),
+              findsOneWidget,
+            );
+            expect(tester.takeException(), isNull);
+          },
+          locale: locale,
+          scale: 2,
+        );
+      },
+    );
+  }
 
   testWidgets('U6R causal default-off keeps real incoming audio Answer', (
     tester,

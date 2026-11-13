@@ -2784,5 +2784,9 @@
   "@call_video_controls_label": {
     "description": "U6 call video presentation label. User action wording does not grant camera permission or remote consent."
   },
-  "contact_retry_stopped_hint": "Still waiting. Ask them to scan your code again."
+  "contact_retry_stopped_hint": "Still waiting. Ask them to scan your code again.",
+  "call_video_entry_incoming": "Incoming video call",
+  "call_video_entry_starting": "Starting video call",
+  "call_video_entry_unavailable": "Video calling is unavailable right now.",
+  "call_video_entry_start_failed": "Couldn't start the video call. Please try again."
 }

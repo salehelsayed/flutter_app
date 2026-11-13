@@ -5504,4 +5504,18 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get contact_retry_stopped_hint =>
       'Noch nicht verbunden. Bitte dein Gegenüber, deinen Code erneut zu scannen.';
+
+  @override
+  String get call_video_entry_incoming => 'Eingehender Videoanruf';
+
+  @override
+  String get call_video_entry_starting => 'Videoanruf wird gestartet';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'Videoanrufe sind gerade nicht verfügbar.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.';
 }

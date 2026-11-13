@@ -10,6 +10,7 @@ import '../application/foreground_call_capability.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_video_presentation.dart';
@@ -75,6 +76,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   String _contactDisplayName = _unknownContactName;
   bool _nameLoaded = false;
   int _capabilityGeneration = 0;
+  (CallId, int, int)? _mediaAnswerPending;
   int _nameGeneration = 0;
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
@@ -220,6 +222,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     void update() {
       _projection = projection;
       final session = projection?.session;
+      final pending = _mediaAnswerPending;
+      if (pending != null &&
+          (pending.$1 != session?.callId ||
+              pending.$2 != projection?.video?.generation ||
+              pending.$3 != _capabilityGeneration)) {
+        _mediaAnswerPending = null;
+      }
       final surfaceKind = _surfaceKind(session);
       final wasMinimized =
           _minimizedCallId != null && _minimizedCallId == session?.callId;
@@ -370,6 +379,29 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               : _contactDisplayName,
           state: session!.state,
           onAnswer: () => _runAction(() => widget.capability?.answer(callId)),
+          onAcceptVideo: _isInitialVideoOffer(projection, capability)
+              ? () => unawaited(
+                  _answerInitialMedia(
+                    capability!,
+                    capabilityGeneration,
+                    callId,
+                    video!.generation,
+                    CallMediaKind.video,
+                  ),
+                )
+              : null,
+          onUseAudioOnly: _isInitialVideoOffer(projection, capability)
+              ? () => unawaited(
+                  _answerInitialMedia(
+                    capability!,
+                    capabilityGeneration,
+                    callId,
+                    video!.generation,
+                    CallMediaKind.audio,
+                  ),
+                )
+              : null,
+          mediaChoiceInFlight: _mediaAnswerPending != null,
           onDecline: () => _runAction(() => widget.capability?.decline(callId)),
           videoPresentation: video?.presentation,
           onVideoIntent: onVideoIntent,
@@ -647,6 +679,63 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       return null;
     }
     return video;
+  }
+
+  bool _isInitialVideoOffer(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    final video = _visibleVideo(projection, capability);
+    return capability is ForegroundCallMediaAnswerCapability &&
+        projection.session.direction == CallDirection.incoming &&
+        projection.session.incomingValidated &&
+        projection.session.state == CallState.ringing &&
+        video != null &&
+        video.presentation.requestedMedia == CallMediaKind.video &&
+        video.presentation.acceptedMedia == null;
+  }
+
+  Future<void> _answerInitialMedia(
+    ForegroundCallCapability capability,
+    int capabilityGeneration,
+    CallId callId,
+    int generation,
+    CallMediaKind acceptedMedia,
+  ) async {
+    if (!mounted ||
+        !identical(capability, widget.capability) ||
+        capabilityGeneration != _capabilityGeneration ||
+        _mediaAnswerPending != null) {
+      return;
+    }
+    ForegroundCallProjection? current;
+    try {
+      current = capability.current;
+    } catch (_) {
+      return;
+    }
+    if (current == null ||
+        current.session.callId != callId ||
+        current.video?.generation != generation ||
+        !_isInitialVideoOffer(current, capability)) {
+      return;
+    }
+    final pending = (callId, generation, capabilityGeneration);
+    setState(() => _mediaAnswerPending = pending);
+    try {
+      await _handleActionResult(
+        () =>
+            (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
+              callId,
+              generation: generation,
+              acceptedMedia: acceptedMedia,
+            ),
+      );
+    } finally {
+      if (mounted && _mediaAnswerPending == pending) {
+        setState(() => _mediaAnswerPending = null);
+      }
+    }
   }
 
   void _runVideoIntent({
