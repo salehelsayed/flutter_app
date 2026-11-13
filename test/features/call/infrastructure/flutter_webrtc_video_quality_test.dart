@@ -190,7 +190,7 @@ void main() {
             'initialize',
             'mediaStreamTrackSetEnable',
             'trackDispose',
-            'mediaStreamDispose',
+            'streamDispose',
           ].contains(call.method)) {
             return null;
           }
@@ -288,7 +288,7 @@ void main() {
               'initialize',
               'mediaStreamTrackSetEnable',
               'trackDispose',
-              'mediaStreamDispose',
+              'streamDispose',
             ].contains(call.method)) {
               return null;
             }
@@ -552,11 +552,23 @@ void main() {
     (tester) async {
       final f = harness.Fixture();
       await f.start(bind: false);
-      await advance(tester, f, 40);
-      expect(f.captures, 0);
-      expect(f.peer.statsReads, 0);
-      expect(f.peer.nativeTransceivers, isEmpty);
-      await closeFixture(tester, f);
+      try {
+        await advance(tester, f, 40);
+        expect(f.captures, 0);
+        expect(f.peer.statsReads, 0);
+        expect(f.peer.nativeTransceivers, hasLength(1));
+        final audio = f.peer.nativeTransceivers.single;
+        expect(audio.receiver.track.kind, 'audio');
+        expect(audio.direction, rtc.TransceiverDirection.RecvOnly);
+        expect(
+          f.peer.nativeTransceivers.where(
+            (transceiver) => transceiver.receiver.track.kind == 'video',
+          ),
+          isEmpty,
+        );
+      } finally {
+        await closeFixture(tester, f);
+      }
     },
   );
   qualityTest(
