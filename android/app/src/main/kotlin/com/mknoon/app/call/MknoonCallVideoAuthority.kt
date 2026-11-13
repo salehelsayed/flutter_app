@@ -34,6 +34,8 @@ internal class MknoonCallVideoAuthority(
     private var videoCapabilityEnabled = false
     private val mediaByCall = mutableMapOf<UUID, MknoonCallMedia>()
     private var cameraLeaseCall: UUID? = null
+    // Whether the held lease also put the camera FGS type on the service.
+    private var cameraLeaseTyped = false
     // Revocation fence (NATIVE-VIDEO-1): every revoking action bumps it, so a
     // camera request that raced a revocation cannot commit a lease afterwards.
     private var revocationEpoch = 0L
@@ -83,24 +85,28 @@ internal class MknoonCallVideoAuthority(
         val epoch = synchronized(lock) { revocationEpoch }
         val decision = decide(nativeCallId)
         if (decision != MknoonCallLocalCameraDecision.Apply) return decision
-        if (!applier.apply(nativeCallId, true)) {
+        // Without the manifest camera type the service keeps phoneCall|microphone;
+        // the visible activity's while-in-use access covers the camera.
+        val typed = facts.manifestDeclaresCameraType()
+        if (typed && !applier.apply(nativeCallId, true)) {
             return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
         }
         // Recheck after the platform call: anything that changed meanwhile
         // (media downgrade, capability off, backgrounded) wins.
         val recheck = decide(nativeCallId)
         if (recheck != MknoonCallLocalCameraDecision.Apply) {
-            applier.apply(nativeCallId, false)
+            if (typed) applier.apply(nativeCallId, false)
             return recheck
         }
         val committed = synchronized(lock) {
             if (revocationEpoch == epoch) {
                 cameraLeaseCall = nativeCallId
+                cameraLeaseTyped = typed
                 true
             } else false
         }
         if (!committed) {
-            applier.apply(nativeCallId, false)
+            if (typed) applier.apply(nativeCallId, false)
             return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
         }
         return MknoonCallLocalCameraDecision.Apply
@@ -118,8 +124,9 @@ internal class MknoonCallVideoAuthority(
     fun holdsCameraLease(nativeCallId: UUID): Boolean = synchronized(lock) { cameraLeaseCall == nativeCallId }
 
     /** True only while this call's lease also carries the camera FGS type on
-     * the running service. API scaffold: today every lease is typed. */
-    fun holdsCameraForegroundType(nativeCallId: UUID): Boolean = holdsCameraLease(nativeCallId)
+     * the running service. An untyped lease must never re-add that type. */
+    fun holdsCameraForegroundType(nativeCallId: UUID): Boolean =
+        synchronized(lock) { cameraLeaseCall == nativeCallId && cameraLeaseTyped }
 
     /** Drops the lease without touching the platform, for a caller that is
      * itself about to re-apply the service types without the camera. */

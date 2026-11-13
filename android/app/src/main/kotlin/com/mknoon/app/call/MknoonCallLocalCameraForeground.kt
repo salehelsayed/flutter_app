@@ -29,7 +29,9 @@ internal data class MknoonCallLocalCameraInputs(
     val cameraPermissionGranted: Boolean,
     val sdkInt: Int,
     /** The call service's manifest entry lists the "camera" type. Held out of
-     * the manifest until the build that enables video (Play declaration). */
+     * the manifest until the build that enables video (Play declaration).
+     * Without it a visible call still gets an untyped lease (VC-FG-CAMERA):
+     * while-in-use camera access from a visible activity needs no FGS type. */
     val manifestDeclaresCameraType: Boolean,
 )
 
@@ -55,7 +57,6 @@ internal fun decideMknoonCallLocalCamera(
 ): MknoonCallLocalCameraDecision {
     val reason = when {
         inputs.sdkInt < MKNOON_CALL_CAMERA_TYPE_MIN_SDK -> MknoonCallLocalCameraDecision.Reason.UNSUPPORTED
-        !inputs.manifestDeclaresCameraType -> MknoonCallLocalCameraDecision.Reason.UNSUPPORTED
         inputs.media != MknoonCallMedia.VIDEO -> MknoonCallLocalCameraDecision.Reason.NOT_VIDEO
         !inputs.audioActive -> MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE
         !inputs.cameraPermissionGranted -> MknoonCallLocalCameraDecision.Reason.NO_PERMISSION
