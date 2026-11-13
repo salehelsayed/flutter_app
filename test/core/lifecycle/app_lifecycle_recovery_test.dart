@@ -35,7 +35,9 @@ IdentityModel _makeIdentity({String? mlKemPublicKey = 'own-mlkem-pk'}) {
   );
 }
 
-final _retryNow = DateTime.utc(2026, 11, 13, 12);
+// Signing uses wall time, so pin retry time to a captured real instant rather
+// than a calendar date that could put the scan after the signed envelope.
+final _retryNow = DateTime.now().toUtc();
 
 ContactModel _makeContact(String peerId, {DateTime? scannedAt}) {
   return ContactModel(
