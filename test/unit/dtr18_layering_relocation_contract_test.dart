@@ -135,8 +135,10 @@ const _closureConsumerUriRewrites = <String, String>{
 // Plans 347 and 370 deliberately add app-owned lifecycle callbacks ahead of
 // incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
+// BL-24 D1 adds the optional delivery-receipt drain ports to the existing resume
+// lifecycle (19 additive lines); no owner moves and the import floor holds.
 const _resumeSha256 =
-    '0b02fec7d3ab076b9d9f8fc0319dac317c035ec909144e493db560fc8c79a046';
+    '99d293b431d93b59fd9826751cf4b3a8388ec22caaf9101cc4d84d1efe580614';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -269,7 +271,9 @@ const _applicationRootNormalizedSha256 =
     // hook at this same app owner; the six-line reverse diff is exact.
     // BL-17 piece 4 forwards that library to routes as CustomStickerScope
     // around the existing route child only; no owner or resume dispatch moves.
-    '64ff4f50a6c7fd949ab8cb6cb3616493689e2c334c525e5796b0c9b103606c57';
+    // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
+    // this same app owner (3 lines); no owner or resume dispatch moves.
+    '2fbe10ebe711b0e10ece21377561ab1f580c8228b6a14d606025129bd03a0b01';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -529,8 +533,10 @@ const _productionBootstrapNormalizedSha256 =
 // callback remains byte-identical and unique; no existing owner relocates.
 // The same BL-14 sweep callback change leaves the historical callback exact.
 // The same BL-24C retry-marker wiring leaves the historical callback exact.
+// BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
+// leave the historical callback exact; no owner relocates.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '69b140c3d2a08a52077461f035a63becd535933980b6a96073a1c41f3425e3fb';
+    'e5381f388d60aa6bdc985bdb942c0cbe95b99716ec8798d673c2636fa658cc59';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
