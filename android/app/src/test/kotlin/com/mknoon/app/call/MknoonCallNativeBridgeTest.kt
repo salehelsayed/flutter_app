@@ -1297,7 +1297,7 @@ class MknoonCallNativeBridgeTest {
     }
 
     @Test
-    fun `phase-4 camera lease is refused while the manifest lacks the camera type and release always succeeds`() {
+    fun `phase-4 camera lease applies without the camera type while the manifest lacks it and release always succeeds`() {
         val rig = LifecycleRig()
         assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
         val applied = mutableListOf<Pair<UUID, Boolean>>()
@@ -1306,8 +1306,11 @@ class MknoonCallNativeBridgeTest {
         authority.setCallMedia(rig.payload.nativeCallId, MknoonCallMedia.VIDEO)
         val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null, videoAuthority = authority)
         val identity = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
-        assertBridgeSuccess(bridge, "setLocalCameraActive", identity + ("active" to true), false)
+        // VC-FG-CAMERA: visible UI gets the lease; the undeclared camera type is never applied.
+        assertBridgeSuccess(bridge, "setLocalCameraActive", identity + ("active" to true), true)
         assertTrue(applied.isEmpty())
+        assertTrue(authority.holdsCameraLease(rig.payload.nativeCallId))
+        assertFalse(authority.holdsCameraForegroundType(rig.payload.nativeCallId))
         assertBridgeSuccess(bridge, "setLocalCameraActive", identity + ("active" to false), true)
         assertEquals(listOf(rig.payload.nativeCallId to false), applied)
         val malformed = CapturingCallBridgeResult()

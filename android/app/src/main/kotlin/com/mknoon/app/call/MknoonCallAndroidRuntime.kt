@@ -909,7 +909,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val types = mknoonCallOngoingForegroundTypes(
                                 withMicrophone = withMicrophone,
-                                withCamera = withMicrophone && videoAuthority.holdsCameraLease(nativeCallId),
+                                withCamera = withMicrophone && videoAuthority.holdsCameraForegroundType(nativeCallId),
                             )
                             service.startForeground(id, foregroundNotification, types)
                         } else {
