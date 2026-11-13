@@ -11779,6 +11779,37 @@ visible and cannot become an ordinary first-attempt PASS.
   `build/qn-save/handoff.json` (sha256 `7fd80926...`). These are mapping and
   contract proofs only: live network/thermal transitions on devices, Q/G
   consumption and activation remain separate, and the video gate stays off.
+  **U3j-Q adaptive video quality policy:** scoped Dart host evidence is closed
+  at `88276a9a25845ab130a16fc3b8a1bfebfa97bc1d`. The corrected native quality
+  file passed 19 cases; 20 policy, 15 sampler and 162 preservation cases carry
+  by unchanged production and test identities. The pinned SDK stream cleanup
+  method is `streamDispose`; an unbound receive-audio peer legitimately owns
+  one audio RecvOnly transceiver and must own no video transceiver. Widget
+  cleanup must drive both real and fake async queues with a bound, retaining
+  the original assertion if cleanup also fails. The original timeout, both
+  diagnostic probes and the first 51-pass/three-error GREEN remain evidence;
+  the corrected result does not replace them. Three original runtime identity
+  checkpoints (72 file hashes) were recovered verbatim from the runner's
+  transcript and verified, separately from its post-run identity snapshot.
+  Evidence: `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jq-fixture-runtime-audit.json`.
+  iOS SDK acknowledgement does not establish native acceptance or fail-closed
+  rejection detection; Kayan deferred that proof to the device work. Actual
+  encoder/thermal hardware behavior and Q/QN graph consumption remain separate.
+  **U3j-G graph core:** scoped source and host evidence is closed at
+  `f88b54ad87da47a35cc4ffe845591379dbc301b2`. The corrected composition file
+  passed 213 cases; six unchanged executor/bundle/control/lifecycle files
+  carry 380 passing cases by source identity. This is assembled coverage,
+  not a repeated seven-file run. Original RED had one passing control and 27
+  causal assertion failures; first GREEN had 590 passes and three invitation
+  fixture failures. Outgoing preflight rotates a caller wake grant with less
+  than 645 seconds remaining: fixtures must model delivery of the replacement
+  grant, and native-enabled outgoing fixtures must replay presented/adopted
+  state before expecting an invitation. Three original runtime checkpoints
+  matched all 90 file hashes. Evidence:
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jg-fixture-runtime-audit.json`.
+  Q consumer plus native QN environment composition remains required dependent
+  work. Video stays off; native/device/RTP/PiP/signed-candidate and activation
+  claims are outside this core result.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,

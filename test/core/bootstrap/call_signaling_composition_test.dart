@@ -53,6 +53,9 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/domain/call_video_quality_environment.dart';
+import 'package:flutter_app/features/call/domain/call_video_quality_policy.dart';
+import 'package:flutter_app/features/call/infrastructure/platform_call_video_quality_environment_source.dart';
 import 'package:flutter_app/features/call/application/call_video_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -510,6 +513,229 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  for (final enabled in [false, true]) {
+    test(
+      'U3j-GQ default platform source follows video gate=$enabled',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        const channel = MethodChannel(
+          PlatformCallVideoQualityEnvironmentSource.eventChannelName,
+        );
+        final methods = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          methods.add(call.method);
+          return null;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final fixture = await _createProductionIosFixture(
+          privacyFlags: {'video_call_v2_enabled': enabled},
+          usePlatformQualityEnvironment: true,
+        );
+        await fixture.composition.start();
+        if (enabled) await _untilComposition(() => methods.contains('listen'));
+        expect(methods.where((m) => m == 'listen'), hasLength(enabled ? 1 : 0));
+        expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+        expect(fixture.graphs.single.coordinator.activeSession, isNull);
+        await fixture.composition.shutdown();
+        expect(methods.where((m) => m == 'cancel'), hasLength(enabled ? 1 : 0));
+      },
+      timeout: const Timeout(Duration(seconds: 20)),
+    );
+  }
+
+  test('U3j-GQ gate off does not construct the optional source', () async {
+    var factories = 0;
+    final fixture = await _createProductionIosFixture(
+      qualityEnvironmentSourceFactory: () {
+        factories++;
+        throw StateError('disabled source must not be constructed');
+      },
+    );
+    await fixture.composition.start();
+    expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+    await fixture.composition.shutdown();
+    expect(factories, 0);
+  });
+
+  test(
+    'U3j-GQ pending observation start cannot block audio readiness or close',
+    () async {
+      final gate = Completer<void>();
+      final source = _GraphQualitySource(startGate: gate);
+      final fixture = await _createProductionIosFixture(
+        privacyFlags: const {'video_call_v2_enabled': true},
+        qualityEnvironmentSourceFactory: () => source,
+      );
+      await fixture.composition.start().timeout(const Duration(seconds: 2));
+      expect(source.starts, 1);
+      expect(gate.isCompleted, isFalse);
+      expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+      await fixture.composition.shutdown().timeout(const Duration(seconds: 2));
+      expect(source.closes, 1);
+      gate.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(source.listens, 1);
+    },
+    timeout: const Timeout(Duration(seconds: 20)),
+  );
+
+  test(
+    'U3j-GQ observation failure stays unknown and leaves audio ready',
+    () async {
+      final source = _GraphQualitySource(failStart: true);
+      final fixture = await _createProductionIosFixture(
+        privacyFlags: const {'video_call_v2_enabled': true},
+        qualityEnvironmentSourceFactory: () => source,
+      );
+      await fixture.composition.start();
+      await _untilComposition(() => source.starts == 1);
+      expect(source.starts, 1);
+      expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+      await fixture.composition.shutdown();
+      expect(source.closes, 1);
+    },
+  );
+
+  test(
+    'U3j-GQ current input reaches the canonical session without camera consent',
+    () async {
+      final source = _GraphQualitySource(initial: _graphCellularQuality);
+      var permissions = 0;
+      final (fixture, engine) = await _connectedGraphVideo(
+        qualityEnvironmentSourceFactory: () => source,
+        permission: () async {
+          permissions++;
+          return true;
+        },
+      );
+      final video = engine.video!;
+      expect(video.qualityEnvironments.lastOrNull, same(_graphCellularQuality));
+      source.emit(_graphCriticalQuality);
+      await _untilComposition(
+        () => identical(
+          video.qualityEnvironments.lastOrNull,
+          _graphCriticalQuality,
+        ),
+      );
+      expect(video.qualityEnvironments.last, same(_graphCriticalQuality));
+      expect(video.cameraStarts, 0);
+      expect(permissions, 0);
+      expect(engine.binds, 1);
+      expect(engine.candidateSubscriptions, 1);
+      expect(fixture.lifecycleMethods, isNot(contains('setLocalCameraActive')));
+      expect(source.starts, 1);
+      expect(source.listens, 1);
+    },
+  );
+
+  test(
+    'U3j-GQ source errors become unknown for the same current session',
+    () async {
+      final source = _GraphQualitySource(initial: _graphCriticalQuality);
+      final (_, engine) = await _connectedGraphVideo(
+        qualityEnvironmentSourceFactory: () => source,
+      );
+      expect(
+        engine.video!.qualityEnvironments.lastOrNull,
+        same(_graphCriticalQuality),
+      );
+      source.emitError();
+      await _untilComposition(
+        () => identical(
+          engine.video!.qualityEnvironments.lastOrNull,
+          CallVideoQualityEnvironment.unknown,
+        ),
+      );
+      expect(
+        engine.video!.qualityEnvironments.last,
+        same(CallVideoQualityEnvironment.unknown),
+      );
+      expect(engine.video!.cameraStarts, 0);
+    },
+  );
+
+  for (final platform in [
+    CallEndpointPlatform.ios,
+    CallEndpointPlatform.android,
+  ]) {
+    test(
+      'U3j-GQ environment delivery preserves explicit camera authority on $platform',
+      () async {
+        final source = _GraphQualitySource(initial: _graphCellularQuality);
+        var permissions = 0;
+        final (fixture, engine) = await _connectedGraphVideo(
+          platform: platform,
+          qualityEnvironmentSourceFactory: () => source,
+          permission: () async {
+            permissions++;
+            return true;
+          },
+        );
+        final graph = fixture.graphs.single;
+        expect(
+          engine.video!.qualityEnvironments.lastOrNull,
+          same(_graphCellularQuality),
+        );
+        final capability =
+            (fixture.composition as Object) as ForegroundCallVideoCapability;
+        expect(
+          await capability.applyVideoIntent(
+            _callA,
+            generation: graph.current!.video!.generation,
+            intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        expect(
+          engine.video!.environmentAtCameraStart,
+          same(_graphCellularQuality),
+        );
+        expect(permissions, 1);
+        expect(engine.video!.cameraStarts, 1);
+        if (platform == CallEndpointPlatform.android) {
+          expect(fixture.lifecycleMethods, contains('setLocalCameraActive'));
+        }
+        await fixture.composition.onBackgrounded();
+        source.emit(_graphCriticalQuality);
+        await fixture.composition.onResume();
+        source.emit(_graphCellularQuality);
+        await Future<void>.delayed(Duration.zero);
+        expect(engine.video!.cameraOn, isFalse);
+        expect(engine.video!.cameraStarts, 1);
+        expect(permissions, 1);
+      },
+      timeout: const Timeout(Duration(seconds: 20)),
+    );
+  }
+
+  test(
+    'U3j-GQ terminal and graph shutdown fence late environment events',
+    () async {
+      final source = _GraphQualitySource(initial: _graphCellularQuality);
+      final (fixture, engine) = await _connectedGraphVideo(
+        qualityEnvironmentSourceFactory: () => source,
+      );
+      final video = engine.video!;
+      expect(video.qualityEnvironments.lastOrNull, same(_graphCellularQuality));
+      expect(
+        await fixture.composition.end(_callA),
+        ForegroundCallActionResult.applied,
+      );
+      final afterEnd = video.qualityEnvironments.length;
+      source.emit(_graphCriticalQuality);
+      await Future<void>.delayed(Duration.zero);
+      expect(video.qualityEnvironments, hasLength(afterEnd));
+      await fixture.composition.shutdown();
+      expect(source.closes, 1);
+      expect(source.cancellations, 1);
+      source.emit(_graphCellularQuality);
+      await Future<void>.delayed(Duration.zero);
+      expect(video.qualityEnvironments, hasLength(afterEnd));
+      expect(video.cameraStarts, 0);
+    },
+  );
   test('endpoint repair coalesces through delayed publication', () async {
     const contact = 'remote-account';
     var repairs = 0;
@@ -8583,6 +8809,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Future<bool> Function()? permission,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
   CallScheduledTimerObserver? timerObserver,
+  CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
 }) async {
   final events = StreamController<Object?>.broadcast(sync: true);
   addTearDown(events.close);
@@ -8593,6 +8820,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestCameraPermission: permission ?? () async => true,
     onCallTimerScheduled: timerObserver,
+    qualityEnvironmentSourceFactory: qualityEnvironmentSourceFactory,
     outgoingContactAccountPeerId: 'video-contact',
     privacyFlags: const {'video_call_v2_enabled': true},
     lifecycleEventStream: events.stream,
@@ -8879,6 +9107,8 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
   Future<bool> Function()? requestCameraPermission,
+  CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
+  bool usePlatformQualityEnvironment = false,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   RepairCallEndpoint? repairMissingEndpoint,
   String? nativeHandleOverride,
@@ -8958,6 +9188,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
     requestCameraPermission: requestCameraPermission,
+    qualityEnvironmentSourceFactory: usePlatformQualityEnvironment
+        ? null
+        : qualityEnvironmentSourceFactory ?? () => _GraphQualitySource(),
     callEngineFactory: callEngineFactory,
     onCallHistoryProjected: onCallHistoryProjected,
     onCallTimerScheduled: onCallTimerScheduled,
@@ -9426,8 +9659,16 @@ final class _GraphVideoSession
     implements
         CallVideoSession,
         CallVideoPresentationSource,
-        CallVideoCameraSwitch {
+        CallVideoCameraSwitch,
+        CallVideoQualityEnvironmentConsumer {
   _GraphVideoSession(this.callId, this.canApply);
+  final qualityEnvironments = <CallVideoQualityEnvironment>[];
+  CallVideoQualityEnvironment? environmentAtCameraStart;
+  @override
+  void updateQualityEnvironment(CallVideoQualityEnvironment environment) {
+    qualityEnvironments.add(environment);
+  }
+
   @override
   final CallId callId;
   final bool Function() canApply;
@@ -9520,6 +9761,7 @@ final class _GraphVideoSession
     if (!canApply() || !identical(this.token, token) || !grant.isCurrent()) {
       return false;
     }
+    environmentAtCameraStart = qualityEnvironments.lastOrNull;
     cameraStarts++;
     cameraOn = true;
     emit(CallVideoRendererSlot.local);
@@ -9892,4 +10134,79 @@ final class _ProcessLossEngine extends _ProductionSpeakerRouteEngine {
   @override
   Future<int> restartIce({List<CallIceServer> iceServers = const []}) async =>
       1;
+}
+
+const _graphCellularQuality = CallVideoQualityEnvironment(
+  networkClass: CallVideoNetworkClass.cellular,
+  lowDataMode: false,
+  metered: true,
+  thermalState: CallVideoThermalState.nominal,
+);
+const _graphCriticalQuality = CallVideoQualityEnvironment(
+  networkClass: CallVideoNetworkClass.wifi,
+  lowDataMode: false,
+  metered: false,
+  thermalState: CallVideoThermalState.critical,
+);
+
+final class _GraphQualitySource implements CallVideoQualityEnvironmentSource {
+  _GraphQualitySource({
+    CallVideoQualityEnvironment initial = CallVideoQualityEnvironment.unknown,
+    this.startGate,
+    this.failStart = false,
+  }) : _current = initial {
+    addTearDown(() async {
+      final gate = startGate;
+      if (gate != null && !gate.isCompleted) gate.complete();
+      await close();
+    });
+  }
+  final Completer<void>? startGate;
+  final bool failStart;
+  final _events = StreamController<CallVideoQualityEnvironment>.broadcast(
+    sync: true,
+  );
+  CallVideoQualityEnvironment _current;
+  bool _closed = false;
+  int starts = 0, listens = 0, cancellations = 0, closes = 0;
+  @override
+  CallVideoQualityEnvironment get current => _current;
+  @override
+  Stream<CallVideoQualityEnvironment> get changes {
+    listens++;
+    return Stream<CallVideoQualityEnvironment>.multi((subscriber) {
+      subscriber.add(_current);
+      final live = _events.stream.listen(
+        subscriber.add,
+        onError: subscriber.addError,
+        onDone: subscriber.close,
+      );
+      subscriber.onCancel = () {
+        cancellations++;
+        return live.cancel();
+      };
+    });
+  }
+
+  @override
+  Future<void> start() async {
+    starts++;
+    if (failStart) throw StateError('optional observation failed');
+    await startGate?.future;
+  }
+
+  void emit(CallVideoQualityEnvironment environment) {
+    _current = environment;
+    if (!_events.isClosed) _events.add(environment);
+  }
+
+  void emitError() => _events.addError(StateError('optional source error'));
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    closes++;
+    _current = CallVideoQualityEnvironment.unknown;
+    await _events.close();
+  }
 }
