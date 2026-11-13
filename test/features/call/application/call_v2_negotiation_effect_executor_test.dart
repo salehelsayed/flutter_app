@@ -616,9 +616,17 @@ void main() {
         await h.connect();
         final held = Completer<void>();
         h.engine.restartGate = held;
-        final pending = h.loseMedia();
+        var effectReturned = false;
+        final pending = h.loseMedia().then((_) {
+          effectReturned = true;
+        });
         await _turn();
         try {
+          expect(
+            effectReturned,
+            isTrue,
+            reason: 'Native work must release the canonical effect lane.',
+          );
           expect(h.engine.restartCalls, 1);
           if (boundary == 'end') {
             await h.end();
