@@ -1176,7 +1176,11 @@ void main() {
                 expect(bounds.width, greaterThanOrEqualTo(48));
                 expect(bounds.height, greaterThanOrEqualTo(48));
                 expect(rect.contains(bounds.center), isTrue);
-                expect(tester.getSemantics(action).label, contains(label));
+                final node = tester.getSemantics(action);
+                expect(
+                  node.tooltip.isNotEmpty ? node.tooltip : node.label,
+                  contains(label),
+                );
                 expect(
                   Directionality.of(tester.element(action)),
                   language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
