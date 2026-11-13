@@ -1,6 +1,9 @@
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
+
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -11,6 +14,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../bridge/fake_bridge.dart';
+import '../secure_storage/fake_secure_key_store.dart';
 import '../services/fake_p2p_service.dart';
 import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../features/identity/domain/repositories/fake_identity_repository.dart';
@@ -31,14 +35,16 @@ IdentityModel _makeIdentity({String? mlKemPublicKey = 'own-mlkem-pk'}) {
   );
 }
 
-ContactModel _makeContact(String peerId) {
+final _retryNow = DateTime.utc(2026, 11, 13, 12);
+
+ContactModel _makeContact(String peerId, {DateTime? scannedAt}) {
   return ContactModel(
     peerId: peerId,
     publicKey: 'pk-$peerId',
     rendezvous: '/p2p-circuit/rendezvous',
     username: 'user-$peerId',
     signature: 'sig-$peerId',
-    scannedAt: '2024-01-01T00:00:00Z',
+    scannedAt: scannedAt?.toIso8601String() ?? '2024-01-01T00:00:00Z',
   );
 }
 
@@ -191,8 +197,14 @@ void main() {
         addresses: ['/ip4/127.0.0.1/tcp/4001'],
       );
       final contactRepo = FakeContactRepository()
-        ..seed([_makeContact('target-peer-1234567890')]);
+        ..seed([
+          _makeContact(
+            'target-peer-1234567890',
+            scannedAt: _retryNow.subtract(const Duration(hours: 1)),
+          ),
+        ]);
       final identityRepo = FakeIdentityRepository()..seed(_makeIdentity());
+      final retryStore = FakeSecureKeyStore();
 
       bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
       bridge.responses['contactrequest.encrypt'] = {
@@ -207,6 +219,17 @@ void main() {
         p2pService: runningP2P,
         contactRepo: contactRepo,
         identityRepo: identityRepo,
+        // Exercise the same durable retry seam injected by production resume.
+        retryIncompleteKeyExchangesFn: () => withClock(
+          Clock.fixed(_retryNow),
+          () => retryIncompleteKeyExchanges(
+            contactRepo: contactRepo,
+            identityRepo: identityRepo,
+            p2pService: runningP2P,
+            bridge: bridge,
+            secureKeyStore: retryStore,
+          ),
+        ),
       );
 
       // sendContactRequest now uses sendMessageWithReply (not sendMessage)
@@ -606,8 +629,14 @@ void main() {
       );
       runningP2P.storeInInboxResult = true;
       final contactRepo = FakeContactRepository()
-        ..seed([_makeContact('target-peer-1234567890')]);
+        ..seed([
+          _makeContact(
+            'target-peer-1234567890',
+            scannedAt: _retryNow.subtract(const Duration(hours: 1)),
+          ),
+        ]);
       final identityRepo = FakeIdentityRepository()..seed(_makeIdentity());
+      final retryStore = FakeSecureKeyStore();
 
       bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
       bridge.responses['contactrequest.encrypt'] = {
@@ -622,6 +651,17 @@ void main() {
         p2pService: runningP2P,
         contactRepo: contactRepo,
         identityRepo: identityRepo,
+        // Exercise the same durable retry seam injected by production resume.
+        retryIncompleteKeyExchangesFn: () => withClock(
+          Clock.fixed(_retryNow),
+          () => retryIncompleteKeyExchanges(
+            contactRepo: contactRepo,
+            identityRepo: identityRepo,
+            p2pService: runningP2P,
+            bridge: bridge,
+            secureKeyStore: retryStore,
+          ),
+        ),
       );
 
       // Verify command order: payload.sign then contactrequest.encrypt
