@@ -11818,6 +11818,40 @@ visible and cannot become an ordinary first-attempt PASS.
   The gate remains off. General recovery/takeover, graph/lifecycle composition,
   aggregate batch checks, native/live media and signed candidate proof remain
   separate; this unit does not establish those claims.
+  **U3j settled v2 ICE recovery:** recovery retains the canonical reconnect
+  episode, existing SDP queue and engine/candidate listeners. Its effect
+  returns before native work completes so End and the canonical timeout stay
+  responsive. Capture closes before native retirement; fresh endpoint/TURN
+  and replacement ICE work require positive native reconciliation. Bounded
+  retries preserve immutable signal custody. Current native readiness is
+  sampled after current SDP work outside the coordinator's await chain, so a
+  second native callback is unnecessary. A retained recovery record applies
+  only to its current canonical reconnect generation; two-episode cases
+  cover both normal advancement and a first-delivered older announcement.
+  Original RED `72b8e1f18b9b8ac09c9171b39dc21246400feb1c` recorded two
+  passes, 20 assertion failures and three BadState errors, with no loader
+  failure. Correction RED `799f755b606c7a915479a2c9ea34361ccf7c4e18`
+  failed both prior-episode cases by assertion. Corrected GREEN
+  `1599cf3d8146aa1570c63825812b8fb60b5e9685` passed all 143 focused cases
+  (76 legacy-executor and 67 v2-executor) and 243 preservation cases
+  (29 machine, 26 switch-executor, 44 wire, 21 media-owner, 35 video-session,
+  46 signaling-port and 42 incoming-v2). Both passing reporters completed
+  with zero failures, errors or skips and child exits 0. Four-path analysis,
+  metadata validation and the bounded selection preview exited 0; its 13
+  broader selections remain unrun for the later batch. Ten clean runtime
+  checkpoints pin exact HEAD/parent/tree/library-tree and 23 hashes each;
+  all 230 pins were independently checked against 69 distinct Git blobs.
+  All three setups used plain `flutter pub get` instead of the requested
+  offline/enforced-lockfile flags. Each exited 0, without a changed-dependency
+  line, tracked source/configuration/locale delta or restoration. This setup
+  deviation and every first failure remain retained. Codex closed source and
+  scoped host review with zero required findings; raw reporters, argv,
+  checkpoints and the final verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jr-final-host-adoption.json`.
+  This proof covers initial-complete and settled agreements. Pending-switch
+  takeover remains a separate required unit before activation. Graph and
+  lifecycle wiring, native/live delivery, aggregate validation and signed
+  candidate proof remain separate; the video gate stays off.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
@@ -11899,13 +11933,31 @@ visible and cannot become an ordinary first-attempt PASS.
   probe. The test-only correction starts close, releases the gate, then awaits
   the unreconciled result and close with every assertion retained. Production
   remains byte-identical to `711e7423d`.
-  Known limit: production close retires gates/token synchronously but waits
-  behind an in-flight native state probe in its serial tail. A hanging native
-  operation can delay close. The separate SDP-C unit must address read-only
-  probe waiting before activation; this fixture correction does not do so.
+  That fixture correction retained a known close-wait limit, subsequently
+  addressed by SDP-C at `eef24565e57e1f7b4c4c95cde9ad8af435c3e2a5`.
+  One idempotent close signal releases all five read-only signaling probes
+  (commit and both probes in legacy rollback and reconciliation). Each existing
+  post-await authority check still rejects a closed token; late native results
+  cannot publish or certify state, and late errors are consumed. Native
+  mutations, capture detach and resource cleanup remain serialized: close may
+  still wait for those operations. The native query itself is not cancelled.
+  The ten held-read cases require close and queued work to settle before the
+  probe is released, then cover late success/error, repeated close and owned
+  camera/renderer cleanup. Four controls preserve native rollback ordering and
+  errors that arrive before close. RED `513d89a3c` gives ten causal assertion
+  failures and four passing controls, without loader failures or timeouts.
+  GREEN passes all 68 session and 72 owner/engine cases, with zero
+  failures/errors/skips, successful reporter completion and child exits zero.
+  Eight clean HEAD/tree/lib boundaries match all 15 individual pins; both setup
+  deltas are empty. Analysis, metadata validation and explicit-base selection
+  preview pass; broader selected lanes remain unrun under the bounded scope.
+  Raw evidence is in the Claude-Dev checkout's `build/sdpc-proof/`, verified in
+  `/Users/I560101/.codex/investigations/video-sdp-c-20261113/runtime-verified.json`.
+  This resolves the read-probe wait within host proof, not native/device or
+  composed-video certification. The video gate remains off.
   All eight initial and three correction HEAD/tree/clean identity boundaries
   match 15 individual pins; correction boundaries also print the library tree.
-  Both setup deltas are empty. Initial analysis and metadata validation passed;
+  All setup deltas are empty. Initial analysis and metadata validation passed;
   corrected-test analysis passed. Raw evidence is in the Claude-Dev checkout's
   `build/sdp-proof/` and `build/sdpfix-proof/`, with independent verification in
   `/Users/I560101/.codex/investigations/video-sdp-reconcile-20261113/first-runtime-verified.json`
