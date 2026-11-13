@@ -64,12 +64,36 @@ class MknoonCallVideoAuthorityTest {
     }
 
     @Test
-    fun `without the manifest camera type a ready call is refused as unsupported`() {
+    fun `without the manifest camera type a visible ready call gets an untyped lease`() {
         readyVideoCall()
         facts.manifest = false
-        val decision = authority.requestLocalCamera(call)
-        assertEquals("unsupported", (decision as MknoonCallLocalCameraDecision.Refuse).reason.wireValue)
+        assertEquals(MknoonCallLocalCameraDecision.Apply, authority.requestLocalCamera(call))
+        assertTrue(authority.holdsCameraLease(call))
+        // The service never gets the camera type it does not declare.
+        assertFalse(authority.holdsCameraForegroundType(call))
         assertTrue(applied.isEmpty())
+        // Background release stays as before: it always succeeds.
+        authority.releaseLocalCamera(call)
+        assertFalse(authority.holdsCameraLease(call))
+        assertEquals(listOf(call to false), applied)
+    }
+
+    @Test
+    fun `without the manifest camera type hidden UI is still refused`() {
+        readyVideoCall()
+        facts.manifest = false
+        facts.visible = false
+        val decision = authority.requestLocalCamera(call)
+        assertEquals("not_visible", (decision as MknoonCallLocalCameraDecision.Refuse).reason.wireValue)
+        assertFalse(authority.holdsCameraLease(call))
+        assertTrue(applied.isEmpty())
+    }
+
+    @Test
+    fun `a typed lease reports the camera foreground type`() {
+        readyVideoCall()
+        assertEquals(MknoonCallLocalCameraDecision.Apply, authority.requestLocalCamera(call))
+        assertTrue(authority.holdsCameraForegroundType(call))
     }
 
     @Test

@@ -33,7 +33,6 @@ class MknoonCallLocalCameraForegroundTest {
     fun `each missing fact refuses with its own fixed reason`() {
         val cases = listOf(
             ready.copy(sdkInt = 29) to "unsupported",
-            ready.copy(manifestDeclaresCameraType = false) to "unsupported",
             ready.copy(media = MknoonCallMedia.AUDIO) to "not_video",
             ready.copy(audioActive = false) to "not_active",
             ready.copy(cameraPermissionGranted = false) to "no_permission",
@@ -48,10 +47,14 @@ class MknoonCallLocalCameraForegroundTest {
     }
 
     @Test
-    fun `without the manifest camera type every request is unsupported, even a fully ready call`() {
+    fun `without the manifest camera type a visible ready call is still allowed and hidden UI is not`() {
+        // VC-FG-CAMERA (Kayan m-b97f6778): camera while-in-use from a visible
+        // activity needs no camera FGS type; only the type itself is withheld.
+        val untyped = ready.copy(manifestDeclaresCameraType = false)
+        assertEquals(MknoonCallLocalCameraDecision.Apply, decideMknoonCallLocalCamera(untyped))
         assertEquals(
-            MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.UNSUPPORTED),
-            decideMknoonCallLocalCamera(ready.copy(manifestDeclaresCameraType = false)),
+            MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_VISIBLE),
+            decideMknoonCallLocalCamera(untyped.copy(uiVisible = false)),
         )
     }
 
