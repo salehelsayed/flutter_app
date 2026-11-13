@@ -1,17 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
-import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
-import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
-import 'package:flutter_app/core/database/migrations/004_nullify_secret_columns.dart';
-import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
-import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
-import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
-import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
-import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
-import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
-import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
-import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -26,19 +16,12 @@ void main() {
   });
 
   setUp(() async {
-    db = await openDatabase(inMemoryDatabasePath, version: 1);
-    await runIdentityTableMigration(db);
-    await runMessagesTableMigration(db);
-    await runMlKemKeysMigration(db);
-    await runNullifySecretColumnsMigration(db);
-    await runSecretNullChecksMigration(db);
-    await runReadAtColumnMigration(db);
-    await runArchiveColumnsMigration(db);
-    await runBlockColumnsMigration(db);
-    await runQuotedMessageIdMigration(db);
-    await runTransportColumnMigration(db);
-    await runWireEnvelopeMigration(db);
-    await runMessagesDeletedStateMigration(db);
+    db = await openDatabase(
+      inMemoryDatabasePath,
+      version: currentIdentityDatabaseVersion,
+      onCreate: runProductionOnCreate,
+      onUpgrade: runProductionOnUpgrade,
+    );
 
     messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
