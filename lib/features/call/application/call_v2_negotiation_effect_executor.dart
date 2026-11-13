@@ -116,25 +116,66 @@ final class CallV2NegotiationEffectExecutor
   _V2Recovery? _recovery;
   final Map<CallSignalV2Type, _V2MediaWork> _recoveryIngress = {};
   int? _recoveryIngressEpisode;
+  int? _observedReconnectGeneration;
+  int? _observedReconnectDeadlineMs;
 
   /// Receives the original canonical timer observation before recovery effects.
   void observeReconnectTimer(
     CallSessionSnapshot snapshot,
     Duration effectiveDelay,
-  ) {}
+  ) {
+    if (!_initialCommitted ||
+        !_ready ||
+        snapshot.callId != callId ||
+        snapshot.state != CallState.reconnecting ||
+        snapshot.reconnectGeneration != _snapshot?.reconnectGeneration ||
+        (_observedReconnectGeneration != null &&
+            snapshot.reconnectGeneration <= _observedReconnectGeneration!)) {
+      return;
+    }
+    _observedReconnectGeneration = snapshot.reconnectGeneration;
+    _observedReconnectDeadlineMs =
+        _monotonicMs + max(0, effectiveDelay.inMilliseconds);
+    // Audio-focus loss can open the canonical episode before any ICE effect.
+    // Retire consent now; a later transport upgrade keeps this same budget.
+    _adoptRecovery(snapshot);
+  }
 
   CallMediaSwitchEffectExecutor? get mediaSwitch {
     if (!current) return null;
     return _switch ??= CallMediaSwitchEffectExecutor(
       host: this,
       localIsCaller: _context!.direction == CallDirection.outgoing,
-      initialMedia: _context!.initialAcceptedMedia!,
+      initialMedia: _token!.media,
+      settledRevision: _token!.mediaRevision,
       nowMs: () => _monotonicMs,
       idSource: idSource,
       videoEnabled: videoEnabled,
       timerScheduler: timerScheduler,
-      onChanged: onMediaChanged,
+      onChanged: _switchChanged,
     );
+  }
+
+  bool get _switchRecoveryCurrent {
+    final recovery = _recovery;
+    return recovery != null && recovery.takeover && _recoveryCurrent(recovery);
+  }
+
+  bool get _repairRecoveryCurrent =>
+      _switchRecoveryCurrent &&
+      !_recovery!.prepared &&
+      legacy.engine.iceGeneration == _recovery!.oldGeneration;
+
+  void _switchChanged() {
+    final recovery = _recovery;
+    if (recovery != null && recovery.takeover) {
+      _scheduleRecovery(recovery);
+    }
+    try {
+      onMediaChanged?.call();
+    } catch (_) {
+      // A presentation observer cannot stop owned recovery progress.
+    }
   }
 
   @override
@@ -157,7 +198,7 @@ final class CallV2NegotiationEffectExecutor
           _switch?.machine.phase == MediaSwitchPhase.committed;
       var completed = false;
       try {
-        if (current) {
+        if (current || _repairRecoveryCurrent) {
           await job();
           completed = true;
         }
@@ -193,7 +234,14 @@ final class CallV2NegotiationEffectExecutor
     required CallMediaKind media,
     required bool Function() canApply,
   }) {
-    if (!current || !_allowed(canApply)) throw const _V2WorkRetired();
+    final recovery = !current && _repairRecoveryCurrent ? _recovery : null;
+    if ((!current && recovery == null) ||
+        !_allowed(canApply) ||
+        (recovery != null &&
+            (media != CallMediaKind.audio ||
+                revision != _switch?.machine.settledRevision))) {
+      throw const _V2WorkRetired();
+    }
     final preserveRemote = _awaitingOptionalOffer;
     _awaitingOptionalOffer = false;
     _mediaRetired = false;
@@ -208,14 +256,23 @@ final class CallV2NegotiationEffectExecutor
       _remoteCandidates.clear();
     }
     final epoch = ++_epoch;
+    if (recovery != null) recovery.epoch = epoch;
     _optionalTokenCurrent = canApply;
     _token = _session!.beginNegotiation(
       negotiationId: negotiationId,
       mediaRevision: revision,
       media: media,
       canApply: () =>
-          current && _epoch == epoch && !_mediaRetired && _allowed(canApply),
+          (current || _repairRecoveryCurrent) &&
+          _epoch == epoch &&
+          !_mediaRetired &&
+          _allowed(canApply),
     );
+    if (recovery != null) {
+      recovery.oldToken = _token!;
+      recovery.media = media;
+      recovery.revision = revision;
+    }
     return _token!;
   }
 
@@ -356,10 +413,30 @@ final class CallV2NegotiationEffectExecutor
     required bool Function() canApply,
     bool reservedAbort = false,
   }) async {
-    if (!current || !_allowed(canApply) || _monotonicMs >= deadlineMs) {
+    bool authority() {
+      if (current) return true;
+      if (!_switchRecoveryCurrent ||
+          payload['switch_id'] != _switch?.machine.selectedSwitchId) {
+        return false;
+      }
+      return const {
+            CallSignalV2Type.mediaAbort,
+            CallSignalV2Type.mediaCommit,
+            CallSignalV2Type.mediaCommitAck,
+          }.contains(event) ||
+          (_repairRecoveryCurrent &&
+              (event == CallSignalV2Type.offer ||
+                  event == CallSignalV2Type.answer) &&
+              payload['purpose'] == 'media_repair' &&
+              payload['media'] == 'audio');
+    }
+
+    if (!authority() || !_allowed(canApply) || _monotonicMs >= deadlineMs) {
       return false;
     }
-    var cached = _switchSignals[key];
+    final generation = legacy.engine.iceGeneration;
+    final generationKey = '$generation:$key';
+    var cached = _switchSignals[generationKey];
     if (cached == null) {
       if (_switchSignals.length >= (reservedAbort ? 64 : 60)) return false;
       final now = _nowMs;
@@ -391,7 +468,7 @@ final class CallV2NegotiationEffectExecutor
       cached = _CachedSwitchSignal(signal, deadlineMs, canApply);
       // Reserving before the first await retains exact IDs through retries.
       // The shared production adapter reserves the immutable sealed bytes.
-      _switchSignals[key] = cached;
+      _switchSignals[generationKey] = cached;
     } else if (cached.signal.event != event ||
         cached.deadlineMs != deadlineMs ||
         cached.signal.payload.length != payload.length ||
@@ -402,7 +479,8 @@ final class CallV2NegotiationEffectExecutor
     }
     final captured = cached;
     bool valid() =>
-        current &&
+        authority() &&
+        captured.signal.iceGeneration == legacy.engine.iceGeneration &&
         _monotonicMs < captured.deadlineMs &&
         _nowMs < captured.signal.expiresAtMs &&
         _allowed(captured.canApply) &&
@@ -423,10 +501,26 @@ final class CallV2NegotiationEffectExecutor
   }
 
   IncomingCallSignalOutcome _handleSwitch(_V2MediaWork work) {
-    final owner = mediaSwitch;
+    final owner = current
+        ? mediaSwitch
+        : (_switchRecoveryCurrent ? _switch : null);
     if (owner == null) return IncomingCallSignalOutcome.rejected;
     final signal = work.signal;
     final p = signal.payload;
+    if (!current &&
+        (p['switch_id'] != owner.machine.selectedSwitchId ||
+            (!const {
+                  CallSignalV2Type.mediaAbort,
+                  CallSignalV2Type.mediaCommit,
+                  CallSignalV2Type.mediaCommitAck,
+                }.contains(signal.event) &&
+                !(_repairRecoveryCurrent &&
+                    (signal.event == CallSignalV2Type.offer ||
+                        signal.event == CallSignalV2Type.answer) &&
+                    p['purpose'] == 'media_repair' &&
+                    p['media'] == 'audio')))) {
+      return IncomingCallSignalOutcome.rejected;
+    }
     final remoteIsCaller = _context!.direction == CallDirection.incoming;
     bool accepted;
     switch (signal.event) {
@@ -794,6 +888,14 @@ final class CallV2NegotiationEffectExecutor
         retained?.snapshot.reconnectGeneration == snapshot.reconnectGeneration
         ? retained
         : null;
+    if (recovery != null &&
+        recovery.takeover &&
+        !recovery.prepared &&
+        _switch?.recoveryReady == false) {
+      // A peer's advanced ICE tuple cannot replace unresolved same-generation
+      // audio repair or its terminal custody.
+      return IncomingCallSignalOutcome.rejected;
+    }
     final caller = _context!.direction == CallDirection.outgoing;
     final revision = _switch?.machine.settledRevision ?? _token!.mediaRevision;
     final media = _switch?.machine.settledMedia ?? _token!.media;
@@ -897,8 +999,79 @@ final class CallV2NegotiationEffectExecutor
     return IncomingCallSignalOutcome.accepted;
   }
 
+  _V2Recovery? _adoptRecovery(CallSessionSnapshot snapshot) {
+    if (!_ready || _session == null || _token == null) return null;
+    final existing = _recovery;
+    if (existing?.snapshot.reconnectGeneration ==
+        snapshot.reconnectGeneration) {
+      return existing;
+    }
+    final machine = _switch?.machine;
+    final settled =
+        machine == null ||
+        const {
+          null,
+          MediaSwitchPhase.committed,
+          MediaSwitchPhase.declined,
+          MediaSwitchPhase.superseded,
+        }.contains(machine.phase);
+    final pending =
+        !settled ||
+        machine?.requiresReconciliation == true ||
+        _optionalJobs != 0 ||
+        _optionalSends != 0 ||
+        _optionalAuthority != 0 ||
+        _optionalCommitPending;
+    final observed =
+        _observedReconnectGeneration == snapshot.reconnectGeneration;
+    final takeover = observed && !_pendingTakeoverBlocked;
+    _pendingTakeoverBlocked = _pendingTakeoverBlocked || (pending && !takeover);
+    existing?.timer?.cancel();
+    final old = _token!;
+    final recovery = _V2Recovery(
+      snapshot: snapshot,
+      oldToken: old,
+      epoch: ++_epoch,
+      oldGeneration: legacy.engine.iceGeneration,
+      media: machine?.settledMedia ?? old.media,
+      revision: machine?.settledRevision ?? old.mediaRevision,
+      deadlineMs: min(
+        _monotonicMs + 15000,
+        observed ? _observedReconnectDeadlineMs! : _monotonicMs + 15000,
+      ),
+      blocked: _pendingTakeoverBlocked,
+      takeover: takeover,
+      transportRequested: !observed,
+    );
+    _recovery = recovery;
+    _mediaRetired = true;
+    _awaitingOptionalOffer = false;
+    _optionalTokenCurrent = null;
+    _localAnnounced = false;
+    _remoteApplied = false;
+    _localCandidates.clear();
+    _remoteCandidates.clear();
+    legacy.rearmMediaRecoveryObservation(snapshot);
+    recovery.retirement = _session!.retireVideo().then(
+      (closed) => closed,
+      onError: (Object _, StackTrace _) => false,
+    );
+    _track(recovery.retirement!.then<void>((_) {}));
+    final switches = _switch;
+    if (takeover && switches != null) {
+      _optionalCommitPending = false;
+      switches.beginRecovery(
+        reconnectGeneration: snapshot.reconnectGeneration,
+        deadlineMs: recovery.deadlineMs,
+        canApply: () => _recoveryCurrent(recovery),
+      );
+      recovery.media = switches.machine.settledMedia;
+      recovery.revision = switches.machine.settledRevision;
+    }
+    return recovery;
+  }
+
   void _executeRecovery(CallEffect effect, CallSessionSnapshot snapshot) {
-    if (!_ready || _session == null || _token == null) return;
     if (!const {
       CallEffectType.restartIce,
       CallEffectType.requestIceRestart,
@@ -908,55 +1081,8 @@ final class CallV2NegotiationEffectExecutor
     }.contains(effect.type)) {
       return;
     }
-    var recovery = _recovery;
-    if (recovery == null ||
-        recovery.snapshot.reconnectGeneration != snapshot.reconnectGeneration) {
-      final machine = _switch?.machine;
-      final settled =
-          machine == null ||
-          const {
-            null,
-            MediaSwitchPhase.committed,
-            MediaSwitchPhase.declined,
-            MediaSwitchPhase.superseded,
-          }.contains(machine.phase);
-      final pending =
-          !settled ||
-          machine?.requiresReconciliation == true ||
-          _optionalJobs != 0 ||
-          _optionalSends != 0 ||
-          _optionalAuthority != 0 ||
-          _optionalCommitPending;
-      _pendingTakeoverBlocked = _pendingTakeoverBlocked || pending;
-      _recovery?.timer?.cancel();
-      final old = _token!;
-      recovery = _V2Recovery(
-        snapshot: snapshot,
-        oldToken: old,
-        epoch: ++_epoch,
-        oldGeneration: legacy.engine.iceGeneration,
-        media: machine?.settledMedia ?? old.media,
-        revision: machine?.settledRevision ?? old.mediaRevision,
-        deadlineMs: _monotonicMs + 15000,
-        blocked: _pendingTakeoverBlocked,
-      );
-      _recovery = recovery;
-      _mediaRetired = true;
-      _awaitingOptionalOffer = false;
-      _optionalTokenCurrent = null;
-      _localAnnounced = false;
-      _remoteApplied = false;
-      _localCandidates.clear();
-      _remoteCandidates.clear();
-      legacy.rearmMediaRecoveryObservation(snapshot);
-      // Retirement closes capture synchronously, even behind pending native work.
-      recovery.retirement = _session!.retireVideo().then(
-        (closed) => closed,
-        onError: (Object _, StackTrace _) => false,
-      );
-      _track(recovery.retirement!.then<void>((_) {}));
-    }
-    if (recovery.blocked) return;
+    final recovery = _adoptRecovery(snapshot);
+    if (recovery == null || recovery.blocked) return;
     final id = snapshot.recentEventIds.isEmpty
         ? null
         : snapshot.recentEventIds.last;
@@ -964,6 +1090,16 @@ final class CallV2NegotiationEffectExecutor
       (work) => work.signal.messageId == id,
     );
     final work = incoming.isEmpty ? null : incoming.first;
+    if (effect.type != CallEffectType.resumeRecoverySignals || work != null) {
+      recovery.transportRequested = true;
+    }
+    if (effect.type == CallEffectType.resumeRecoverySignals &&
+        recovery.takeover &&
+        !recovery.prepared &&
+        _optionalSends == 0 &&
+        _switch?.machine.requiresReconciliation == true) {
+      _switch!.reconnect();
+    }
     recovery.authorityWork ??= work;
     if (_context!.direction == CallDirection.incoming && work != null) {
       recovery.negotiationId ??=
@@ -1104,10 +1240,27 @@ final class CallV2NegotiationEffectExecutor
     _optionalTokenCurrent = () => _recoveryTokenCurrent(recovery);
     _mediaRetired = false;
     recovery.prepared = true;
+    if (recovery.takeover) {
+      // Preserve the semantic outcome while using new-generation transport
+      // custody. The machine bars a fresh switch base until delivery settles.
+      _switch?.reconnect();
+    }
   }
 
   Future<void> _driveRecovery(_V2Recovery recovery) async {
     _checkRecovery(recovery);
+    if (recovery.takeover && !recovery.prepared) {
+      final switches = _switch;
+      if (switches != null && !switches.recoveryReady) {
+        if (switches.machine.requiresReconciliation && _optionalSends == 0) {
+          _armRecoveryRetry(recovery, reconcileSwitch: true);
+        }
+        return;
+      }
+      recovery.timer?.cancel();
+      recovery.timer = null;
+    }
+    if (!recovery.transportRequested) return;
     final candidate = recovery.candidateSignal;
     if (candidate != null && await _deliverRecovery(recovery, candidate)) {
       recovery.candidateSignal = null;
@@ -1284,19 +1437,28 @@ final class CallV2NegotiationEffectExecutor
     }
     _checkRecovery(recovery);
     if (delivered && valid()) return true;
-    if (recovery.timer?.isActive != true) {
-      final remaining = recovery.deadlineMs - _monotonicMs;
-      if (remaining > 0) {
-        recovery.timer = timerScheduler.schedule(
-          Duration(milliseconds: min(remaining, 500)),
-          () async {
-            recovery.timer = null;
-            _scheduleRecovery(recovery);
-          },
-        );
-      }
-    }
+    _armRecoveryRetry(recovery);
     return false;
+  }
+
+  void _armRecoveryRetry(_V2Recovery recovery, {bool reconcileSwitch = false}) {
+    if (!_recoveryCurrent(recovery) || recovery.timer?.isActive == true) return;
+    final remaining = recovery.deadlineMs - _monotonicMs;
+    if (remaining <= 0) return;
+    recovery.timer = timerScheduler.schedule(
+      Duration(milliseconds: min(remaining, 500)),
+      () async {
+        recovery.timer = null;
+        if (reconcileSwitch &&
+            _recoveryCurrent(recovery) &&
+            !recovery.prepared &&
+            _optionalSends == 0 &&
+            _switch?.machine.requiresReconciliation == true) {
+          _switch!.reconnect();
+        }
+        _scheduleRecovery(recovery);
+      },
+    );
   }
 
   Future<CallEvent?> _startInitial(CallSessionSnapshot snapshot) async {
@@ -1462,6 +1624,7 @@ final class CallV2NegotiationEffectExecutor
     final recovery = _recovery;
     if (type == CallSignalV2Type.ice &&
         recovery != null &&
+        recovery.prepared &&
         _recoveryCurrent(recovery)) {
       recovery.candidateSignal ??= _recoverySignal(recovery, type, payload);
       if (await _deliverRecovery(recovery, recovery.candidateSignal!)) {
@@ -1925,14 +2088,18 @@ final class _V2Recovery {
     required this.revision,
     required this.deadlineMs,
     required this.blocked,
+    required this.takeover,
+    required this.transportRequested,
   });
   final CallSessionSnapshot snapshot;
-  final CallVideoNegotiation oldToken;
-  final int epoch;
+  CallVideoNegotiation oldToken;
+  int epoch;
   final int oldGeneration;
-  final CallMediaKind media;
-  final int revision;
+  CallMediaKind media;
+  int revision;
   final int deadlineMs;
+  final bool takeover;
+  bool transportRequested;
   bool blocked;
   bool scheduled = false;
   bool needsDrive = false;

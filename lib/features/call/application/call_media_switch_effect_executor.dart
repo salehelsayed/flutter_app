@@ -58,6 +58,7 @@ final class CallMediaSwitchEffectExecutor {
          videoEnabled: videoEnabled,
          connected: true,
          settledMedia: initialMedia,
+         settledRevision: settledRevision,
          nowMs: nowMs,
        ) {
     if (maximumTransactions < 1 || maximumTransactions > 128) {
@@ -79,16 +80,81 @@ final class CallMediaSwitchEffectExecutor {
   CallTimerHandle? _timer;
   int? _timerDeadline;
   bool _closed = false;
+  int? _recoveryGeneration;
+  int? _recoveryDeadlineMs;
+  bool Function()? _recoveryCanApply;
 
   bool get _current => !_closed && videoEnabled && host.current;
+  bool get _recoveryCurrent =>
+      !_closed &&
+      videoEnabled &&
+      _recoveryCanApply != null &&
+      nowMs() < _recoveryDeadlineMs! &&
+      _allowed(_recoveryCanApply);
   _SwitchWork? get _selected => _transactions[machine.selectedSwitchId];
+
+  /// Native ICE replacement may follow only the retained transaction's repair
+  /// and terminal custody. This does not grant ordinary switch/camera authority.
+  bool get recoveryReady {
+    if (!_recoveryCurrent ||
+        machine.switchingDisabled ||
+        machine.requiresReconciliation) {
+      return false;
+    }
+    final selected = _selected;
+    return selected == null ||
+        (selected.committed && !selected.aborted) ||
+        selected.repairDeadline == null ||
+        selected.repairComplete;
+  }
 
   /// Cancels unfinished work while retaining this call's machine and tombstones.
   void beginRecovery({
     required int reconnectGeneration,
     required int deadlineMs,
     required bool Function() canApply,
-  }) {}
+  }) {
+    if (_closed ||
+        !videoEnabled ||
+        (_recoveryGeneration != null &&
+            reconnectGeneration <= _recoveryGeneration!)) {
+      return;
+    }
+    _recoveryGeneration = reconnectGeneration;
+    _recoveryDeadlineMs = deadlineMs;
+    _recoveryCanApply = canApply;
+    for (final work in _transactions.values) {
+      work.retired = true;
+      work.grant = null;
+      final repair = work.repairDeadline;
+      if (repair != null && deadlineMs < repair) {
+        work.repairDeadline = deadlineMs;
+      }
+    }
+    // Retire capture before a held SDP or authority lookup can complete.
+    _track(host.closeVideo());
+    final pending = _transactions[machine.currentSwitchId];
+    if (pending != null && !identical(pending, _selected)) {
+      _apply(
+        machine.abort(
+          id: pending.request.id,
+          baseRevision: pending.request.baseRevision,
+          revision: pending.revision,
+        ),
+      );
+    }
+    final selected = _selected;
+    if (selected != null && !selected.committed) {
+      _apply(
+        machine.abort(
+          id: selected.request.id,
+          baseRevision: selected.request.baseRevision,
+          revision: selected.revision,
+        ),
+      );
+    }
+    _scheduleTick();
+  }
 
   Future<void> get workSettled async {
     while (_pending.isNotEmpty) {
@@ -153,6 +219,7 @@ final class CallMediaSwitchEffectExecutor {
       Future<void>.sync(() async {
         final admitted = await host.freshUpgradeAuthority();
         if (!_current ||
+            work.retired ||
             !admitted ||
             !_allowed(work.canApply) ||
             nowMs() >= request.deadlineMs ||
@@ -181,7 +248,7 @@ final class CallMediaSwitchEffectExecutor {
   }) {
     if (!_current || !_allowed(canApply)) return false;
     final work = _transactions[id];
-    if (work == null || !work.admitted) return false;
+    if (work == null || !work.admitted || work.retired) return false;
     final local = fromCaller == localIsCaller;
     if ((!local && localGrant != null) ||
         (local && camera == CallCameraState.on && !_grantCurrent(localGrant))) {
@@ -221,7 +288,7 @@ final class CallMediaSwitchEffectExecutor {
     tick();
     final work = _transactions[id];
     final offer = description.type == CallSessionDescriptionType.offer;
-    if (!_current ||
+    if (!(repair ? _current || _recoveryCurrent : _current) ||
         !_allowed(canApply) ||
         work == null ||
         !identical(work, _selected) ||
@@ -328,7 +395,7 @@ final class CallMediaSwitchEffectExecutor {
     required int revision,
     required CallMediaKind media,
   }) {
-    if (!_current) return false;
+    if (!_current && !_recoveryCurrent) return false;
     final work = _transactions[id];
     final deadline = machine.stageDeadlineMs;
     final decision = machine.receiveCommit(
@@ -346,7 +413,7 @@ final class CallMediaSwitchEffectExecutor {
     required int revision,
     required CallMediaKind media,
   }) {
-    if (!_current) return false;
+    if (!_current && !_recoveryCurrent) return false;
     final work = _transactions[id];
     final deadline = machine.stageDeadlineMs;
     final decision = machine.receiveAck(
@@ -366,7 +433,7 @@ final class CallMediaSwitchEffectExecutor {
     bool remote = false,
     MediaSwitchAbortReason reason = MediaSwitchAbortReason.cancelled,
   }) {
-    if (!_current) return false;
+    if (!_current && !_recoveryCurrent) return false;
     final decision = machine.abort(
       id: id,
       baseRevision: baseRevision,
@@ -382,6 +449,13 @@ final class CallMediaSwitchEffectExecutor {
     if (_closed) return;
     _apply(machine.tick());
     final selected = _selected;
+    if (selected != null &&
+        !selected.repairComplete &&
+        !machine.switchingDisabled &&
+        selected.repairDeadline != null &&
+        nowMs() >= selected.repairDeadline!) {
+      _repairFailed(selected);
+    }
     if (machine.phase == MediaSwitchPhase.committed &&
         selected != null &&
         selected.settlementScheduled &&
@@ -414,7 +488,7 @@ final class CallMediaSwitchEffectExecutor {
   }
 
   void reconnect() {
-    if (_current) _apply(machine.reconnect());
+    if (_current || _recoveryCurrent) _apply(machine.reconnect());
   }
 
   void terminate() {
@@ -434,6 +508,9 @@ final class CallMediaSwitchEffectExecutor {
     for (final effect in decision.effects) {
       final work = _transactions[effect.switchId];
       if (work == null) continue;
+      if ((effect.replayOf ?? effect.kind) == MediaSwitchEffectKind.sendAbort) {
+        work.aborted = true;
+      }
       switch (effect.kind) {
         case MediaSwitchEffectKind.closeVideo:
           if (machine.phase == MediaSwitchPhase.committed &&
@@ -475,6 +552,9 @@ final class CallMediaSwitchEffectExecutor {
         case MediaSwitchEffectKind.repairAudio:
         case MediaSwitchEffectKind.awaitAudioRepair:
           work.repairDeadline ??= effect.deadlineMs;
+          if (_recoveryCurrent && _recoveryDeadlineMs! < work.repairDeadline!) {
+            work.repairDeadline = _recoveryDeadlineMs;
+          }
           work.grant = null;
           if (work.reconciled) {
             _startRepair(work);
@@ -490,6 +570,10 @@ final class CallMediaSwitchEffectExecutor {
           work.grant = null;
           _track(host.closeVideo());
       }
+    }
+    final selected = _selected;
+    if (_recoveryCurrent && selected != null && selected.reconciled) {
+      _startRepair(selected);
     }
     _scheduleTick();
     try {
@@ -622,7 +706,7 @@ final class CallMediaSwitchEffectExecutor {
     } catch (_) {
       /* Preserve failed transport custody as a failed outcome. */
     }
-    if (!_current) return false;
+    if (!_controlCurrent(work, effect)) return false;
     final kind = effect.replayOf ?? effect.kind;
     if (kind == MediaSwitchEffectKind.sendAbort ||
         (machine.requiresReconciliation &&
@@ -646,8 +730,16 @@ final class CallMediaSwitchEffectExecutor {
   }
 
   bool _controlCurrent(_SwitchWork work, MediaSwitchEffect effect) {
-    if (!_current || nowMs() >= effect.deadlineMs) return false;
+    if ((!_current && !_recoveryCurrent) || nowMs() >= effect.deadlineMs) {
+      return false;
+    }
     final kind = effect.replayOf ?? effect.kind;
+    final terminal = const {
+      MediaSwitchEffectKind.sendAbort,
+      MediaSwitchEffectKind.sendCommit,
+      MediaSwitchEffectKind.sendAck,
+    }.contains(kind);
+    if ((!_current || work.retired) && !terminal) return false;
     if (kind == MediaSwitchEffectKind.sendResponse &&
         effect.response != MediaSwitchResponse.accept) {
       return true;
@@ -658,10 +750,9 @@ final class CallMediaSwitchEffectExecutor {
     }
     if (!identical(work, _selected)) return false;
     if (kind == MediaSwitchEffectKind.sendAbort) {
-      return machine.phase == MediaSwitchPhase.aborted;
+      return work.aborted;
     }
-    return machine.phase != MediaSwitchPhase.aborted &&
-        !machine.switchingDisabled;
+    return !work.aborted && !machine.switchingDisabled;
   }
 
   void _reconcile(_SwitchWork work, {required bool rollback}) {
@@ -693,7 +784,12 @@ final class CallMediaSwitchEffectExecutor {
   }
 
   void _startRepair(_SwitchWork work) {
-    if (!_repairCurrent(work) || !work.reconciled || work.repairStarted) return;
+    if (!_repairCurrent(work) ||
+        !work.reconciled ||
+        work.repairStarted ||
+        (_recoveryCurrent && machine.requiresReconciliation)) {
+      return;
+    }
     work.repairStarted = true;
     if (localIsCaller) {
       _offer(work, repair: true);
@@ -785,7 +881,7 @@ final class CallMediaSwitchEffectExecutor {
   }
 
   void _nativeFailure(_SwitchWork work, {bool repair = false}) {
-    if (!_current || !identical(work, _selected)) return;
+    if ((!_current && !_recoveryCurrent) || !identical(work, _selected)) return;
     if (repair) {
       if (_repairCurrent(work)) _repairFailed(work);
     } else if (_live(work)) {
@@ -806,6 +902,7 @@ final class CallMediaSwitchEffectExecutor {
 
   bool _live(_SwitchWork work) =>
       _current &&
+      !work.retired &&
       identical(work, _selected) &&
       !machine.switchingDisabled &&
       machine.phase != MediaSwitchPhase.aborted &&
@@ -816,7 +913,7 @@ final class CallMediaSwitchEffectExecutor {
               (work.commitDeadline == null || nowMs() < work.commitDeadline!)));
 
   bool _repairCurrent(_SwitchWork work) =>
-      _current &&
+      (_current || _recoveryCurrent) &&
       identical(work, _selected) &&
       !machine.switchingDisabled &&
       machine.phase == MediaSwitchPhase.aborted &&
@@ -825,7 +922,7 @@ final class CallMediaSwitchEffectExecutor {
       nowMs() < work.repairDeadline!;
 
   bool _settledAudio(_SwitchWork work) =>
-      _current &&
+      (_current || _recoveryCurrent) &&
       identical(work, _selected) &&
       work.repairComplete &&
       !machine.switchingDisabled &&
@@ -845,7 +942,7 @@ final class CallMediaSwitchEffectExecutor {
   }
 
   void _scheduleTick() {
-    if (!_current) {
+    if (!_current && !_recoveryCurrent) {
       _timer?.cancel();
       _timer = null;
       _timerDeadline = null;
@@ -853,6 +950,13 @@ final class CallMediaSwitchEffectExecutor {
     }
     var deadline = machine.nextDeadlineMs;
     final selected = _selected;
+    final repair =
+        selected?.repairComplete == false && !machine.switchingDisabled
+        ? selected?.repairDeadline
+        : null;
+    if (repair != null && (deadline == null || repair < deadline)) {
+      deadline = repair;
+    }
     final commit =
         machine.phase == MediaSwitchPhase.committed &&
             selected?.committed == false
@@ -923,6 +1027,8 @@ final class _SwitchWork {
   CallLocalCameraGrant? grant;
   int get revision => request.baseRevision + 1;
   bool admitted = false;
+  bool retired = false;
+  bool aborted = false;
   CallVideoNegotiation? token;
   _RemoteSwitchDescription? remoteSwitch;
   _RemoteSwitchDescription? remoteRepair;
