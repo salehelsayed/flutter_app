@@ -8762,6 +8762,9 @@ void main() {
         'await runtime.onResume();\n'
         '    final active = coordinator.activeSession;\n'
         '    if (active != null) _onSessionSnapshot(active);\n'
+        '    _pip?.foreground();\n'
+        '    _refreshVideo();\n'
+        '    await _resumePipCamera();\n'
         '  }',
       ),
     );
