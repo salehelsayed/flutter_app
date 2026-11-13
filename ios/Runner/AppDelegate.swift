@@ -901,6 +901,7 @@ final class IosSetupReadinessEntryCoordinator {
   private var stickerClipFramePlugin: StickerClipFramePlugin?
   private var stickerCutoutPlugin: StickerCutoutPlugin?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
+  private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment?
   private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
   private var iosSetupReadinessEntryChannel: FlutterMethodChannel?
   private lazy var iosSetupReadinessEntryCoordinator: IosSetupReadinessEntryCoordinator = {
@@ -1252,6 +1253,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupAppGroupPathBridge(messenger: messenger)
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
+    setupCallVideoQualityBridge(messenger: messenger)
     setupIosCallLifecycleBridges(messenger: messenger)
     updateCheckBackground.attach(messenger: messenger)
 
@@ -1957,6 +1959,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupGemmaPreviewBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
+    setupCallVideoQualityBridge(messenger: controller.binaryMessenger)
     setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
   }
 
@@ -2027,6 +2030,13 @@ final class IosSetupReadinessEntryCoordinator {
   private func setupPrivateMediaProtectionBridge(messenger: FlutterBinaryMessenger) {
     guard privateMediaProtectionCoordinator == nil else { return }
     privateMediaProtectionCoordinator = PrivateMediaProtectionCoordinator(messenger: messenger)
+  }
+
+  /// U3j-QN: read-only video quality inputs. Observes nothing until Dart
+  /// listens, which it does only while video is enabled.
+  private func setupCallVideoQualityBridge(messenger: FlutterBinaryMessenger) {
+    guard callVideoQualityEnvironment == nil else { return }
+    callVideoQualityEnvironment = MknoonCallVideoQualityEnvironment(messenger: messenger)
   }
 
   private func setupDiskSpaceBridge(messenger: FlutterBinaryMessenger) {
