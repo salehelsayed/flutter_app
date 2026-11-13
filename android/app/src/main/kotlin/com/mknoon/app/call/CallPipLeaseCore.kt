@@ -131,6 +131,8 @@ class CallPipLeaseCore(
     fun enter(id: CallPipIdentity): Boolean {
         val target = current(id) ?: return false
         if (target.entered) return true
+        // A retired lease's OS start is still outstanding: refuse, never overwrite.
+        if (pendingEntry != null && pendingEntry != id) return false
         val previous = pendingEntry
         pendingEntry = id
         if (platform.requestEnter()) return true
@@ -149,10 +151,12 @@ class CallPipLeaseCore(
      * the adapter must pass to every later entry/exit callback. */
     fun beginEntry(): CallPipIdentity? {
         val target = lease ?: return null
-        // An explicit request already in flight keeps its own identity.
+        // An outstanding capture keeps its identity; a retired lease's capture
+        // blocks the successor until its own terminal callback settles it.
         val owner = pendingEntry ?: target.id
+        if (owner != target.id) return null
         pendingEntry = owner
-        if (owner == target.id && target.sink == null) target.sink = platform.attachSink(target.source)
+        if (target.sink == null) target.sink = platform.attachSink(target.source)
         return owner
     }
 
@@ -176,10 +180,12 @@ class CallPipLeaseCore(
         pendingEntry = null
     }
 
-    /** [settled] false keeps the capture (iOS can report active before stop). */
+    /** [settled] false keeps a current capture (iOS can report active before
+     * stop); a retired lease's capture is always settled here. */
     fun osReturnedWithoutEntry(settled: Boolean) {
-        pendingEntry?.let(::onReturnedWithoutEntry)
-        if (settled) pendingEntry = null
+        val owner = pendingEntry ?: return
+        onReturnedWithoutEntry(owner)
+        if (settled || lease?.id != owner) pendingEntry = null
     }
 
     fun onEntered(id: CallPipIdentity) {
@@ -264,8 +270,6 @@ class CallPipLeaseCore(
     private fun drop(target: Lease) {
         lease = null
         target.entered = false
-        // A late OS completion for this lease now finds no capture and is rejected.
-        if (pendingEntry == target.id) pendingEntry = null
         try {
             platform.setAutoEnter(null, null)
         } catch (_: Exception) {

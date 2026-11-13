@@ -175,6 +175,8 @@ class CallPipLeaseCoreTest {
         assertEquals(listOf("1:1:entered", "1:2:exited"), types())
         assertEquals(controls, platform.autoEnter)
         assertEquals(id(2), platform.autoLease)
+        core.osExited(restored = false) // lease 1's own terminal OS callback
+        assertEquals(2, events.size)
         assertEquals(id(2), core.beginEntry())
         core.onAction(id(2), "end") // successor not entered yet: dropped
         assertEquals(listOf("sink-2:pc-1"), platform.live)
@@ -389,5 +391,31 @@ class CallPipLeaseCoreTest {
         assertFalse(core.enter(id(1)))
         assertFalse(core.osEntered())
         assertEquals(emptyList<Map<String, Any>>(), events)
+    }
+
+    @Test
+    fun `a successor start waits until the retired lease's OS start settles`() {
+        core.arm(id(1), source, controls)
+        assertTrue(core.enter(id(1)))
+        core.arm(id(2), source, controls)
+        assertFalse(core.enter(id(2))) // old start outstanding: refused, not overwritten
+        assertNull(core.beginEntry())
+        assertFalse(core.osEntered()) // A's delayed completion
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        assertEquals(emptyList<Any>(), platform.live)
+        core.osExited(restored = false) // A's terminal callback settles the capture
+        assertTrue(core.enter(id(2)))
+        assertEquals(id(2), core.beginEntry())
+        assertTrue(core.osEntered())
+        assertEquals(listOf("2:1:entered"), types())
+    }
+
+    @Test
+    fun `a stale capture also settles when the app returns without PiP`() {
+        core.arm(id(1), source, controls)
+        assertTrue(core.enter(id(1)))
+        core.arm(id(2), source, controls)
+        core.osReturnedWithoutEntry(settled = false)
+        assertEquals(id(2), core.beginEntry())
     }
 }

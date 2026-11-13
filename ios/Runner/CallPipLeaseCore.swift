@@ -140,6 +140,8 @@ final class CallPipLeaseCore {
   func enter(_ id: CallPipIdentity) -> Bool {
     guard let target = current(id) else { return false }
     if target.entered { return true }
+    // A retired lease's OS start is still outstanding: refuse, never overwrite.
+    if let outstanding = pendingEntry, outstanding != id { return false }
     let previous = pendingEntry
     pendingEntry = id
     if platform.requestEnter() { return true }
@@ -158,10 +160,12 @@ final class CallPipLeaseCore {
   /// adapter must pass to every later entry/exit callback.
   func beginEntry() -> CallPipIdentity? {
     guard let target = lease else { return nil }
-    // An explicit request already in flight keeps its own identity.
+    // An outstanding capture keeps its identity; a retired lease's capture
+    // blocks the successor until its own terminal callback settles it.
     let owner = pendingEntry ?? target.id
+    guard owner == target.id else { return nil }
     pendingEntry = owner
-    if owner == target.id && target.sink == nil { target.sink = platform.attachSink(target.source) }
+    if target.sink == nil { target.sink = platform.attachSink(target.source) }
     return owner
   }
 
@@ -186,10 +190,12 @@ final class CallPipLeaseCore {
     pendingEntry = nil
   }
 
-  /// `settled` false keeps the capture (iOS can report active before stop).
+  /// `settled` false keeps a current capture (iOS can report active before
+  /// stop); a retired lease's capture is always settled here.
   func osReturnedWithoutEntry(settled: Bool) {
-    if let owner = pendingEntry { onReturnedWithoutEntry(owner) }
-    if settled { pendingEntry = nil }
+    guard let owner = pendingEntry else { return }
+    onReturnedWithoutEntry(owner)
+    if settled || lease?.id != owner { pendingEntry = nil }
   }
 
   func onEntered(_ id: CallPipIdentity) {
@@ -272,8 +278,6 @@ final class CallPipLeaseCore {
   private func drop(_ target: Lease) {
     lease = nil
     target.entered = false
-    // A late OS completion for this lease now finds no capture and is rejected.
-    if pendingEntry == target.id { pendingEntry = nil }
     if (try? platform.setAutoEnter(nil, nil)) == nil { pendingAutoOff = target.id }
     guard let sink = target.sink else { return }
     target.sink = nil

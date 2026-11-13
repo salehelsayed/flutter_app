@@ -164,6 +164,8 @@ final class CallPipLeaseCoreTests: XCTestCase {
     core.onReturnedWithoutEntry(id(1))
     XCTAssertEqual(types(), ["1:1:entered", "1:2:exited"])
     XCTAssertEqual(platform.autoLease, id(2))
+    core.osExited(restored: false)  // lease 1's own terminal OS callback
+    XCTAssertEqual(events.count, 2)
     XCTAssertEqual(core.beginEntry(), id(2))
     XCTAssertEqual(platform.live, ["sink-2:pc-1"])
     XCTAssertFalse(core.arm(id(1), source: source, controls: controls)["armed"] as! Bool)
@@ -290,6 +292,30 @@ final class CallPipLeaseCoreTests: XCTestCase {
     core.osEntryFailed()
     XCTAssertEqual(events.last?["code"] as? String, "enterRejected")
     XCTAssertFalse(core.osEntered())
+  }
+
+  func testSuccessorStartWaitsUntilRetiredStartSettles() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    XCTAssertTrue(core.enter(id(1)))
+    _ = core.arm(id(2), source: source, controls: controls)
+    XCTAssertFalse(core.enter(id(2)))
+    XCTAssertNil(core.beginEntry())
+    XCTAssertFalse(core.osEntered())
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertEqual(platform.live, [])
+    core.osExited(restored: false)
+    XCTAssertTrue(core.enter(id(2)))
+    XCTAssertEqual(core.beginEntry(), id(2))
+    XCTAssertTrue(core.osEntered())
+    XCTAssertEqual(types(), ["2:1:entered"])
+  }
+
+  func testStaleCaptureSettlesWhenAppReturnsWithoutPip() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    XCTAssertTrue(core.enter(id(1)))
+    _ = core.arm(id(2), source: source, controls: controls)
+    core.osReturnedWithoutEntry(settled: false)
+    XCTAssertEqual(core.beginEntry(), id(2))
   }
 
   /// Guard for Kayan m-69a3dbc5 condition 2: without an arm no PiP controller exists.
