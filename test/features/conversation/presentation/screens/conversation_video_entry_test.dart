@@ -121,6 +121,7 @@ void main() {
 
   Future<void> menu(WidgetTester tester) async {
     await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
   }
 
