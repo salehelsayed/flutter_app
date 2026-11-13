@@ -218,6 +218,15 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   /// preparation succeeds and the close is replayed for the current call.
   CallEngineEvent? _heldCloseEvent;
 
+  /// Reuses the existing observer for an exact canonical recovery episode.
+  bool rearmMediaRecoveryObservation(CallSessionSnapshot snapshot) => false;
+
+  /// Starts existing readiness observation after successful current typed SDP.
+  void deferMediaRecoveryObservation(
+    CallSessionSnapshot snapshot,
+    int generation,
+  ) {}
+
   @override
   Future<CallEvent?> execute(
     CallEffect effect,
