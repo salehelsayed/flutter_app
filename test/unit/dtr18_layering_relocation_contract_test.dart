@@ -489,7 +489,9 @@ const _productionBootstrapNormalizedSha256 =
     // cards of Thoughts kept hidden for the clock grace; no owner moves.
     // BL-24C passes the durable invalid-retry marker store into the existing
     // message retry wiring at this bootstrap owner (3 lines); no owner moves.
-    '09e170bb3d543a17cd98c70d2ade367b0a6c6b3ab3c195040f7c4601ae9d1d55';
+    // BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
+    // add callbacks at this same bootstrap owner; no owner moves.
+    '11ea685d312c2f75f4ed4abe3394d9afd47cb0e368669bc96a3625be834a9490';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -597,6 +599,8 @@ const _resumeDirectiveFiles = <String>{
   'test/core/services/p2p_service_fault_injection_test.dart',
   'test/features/contact_request/application/'
       'key_exchange_retry_smoke_test.dart',
+  'test/features/conversation/integration/'
+      'delivery_receipt_outbox_sqlite_test.dart',
   'test/features/groups/integration/group_resume_recovery_test.dart',
   'test/features/groups/integration/group_startup_rejoin_smoke_test.dart',
   'test/features/identity/presentation/screens/'
