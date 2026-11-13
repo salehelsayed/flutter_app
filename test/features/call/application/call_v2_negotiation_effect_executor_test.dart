@@ -2662,20 +2662,20 @@ final class _Rig {
       isTrue,
     );
     await owner.workSettled;
-    if (target == CallMediaKind.video) {
-      expect(
-        admit(
-          switchWire('media_response', {
-            'switch_id': id,
-            'base_revision': base,
-            'decision': 'accept',
-            'camera': 'off',
-          }, generation: engine.iceGeneration),
-        ),
-        IncomingCallSignalOutcome.accepted,
-      );
-      await owner.workSettled;
-    }
+    // The peer automatically accepts an audio downgrade, but that response must
+    // still arrive before the local caller can select its SDP transaction.
+    expect(
+      admit(
+        switchWire('media_response', {
+          'switch_id': id,
+          'base_revision': base,
+          'decision': 'accept',
+          'camera': 'off',
+        }, generation: engine.iceGeneration),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await owner.workSettled;
     expect(
       admit(
         switchWire('answer', {
