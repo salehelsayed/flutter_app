@@ -46,9 +46,11 @@ Future<FakeModelDeliveryController> _pumpSettings(
   ModelDeliveryState state, {
   Locale locale = const Locale('en'),
   double textScale = 1,
-  bool enabled = true,
+  bool? enabled = true,
+  bool supported = true,
 }) async {
   final controller = FakeModelDeliveryController(state);
+  controller.deviceSupported.value = supported;
   debugTranslatePreviewEnabledOverride = enabled;
   debugModelDeliveryOverride = controller;
   final shell = AppShellController();
@@ -59,6 +61,7 @@ Future<FakeModelDeliveryController> _pumpSettings(
     shell.dispose();
     privacyRepo.dispose();
     controller.state.dispose();
+    controller.deviceSupported.dispose();
     controller.allowMobileData.dispose();
     controller.memoryNoticePending.dispose();
   });
@@ -117,6 +120,83 @@ void main() {
     debugTranslationPreferencesOverride = TranslationPreferences();
   });
   tearDown(() => debugTranslationPreferencesOverride = null);
+
+  testWidgets('BL25U4 default build shows ready translator in Preferences', (
+    tester,
+  ) async {
+    expect(const bool.fromEnvironment('TRANSLATE_PREVIEW'), isFalse);
+    final controller = await _pumpSettings(
+      tester,
+      const ModelReady(sizeBytes: _total),
+      enabled: null,
+    );
+    expect(debugTranslatePreviewEnabledOverride, isNull);
+    _expectPreferencesRows(tester);
+    expect(find.text('Remove'), findsOneWidget);
+    expect(controller.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('BL25U4 default build hides all translator rows on static '
+      'device rejection even with a stale ready model', (tester) async {
+    expect(const bool.fromEnvironment('TRANSLATE_PREVIEW'), isFalse);
+    final controller = await _pumpSettings(
+      tester,
+      const ModelReady(sizeBytes: _total),
+      enabled: null,
+      supported: false,
+    );
+    expect(debugTranslatePreviewEnabledOverride, isNull);
+    expect(find.byType(PrivateTranslatorSettingsSection), findsNothing);
+    expect(
+      find.byKey(const ValueKey('settings-row-translate-to')),
+      findsNothing,
+    );
+    expect(find.text('new'), findsNothing);
+    expect(controller.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('BL25U4 default Settings reacts to static eligibility without '
+      'changing delivery state', (tester) async {
+    final controller = await _pumpSettings(
+      tester,
+      const ModelReady(sizeBytes: _total),
+      enabled: null,
+      supported: false,
+    );
+    expect(find.byType(PrivateTranslatorSettingsSection), findsNothing);
+    controller.deviceSupported.value = true;
+    await tester.pump();
+    _expectPreferencesRows(tester);
+    controller.deviceSupported.value = false;
+    await tester.pump();
+    expect(find.byType(PrivateTranslatorSettingsSection), findsNothing);
+    expect(controller.state.value, isA<ModelReady>());
+    expect(controller.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('BL25U4 default build preserves manual recovery on a supported '
+      'phone blocked by memory safety', (tester) async {
+    final controller = await _pumpSettings(
+      tester,
+      const ModelUnsupported(),
+      enabled: null,
+    );
+    final row = find.byKey(const ValueKey('settings-row-private-translator'));
+    expect(row, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-row-translate-to')),
+      findsNothing,
+    );
+    expect(controller.calls, isEmpty);
+    await tester.ensureVisible(row);
+    await tester.tap(find.text('Try again'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(controller.calls, ['retryMemorySafety']);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('unsupported: Settings row keeps a manual memory retry without '
       'a download or mobile-data switch', (tester) async {
