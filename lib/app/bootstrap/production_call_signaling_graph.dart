@@ -423,6 +423,7 @@ final class ProductionCallSignalingGraph
     CallV2NegotiationEffectExecutor owner,
     CallVideoSession session,
     CallVideoNegotiation token,
+    CallPipLease lease,
     int generation,
     int epoch,
   })?
@@ -759,6 +760,7 @@ final class ProductionCallSignalingGraph
         owner.current &&
         identical(owner.videoSession, intent.session) &&
         identical(owner.negotiation, intent.token) &&
+        _pipSourceCurrent(intent.lease.source) &&
         _videoGeneration == intent.generation &&
         _cameraEpoch == intent.epoch &&
         machine?.videoGatesOpen == true &&
@@ -767,25 +769,33 @@ final class ProductionCallSignalingGraph
         machine?.settledRevision == intent.token.mediaRevision;
   }
 
-  void _pausePipCamera() {
+  void _pausePipCamera(CallPipLease? lease) {
     final token = _localCameraToken;
     final owner = token == null ? null : videoOwners?[token.callId];
     final session = owner?.videoSession;
     final retain =
-        _pip != null &&
+        lease != null &&
+        lease.phase != CallPipPhase.preparing &&
+        _pipSourceCurrent(lease.source) &&
         token != null &&
         owner != null &&
         session != null &&
         identical(owner.negotiation, token) &&
         owner.current;
     // A second background/exit notification cannot erase a prior OS pause.
-    if (token == null && _pipIntentCurrent()) return;
+    if (token == null &&
+        lease != null &&
+        identical(_pipCameraIntent?.lease, lease) &&
+        _pipIntentCurrent()) {
+      return;
+    }
     unawaited(_revokeLocalCamera(state: CallCameraState.paused));
     if (retain) {
       _pipCameraIntent = (
         owner: owner,
         session: session,
         token: token,
+        lease: lease,
         generation: _videoGeneration,
         epoch: _cameraEpoch,
       );
@@ -806,6 +816,10 @@ final class ProductionCallSignalingGraph
     try {
       final intent = _pipCameraIntent;
       final token = _localCameraToken;
+      if (intent != null && !intent.lease.entryAccepted) {
+        _pipCameraIntent = null;
+        return;
+      }
       if (intent == null && token == null) return;
       final epoch = _cameraEpoch;
       final permitted = await _cameraPermissionWithoutPrompt();
@@ -919,10 +933,18 @@ final class ProductionCallSignalingGraph
         case 'camera':
           unawaited(_pipCameraTap(lease));
       }
-    } else if (event.type == CallPipEventType.exited ||
-        event.type == CallPipEventType.failed ||
-        event.type == CallPipEventType.blocked) {
-      if (!_videoForegroundAllowed) _pausePipCamera();
+    } else if (event.type == CallPipEventType.failed ||
+        event.type == CallPipEventType.blocked ||
+        (event.type == CallPipEventType.exited &&
+            event.detail != 'closed' &&
+            event.detail != 'restored')) {
+      _pipCameraIntent = null;
+      if (!_videoForegroundAllowed || event.type == CallPipEventType.blocked) {
+        unawaited(_revokeLocalCamera(state: CallCameraState.paused));
+      }
+    } else if (event.type == CallPipEventType.exited &&
+        !_videoForegroundAllowed) {
+      _pausePipCamera(lease.entryAccepted ? lease : null);
     }
   }
 
@@ -1781,7 +1803,7 @@ final class ProductionCallSignalingGraph
         lease.phase == CallPipPhase.preparing ||
         !lease.cameraInPip ||
         !_pipSourceCurrent(lease.source)) {
-      _pausePipCamera();
+      _pausePipCamera(lease);
     }
     _pip?.background();
     if (_nativeCallLifecycleAdapter != null) {

@@ -109,6 +109,7 @@ final class CallPipLease {
   final CallPipSource source;
   CallPipPhase phase = CallPipPhase.preparing;
   bool cameraInPip = false;
+  bool entryAccepted = false;
   int lastSequence = 0;
 }
 
@@ -281,6 +282,7 @@ final class CallPictureInPictureController {
     switch (event.type) {
       case CallPipEventType.entered:
         if (lease.phase == CallPipPhase.entered) return;
+        lease.entryAccepted = true;
         lease.phase = CallPipPhase.entered;
       case CallPipEventType.action:
         if (lease.phase != CallPipPhase.entered) return;
@@ -308,6 +310,7 @@ final class CallPictureInPictureController {
     unawaited(() async {
       try {
         final entered = await bridge.enter(lease.identity);
+        if (entered && _valid(lease)) lease.entryAccepted = true;
         if (!entered && _valid(lease) && lease.phase != CallPipPhase.entered) {
           _fail(lease, 'enterRejected');
         }

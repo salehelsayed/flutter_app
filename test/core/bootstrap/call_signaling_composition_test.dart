@@ -606,6 +606,61 @@ void main() {
     },
   );
 
+  for (final fallback in [
+    'unsupported',
+    'no-source',
+    'preparing',
+    'entry-rejected',
+    'failed',
+    'blocked',
+  ]) {
+    test(
+      'PiP fallback $fallback never restores ordinary background camera',
+      () async {
+        final pip = FakeCallPictureInPictureBridge();
+        if (fallback == 'unsupported') pip.supported = false;
+        if (fallback == 'preparing') pip.pendingArm = Completer<bool>();
+        if (fallback == 'entry-rejected') pip.enterResult = false;
+        final (fixture, engine) = await _connectedGraphVideo(
+          pictureInPictureBridgeFactory: () => pip,
+          checkCameraPermission: () async => true,
+        );
+        if (fallback != 'no-source') engine.video!.replaceRemoteTrack();
+        await turnCameraOn(fixture);
+        await flushPip();
+        expect(engine.video!.cameraOn, isTrue);
+        await fixture.composition.onBackgrounded();
+        await flushPip();
+        if (fallback == 'failed' || fallback == 'blocked') {
+          expect(pip.arms, hasLength(1));
+          final id = pip.arms.single;
+          pip.emit(id, 1, CallPipEventType.entered);
+          pip.emit(
+            id,
+            2,
+            fallback == 'failed'
+                ? CallPipEventType.failed
+                : CallPipEventType.blocked,
+            fallback == 'failed' ? 'trackLost' : 'locked',
+          );
+        }
+        await fixture.composition.onResume();
+        await flushPip();
+        expect(engine.video!.cameraOn, isFalse);
+        expect(engine.video!.cameraStarts, 1);
+        expect(
+          fixture.graphs.single.coordinator.activeSession!.isTerminal,
+          isFalse,
+        );
+        if (fallback == 'preparing') {
+          pip.pendingArm!.complete(true);
+          await flushPip();
+          expect(engine.video!.cameraOn, isFalse);
+        }
+      },
+    );
+  }
+
   test('PiP graph permission loss keeps an OS-paused camera off', () async {
     final pip = FakeCallPictureInPictureBridge();
     var granted = true;
