@@ -45,6 +45,7 @@ final class CallMediaSwitchEffectExecutor {
     required this.host,
     required this.localIsCaller,
     required CallMediaKind initialMedia,
+    int settledRevision = 0,
     required this.nowMs,
     required this.idSource,
     this.videoEnabled = false,
@@ -81,6 +82,13 @@ final class CallMediaSwitchEffectExecutor {
 
   bool get _current => !_closed && videoEnabled && host.current;
   _SwitchWork? get _selected => _transactions[machine.selectedSwitchId];
+
+  /// Cancels unfinished work while retaining this call's machine and tombstones.
+  void beginRecovery({
+    required int reconnectGeneration,
+    required int deadlineMs,
+    required bool Function() canApply,
+  }) {}
 
   Future<void> get workSettled async {
     while (_pending.isNotEmpty) {

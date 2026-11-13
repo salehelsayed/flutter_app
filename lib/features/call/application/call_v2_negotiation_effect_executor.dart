@@ -117,6 +117,12 @@ final class CallV2NegotiationEffectExecutor
   final Map<CallSignalV2Type, _V2MediaWork> _recoveryIngress = {};
   int? _recoveryIngressEpisode;
 
+  /// Receives the original canonical timer observation before recovery effects.
+  void observeReconnectTimer(
+    CallSessionSnapshot snapshot,
+    Duration effectiveDelay,
+  ) {}
+
   CallMediaSwitchEffectExecutor? get mediaSwitch {
     if (!current) return null;
     return _switch ??= CallMediaSwitchEffectExecutor(
