@@ -14,6 +14,8 @@ class CallPipLeaseCoreTest {
         val log = mutableListOf<String>()
         val live = mutableListOf<Any>()
         var autoEnter: CallPipControls? = null
+        var autoLease: CallPipIdentity? = null
+        var failRelease = false
         private var next = 0
 
         override fun supported() = supported
@@ -26,11 +28,13 @@ class CallPipLeaseCoreTest {
             return sink
         }
         override fun releaseSink(sink: Any) {
+            if (failRelease) throw IllegalStateException("release failed")
             live -= sink
             log += "release $sink"
         }
-        override fun setAutoEnter(controls: CallPipControls?) {
+        override fun setAutoEnter(lease: CallPipIdentity?, controls: CallPipControls?) {
             autoEnter = controls
+            autoLease = lease
             log += "auto ${controls != null}"
         }
         override fun requestEnter(): Boolean {
@@ -73,10 +77,12 @@ class CallPipLeaseCoreTest {
 
     @Test
     fun `without an arm nothing is requested (gate off)`() {
-        core.onUserLeaving()
-        core.onEntered()
-        core.onAction("end")
-        core.onReturnedWithoutEntry()
+        assertNull(core.beginEntry())
+        core.onEntered(id(1))
+        core.onAction(id(1), "end")
+        core.onReturnedWithoutEntry(id(1))
+        core.onBlocked("locked")
+        core.shutdown()
         assertEquals(emptyList<String>(), platform.log)
         assertEquals(emptyList<Map<String, Any>>(), events)
     }
@@ -86,6 +92,19 @@ class CallPipLeaseCoreTest {
         assertEquals(mapOf("supported" to true, "cameraInPip" to false, "reason" to "ok"), core.availability())
         platform.supported = false
         assertEquals(mapOf("supported" to false, "cameraInPip" to false, "reason" to "os"), core.availability())
+    }
+
+    @Test
+    fun `remote lookup rejects a local id collision and a wrong peer`() {
+        val peers = mapOf(("remote-v" to "pc-1") to "remote-track")
+        fun resolve(source: CallPipSource, locals: Set<String>) = resolveExactRemoteTrack(
+            source,
+            localTrack = { if (it in locals) "local-camera" else null },
+            peerTrack = { track, peer -> peers[track to peer] },
+        )
+        assertEquals("remote-track", resolve(source, emptySet()))
+        assertNull(resolve(source, setOf("remote-v"))) // local collision never wins
+        assertNull(resolve(CallPipSource("pc-old", "remote-v"), emptySet())) // no global fallback
     }
 
     @Test
@@ -100,77 +119,98 @@ class CallPipLeaseCoreTest {
         platform.supported = true
         assertEquals(mapOf("armed" to true, "reason" to "ok"), core.arm(id(3), source, controls))
         assertEquals(controls, platform.autoEnter)
-        // Arm only configures automatic entry; it never enters or attaches by itself.
+        assertEquals(id(3), platform.autoLease) // controls carry the exact triple
         assertEquals(listOf("auto true"), platform.log)
     }
 
     @Test
-    fun `entry attaches the remote sink and events follow the lease order`() {
+    fun `one entry and one exit per lease, then the lease is retired`() {
         core.arm(id(1), source, controls)
-        core.onAction("mute") // before entered: dropped
-        core.onUserLeaving()
-        core.onEntered()
-        core.onEntered() // duplicate: inert
-        core.onAction("mute")
-        core.onAction("bogus") // unknown kind: dropped
-        core.onExited(restored = true)
-        core.onExited(restored = false) // second exit for one entry: dropped
-        core.onAction("end") // after exit: dropped
+        core.onAction(id(1), "mute") // before entered: dropped
+        assertEquals(id(1), core.beginEntry())
+        core.onEntered(id(1))
+        core.onEntered(id(1)) // duplicate: inert
+        core.onAction(id(1), "mute")
+        core.onAction(id(1), "bogus")
+        core.onExited(id(1), restored = true)
+        core.onExited(id(1), restored = false) // second exit: dropped
+        core.onEntered(id(1)) // re-entry of a retired lease: dropped
+        core.onAction(id(1), "end")
         assertEquals(listOf("1:1:entered", "1:2:action", "1:3:exited"), types())
-        assertEquals("mute", events[1]["kind"])
         assertEquals("restored", events[2]["reason"])
-        assertEquals(listOf("auto true", "attach sink-1:pc-1", "release sink-1:pc-1"), platform.log)
+        assertNull(platform.autoEnter) // auto entry off until a fresh arm
         assertEquals(emptyList<Any>(), platform.live)
-        val first = events.first()
-        assertEquals(1, first["version"])
-        assertEquals("graph-a", first["instanceId"])
-        assertEquals("call-1", first["callId"])
-        assertEquals(1L, first["leaseId"])
+        assertFalse(core.update(id(1), controls))
+        assertEquals(1, events.first()["version"])
+        assertEquals("graph-a", events.first()["instanceId"])
+        assertEquals("call-1", events.first()["callId"])
+        assertEquals(1L, events.first()["leaseId"])
     }
 
     @Test
-    fun `close keeps the lease armed and reports closed`() {
+    fun `close reports closed and another entry needs a fresh arm`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
-        core.onExited(restored = false)
+        core.beginEntry()
+        core.onEntered(id(1))
+        core.onExited(id(1), restored = false)
         assertEquals("closed", events.last()["reason"])
-        core.onUserLeaving()
-        core.onEntered()
-        assertEquals(listOf("1:1:entered", "1:2:exited", "1:3:entered"), types())
+        assertNull(core.beginEntry())
+        core.arm(id(2), source, controls)
+        core.beginEntry()
+        core.onEntered(id(2))
+        assertEquals(listOf("1:1:entered", "1:2:exited", "2:1:entered"), types())
     }
 
     @Test
-    fun `leaving without entry releases the early sink`() {
+    fun `old controls and old OS callbacks never touch a successor`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onReturnedWithoutEntry()
+        core.beginEntry()
+        core.onEntered(id(1))
+        core.arm(id(2), source, controls) // retires 1 (exited disarmed)
+        core.onAction(id(1), "end")
+        core.onEntered(id(1))
+        core.onExited(id(1), restored = false)
+        core.onEntryFailed(id(1))
+        core.onReturnedWithoutEntry(id(1))
+        assertEquals(listOf("1:1:entered", "1:2:exited"), types())
+        assertEquals(controls, platform.autoEnter)
+        assertEquals(id(2), platform.autoLease)
+        assertEquals(id(2), core.beginEntry())
+        core.onAction(id(2), "end") // successor not entered yet: dropped
+        assertEquals(listOf("sink-2:pc-1"), platform.live)
+        assertEquals(2, events.size)
+    }
+
+    @Test
+    fun `leaving without entry releases the early sink and keeps the lease`() {
+        core.arm(id(1), source, controls)
+        core.beginEntry()
+        core.onReturnedWithoutEntry(id(1))
         assertEquals(emptyList<Any>(), platform.live)
         assertEquals(emptyList<Map<String, Any>>(), events)
+        assertTrue(core.update(id(1), controls))
     }
 
     @Test
     fun `a newer arm retires the old lease and old triples cannot mutate it`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
+        core.beginEntry()
+        core.onEntered(id(1))
         assertEquals(mapOf("armed" to true, "reason" to "ok"), core.arm(id(2), source, controls))
         assertEquals(listOf("1:1:entered", "1:2:exited"), types())
         assertEquals("disarmed", events.last()["reason"])
         assertEquals(emptyList<Any>(), platform.live)
         assertFalse(core.update(id(1), controls))
         assertFalse(core.enter(id(1)))
-        assertTrue(core.disarm(id(1))) // idempotent for a retired lease
+        assertTrue(core.disarm(id(1)))
         assertEquals(mapOf("armed" to false, "reason" to "stale"), core.arm(id(1), source, controls))
-        assertTrue(core.update(id(2), controls)) // successor untouched
-        assertEquals(controls, platform.autoEnter)
+        assertTrue(core.update(id(2), controls))
     }
 
     @Test
     fun `a new graph instance retires the old one for good`() {
         core.arm(id(5, instance = "graph-a"), source, controls)
         assertEquals(mapOf("armed" to true, "reason" to "ok"), core.arm(id(1, instance = "graph-b"), source, controls))
-        // Old graph, even with a higher lease id, can never act again.
         assertEquals(mapOf("armed" to false, "reason" to "stale"), core.arm(id(9, instance = "graph-a"), source, controls))
         assertTrue(core.disarm(id(5, instance = "graph-a")))
         assertTrue(core.update(id(1, instance = "graph-b"), controls))
@@ -179,58 +219,97 @@ class CallPipLeaseCoreTest {
     @Test
     fun `disarm retires before cleanup and emits nothing afterwards`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
+        core.beginEntry()
+        core.onEntered(id(1))
         assertTrue(core.disarm(id(1)))
         assertEquals(listOf("1:1:entered", "1:2:exited"), types())
-        assertEquals("disarmed", events.last()["reason"])
         assertNull(platform.autoEnter)
         assertTrue(platform.log.contains("leave"))
         assertEquals(emptyList<Any>(), platform.live)
-        core.onAction("end")
-        core.onExited(restored = true)
-        core.onEntered()
+        core.onAction(id(1), "end")
+        core.onExited(id(1), restored = true)
         assertEquals(2, events.size)
         assertTrue(core.disarm(id(1)))
     }
 
     @Test
+    fun `failed cleanup stays owned and a later disarm retries it`() {
+        core.arm(id(1), source, controls)
+        core.beginEntry()
+        core.onEntered(id(1))
+        platform.failRelease = true
+        assertFalse(core.disarm(id(1))) // retired, but its sink is still owned
+        assertEquals(listOf("1:1:entered", "1:2:exited"), types())
+        assertNull(platform.autoEnter)
+        assertEquals(listOf("sink-1:pc-1"), platform.live)
+        assertEquals(mapOf("armed" to true, "reason" to "ok"), core.arm(id(2), source, controls))
+        assertFalse(core.disarm(id(1)))
+        assertEquals(controls, platform.autoEnter) // retry never touches the successor
+        platform.failRelease = false
+        assertTrue(core.disarm(id(1)))
+        assertEquals(emptyList<Any>(), platform.live)
+        assertTrue(core.update(id(2), controls))
+    }
+
+    @Test
+    fun `shutdown retires an armed lease and turns auto entry off`() {
+        core.arm(id(1), source, controls)
+        core.beginEntry()
+        core.onEntered(id(1))
+        core.shutdown()
+        assertNull(platform.autoEnter)
+        assertTrue(platform.log.contains("leave"))
+        assertEquals(emptyList<Any>(), platform.live)
+        assertEquals(listOf("1:1:entered"), types())
+        assertFalse(core.update(id(1), controls))
+    }
+
+    @Test
     fun `entry that cannot attach the track fails and retires`() {
         core.arm(id(1), source, controls)
-        platform.videoTracks.clear() // remote track replaced or gone
-        core.onUserLeaving()
-        core.onEntered()
+        platform.videoTracks.clear()
+        assertEquals(id(1), core.beginEntry())
+        core.onEntered(id(1))
         assertEquals(listOf("1:1:failed"), types())
         assertEquals("trackLost", events.last()["code"])
         assertNull(platform.autoEnter)
         assertTrue(platform.log.contains("leave"))
-        core.onAction("end")
+    }
+
+    @Test
+    fun `an asynchronous start failure reports enterRejected and retires`() {
+        core.arm(id(1), source, controls)
+        core.beginEntry()
+        core.onEntryFailed(id(1))
+        assertEquals(listOf("1:1:failed"), types())
+        assertEquals("enterRejected", events.last()["code"])
+        assertNull(platform.autoEnter)
+        assertEquals(emptyList<Any>(), platform.live)
+        core.onEntered(id(1))
         assertEquals(1, events.size)
     }
 
     @Test
-    fun `blocked removes the sink and auto entry even before entry`() {
+    fun `lock retires an armed lease even before entry`() {
         core.arm(id(1), source, controls)
-        core.onBlocked("userDisabled")
+        core.onBlocked("locked")
         assertEquals(listOf("1:1:blocked"), types())
-        assertEquals("userDisabled", events.last()["reason"])
+        assertEquals("locked", events.last()["reason"])
         assertNull(platform.autoEnter)
-        core.onUserLeaving()
-        core.onEntered()
-        assertEquals(1, events.size)
+        assertNull(core.beginEntry())
         assertTrue(core.disarm(id(1)))
     }
 
     @Test
     fun `blocked while entered leaves PiP and drops later callbacks`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
-        core.onBlocked("locked")
+        core.beginEntry()
+        core.onEntered(id(1))
+        core.onBlocked("userDisabled")
         assertEquals(listOf("1:1:entered", "1:2:blocked"), types())
         assertTrue(platform.log.contains("leave"))
         assertEquals(emptyList<Any>(), platform.live)
-        core.onExited(restored = false)
+        core.onExited(id(1), restored = false)
         assertEquals(2, events.size)
     }
 
@@ -240,10 +319,10 @@ class CallPipLeaseCoreTest {
         core.arm(id(1), source, controls)
         platform.enterAllowed = false
         assertFalse(core.enter(id(1)))
-        assertEquals(emptyList<Map<String, Any>>(), events) // a late request is not a failure event
+        assertEquals(emptyList<Map<String, Any>>(), events)
         platform.enterAllowed = true
         assertTrue(core.enter(id(1)))
-        core.onEntered()
+        core.onEntered(id(1))
         val requests = platform.log.count { it == "enter" }
         assertTrue(core.enter(id(1)))
         assertEquals(requests, platform.log.count { it == "enter" })
@@ -253,11 +332,11 @@ class CallPipLeaseCoreTest {
     @Test
     fun `seq restarts at 1 for each lease`() {
         core.arm(id(1), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
+        core.beginEntry()
+        core.onEntered(id(1))
         core.arm(id(2), source, controls)
-        core.onUserLeaving()
-        core.onEntered()
+        core.beginEntry()
+        core.onEntered(id(2))
         assertEquals(listOf("1:1:entered", "1:2:exited", "2:1:entered"), types())
     }
 }

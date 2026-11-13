@@ -47,17 +47,33 @@ struct CallPipControls: Equatable {
   }
 }
 
+/// Exact remote lookup (PIP-NATIVE-1). The pinned plugin's peer lookup checks
+/// local tracks first, so a local id collision is rejected before asking the
+/// exact peer; there is never a global fallback.
+func resolveExactRemoteTrack<T>(
+  _ source: CallPipSource,
+  localTrack: (String) -> Any?,
+  peerTrack: (_ trackId: String, _ peerConnectionId: String) -> T?
+) -> T? {
+  if localTrack(source.remoteTrackId) != nil { return nil }
+  return peerTrack(source.remoteTrackId, source.peerConnectionId)
+}
+
 /// Platform effects. A sink is an opaque native renderer bound to one track.
+/// releaseSink and setAutoEnter throw when the platform cleanup fails.
 protocol CallPipPlatform: AnyObject {
   func supported() -> Bool
   func hasVideoTrack(_ source: CallPipSource) -> Bool
   func attachSink(_ source: CallPipSource) -> AnyObject?
-  func releaseSink(_ sink: AnyObject)
-  func setAutoEnter(_ controls: CallPipControls?)
+  func releaseSink(_ sink: AnyObject) throws
+  func setAutoEnter(_ lease: CallPipIdentity?, _ controls: CallPipControls?) throws
   func requestEnter() -> Bool
   func leavePip()
 }
 
+/// Every OS callback carries the triple captured when it began (PIP-NATIVE-2);
+/// one entry and one exit per lease, exit retires it (PIP-NATIVE-3); failed
+/// cleanup stays owned until a disarm retries it (PIP-NATIVE-4).
 final class CallPipLeaseCore {
   private final class Lease {
     let id: CallPipIdentity
@@ -80,6 +96,8 @@ final class CallPipLeaseCore {
   private var instance: String?
   private var highestLease: Int64 = 0
   private var retiredInstances = Set<String>()
+  private var pendingSinks: [String: AnyObject] = [:]
+  private var pendingAutoOff: CallPipIdentity?
 
   init(platform: CallPipPlatform, emit: @escaping ([String: Any]) -> Void) {
     self.platform = platform
@@ -103,70 +121,96 @@ final class CallPipLeaseCore {
     guard platform.supported() else { return ["armed": false, "reason": "unsupported"] }
     guard platform.hasVideoTrack(source) else { return ["armed": false, "reason": "trackNotFound"] }
     lease = Lease(id: id, source: source)
-    platform.setAutoEnter(controls)
+    guard (try? platform.setAutoEnter(id, controls)) != nil else {
+      lease = nil
+      return ["armed": false, "reason": "unsupported"]
+    }
+    pendingAutoOff = nil
     return ["armed": true, "reason": "ok"]
   }
 
   func update(_ id: CallPipIdentity, controls: CallPipControls) -> Bool {
-    guard lease?.id == id else { return false }
-    platform.setAutoEnter(controls)
-    return true
+    guard current(id) != nil else { return false }
+    return (try? platform.setAutoEnter(id, controls)) != nil
   }
 
   func enter(_ id: CallPipIdentity) -> Bool {
-    guard let current = lease, current.id == id else { return false }
-    return current.entered || platform.requestEnter()
+    guard let target = current(id) else { return false }
+    return target.entered || platform.requestEnter()
   }
 
-  /// Idempotent: a retired or unknown triple is already clean and never touches a successor.
+  /// Retires a current triple, then retries any cleanup it still owns. True once
+  /// nothing of that lease is left; never touches a successor.
   func disarm(_ id: CallPipIdentity) -> Bool {
     if lease?.id == id { retire(reason: "disarmed") }
-    return true
+    return retryCleanup(id)
   }
 
-  func onUserLeaving() {
-    guard let current = lease, current.sink == nil else { return }
-    current.sink = platform.attachSink(current.source)
+  /// OS entry is starting: attach the sink early and return the triple the
+  /// adapter must pass to every later entry/exit callback.
+  func beginEntry() -> CallPipIdentity? {
+    guard let target = lease else { return nil }
+    if target.sink == nil { target.sink = platform.attachSink(target.source) }
+    return target.id
   }
 
-  func onEntered() {
-    guard let current = lease, !current.entered else { return }
-    if current.sink == nil { current.sink = platform.attachSink(current.source) }
-    guard current.sink != nil else {
-      send(current, "failed", ["code": "trackLost"])
-      drop(current)
+  func onEntered(_ id: CallPipIdentity) {
+    guard let target = current(id), !target.entered else { return }
+    if target.sink == nil { target.sink = platform.attachSink(target.source) }
+    guard target.sink != nil else {
+      send(target, "failed", ["code": "trackLost"])
+      drop(target)
       platform.leavePip()
       return
     }
-    current.entered = true
-    send(current, "entered")
+    target.entered = true
+    send(target, "entered")
   }
 
-  func onExited(restored: Bool) {
-    guard let current = lease, current.entered else { return }
-    current.entered = false
-    if let sink = current.sink { platform.releaseSink(sink) }
-    current.sink = nil
-    send(current, "exited", ["reason": restored ? "restored" : "closed"])
+  func onExited(_ id: CallPipIdentity, restored: Bool) {
+    guard let target = current(id), target.entered else { return }
+    send(target, "exited", ["reason": restored ? "restored" : "closed"])
+    drop(target)
   }
 
-  func onAction(_ kind: String) {
-    guard let current = lease, current.entered, Self.actions.contains(kind) else { return }
-    send(current, "action", ["kind": kind])
+  /// OS entry failed after it began (iOS start error).
+  func onEntryFailed(_ id: CallPipIdentity) {
+    guard let target = current(id), !target.entered else { return }
+    send(target, "failed", ["code": "enterRejected"])
+    drop(target)
   }
 
+  func onReturnedWithoutEntry(_ id: CallPipIdentity) {
+    guard let target = current(id), !target.entered, let sink = target.sink else { return }
+    target.sink = nil
+    releaseOwned(target.id, sink)
+  }
+
+  func onAction(_ id: CallPipIdentity, _ kind: String) {
+    guard let target = current(id), target.entered, Self.actions.contains(kind) else { return }
+    send(target, "action", ["kind": kind])
+  }
+
+  /// Lock or user-disabled: retires the current lease even before entry.
   func onBlocked(_ reason: String) {
-    guard let current = lease, Self.blocked.contains(reason) else { return }
-    let wasEntered = current.entered
-    drop(current)
+    guard let target = lease, Self.blocked.contains(reason) else { return }
+    let wasEntered = target.entered
+    drop(target)
     if wasEntered { platform.leavePip() }
-    send(current, "blocked", ["reason": reason])
+    send(target, "blocked", ["reason": reason])
   }
 
-  func onReturnedWithoutEntry() {
-    guard let current = lease, !current.entered else { return }
-    if let sink = current.sink { platform.releaseSink(sink) }
-    current.sink = nil
+  /// Host going away: retire without events.
+  func shutdown() {
+    guard let target = lease else { return }
+    let wasEntered = target.entered
+    drop(target)
+    if wasEntered { platform.leavePip() }
+  }
+
+  private func current(_ id: CallPipIdentity) -> Lease? {
+    guard let target = lease, target.id == id else { return nil }
+    return target
   }
 
   private func accepts(_ id: CallPipIdentity) -> Bool {
@@ -175,22 +219,40 @@ final class CallPipLeaseCore {
   }
 
   private func retire(reason: String) {
-    guard let current = lease else { return }
-    let wasEntered = current.entered
-    drop(current)
+    guard let target = lease else { return }
+    let wasEntered = target.entered
+    drop(target)
     if wasEntered {
       platform.leavePip()
-      send(current, "exited", ["reason": reason])
+      send(target, "exited", ["reason": reason])
     }
   }
 
-  /// Retire first, then clean up: no callback can reach this lease afterwards.
-  private func drop(_ current: Lease) {
+  private static func key(_ id: CallPipIdentity) -> String { "\(id.instanceId)/\(id.callId)/\(id.leaseId)" }
+
+  /// Retire first, then clean up; failed cleanup stays owned by this triple.
+  private func drop(_ target: Lease) {
     lease = nil
-    current.entered = false
-    platform.setAutoEnter(nil)
-    if let sink = current.sink { platform.releaseSink(sink) }
-    current.sink = nil
+    target.entered = false
+    if (try? platform.setAutoEnter(nil, nil)) == nil { pendingAutoOff = target.id }
+    guard let sink = target.sink else { return }
+    target.sink = nil
+    releaseOwned(target.id, sink)
+  }
+
+  private func releaseOwned(_ id: CallPipIdentity, _ sink: AnyObject) {
+    if (try? platform.releaseSink(sink)) == nil { pendingSinks[Self.key(id)] = sink }
+  }
+
+  private func retryCleanup(_ id: CallPipIdentity) -> Bool {
+    if pendingAutoOff == id && lease == nil {
+      guard (try? platform.setAutoEnter(nil, nil)) != nil else { return false }
+      pendingAutoOff = nil
+    }
+    guard let sink = pendingSinks[Self.key(id)] else { return pendingAutoOff != id }
+    guard (try? platform.releaseSink(sink)) != nil else { return false }
+    pendingSinks[Self.key(id)] = nil
+    return true
   }
 
   private func send(_ target: Lease, _ type: String, _ extra: [String: Any] = [:]) {

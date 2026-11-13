@@ -19,7 +19,7 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
       self.track = track
       self.view = view
     }
-    func release() {
+    func release() throws {
       track.remove(view)
       view.removeFromSuperview()
     }
@@ -33,6 +33,8 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   private var pip: AVPictureInPictureController?
   private var content: AVPictureInPictureVideoCallViewController?
   private var restoring = false
+  // Triple captured when the current OS entry began (PIP-NATIVE-2).
+  private var entry: CallPipIdentity?
   private var observers: [NSObjectProtocol] = []
 
   /// Test observation only: true once an armed lease created the AVKit controller.
@@ -53,14 +55,16 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
       center.addObserver(
         forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
       ) { [weak self] _ in
-        guard let self, self.pip?.isPictureInPictureActive == true else { return }
-        self.core.onBlocked("locked")
+        // Lock retires an armed lease even before entry (PIP-NATIVE-5).
+        self?.core.onBlocked("locked")
       })
     observers.append(
       center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) {
         [weak self] _ in
-        guard let self, self.pip?.isPictureInPictureActive != true else { return }
-        self.core.onReturnedWithoutEntry()
+        // Keep `entry`: on restore this can arrive before didStop, and the core
+        // ignores it for an entered lease.
+        guard let self, self.pip?.isPictureInPictureActive != true, let started = self.entry else { return }
+        self.core.onReturnedWithoutEntry(started)
       })
   }
 
@@ -108,8 +112,12 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
 
   /// Exact peer + track lookup through the plugin's public API; never first match.
   private static func videoTrack(_ source: CallPipSource) -> RTCVideoTrack? {
-    FlutterWebRTCPlugin.sharedSingleton()?
-      .track(forId: source.remoteTrackId, peerConnectionId: source.peerConnectionId) as? RTCVideoTrack
+    guard let plugin = FlutterWebRTCPlugin.sharedSingleton() else { return nil }
+    return resolveExactRemoteTrack(
+      source,
+      localTrack: { plugin.localTracks?.object(forKey: $0) },
+      peerTrack: { plugin.track(forId: $0, peerConnectionId: $1) }
+    ) as? RTCVideoTrack
   }
 
   func hasVideoTrack(_ source: CallPipSource) -> Bool { Self.videoTrack(source) != nil }
@@ -124,11 +132,11 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
     return RemoteSink(track: track, view: view)
   }
 
-  func releaseSink(_ sink: AnyObject) {
-    (sink as? RemoteSink)?.release()
+  func releaseSink(_ sink: AnyObject) throws {
+    try (sink as? RemoteSink)?.release()
   }
 
-  func setAutoEnter(_ controls: CallPipControls?) {
+  func setAutoEnter(_ lease: CallPipIdentity?, _ controls: CallPipControls?) throws {
     guard controls != nil else {
       pip?.canStartPictureInPictureAutomaticallyFromInline = false
       return
@@ -160,17 +168,21 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
 
   // AVPictureInPictureControllerDelegate.
   func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
-    core.onUserLeaving()
+    entry = core.beginEntry()
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-    core.onEntered()
+    let started = entry ?? core.beginEntry()
+    entry = started
+    if let started { core.onEntered(started) }
   }
 
   func pictureInPictureController(
     _ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error
   ) {
-    core.onReturnedWithoutEntry()
+    // Async start rejection: report it and retire that lease (PIP-NATIVE-6).
+    if let started = entry { core.onEntryFailed(started) }
+    entry = nil
   }
 
   func pictureInPictureController(
@@ -184,6 +196,7 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
     let restored = restoring
     restoring = false
-    core.onExited(restored: restored)
+    if let started = entry { core.onExited(started, restored: restored) }
+    entry = nil
   }
 }

@@ -41,13 +41,25 @@ internal class CallPictureInPictureHandler(
     private val liveSinks = mutableSetOf<CallPipRemoteSink>()
     private var controls: CallPipControls? = null
     private var exit: PictureInPictureExitClassifier? = null
+    // Triple captured when the current OS entry began (PIP-NATIVE-2).
+    private var entry: CallPipIdentity? = null
+    private var armedLease: CallPipIdentity? = null
     private var receiverRegistered = false
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                ACTION_CONTROL -> intent.getStringExtra(EXTRA_KIND)?.let(core::onAction)
-                Intent.ACTION_SCREEN_OFF -> if (inPip()) core.onBlocked("locked")
+                ACTION_CONTROL -> {
+                    val kind = intent.getStringExtra(EXTRA_KIND) ?: return
+                    val id = CallPipIdentity(
+                        intent.getStringExtra(EXTRA_INSTANCE) ?: return,
+                        intent.getStringExtra(EXTRA_CALL) ?: return,
+                        intent.getLongExtra(EXTRA_LEASE, 0L),
+                    )
+                    core.onAction(id, kind)
+                }
+                // Lock retires an armed lease even before entry (PIP-NATIVE-5).
+                Intent.ACTION_SCREEN_OFF -> core.onBlocked("locked")
             }
         }
     }
@@ -58,11 +70,14 @@ internal class CallPictureInPictureHandler(
     }
 
     fun dispose() {
+        // Retire the lease and turn auto entry off before the channels go.
+        core.shutdown()
+        entry = null
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
         eventSink = null
         setReceiver(false)
-        liveSinks.toList().forEach(::releaseSink)
+        liveSinks.toList().forEach { runCatching { releaseSink(it) } }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -104,17 +119,21 @@ internal class CallPictureInPictureHandler(
 
     // MainActivity lifecycle forwarding.
     fun onUserLeaveHint() {
-        core.onUserLeaving()
+        val started = core.beginEntry() ?: return
+        entry = started
         val wanted = controls ?: return
-        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S) {
-            enter(wanted)
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S && !enter(wanted)) {
+            core.onEntryFailed(started)
+            entry = null
         }
     }
 
     fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) {
         if (inPictureInPicture) {
             exit = PictureInPictureExitClassifier().also { it.onPictureInPictureModeChanged(true) }
-            core.onEntered()
+            val started = entry ?: core.beginEntry()
+            entry = started
+            started?.let(core::onEntered)
             return
         }
         val classifier = exit ?: return
@@ -127,7 +146,8 @@ internal class CallPictureInPictureHandler(
         if (classifier != null) {
             settle(classifier.onResume())
         } else {
-            core.onReturnedWithoutEntry()
+            entry?.let(core::onReturnedWithoutEntry)
+            entry = null
         }
         if (controls != null && !pipAllowed()) core.onBlocked("userDisabled")
     }
@@ -145,12 +165,14 @@ internal class CallPictureInPictureHandler(
     }
 
     private fun settle(reason: String?) {
+        val started = entry
         when (reason) {
-            "system_return" -> core.onExited(restored = true)
-            "system_close" -> core.onExited(restored = false)
+            "system_return" -> started?.let { core.onExited(it, restored = true) }
+            "system_close" -> started?.let { core.onExited(it, restored = false) }
             else -> return
         }
         exit = null
+        entry = null
     }
 
     // CallPipPlatform.
@@ -167,12 +189,13 @@ internal class CallPictureInPictureHandler(
 
     override fun releaseSink(sink: Any) {
         val remote = sink as? CallPipRemoteSink ?: return
+        remote.release() // throws on failure; the sink stays owned
         liveSinks -= remote
-        remote.release()
     }
 
-    override fun setAutoEnter(controls: CallPipControls?) {
+    override fun setAutoEnter(lease: CallPipIdentity?, controls: CallPipControls?) {
         this.controls = controls
+        armedLease = lease
         setReceiver(controls != null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             activity.setPictureInPictureParams(params(controls))
@@ -248,10 +271,16 @@ internal class CallPictureInPictureHandler(
 
     @TargetApi(Build.VERSION_CODES.O)
     private fun action(kind: String, icon: Int, title: Int, enabled: Boolean): RemoteAction {
-        val intent = Intent(ACTION_CONTROL).setPackage(activity.packageName).putExtra(EXTRA_KIND, kind)
+        val lease = armedLease
+        val intent = Intent(ACTION_CONTROL).setPackage(activity.packageName)
+            .putExtra(EXTRA_KIND, kind)
+            .putExtra(EXTRA_INSTANCE, lease?.instanceId)
+            .putExtra(EXTRA_CALL, lease?.callId)
+            .putExtra(EXTRA_LEASE, lease?.leaseId ?: 0L)
+        // Distinct per lease: an old control can never be rewritten to a successor.
         val pending = PendingIntent.getBroadcast(
             activity,
-            kind.hashCode(),
+            "$kind/${lease?.instanceId}/${lease?.leaseId}".hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -281,6 +310,9 @@ internal class CallPictureInPictureHandler(
         const val EVENT_CHANNEL = "mknoon/call_pip/events"
         private const val ACTION_CONTROL = "com.mknoon.app.call.PIP_CONTROL"
         private const val EXTRA_KIND = "kind"
+        private const val EXTRA_INSTANCE = "instanceId"
+        private const val EXTRA_CALL = "callId"
+        private const val EXTRA_LEASE = "leaseId"
         private const val EXIT_FALLBACK_MS = 1500L
     }
 }

@@ -19,17 +19,26 @@ internal class CallPipRemoteSink private constructor(
     private val track: VideoTrack,
     private val renderer: SurfaceViewRenderer,
 ) {
+    /** Throws if native cleanup fails, so the lease core keeps owning it. */
     fun release() {
-        runCatching { track.removeSink(renderer) }
-        runCatching { renderer.release() }
-        (renderer.parent as? ViewGroup)?.removeView(renderer)
+        try {
+            track.removeSink(renderer)
+            renderer.release()
+        } finally {
+            (renderer.parent as? ViewGroup)?.removeView(renderer)
+        }
     }
 
     companion object {
         /** Exact peer + track lookup through the plugin's public API; never first match. */
-        fun videoTrack(source: CallPipSource): VideoTrack? =
-            FlutterWebRTCPlugin.sharedSingleton
-                ?.getTrackForId(source.remoteTrackId, source.peerConnectionId) as? VideoTrack
+        fun videoTrack(source: CallPipSource): VideoTrack? {
+            val plugin = FlutterWebRTCPlugin.sharedSingleton ?: return null
+            return resolveExactRemoteTrack(
+                source,
+                localTrack = { plugin.getLocalTrack(it) },
+                peerTrack = { track, peer -> plugin.getTrackForId(track, peer) },
+            ) as? VideoTrack
+        }
 
         fun attach(activity: Activity, source: CallPipSource): CallPipRemoteSink? {
             val track = videoTrack(source) ?: return null

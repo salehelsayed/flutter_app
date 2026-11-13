@@ -12,6 +12,8 @@ final class CallPipLeaseCoreTests: XCTestCase {
     var log: [String] = []
     var live: [String] = []
     var autoEnter: CallPipControls?
+    var autoLease: CallPipIdentity?
+    var failRelease = false
     private var next = 0
 
     func supported() -> Bool { isSupported }
@@ -24,13 +26,15 @@ final class CallPipLeaseCoreTests: XCTestCase {
       log.append("attach \(sink)")
       return sink as NSString
     }
-    func releaseSink(_ sink: AnyObject) {
+    func releaseSink(_ sink: AnyObject) throws {
+      if failRelease { throw NSError(domain: "test", code: 1) }
       let name = sink as! String
       live.removeAll { $0 == name }
       log.append("release \(name)")
     }
-    func setAutoEnter(_ controls: CallPipControls?) {
+    func setAutoEnter(_ lease: CallPipIdentity?, _ controls: CallPipControls?) throws {
       autoEnter = controls
+      autoLease = lease
       log.append("auto \(controls != nil)")
     }
     func requestEnter() -> Bool {
@@ -78,10 +82,12 @@ final class CallPipLeaseCoreTests: XCTestCase {
   }
 
   func testWithoutAnArmNothingIsRequestedGateOff() {
-    core.onUserLeaving()
-    core.onEntered()
-    core.onAction("end")
-    core.onReturnedWithoutEntry()
+    XCTAssertNil(core.beginEntry())
+    core.onEntered(id(1))
+    core.onAction(id(1), "end")
+    core.onReturnedWithoutEntry(id(1))
+    core.onBlocked("locked")
+    core.shutdown()
     XCTAssertEqual(platform.log, [])
     XCTAssertTrue(events.isEmpty)
   }
@@ -92,46 +98,75 @@ final class CallPipLeaseCoreTests: XCTestCase {
     XCTAssertEqual(core.availability() as NSDictionary, ["supported": false, "cameraInPip": false, "reason": "os"])
   }
 
+  func testRemoteLookupRejectsLocalCollisionAndWrongPeer() {
+    func resolve(_ s: CallPipSource, locals: Set<String>) -> String? {
+      resolveExactRemoteTrack(
+        s,
+        localTrack: { locals.contains($0) ? "local-camera" : nil },
+        peerTrack: { track, peer in track == "remote-v" && peer == "pc-1" ? "remote-track" : nil })
+    }
+    XCTAssertEqual(resolve(source, locals: []), "remote-track")
+    XCTAssertNil(resolve(source, locals: ["remote-v"]))
+    XCTAssertNil(resolve(CallPipSource(peerConnectionId: "pc-old", remoteTrackId: "remote-v"), locals: []))
+  }
+
   func testArmBindsOnlyTheExactPeerAndVideoTrack() {
     let stale = CallPipSource(peerConnectionId: "pc-old", remoteTrackId: "remote-v")
     XCTAssertEqual(core.arm(id(1), source: stale, controls: controls) as NSDictionary, ["armed": false, "reason": "trackNotFound"])
     XCTAssertNil(platform.autoEnter)
     XCTAssertEqual(core.arm(id(2), source: source, controls: controls) as NSDictionary, ["armed": true, "reason": "ok"])
     XCTAssertEqual(platform.autoEnter, controls)
+    XCTAssertEqual(platform.autoLease, id(2))
     XCTAssertEqual(platform.log, ["auto true"])
   }
 
-  func testEntryAttachesTheSinkAndEventsFollowLeaseOrder() {
+  func testOneEntryAndOneExitPerLeaseThenRetired() {
     _ = core.arm(id(1), source: source, controls: controls)
-    core.onAction("mute")
-    core.onUserLeaving()
-    core.onEntered()
-    core.onEntered()
-    core.onAction("mute")
-    core.onExited(restored: true)
-    core.onExited(restored: false)
-    core.onAction("end")
+    core.onAction(id(1), "mute")
+    XCTAssertEqual(core.beginEntry(), id(1))
+    core.onEntered(id(1))
+    core.onEntered(id(1))
+    core.onAction(id(1), "mute")
+    core.onExited(id(1), restored: true)
+    core.onExited(id(1), restored: false)
+    core.onEntered(id(1))
     XCTAssertEqual(types(), ["1:1:entered", "1:2:action", "1:3:exited"])
     XCTAssertEqual(events[2]["reason"] as? String, "restored")
+    XCTAssertNil(platform.autoEnter)
     XCTAssertEqual(platform.live, [])
+    XCTAssertFalse(core.update(id(1), controls: controls))
     XCTAssertEqual(events[0]["instanceId"] as? String, "graph-a")
     XCTAssertEqual(events[0]["version"] as? Int, 1)
   }
 
-  func testCloseKeepsTheLeaseAndNewerArmRetiresOld() {
+  func testCloseReportsClosedAndReentryNeedsFreshArm() {
     _ = core.arm(id(1), source: source, controls: controls)
-    core.onUserLeaving()
-    core.onEntered()
-    core.onExited(restored: false)
+    _ = core.beginEntry()
+    core.onEntered(id(1))
+    core.onExited(id(1), restored: false)
     XCTAssertEqual(events.last?["reason"] as? String, "closed")
-    core.onEntered()
-    XCTAssertEqual(core.arm(id(2), source: source, controls: controls)["armed"] as? Bool, true)
-    XCTAssertEqual(types(), ["1:1:entered", "1:2:exited", "1:3:entered", "1:4:exited"])
-    XCTAssertEqual(events.last?["reason"] as? String, "disarmed")
-    XCTAssertFalse(core.update(id(1), controls: controls))
-    XCTAssertTrue(core.disarm(id(1)))
-    XCTAssertEqual(core.arm(id(1), source: source, controls: controls)["reason"] as? String, "stale")
-    XCTAssertTrue(core.update(id(2), controls: controls))
+    XCTAssertNil(core.beginEntry())
+    _ = core.arm(id(2), source: source, controls: controls)
+    _ = core.beginEntry()
+    core.onEntered(id(2))
+    XCTAssertEqual(types(), ["1:1:entered", "1:2:exited", "2:1:entered"])
+  }
+
+  func testOldCallbacksNeverTouchASuccessor() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    _ = core.beginEntry()
+    core.onEntered(id(1))
+    _ = core.arm(id(2), source: source, controls: controls)
+    core.onAction(id(1), "end")
+    core.onEntered(id(1))
+    core.onExited(id(1), restored: false)
+    core.onEntryFailed(id(1))
+    core.onReturnedWithoutEntry(id(1))
+    XCTAssertEqual(types(), ["1:1:entered", "1:2:exited"])
+    XCTAssertEqual(platform.autoLease, id(2))
+    XCTAssertEqual(core.beginEntry(), id(2))
+    XCTAssertEqual(platform.live, ["sink-2:pc-1"])
+    XCTAssertFalse(core.arm(id(1), source: source, controls: controls)["armed"] as! Bool)
   }
 
   func testNewGraphInstanceRetiresTheOldOneForGood() {
@@ -143,30 +178,65 @@ final class CallPipLeaseCoreTests: XCTestCase {
 
   func testDisarmRetiresBeforeCleanupAndEmitsNothingAfter() {
     _ = core.arm(id(1), source: source, controls: controls)
-    core.onUserLeaving()
-    core.onEntered()
+    _ = core.beginEntry()
+    core.onEntered(id(1))
     XCTAssertTrue(core.disarm(id(1)))
     XCTAssertEqual(types(), ["1:1:entered", "1:2:exited"])
     XCTAssertNil(platform.autoEnter)
     XCTAssertTrue(platform.log.contains("leave"))
-    core.onAction("end")
-    core.onExited(restored: true)
+    core.onAction(id(1), "end")
+    core.onExited(id(1), restored: true)
     XCTAssertEqual(events.count, 2)
   }
 
-  func testTrackLostAndBlockedRetire() {
+  func testFailedCleanupStaysOwnedAndIsRetried() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    _ = core.beginEntry()
+    core.onEntered(id(1))
+    platform.failRelease = true
+    XCTAssertFalse(core.disarm(id(1)))
+    XCTAssertEqual(platform.live, ["sink-1:pc-1"])
+    XCTAssertEqual(core.arm(id(2), source: source, controls: controls)["armed"] as? Bool, true)
+    XCTAssertFalse(core.disarm(id(1)))
+    XCTAssertEqual(platform.autoEnter, controls)
+    platform.failRelease = false
+    XCTAssertTrue(core.disarm(id(1)))
+    XCTAssertEqual(platform.live, [])
+    XCTAssertTrue(core.update(id(2), controls: controls))
+  }
+
+  func testShutdownRetiresAndTurnsAutoEntryOff() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    _ = core.beginEntry()
+    core.onEntered(id(1))
+    core.shutdown()
+    XCTAssertNil(platform.autoEnter)
+    XCTAssertEqual(platform.live, [])
+    XCTAssertEqual(types(), ["1:1:entered"])
+  }
+
+  func testTrackLostAndAsyncStartFailureRetire() {
     _ = core.arm(id(1), source: source, controls: controls)
     platform.videoTracks = []
-    core.onEntered()
-    XCTAssertEqual(types(), ["1:1:failed"])
+    core.onEntered(id(1))
     XCTAssertEqual(events.last?["code"] as? String, "trackLost")
     platform.videoTracks = [source]
     _ = core.arm(id(2), source: source, controls: controls)
-    core.onBlocked("locked")
-    XCTAssertEqual(events.last?["type"] as? String, "blocked")
+    _ = core.beginEntry()
+    core.onEntryFailed(id(2))
+    XCTAssertEqual(types(), ["1:1:failed", "2:1:failed"])
+    XCTAssertEqual(events.last?["code"] as? String, "enterRejected")
     XCTAssertNil(platform.autoEnter)
-    core.onEntered()
-    XCTAssertEqual(types(), ["1:1:failed", "2:1:blocked"])
+    XCTAssertEqual(platform.live, [])
+  }
+
+  func testLockRetiresAnArmedLeaseBeforeEntry() {
+    _ = core.arm(id(1), source: source, controls: controls)
+    core.onBlocked("locked")
+    XCTAssertEqual(types(), ["1:1:blocked"])
+    XCTAssertNil(platform.autoEnter)
+    XCTAssertNil(core.beginEntry())
+    XCTAssertTrue(core.disarm(id(1)))
   }
 
   func testEnterIsBestEffortAndIdempotent() {
@@ -177,7 +247,7 @@ final class CallPipLeaseCoreTests: XCTestCase {
     XCTAssertTrue(events.isEmpty)
     platform.enterAllowed = true
     XCTAssertTrue(core.enter(id(1)))
-    core.onEntered()
+    core.onEntered(id(1))
     let requests = platform.log.filter { $0 == "enter" }.count
     XCTAssertTrue(core.enter(id(1)))
     XCTAssertEqual(platform.log.filter { $0 == "enter" }.count, requests)

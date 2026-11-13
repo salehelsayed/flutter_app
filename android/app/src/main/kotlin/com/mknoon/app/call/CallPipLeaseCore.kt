@@ -46,17 +46,39 @@ data class CallPipControls(val muted: Boolean, val cameraOn: Boolean, val camera
     }
 }
 
-/** Platform effects. A sink is an opaque native renderer bound to one track. */
+/**
+ * Exact remote lookup (PIP-NATIVE-1). The pinned plugin's peer lookup checks
+ * local tracks first, so a local id collision is rejected before asking the
+ * exact peer; there is never a global fallback.
+ */
+internal fun <T : Any> resolveExactRemoteTrack(
+    source: CallPipSource,
+    localTrack: (String) -> Any?,
+    peerTrack: (trackId: String, peerConnectionId: String) -> T?,
+): T? {
+    if (localTrack(source.remoteTrackId) != null) return null
+    return peerTrack(source.remoteTrackId, source.peerConnectionId)
+}
+
+/** Platform effects. A sink is an opaque native renderer bound to one track.
+ * releaseSink and setAutoEnter throw when the platform cleanup fails. */
 interface CallPipPlatform {
     fun supported(): Boolean
     fun hasVideoTrack(source: CallPipSource): Boolean
     fun attachSink(source: CallPipSource): Any?
     fun releaseSink(sink: Any)
-    fun setAutoEnter(controls: CallPipControls?)
+    /** Lease-qualified so platform controls can carry the exact triple. */
+    fun setAutoEnter(lease: CallPipIdentity?, controls: CallPipControls?)
     fun requestEnter(): Boolean
     fun leavePip()
 }
 
+/**
+ * Every OS callback and control carries the triple captured when it began
+ * (PIP-NATIVE-2); a stale triple never touches the current lease. One entry
+ * and one exit per lease: exit retires it (PIP-NATIVE-3). Failed cleanup stays
+ * owned until a disarm retries it (PIP-NATIVE-4).
+ */
 class CallPipLeaseCore(
     private val platform: CallPipPlatform,
     private val emit: (Map<String, Any>) -> Unit,
@@ -71,6 +93,8 @@ class CallPipLeaseCore(
     private var instance: String? = null
     private var highestLease = 0L
     private val retiredInstances = mutableSetOf<String>()
+    private val pendingSinks = mutableMapOf<CallPipIdentity, Any>()
+    private var pendingAutoOff: CallPipIdentity? = null
 
     fun availability(): Map<String, Any> {
         val supported = platform.supported()
@@ -89,77 +113,99 @@ class CallPipLeaseCore(
         if (!platform.supported()) return mapOf("armed" to false, "reason" to "unsupported")
         if (!platform.hasVideoTrack(source)) return mapOf("armed" to false, "reason" to "trackNotFound")
         lease = Lease(id, source)
-        platform.setAutoEnter(controls)
+        platform.setAutoEnter(id, controls)
+        pendingAutoOff = null
         return mapOf("armed" to true, "reason" to "ok")
     }
 
     fun update(id: CallPipIdentity, controls: CallPipControls): Boolean {
-        if (lease?.id != id) return false
-        platform.setAutoEnter(controls)
+        current(id) ?: return false
+        platform.setAutoEnter(id, controls)
         return true
     }
 
     fun enter(id: CallPipIdentity): Boolean {
-        val current = lease ?: return false
-        if (current.id != id) return false
-        return current.entered || platform.requestEnter()
+        val target = current(id) ?: return false
+        return target.entered || platform.requestEnter()
     }
 
-    /** Idempotent: a retired or unknown triple is already clean and never touches a successor. */
+    /** Retires a current triple, then retries any cleanup it still owns. True
+     * once nothing of that lease is left; never touches a successor. */
     fun disarm(id: CallPipIdentity): Boolean {
         if (lease?.id == id) retire("disarmed")
-        return true
+        return retryCleanup(id)
     }
 
-    fun onUserLeaving() {
-        val current = lease ?: return
-        if (current.sink == null) current.sink = platform.attachSink(current.source)
+    /** OS entry is starting: attach the remote sink early and return the triple
+     * the adapter must pass to every later entry/exit callback. */
+    fun beginEntry(): CallPipIdentity? {
+        val target = lease ?: return null
+        if (target.sink == null) target.sink = platform.attachSink(target.source)
+        return target.id
     }
 
-    fun onEntered() {
-        val current = lease ?: return
-        if (current.entered) return
-        if (current.sink == null) current.sink = platform.attachSink(current.source)
-        if (current.sink == null) {
-            send(current, "failed", "code" to "trackLost")
-            drop(current)
+    fun onEntered(id: CallPipIdentity) {
+        val target = current(id) ?: return
+        if (target.entered) return
+        if (target.sink == null) target.sink = platform.attachSink(target.source)
+        if (target.sink == null) {
+            send(target, "failed", "code" to "trackLost")
+            drop(target)
             platform.leavePip()
             return
         }
-        current.entered = true
-        send(current, "entered")
+        target.entered = true
+        send(target, "entered")
     }
 
-    fun onExited(restored: Boolean) {
-        val current = lease ?: return
-        if (!current.entered) return
-        current.entered = false
-        current.sink?.let(platform::releaseSink)
-        current.sink = null
-        send(current, "exited", "reason" to (if (restored) "restored" else "closed"))
+    fun onExited(id: CallPipIdentity, restored: Boolean) {
+        val target = current(id) ?: return
+        if (!target.entered) return
+        send(target, "exited", "reason" to (if (restored) "restored" else "closed"))
+        drop(target)
     }
 
-    fun onAction(kind: String) {
-        val current = lease ?: return
-        if (!current.entered || kind !in ACTIONS) return
-        send(current, "action", "kind" to kind)
+    /** OS entry failed after it began (iOS start error, Android refusal). */
+    fun onEntryFailed(id: CallPipIdentity) {
+        val target = current(id) ?: return
+        if (target.entered) return
+        send(target, "failed", "code" to "enterRejected")
+        drop(target)
     }
 
+    fun onReturnedWithoutEntry(id: CallPipIdentity) {
+        val target = current(id) ?: return
+        if (target.entered) return
+        val sink = target.sink ?: return
+        target.sink = null
+        releaseOwned(target.id, sink)
+    }
+
+    fun onAction(id: CallPipIdentity, kind: String) {
+        val target = current(id) ?: return
+        if (!target.entered || kind !in ACTIONS) return
+        send(target, "action", "kind" to kind)
+    }
+
+    /** Lock or user-disabled: retires the current lease even before entry. */
     fun onBlocked(reason: String) {
-        val current = lease ?: return
+        val target = lease ?: return
         if (reason !in BLOCKED) return
-        val wasEntered = current.entered
-        drop(current)
+        val wasEntered = target.entered
+        drop(target)
         if (wasEntered) platform.leavePip()
-        send(current, "blocked", "reason" to reason)
+        send(target, "blocked", "reason" to reason)
     }
 
-    fun onReturnedWithoutEntry() {
-        val current = lease ?: return
-        if (current.entered) return
-        current.sink?.let(platform::releaseSink)
-        current.sink = null
+    /** Host going away (engine detach): retire without events. */
+    fun shutdown() {
+        val target = lease ?: return
+        val wasEntered = target.entered
+        drop(target)
+        if (wasEntered) platform.leavePip()
     }
+
+    private fun current(id: CallPipIdentity): Lease? = lease?.takeIf { it.id == id }
 
     private fun accepts(id: CallPipIdentity): Boolean {
         if (id.instanceId in retiredInstances) return false
@@ -167,22 +213,54 @@ class CallPipLeaseCore(
     }
 
     private fun retire(reason: String) {
-        val current = lease ?: return
-        val wasEntered = current.entered
-        drop(current)
+        val target = lease ?: return
+        val wasEntered = target.entered
+        drop(target)
         if (wasEntered) {
             platform.leavePip()
-            send(current, "exited", "reason" to reason)
+            send(target, "exited", "reason" to reason)
         }
     }
 
-    /** Retire first, then clean up: no callback can reach this lease afterwards. */
-    private fun drop(current: Lease) {
+    /** Retire first, then clean up; failed cleanup stays owned by this triple. */
+    private fun drop(target: Lease) {
         lease = null
-        current.entered = false
-        platform.setAutoEnter(null)
-        current.sink?.let(platform::releaseSink)
-        current.sink = null
+        target.entered = false
+        try {
+            platform.setAutoEnter(null, null)
+        } catch (_: Exception) {
+            pendingAutoOff = target.id
+        }
+        val sink = target.sink ?: return
+        target.sink = null
+        releaseOwned(target.id, sink)
+    }
+
+    private fun releaseOwned(id: CallPipIdentity, sink: Any) {
+        try {
+            platform.releaseSink(sink)
+        } catch (_: Exception) {
+            pendingSinks[id] = sink
+        }
+    }
+
+    private fun retryCleanup(id: CallPipIdentity): Boolean {
+        if (pendingAutoOff == id && lease == null) {
+            try {
+                platform.setAutoEnter(null, null)
+                pendingAutoOff = null
+            } catch (_: Exception) {
+                return false
+            }
+        }
+        val sink = pendingSinks[id] ?: return pendingAutoOff != id
+        return try {
+            platform.releaseSink(sink)
+            pendingSinks.remove(id)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun send(target: Lease, type: String, vararg extra: Pair<String, Any>) {
