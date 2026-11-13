@@ -183,7 +183,7 @@ final class CallPipLeaseCoreTests: XCTestCase {
     XCTAssertEqual(platform.log.filter { $0 == "enter" }.count, requests)
   }
 
-  /// Guard for Kayan m-69a3dbc5 condition 2: without an arm no AVKit PiP exists.
+  /// Guard for Kayan m-69a3dbc5 condition 2: without an arm no PiP controller exists.
   func testControllerCreatesNoPipBeforeArmAndFailsClosed() {
     let controller = CallPictureInPictureController(messenger: MockFlutterBinaryMessenger()) { UIView() }
     var replies: [Any?] = []
