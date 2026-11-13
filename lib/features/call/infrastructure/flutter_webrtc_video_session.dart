@@ -6,6 +6,8 @@ import '../application/call_video_media_owner.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_id.dart';
 import '../domain/call_media.dart';
+import '../domain/call_video_quality_environment.dart';
+import '../domain/call_video_quality_policy.dart';
 import 'webrtc_types.dart';
 
 /// Injectable native boundaries; production defaults never request audio.
@@ -45,7 +47,8 @@ final class FlutterWebRtcVideoSession
         CallVideoSession,
         CallVideoPresentationSource,
         CallVideoCameraSwitch,
-        CallVideoSdpReconciler {
+        CallVideoSdpReconciler,
+        CallVideoQualityEnvironmentConsumer {
   FlutterWebRtcVideoSession({
     required this.callId,
     required this.localIsCaller,
@@ -56,6 +59,7 @@ final class FlutterWebRtcVideoSession
     CallVideoCaptureFactory? capture,
     CallVideoRendererFactory? renderer,
     CallVideoStreamFactory? videoStream,
+    Duration Function()? qualityElapsed,
   }) : _connection = connection,
        _canApply = canApply,
        _validateDescription = validateDescription,
@@ -85,6 +89,10 @@ final class FlutterWebRtcVideoSession
   final CallVideoCaptureFactory _capture;
   final CallVideoRendererFactory _renderer;
   final CallVideoStreamFactory _videoStream;
+
+  // Compile-only RED seam; quality ownership is implemented after test freeze.
+  @override
+  void updateQualityEnvironment(CallVideoQualityEnvironment environment) {}
   webrtc.MediaStream? _sendStream;
   bool _streamDisposeFailed = false;
   Future<void>? _streamDisposal;
