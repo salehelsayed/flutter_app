@@ -385,7 +385,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
   }
 
   // 3. Build unsigned payload (same format as QR, plus mlkem key)
-  final now = DateTime.now().toUtc();
+  final now = clock.now().toUtc();
   final timestamp = now.toIso8601String();
   final sanitizedUsername = sanitizeUsername(identity.username);
   // FDC-09 §12 / CV-14: resolve the wake-token to distribute — v2 (encrypted,
