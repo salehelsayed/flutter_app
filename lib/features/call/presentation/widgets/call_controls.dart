@@ -22,6 +22,7 @@ class CallControls extends StatelessWidget {
     required this.onSpeaker,
     required this.onEnd,
     this.onChooseAudioOutput,
+    this.constrainLabels = false,
   });
 
   final bool isMuted;
@@ -36,6 +37,7 @@ class CallControls extends StatelessWidget {
   final VoidCallback onSpeaker;
   final VoidCallback onEnd;
   final VoidCallback? onChooseAudioOutput;
+  final bool constrainLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -87,56 +89,67 @@ class CallControls extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _Control(
-                identifier: 'call_mute',
-                tooltip: muteTooltip,
-                label: isMuted
-                    ? l10n.media_viewer_unmute
-                    : l10n.media_viewer_mute,
-                icon: isMuted ? Icons.mic_off_rounded : Icons.mic_none_rounded,
-                backgroundColor: isMuteAvailable
-                    ? (isMuted ? colors.accent : colors.surfaceRaised)
-                    : colors.disabledSurface,
-                foregroundColor: isMuteAvailable
-                    ? (isMuted ? colors.accentIcon : colors.iconPrimary)
-                    : colors.disabledForeground,
-                semanticsEnabled: isMuteAvailable,
-                onPressed: isMuteAvailable
-                    ? onMute
-                    : () => _showUnavailable(
-                        context,
-                        _truthfulMuteUnavailableMessage,
-                      ),
+              _fitControl(
+                _Control(
+                  identifier: 'call_mute',
+                  tooltip: muteTooltip,
+                  label: isMuted
+                      ? l10n.media_viewer_unmute
+                      : l10n.media_viewer_mute,
+                  icon: isMuted
+                      ? Icons.mic_off_rounded
+                      : Icons.mic_none_rounded,
+                  backgroundColor: isMuteAvailable
+                      ? (isMuted ? colors.accent : colors.surfaceRaised)
+                      : colors.disabledSurface,
+                  foregroundColor: isMuteAvailable
+                      ? (isMuted ? colors.accentIcon : colors.iconPrimary)
+                      : colors.disabledForeground,
+                  semanticsEnabled: isMuteAvailable,
+                  constrainLabel: constrainLabels,
+                  onPressed: isMuteAvailable
+                      ? onMute
+                      : () => _showUnavailable(
+                          context,
+                          _truthfulMuteUnavailableMessage,
+                        ),
+                ),
               ),
-              _Control(
-                identifier: 'call_speaker',
-                tooltip: speakerTooltip,
-                label: l10n.call_speaker,
-                icon: isSpeakerOn
-                    ? Icons.volume_up_rounded
-                    : Icons.volume_down_outlined,
-                backgroundColor: isSpeakerAvailable
-                    ? (isSpeakerOn ? colors.accent : colors.surfaceRaised)
-                    : colors.disabledSurface,
-                foregroundColor: isSpeakerAvailable
-                    ? (isSpeakerOn ? colors.accentIcon : colors.iconPrimary)
-                    : colors.disabledForeground,
-                semanticsEnabled: isSpeakerAvailable,
-                onPressed: isSpeakerAvailable
-                    ? onSpeaker
-                    : () => _showUnavailable(
-                        context,
-                        _truthfulSpeakerUnavailableMessage,
-                      ),
+              _fitControl(
+                _Control(
+                  identifier: 'call_speaker',
+                  tooltip: speakerTooltip,
+                  label: l10n.call_speaker,
+                  icon: isSpeakerOn
+                      ? Icons.volume_up_rounded
+                      : Icons.volume_down_outlined,
+                  backgroundColor: isSpeakerAvailable
+                      ? (isSpeakerOn ? colors.accent : colors.surfaceRaised)
+                      : colors.disabledSurface,
+                  foregroundColor: isSpeakerAvailable
+                      ? (isSpeakerOn ? colors.accentIcon : colors.iconPrimary)
+                      : colors.disabledForeground,
+                  semanticsEnabled: isSpeakerAvailable,
+                  constrainLabel: constrainLabels,
+                  onPressed: isSpeakerAvailable
+                      ? onSpeaker
+                      : () => _showUnavailable(
+                          context,
+                          _truthfulSpeakerUnavailableMessage,
+                        ),
+                ),
               ),
-              _Control(
-                identifier: 'call_end',
-                tooltip: l10n.call_end,
-                label: l10n.call_end_action,
-                icon: Icons.call_end_rounded,
-                backgroundColor: const Color(0xFFE5484D),
-                foregroundColor: Colors.white,
-                onPressed: onEnd,
+              _fitControl(
+                _Control(
+                  identifier: 'call_end',
+                  tooltip: l10n.call_end,
+                  label: l10n.call_end_action,
+                  icon: Icons.call_end_rounded,
+                  backgroundColor: const Color(0xFFE5484D),
+                  foregroundColor: Colors.white,
+                  onPressed: onEnd,
+                  constrainLabel: constrainLabels,
+                ),
               ),
             ],
           ),
@@ -151,6 +164,9 @@ class CallControls extends StatelessWidget {
       ),
     );
   }
+
+  Widget _fitControl(Widget control) =>
+      constrainLabels ? Expanded(child: control) : control;
 
   String _selectedRouteLabel(AppLocalizations l10n) => switch (selectedRoute) {
     CallAudioOutputRoute.systemDefault => l10n.call_audio_route_system_default,
@@ -198,6 +214,7 @@ class _Control extends StatelessWidget {
     required this.foregroundColor,
     required this.onPressed,
     this.semanticsEnabled = true,
+    this.constrainLabel = false,
   });
 
   final String identifier;
@@ -208,6 +225,7 @@ class _Control extends StatelessWidget {
   final Color foregroundColor;
   final VoidCallback onPressed;
   final bool semanticsEnabled;
+  final bool constrainLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -236,6 +254,9 @@ class _Control extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             label,
+            maxLines: constrainLabel ? 2 : null,
+            overflow: constrainLabel ? TextOverflow.ellipsis : null,
+            textAlign: constrainLabel ? TextAlign.center : null,
             style: TextStyle(
               color: semanticsEnabled
                   ? context.backgroundReadableColors.textSecondary

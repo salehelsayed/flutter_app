@@ -37,8 +37,22 @@ internal struct MknoonCallAudioState: Equatable {
   let availableRoutes: [String]
 }
 
+/// Media a call was registered or settled with. Absent on the wire means
+/// audio; unknown values are rejected by the bridge.
+internal enum MknoonCallMedia: String {
+  case audio
+  case video
+
+  static func parse(_ wire: Any?) -> MknoonCallMedia? {
+    guard let wire else { return .audio }
+    guard let text = wire as? String else { return nil }
+    return MknoonCallMedia(rawValue: text)
+  }
+}
+
 internal protocol MknoonCallProviding: AnyObject {
   func refreshConfiguration()
+  func setSupportsVideo(_ supported: Bool)
   func setDelegate(_ delegate: CXProviderDelegate?, queue: DispatchQueue?)
   func reportNewIncomingCall(
     with UUID: UUID,
@@ -51,6 +65,10 @@ internal protocol MknoonCallProviding: AnyObject {
   func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?)
 }
 
+extension MknoonCallProviding {
+  func setSupportsVideo(_ supported: Bool) {}
+}
+
 extension CXProvider: MknoonCallProviding {
   func refreshConfiguration() {
     // Re-register the current AudioSession ID with callservicesd before a new
@@ -58,6 +76,12 @@ extension CXProvider: MknoonCallProviding {
     // https://developer.apple.com/forums/thread/783870?answerId=852684022
     let currentConfiguration = configuration
     configuration = currentConfiguration
+  }
+
+  func setSupportsVideo(_ supported: Bool) {
+    let updated = configuration
+    updated.supportsVideo = supported
+    configuration = updated
   }
 }
 
@@ -475,6 +499,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private var ringbackPlaying = false
   private let lock = NSRecursiveLock()
   private var eventHandler: EventHandler?
+  // Phase-4 video truth (Astra m-bd5297cd): off unless the video capability
+  // is on AND the call's current media is video. Never starts capture.
+  private var videoCapabilityEnabled = false
+  private var mediaByCall: [UUID: MknoonCallMedia] = [:]
   private var capabilityChangeHandler: ((Bool) -> Bool)?
   private var endedCallIds: Set<UUID> = []
   private var answeredCallIds: Set<UUID> = []
@@ -617,6 +645,46 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func isCapabilityEnabled() -> Bool { synchronized { callsEnabled } }
 
+  /// Off when absent or disabled; disabling clears video presentation for
+  /// the current call without ending its audio.
+  func setVideoCapabilityEnabled(_ enabled: Bool) {
+    synchronized {
+      videoCapabilityEnabled = enabled
+      provider.setSupportsVideo(enabled)
+      if let live = store.snapshot(), mediaByCall[live.nativeCallId] == .video {
+        reportCurrentMediaUpdate()
+      }
+    }
+  }
+
+  func isVideoCapabilityEnabled() -> Bool { synchronized { videoCapabilityEnabled } }
+
+  /// Settled media for the exact current call. Updates CallKit's hasVideo;
+  /// never starts capture.
+  func setCallMedia(callHandle: String, media: MknoonCallMedia) -> Bool {
+    synchronized {
+      guard let callId = store.resolveCallHandle(callHandle),
+            let live = store.snapshot(),
+            live.nativeCallId == callId,
+            live.terminalEvent == nil
+      else { return false }
+      mediaByCall[callId] = media
+      reportCurrentMediaUpdate()
+      return true
+    }
+  }
+
+  func effectiveMedia(for callId: UUID) -> MknoonCallMedia {
+    synchronized {
+      videoCapabilityEnabled && mediaByCall[callId] == .video ? .video : .audio
+    }
+  }
+
+  private func reportCurrentMediaUpdate() {
+    guard let live = store.snapshot(), live.terminalEvent == nil, live.presented else { return }
+    provider.reportCall(with: live.nativeCallId, updated: incomingUpdate(for: live))
+  }
+
   private var callsEnabled: Bool { !capabilityDisabledInProcess && capability.enabled }
 
   func presentIncoming(
@@ -756,6 +824,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func presentAuthenticated(
     callHandle: String,
     expiresAtMs: Int64,
+    media: MknoonCallMedia = .audio,
     completion: @escaping (Bool) -> Void
   ) {
     guard isCapabilityEnabled() else { completion(false); return }
@@ -767,6 +836,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       completion(false)
       return
     }
+    synchronized { mediaByCall[callId] = media }
     let now = nowMs()
     guard now >= 0 else {
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=invalid_clock")
@@ -832,6 +902,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func registerOutgoingAuthenticated(
     callHandle: String,
     expiresAtMs: Int64,
+    media: MknoonCallMedia = .audio,
     completion: @escaping (Bool) -> Void
   ) {
     let decision: MknoonOutgoingRegistrationDecision = synchronized {
@@ -852,10 +923,12 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       )
       switch store.createOutgoing(payload) {
       case .duplicate:
+        mediaByCall[callId] = media
         return .duplicate
       case .busy, .persistenceFailure:
         return .rejected
       case .created:
+        mediaByCall[callId] = media
         return .created(callId, payload)
       }
     }
@@ -871,7 +944,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         call: callId,
         handle: CXHandle(type: .generic, value: callHandle)
       )
-      action.isVideo = false
+      action.isVideo = effectiveMedia(for: callId) == .video
       provider.refreshConfiguration()
       transactionRequester.request(CXTransaction(action: action)) { [weak self] error in
         guard let self else { completion(false); return }
@@ -1843,7 +1916,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     let update = CXCallUpdate()
     update.remoteHandle = CXHandle(type: .generic, value: callHandle)
     update.localizedCallerName = displayName
-    update.hasVideo = false
+    update.hasVideo = UUID(uuidString: callHandle).map { effectiveMedia(for: $0) == .video } ?? false
     update.supportsHolding = false
     update.supportsGrouping = false
     update.supportsUngrouping = false
@@ -1902,6 +1975,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     guard type.isTerminal, let descriptor = store.snapshot(),
           descriptor.nativeCallId == nativeCallId
     else { return false }
+    mediaByCall.removeValue(forKey: nativeCallId)
     let newlyRecorded = descriptor.terminalEvent == nil
     if newlyRecorded, !record(nativeCallId, type, failureOrigin: failureOrigin) {
       failClosedAfterPersistenceFailure(nativeCallId)

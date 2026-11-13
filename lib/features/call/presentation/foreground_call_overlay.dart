@@ -12,6 +12,7 @@ import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
+import 'call_video_presentation.dart';
 import 'foreground_call_back_guard.dart';
 import 'locked_call_projection.dart';
 import 'screens/active_call_screen.dart';
@@ -349,6 +350,18 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         surfaceKind != _ForegroundCallSurface.hidden &&
         callId != null &&
         peerId != null) {
+      final capability = widget.capability;
+      final video = _visibleVideo(projection, capability);
+      final capabilityGeneration = _capabilityGeneration;
+      final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
+          ? null
+          : (intent) => _runVideoIntent(
+              capability: capability!,
+              capabilityGeneration: capabilityGeneration,
+              callId: callId,
+              generation: video.generation,
+              intent: intent,
+            );
       surface = switch (surfaceKind) {
         _ForegroundCallSurface.incoming => IncomingCallScreen(
           contactPeerId: peerId,
@@ -358,6 +371,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           state: session!.state,
           onAnswer: () => _runAction(() => widget.capability?.answer(callId)),
           onDecline: () => _runAction(() => widget.capability?.decline(callId)),
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.outgoing => OutgoingCallScreen(
           contactPeerId: peerId,
@@ -366,6 +381,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               : _contactDisplayName,
           state: session!.state,
           onCancel: () => _runAction(() => widget.capability?.cancel(callId)),
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.active => ActiveCallScreen(
           contactPeerId: peerId,
@@ -375,7 +392,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           state: session!.state,
           connectedAt: session.connectedAt,
           now: widget.now ?? DateTime.now,
-          controls: _buildControls(callId, projection.audio),
+          controls: _buildControls(
+            callId,
+            projection.audio,
+            constrainLabels: video != null,
+          ),
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.terminal =>
           _terminalNoticeVisible
@@ -570,13 +593,18 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     });
   }
 
-  CallControls _buildControls(CallId callId, CallAudioControlState audio) {
+  CallControls _buildControls(
+    CallId callId,
+    CallAudioControlState audio, {
+    bool constrainLabels = false,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     final speakerOn = audio.selectedRoute == CallAudioOutputRoute.speaker;
     final speakerAvailable =
         audio.active &&
         audio.supportedRoutes.contains(CallAudioOutputRoute.speaker);
     return CallControls(
+      constrainLabels: constrainLabels,
       isMuted: audio.muted,
       isMuteAvailable: audio.active,
       isSpeakerOn: speakerOn,
@@ -602,6 +630,58 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           : null,
       onEnd: () => _runAction(() => widget.capability?.end(callId)),
     );
+  }
+
+  ForegroundCallVideoProjection? _visibleVideo(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    final session = projection.session;
+    final video = projection.video;
+    if (capability is! ForegroundCallVideoCapability ||
+        session.isIdle ||
+        session.isTerminal ||
+        session.state == CallState.incomingValidating ||
+        video == null ||
+        !video.presentation.isVisible) {
+      return null;
+    }
+    return video;
+  }
+
+  void _runVideoIntent({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required int generation,
+    required CallVideoIntent intent,
+  }) {
+    _runAction(() {
+      if (!mounted ||
+          !identical(capability, widget.capability) ||
+          capabilityGeneration != _capabilityGeneration ||
+          _minimizedCallId == callId ||
+          _pickerCallId == callId ||
+          capability is! ForegroundCallVideoCapability) {
+        return null;
+      }
+      // Re-read the owner immediately before dispatch, including updates that
+      // have not reached the presentation stream yet. The root revalidates
+      // these tokens atomically before performing any media effect.
+      final current = capability.current;
+      if (current == null || current.session.callId != callId) return null;
+      final video = _visibleVideo(current, capability);
+      if (video == null || video.generation != generation) return null;
+      final available = video.presentation.intentFor(intent.action);
+      if (available == null || available.upgradeId != intent.upgradeId) {
+        return null;
+      }
+      return (capability as ForegroundCallVideoCapability).applyVideoIntent(
+        callId,
+        generation: generation,
+        intent: intent,
+      );
+    });
   }
 
   void _runAction(

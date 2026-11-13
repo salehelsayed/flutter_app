@@ -1191,6 +1191,130 @@ class MknoonCallNativeBridgeTest {
         "acknowledgement" to acknowledgement,
     )
 
+    private class VideoFacts(var active: Boolean = true) : MknoonCallLocalCameraFacts {
+        override fun audioActive(nativeCallId: UUID) = active
+        override fun uiVisible() = true
+        override fun cameraPermissionGranted() = true
+        override fun sdkInt() = 34
+        override fun manifestDeclaresCameraType() = false
+    }
+
+    @Test
+    fun `phase-4 registration media is optional, audio by default and strict`() {
+        val rig = LifecycleRig()
+        val applied = mutableListOf<Pair<UUID, Boolean>>()
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { id, on -> applied += id to on; true }
+        authority.setVideoCapability(true)
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller, messenger = null,
+            authenticatedPresenter = { _, _ ->
+                rig.controller.present(rig.payload) == MknoonCallPresentationResult.PRESENTED
+            },
+            videoAuthority = authority,
+        )
+        val base = mapOf(
+            "version" to 1, "callHandle" to rig.payload.callHandle, "expiresAtMs" to rig.payload.expiresAtMs,
+        )
+        val invalid = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("presentAuthenticated", base + ("media" to "screen")), invalid)
+        assertEquals("bad_args", invalid.errorCode)
+        val explicitNull = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("presentAuthenticated", base + ("media" to null)), explicitNull)
+        assertEquals("explicit null media is not absent media (NATIVE-VIDEO-2)", "bad_args", explicitNull.errorCode)
+        assertEquals(null, rig.controller.snapshot())
+        assertBridgeSuccess(bridge, "presentAuthenticated", base + ("media" to "video"), true)
+        assertEquals(MknoonCallMedia.VIDEO, authority.effectiveMedia(rig.payload.nativeCallId))
+        assertBridgeSuccess(bridge, "presentAuthenticated", base, true)
+        assertEquals(MknoonCallMedia.AUDIO, authority.effectiveMedia(rig.payload.nativeCallId))
+        assertTrue(applied.isEmpty())
+    }
+
+    @Test
+    fun `phase-4 outgoing registration rejects explicit null media without registering (NATIVE-VIDEO-2)`() {
+        val rig = LifecycleRig()
+        var registrations = 0
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { _, _ -> true }
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller, messenger = null,
+            authenticatedOutgoingRegistrar = { _, _ -> registrations += 1; true },
+            videoAuthority = authority,
+        )
+        val base = mapOf(
+            "version" to 1, "callHandle" to rig.payload.callHandle, "expiresAtMs" to rig.payload.expiresAtMs,
+        )
+        for (bad in listOf<Any?>(null, "screen", true)) {
+            val malformed = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("registerOutgoingAuthenticated", base + ("media" to bad)), malformed)
+            assertEquals("bad_args", malformed.errorCode)
+        }
+        assertEquals(0, registrations)
+        assertBridgeSuccess(bridge, "registerOutgoingAuthenticated", base, true)
+        assertEquals(1, registrations)
+    }
+
+    @Test
+    fun `phase-4 video capability is off unless explicitly enabled with native calls`() {
+        val rig = LifecycleRig()
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { _, _ -> true }
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller, messenger = null,
+            capabilitySetter = { true }, videoAuthority = authority,
+        )
+        assertBridgeSuccess(bridge, "setCapabilityEnabled", mapOf("version" to 1, "enabled" to true, "video" to true), true)
+        assertTrue(authority.videoCapabilityEnabled())
+        assertBridgeSuccess(bridge, "setCapabilityEnabled", mapOf("version" to 1, "enabled" to true), true)
+        assertFalse(authority.videoCapabilityEnabled())
+        assertBridgeSuccess(bridge, "setCapabilityEnabled", mapOf("version" to 1, "enabled" to false, "video" to true), true)
+        assertFalse(authority.videoCapabilityEnabled())
+        val malformed = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("setCapabilityEnabled", mapOf("version" to 1, "enabled" to true, "video" to "yes")), malformed)
+        assertEquals("bad_args", malformed.errorCode)
+    }
+
+    @Test
+    fun `phase-4 setCallMedia binds the exact current call and audio releases the camera lease`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val applied = mutableListOf<Pair<UUID, Boolean>>()
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { id, on -> applied += id to on; true }
+        authority.setVideoCapability(true)
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null, videoAuthority = authority)
+        val identity = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
+        assertBridgeSuccess(bridge, "setCallMedia", identity + ("media" to "video"), true)
+        assertEquals(MknoonCallMedia.VIDEO, authority.effectiveMedia(rig.payload.nativeCallId))
+        assertBridgeSuccess(
+            bridge, "setCallMedia",
+            mapOf("version" to 1, "callHandle" to UUID.randomUUID().toString(), "media" to "video"),
+            false,
+        )
+        for (bad in listOf(identity, identity + ("media" to "screen"), identity + ("media" to null))) {
+            val malformed = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("setCallMedia", bad), malformed)
+            assertEquals("bad_args", malformed.errorCode)
+        }
+        assertBridgeSuccess(bridge, "setCallMedia", identity + ("media" to "audio"), true)
+        assertEquals(MknoonCallMedia.AUDIO, authority.effectiveMedia(rig.payload.nativeCallId))
+    }
+
+    @Test
+    fun `phase-4 camera lease is refused while the manifest lacks the camera type and release always succeeds`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val applied = mutableListOf<Pair<UUID, Boolean>>()
+        val authority = MknoonCallVideoAuthority(VideoFacts()) { id, on -> applied += id to on; true }
+        authority.setVideoCapability(true)
+        authority.setCallMedia(rig.payload.nativeCallId, MknoonCallMedia.VIDEO)
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null, videoAuthority = authority)
+        val identity = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
+        assertBridgeSuccess(bridge, "setLocalCameraActive", identity + ("active" to true), false)
+        assertTrue(applied.isEmpty())
+        assertBridgeSuccess(bridge, "setLocalCameraActive", identity + ("active" to false), true)
+        assertEquals(listOf(rig.payload.nativeCallId to false), applied)
+        val malformed = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("setLocalCameraActive", identity + ("active" to "on")), malformed)
+        assertEquals("bad_args", malformed.errorCode)
+    }
+
     private fun assertBridgeSuccess(
         bridge: MknoonCallNativeBridge,
         method: String,

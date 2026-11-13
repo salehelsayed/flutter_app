@@ -163,6 +163,10 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
       failClosed(call.arguments, result)
     case "detach":
       detach(call.arguments, result)
+    case "setCallMedia":
+      setCallMedia(call.arguments, result)
+    case "setLocalCameraActive":
+      setLocalCameraActive(call.arguments, result)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -193,11 +197,40 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
   }
 
   private func setCapability(_ arguments: Any?, _ result: @escaping FlutterResult) {
-    guard let map = exactMap(arguments, keys: ["version", "enabled"]),
+    guard let map = mapWithOptional(arguments, keys: ["version", "enabled"], optional: ["video"]),
           validVersion(map["version"]),
           let enabled = map["enabled"] as? Bool
     else { badArguments(result); return }
-    result(controller.setCapabilityEnabled(enabled))
+    var video = false
+    if map.keys.contains("video") {
+      guard let flag = map["video"] as? Bool else { badArguments(result); return }
+      video = flag
+    }
+    let applied = controller.setCapabilityEnabled(enabled)
+    controller.setVideoCapabilityEnabled(enabled && video && applied)
+    result(applied)
+  }
+
+  /// Settled media for the exact current call; never starts capture.
+  private func setCallMedia(_ arguments: Any?, _ result: @escaping FlutterResult) {
+    guard let map = exactMap(arguments, keys: ["version", "callHandle", "media"]),
+          validVersion(map["version"]),
+          let callHandle = map["callHandle"] as? String,
+          map["media"] is String,
+          let media = MknoonCallMedia.parse(map["media"])
+    else { badArguments(result); return }
+    result(controller.setCallMedia(callHandle: callHandle, media: media))
+  }
+
+  /// The camera foreground-type lease is Android-only. iOS grants no lease
+  /// (refused); releasing always succeeds.
+  private func setLocalCameraActive(_ arguments: Any?, _ result: @escaping FlutterResult) {
+    guard let map = exactMap(arguments, keys: ["version", "callHandle", "active"]),
+          validVersion(map["version"]),
+          map["callHandle"] is String,
+          let active = map["active"] as? Bool
+    else { badArguments(result); return }
+    result(!active)
   }
 
   private func attach(_ arguments: Any?, _ result: @escaping FlutterResult) {
@@ -228,6 +261,7 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
     controller.presentAuthenticated(
       callHandle: parsed.callHandle,
       expiresAtMs: parsed.expiresAtMs,
+      media: parsed.media,
       completion: result
     )
   }
@@ -243,6 +277,7 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
     controller.registerOutgoingAuthenticated(
       callHandle: parsed.callHandle,
       expiresAtMs: parsed.expiresAtMs,
+      media: parsed.media,
       completion: result
     )
   }
@@ -471,15 +506,19 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
     ]
   }
 
-  private func authenticatedArguments(_ arguments: Any?) -> (callHandle: String, expiresAtMs: Int64)? {
-    guard let map = exactMap(
+  private func authenticatedArguments(
+    _ arguments: Any?
+  ) -> (callHandle: String, expiresAtMs: Int64, media: MknoonCallMedia)? {
+    guard let map = mapWithOptional(
       arguments,
-      keys: ["version", "callHandle", "expiresAtMs"]
+      keys: ["version", "callHandle", "expiresAtMs"],
+      optional: ["media"]
     ), validVersion(map["version"]),
       let callHandle = map["callHandle"] as? String,
-      let expiresAtMs = parseInt64(map["expiresAtMs"])
+      let expiresAtMs = parseInt64(map["expiresAtMs"]),
+      let media = MknoonCallMedia.parse(map["media"])
     else { return nil }
-    return (callHandle, expiresAtMs)
+    return (callHandle, expiresAtMs, media)
   }
 
   private func ringback(
@@ -509,6 +548,18 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
 
   private func exactMap(_ arguments: Any?, keys: Set<String>) -> [String: Any]? {
     guard let map = arguments as? [String: Any], Set(map.keys) == keys else { return nil }
+    return map
+  }
+
+  /// Exact required keys plus only the named optional keys.
+  private func mapWithOptional(
+    _ arguments: Any?,
+    keys: Set<String>,
+    optional: Set<String>
+  ) -> [String: Any]? {
+    guard let map = arguments as? [String: Any],
+          Set(map.keys).subtracting(optional) == keys
+    else { return nil }
     return map
   }
 

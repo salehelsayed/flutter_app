@@ -11580,6 +11580,251 @@ visible and cannot become an ordinary first-attempt PASS.
   and its ten unit-adoption receipts. This establishes the individual host
   boundaries, not combined engine/graph behavior, native SDP/camera integration,
   platform lifecycle handling, video activation or a signed candidate.
+  **U3e prepared outgoing v2 signaling:** the production adapter's host tests
+  cover sharing the preparation Future before awaiting, immutable message-ID
+  custody, sealed-byte replay, retained preparation failures, fresh endpoint
+  authority and current-owner checks across awaits, bounded terminal capacity,
+  and retirement/expiry. Retries do not reseal a message or turn a stale
+  authority into a valid send. Frozen RED
+  `c0bdd422d15fd496e71b305167f060ef11fd3af4` produced nine passing controls,
+  23 causal `migrationPaused` errors and one causal assertion failure, with
+  successful loading and exit 1. GREEN
+  `84c56c93ad2cd312c0c582f3be1978c669039645` passed all 33 focused cases and
+  92 cases across the three preservation suites, without failures or skips,
+  with successful reporter completion and child exits 0. Official two-path
+  analysis and metadata validation also exited 0. Four before/after identity
+  snapshots bind both heads and the adapter, identical test and selection
+  manifest; generated locale changes were restored before testing and the
+  after-test trees were clean. The retained RED startup-lock wait line precedes
+  the completed causal run; it is not a test failure. Exact commands, stdout,
+  raw results and hashes are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3e-final-host-adoption.json`.
+  This proves the adapter's host boundary, not its later production graph
+  wiring, live delivery or video activation.
+  **U3f incoming v2 dispatch and mailbox custody:** same-page terminal
+  suppression requires the same wire schema and exact authenticated call,
+  handle and both account/device peer identities. Cross-version pairs use
+  ordinary context/phase validation; the same-bound unsupported-v1 cleanup
+  exception ends at the first initial offer. Typed media dispatch preserves
+  current-owner, expiry, replay and native-cancellation fences without falling
+  back to legacy media effects. An idle orphan terminal remains rejected with
+  `stateMismatch`: it creates no canonical episode or tombstone. Context
+  cleanup, exact terminal custody proof, native cancellation and mailbox
+  acknowledgement/settlement remain separate from that reducer outcome.
+  The answer fixture must establish an outgoing accepted call and await the
+  fake executor's recorded `startNegotiation` before taking its effects
+  baseline. Handler acceptance alone does not mean its setup effects have
+  completed; allowing a late effect or sleeping would hide that distinction.
+  Original feature RED `c9c796b32a9c168cf9a2afe7729ca783f428b45f` recorded six
+  passes and 27 failures. Corrective RED
+  `1b55bcd687bfe4368361d83e0c23f6163b2382b5` recorded two passes and six
+  failures: five causal schema/binding failures and one invalid orphan-episode
+  expectation. Production GREEN `5b540a6c7e6c38c0e5b2a807d72fbd0ab4b97eb1`
+  initially recorded 38 passes/three failures; the first test-only correction
+  `a2e68b68127ded471d9240c3c0cbad485d989bbe` recorded 40 passes/one setup
+  timing failure. These attempts remain retained and failed. Final test-only
+  GREEN `b6dc44272cdbc653064932958ad71c0278835c0e` passed all 41 cases, with
+  zero failures/errors/skips, successful loading/reporter completion and child
+  exit 0. Its production/configuration is byte-identical to `5b540a6c7`; the
+  earlier 190 passing preservation cases, six-path analysis and metadata
+  validation are adopted unchanged, with fresh corrected-test analysis passing.
+  The sole runner's raw receipt pins the initial HEAD/parent/library tree,
+  before/after test and lock hashes, recorded locale restoration before the
+  test result, and final clean tracked status. It omits the exact CLI, an
+  immediate post-restoration/pretest clean stamp and a repeated final HEAD/tree
+  stamp; the exact command comes from the actor message and frozen handoff.
+  Those evidence limits remain explicit without extra stamps or reruns. Raw
+  first failures, corrected results and the independent source/runtime review
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3f-final-host-adoption.json`.
+  This closes the frozen default-off host unit; production graph, real native
+  effects, live video and combined candidate proof remain separate.
+  **U3g typed v2 control effects:** the optional v2 port preserves the prepared
+  outgoing invitation and its identity/sequence, rejects expired preparation,
+  and retains existing native cancellation, current-call and mailbox custody
+  boundaries. Accepted media is explicit and local camera remains off; an
+  absent v2 port cannot downgrade a v2 context to legacy signaling. Frozen
+  RED `278e4621478e70aad1a8a3f1b7d8f48d97ab8676` recorded five passes,
+  26 failures and seven errors with successful loading and child exit 1.
+  GREEN `aba7844ab3852a1aea64c18a06f7db4b292b740b` passed all 38 focused
+  cases without failures/errors/skips, with successful reporter completion
+  and child exit 0; three-path analysis and metadata validation also passed.
+  Its original preservation run recorded 132 passes and three inherited U3f
+  fixture failures, including 94 passing cases in the other four suites.
+  Both baseline/serial diagnostics retained the same three failures; those
+  diagnostics overlapped and do not establish an idle-host result.
+  Final source-equivalent composition
+  `bcdf6648b9cde8d9eac2071341b88ef75e54065d` has parent U3f `b6dc44272`
+  and preserves the original four U3g source/test/selection blobs. Only the
+  dependent incoming-handler test changes to the reviewed U3f fixture. The
+  sole Claude-Dev follow-up ran that one file once: 41 authored passes, zero
+  failures/errors/skips, successful loading/reporter completion and child
+  exit 0. All three identity boundaries (before setup, restored before test,
+  after test) match the exact HEAD, library tree, test/lock/locale hashes and
+  clean tracked status. The saved generated-locale delta was restored before
+  execution. The earlier 38 focused and 94 other preservation passes, analysis
+  and metadata are adopted unchanged; this is not a fresh full preservation
+  run. Original failed receipts remain retained. The superseded `062f032ed`
+  composition on the first U3f fixture correction was never run. Exact command,
+  retained raw reports and final independent review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3g-dependent-host-adoption.json`.
+  This closes the scoped host unit and its inherited fixture follow-up, without
+  certifying production graph wiring, native effects or a combined candidate.
+  **U3h original endpoint custody and production v2 control:** authenticated
+  invitation admission freezes the full signed endpoint separately from the
+  mutable legacy pin. Neither later directory lookup nor duplicate context
+  capture can replace or retrofit that original authority. The production
+  control bridge rechecks fresh authority against that original, retains sealed
+  signaling bytes and terminal custody, and purges port-owned context when
+  outgoing preparation is cancelled. Accepted media remains explicit and
+  camera remains off. Frozen RED
+  `607dd01157cb6090db15de19be81c4bb4b1dfa39` recorded six passing controls,
+  27 assertion failures and seven causal stub/missing-authority errors, without
+  loader failures and with child exit 1. Its direct GREEN child
+  `22306cedc0e27e57246963c9e5dcd3a09b5308ff` passed 232 cases in the five
+  complete focused suites and 120 cases in six preservation suites, without
+  failures/errors/skips and with successful reporter completion/child exits 0.
+  All five test files are identical across RED/GREEN. Official 11-path analysis,
+  metadata validation and selection preview exited 0. The preview compared
+  shared base `726a8a48f14f17a43bbb521d72aa94ab855b80da`, mapped all 11
+  changed paths and selected 11 broader checks; those checks remain unrun for
+  the later batch. The first author preview was interrupted during source
+  identity file reading with exit -2 and remains incomplete, distinct from
+  the later passing official preview. Six runtime stamps record exact heads,
+  clean tracked status and 20 matching source/test/configuration hashes; setup
+  produced no generated locale delta. Runtime receipts omit explicit tree and
+  library-tree hashes, the six preservation-file hashes and a separate stamp
+  between focused and preservation runs. Source review verified the reference
+  preservation hashes; exact commands come from the frozen handoff and runner
+  acknowledgement rather than repeated raw argv stamps. These limits remain
+  explicit without fabricated stamps or additional runs. Codex-2 closed the
+  scoped source and host review with zero required findings. Retained raw
+  results, hashes and final review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3h-final-host-adoption.json`.
+  This closes the default-off unit; graph composition, native/live behavior,
+  broader batch checks, activation and signed candidate proof remain separate.
+  **U3i initial typed v2 SDP and ICE:** the production v2 executor owns initial
+  typed negotiation while preserving the admitted endpoint, current call and
+  negotiation fences, bounded replay/ICE handling and camera-off defaults.
+  Frozen RED `41b599ce4e6c8b768d6fd85451f0d81257459feb` recorded 14 passing
+  controls, 19 assertion failures and two causal missing-SDP `Bad state: No
+  element` errors, with child exit 1 and no loader/compile/configuration error.
+  Direct GREEN child `6aaf6a6993c2aa7f7092dfcede31c44985fffaec` passed all
+  35 focused cases and 190 preservation cases: 73 legacy-executor, 46 v2
+  context, six context-store, 42 incoming-v2 and 23 video-session cases. Both
+  reporters completed successfully with zero failures/errors/skips and child
+  exits 0. The actual runner script analyzed four paths, including the focused
+  test; analysis, metadata validation and one selection preview exited 0.
+  The 13 broader selections remain unrun for the later batch. Seven runtime
+  checkpoints record clean tracked state, exact HEAD/tree/library-tree and
+  18 matching source/test/configuration hashes each; all 126 hashes were
+  independently checked against their frozen Git blobs. Setup used plain
+  `flutter pub get`, without the requested offline/enforced-lockfile flags.
+  The before/after setup and subsequent checkpoints show no tracked source,
+  configuration or generated-locale delta; this setup deviation remains
+  explicit and was not replaced by a rerun. Retained raw JSON, argv, stamps,
+  identity verification and the final Codex source/host verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3i-final-host-adoption.json`.
+  Source and scoped host review are closed with zero required findings. This
+  default-off initial-negotiation proof does not establish production graph
+  wiring, lifecycle/general recovery, native/live delivery, aggregate batch
+  validation, activation or a signed candidate.
+  **Phase-4 native video preparation:** optional media keys remain strict and
+  inert while the video capability is off. Absent media preserves audio;
+  explicitly invalid media is rejected. Native camera-lease revocation cannot
+  be undone by a stale commit, and CallKit's video flag requires both enabled
+  capability and video media for the exact current call. These are native
+  preparation boundaries, not proof of camera capture or Dart graph wiring.
+  At frozen `11b03bd11101c3d207b5fa8a6965128d3b00a3e0`, Flutter's Kotlin
+  lane passed 651 tests across 49 classes, without failures/errors/skips and
+  with a successful build/child exit 0. This includes the camera-foreground
+  six cases, video-authority ten cases and native-bridge 36 cases, including
+  the `NATIVE-VIDEO-1` and `NATIVE-VIDEO-2` regressions. The unsigned serial
+  iPhone 16e/iOS 26.5 simulator run passed 93 CallKit lifecycle and 18 native
+  bridge cases; all four new `testPhase4*` cases passed and Xcode reported
+  `TEST SUCCEEDED`. The official actor reported child exit 0. The retained
+  iOS command/log pins the simulator and selected classes but does not repeat
+  a Git/source-hash vector or shell exit stamp; the exact head and clean
+  worktree are actor attestations. Kotlin's initial head/clean record and the
+  reviewed 15-file composition remain separate evidence. The first iOS
+  member-order contract failure is retained, with its source correction.
+  Source review, independently parsed raw results and these identity limits
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/native-prep-final-adoption.json`.
+  The video gate stays off and Android manifest commit `afa0e7970` stays
+  unmerged. Live camera/foreground-service behavior, PiP, Telecom C5 and
+  composed or signed candidate proof remain separate available-device legs.
+  **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
+  committed-media checks, stale asynchronous capture/SDP/rendering completion,
+  local-off versus remote reception, caller/callee offer rollback boundaries,
+  relay-only SDP, audio downgrade and retryable resource cleanup. An optional
+  video cleanup failure must not prevent microphone, stream and peer-connection
+  disposal; successful cleanup stages are not repeated on retry. Original
+  feature RED `2e0563a1d646d901f6854b6db56d329b3037fd3e` had one passing
+  control and 21 causal absent-factory errors. Corrected cleanup RED
+  `46466383383a368fa4eef1dff3147e1a9510b0a9` failed because microphone
+  `trackDispose` was never attempted, with exit 1. Final GREEN
+  `ee80fd033e29118e031b2d5906b0a86c4e2f05d0` passed all 23 focused cases,
+  without failures or skips, with successful reporter completion and exit 0.
+  The earlier regression RED `3c4e75a77` and GREEN `6216b5a76` failed an
+  incorrect exception-type expectation; those failures remain visible. The
+  correction asserts the existing `WebRtcAdapterException(other)` contract
+  and leaves the production library tree and preservation suites unchanged.
+  Their previous 90 passing cases, five-path analysis and metadata validation
+  are adopted within that unchanged scope, with fresh corrected-test analysis
+  passing. The corrected run recorded both initial heads and test/engine/lock
+  hashes, pretest locale restoration, and final GREEN hashes/clean status;
+  it did not record post-RED hashes or a final HEAD stamp. Those limits are
+  retained without inventing evidence or repeating unrelated checks. Raw
+  first failures, corrected results, source identities and adoption are indexed
+  by `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/live-video-final-host-adoption.json`.
+  The optional presentation stream and active-camera switch are covered at
+  `9af76e2e5e47027f5fb92baff99e1f0ccc9cfae2`: all 35 video-session cases pass,
+  with 72 unchanged owner/engine preservation cases adopted. Snapshot updates
+  follow current renderer ownership; stale callbacks cannot revive cleared
+  views. Camera switching uses the existing capture, checks fresh authority
+  around the native await, and treats the native facing boolean as metadata.
+  RED `454d6481f975859ff76aee08a7ea20ea1e9834b0` retained 12 causal assertion
+  failures. The first GREEN had 34 passes and one failure because the test
+  channel rejected flutter_webrtc initialization before camera switching. The
+  test-only correction accepts initialization and preserves switch assertions;
+  the production library tree is unchanged. Final reporter completion and
+  child exit are successful, with no skips; original two-path analysis and
+  validation passed. All eight original and three correction identity stamps
+  match their exact heads, trees and 13 pins, with clean status and empty setup
+  deltas. Raw hashes and scoped review adoption are recorded in
+  `/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/v2-view-raw-facts.json`.
+  These tests use host plugin fakes; real camera/frames, native renderer
+  cleanup, native rollback, device lifecycle and composed candidate proof
+  remain separate. The video gate stays off.
+  **U6 real-screen video binding:** the active, incoming and outgoing screens
+  bind video controls to the current foreground projection. Every intent
+  rechecks the canonical call and generation; upgrade actions also reject a
+  stale upgrade ID. Covered, minimized and disposed surfaces cannot dispatch
+  retained video actions. Existing Answer remains audio-only, including the
+  locked projection; presenting a video request does not grant camera consent.
+  Host widget evidence covers control/status semantics, EN/DE/AR at 320 and
+  360 logical pixels with 2x text, and the compact 600x320 layout. It does not
+  prove live video frames, camera capture, native effects or device behavior.
+  At frozen RED `f784c2ca1847e737aff461a38d164dbea0c37fb6`, the default-off
+  incoming Answer control passed and enabled active-screen binding failed
+  causally because `CallVideoControls` was absent. Flutter reported that
+  assertion as a widget-test error, with child exit 1, not a setup/load failure.
+  Frozen GREEN `049d15c4b483952fa982cd4bb5666afa7bcdcae5` passed all 45 focused
+  cases and 84 cases in the seven-file audio preservation run, without failures
+  or skips; both reporters completed successfully and both children exited 0.
+  Official eight-path analysis and metadata validation also exited 0. The
+  sole runner was Claude-Dev after Claude-UI explicitly released its unstarted
+  assignment. Three identity snapshots at each revision preserve the source,
+  seven localization files and lockfile, including restoration of generated
+  locale formatting before tests. RED's identity-command exit 1 is retained:
+  only the intentionally GREEN-only layout file was absent, while all 15
+  existing pins matched; all 16 GREEN pins matched throughout the recorded
+  boundaries. Exact commands, raw reports, hashes and independent adoption are
+  retained under
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u6-real-screen-host-adoption.json`
+  and its `u6-real-screen-retained-host/` evidence directory. This is a scoped
+  host result for the frozen unit, not a combined integration or release gate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
