@@ -12781,6 +12781,28 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
+  Chat-header translation remains `ModelReady`-only. In the pinned Material
+  theme, call/search/translation buttons use a 44-pixel style inside matching
+  48-pixel padded touch targets. Assert the actual shared target, not the style
+  value, and keep the 7-pixel active dot's 9-top/8-end geometry checks in both
+  text directions. A Tooltip populates the semantics tooltip field but does
+  not guarantee an accessible label. The translation action uses the existing
+  call-button pattern: an explicit localized semantics label and activation,
+  retained tooltip, and excluded child semantics. Decorative dots ignore
+  pointer events so they cannot steal a tap.
+  Widget tests must dispose an `ensureSemantics()` handle before returning;
+  use `try/finally` so failed assertions also release it. In this binding,
+  end-of-test verification precedes `addTearDown`. For a real light conversation
+  fixture, pass `BackgroundPreference.daylightLagoon` to `ConversationScreen`.
+  Its `AmbientBackground` deliberately replaces the outer readable-color
+  extension from its own background preference; an outer light Theme with the
+  default dark preference is still a dark conversation. Preserve semantic
+  palette assertions instead of changing production colors for that fixture.
+  The final U2 correction `64ce56865` passes 22 focused and 404 curated case
+  executions without failures, errors or skips. Original binding-error outcomes
+  (17/399 passes with five errors, then 19/401 passes with three errors), causal
+  RED and diagnostic compile/failed-run evidence remain under
+  `.codex-test-logs/codex-ui-bl25-u2-translation-header-20261112/`.
   Preview requests now keep task instructions in LiteRT-LM's supported
   `systemInstruction` and source audio/text in the user message. Prompt-contract
   tests check verbatim spoken-language and data-only translation instructions;

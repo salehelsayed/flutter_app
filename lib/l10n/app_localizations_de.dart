@@ -5107,6 +5107,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_settings_mobile_data => 'Über mobile Daten laden';
 
   @override
+  String get translate_header_tooltip => 'Übersetzung';
+
+  @override
   String get translate_to_title => 'Übersetzen in';
 
   @override

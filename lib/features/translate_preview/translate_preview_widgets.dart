@@ -272,6 +272,8 @@ class MessageTranslation extends StatelessWidget {
           },
           color: color,
           linksFrom: text,
+          topPadding: 8,
+          resultLineHeight: 1.4,
         ),
       ],
     );
@@ -537,6 +539,8 @@ class _AiAction extends StatefulWidget {
     this.targetLanguage,
     this.visible = true,
     this.autoStart = false,
+    this.topPadding = 6,
+    this.resultLineHeight = 1.3,
   });
 
   final _Labels labels;
@@ -553,6 +557,8 @@ class _AiAction extends StatefulWidget {
   final Object? identity;
   final String? targetLanguage;
   final bool visible;
+  final double topPadding;
+  final double resultLineHeight;
 
   /// Runs as soon as it shows instead of waiting for a tap.
   final bool autoStart;
@@ -680,7 +686,11 @@ class _AiActionState extends State<_AiAction> {
           LinkableText(
             text: text,
             textDirection: detectTextDirection(text),
-            style: TextStyle(color: base, fontSize: 15, height: 1.3),
+            style: TextStyle(
+              color: base,
+              fontSize: 15,
+              height: widget.resultLineHeight,
+            ),
             onlyLinks: {
               for (final segment in parseUrls(widget.linksFrom ?? ''))
                 if (segment.isUrl) segment.text,
@@ -691,7 +701,7 @@ class _AiActionState extends State<_AiAction> {
       ),
     };
     final result = Padding(
-      padding: const EdgeInsetsDirectional.only(top: 6),
+      padding: EdgeInsetsDirectional.only(top: widget.topPadding),
       child: body,
     );
     return _phase is _Done

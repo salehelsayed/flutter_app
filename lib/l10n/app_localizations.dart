@@ -8288,6 +8288,12 @@ abstract class AppLocalizations {
   /// **'Download over mobile data'**
   String get translator_settings_mobile_data;
 
+  /// Chat translation button tooltip and accessible label
+  ///
+  /// In en, this message translates to:
+  /// **'Translation'**
+  String get translate_header_tooltip;
+
   /// Settings row, chat panel row and language list title.
   ///
   /// In en, this message translates to:
