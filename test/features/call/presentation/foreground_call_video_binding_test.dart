@@ -8,7 +8,7 @@ import 'package:flutter_app/features/call/application/foreground_call_capability
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart'
-    show CallAudioOutputRoute;
+    show CallAudioOutputRoute, CallVideoView;
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -213,6 +213,7 @@ Widget _app(
   _AudioCapability capability, {
   Locale locale = const Locale('en'),
   double scale = 1,
+  Widget? retainedChild,
 }) => MaterialApp(
   locale: locale,
   localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -231,7 +232,9 @@ Widget _app(
         ? 'اسم صديق تجريبي طويل للغاية'
         : 'Alexandria Very Long Synthetic Contact Name',
     now: () => _now,
-    child: const Scaffold(body: Center(child: Text('retained route'))),
+    child:
+        retainedChild ??
+        const Scaffold(body: Center(child: Text('retained route'))),
   ),
 );
 
@@ -241,10 +244,18 @@ Future<void> _withOverlay(
   Future<void> Function(AppLocalizations l10n) body, {
   Locale locale = const Locale('en'),
   double scale = 1,
+  Widget? retainedChild,
 }) async {
   final semantics = tester.ensureSemantics();
   try {
-    await tester.pumpWidget(_app(capability, locale: locale, scale: scale));
+    await tester.pumpWidget(
+      _app(
+        capability,
+        locale: locale,
+        scale: scale,
+        retainedChild: retainedChild,
+      ),
+    );
     await tester.pumpAndSettle();
     await body(lookupAppLocalizations(locale));
   } finally {
@@ -284,6 +295,54 @@ Future<void> _audioTap(WidgetTester tester, _Phase phase) async {
   expect(activeNode, findsOneWidget);
   tester.semantics.tap(activeNode);
   await tester.pump();
+}
+
+ForegroundCallProjection _pipProjection({
+  CallId? callId,
+  int generation = 7,
+  bool enabled = true,
+  CallWireVersion wire = CallWireVersion.v2,
+  CallMediaKind agreed = CallMediaKind.video,
+  CallState state = CallState.connected,
+  CallCameraState remoteCamera = CallCameraState.on,
+  CallVideoView? view = const CallVideoView(
+    textureId: 41,
+    width: 1280,
+    height: 720,
+  ),
+}) {
+  final base = _projection(
+    callId: callId,
+    generation: generation,
+    state: state,
+    media: CallVideoPresentation.project(
+      videoEnabled: enabled,
+      wireVersion: wire,
+      requestedMedia: CallMediaKind.video,
+      acceptedMedia: agreed,
+      agreedMedia: agreed,
+      localCamera: CallCameraState.on,
+      remoteCamera: remoteCamera,
+      isConnected: state == CallState.connected,
+      isReconnecting: state == CallState.reconnecting,
+    ),
+  );
+  return ForegroundCallProjection(
+    session: base.session,
+    audio: base.audio,
+    video: ForegroundCallVideoProjection(
+      generation: generation,
+      presentation: base.video!.presentation,
+      localView: const CallVideoView(textureId: 99, width: 640, height: 480),
+      remoteView: view,
+    ),
+  );
+}
+
+Future<void> _minimizePip(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('call-minimize')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 void main() {
@@ -708,4 +767,461 @@ void main() {
       expect(cap.videoCalls, isEmpty);
     },
   );
+
+  group('PIP-IN', () {
+    testWidgets(
+      'minimize shows only the owner remote view and restores full call',
+      (tester) async {
+        final initial = _pipProjection();
+        final cap = _VideoCapability(initial);
+        await _withOverlay(tester, cap, (_) async {
+          final navigator = tester.state<NavigatorState>(
+            find.byType(Navigator).first,
+          );
+          await _minimizePip(tester);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          expect(find.byType(CallReturnBar), findsOneWidget);
+          expect(find.byType(ActiveCallScreen), findsNothing);
+          expect(
+            tester
+                .widgetList<Texture>(find.byType(Texture))
+                .map((v) => v.textureId),
+            [41],
+          );
+          expect(find.semantics.byLabel('retained route'), findsOneWidget);
+          expect(cap.current, same(initial));
+          expect(cap.videoCalls, isEmpty);
+          expect(cap.audioCalls, isEmpty);
+          await tester.tap(find.byKey(const ValueKey('call-pip-view')));
+          await tester.pump();
+          expect(find.byType(ActiveCallScreen), findsOneWidget);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(find.byType(Texture), findsNothing);
+          expect(
+            tester.state<NavigatorState>(find.byType(Navigator).first),
+            same(navigator),
+          );
+          expect(cap.current, same(initial));
+          expect(cap.videoCalls, isEmpty);
+          expect(cap.audioCalls, isEmpty);
+        });
+      },
+    );
+
+    testWidgets(
+      'End uses canonical termination and waits for canonical state',
+      (tester) async {
+        final initial = _pipProjection();
+        final cap = _VideoCapability(initial);
+        await _withOverlay(tester, cap, (_) async {
+          await _minimizePip(tester);
+          await tester.tap(find.byKey(const ValueKey('call-pip-end')));
+          await tester.pump();
+          expect(cap.audioCalls, [('end', _callA)]);
+          expect(cap.videoCalls, isEmpty);
+          expect(cap.current, same(initial));
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          cap.emit(_pipProjection(state: CallState.ended));
+          await tester.pump();
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(find.byType(Texture), findsNothing);
+          expect(
+            find.byKey(const ValueKey('foreground-call-terminal-notice')),
+            findsNothing,
+          );
+        });
+      },
+    );
+
+    for (final branch in ['gate off', 'legacy wire', 'audio agreement']) {
+      testWidgets(
+        '$branch preserves the existing minimized audio presentation',
+        (tester) async {
+          final cap = _VideoCapability(
+            _pipProjection(
+              enabled: branch != 'gate off',
+              wire: branch == 'legacy wire'
+                  ? CallWireVersion.v1
+                  : CallWireVersion.v2,
+              agreed: branch == 'audio agreement'
+                  ? CallMediaKind.audio
+                  : CallMediaKind.video,
+            ),
+          );
+          await _withOverlay(tester, cap, (_) async {
+            await _minimizePip(tester);
+            expect(find.byType(CallReturnBar), findsOneWidget);
+            expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+            expect(find.byType(Texture), findsNothing);
+            await tester.tap(find.byType(CallReturnBar));
+            await tester.pump();
+            expect(find.byType(ActiveCallScreen), findsOneWidget);
+            expect(cap.audioCalls, isEmpty);
+            expect(cap.videoCalls, isEmpty);
+          });
+        },
+      );
+    }
+
+    testWidgets(
+      'metadata arrival replacement and null retirement use one current view',
+      (tester) async {
+        final cap = _VideoCapability(_pipProjection(view: null));
+        await _withOverlay(tester, cap, (_) async {
+          await _minimizePip(tester);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          expect(find.byType(Texture), findsNothing);
+          cap.emit(_pipProjection());
+          await tester.pump();
+          expect(
+            tester
+                .widgetList<Texture>(find.byType(Texture))
+                .map((v) => v.textureId),
+            [41],
+          );
+          cap.emit(
+            _pipProjection(
+              generation: 8,
+              view: const CallVideoView(
+                textureId: 42,
+                width: 720,
+                height: 1280,
+              ),
+            ),
+          );
+          await tester.pump();
+          expect(
+            tester
+                .widgetList<Texture>(find.byType(Texture))
+                .map((v) => v.textureId),
+            [42],
+          );
+          cap.emit(_pipProjection(generation: 8, view: null));
+          await tester.pump();
+          expect(find.byType(Texture), findsNothing);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+        });
+      },
+    );
+
+    for (final camera in [CallCameraState.off, CallCameraState.paused]) {
+      testWidgets('$camera hides retained remote texture metadata', (
+        tester,
+      ) async {
+        final cap = _VideoCapability(_pipProjection(remoteCamera: camera));
+        await _withOverlay(tester, cap, (l10n) async {
+          await _minimizePip(tester);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          expect(find.byType(Texture), findsNothing);
+          final label = camera == CallCameraState.off
+              ? l10n.call_video_remote_camera_off
+              : l10n.call_video_remote_camera_paused;
+          expect(
+            tester
+                .getSemantics(find.byKey(const ValueKey('call-pip-view')))
+                .label,
+            contains(label),
+          );
+        });
+      });
+    }
+
+    testWidgets(
+      'reconnect and ending retire the displayed frame without camera work',
+      (tester) async {
+        final cap = _VideoCapability(_pipProjection());
+        await _withOverlay(tester, cap, (_) async {
+          await _minimizePip(tester);
+          expect(find.byType(Texture), findsOneWidget);
+          cap.emit(_pipProjection(state: CallState.reconnecting));
+          await tester.pump();
+          expect(find.byType(Texture), findsNothing);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+          cap.emit(_pipProjection(state: CallState.ending));
+          await tester.pump();
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(cap.audioCalls, isEmpty);
+          expect(cap.videoCalls, isEmpty);
+        });
+      },
+    );
+
+    for (final view in [
+      const CallVideoView(textureId: -1, width: 1280, height: 720),
+      const CallVideoView(textureId: 41, width: 0, height: 720),
+      const CallVideoView(textureId: 41, width: 1280, height: -1),
+    ]) {
+      testWidgets(
+        'invalid metadata ${view.textureId}/${view.width}/${view.height} never becomes a texture',
+        (tester) async {
+          final cap = _VideoCapability(_pipProjection(view: view));
+          await _withOverlay(tester, cap, (_) async {
+            await _minimizePip(tester);
+            expect(find.byKey(const ValueKey('call-pip-tile')), findsOneWidget);
+            expect(find.byType(Texture), findsNothing);
+            expect(tester.takeException(), isNull);
+          });
+        },
+      );
+    }
+
+    for (final change in [
+      'call',
+      'generation',
+      'ended',
+      'gone',
+      'gate',
+      'audio',
+    ]) {
+      testWidgets(
+        'retained restore and End reject stale $change before stream delivery',
+        (tester) async {
+          final cap = _VideoCapability(_pipProjection());
+          await _withOverlay(tester, cap, (_) async {
+            await _minimizePip(tester);
+            final restore = tester
+                .widget<IconButton>(
+                  find.byKey(const ValueKey('call-pip-restore')),
+                )
+                .onPressed!;
+            final end = tester
+                .widget<IconButton>(find.byKey(const ValueKey('call-pip-end')))
+                .onPressed!;
+            cap.emit(switch (change) {
+              'call' => _pipProjection(callId: _callB),
+              'generation' => _pipProjection(generation: 8),
+              'ended' => _pipProjection(state: CallState.ended),
+              'gone' => null,
+              'gate' => _pipProjection(enabled: false),
+              _ => _pipProjection(agreed: CallMediaKind.audio),
+            }, notify: false);
+            restore();
+            end();
+            await tester.pump();
+            expect(find.byType(CallReturnBar), findsOneWidget);
+            expect(cap.audioCalls, isEmpty);
+            expect(cap.videoCalls, isEmpty);
+          });
+        },
+      );
+    }
+
+    testWidgets('replacement call removes the old floating frame', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_pipProjection());
+      await _withOverlay(tester, cap, (_) async {
+        await _minimizePip(tester);
+        cap.emit(_pipProjection(callId: _callB, generation: 8));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+        expect(find.byType(Texture), findsNothing);
+        expect(find.byType(ActiveCallScreen), findsOneWidget);
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+
+    testWidgets(
+      'replaced capability rejects tile callbacks with matching call tokens',
+      (tester) async {
+        final first = _VideoCapability(_pipProjection());
+        final next = _VideoCapability(_pipProjection());
+        addTearDown(next.close);
+        await _withOverlay(tester, first, (_) async {
+          await _minimizePip(tester);
+          final restore = tester
+              .widget<IconButton>(
+                find.byKey(const ValueKey('call-pip-restore')),
+              )
+              .onPressed!;
+          final end = tester
+              .widget<IconButton>(find.byKey(const ValueKey('call-pip-end')))
+              .onPressed!;
+          await tester.pumpWidget(_app(next));
+          await tester.pump();
+          restore();
+          end();
+          await tester.pump();
+          expect(find.byType(CallReturnBar), findsOneWidget);
+          expect(first.audioCalls, isEmpty);
+          expect(next.audioCalls, isEmpty);
+          expect(first.videoCalls, isEmpty);
+          expect(next.videoCalls, isEmpty);
+        });
+      },
+    );
+
+    testWidgets(
+      'End remains canonical while the remote renderer is not attached',
+      (tester) async {
+        final cap = _VideoCapability(_pipProjection(view: null));
+        await _withOverlay(tester, cap, (_) async {
+          await _minimizePip(tester);
+          expect(find.byType(Texture), findsNothing);
+          await tester.tap(find.byKey(const ValueKey('call-pip-end')));
+          await tester.pump();
+          expect(cap.audioCalls, [('end', _callA)]);
+          expect(cap.videoCalls, isEmpty);
+          cap.emit(_pipProjection(state: CallState.ended, view: null));
+          await tester.pump();
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(find.byType(Texture), findsNothing);
+        });
+      },
+    );
+
+    testWidgets('losing the canonical projection removes the floating frame', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_pipProjection());
+      await _withOverlay(tester, cap, (_) async {
+        await _minimizePip(tester);
+        expect(find.byType(Texture), findsOneWidget);
+        cap.emit(null);
+        await tester.pump();
+        expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+        expect(find.byType(Texture), findsNothing);
+        expect(find.byType(CallReturnBar), findsNothing);
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+    testWidgets('disposed tile callbacks cannot restore or end a call', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_pipProjection());
+      await _withOverlay(tester, cap, (_) async {
+        await _minimizePip(tester);
+        final restore = tester
+            .widget<IconButton>(find.byKey(const ValueKey('call-pip-restore')))
+            .onPressed!;
+        final end = tester
+            .widget<IconButton>(find.byKey(const ValueKey('call-pip-end')))
+            .onPressed!;
+        await tester.pumpWidget(const SizedBox.shrink());
+        restore();
+        end();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+
+    testWidgets('browsing chats preserves the tile and retained navigation', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(_pipProjection());
+      final navigator = GlobalKey<NavigatorState>();
+      final child = Navigator(
+        key: navigator,
+        onGenerateRoute: (_) => MaterialPageRoute<void>(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const Scaffold(body: Text('browsed chat')),
+                ),
+              ),
+              child: const Text('Browse chats'),
+            ),
+          ),
+        ),
+      );
+      await _withOverlay(tester, cap, (_) async {
+        final retained = navigator.currentState;
+        await _minimizePip(tester);
+        await tester.tap(find.text('Browse chats'));
+        await tester.pumpAndSettle();
+        expect(find.text('browsed chat'), findsOneWidget);
+        expect(find.byType(Texture), findsOneWidget);
+        expect(navigator.currentState, same(retained));
+        expect(navigator.currentState!.canPop(), isTrue);
+        await tester.tap(find.byKey(const ValueKey('call-pip-restore')));
+        await tester.pump();
+        expect(find.byType(ActiveCallScreen), findsOneWidget);
+        expect(navigator.currentState, same(retained));
+        expect(navigator.currentState!.canPop(), isTrue);
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      }, retainedChild: child);
+    });
+
+    for (final language in ['de', 'ar']) {
+      testWidgets(
+        '$language 320px 2x tile controls remain readable and reachable',
+        (tester) async {
+          _viewport(tester, 320, 640);
+          final cap = _VideoCapability(_pipProjection());
+          await _withOverlay(
+            tester,
+            cap,
+            (l10n) async {
+              await _minimizePip(tester);
+              final tile = find.byKey(const ValueKey('call-pip-tile'));
+              final rect = tester.getRect(tile);
+              expect(rect.left, greaterThanOrEqualTo(0));
+              expect(rect.right, lessThanOrEqualTo(320));
+              expect(rect.top, greaterThanOrEqualTo(56));
+              expect(rect.bottom, lessThanOrEqualTo(640));
+              for (final (key, label) in [
+                ('call-pip-restore', l10n.call_return),
+                ('call-pip-end', l10n.call_end),
+              ]) {
+                final action = find.byKey(ValueKey(key));
+                final bounds = tester.getRect(action);
+                expect(bounds.width, greaterThanOrEqualTo(48));
+                expect(bounds.height, greaterThanOrEqualTo(48));
+                expect(rect.contains(bounds.center), isTrue);
+                expect(tester.getSemantics(action).label, contains(label));
+                expect(
+                  Directionality.of(tester.element(action)),
+                  language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+                );
+              }
+              expect(tester.takeException(), isNull);
+            },
+            locale: Locale(language),
+            scale: 2,
+          );
+        },
+      );
+    }
+
+    testWidgets('dragging stays inside the app and makes no media command', (
+      tester,
+    ) async {
+      _viewport(tester, 320, 640);
+      final initial = _pipProjection();
+      final cap = _VideoCapability(initial);
+      await _withOverlay(tester, cap, (_) async {
+        await _minimizePip(tester);
+        final tile = find.byKey(const ValueKey('call-pip-tile'));
+        final before = tester.getRect(tile);
+        await tester.drag(
+          find.byKey(const ValueKey('call-pip-view')),
+          const Offset(-60, -80),
+        );
+        await tester.pump();
+        final after = tester.getRect(tile);
+        expect(after.topLeft, isNot(before.topLeft));
+        await tester.drag(
+          find.byKey(const ValueKey('call-pip-view')),
+          const Offset(-1000, -1000),
+        );
+        await tester.pump();
+        final bounded = tester.getRect(tile);
+        expect(bounded.left, greaterThanOrEqualTo(0));
+        expect(bounded.top, greaterThanOrEqualTo(56));
+        expect(bounded.right, lessThanOrEqualTo(320));
+        expect(bounded.bottom, lessThanOrEqualTo(640));
+        expect(cap.current, same(initial));
+        expect(cap.audioCalls, isEmpty);
+        expect(cap.videoCalls, isEmpty);
+      });
+    });
+  });
 }
