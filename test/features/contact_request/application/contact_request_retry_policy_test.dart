@@ -168,6 +168,37 @@ void main() {
     }
   }
 
+  test('BL24-CLK injected future clock signs and sends one durable retry', () async {
+    now = DateTime.now().toUtc().add(const Duration(days: 2));
+    contacts.seed([_contact(now.subtract(const Duration(hours: 1)))]);
+
+    final sent = await retry();
+    final raw = await store.read(_journalKey);
+    expect(raw, isNotNull);
+    final entry = entries(raw!).single as Map;
+    final envelope = entry['envelope'] as Map?;
+    expect(
+      {
+        'sent': sent,
+        'transmissions': transport.storeInInboxCallCount,
+        'signedAtMs': envelope?['signedAtMs'],
+      },
+      {
+        'sent': 1,
+        'transmissions': 1,
+        'signedAtMs': now.millisecondsSinceEpoch,
+      },
+    );
+    final signCommand = bridge.sentMessages
+        .map((message) => jsonDecode(message) as Map<String, dynamic>)
+        .singleWhere((command) => command['cmd'] == 'payload.sign');
+    final signed =
+        jsonDecode((signCommand['payload'] as Map)['data'] as String) as Map;
+    expect(DateTime.parse(signed['ts'] as String), now);
+    expect(bridge.commandLog.indexOf('contactrequest.encrypt'),
+        greaterThan(bridge.commandLog.indexOf('payload.sign')));
+  });
+
   for (final marker in ['mlkem', 'wake', 'call']) {
     test(
       'BL24E2 $marker dormant retries keep exact id back off and expire',
