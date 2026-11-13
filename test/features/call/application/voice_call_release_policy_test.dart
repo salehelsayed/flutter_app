@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Release define keys that would turn video calling on. RED stub.
-List<String> releaseDefinesEnablingVideo(Map<Object?, Object?> defines) =>
-    const <String>[];
+/// Release define keys that would turn video calling on.
+List<String> releaseDefinesEnablingVideo(Map<Object?, Object?> defines) => [
+  for (final key in defines.keys)
+    if (key == 'VIDEO_CALL_V2_ENABLED') '$key',
+];
 
 void main() {
   test('release offers privacy mode without forcing it for normal calls', () {
