@@ -3416,15 +3416,15 @@ declined, withdrawn, removed, expired or replaced generations before retry;
 after an asynchronous build, current account and contact authority are checked
 again. Existing account-reset inventory erases the journal. First-send and
 acceptance wire payloads remain unchanged; `signedAtMs` is local envelope
-metadata, not a new wire field. Explicit ML-KEM, notification wake-token and
-call-wake marker jobs are outside this E unit and remain a separate E2 change.
+metadata, not a new wire field. E2 extends the dormant policy to explicit
+ML-KEM, notification wake-token and call-wake marker jobs as described below.
 There is no manual resend UI in this baseline.
 
 Live-retry preservation fixtures need a current `scannedAt` and durable fake
 secure storage; old 2024/January fixtures now intentionally represent expired
 contacts. Explicit call-grant distribution fixtures retain their pending-grant
-owner instead of becoming ordinary dormant retries. Keep their assertions and
-deadlines intact. The causal policy file produces one passing v2 control and
+owner and their explicit fresh-event send under E2; a locally issued grant is
+not received-material authority. Keep their assertions and deadlines intact. The causal policy file produces one passing v2 control and
 seven assertion failures before the fix; 156 focused and 1,105 curated identity
 case executions pass afterwards without failures or skips. Evidence is in
 `.codex-test-logs/codex-ui-bl24e-contact-request-retry-20261112/` at
@@ -3433,6 +3433,37 @@ by the new GREEN-only journal file being absent from the RED tree: all existing
 RED pins and all GREEN pins match at eight clean ref/tree boundaries. These
 exits are not loader failures or substitute causal failures. The evidence does
 not measure production relay rows, battery/data use, devices or signed artifacts.
+
+E2 treats every nonarchived keyless contact as dormant for periodic, reconnect
+and resume work, including contacts with pending marker jobs. An explicit
+`requireFresh` event may send once for its pending marker through the existing
+equivalent-request coalescer. It preserves the original seven-day cutoff and an
+existing future reservation; a first or already-due attempt takes the normal
+reservation without resetting attempts or expiry. Missing optional secure-store
+wiring retains the legacy fresh-event path, while a configured but unavailable
+journal fails closed. Fresh work excludes peers without a pending marker. After
+asynchronous construction and authority reads, the final material check runs
+immediately before transmission. A local issued grant does not exempt a keyless
+contact from the dormant periodic policy.
+
+The coordinator carries fresh-event authority through the unchanged zero-argument
+callback using scoped execution context. A queued fresh request waits behind a
+newer periodic pass and then runs its single coalesced fresh follow-up; it may
+share a newer fresh pass. The policy fixture covers periodic A, periodic B and
+two queued fresh callers sharing one future, as well as late key material,
+reservation preservation, expiry and unrelated-peer suppression.
+
+E2's initial causal REDs and first GREEN outcome (37 policy passes, then
+125 preservation passes and one A-D burst failure) remain evidence. The burst
+failure exposed lost explicit fresh-event authority; its existing test bytes
+were retained. At corrected source `85b68ebc0`, Claude-Dev's two exact runs pass
+43 policy and 126 preservation cases with no errors or skips and both child
+exits zero. All 21 individual pins match at four clean HEAD/tree boundaries;
+setup generated no delta. Raw evidence is retained in the Claude-Dev checkout's
+`build/e2qf-proof/`, with verification in
+`/Users/I560101/.codex/investigations/bl24e2-markers-20261112/queued-fresh-runtime-verified.json`.
+These are isolated host proofs; composed changes, native delivery and signed
+artifacts require their own evidence.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
