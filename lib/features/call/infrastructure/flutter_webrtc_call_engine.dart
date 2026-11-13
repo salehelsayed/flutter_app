@@ -125,6 +125,7 @@ final class FlutterWebRtcPeerConnectionAdapter
     this.videoRendererFactory,
     this.videoStreamFactory,
     this.videoQualityElapsed,
+    this.videoDebugStatsInterval,
   }) : assert(eventBufferCapacity > 0),
        assert(snapshotReadTimeout > Duration.zero),
        assert(snapshotDeadlineTimeout > snapshotReadTimeout),
@@ -161,6 +162,7 @@ final class FlutterWebRtcPeerConnectionAdapter
   final CallVideoRendererFactory? videoRendererFactory;
   final CallVideoStreamFactory? videoStreamFactory;
   final Duration Function()? videoQualityElapsed;
+  final Duration? videoDebugStatsInterval;
   FlutterWebRtcVideoSession? _videoSession;
 
   @override
@@ -188,6 +190,7 @@ final class FlutterWebRtcPeerConnectionAdapter
       renderer: videoRendererFactory,
       videoStream: videoStreamFactory,
       qualityElapsed: videoQualityElapsed,
+      debugStatsInterval: videoDebugStatsInterval,
     );
   }
 

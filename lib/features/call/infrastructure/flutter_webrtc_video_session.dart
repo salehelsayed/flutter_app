@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../application/call_video_media_owner.dart';
@@ -9,6 +10,7 @@ import '../domain/call_id.dart';
 import '../domain/call_media.dart';
 import '../domain/call_video_quality_environment.dart';
 import '../domain/call_video_quality_policy.dart';
+import 'call_video_debug_stats_log.dart';
 import 'call_video_quality_stats_sampler.dart';
 import 'webrtc_types.dart';
 
@@ -69,7 +71,12 @@ final class FlutterWebRtcVideoSession
     CallVideoRendererFactory? renderer,
     CallVideoStreamFactory? videoStream,
     Duration Function()? qualityElapsed,
+    Duration? debugStatsInterval,
   }) : _connection = connection,
+       _debugStatsInterval = kDebugMode
+           ? debugStatsInterval ??
+                 (_statsLogDefine ? const Duration(seconds: 2) : null)
+           : null,
        _canApply = canApply,
        _validateDescription = validateDescription,
        _remoteDescriptionApplied = remoteDescriptionApplied,
@@ -96,6 +103,40 @@ final class FlutterWebRtcVideoSession
   final CallVideoStreamFactory _videoStream;
 
   final Duration Function()? _qualityElapsedOverride;
+
+  /// Device proofs opt in with --dart-define=CALL_VIDEO_STATS_LOG=true.
+  static const _statsLogDefine = bool.fromEnvironment('CALL_VIDEO_STATS_LOG');
+  final Duration? _debugStatsInterval;
+  final _debugStatsLog = CallVideoDebugStatsLog();
+  Timer? _debugStatsTimer;
+  bool _debugStatsReading = false;
+
+  // Debug only. Its own read, so lines continue while the camera is off; it
+  // never touches the quality poll or its single-read guard.
+  void _startDebugStats() {
+    final interval = _debugStatsInterval;
+    if (interval == null || _debugStatsTimer != null) return;
+    _debugStatsTimer = Timer.periodic(interval, (_) {
+      if (_debugStatsReading) return;
+      _debugStatsReading = true;
+      Future.sync(() => _connection().getStats())
+          .then<void>(
+            (reports) {
+              if (_debugStatsTimer == null) return;
+              _debugStatsLog.lines(reports).forEach(debugPrint);
+            },
+            onError: (Object error, StackTrace _) =>
+                debugPrint('[STATS] read failed: $error'),
+          )
+          .whenComplete(() => _debugStatsReading = false);
+    });
+  }
+
+  void _stopDebugStats() {
+    _debugStatsTimer?.cancel();
+    _debugStatsTimer = null;
+  }
+
   final Stopwatch _qualityClock = Stopwatch()..start();
   final _qualityPolicy = CallVideoQualityPolicy();
   final _qualityStats = CallVideoQualityStatsSampler();
@@ -533,6 +574,9 @@ final class FlutterWebRtcVideoSession
     final actual = await video.getDirection();
     _check(token);
     if (actual != direction) _reject();
+    direction == webrtc.TransceiverDirection.SendRecv
+        ? _startDebugStats()
+        : _stopDebugStats();
   }
 
   Future<CallSessionDescription> _create(
@@ -1114,6 +1158,7 @@ final class FlutterWebRtcVideoSession
 
   @override
   Future<bool> retireVideo() {
+    _stopDebugStats();
     _retireQuality();
     _current?.retired = true;
     _receiveOpen = false;
