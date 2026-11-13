@@ -273,7 +273,7 @@ const _applicationRootNormalizedSha256 =
     // around the existing route child only; no owner or resume dispatch moves.
     // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
     // this same app owner (3 lines); no owner or resume dispatch moves.
-    '2fbe10ebe711b0e10ece21377561ab1f580c8228b6a14d606025129bd03a0b01';
+    '0575d4f9ed306fe40e468609e785c07c49aaccb0e3bb0d2aba11ee77c2607b81';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
