@@ -1,3 +1,5 @@
+import Flutter
+import UIKit
 import XCTest
 
 @testable import Runner
@@ -179,5 +181,23 @@ final class CallPipLeaseCoreTests: XCTestCase {
     let requests = platform.log.filter { $0 == "enter" }.count
     XCTAssertTrue(core.enter(id(1)))
     XCTAssertEqual(platform.log.filter { $0 == "enter" }.count, requests)
+  }
+
+  /// Guard for Kayan m-69a3dbc5 condition 2: without an arm no AVKit PiP exists.
+  func testControllerCreatesNoPipBeforeArmAndFailsClosed() {
+    let controller = CallPictureInPictureController(messenger: MockFlutterBinaryMessenger()) { UIView() }
+    var replies: [Any?] = []
+    let identity: [String: Any] = ["version": 1, "instanceId": "graph-a", "callId": "call-1", "leaseId": 1]
+    controller.handle(FlutterMethodCall(methodName: "arm", arguments: identity)) { replies.append($0) }
+    controller.handle(FlutterMethodCall(methodName: "enter", arguments: identity)) { replies.append($0) }
+    controller.handle(FlutterMethodCall(methodName: "disarm", arguments: identity)) { replies.append($0) }
+    controller.handle(FlutterMethodCall(methodName: "availability", arguments: ["version": 2])) {
+      replies.append($0)
+    }
+    XCTAssertEqual(replies[0] as? NSDictionary, ["armed": false, "reason": "invalid"])
+    XCTAssertEqual(replies[1] as? Bool, false)
+    XCTAssertEqual(replies[2] as? Bool, false)
+    XCTAssertEqual(replies[3] as? NSDictionary, ["supported": false, "cameraInPip": false, "reason": "invalid"])
+    XCTAssertFalse(controller.hasPictureInPictureController)
   }
 }
