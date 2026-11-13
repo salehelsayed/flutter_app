@@ -61,17 +61,146 @@ class CallPipLeaseCore(
     private val platform: CallPipPlatform,
     private val emit: (Map<String, Any>) -> Unit,
 ) {
-    // API scaffold: behavior lands in the GREEN commit.
-    fun availability(): Map<String, Any> = emptyMap()
-    fun arm(id: CallPipIdentity, source: CallPipSource, controls: CallPipControls): Map<String, Any> =
-        mapOf("armed" to false, "reason" to "unimplemented")
-    fun update(id: CallPipIdentity, controls: CallPipControls): Boolean = false
-    fun enter(id: CallPipIdentity): Boolean = false
-    fun disarm(id: CallPipIdentity): Boolean = false
-    fun onUserLeaving() = Unit
-    fun onEntered() = Unit
-    fun onExited(restored: Boolean) = Unit
-    fun onAction(kind: String) = Unit
-    fun onBlocked(reason: String) = Unit
-    fun onReturnedWithoutEntry() = Unit
+    private class Lease(val id: CallPipIdentity, val source: CallPipSource) {
+        var seq = 0L
+        var sink: Any? = null
+        var entered = false
+    }
+
+    private var lease: Lease? = null
+    private var instance: String? = null
+    private var highestLease = 0L
+    private val retiredInstances = mutableSetOf<String>()
+
+    fun availability(): Map<String, Any> {
+        val supported = platform.supported()
+        // Unit 3 never enables same-session background capture.
+        return mapOf("supported" to supported, "cameraInPip" to false, "reason" to (if (supported) "ok" else "os"))
+    }
+
+    fun arm(id: CallPipIdentity, source: CallPipSource, controls: CallPipControls): Map<String, Any> {
+        if (!accepts(id)) return mapOf("armed" to false, "reason" to "stale")
+        if (id.instanceId != instance) {
+            instance?.let { retiredInstances += it }
+            instance = id.instanceId
+        }
+        highestLease = id.leaseId
+        retire("disarmed")
+        if (!platform.supported()) return mapOf("armed" to false, "reason" to "unsupported")
+        if (!platform.hasVideoTrack(source)) return mapOf("armed" to false, "reason" to "trackNotFound")
+        lease = Lease(id, source)
+        platform.setAutoEnter(controls)
+        return mapOf("armed" to true, "reason" to "ok")
+    }
+
+    fun update(id: CallPipIdentity, controls: CallPipControls): Boolean {
+        if (lease?.id != id) return false
+        platform.setAutoEnter(controls)
+        return true
+    }
+
+    fun enter(id: CallPipIdentity): Boolean {
+        val current = lease ?: return false
+        if (current.id != id) return false
+        return current.entered || platform.requestEnter()
+    }
+
+    /** Idempotent: a retired or unknown triple is already clean and never touches a successor. */
+    fun disarm(id: CallPipIdentity): Boolean {
+        if (lease?.id == id) retire("disarmed")
+        return true
+    }
+
+    fun onUserLeaving() {
+        val current = lease ?: return
+        if (current.sink == null) current.sink = platform.attachSink(current.source)
+    }
+
+    fun onEntered() {
+        val current = lease ?: return
+        if (current.entered) return
+        if (current.sink == null) current.sink = platform.attachSink(current.source)
+        if (current.sink == null) {
+            send(current, "failed", "code" to "trackLost")
+            drop(current)
+            platform.leavePip()
+            return
+        }
+        current.entered = true
+        send(current, "entered")
+    }
+
+    fun onExited(restored: Boolean) {
+        val current = lease ?: return
+        if (!current.entered) return
+        current.entered = false
+        current.sink?.let(platform::releaseSink)
+        current.sink = null
+        send(current, "exited", "reason" to (if (restored) "restored" else "closed"))
+    }
+
+    fun onAction(kind: String) {
+        val current = lease ?: return
+        if (!current.entered || kind !in ACTIONS) return
+        send(current, "action", "kind" to kind)
+    }
+
+    fun onBlocked(reason: String) {
+        val current = lease ?: return
+        if (reason !in BLOCKED) return
+        val wasEntered = current.entered
+        drop(current)
+        if (wasEntered) platform.leavePip()
+        send(current, "blocked", "reason" to reason)
+    }
+
+    fun onReturnedWithoutEntry() {
+        val current = lease ?: return
+        if (current.entered) return
+        current.sink?.let(platform::releaseSink)
+        current.sink = null
+    }
+
+    private fun accepts(id: CallPipIdentity): Boolean {
+        if (id.instanceId in retiredInstances) return false
+        return id.instanceId != instance || id.leaseId > highestLease
+    }
+
+    private fun retire(reason: String) {
+        val current = lease ?: return
+        val wasEntered = current.entered
+        drop(current)
+        if (wasEntered) {
+            platform.leavePip()
+            send(current, "exited", "reason" to reason)
+        }
+    }
+
+    /** Retire first, then clean up: no callback can reach this lease afterwards. */
+    private fun drop(current: Lease) {
+        lease = null
+        current.entered = false
+        platform.setAutoEnter(null)
+        current.sink?.let(platform::releaseSink)
+        current.sink = null
+    }
+
+    private fun send(target: Lease, type: String, vararg extra: Pair<String, Any>) {
+        target.seq += 1
+        emit(
+            mapOf(
+                "version" to 1,
+                "instanceId" to target.id.instanceId,
+                "callId" to target.id.callId,
+                "leaseId" to target.id.leaseId,
+                "seq" to target.seq,
+                "type" to type,
+            ) + extra,
+        )
+    }
+
+    companion object {
+        private val ACTIONS = setOf("mute", "camera", "end")
+        private val BLOCKED = setOf("locked", "userDisabled")
+    }
 }
