@@ -34,6 +34,151 @@ const _configuration = CallConnectionConfiguration(
 
 void main() {
   test(
+    'U3j-R validated future ICE defers until the native generation is adopted',
+    () async {
+      final h = _Rig(recovery: true, incoming: true, capacity: 1);
+      addTearDown(h.close);
+      await h.connect();
+      final held = Completer<void>();
+      h.engine.restartGate = held;
+      expect(
+        h.admit(
+          h.remote(
+            'offer',
+            purpose: 'ice_restart',
+            negotiation: _otherNegotiation,
+            generation: 1,
+          ),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await _turn();
+      final ice = h.remote(
+        'ice',
+        negotiation: _otherNegotiation,
+        generation: 1,
+      );
+      try {
+        expect(h.engine.restartCalls, 1);
+        expect(h.admit(ice), IncomingCallSignalOutcome.deferred);
+        expect(h.engine.remoteCandidates, isEmpty);
+      } finally {
+        held.complete();
+        await h.owner.workSettled;
+      }
+      expect(h.admit(ice), IncomingCallSignalOutcome.accepted);
+      await h.owner.workSettled;
+      expect(h.engine.remoteCandidates, hasLength(1));
+      expect(h.engine.remoteCandidates.single.iceGeneration, 1);
+      expect(h.engine.candidateListeners, 1);
+      expect(h.legacySignaling.candidateSends, 0);
+    },
+  );
+
+  test(
+    'U3j-R candidate retry keeps exact custody identity and native restart count',
+    () async {
+      final h = _Rig(recovery: true);
+      addTearDown(h.close);
+      await h.connect();
+      await h.loseMedia();
+      await h.owner.workSettled;
+      h.deliveryFor = (signal) => signal.event != CallSignalV2Type.ice;
+      h.engine.candidates.add(
+        const CallIceCandidate(
+          value: 'recovery-candidate',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+          iceGeneration: 1,
+        ),
+      );
+      await h.owner.workSettled;
+      final first = h.sent.lastWhere(
+        (signal) => signal.event == CallSignalV2Type.ice,
+      );
+      h.deliveryFor = (_) => true;
+      await h.resumeRecovery();
+      await h.owner.workSettled;
+      final retries = h.sent
+          .where((signal) => signal.event == CallSignalV2Type.ice)
+          .toList();
+      expect(retries, hasLength(2));
+      expect(identical(first, retries.last), isTrue);
+      expect(retries.last.toMap(), first.toMap());
+      expect(h.engine.restartCalls, 1);
+      expect(h.engine.video.offers, 2);
+      expect(h.snapshot.state, CallState.reconnecting);
+    },
+  );
+
+  test(
+    'U3j-R envelope revocation during fresh authority lookup fences native restart',
+    () async {
+      final h = _Rig(recovery: true, incoming: true);
+      addTearDown(h.close);
+      await h.connect();
+      final lookup = Completer<ResolvedCallEndpoint>();
+      h.lookupGate = lookup;
+      var allowed = true;
+      expect(
+        h.admit(
+          h.remote(
+            'offer',
+            purpose: 'ice_restart',
+            negotiation: _otherNegotiation,
+            generation: 1,
+          ),
+          allowed: () => allowed,
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await _turn();
+      allowed = false;
+      lookup.complete(h.freshEndpoint);
+      await h.owner.workSettled;
+      expect(h.engine.video.retired, greaterThan(0));
+      expect(h.engine.restartCalls, 0);
+      expect(h.engine.video.answers, 1);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
+  test(
+    'U3j-R a new native generation retires saturated old ICE identities',
+    () async {
+      final h = _Rig(recovery: true);
+      addTearDown(h.close);
+      await h.connect();
+      final oldId = h.owner.negotiation!.negotiationId;
+      for (var i = 0; i < 127; i++) {
+        expect(
+          h.admit(h.remote('ice', negotiation: oldId)),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+      }
+      await h.loseMedia();
+      await h.owner.workSettled;
+      expect(h.engine.restartCalls, 1);
+      expect(
+        h.admit(
+          h.remote(
+            'ice',
+            negotiation: h.owner.negotiation!.negotiationId,
+            generation: 1,
+          ),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(
+        h.admit(h.remote('ice', negotiation: oldId)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(h.engine.candidateListeners, 1);
+    },
+  );
+
+  test(
     'U3j-R settled switch revision survives recovery without reviving its grant',
     () async {
       final h = _Rig(recovery: true, media: CallMediaKind.audio);
