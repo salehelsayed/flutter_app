@@ -4,6 +4,10 @@ import 'dart:io';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _testerVideoAuthorization =
+    'Owner 2026-11-13: "I give the go to switch video on for testers". '
+    'Store video activation remains a separate owner gate.';
+
 /// Release define keys that would turn video calling on.
 List<String> releaseDefinesEnablingVideo(Map<Object?, Object?> defines) => [
   for (final key in defines.keys)
@@ -52,8 +56,8 @@ void main() {
     },
   );
 
-  // VC-GATE-GUARD: video stays off in every release build until the owner
-  // decides to enable it. Adding VIDEO_CALL_V2_ENABLED here is that decision.
+  // VC-GATE-GUARD: the 11-13 owner go is tester-only. Store builds keep the
+  // existing release defines; tester builds must explicitly select their file.
   test('VC-GATE-GUARD a defines file that sets the video gate is caught', () {
     final fixture = <String, String>{
       'VOICE_CALL_CAPABILITY_V1': 'true',
@@ -62,7 +66,7 @@ void main() {
     expect(releaseDefinesEnablingVideo(fixture), ['VIDEO_CALL_V2_ENABLED']);
   });
 
-  test('VC-GATE-GUARD release defines never enable video', () {
+  test('VC-GATE-GUARD store release stays off after the tester-only go', () {
     final defines =
         jsonDecode(
               File(
@@ -73,14 +77,40 @@ void main() {
     expect(
       releaseDefinesEnablingVideo(defines),
       isEmpty,
-      reason:
-          'Video calling stays off for testers and the store until the '
-          'owner decides to enable it.',
+      reason: _testerVideoAuthorization,
     );
     expect(defaultVoiceCallFeatureFlags()['video_call_v2_enabled'], isFalse);
     expect(
       productionVoiceCallFeatureFlags()['video_call_v2_enabled'],
       const bool.fromEnvironment('VIDEO_CALL_V2_ENABLED'),
+    );
+  });
+
+  test('VC-GATE-GUARD tester defines enable only video under the 11-13 go', () {
+    final testerFile = File('tool/build/voice_call_tester_defines.json');
+    expect(testerFile.existsSync(), isTrue, reason: _testerVideoAuthorization);
+    final testerDefines = jsonDecode(testerFile.readAsStringSync()) as Map;
+    final releaseDefines =
+        jsonDecode(
+              File(
+                'tool/build/voice_call_release_defines.json',
+              ).readAsStringSync(),
+            )
+            as Map;
+    expect(
+      testerDefines['VIDEO_CALL_V2_ENABLED'],
+      'true',
+      reason: _testerVideoAuthorization,
+    );
+    expect(releaseDefinesEnablingVideo(testerDefines), [
+      'VIDEO_CALL_V2_ENABLED',
+    ]);
+    expect(
+      Map<Object?, Object?>.of(testerDefines)..remove('VIDEO_CALL_V2_ENABLED'),
+      releaseDefines,
+      reason:
+          'Tester video preserves every existing voice, native, privacy '
+          'and STUN define.',
     );
   });
 }

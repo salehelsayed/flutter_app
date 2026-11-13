@@ -6277,7 +6277,8 @@
         "test/features/settings/application/call_privacy_preference_use_cases_test.dart",
         "test/features/settings/presentation/widgets/call_privacy_settings_control_test.dart",
         "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
-        "tool/build/voice_call_release_defines.json"
+        "tool/build/voice_call_release_defines.json",
+        "tool/build/voice_call_tester_defines.json"
       ],
       "checks": [
         "call-signaling",

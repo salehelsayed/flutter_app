@@ -1,9 +1,30 @@
-# Release build defines
+# Store and tester build defines
 
-`voice_call_release_defines.json` is the single source of the compile-time
-gates that turn 1:1 voice calling on. Every gate in
+The owner authorized video for testers on 2026-11-13: "I give the go to switch
+video on for testers". Tester builds explicitly select
+`--dart-define-from-file=tool/build/voice_call_tester_defines.json` in their
+existing Flutter build invocation. This file retains every release voice,
+native-call, privacy and STUN define and adds `VIDEO_CALL_V2_ENABLED=true`.
+Android tester builds retain
+`--android-project-arg=enableAndroidNativeCalls=true` alongside it.
+
+Store builds continue to select `voice_call_release_defines.json`, which has no
+video define. Existing store entrypoints are unchanged. Store video activation
+requires the owner's separate go; a build without a defines file keeps the
+existing default-off gates. The video gate is fixed for the build, not a live
+in-process setting.
+
+VC-ACTIVATE currently changes the tester build selection only. The camera
+foreground-service change `afa0e7970` remains held by the owner while foreground
+Android camera feasibility is checked. This configuration does not establish
+native camera, background camera or OS PiP behavior.
+
+## Existing store and phone build consumers
+
+The existing consumers below select `voice_call_release_defines.json` for the
+compile-time gates that turn 1:1 voice calling on. Every gate in
 `lib/features/call/application/voice_call_feature_flags.dart` reads a
-`--dart-define` with no default, so a build that does not pass this file has
+`--dart-define` with no default, so a build without the call defines has
 no call button, no incoming-call presentation, and publishes no call endpoint.
 
 Consumers pass it with `--dart-define-from-file=tool/build/voice_call_release_defines.json`:
