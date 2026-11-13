@@ -38,6 +38,8 @@ class Track implements rtc.MediaStreamTrack {
   int stops = 0;
   bool failStop = false;
   @override
+  Map<String, dynamic> getSettings() => {'width': 640, 'height': 360};
+  @override
   Future<void> stop() async {
     stops++;
     if (failStop) throw StateError('stop');
@@ -72,6 +74,28 @@ class Sender implements rtc.RTCRtpSender {
   rtc.MediaStreamTrack? track;
   final replacements = <rtc.MediaStreamTrack?>[];
   final streams = <rtc.MediaStream>[];
+  @override
+  rtc.RTCRtpParameters parameters = rtc.RTCRtpParameters(
+    transactionId: 'native-transaction',
+    encodings: [rtc.RTCRtpEncoding(ssrc: 42)],
+  );
+  final parameterWrites = <Map<String, dynamic>>[];
+  Completer<bool>? parametersGate;
+  bool acceptParameters = true;
+  bool failParameters = false;
+  void Function()? onParameters;
+  @override
+  Future<bool> setParameters(rtc.RTCRtpParameters value) async {
+    parameterWrites.add(value.toMap());
+    // The pinned SDK caches the requested value even when native returns false.
+    parameters = value;
+    onParameters?.call();
+    if (failParameters) throw StateError('parameters');
+    return parametersGate == null
+        ? acceptParameters
+        : await parametersGate!.future;
+  }
+
   @override
   Future<void> setStreams(List<rtc.MediaStream> value) async {
     streams
@@ -131,6 +155,14 @@ class Peer implements rtc.RTCPeerConnection {
   Future<rtc.RTCSignalingState?> Function()? probe;
   Future<void> Function(rtc.RTCSessionDescription, bool)? beforeApply;
   int probes = 0;
+  int statsReads = 0;
+  Future<List<rtc.StatsReport>> Function()? stats;
+  @override
+  Future<List<rtc.StatsReport>> getStats([rtc.MediaStreamTrack? track]) async {
+    statsReads++;
+    return stats == null ? [] : await stats!();
+  }
+
   @override
   rtc.RTCSignalingState signalingState =
       rtc.RTCSignalingState.RTCSignalingStateStable;
@@ -295,20 +327,27 @@ class Fixture {
   late CallVideoSession session;
   bool current = true;
   int captures = 0;
+  Duration qualityNow = Duration.zero;
+  final captureResults = <rtc.MediaStream>[];
   Completer<rtc.MediaStream>? captureGate;
   Future<void> start({
     bool caller = true,
     bool bind = true,
     bool captureAudio = false,
+    bool nativeVideoCapture = false,
     CallTransportPolicy policy = CallTransportPolicy.all,
   }) async {
     final adapter = FlutterWebRtcPeerConnectionAdapter(
       peerConnectionFactory: (_) async => peer,
       configureAndroidAudioFocus: () async {},
-      videoCaptureFactory: () async {
-        captures++;
-        return captureGate == null ? stream : await captureGate!.future;
-      },
+      videoCaptureFactory: nativeVideoCapture
+          ? null
+          : () async {
+              captures++;
+              if (captureResults.isNotEmpty) return captureResults.removeAt(0);
+              return captureGate == null ? stream : await captureGate!.future;
+            },
+      videoQualityElapsed: () => qualityNow,
       videoRendererFactory: () =>
           renderers.isEmpty ? renderer : renderers.removeAt(0),
       videoStreamFactory: () async => association,
@@ -331,6 +370,12 @@ class Fixture {
         videoEnabled: true,
         canApply: () => current,
       );
+      addTearDown(() {
+        current = false;
+        // Retirement cancels owned polling synchronously. Some tests deliberately
+        // leave a native future unresolved, so teardown must not wait on it.
+        unawaited(session.retireVideo());
+      });
     }
   }
 
