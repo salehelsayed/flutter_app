@@ -233,6 +233,9 @@ final class CallMediaSwitchEffectExecutor {
           !_sameDescription(existing.description, description)) {
         return false;
       }
+      // Admission owns the description while native application is pending.
+      // Only successful application permits replaying its recorded result.
+      if (!existing.applied) return false;
       if (!repair) {
         _apply(
           machine.descriptionApplied(
@@ -288,6 +291,7 @@ final class CallMediaSwitchEffectExecutor {
       if (!_allowed(remote.canApply)) throw const _SwitchRetired();
       await host.remoteDescriptionApplied(token);
       _check(work, repair: repair);
+      remote.applied = true;
       if (repair) {
         if (offer) {
           await _answer(work, repair: true);
@@ -928,14 +932,11 @@ final class _SwitchWork {
 }
 
 final class _RemoteSwitchDescription {
-  const _RemoteSwitchDescription(
-    this.negotiationId,
-    this.description,
-    this.canApply,
-  );
+  _RemoteSwitchDescription(this.negotiationId, this.description, this.canApply);
   final String negotiationId;
   final CallSessionDescription description;
   final bool Function()? canApply;
+  bool applied = false;
 }
 
 final class _SwitchRetired implements Exception {
