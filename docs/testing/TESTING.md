@@ -11767,6 +11767,37 @@ visible and cannot become an ordinary first-attempt PASS.
   default-off initial-negotiation proof does not establish production graph
   wiring, lifecycle/general recovery, native/live delivery, aggregate batch
   validation, activation or a signed candidate.
+  **U4 live optional media switching:** the switch executor uses the retained
+  pure machine and the v2 owner's existing SDP queue and candidate listener.
+  Admitting a remote description does not authorize replaying its outcome:
+  duplicate answers remain inert until native application and the current
+  host callback succeed. This also holds when the ordinary replay ledger is
+  full. Camera authority still requires the current committed consent; abort
+  and repair close capture, and repair requires positive native reconciliation.
+  Original RED `a8813fcd8b760e0836ad31917401bc5adfb8782c` recorded 61 passes,
+  30 assertion failures and four null-assertion errors in the named missing
+  switch paths, with exit 1 and no hidden/loader failure. Correction RED
+  `37ed1d272cb0045534b2e07abe30f10bec15c9cf` failed all three pending-answer
+  replay cases by assertion, with exit 1. Corrected GREEN
+  `925e1efc6478993b059644b94dbcd197148ce8f0` passed all 98 focused cases
+  (29 machine, 26 switch-executor and 43 v2-executor) and 219 preservation
+  cases (73 legacy-executor, 44 wire, 21 media-owner, 35 video-session and
+  46 signaling-port). Both passing reporters completed with zero failures,
+  errors or skips and child exits 0. Six-path analysis, metadata validation
+  and one bounded selection preview exited 0; its ten broader selections
+  remain unrun for the later batch. Ten clean runtime checkpoints pin exact
+  HEAD/parent/tree/library-tree and 20 source/test/configuration hashes each.
+  All 200 printed pins were independently checked against 60 distinct Git
+  blobs. Setup used plain `flutter pub get`, without the requested offline
+  and enforced-lockfile flags; all three setup exits were 0 and the tracked
+  source/configuration stayed exact without generated drift or restoration.
+  This deviation and all first failures remain retained. Codex closed source
+  and scoped host review with zero required findings; raw results, argv,
+  checkpoints and the final verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u4-final-host-adoption.json`.
+  The gate remains off. General recovery/takeover, graph/lifecycle composition,
+  aggregate batch checks, native/live media and signed candidate proof remain
+  separate; this unit does not establish those claims.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
@@ -11832,6 +11863,33 @@ visible and cannot become an ordinary first-attempt PASS.
   match their exact heads, trees and 13 pins, with clean status and empty setup
   deltas. Raw hashes and scoped review adoption are recorded in
   `/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/v2-view-raw-facts.json`.
+  The optional SDP reconciliation capability distinguishes `rolledBack`,
+  `alreadyStable` and `unreconciled`. It retires video gates immediately, waits
+  for owned native apply bookkeeping, then reads native signaling state.
+  Stable state needs no rollback; local/remote offer rollback requires the
+  exact owned offer and a confirming stable probe. Every await is followed by
+  fresh session/token/owner authority checks; null/error/stale state cannot
+  certify recovery. Existing audio, ICE and peer lifetime remain untouched.
+  At `b0e30b9370d6fbdb5e56fdd6c945bb0d54d2df9f`, all 54 session cases pass
+  with no failures/errors/skips, successful reporter completion and child
+  exit zero. The original RED has eight passing controls and eleven causal
+  assertion failures; the 72 owner/engine preservation cases also pass.
+  The first GREEN's 53 passes and one 30-second timeout remain evidence: the
+  close/probe fixture awaited close before releasing its own blocked native
+  probe. The test-only correction starts close, releases the gate, then awaits
+  the unreconciled result and close with every assertion retained. Production
+  remains byte-identical to `711e7423d`.
+  Known limit: production close retires gates/token synchronously but waits
+  behind an in-flight native state probe in its serial tail. A hanging native
+  operation can delay close. The separate SDP-C unit must address read-only
+  probe waiting before activation; this fixture correction does not do so.
+  All eight initial and three correction HEAD/tree/clean identity boundaries
+  match 15 individual pins; correction boundaries also print the library tree.
+  Both setup deltas are empty. Initial analysis and metadata validation passed;
+  corrected-test analysis passed. Raw evidence is in the Claude-Dev checkout's
+  `build/sdp-proof/` and `build/sdpfix-proof/`, with independent verification in
+  `/Users/I560101/.codex/investigations/video-sdp-reconcile-20261113/first-runtime-verified.json`
+  and `close-test-runtime-verified.json` in that directory.
   These tests use host plugin fakes; real camera/frames, native renderer
   cleanup, native rollback, device lifecycle and composed candidate proof
   remain separate. The video gate stays off.
