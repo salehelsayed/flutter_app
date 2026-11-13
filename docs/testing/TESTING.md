@@ -102,6 +102,19 @@ did not build or distribute an IPA; later local candidate identities are recorde
 in `Network-Arch/IPV6-Infra-Ops.md`. Candidate evidence must bind the actual selected build
 configuration and signed artifact, not just the Dart revision or version label.
 
+Tester video has a separate build configuration after the owner's 2026-11-13
+"I give the go to switch video on for testers": explicitly select
+`tool/build/voice_call_tester_defines.json`. It differs from the store/release
+file only by `VIDEO_CALL_V2_ENABLED=true`; all existing voice/native/privacy/STUN
+defines remain equal. Store entrypoints and their release file remain unchanged,
+with video absent, and ordinary no-define builds retain default-off gates.
+`VC-GATE-GUARD` covers this separation. Its host evidence must record the actual
+default, store-file or tester-file compiler arguments and the selected file hash.
+Configuration guards do not establish native camera or signed artifact behavior.
+Camera FGS commit `afa0e7970` remains excluded per Kayan m-ab11ba0e while the
+foreground-camera feasibility question is checked; its parked Play declaration
+is not a claim that background/lock-screen camera or OS PiP works.
+
 ## Sources of truth
 
 - `tool/testing/selection.json` owns check selectors, requirements, timeouts,
