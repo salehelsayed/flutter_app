@@ -9,6 +9,8 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart' as permissions;
 
+import '../../features/call/infrastructure/platform_call_picture_in_picture_bridge.dart';
+
 import '../../core/bridge/bridge.dart';
 import '../../core/secure_storage/secure_key_store.dart';
 import '../../features/settings/application/call_privacy_preference_use_cases.dart';
@@ -177,6 +179,8 @@ final class ProductionCallSignalingGraph
     this.videoContexts,
     this.videoOwners,
     this.qualityEnvironmentSource,
+    CallPictureInPictureBridge? pictureInPictureBridge,
+    Future<bool> Function()? checkCameraPermission,
     bool Function()? isForeground,
     Future<bool> Function()? requestCameraPermission,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
@@ -188,8 +192,18 @@ final class ProductionCallSignalingGraph
        _networkEffectsAllowed = networkEffectsAllowed,
        _nowMs = nowMs,
        _isVideoForeground = isForeground ?? (() => true),
+       _checkCameraPermission = checkCameraPermission ?? (() async => false),
        _requestCameraPermission =
            requestCameraPermission ?? (() async => false) {
+    if (videoEnabled && pictureInPictureBridge != null) {
+      _pip = CallPictureInPictureController(
+        videoEnabled: true,
+        bridge: pictureInPictureBridge,
+        canApply: _pipSourceCurrent,
+        onEvent: _onPipEvent,
+        onReady: _refreshVideo,
+      );
+    }
     _networkPathBinding = networkPathOutcomes == null
         ? null
         : CallNetworkPathBinding(
@@ -374,6 +388,9 @@ final class ProductionCallSignalingGraph
     await runtime.onResume();
     final active = coordinator.activeSession;
     if (active != null) _onSessionSnapshot(active);
+    _pip?.foreground();
+    _refreshVideo();
+    await _resumePipCamera();
   }
 
   /// A native wake or relay recovery: drain the ephemeral call mailbox now.
@@ -399,6 +416,20 @@ final class ProductionCallSignalingGraph
   CallVideoQualityEnvironment? _qualityAppliedEnvironment;
   final bool Function() _isVideoForeground;
   final Future<bool> Function() _requestCameraPermission;
+  final Future<bool> Function() _checkCameraPermission;
+  CallPictureInPictureController? _pip;
+  StreamSubscription<void>? _pipSourceSubscription;
+  ({
+    CallV2NegotiationEffectExecutor owner,
+    CallVideoSession session,
+    CallVideoNegotiation token,
+    int generation,
+    int epoch,
+  })?
+  _pipCameraIntent;
+  bool _pipResumePending = false;
+  bool _pipThermalBlocked = false;
+
   bool _videoForegroundAllowed = true;
   CallId? _videoCallId;
   int _videoGeneration = 0;
@@ -411,6 +442,7 @@ final class ProductionCallSignalingGraph
   ({CallId callId, int generation, CallMediaKind media})? _stagedAnswerMedia;
 
   bool _cameraActionPending = false;
+  bool _cameraPermissionPending = false;
   Future<void>? _cameraRelease;
   ({CallId callId, CallMediaKind media})? _publishedNativeMedia;
 
@@ -425,6 +457,12 @@ final class ProductionCallSignalingGraph
     }
     final snapshot = coordinator.activeSession!;
     final presentation = _projectVideo(snapshot)?.presentation;
+    if (intent.action == CallVideoAction.turnCameraOff &&
+        _pipCameraIntent != null) {
+      await _revokeLocalCamera();
+      _refreshVideo();
+      return ForegroundCallActionResult.applied;
+    }
     final expected = presentation?.intentFor(intent.action);
     if (expected == null || expected.upgradeId != intent.upgradeId) {
       return ForegroundCallActionResult.unavailable;
@@ -497,13 +535,19 @@ final class ProductionCallSignalingGraph
             return ForegroundCallActionResult.unavailable;
           }
           _cameraActionPending = true;
+          _cameraPermissionPending =
+              intent.action == CallVideoAction.turnCameraOn;
+          if (_cameraPermissionPending) _pip?.invalidate('prompt');
           final token = owner.negotiation;
           final session = owner.videoSession;
           final epoch = intent.action == CallVideoAction.switchCamera
               ? _cameraEpoch
               : ++_cameraEpoch;
+          var cameraStarted = false;
           bool cameraCurrent() =>
-              current() &&
+              (current() ||
+                  cameraStarted &&
+                      _pipCameraExecutionCurrent(callId, generation, owner)) &&
               epoch == _cameraEpoch &&
               identical(owner.negotiation, token) &&
               identical(owner.videoSession, session) &&
@@ -549,6 +593,7 @@ final class ProductionCallSignalingGraph
             if (!applied || !cameraCurrent()) {
               return ForegroundCallActionResult.unavailable;
             }
+            cameraStarted = true;
             _localCameraToken = token;
             acquiredLease =
                 false; // Retained by this call until explicit revocation.
@@ -566,6 +611,8 @@ final class ProductionCallSignalingGraph
               );
             }
             _cameraActionPending = false;
+            _cameraPermissionPending = false;
+            if (_videoForeground) _pip?.foreground();
             _refreshVideo();
           }
       }
@@ -613,6 +660,11 @@ final class ProductionCallSignalingGraph
   void _acceptQualityEnvironment(CallVideoQualityEnvironment environment) {
     if (!videoEnabled || _shuttingDown) return;
     _qualityEnvironment = environment;
+    if (environment.thermalState == CallVideoThermalState.critical) {
+      _pipThermalBlocked = true;
+    } else if (environment.thermalState != CallVideoThermalState.unknown) {
+      _pipThermalBlocked = false;
+    }
     _applyQualityEnvironment();
   }
 
@@ -650,6 +702,261 @@ final class ProductionCallSignalingGraph
       if (subscription != null) Future<void>.sync(subscription.cancel),
       if (source != null) Future<void>.sync(source.close),
     ]);
+  }
+
+  bool _pipSourceCurrent(CallPipSource source) {
+    final snapshot = coordinator.activeSession;
+    final owner = videoOwners?[source.negotiation.callId];
+    final session = owner?.videoSession;
+    final machine = owner?.mediaSwitch?.machine;
+    if (!videoEnabled ||
+        _shuttingDown ||
+        _callabilityInvalidated ||
+        _cameraPermissionPending ||
+        snapshot?.callId != source.negotiation.callId ||
+        snapshot?.state != CallState.connected ||
+        owner?.current != true ||
+        !identical(owner?.negotiation, source.negotiation) ||
+        machine?.videoGatesOpen != true ||
+        machine?.currentRequest != null ||
+        machine?.settledMedia != CallMediaKind.video ||
+        machine?.settledRevision != source.negotiation.mediaRevision ||
+        session is! CallVideoPictureInPictureSource ||
+        !source.isCurrent()) {
+      return false;
+    }
+    final actual =
+        (session as CallVideoPictureInPictureSource).pictureInPictureSource;
+    return actual != null && actual.sameBinding(source);
+  }
+
+  bool _pipCameraExecutionCurrent(
+    CallId callId,
+    int generation,
+    CallV2NegotiationEffectExecutor owner,
+  ) {
+    final lease = _pip?.current;
+    return !_videoForegroundAllowed &&
+        _videoCallId == callId &&
+        _videoGeneration == generation &&
+        identical(videoOwners?[callId], owner) &&
+        lease != null &&
+        lease.cameraInPip &&
+        lease.phase != CallPipPhase.preparing &&
+        _pipSourceCurrent(lease.source);
+  }
+
+  bool _pipIntentCurrent() {
+    final intent = _pipCameraIntent;
+    if (intent == null) return false;
+    final owner = intent.owner;
+    final machine = owner.mediaSwitch?.machine;
+    return !_shuttingDown &&
+        !_callabilityInvalidated &&
+        coordinator.activeSession?.state == CallState.connected &&
+        coordinator.activeSession?.callId == intent.token.callId &&
+        identical(videoOwners?[intent.token.callId], owner) &&
+        owner.current &&
+        identical(owner.videoSession, intent.session) &&
+        identical(owner.negotiation, intent.token) &&
+        _videoGeneration == intent.generation &&
+        _cameraEpoch == intent.epoch &&
+        machine?.videoGatesOpen == true &&
+        machine?.currentRequest == null &&
+        machine?.settledMedia == CallMediaKind.video &&
+        machine?.settledRevision == intent.token.mediaRevision;
+  }
+
+  void _pausePipCamera() {
+    final token = _localCameraToken;
+    final owner = token == null ? null : videoOwners?[token.callId];
+    final session = owner?.videoSession;
+    final retain =
+        _pip != null &&
+        token != null &&
+        owner != null &&
+        session != null &&
+        identical(owner.negotiation, token) &&
+        owner.current;
+    // A second background/exit notification cannot erase a prior OS pause.
+    if (token == null && _pipIntentCurrent()) return;
+    unawaited(_revokeLocalCamera(state: CallCameraState.paused));
+    if (retain) {
+      _pipCameraIntent = (
+        owner: owner,
+        session: session,
+        token: token,
+        generation: _videoGeneration,
+        epoch: _cameraEpoch,
+      );
+    }
+  }
+
+  Future<bool> _cameraPermissionWithoutPrompt() async {
+    try {
+      return await _checkCameraPermission();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _resumePipCamera() async {
+    if (_pip == null || _pipResumePending) return;
+    _pipResumePending = true;
+    try {
+      final intent = _pipCameraIntent;
+      final token = _localCameraToken;
+      if (intent == null && token == null) return;
+      final epoch = _cameraEpoch;
+      final permitted = await _cameraPermissionWithoutPrompt();
+      if (epoch != _cameraEpoch || !_videoForeground) return;
+      if (!permitted) {
+        _pip?.invalidate('permissionLost');
+        await _revokeLocalCamera();
+        _refreshVideo();
+        return;
+      }
+      if (intent == null ||
+          _pipCameraIntent != intent ||
+          !_pipIntentCurrent() ||
+          _pipThermalBlocked) {
+        return;
+      }
+      await _startPipCamera(
+        intent.owner,
+        intent.session,
+        intent.token,
+        intent.generation,
+        intent.epoch,
+        () =>
+            _videoForeground &&
+            _pipCameraIntent == intent &&
+            _pipIntentCurrent(),
+      );
+    } finally {
+      _pipResumePending = false;
+    }
+  }
+
+  Future<void> _startPipCamera(
+    CallV2NegotiationEffectExecutor owner,
+    CallVideoSession session,
+    CallVideoNegotiation token,
+    int generation,
+    int epoch,
+    bool Function() admitted,
+  ) async {
+    if (_cameraActionPending || _pipThermalBlocked || !admitted()) return;
+    _cameraActionPending = true;
+    var acquired = false;
+    bool current() =>
+        !_shuttingDown &&
+        !_callabilityInvalidated &&
+        epoch == _cameraEpoch &&
+        generation == _videoGeneration &&
+        identical(videoOwners?[token.callId], owner) &&
+        owner.current &&
+        identical(owner.videoSession, session) &&
+        identical(owner.negotiation, token) &&
+        owner.mediaSwitch?.machine.videoGatesOpen == true &&
+        owner.mediaSwitch?.machine.currentRequest == null &&
+        (_videoForeground ||
+            _pipCameraExecutionCurrent(token.callId, generation, owner));
+    try {
+      await _cameraRelease;
+      if (!admitted() || !current()) return;
+      _applyQualityEnvironment();
+      if (androidCallLifecycleAdapter != null) {
+        acquired = await androidCallLifecycleAdapter!.setLocalCameraActive(
+          token.callId,
+          true,
+        );
+        if (!acquired || !admitted() || !current()) return;
+      }
+      final applied = await session.setLocalCamera(
+        token,
+        CallLocalCameraGrant(
+          foregroundConsent: true,
+          permissionGranted: true,
+          videoAgreed: true,
+          isCurrent: current,
+        ),
+      );
+      if (!applied || !current()) return;
+      _localCameraToken = token;
+      _pipCameraIntent = null;
+      acquired = false;
+      unawaited(
+        owner.publishLocalCameraState(CallCameraState.on, canApply: current),
+      );
+    } catch (_) {
+      // Optional camera failure never terminates call audio.
+    } finally {
+      if (acquired) {
+        await androidCallLifecycleAdapter?.setLocalCameraActive(
+          token.callId,
+          false,
+        );
+      }
+      _cameraActionPending = false;
+      _refreshVideo();
+    }
+  }
+
+  void _onPipEvent(CallPipLease lease, CallPipEvent event) {
+    if (!_pipSourceCurrent(lease.source)) return;
+    if (event.type == CallPipEventType.action) {
+      switch (event.detail) {
+        case 'end':
+          unawaited(end(lease.identity.callId));
+        case 'mute':
+          final audio = mediaOwner.currentAudioController(
+            lease.identity.callId,
+          );
+          if (audio != null) {
+            unawaited(setMuted(lease.identity.callId, !audio.state.muted));
+          }
+        case 'camera':
+          unawaited(_pipCameraTap(lease));
+      }
+    } else if (event.type == CallPipEventType.exited ||
+        event.type == CallPipEventType.failed ||
+        event.type == CallPipEventType.blocked) {
+      if (!_videoForegroundAllowed) _pausePipCamera();
+    }
+  }
+
+  Future<void> _pipCameraTap(CallPipLease lease) async {
+    bool current() =>
+        identical(_pip?.current, lease) &&
+        lease.phase == CallPipPhase.entered &&
+        lease.cameraInPip &&
+        _pipSourceCurrent(lease.source);
+    if (!current()) return;
+    if (_localCameraToken != null || _pipCameraIntent != null) {
+      await _revokeLocalCamera();
+      _refreshVideo();
+      return;
+    }
+    final epoch = _cameraEpoch;
+    final permitted = await _cameraPermissionWithoutPrompt();
+    if (!current() || epoch != _cameraEpoch) return;
+    if (!permitted) {
+      _pip?.invalidate('permissionLost');
+      await _revokeLocalCamera();
+      return;
+    }
+    final owner = videoOwners?[lease.identity.callId]!;
+    final session = owner?.videoSession;
+    if (owner == null || session == null) return;
+    await _startPipCamera(
+      owner,
+      session,
+      lease.source.negotiation,
+      _videoGeneration,
+      epoch,
+      current,
+    );
   }
 
   bool get _videoForeground =>
@@ -783,6 +1090,17 @@ final class ProductionCallSignalingGraph
 
   void _bindVideoSource(CallVideoSession? session) {
     if (identical(_observedVideoSession, session)) return;
+    _pip?.invalidate('sourceChanged');
+    final previousPip = _pipSourceSubscription;
+    _pipSourceSubscription = null;
+    if (previousPip != null) unawaited(previousPip.cancel());
+    if (session is CallVideoPictureInPictureSource) {
+      _pipSourceSubscription = (session as CallVideoPictureInPictureSource)
+          .pictureInPictureSourceChanges
+          .listen((_) {
+            if (identical(_observedVideoSession, session)) _refreshVideo();
+          }, onError: (Object _) => _pip?.invalidate('sourceError'));
+    }
     final previous = _videoSubscription;
     _videoSubscription = null;
     _observedVideoSession = session;
@@ -806,6 +1124,7 @@ final class ProductionCallSignalingGraph
         _shuttingDown ||
         snapshot == null ||
         snapshot.isTerminal) {
+      _pip?.invalidate('inactive');
       return;
     }
     final owner = videoOwners?[snapshot.callId];
@@ -818,6 +1137,18 @@ final class ProductionCallSignalingGraph
     }
     final session = owner?.videoSession;
     _bindVideoSource(session);
+    final pipSource = session is CallVideoPictureInPictureSource
+        ? (session as CallVideoPictureInPictureSource).pictureInPictureSource
+        : null;
+    _pip?.bind(
+      pipSource != null && _pipSourceCurrent(pipSource) ? pipSource : null,
+      muted:
+          mediaOwner.currentAudioController(snapshot.callId!)?.state.muted ??
+          false,
+      cameraOn: _localCameraToken != null,
+    );
+    final retained = _pipCameraIntent;
+    if (retained != null && !_pipIntentCurrent()) _pipCameraIntent = null;
     _applyQualityEnvironment();
     final token = owner?.negotiation;
     if (!identical(_rendererToken, token)) {
@@ -888,7 +1219,9 @@ final class ProductionCallSignalingGraph
 
   Future<void> _revokeLocalCamera({
     CallCameraState state = CallCameraState.off,
+    bool preservePipIntent = false,
   }) {
+    if (!preservePipIntent) _pipCameraIntent = null;
     _cameraEpoch++;
     final token = _localCameraToken;
     _localCameraToken = null;
@@ -1317,8 +1650,13 @@ final class ProductionCallSignalingGraph
       _dispatchForegroundAction(CallEventType.cancel, callId);
 
   @override
-  Future<ForegroundCallActionResult> end(CallId callId) =>
-      _dispatchForegroundAction(CallEventType.end, callId);
+  Future<ForegroundCallActionResult> end(CallId callId) {
+    if (coordinator.activeSession?.callId == callId) {
+      _pip?.invalidate('end');
+      _pipCameraIntent = null;
+    }
+    return _dispatchForegroundAction(CallEventType.end, callId);
+  }
 
   @override
   Future<ForegroundCallActionResult> setMuted(CallId callId, bool muted) async {
@@ -1438,7 +1776,14 @@ final class ProductionCallSignalingGraph
   Future<void> onBackgrounded() async {
     _videoForegroundAllowed = false;
     _stagedAnswerMedia = null;
-    unawaited(_revokeLocalCamera(state: CallCameraState.paused));
+    final lease = _pip?.current;
+    if (lease == null ||
+        lease.phase == CallPipPhase.preparing ||
+        !lease.cameraInPip ||
+        !_pipSourceCurrent(lease.source)) {
+      _pausePipCamera();
+    }
+    _pip?.background();
     if (_nativeCallLifecycleAdapter != null) {
       // Composition hides the Flutter surface. Keep the canonical projection
       // so its mailbox poller and live-call refresh guard retain this call.
@@ -1798,6 +2143,16 @@ final class ProductionCallSignalingGraph
         video: _projectVideo(projection.session),
       );
     }
+    final lease = _pip?.current;
+    if (lease != null &&
+        projection != null &&
+        _pipSourceCurrent(lease.source)) {
+      _pip?.bind(
+        lease.source,
+        muted: projection.audio.muted,
+        cameraOn: _localCameraToken != null,
+      );
+    }
     _foregroundCurrent = projection;
     if (!_foregroundChanges.isClosed) _foregroundChanges.add(projection);
   }
@@ -2021,6 +2376,7 @@ final class ProductionCallSignalingGraph
   Future<void> shutdown() async {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    unawaited(_pip?.close());
     unawaited(_revokeLocalCamera());
     _bindVideoSource(null);
     signalingService.stopRetries();
@@ -3158,7 +3514,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
           // Optional environment construction cannot disable ordinary calls.
         }
       }
+      CallPictureInPictureBridge? pipBridge;
+      if (videoEnabled) {
+        try {
+          pipBridge =
+              pictureInPictureBridgeFactory?.call() ??
+              PlatformCallPictureInPictureBridge(videoEnabled: true);
+        } catch (_) {}
+      }
       final graph = ProductionCallSignalingGraph(
+        pictureInPictureBridge: pipBridge,
+        checkCameraPermission:
+            checkCameraPermission ??
+            () async => (await permissions.Permission.camera.status).isGranted,
         qualityEnvironmentSource: qualitySource,
         videoEnabled: videoEnabled,
         onOutgoingVideoAdmitted: videoEnabled
