@@ -28,6 +28,7 @@ void main() {
   );
 
   test('E3 interest starts one fresh signed encrypted silent cycle', () async {
+    f.now = DateTime.now().toUtc().add(const Duration(days: 2));
     expect(await f.retry(interest: interestPeer), 1);
     expect(f.wire['version'], '2');
     expect(f.wire['intent'], 'key_exchange_retry');
@@ -43,6 +44,8 @@ void main() {
         .where((m) => m['cmd'] == 'payload.sign')
         .toList();
     expect(signs, hasLength(1));
+    final signed = jsonDecode(signs.single['payload']['data'] as String) as Map;
+    expect(DateTime.parse(signed['ts'] as String), f.now);
     expect(
       (entry['envelope'] as Map)['signedAtMs'],
       f.now.millisecondsSinceEpoch,

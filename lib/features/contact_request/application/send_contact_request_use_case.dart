@@ -386,7 +386,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
   }
 
   // 3. Build unsigned payload (same format as QR, plus mlkem key)
-  final now = (signingTime ?? DateTime.now()).toUtc();
+  final now = (signingTime ?? clock.now()).toUtc();
   final timestamp = now.toIso8601String();
   final sanitizedUsername = sanitizeUsername(identity.username);
   // FDC-09 §12 / CV-14: resolve the wake-token to distribute — v2 (encrypted,
@@ -516,7 +516,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
   // v2: Encrypt the signed payload. A marked request's operation ID is its
   // message ID, so the encryption AAD and the signed marker agree.
   final msgId = control?.id ?? const Uuid().v4();
-  final ts = (signingTime ?? DateTime.now()).toUtc().toIso8601String();
+  final ts = (signingTime ?? clock.now()).toUtc().toIso8601String();
 
   emitFlowEvent(
     layer: 'FL',
