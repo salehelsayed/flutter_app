@@ -184,18 +184,35 @@ void main() {
       final r = _Rig(initialMedia: _video, settledRevision: 3);
       final held = Completer<void>();
       r.video.applyGate = held;
-      r.owner.request(
-        MediaSwitchRequest(
+      expect(
+        r.owner.request(
+          MediaSwitchRequest(
+            id: 'downgrade',
+            baseRevision: 3,
+            target: _audio,
+            requesterIsCaller: true,
+            createdAtMs: r.host.now,
+            deadlineMs: r.host.now + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      await r.owner.workSettled;
+      expect(
+        r.owner.respond(
           id: 'downgrade',
           baseRevision: 3,
-          target: _audio,
-          requesterIsCaller: true,
-          createdAtMs: r.host.now,
-          deadlineMs: r.host.now + 30000,
+          fromCaller: false,
+          response: MediaSwitchResponse.accept,
+          camera: CallCameraState.off,
         ),
+        isTrue,
       );
       await _turn();
       try {
+        expect(r.owner.machine.selectedSwitchId, 'downgrade');
+        expect(r.owner.machine.phase, MediaSwitchPhase.negotiating);
+        expect(r.video.events, contains('local:offer'));
         r.beginRecovery();
         expect(r.owner.machine.settledRevision, 4);
         expect(r.owner.machine.settledMedia, _audio);
@@ -246,6 +263,17 @@ void main() {
           createdAtMs: r.host.now,
           deadlineMs: r.host.now + 30000,
         ),
+      ),
+      isTrue,
+    );
+    await r.owner.workSettled;
+    expect(
+      r.owner.respond(
+        id: 'fresh-stop',
+        baseRevision: 3,
+        fromCaller: false,
+        response: MediaSwitchResponse.accept,
+        camera: CallCameraState.off,
       ),
       isTrue,
     );
