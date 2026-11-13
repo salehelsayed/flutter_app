@@ -117,6 +117,10 @@ internal class MknoonCallVideoAuthority(
 
     fun holdsCameraLease(nativeCallId: UUID): Boolean = synchronized(lock) { cameraLeaseCall == nativeCallId }
 
+    /** True only while this call's lease also carries the camera FGS type on
+     * the running service. API scaffold: today every lease is typed. */
+    fun holdsCameraForegroundType(nativeCallId: UUID): Boolean = holdsCameraLease(nativeCallId)
+
     /** Drops the lease without touching the platform, for a caller that is
      * itself about to re-apply the service types without the camera. */
     fun dropLease(nativeCallId: UUID) {
