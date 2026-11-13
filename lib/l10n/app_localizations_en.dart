@@ -1204,6 +1204,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_section_identity => 'IDENTITY';
 
   @override
+  String get settings_badge_new => 'new';
+
+  @override
   String get settings_section_preferences => 'PREFERENCES';
 
   @override

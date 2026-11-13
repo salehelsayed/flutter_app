@@ -492,6 +492,7 @@
   "picker_search_all": "Kontakte & Gruppen durchsuchen",
   "settings_title": "Einstellungen",
   "settings_section_identity": "IDENTITÄT",
+  "settings_badge_new": "neu",
   "settings_section_preferences": "PRÄFERENZEN",
   "settings_group_exit_diagnostics_section": "SUPPORT",
   "settings_group_exit_diagnostics_title": "Gruppenaustrittsverlauf",

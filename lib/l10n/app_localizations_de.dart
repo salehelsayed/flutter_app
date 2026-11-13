@@ -1225,6 +1225,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_section_identity => 'IDENTITÄT';
 
   @override
+  String get settings_badge_new => 'neu';
+
+  @override
   String get settings_section_preferences => 'PRÄFERENZEN';
 
   @override

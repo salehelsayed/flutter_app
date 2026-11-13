@@ -516,9 +516,6 @@ class _SettingsWiredState extends State<SettingsWired>
   Future<void> _openMediaStorageSheet() {
     final manager = widget.mediaStorageManager;
     final scopesProvider = widget.mediaStorageScopesProvider;
-    final translator = translatePreviewEnabled
-        ? translatePreviewDelivery
-        : null;
     return _showSettingsSheet(
       builder: (sheetContext, setSheetState) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -535,21 +532,6 @@ class _SettingsWiredState extends State<SettingsWired>
               setSheetState(() {});
             },
           ),
-          // Keep translator controls together under Media & storage.
-          if (translator != null)
-            PrivateTranslatorSettingsSection(
-              controller: translator,
-              onFreeUpSpace: manager == null || scopesProvider == null
-                  ? null
-                  : () => unawaited(
-                      _showSettingsSheet(
-                        builder: (_, _) => MediaStorageUsageSection(
-                          manager: manager,
-                          loadScopes: scopesProvider,
-                        ),
-                      ),
-                    ),
-            ),
           if (manager != null && scopesProvider != null)
             MediaStorageUsageSection(
               manager: manager,
@@ -1220,8 +1202,28 @@ class _SettingsWiredState extends State<SettingsWired>
     final canHostQr =
         widget.onMyQrRequested != null && widget.onScanQrRequested != null;
 
+    final translator = translatePreviewEnabled
+        ? translatePreviewDelivery
+        : null;
+    final manager = widget.mediaStorageManager;
+    final scopesProvider = widget.mediaStorageScopesProvider;
     final screen = SettingsScreen(
       username: identity?.username ?? 'Username',
+      privateTranslatorSection: translator == null
+          ? null
+          : PrivateTranslatorSettingsSection(
+              controller: translator,
+              onFreeUpSpace: manager == null || scopesProvider == null
+                  ? null
+                  : () => unawaited(
+                      _showSettingsSheet(
+                        builder: (_, _) => MediaStorageUsageSection(
+                          manager: manager,
+                          loadScopes: scopesProvider,
+                        ),
+                      ),
+                    ),
+            ),
       appUpdatesRow: const SettingsAppUpdatesRow(),
       peerId: identity?.peerId,
       avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,

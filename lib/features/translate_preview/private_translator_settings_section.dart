@@ -109,6 +109,26 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
                   key: const ValueKey('settings-row-translate-to'),
                   icon: Icons.language,
                   label: l10n.translate_to_title,
+                  labelAccessory: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: context.backgroundReadableColors.accent,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        l10n.settings_badge_new,
+                        style: TextStyle(
+                          fontSize: 10,
+                          height: 1.6,
+                          fontWeight: FontWeight.w600,
+                          color: context.backgroundReadableColors.accent,
+                        ),
+                      ),
+                    ),
+                  ),
                   subtitle: l10n.translate_to_subtitle,
                   value: translateToLabel(context, chosen),
                   onTap: () => unawaited(showTranslateToSheet(context)),

@@ -1225,6 +1225,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_section_identity => 'الهوية';
 
   @override
+  String get settings_badge_new => 'جديد';
+
+  @override
   String get settings_section_preferences => 'التفضيلات';
 
   @override

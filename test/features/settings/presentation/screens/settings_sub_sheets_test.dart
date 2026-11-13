@@ -165,9 +165,8 @@ void main() {
         ),
       ],
     );
-    await openSheet(tester, 'settings-row-media-storage');
-    final mediaSheetRoute = ModalRoute.of(
-      tester.element(find.byType(MediaStorageUsageSection)),
+    final settingsRoute = ModalRoute.of(
+      tester.element(find.byType(SettingsWired)),
     );
     await tester.ensureVisible(find.text('Get'));
     await tester.tap(find.text('Get'));
@@ -186,7 +185,7 @@ void main() {
     expect(currentStorage, hasLength(1));
     expect(
       ModalRoute.of(currentStorage.single),
-      isNot(same(mediaSheetRoute)),
+      isNot(same(settingsRoute)),
       reason: 'Free up space must open Storage, not just dismiss the offer',
     );
     expect(find.text('Storage usage').hitTestable(), findsOneWidget);

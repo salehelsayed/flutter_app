@@ -54,6 +54,7 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<bool>? onNearbySharingChanged;
   final Widget? thoughtNotificationsRow;
   final Widget? appUpdatesRow;
+  final Widget? privateTranslatorSection;
   final VoidCallback? onMoveAccountToNewPhone;
   final Widget? groupExitDiagnosticsSection;
   final Widget? callDiagnosticsSection;
@@ -92,6 +93,7 @@ class SettingsScreen extends StatelessWidget {
     this.onNearbySharingChanged,
     this.thoughtNotificationsRow,
     this.appUpdatesRow,
+    this.privateTranslatorSection,
     this.onMoveAccountToNewPhone,
     this.groupExitDiagnosticsSection,
     this.callDiagnosticsSection,
@@ -218,6 +220,7 @@ class SettingsScreen extends StatelessWidget {
           onTap: onMoveAccountToNewPhone,
         ),
       ?appUpdatesRow,
+      ?privateTranslatorSection,
     ];
 
     return AmbientBackground(
@@ -334,6 +337,21 @@ class SettingsScreen extends StatelessWidget {
                             label: l10n.settings_section_preferences,
                             children: preferenceRows,
                           ),
+                          if (privateTranslatorSection != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 2,
+                              ),
+                              child: Text(
+                                l10n.translator_sheet_privacy,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  height: 18 / 13,
+                                  color: readableColors.textSecondary,
+                                ),
+                              ),
+                            ),
                           const SizedBox(height: 14),
                         ],
                         ?groupExitDiagnosticsSection,
