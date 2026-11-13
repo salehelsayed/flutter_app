@@ -85,6 +85,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   bool _navigatorCanHandlePop = false;
   bool? _publishedOwnsBack;
   CallId? _minimizedCallId;
+  Offset? _pictureInPictureOffset;
   CallId? _pickerCallId;
   final _lockedProjection = LockedCallProjection();
   bool _lockedLight = false;
@@ -349,18 +350,20 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     final surfaceKind = _surfaceKind(session);
     final callId = session?.callId;
     final peerId = session?.contactPeerId;
+    final capability = widget.capability;
     final minimized =
         surfaceKind == _ForegroundCallSurface.active &&
         callId != null &&
         _minimizedCallId == callId;
 
     Widget? surface;
+    ForegroundCallVideoProjection? pictureInPictureVideo;
     if (projection != null &&
         surfaceKind != _ForegroundCallSurface.hidden &&
         callId != null &&
         peerId != null) {
-      final capability = widget.capability;
       final video = _visibleVideo(projection, capability);
+      pictureInPictureVideo = _pictureInPictureVideo(projection, capability);
       final capabilityGeneration = _capabilityGeneration;
       final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
           ? null
@@ -536,6 +539,14 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               ),
             ),
           ),
+        if (minimized && pictureInPictureVideo != null)
+          _buildPictureInPicture(
+            capability: capability!,
+            capabilityGeneration: _capabilityGeneration,
+            callId: callId,
+            video: pictureInPictureVideo,
+            keyboardInset: keyboardInset,
+          ),
         if (modal)
           Positioned.fill(
             key: ValueKey<CallId?>(callId),
@@ -576,6 +587,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                                 onPressed: () => setState(() {
                                   _pickerCallId = null;
                                   _minimizedCallId = callId;
+                                  _pictureInPictureOffset = null;
                                 }),
                                 icon: const Icon(Icons.keyboard_arrow_down),
                               ),
@@ -603,6 +615,143 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
             ),
           ),
       ],
+    );
+  }
+
+  ForegroundCallVideoProjection? _pictureInPictureVideo(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    if (_surfaceKind(projection.session) != _ForegroundCallSurface.active ||
+        projection.session.state == CallState.ending) {
+      return null;
+    }
+    final video = _visibleVideo(projection, capability);
+    if (video == null ||
+        video.presentation.acceptedMedia == null ||
+        video.presentation.agreedMedia != CallMediaKind.video) {
+      return null;
+    }
+    return video;
+  }
+
+  bool _ownsPictureInPicture({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required int generation,
+  }) {
+    if (!mounted ||
+        !identical(capability, widget.capability) ||
+        capabilityGeneration != _capabilityGeneration ||
+        _minimizedCallId != callId) {
+      return false;
+    }
+    try {
+      final current = capability.current;
+      return current != null &&
+          current.session.callId == callId &&
+          _pictureInPictureVideo(current, capability)?.generation == generation;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Widget _buildPictureInPicture({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required ForegroundCallVideoProjection video,
+    required double keyboardInset,
+  }) {
+    bool isCurrent() => _ownsPictureInPicture(
+      capability: capability,
+      capabilityGeneration: capabilityGeneration,
+      callId: callId,
+      generation: video.generation,
+    );
+    void restore() {
+      if (!isCurrent()) return;
+      setState(() => _minimizedCallId = null);
+    }
+
+    return Positioned.fill(
+      child: SafeArea(
+        child: Padding(
+          // Keep the existing return bar and the keyboard unobstructed.
+          padding: EdgeInsets.only(top: 56, bottom: keyboardInset),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = (constraints.maxWidth - 24)
+                  .clamp(0.0, 180.0)
+                  .toDouble();
+              final height = (constraints.maxHeight - 24)
+                  .clamp(0.0, width * 9 / 16 + 48)
+                  .toDouble();
+              if (width < 96 || height < 48) return const SizedBox.shrink();
+              final maxX = constraints.maxWidth - width;
+              final maxY = constraints.maxHeight - height;
+              final requested =
+                  _pictureInPictureOffset ??
+                  Offset(
+                    Directionality.of(context) == TextDirection.rtl
+                        ? 12
+                        : maxX - 12,
+                    maxY - 12,
+                  );
+              final position = Offset(
+                requested.dx.clamp(0.0, maxX).toDouble(),
+                requested.dy.clamp(0.0, maxY).toDouble(),
+              );
+              return Stack(
+                children: [
+                  Positioned(
+                    left: position.dx,
+                    top: position.dy,
+                    width: width,
+                    height: height,
+                    child: GestureDetector(
+                      onPanUpdate: (details) {
+                        if (!isCurrent()) return;
+                        // A resize can clamp the visible tile before the next
+                        // gesture; apply its delta from that visible position.
+                        final stored = _pictureInPictureOffset ?? position;
+                        final previous = Offset(
+                          stored.dx.clamp(0.0, maxX).toDouble(),
+                          stored.dy.clamp(0.0, maxY).toDouble(),
+                        );
+                        setState(() {
+                          _pictureInPictureOffset = Offset(
+                            (previous.dx + details.delta.dx)
+                                .clamp(0.0, maxX)
+                                .toDouble(),
+                            (previous.dy + details.delta.dy)
+                                .clamp(0.0, maxY)
+                                .toDouble(),
+                          );
+                        });
+                      },
+                      child: _CallPictureInPictureTile(
+                        ownerIdentity: (
+                          callId.value,
+                          capabilityGeneration,
+                          video.generation,
+                        ),
+                        video: video,
+                        onReturn: restore,
+                        onEnd: () => _runAction(() {
+                          if (!isCurrent()) return null;
+                          return capability.end(callId);
+                        }),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 
@@ -845,6 +994,125 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     _terminalNoticeTimer = null;
     if (!mounted || !_terminalNoticeVisible) return;
     setState(() => _terminalNoticeVisible = false);
+  }
+}
+
+/// Displays owner-issued metadata in the minimized call surface.
+class _CallPictureInPictureTile extends StatelessWidget {
+  const _CallPictureInPictureTile({
+    required this.ownerIdentity,
+    required this.video,
+    required this.onReturn,
+    required this.onEnd,
+  });
+
+  final Object ownerIdentity;
+  final ForegroundCallVideoProjection video;
+  final VoidCallback onReturn;
+  final VoidCallback onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final presentation = video.presentation;
+    final view = video.remoteView;
+    final label = presentation.isReconnecting
+        ? l10n.call_video_status_reconnecting
+        : switch (presentation.remoteCamera) {
+            CallCameraState.on => l10n.call_video_remote_camera_on,
+            CallCameraState.off => l10n.call_video_remote_camera_off,
+            CallCameraState.paused => l10n.call_video_remote_camera_paused,
+          };
+    Widget frame = Icon(
+      presentation.remoteCamera == CallCameraState.off
+          ? Icons.videocam_off_outlined
+          : Icons.videocam_outlined,
+      color: Colors.white,
+    );
+    if (presentation.isConnected &&
+        !presentation.isReconnecting &&
+        presentation.remoteCamera == CallCameraState.on &&
+        view != null &&
+        view.textureId >= 0 &&
+        view.width > 0 &&
+        view.height > 0) {
+      frame = FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: view.width.toDouble(),
+          height: view.height.toDouble(),
+          child: Texture(
+            key: ValueKey((
+              ownerIdentity,
+              view.textureId,
+              view.width,
+              view.height,
+            )),
+            textureId: view.textureId,
+          ),
+        ),
+      );
+    }
+    return Material(
+      key: const ValueKey('call-pip-tile'),
+      color: colors.surfaceRaised,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Expanded(
+            child: Semantics(
+              key: const ValueKey('call-pip-view'),
+              container: true,
+              button: true,
+              label: '${l10n.call_return}, $label',
+              onTap: onReturn,
+              excludeSemantics: true,
+              child: InkWell(
+                onTap: onReturn,
+                child: SizedBox.expand(
+                  child: ColoredBox(color: Colors.black, child: frame),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 48,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  key: const ValueKey('call-pip-restore'),
+                  tooltip: l10n.call_return,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onReturn,
+                  icon: Icon(Icons.open_in_full, color: colors.textPrimary),
+                ),
+                IconButton(
+                  key: const ValueKey('call-pip-end'),
+                  tooltip: l10n.call_end,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onEnd,
+                  icon: Icon(
+                    Icons.call_end_rounded,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
