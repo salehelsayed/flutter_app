@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
+import 'package:flutter_app/features/call/presentation/widgets/call_video_screen_layout.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -20,6 +22,8 @@ class ActiveCallScreen extends StatefulWidget {
     required this.connectedAt,
     required this.now,
     required this.controls,
+    this.videoPresentation,
+    this.onVideoIntent,
   });
 
   final String contactPeerId;
@@ -28,6 +32,8 @@ class ActiveCallScreen extends StatefulWidget {
   final DateTime? connectedAt;
   final DateTime Function() now;
   final CallControls controls;
+  final CallVideoPresentation? videoPresentation;
+  final ValueChanged<CallVideoIntent>? onVideoIntent;
 
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
@@ -85,6 +91,23 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             final useCompactLandscape =
                 constraints.maxWidth > constraints.maxHeight &&
                 constraints.maxHeight < 600;
+
+            final video = widget.videoPresentation;
+            final onVideoIntent = widget.onVideoIntent;
+            if (video != null && video.isVisible && onVideoIntent != null) {
+              return CallVideoScreenLayout(
+                profile: _buildProfile(
+                  colors,
+                  formattedDuration,
+                  compact: useCompactLandscape,
+                ),
+                audioControls: widget.controls,
+                presentation: video,
+                onIntent: onVideoIntent,
+                // Leave room for the root-owned minimize control.
+                topPadding: 56,
+              );
+            }
 
             if (useCompactLandscape) {
               return Padding(

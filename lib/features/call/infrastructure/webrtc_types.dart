@@ -1,6 +1,15 @@
 import 'dart:async';
 
 import '../domain/call_engine.dart';
+import '../domain/call_id.dart';
+import '../domain/call_media.dart';
+
+typedef CallVideoDescriptionValidator =
+    CallSessionDescription Function(
+      CallSessionDescription description,
+      CallMediaKind media,
+      bool local,
+    );
 
 /// Legacy native WebRTC constraints required by flutter_webrtc 1.6.0.
 ///
@@ -181,4 +190,15 @@ abstract interface class WebRtcLocalCandidateSource {
 /// Optional configuration update used before the single bounded ICE restart.
 abstract interface class WebRtcIceServerUpdater {
   Future<void> updateIceServers(List<CallIceServer> iceServers);
+}
+
+/// Optional capability; legacy audio fakes need no video implementation.
+abstract interface class WebRtcVideoSessionFactory {
+  CallVideoSession createVideoSession({
+    required CallId callId,
+    required bool localIsCaller,
+    required bool Function() canApply,
+    required CallVideoDescriptionValidator validateDescription,
+    required Future<void> Function() remoteDescriptionApplied,
+  });
 }

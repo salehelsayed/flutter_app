@@ -70,6 +70,24 @@ final class ResolvedCallEndpoint {
     this.capabilities = const <String>{},
   });
 
+  /// Takes custody of a previously verified endpoint without retaining a
+  /// caller-owned mutable capability set. This does not verify authority.
+  ResolvedCallEndpoint.frozen(ResolvedCallEndpoint endpoint)
+    : this(
+        accountPeerId: endpoint.accountPeerId,
+        devicePeerId: endpoint.devicePeerId,
+        signingPublicKey: endpoint.signingPublicKey,
+        mlKemPublicKey: endpoint.mlKemPublicKey,
+        admissionAuthority: endpoint.admissionAuthority,
+        deviceKeyEpoch: endpoint.deviceKeyEpoch,
+        preferenceEpoch: endpoint.preferenceEpoch,
+        platform: endpoint.platform,
+        expiresAtMs: endpoint.expiresAtMs,
+        routingHandle: endpoint.routingHandle,
+        wakeHandle: endpoint.wakeHandle,
+        capabilities: Set<String>.unmodifiable(endpoint.capabilities),
+      );
+
   final String accountPeerId;
   final String devicePeerId;
   final String signingPublicKey;

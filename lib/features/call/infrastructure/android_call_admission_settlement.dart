@@ -2,7 +2,6 @@ import '../../../core/utils/flow_event_emitter.dart';
 import '../application/handle_incoming_call_signal.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
-import '../domain/call_signal.dart';
 import '../domain/issued_call_wake_handle_store.dart';
 import 'call_signaling_runtime.dart';
 
@@ -111,8 +110,8 @@ Future<CommitCallMailboxSettlement?> prepareAndroidCallAdmissionSettlement({
         signal.recipientDevicePeerId != frame.expectedRecipientDevicePeerId ||
         signal.recipientAccountPeerId != localAccountPeerId ||
         signal.recipientDevicePeerId != localDevicePeerId ||
-        (signal.event != CallSignalType.reject &&
-            signal.event != CallSignalType.terminate)) {
+        (signal.eventWireName != 'reject' &&
+            signal.eventWireName != 'terminate')) {
       _diagnostic('authority', 'rejected');
       return;
     }

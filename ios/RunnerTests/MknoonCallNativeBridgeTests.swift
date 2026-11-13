@@ -31,6 +31,34 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
     XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
   }
 
+  func testPhase4VideoKeysAreOptionalStrictAndInert() throws {
+    let rig = makeBridgeRig()
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil)
+    let handle = callId.uuidString.lowercased()
+    let registration: [String: Any] = ["version": 1, "callHandle": handle, "expiresAtMs": now + 20_000]
+
+    let invalidMedia = try XCTUnwrap(invoke(bridge, "presentAuthenticated", registration.merging(["media": "screen"]) { $1 }) as? FlutterError)
+    XCTAssertEqual(invalidMedia.code, "bad_args")
+    let badVideoFlag = try XCTUnwrap(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true, "video": "yes"]) as? FlutterError)
+    XCTAssertEqual(badVideoFlag.code, "bad_args")
+
+    XCTAssertEqual(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true]) as? Bool, true)
+    XCTAssertFalse(rig.controller.isVideoCapabilityEnabled(), "absent video flag keeps video off")
+    XCTAssertEqual(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true, "video": true]) as? Bool, true)
+    XCTAssertTrue(rig.controller.isVideoCapabilityEnabled())
+
+    XCTAssertEqual(invoke(bridge, "presentAuthenticated", registration.merging(["media": "video"]) { $1 }) as? Bool, true)
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callId), .video)
+    XCTAssertEqual(invoke(bridge, "setCallMedia", ["version": 1, "callHandle": handle, "media": "audio"]) as? Bool, true)
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callId), .audio)
+    let missingMedia = try XCTUnwrap(invoke(bridge, "setCallMedia", identity(handle)) as? FlutterError)
+    XCTAssertEqual(missingMedia.code, "bad_args")
+
+    XCTAssertEqual(invoke(bridge, "setLocalCameraActive", ["version": 1, "callHandle": handle, "active": true]) as? Bool, false,
+                   "iOS grants no camera foreground lease")
+    XCTAssertEqual(invoke(bridge, "setLocalCameraActive", ["version": 1, "callHandle": handle, "active": false]) as? Bool, true)
+  }
+
   func testAudioActivationRefusalHasCoarseReasonAndMayLaterRecover() throws {
     let rig = makeBridgeRig()
     let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })

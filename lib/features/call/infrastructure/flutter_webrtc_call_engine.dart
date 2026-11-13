@@ -6,6 +6,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import '../../../core/utils/flow_event_emitter.dart';
 
 import '../domain/call_engine.dart';
+import '../domain/call_id.dart';
+import '../domain/call_media.dart';
+import 'flutter_webrtc_video_session.dart';
 import '../domain/call_audio_output_device.dart';
 import 'call_audio_route_adapter.dart';
 import 'call_stats_sampler.dart';
@@ -102,13 +105,14 @@ final class FlutterWebRtcFailureStageGuard {
   }
 }
 
-/// The only class that touches the external WebRTC API.
+/// Audio peer adapter; optional video resources have a separate lifetime.
 ///
 final class FlutterWebRtcPeerConnectionAdapter
     implements
         WebRtcPeerConnectionAdapter,
         WebRtcLocalCandidateSource,
-        WebRtcIceServerUpdater {
+        WebRtcIceServerUpdater,
+        WebRtcVideoSessionFactory {
   FlutterWebRtcPeerConnectionAdapter({
     int eventBufferCapacity = 64,
     Duration snapshotReadTimeout = const Duration(seconds: 1),
@@ -117,6 +121,9 @@ final class FlutterWebRtcPeerConnectionAdapter
     this.onDiagnosticSample,
     FlutterWebRtcAndroidAudioFocusConfigurator? configureAndroidAudioFocus,
     FlutterWebRtcPeerConnectionFactory? peerConnectionFactory,
+    this.videoCaptureFactory,
+    this.videoRendererFactory,
+    this.videoStreamFactory,
   }) : assert(eventBufferCapacity > 0),
        assert(snapshotReadTimeout > Duration.zero),
        assert(snapshotDeadlineTimeout > snapshotReadTimeout),
@@ -148,6 +155,38 @@ final class FlutterWebRtcPeerConnectionAdapter
   final List<WebRtcPeerConnectionEvent> _recentEvents =
       <WebRtcPeerConnectionEvent>[];
   static const CallStatsSampler _statsSampler = CallStatsSampler();
+
+  final CallVideoCaptureFactory? videoCaptureFactory;
+  final CallVideoRendererFactory? videoRendererFactory;
+  final CallVideoStreamFactory? videoStreamFactory;
+  FlutterWebRtcVideoSession? _videoSession;
+
+  @override
+  CallVideoSession createVideoSession({
+    required CallId callId,
+    required bool localIsCaller,
+    required bool Function() canApply,
+    required CallVideoDescriptionValidator validateDescription,
+    required Future<void> Function() remoteDescriptionApplied,
+  }) {
+    _requireConnection();
+    if (_videoSession != null) {
+      throw const CallEngineException(
+        CallEngineErrorCode.configurationRejected,
+      );
+    }
+    return _videoSession = FlutterWebRtcVideoSession(
+      callId: callId,
+      localIsCaller: localIsCaller,
+      connection: _requireConnection,
+      canApply: () => !_closed && canApply(),
+      validateDescription: validateDescription,
+      remoteDescriptionApplied: remoteDescriptionApplied,
+      capture: videoCaptureFactory,
+      renderer: videoRendererFactory,
+      videoStream: videoStreamFactory,
+    );
+  }
 
   webrtc.RTCPeerConnection? _peerConnection;
   webrtc.MediaStream? _localStream;
@@ -391,6 +430,11 @@ final class FlutterWebRtcPeerConnectionAdapter
       );
     };
     connection.onTrack = (webrtc.RTCTrackEvent event) {
+      if (event.track.kind == 'video') {
+        event.track.enabled = false;
+        _videoSession?.onRemoteTrack(event);
+        return;
+      }
       if (event.track.kind != 'audio') return;
       _remoteAudioTrack = event.track;
       _remoteTrackLive = true;
@@ -869,6 +913,15 @@ final class FlutterWebRtcPeerConnectionAdapter
 
   Future<void> _closeOnce() async {
     var releaseFailed = false;
+    final video = _videoSession;
+    if (video != null) {
+      try {
+        await video.close();
+        if (!await video.retryCleanup()) releaseFailed = true;
+      } catch (_) {
+        releaseFailed = true;
+      }
+    }
 
     Future<void> attempt(
       Future<void> Function() action,
@@ -1009,6 +1062,7 @@ final class FlutterWebRtcPeerConnectionAdapter
 final class FlutterWebRtcCallEngine
     implements
         CallEngine,
+        CallVideoEngine,
         CallAudioOutputRouteChangeSource,
         CallAudioDevicePort {
   FlutterWebRtcCallEngine({
@@ -1083,6 +1137,74 @@ final class FlutterWebRtcCallEngine
   CallSessionDescription? _remoteDescription;
   CallSessionDescription? _pendingLocalDescription;
   CallSessionDescription? _pendingRemoteDescription;
+
+  @override
+  CallVideoSession bindV2Video({
+    required CallId callId,
+    required bool localIsCaller,
+    required CallWireVersion wireVersion,
+    required bool Function() canApply,
+    bool videoEnabled = false,
+  }) {
+    _requireConnectionCreated();
+    final adapter = _adapter;
+    if (!videoEnabled ||
+        wireVersion != CallWireVersion.v2 ||
+        adapter is! WebRtcVideoSessionFactory ||
+        !canApply()) {
+      throw const CallEngineException(
+        CallEngineErrorCode.configurationRejected,
+      );
+    }
+    return (adapter as WebRtcVideoSessionFactory).createVideoSession(
+      callId: callId,
+      localIsCaller: localIsCaller,
+      canApply: () => !_closed && canApply(),
+      validateDescription: (description, media, local) {
+        final checked = local && description.fingerprint == ''
+            ? _withExtractedFingerprint(description)
+            : description;
+        _validateDescriptionCommon(checked);
+        if (media == CallMediaKind.audio &&
+            !_hasOnlyInactiveVideo(checked.value)) {
+          throw const CallEngineException(
+            CallEngineErrorCode.configurationRejected,
+          );
+        }
+        if (local) _validateLocalDescriptionPrivacy(checked);
+        return checked;
+      },
+      remoteDescriptionApplied: () async {
+        _ensureOpen();
+        _remoteDescriptionSet = true;
+        await _drainDeferredCandidates();
+      },
+    );
+  }
+
+  static bool _hasOnlyInactiveVideo(String sdp) {
+    final sections = sdp.split(RegExp(r'(?=^m=)', multiLine: true));
+    for (final section in sections) {
+      if (!section.startsWith('m=video ')) continue;
+      final lines = section
+          .split(RegExp(r'\r?\n'))
+          .map((line) => line.trim())
+          .toList();
+      final fields = lines.first.split(RegExp(r'\s+'));
+      if (fields.length < 3) return false;
+      if (fields[1] == '0') continue;
+      if (!lines.contains('a=inactive') ||
+          lines.any(
+            (line) =>
+                line == 'a=sendrecv' ||
+                line == 'a=sendonly' ||
+                line == 'a=recvonly',
+          )) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   @override
   Stream<CallEngineEvent> get events => _events.stream;
@@ -1636,6 +1758,10 @@ final class FlutterWebRtcCallEngine
         CallEngineErrorCode.configurationRejected,
       );
     }
+    _validateDescriptionCommon(description);
+  }
+
+  void _validateDescriptionCommon(CallSessionDescription description) {
     final authenticated = _normalizeFingerprint(description.fingerprint);
     final inSdp = _extractFingerprint(description.value);
     if (authenticated != inSdp) {

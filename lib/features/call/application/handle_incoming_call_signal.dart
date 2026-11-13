@@ -11,10 +11,13 @@ import '../domain/call_event.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
+import '../domain/call_wire_signal.dart';
 import '../domain/call_state.dart';
 import '../infrastructure/call_trusted_roster_provider.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
 import 'call_coordinator.dart';
+import 'call_endpoint_resolver.dart';
 import 'call_negotiation_material_store.dart';
 import 'call_network_gate.dart';
 import 'call_signaling_context_store.dart';
@@ -33,6 +36,17 @@ enum IncomingCallSignalOutcome {
   /// page. It is acknowledged without ringing or dispatch.
   superseded,
 }
+
+/// Synchronously adopts authenticated v2 media work into its bounded call-owned
+/// queue. It must not wait for SDP, permission or transport, nor treat a remote
+/// signal as local camera consent. Deferred work has not taken replay custody.
+/// The owner rechecks [canApply] after every await and before each effect.
+typedef AuthenticatedIncomingCallV2MediaHandler =
+    IncomingCallSignalOutcome Function({
+      required CallSignalV2 signal,
+      required String callHandle,
+      required bool Function() canApply,
+    });
 
 /// Flow event recorded once for every incoming call signal that does not end
 /// [IncomingCallSignalOutcome.accepted]. Its details hold fixed codes only:
@@ -56,6 +70,9 @@ abstract final class IncomingCallSignalRefusal {
   static const handlerException = 'handler_exception';
   static const laneSaturated = 'lane_saturated';
   static const runtimeDisposed = 'runtime_disposed';
+  static const videoContextUnavailable = 'video_context_unavailable';
+  static const videoCallNotCurrent = 'video_call_not_current';
+  static const videoMediaOwnerUnavailable = 'video_media_owner_unavailable';
 
   static String negotiationMaterial(
     CallNegotiationMaterialStoreDecision decision,
@@ -117,7 +134,7 @@ final class AuthenticatedIncomingCallTerminal {
   });
 
   final String callHandle;
-  final CallSignal signal;
+  final CallWireSignal signal;
 
   @override
   String toString() => 'AuthenticatedIncomingCallTerminal(redacted)';
@@ -133,13 +150,30 @@ final class IncomingCallMailboxHandlingResult {
   final AuthenticatedIncomingCallTerminal? authenticatedTerminal;
 }
 
+/// Authenticated identity that must match before mailbox page coalescing.
+typedef AuthenticatedIncomingCallBinding = ({
+  String schema,
+  String callHandle,
+  String senderAccountPeerId,
+  String senderDevicePeerId,
+  String recipientAccountPeerId,
+  String recipientDevicePeerId,
+});
+
 /// What a mailbox event is, read without consuming it. Lets a drain see that
 /// a terminal signal follows an invite before either is handled.
 final class IncomingCallSignalPeek {
-  const IncomingCallSignalPeek({required this.callId, required this.event});
+  const IncomingCallSignalPeek({
+    required this.callId,
+    required this.event,
+    this.videoEvent,
+    this.authenticatedBinding,
+  });
 
   final CallId callId;
-  final CallSignalType event;
+  final CallSignalType? event;
+  final CallSignalV2Type? videoEvent;
+  final AuthenticatedIncomingCallBinding? authenticatedBinding;
 
   bool get isInvite => event == CallSignalType.invite;
 
@@ -261,6 +295,11 @@ final class HandleIncomingCallSignal {
     required CallLocalAuthorityProvider localAuthorityProvider,
     required IncomingCallPresenter incomingCallPresenter,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
+    bool videoEnabled = false,
+    Future<ResolvedCallEndpoint> Function(String accountPeerId)?
+    resolveV2Endpoint,
+    int Function()? nowMs,
+    AuthenticatedIncomingCallV2MediaHandler? incomingV2MediaHandler,
     CallNegotiationMaterialStore? negotiationMaterialStore,
     AuthenticatedCallSignalingContextObserver? signalingContextObserver,
     ProvisionalNativeIncomingCallLifecycle? provisionalNativeLifecycle,
@@ -272,6 +311,9 @@ final class HandleIncomingCallSignal {
          codec: codec,
          trustedRosterProvider: trustedRosterProvider,
          localAuthorityProvider: localAuthorityProvider,
+         videoEnabled: videoEnabled,
+         resolveV2Endpoint: resolveV2Endpoint,
+         nowMs: nowMs,
        ),
        _coordinator = coordinator,
        _incomingCallPresenter = incomingCallPresenter,
@@ -282,6 +324,7 @@ final class HandleIncomingCallSignal {
        _androidAuthenticatedContactPresenter =
            androidAuthenticatedContactPresenter,
        _signalingContextObserver = signalingContextObserver,
+       _incomingV2MediaHandler = incomingV2MediaHandler,
        _negotiationMaterialStore =
            negotiationMaterialStore ?? CallNegotiationMaterialStore();
 
@@ -295,15 +338,17 @@ final class HandleIncomingCallSignal {
   final AndroidAuthenticatedContactPresenter?
   _androidAuthenticatedContactPresenter;
   final AuthenticatedCallSignalingContextObserver? _signalingContextObserver;
+  final AuthenticatedIncomingCallV2MediaHandler? _incomingV2MediaHandler;
   final CallNegotiationMaterialStore _negotiationMaterialStore;
+  CallId? _retiringMediaCallId;
 
   /// Authenticates [frame] and reports its call and event without consuming
   /// it: the replay reservation is rolled back so [handle] can admit the same
   /// envelope afterwards. Any failure reads as null.
   Future<IncomingCallSignalPeek?> peek(IncomingCallSignalFrame frame) async {
-    AuthenticatedIncomingCallAdmission admitted;
+    AuthenticatedIncomingCallWireAdmission admitted;
     try {
-      admitted = await _admission.authenticateSignal(
+      admitted = await _admission.authenticateVersionedSignal(
         envelopeJson: frame.envelopeJson,
         authenticatedTransportPeerId: frame.authenticatedTransportPeerId,
         expectedCallHandle: frame.expectedCallHandle,
@@ -317,7 +362,19 @@ final class HandleIncomingCallSignal {
     try {
       return IncomingCallSignalPeek(
         callId: admitted.signal.callId,
-        event: admitted.signal.event,
+        event: _commonEvent(admitted.signal),
+        videoEvent: switch (admitted.signal) {
+          CallSignalV2(:final event) => event,
+          _ => null,
+        },
+        authenticatedBinding: (
+          schema: admitted.signal.wireSchema,
+          callHandle: admitted.callHandle,
+          senderAccountPeerId: admitted.signal.senderAccountPeerId,
+          senderDevicePeerId: admitted.signal.senderDevicePeerId,
+          recipientAccountPeerId: admitted.signal.recipientAccountPeerId,
+          recipientDevicePeerId: admitted.signal.recipientDevicePeerId,
+        ),
       );
     } finally {
       admitted.rollbackReplay();
@@ -391,9 +448,9 @@ final class HandleIncomingCallSignal {
       );
     }
 
-    AuthenticatedIncomingCallAdmission? admitted;
+    AuthenticatedIncomingCallWireAdmission? admitted;
     CallNegotiationMaterial? stagedMaterial;
-    CallSignal? capturedSignal;
+    CallWireSignal? capturedSignal;
     CallSignalType? authenticatedEvent;
 
     IncomingCallSignalOutcome settle(
@@ -417,7 +474,7 @@ final class HandleIncomingCallSignal {
     }
 
     try {
-      admitted = await _admission.authenticateSignal(
+      admitted = await _admission.authenticateVersionedSignal(
         envelopeJson: frame.envelopeJson,
         authenticatedTransportPeerId: frame.authenticatedTransportPeerId,
         expectedCallHandle: frame.expectedCallHandle,
@@ -426,7 +483,8 @@ final class HandleIncomingCallSignal {
         expectedRecipientDevicePeerId: frame.expectedRecipientDevicePeerId,
       );
       final signal = admitted.signal;
-      authenticatedEvent = signal.event;
+      final event = _commonEvent(signal);
+      authenticatedEvent = event;
       final diagnostics = CallDiagnostics.instance;
       final existingTrace = diagnostics.traceForCall(
         callId: signal.callId.value,
@@ -434,7 +492,7 @@ final class HandleIncomingCallSignal {
       );
       final traceId =
           existingTrace ??
-          (signal.event == CallSignalType.invite
+          (event == CallSignalType.invite
               ? diagnostics.beginAttempt(role: 'callee')
               : null);
       if (traceId != null) {
@@ -443,7 +501,7 @@ final class HandleIncomingCallSignal {
           callHandle: admitted.callHandle,
           traceId: traceId,
           role:
-              signal.event == CallSignalType.invite ||
+              event == CallSignalType.invite ||
                   _coordinator.activeSession?.direction ==
                       CallDirection.incoming
               ? 'callee'
@@ -455,7 +513,7 @@ final class HandleIncomingCallSignal {
           outcome: 'ok',
           traceId: traceId,
         );
-        if (signal.event == CallSignalType.invite && existingTrace == null) {
+        if (event == CallSignalType.invite && existingTrace == null) {
           final callHandle = admitted.callHandle;
           unawaited(
             diagnostics.resolveTraceForCall(callHandle: callHandle).then((
@@ -474,7 +532,7 @@ final class HandleIncomingCallSignal {
         }
       }
 
-      if (signal.event == CallSignalType.invite && frame.terminalFollows) {
+      if (event == CallSignalType.invite && frame.terminalFollows) {
         // Ringing now would announce a call that is already over. The
         // terminal signal behind this invite still retires any native
         // presentation the wake made for it.
@@ -490,24 +548,109 @@ final class HandleIncomingCallSignal {
         );
       }
 
-      _signalingContextObserver?.captureAuthenticated(
-        signal: signal,
-        callHandle: admitted.callHandle,
-        admissionAuthority: admitted.admissionAuthority,
-      );
+      if (signal is CallSignalV2) {
+        final terminal =
+            event == CallSignalType.reject || event == CallSignalType.terminate;
+        if (!terminal && _isTerminalCall(signal.callId)) {
+          // Do this before context capture. A late accept/offer must not
+          // recreate signaling authority after canonical terminal cleanup.
+          admitted.commitReplay();
+          return settle(
+            IncomingCallSignalOutcome.duplicate,
+            IncomingCallSignalRefusal.coordinator(CallEventDecision.ignored),
+            reduction: CallReductionReason.terminalDominates,
+          );
+        }
+        if (_isV2Media(signal.event) && !_canApplyV2Media(signal)) {
+          admitted.commitReplay();
+          return settle(
+            IncomingCallSignalOutcome.rejected,
+            IncomingCallSignalRefusal.videoCallNotCurrent,
+          );
+        }
+        final observer = _signalingContextObserver;
+        if (observer is! AuthenticatedCallSignalingContextObserverV2) {
+          admitted.commitReplay();
+          return settle(
+            IncomingCallSignalOutcome.rejected,
+            IncomingCallSignalRefusal.videoContextUnavailable,
+          );
+        }
+        try {
+          observer.captureAuthenticatedV2(
+            signal: signal,
+            callHandle: admitted.callHandle,
+            admissionAuthority: admitted.admissionAuthority,
+            admittedEndpoint: (admitted as AuthenticatedIncomingCallAdmissionV2)
+                .admittedEndpoint,
+          );
+        } on CallSignalingContextException catch (error) {
+          // Capacity may recover. A binding/version/order refusal cannot be
+          // made valid by replaying the same authenticated frame forever.
+          if (error.code == CallSignalingContextErrorCode.capacityExceeded) {
+            rethrow;
+          }
+          admitted.commitReplay();
+          return settle(
+            IncomingCallSignalOutcome.rejected,
+            'video_context_${error.code.name}',
+          );
+        }
+      } else {
+        _signalingContextObserver?.captureAuthenticated(
+          signal: signal as CallSignal,
+          callHandle: admitted.callHandle,
+          admissionAuthority: admitted.admissionAuthority,
+        );
+      }
       capturedSignal = signal;
+
+      if (signal is CallSignalV2 && _isV2Media(signal.event)) {
+        final owner = _incomingV2MediaHandler;
+        if (owner == null) {
+          admitted.commitReplay();
+          return settle(
+            IncomingCallSignalOutcome.rejected,
+            IncomingCallSignalRefusal.videoMediaOwnerUnavailable,
+          );
+        }
+        var retired = false;
+        bool canApply() {
+          if (retired) return false;
+          retired = !_canApplyV2Media(signal);
+          return !retired;
+        }
+
+        // Only queue admission is synchronous. The media owner owns its
+        // bounded work, transaction fences and async error handling. No v2
+        // SDP/switch event may reach the legacy audio failure reducer path.
+        final result = owner(
+          signal: signal,
+          callHandle: admitted.callHandle,
+          canApply: canApply,
+        );
+        final outcome = result == IncomingCallSignalOutcome.superseded
+            ? IncomingCallSignalOutcome.rejected
+            : result;
+        if (outcome == IncomingCallSignalOutcome.deferred) {
+          admitted.rollbackReplay();
+        } else {
+          admitted.commitReplay();
+        }
+        return settle(outcome, 'video_media_${outcome.name}');
+      }
       // A PushKit-first call already has a native descriptor, so the verified
       // name lands now; a Dart-first call gets its descriptor in `present`
       // below and is retried right after it (see contactNameApplied).
       var contactNameApplied = false;
-      if (signal.event == CallSignalType.invite) {
+      if (event == CallSignalType.invite) {
         contactNameApplied = await _updateAuthenticatedContactSafely(
           admitted.callHandle,
           signal.senderAccountPeerId,
         );
       }
 
-      if (_hasNegotiationMaterial(signal.event)) {
+      if (signal is CallSignal && _hasNegotiationMaterial(signal.event)) {
         stagedMaterial = CallNegotiationMaterial.fromSignal(signal);
         final storeDecision = _negotiationMaterialStore.store(stagedMaterial);
         if (storeDecision != CallNegotiationMaterialStoreDecision.stored) {
@@ -522,27 +665,30 @@ final class HandleIncomingCallSignal {
       }
 
       final isAuthenticatedRemoteTerminal =
-          signal.event == CallSignalType.reject ||
-          signal.event == CallSignalType.terminate;
+          event == CallSignalType.reject || event == CallSignalType.terminate;
       if (isAuthenticatedRemoteTerminal) {
+        if (_coordinator.activeSession?.callId == signal.callId) {
+          // Stop adopted v2 effects immediately, including while the native
+          // remote-cancel call below is still awaiting its bounded cleanup.
+          _retiringMediaCallId = signal.callId;
+        }
         // CallKit's snapshot subscriber projects terminal coordinator state as
         // a generic end. Retire the authenticated native presentation first so
         // the OS records the authoritative remote-cancel reason instead.
         await _remoteCancelSafely(
           admitted.callHandle,
-          'signal_${signal.event.wireName}',
+          'signal_${signal.eventWireName}',
         );
       }
       // Media preparation can wait for permission or TURN. Once admitted,
       // release the inbound lane so a subsequent remote hang-up can interrupt
       // it. The coordinator still owns effect failures and terminal cleanup.
       final admission =
-          signal.event == CallSignalType.accept ||
-              signal.event == CallSignalType.offer
+          event == CallSignalType.accept || event == CallSignalType.offer
           ? Completer<CallReduction>()
           : null;
       final dispatch = _coordinator.dispatch(
-        _toCoordinatorEvent(signal, frame.route),
+        _toCoordinatorEvent(signal, event!, frame.route),
         onApplied: admission?.complete,
       );
       // A valid terminal dispatch requests interruption synchronously; keep
@@ -559,7 +705,7 @@ final class HandleIncomingCallSignal {
             ]));
       _settleNegotiationMaterial(stagedMaterial, reduction);
       final initialOutcome = _outcome(reduction);
-      if (signal.event != CallSignalType.invite) {
+      if (event != CallSignalType.invite) {
         admitted.commitReplay();
         if (isAuthenticatedRemoteTerminal &&
             frame.route == CallRouteClass.ephemeralMailbox &&
@@ -757,7 +903,7 @@ final class HandleIncomingCallSignal {
         );
       }
 
-      if (!contactNameApplied && signal.event == CallSignalType.invite) {
+      if (!contactNameApplied && event == CallSignalType.invite) {
         // The presentation created the native descriptor: apply the verified
         // caller name now so CallKit never stays on the generic label.
         await _updateAuthenticatedContactSafely(
@@ -765,7 +911,7 @@ final class HandleIncomingCallSignal {
           signal.senderAccountPeerId,
         );
       }
-      if (signal.event == CallSignalType.invite) {
+      if (event == CallSignalType.invite) {
         // Android may have no foreground Flutter view while its process is in
         // the background. The authenticated native notification still needs
         // the local contact name after the descriptor has been presented.
@@ -830,7 +976,7 @@ final class HandleIncomingCallSignal {
   }
 
   bool _shouldPurgeSignalingContext(
-    CallSignal signal,
+    CallWireSignal signal,
     IncomingCallSignalOutcome outcome,
   ) {
     final live = _coordinator.activeSession;
@@ -842,8 +988,8 @@ final class HandleIncomingCallSignal {
       return false;
     }
     if (outcome == IncomingCallSignalOutcome.rejected ||
-        signal.event == CallSignalType.reject ||
-        signal.event == CallSignalType.terminate) {
+        signal.eventWireName == 'reject' ||
+        signal.eventWireName == 'terminate') {
       return true;
     }
     final active = _coordinator.activeSession;
@@ -964,19 +1110,72 @@ final class HandleIncomingCallSignal {
     }
   }
 
+  bool _isTerminalCall(CallId callId) =>
+      _retiringMediaCallId == callId ||
+      _coordinator.isTerminalCall(callId) ||
+      (_coordinator.activeSession?.callId == callId &&
+          (_coordinator.activeSession?.isTerminal == true ||
+              _coordinator.activeSession?.state == CallState.ending));
+
+  bool _canApplyV2Media(CallSignalV2 signal) {
+    final active = _coordinator.activeSession;
+    return active != null &&
+        !active.isTerminal &&
+        active.state != CallState.ending &&
+        _retiringMediaCallId != signal.callId &&
+        active.callId == signal.callId &&
+        active.contactPeerId == signal.senderAccountPeerId &&
+        (active.direction == CallDirection.incoming
+            ? active.callerAccountPeerId == signal.senderAccountPeerId &&
+                  active.callerDeviceId == signal.senderDevicePeerId
+            : active.callerAccountPeerId == signal.recipientAccountPeerId &&
+                  active.callerDeviceId == signal.recipientDevicePeerId) &&
+        _coordinator.clock().millisecondsSinceEpoch < signal.expiresAtMs;
+  }
+
+  static bool _isV2Media(CallSignalV2Type event) => switch (event) {
+    CallSignalV2Type.invite ||
+    CallSignalV2Type.ringing ||
+    CallSignalV2Type.accept ||
+    CallSignalV2Type.reject ||
+    CallSignalV2Type.terminate => false,
+    _ => true,
+  };
+
+  // Shared lifecycle names map to canonical reducer events; payloads remain
+  // strictly typed v1/v2 and are never reparsed as the other wire version.
+  static CallSignalType? _commonEvent(CallWireSignal signal) =>
+      switch (signal) {
+        CallSignal(:final event) => event,
+        CallSignalV2(:final event) => switch (event) {
+          CallSignalV2Type.invite => CallSignalType.invite,
+          CallSignalV2Type.ringing => CallSignalType.ringing,
+          CallSignalV2Type.accept => CallSignalType.accept,
+          CallSignalV2Type.reject => CallSignalType.reject,
+          CallSignalV2Type.terminate => CallSignalType.terminate,
+          CallSignalV2Type.offer => CallSignalType.offer,
+          CallSignalV2Type.answer => CallSignalType.answer,
+          CallSignalV2Type.ice => CallSignalType.ice,
+          CallSignalV2Type.iceRestart => CallSignalType.iceRestart,
+          _ => null,
+        },
+        _ => null,
+      };
+
   static bool _canResumeIncomingInvite(
     CallSessionSnapshot? active,
-    CallSignal signal,
+    CallWireSignal signal,
   ) =>
       active?.callId == signal.callId &&
       active?.direction == CallDirection.incoming &&
       active?.state == CallState.incomingValidating;
 
   static CallEvent _toCoordinatorEvent(
-    CallSignal signal,
+    CallWireSignal signal,
+    CallSignalType event,
     CallRouteClass route,
   ) => CallEvent(
-    type: switch (signal.event) {
+    type: switch (event) {
       CallSignalType.invite => CallEventType.remoteInvite,
       CallSignalType.ringing => CallEventType.remoteRinging,
       CallSignalType.accept => CallEventType.remoteAccept,
@@ -1001,12 +1200,12 @@ final class HandleIncomingCallSignal {
     ),
     admission: IncomingCallAdmission.accepted,
     endReason: _endReason(signal),
-    candidateId: signal.event == CallSignalType.ice ? signal.messageId : null,
+    candidateId: event == CallSignalType.ice ? signal.messageId : null,
     transportRoute: route,
   );
 
   static CallEvent _derivedEvent(
-    CallSignal signal,
+    CallWireSignal signal,
     CallEventType type,
     String suffix,
     CallRouteClass route,
@@ -1028,7 +1227,7 @@ final class HandleIncomingCallSignal {
     transportRoute: route,
   );
 
-  static DateTime _occurredAt(CallSignal signal) =>
+  static DateTime _occurredAt(CallWireSignal signal) =>
       DateTime.fromMillisecondsSinceEpoch(signal.createdAtMs, isUtc: true);
 
   static bool _hasNegotiationMaterial(CallSignalType type) => switch (type) {
@@ -1074,9 +1273,9 @@ final class HandleIncomingCallSignal {
     }
   }
 
-  static CallEndReason? _endReason(CallSignal signal) {
-    if (signal.event != CallSignalType.reject &&
-        signal.event != CallSignalType.terminate) {
+  static CallEndReason? _endReason(CallWireSignal signal) {
+    if (signal.eventWireName != 'reject' &&
+        signal.eventWireName != 'terminate') {
       return null;
     }
     return CallEndReason.parseWire(signal.payload['reason']! as String);

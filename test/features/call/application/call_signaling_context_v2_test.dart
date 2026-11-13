@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -127,9 +129,151 @@ void _outgoing(CallSignalingContextStore store, {String media = 'video'}) =>
       callHandle: _handle,
     );
 
+ResolvedCallEndpoint _endpoint({
+  String account = 'remote-account',
+  String device = 'remote-device',
+  int epoch = 1,
+  Set<String> capabilities = const {'voice_call_v1', 'video_call_v2'},
+}) => ResolvedCallEndpoint(
+  accountPeerId: account,
+  devicePeerId: device,
+  signingPublicKey: 'original-signing-key',
+  mlKemPublicKey: 'original-kem-key',
+  deviceKeyEpoch: epoch,
+  preferenceEpoch: 1,
+  platform: CallEndpointPlatform.android,
+  expiresAtMs: 46000,
+  routingHandle: '0123456789abcdef0123456789abcdef',
+  wakeHandle: 'fedcba9876543210fedcba9876543210',
+  capabilities: capabilities,
+);
+
 void main() {
   late CallSignalingContextStore store;
   setUp(() => store = CallSignalingContextStore(videoEnabled: true));
+
+  for (final outgoing in [false, true]) {
+    test(
+      'U3h original endpoint is frozen and survives v1 pin churn outgoing=$outgoing',
+      () {
+        final caps = <String>{'voice_call_v1', 'video_call_v2'};
+        final endpoint = _endpoint(capabilities: caps);
+        final invite = _v2(outgoing: outgoing);
+        if (outgoing) {
+          store.storeOutgoingV2(
+            invite: invite,
+            callHandle: _handle,
+            admittedEndpoint: endpoint,
+          );
+        } else {
+          store.captureAuthenticatedV2(
+            signal: invite,
+            callHandle: _handle,
+            admittedEndpoint: endpoint,
+          );
+        }
+        caps.clear();
+        store.pinEndpoint(_call, _endpoint(epoch: 2));
+        final original = store.admittedV2Endpoint(_call)!;
+        expect(original.deviceKeyEpoch, 1);
+        expect(original.capabilities, {'voice_call_v1', 'video_call_v2'});
+        expect(() => original.capabilities.clear(), throwsUnsupportedError);
+        expect(
+          store.read(_call).toString(),
+          isNot(contains('original-signing-key')),
+        );
+        if (outgoing) {
+          store.storeOutgoingV2(invite: invite, callHandle: _handle);
+        } else {
+          store.captureAuthenticatedV2(
+            signal: _v2(event: 'ringing', sequence: 2),
+            callHandle: _handle,
+          );
+        }
+        expect(store.admittedV2Endpoint(_call), same(original));
+        store.purge(_call);
+        expect(store.admittedV2Endpoint(_call), isNull);
+        expect(store.pinnedEndpoint(_call), isNull);
+      },
+    );
+
+    test('U3h cannot replace original endpoint outgoing=$outgoing', () {
+      final invite = _v2(outgoing: outgoing);
+      void capture(ResolvedCallEndpoint endpoint) {
+        if (outgoing) {
+          store.storeOutgoingV2(
+            invite: invite,
+            callHandle: _handle,
+            admittedEndpoint: endpoint,
+          );
+        } else {
+          store.captureAuthenticatedV2(
+            signal: invite,
+            callHandle: _handle,
+            admittedEndpoint: endpoint,
+          );
+        }
+      }
+
+      capture(_endpoint());
+      expect(
+        () => capture(_endpoint(epoch: 2)),
+        _refused(CallSignalingContextErrorCode.bindingConflict),
+      );
+      expect(store.admittedV2Endpoint(_call)?.deviceKeyEpoch, 1);
+    });
+
+    test(
+      'U3h cannot retrofit an endpoint after authentication-only capture outgoing=$outgoing',
+      () {
+        final invite = _v2(outgoing: outgoing);
+        if (outgoing) {
+          store.storeOutgoingV2(invite: invite, callHandle: _handle);
+          expect(
+            () => store.storeOutgoingV2(
+              invite: invite,
+              callHandle: _handle,
+              admittedEndpoint: _endpoint(),
+            ),
+            _refused(CallSignalingContextErrorCode.bindingConflict),
+          );
+        } else {
+          store.captureAuthenticatedV2(signal: invite, callHandle: _handle);
+          expect(
+            () => store.captureAuthenticatedV2(
+              signal: invite,
+              callHandle: _handle,
+              admittedEndpoint: _endpoint(),
+            ),
+            _refused(CallSignalingContextErrorCode.bindingConflict),
+          );
+        }
+        expect(store.admittedV2Endpoint(_call), isNull);
+      },
+    );
+  }
+
+  for (final endpoint in [
+    _endpoint(account: 'wrong-account'),
+    _endpoint(device: 'wrong-device'),
+    _endpoint(capabilities: {'voice_call_v1'}),
+  ]) {
+    test(
+      'U3h rejects endpoint binding before context creation ${endpoint.accountPeerId}/${endpoint.devicePeerId}/${endpoint.capabilities.length}',
+      () {
+        expect(
+          () => store.captureAuthenticatedV2(
+            signal: _v2(),
+            callHandle: _handle,
+            admittedEndpoint: endpoint,
+          ),
+          _refused(CallSignalingContextErrorCode.bindingConflict),
+        );
+        expect(store.length, 0);
+        expect(store.admittedV2Endpoint(_call), isNull);
+      },
+    );
+  }
 
   test('video production and local flags are independently default off', () {
     expect(defaultVoiceCallFeatureFlags()['video_call_v2_enabled'], isFalse);

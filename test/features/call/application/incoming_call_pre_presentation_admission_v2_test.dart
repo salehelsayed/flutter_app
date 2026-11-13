@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'dart:convert';
 
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
@@ -78,6 +79,7 @@ const _trusted = TrustedCallDeviceAuthority(
 Future<_Fixture> _fixture({
   bool? videoEnabled = true,
   bool codecEnabled = true,
+  bool bindEndpoint = false,
   bool legacy = false,
   String eventName = 'invite',
   Map<String, Object?>? inner,
@@ -104,6 +106,7 @@ Future<_Fixture> _fixture({
         );
   return _Fixture(
     crypto: crypto,
+    bindEndpoint: bindEndpoint,
     codecEnabled: codecEnabled,
     videoEnabled: videoEnabled,
     event: CallMailboxEvent(
@@ -123,6 +126,7 @@ final class _Fixture {
     required this.crypto,
     required this.event,
     required bool codecEnabled,
+    required bool bindEndpoint,
     required bool? videoEnabled,
   }) {
     final codec = SecureCallEnvelopeCodec(
@@ -147,6 +151,8 @@ final class _Fixture {
             trustedRosterProvider: roster,
             localAuthorityProvider: local,
             videoEnabled: videoEnabled,
+            resolveV2Endpoint: bindEndpoint ? resolveEndpoint : null,
+            nowMs: () => now,
           );
   }
 
@@ -156,6 +162,19 @@ final class _Fixture {
   late final IncomingCallPrePresentationAdmission admission;
   int now = _now;
   int localLoads = 0;
+  int endpointLoads = 0;
+  ResolvedCallEndpoint endpoint = _endpoint();
+  Object? endpointError;
+  Future<void> Function()? beforeEndpoint;
+
+  Future<ResolvedCallEndpoint> resolveEndpoint(String account) async {
+    expect(account, 'sender-account');
+    endpointLoads++;
+    await beforeEndpoint?.call();
+    if (endpointError case final Object error) throw error;
+    return endpoint;
+  }
+
   bool localThrows = false;
   CallLocalDeviceAuthority localAuthority = const CallLocalDeviceAuthority(
     accountPeerId: 'recipient-account',
@@ -256,7 +275,137 @@ final class _Crypto implements CallEnvelopeCrypto {
   }
 }
 
+ResolvedCallEndpoint _endpoint({
+  String account = 'sender-account',
+  String device = 'sender-device',
+  String signing = 'fixture-signing-key',
+  String kem = 'sender-kem',
+  int epoch = 1,
+  int expires = _now + 45000,
+  CallAdmissionAuthorityWitness? witness = _witness,
+  Set<String> capabilities = const {'voice_call_v1', 'video_call_v2'},
+}) => ResolvedCallEndpoint(
+  accountPeerId: account,
+  devicePeerId: device,
+  signingPublicKey: signing,
+  mlKemPublicKey: kem,
+  deviceKeyEpoch: epoch,
+  preferenceEpoch: 1,
+  admissionAuthority: witness,
+  platform: CallEndpointPlatform.android,
+  expiresAtMs: expires,
+  routingHandle: '0123456789abcdef0123456789abcdef',
+  wakeHandle: 'fedcba9876543210fedcba9876543210',
+  capabilities: capabilities,
+);
+
 void main() {
+  for (final mailbox in [false, true]) {
+    test(
+      'U3h freezes signed endpoint at authenticated invite admission mailbox=$mailbox',
+      () async {
+        final f = await _fixture(bindEndpoint: true);
+        final caps = <String>{'voice_call_v1', 'video_call_v2'};
+        f.endpoint = _endpoint(capabilities: caps);
+        final result =
+            (mailbox ? await f.mailbox() : await f.direct())
+                as AuthenticatedIncomingCallAdmissionV2;
+        expect(f.endpointLoads, 1);
+        caps.clear();
+        expect(result.admittedEndpoint?.capabilities, {
+          'voice_call_v1',
+          'video_call_v2',
+        });
+        expect(result.admittedEndpoint?.admissionAuthority, _witness);
+        expect(
+          () => result.admittedEndpoint!.capabilities.clear(),
+          throwsUnsupportedError,
+        );
+        expect(result.toString(), isNot(contains('fixture-signing-key')));
+        result.rollbackReplay();
+      },
+    );
+  }
+
+  final mismatches = <String, ResolvedCallEndpoint>{
+    'account': _endpoint(account: 'other-account'),
+    'device': _endpoint(device: 'other-device'),
+    'signing key': _endpoint(signing: 'other-key'),
+    'KEM key': _endpoint(kem: 'other-kem'),
+    'key epoch': _endpoint(epoch: 2),
+    'relationship': _endpoint(
+      witness: (fingerprint: 'other', relationshipRevision: 8),
+    ),
+    'expired': _endpoint(expires: _now),
+    'missing voice': _endpoint(capabilities: {'video_call_v2'}),
+    'missing video': _endpoint(capabilities: {'voice_call_v1'}),
+  };
+  for (final entry in mismatches.entries) {
+    test(
+      'U3h refuses authenticated invite endpoint ${entry.key} and commits replay',
+      () async {
+        final f = await _fixture(bindEndpoint: true);
+        f.endpoint = entry.value;
+        await expectLater(
+          f.direct(),
+          _failure(
+            IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+          ),
+        );
+        f.endpoint = _endpoint();
+        await expectLater(
+          f.direct(),
+          _failure(IncomingCallPrePresentationAdmissionFailureCode.duplicate),
+        );
+      },
+    );
+  }
+
+  test(
+    'U3h transient endpoint lookup rolls back replay for fresh admission',
+    () async {
+      final f = await _fixture(bindEndpoint: true);
+      f.endpointError = const CallEndpointResolutionException(
+        CallEndpointResolutionCode.unavailable,
+      );
+      await expectLater(
+        f.direct(),
+        _failure(IncomingCallPrePresentationAdmissionFailureCode.deferred),
+      );
+      f.endpointError = null;
+      final result = await f.direct() as AuthenticatedIncomingCallAdmissionV2;
+      expect(result.admittedEndpoint, isNotNull);
+      expect(f.endpointLoads, 2);
+      result.rollbackReplay();
+    },
+  );
+
+  test('U3h invite expiry is rechecked after endpoint await', () async {
+    final f = await _fixture(bindEndpoint: true);
+    f.beforeEndpoint = () async {
+      f.now += 45000;
+    };
+    await expectLater(
+      f.direct(),
+      _failure(IncomingCallPrePresentationAdmissionFailureCode.permanentReject),
+    );
+    expect(f.endpointLoads, 1);
+  });
+
+  for (final event in ['terminate', 'reject', 'accept']) {
+    test(
+      'U3h authenticated $event does not depend on a fresh invite endpoint',
+      () async {
+        final f = await _fixture(bindEndpoint: true, eventName: event);
+        f.endpointError = StateError('directory offline');
+        final result = await f.direct() as AuthenticatedIncomingCallAdmissionV2;
+        expect(f.endpointLoads, 0);
+        expect(result.admittedEndpoint, isNull);
+        result.rollbackReplay();
+      },
+    );
+  }
+
   for (final event in ['ringing', 'accept', 'camera_state']) {
     test('U3d direct $event authenticates without presenting a call', () async {
       final f = await _fixture(eventName: event);
