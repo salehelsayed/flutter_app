@@ -9087,6 +9087,26 @@ visible and cannot become an ordinary first-attempt PASS.
   `bootstrap-preservation-fix-staging/source-fingerprint-proof.json`,
   `sticker-core-boundary-current-main-host-run/bootstrap-1.raw.log` and
   `sticker-core-bootstrap-push-setup-focused-verdict.json`.
+  BL-24C's retry-marker callbacks (`4d21b6bcb`, three bootstrap lines) change
+  both bootstrap pins; batch 3 re-pinned them in `105f6e34f`. The same C change
+  also moves the Conversation message-adapter placement pin
+  (`dtr18_placement_closure_contract_test.dart`, `d97c36e6f`). A census of every
+  test that reads a changed `lib/` file by path and hashes it must run before
+  the lanes start; it found that placement pin, which the bootstrap-only review
+  missed. Batch 4's BL-24 D1 receipt drain (`4b24b6ae6`, `93b733f44`,
+  `2d2d18f84`) and E2 dormant key-exchange retries (`0163ad0b3`) change four
+  pins: resume orchestration, application root, bootstrap without the
+  historical callback, and the full normalized bootstrap
+  (`_productionBootstrapNormalizedSha256`). D1 also adds one reviewed resume
+  importer, `delivery_receipt_outbox_sqlite_test.dart`, to
+  `_resumeDirectiveFiles`. Each DTR-18 case stops at its first failing expect,
+  so a first re-pin round (`d1f87e05a`) hid the full-bootstrap pin and the
+  importer set; the follow-up `d2d5557ff` closes both. All 25 URI rewrites and
+  the single historical notification callback stay unchanged, and the eight
+  layering plus placement cases pass on `d2d5557ff`. Retain the first outcomes
+  (`d1f87e05a`: resume line 725 and Posts line 792) under
+  `.codex-test-logs/batch4-20261112/` and Codex's verdict under
+  `~/.codex/investigations/batch4-dtr18-repin-review-20261113-m9a15cbf3/`.
 
 - **Post notification readiness:** the active-direct-contact listener test waits
   with its existing bounded `_until` helper for the observable notification before
