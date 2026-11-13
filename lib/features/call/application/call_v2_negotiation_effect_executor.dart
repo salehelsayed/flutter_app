@@ -118,6 +118,9 @@ final class CallV2NegotiationEffectExecutor
   int? _recoveryIngressEpisode;
   int? _observedReconnectGeneration;
   int? _observedReconnectDeadlineMs;
+  CallVideoNegotiation? _remoteCameraToken;
+  CallCameraState _remoteCamera = CallCameraState.off;
+  int _remoteCameraSequence = -1;
 
   /// Receives the original canonical timer observation before recovery effects.
   void observeReconnectTimer(
@@ -642,12 +645,74 @@ final class CallV2NegotiationEffectExecutor
   CallVideoSession? get videoSession => _session;
   CallVideoNegotiation? get negotiation => _token;
 
-  CallCameraState get remoteCamera => CallCameraState.off;
+  /// Authenticated presentation hint for the current committed video token.
+  /// It never authorizes local capture and disappears with that token's gates.
+  CallCameraState get remoteCamera {
+    final token = _currentCameraToken;
+    return token != null && identical(token, _remoteCameraToken)
+        ? _remoteCamera
+        : CallCameraState.off;
+  }
 
+  CallVideoNegotiation? get _currentCameraToken {
+    final token = _token;
+    if (!current ||
+        !_candidateReady ||
+        token == null ||
+        token.media != CallMediaKind.video ||
+        (_switch?.machine.settledMedia ?? token.media) != CallMediaKind.video ||
+        (_switch?.machine.settledRevision ?? token.mediaRevision) !=
+            token.mediaRevision) {
+      return null;
+    }
+    return token;
+  }
+
+  /// Publishes an already-owned camera state through the existing bounded
+  /// signaling custody. The foreground owner retains permission/lease checks;
+  /// this operation does not start capture or change the media agreement.
   Future<bool> publishLocalCameraState(
     CallCameraState state, {
     required bool Function() canApply,
-  }) async => false;
+  }) async {
+    final token = _currentCameraToken;
+    if (token == null || !_allowed(canApply)) return false;
+    try {
+      return await _sendOptional(
+        key: 'camera:${idSource()}',
+        event: CallSignalV2Type.cameraState,
+        payload: {'media_revision': token.mediaRevision, 'state': state.name},
+        deadlineMs: _monotonicMs + 30000,
+        canApply: () =>
+            identical(token, _currentCameraToken) && _allowed(canApply),
+      );
+    } catch (_) {
+      // A presentation hint failure cannot end the live audio call.
+      return false;
+    }
+  }
+
+  IncomingCallSignalOutcome _handleCameraState(CallSignalV2 signal) {
+    final token = _currentCameraToken;
+    if (token == null ||
+        signal.payload['media_revision'] != token.mediaRevision ||
+        (identical(token, _remoteCameraToken) &&
+            signal.senderSequence <= _remoteCameraSequence)) {
+      return IncomingCallSignalOutcome.rejected;
+    }
+    _remoteCameraToken = token;
+    _remoteCameraSequence = signal.senderSequence;
+    _remoteCamera = CallCameraState.values.byName(
+      signal.payload['state']! as String,
+    );
+    _seenIncoming.add(signal.messageId);
+    try {
+      onMediaChanged?.call();
+    } catch (_) {
+      // Presentation observers cannot change authenticated message custody.
+    }
+    return IncomingCallSignalOutcome.accepted;
+  }
 
   /// Completes after currently adopted jobs and canonical dispatch settle.
   /// ICE awaiting a future description remains bounded without blocking this.
@@ -775,6 +840,9 @@ final class CallV2NegotiationEffectExecutor
       return IncomingCallSignalOutcome.deferred;
     }
     final work = _V2MediaWork(signal, callHandle, canApply);
+    if (_initialCommitted && signal.event == CallSignalV2Type.cameraState) {
+      return _handleCameraState(signal);
+    }
     if (_initialCommitted && signal.event != CallSignalV2Type.ice) {
       return _handleSwitch(work);
     }

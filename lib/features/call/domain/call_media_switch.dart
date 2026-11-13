@@ -177,7 +177,9 @@ final class CallMediaSwitchMachine {
   bool get terminal => _terminal;
   bool get requiresReconciliation => _requiresReconciliation;
   String? get currentSwitchId => _current?.request.id;
-  MediaSwitchRequest? get currentRequest => null;
+
+  /// The existing immutable request; reading it does not advance the machine.
+  MediaSwitchRequest? get currentRequest => _current?.request;
   String? get selectedSwitchId => _latestSelected?.request.id;
   MediaSwitchPhase? get phase => _current?.phase;
   int? get stageDeadlineMs =>
