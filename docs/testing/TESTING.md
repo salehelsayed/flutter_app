@@ -12132,6 +12132,21 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/codex-ui-u6-entry-20261113/`. This host evidence does not
   certify native camera effects, frames, device lifecycle or a combined
   candidate; no broader family rerun was performed for the fixture fix.
+  **U6 owner-projected video views:** stateless remote/local tiles consume only
+  the current owner's texture ID and dimensions. Null or invalid metadata,
+  camera off/paused, reconnect, gate-off, audio agreement and call retirement
+  preserve safe placeholders or remove the views without media effects.
+  RED `9d07597b10500042203ce940db227936c296b8ff` retained 14 passing controls
+  and 35 missing-view widget binding errors (`isFailure=false`). Frozen GREEN
+  `f711a3679e83a4ee3ef66cdcc1e0f525f183eb97` passed 94 focused, 101 audio
+  preservation and 2328 affected-call cases, with zero failures/errors/skips,
+  successful reporter completion and child exits. Six-path analysis and
+  validation passed. All nine clean HEAD/tree snapshots matched their 38
+  individual pins and both setup deltas were empty. Paired tests, original
+  errors and independent raw adoption are retained under
+  `.codex-test-logs/codex-ui-u6-view-authoring-20261113/host-runtime/`.
+  These overlapping command counts certify the standalone host unit, not a
+  later combined merge, decoded video frames, native media or a signed build.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

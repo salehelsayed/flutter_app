@@ -24,6 +24,7 @@ class ActiveCallScreen extends StatefulWidget {
     required this.controls,
     this.videoPresentation,
     this.onVideoIntent,
+    this.videoViews,
   });
 
   final String contactPeerId;
@@ -34,6 +35,7 @@ class ActiveCallScreen extends StatefulWidget {
   final CallControls controls;
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
+  final Widget? videoViews;
 
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
@@ -104,6 +106,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 audioControls: widget.controls,
                 presentation: video,
                 onIntent: onVideoIntent,
+                videoViews: widget.videoViews,
                 // Leave room for the root-owned minimize control.
                 topPadding: 56,
               );
