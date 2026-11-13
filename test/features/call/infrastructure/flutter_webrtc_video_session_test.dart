@@ -1,5 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter_app/features/call/application/call_picture_in_picture.dart';
+// ignore: implementation_imports
+import 'package:flutter_webrtc/src/native/media_stream_track_impl.dart';
+
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
@@ -424,6 +428,53 @@ class Fixture {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'PiP source binds exact native peer/track and invalidates before retirement',
+    () async {
+      const channel = MethodChannel('FlutterWebRTC.Method');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async => null);
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final f = Fixture();
+      await f.start();
+      final token = await f.committed();
+      expect(f.session, isA<CallVideoPictureInPictureSource>());
+      final source = f.session as CallVideoPictureInPictureSource;
+      expect(source.pictureInPictureSource, isNull);
+      void receive(rtc.MediaStreamTrack track) => f.peer.onTrack!(
+        rtc.RTCTrackEvent(
+          track: track,
+          streams: [
+            StreamFake([track]),
+          ],
+        ),
+      );
+      receive(Track('video'));
+      expect(source.pictureInPictureSource, isNull);
+      receive(
+        MediaStreamTrackNative('remote-a', 'remote', 'video', true, 'peer-a'),
+      );
+      final first = source.pictureInPictureSource!;
+      expect(first.negotiation, same(token));
+      expect(first.peerConnectionId, 'peer-a');
+      expect(first.remoteTrackId, 'remote-a');
+      expect(first.isCurrent(), isTrue);
+      receive(
+        MediaStreamTrackNative('remote-b', 'remote', 'video', true, 'peer-a'),
+      );
+      final second = source.pictureInPictureSource!;
+      expect(second.rendererEpoch, greaterThan(first.rendererEpoch));
+      expect(first.isCurrent(), isFalse);
+      expect(second.remoteTrackId, 'remote-b');
+      final retirement = f.session.retireVideo();
+      expect(second.isCurrent(), isFalse);
+      expect(source.pictureInPictureSource, isNull);
+      await retirement;
+      f.preserved();
+    },
+  );
+
   group('V2-view', () {
     const channel = MethodChannel('FlutterWebRTC.Method');
     void mockSwitch(Future<Object?> Function(MethodCall call) handler) {

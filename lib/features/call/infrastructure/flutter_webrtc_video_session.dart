@@ -4,6 +4,10 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
+// ignore: implementation_imports
+import 'package:flutter_webrtc/src/native/media_stream_track_impl.dart';
+
+import '../application/call_picture_in_picture.dart';
 import '../application/call_video_media_owner.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_id.dart';
@@ -57,6 +61,7 @@ final class FlutterWebRtcVideoSession
     implements
         CallVideoSession,
         CallVideoPresentationSource,
+        CallVideoPictureInPictureSource,
         CallVideoCameraSwitch,
         CallVideoSdpReconciler,
         CallVideoQualityEnvironmentConsumer {
@@ -340,6 +345,43 @@ final class FlutterWebRtcVideoSession
   webrtc.RTCRtpTransceiver? _video;
   webrtc.MediaStreamTrack? _remoteTrack;
   webrtc.MediaStream? _remoteStream;
+  int _pipEpoch = 0;
+  final _pipChanges = StreamController<void>.broadcast();
+  @override
+  Stream<void> get pictureInPictureSourceChanges => _pipChanges.stream;
+  @override
+  CallPipSource? get pictureInPictureSource {
+    final token = _current;
+    final track = _remoteTrack;
+    final epoch = _pipEpoch;
+    bool current() =>
+        !_closed &&
+        token != null &&
+        _currentToken(token) &&
+        token.committed &&
+        token.media == CallMediaKind.video &&
+        _receiveOpen &&
+        identical(_remoteTrack, track) &&
+        epoch == _pipEpoch;
+    if (!current() ||
+        track is! MediaStreamTrackNative ||
+        track.peerConnectionId.isEmpty ||
+        track.id.isEmpty) {
+      return null;
+    }
+    return CallPipSource(
+      negotiation: token!,
+      rendererEpoch: epoch,
+      peerConnectionId: track.peerConnectionId,
+      remoteTrackId: track.id,
+      isCurrent: current,
+    );
+  }
+
+  void _publishPipSource() {
+    if (!_pipChanges.isClosed) _pipChanges.add(null);
+  }
+
   final Set<_Capture> _captures = {};
   final Map<CallVideoRendererSlot, _Renderer> _views = {};
   _Capture? _senderCapture;
@@ -398,6 +440,7 @@ final class FlutterWebRtcVideoSession
   }
 
   void _publish(CallVideoRendererSlot slot) {
+    if (slot == CallVideoRendererSlot.remote) _publishPipSource();
     if (_presentation.isClosed) return;
     final state = presentationFor(slot);
     final last = _lastPresentation[slot];
@@ -1038,9 +1081,11 @@ final class FlutterWebRtcVideoSession
       return;
     }
     _remoteTrack?.enabled = false;
+    _pipEpoch++;
     _remoteTrack = event.track;
     _remoteStream = event.streams.isEmpty ? null : event.streams.first;
     event.track.enabled = _receiveOpen && token.committed;
+    _publishPipSource();
     unawaited(detachRenderer(CallVideoRendererSlot.remote));
   }
 
@@ -1209,6 +1254,7 @@ final class FlutterWebRtcVideoSession
     await _owner.close();
     await _disposeSendStream();
     unawaited(_presentation.close());
+    unawaited(_pipChanges.close());
     return owned && !hasPendingCleanup;
   }
 }
