@@ -17,6 +17,9 @@ class IncomingCallScreen extends StatelessWidget {
     required this.contactUsername,
     required this.state,
     required this.onAnswer,
+    this.onAcceptVideo,
+    this.onUseAudioOnly,
+    this.mediaChoiceInFlight = false,
     required this.onDecline,
     this.videoPresentation,
     this.onVideoIntent,
@@ -26,6 +29,9 @@ class IncomingCallScreen extends StatelessWidget {
   final String contactUsername;
   final CallState state;
   final VoidCallback onAnswer;
+  final VoidCallback? onAcceptVideo;
+  final VoidCallback? onUseAudioOnly;
+  final bool mediaChoiceInFlight;
   final VoidCallback onDecline;
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
