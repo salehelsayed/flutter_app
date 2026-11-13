@@ -33,6 +33,85 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  for (final withheldOldAnnouncement in [false, true]) {
+    test(
+      'U3j-R correction ignores a prior episode after audio interruption withheld=$withheldOldAnnouncement',
+      () async {
+        final h = _Rig(recovery: true, incoming: true);
+        addTearDown(h.close);
+        await h.connect();
+        h.engine.mediaReady = true;
+        final oldAnnouncement = h.remote(
+          'ice_restart',
+          negotiation: _otherNegotiation,
+          generation: 1,
+        );
+        if (!withheldOldAnnouncement) {
+          expect(h.admit(oldAnnouncement), IncomingCallSignalOutcome.accepted);
+        }
+        expect(
+          h.admit(
+            h.remote(
+              'offer',
+              negotiation: _otherNegotiation,
+              generation: 1,
+              purpose: 'ice_restart',
+            ),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+        await _turn();
+        expect(h.snapshot.state, CallState.connected);
+        expect(h.snapshot.reconnectGeneration, 1);
+        expect(h.engine.restartCalls, 1);
+        h.engine.mediaReady = false;
+        await h.loseMedia(audioOnly: true);
+        expect(h.snapshot.state, CallState.reconnecting);
+        expect(h.snapshot.reconnectGeneration, 2);
+        final deadline = h.reconnectDeadline;
+        if (withheldOldAnnouncement) {
+          expect(h.admit(oldAnnouncement), IncomingCallSignalOutcome.rejected);
+          await h.owner.workSettled;
+          expect(h.engine.restartCalls, 1);
+          expect(h.owner.negotiation!.negotiationId, _otherNegotiation);
+        }
+        final announcement = h.remote(
+          'ice_restart',
+          negotiation: _remoteNegotiation,
+          generation: 2,
+        );
+        if (!withheldOldAnnouncement) {
+          expect(h.admit(announcement), IncomingCallSignalOutcome.accepted);
+        }
+        h.engine.mediaReady = true;
+        expect(
+          h.admit(
+            h.remote(
+              'offer',
+              negotiation: _remoteNegotiation,
+              generation: 2,
+              purpose: 'ice_restart',
+            ),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+        await _turn();
+        expect(h.snapshot.state, CallState.connected);
+        expect(h.snapshot.reconnectGeneration, 2);
+        expect(h.engine.restartCalls, 2);
+        expect(h.engine.video.answers, 3);
+        expect(h.reconnectDeadline, same(deadline));
+        expect(h.reconnectTimers, 2);
+        expect(h.admit(announcement), IncomingCallSignalOutcome.duplicate);
+        expect(h.engine.eventListeners, 1);
+        expect(h.engine.candidateListeners, 1);
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+  }
+
   test(
     'U3j-R validated future ICE defers until the native generation is adopted',
     () async {
