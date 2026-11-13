@@ -3656,6 +3656,14 @@ first GREEN 117 passes/6 failures/13 errors, and historical identity-family
 `.codex-test-logs/codex-ui-bl24e3-interest-retry-20261113/`.
 The original nine-file preservation result remains 158 passes. The focused
 correction does not refresh the curated-family or combined release gate.
+The CLK/E3 merge `3954f3dea` preserves explicit `signingTime` precedence and
+uses `clock.now()` as the fallback for both the signed payload and encrypted
+envelope timestamp. Its ten-file E3 suite (including the policy file once)
+passes 138 cases, with future-clock assertions on the interest signed payload
+and ordinary retry outer timestamp. Claude-Dev's `build/clke3-proof/` retains
+raw JSON, child exit 0 and three clean 32-pin identity records (96 matches),
+including both merge parents; setup produced no tracked delta. This host merge
+proof does not refresh broader lanes, native/device or signed-artifact evidence.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
