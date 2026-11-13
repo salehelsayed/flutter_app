@@ -783,7 +783,11 @@ final class CallV2NegotiationEffectExecutor
         _token == null) {
       return IncomingCallSignalOutcome.rejected;
     }
-    final recovery = _recovery;
+    final retained = _recovery;
+    final recovery =
+        retained?.snapshot.reconnectGeneration == snapshot.reconnectGeneration
+        ? retained
+        : null;
     final caller = _context!.direction == CallDirection.outgoing;
     final revision = _switch?.machine.settledRevision ?? _token!.mediaRevision;
     final media = _switch?.machine.settledMedia ?? _token!.media;
