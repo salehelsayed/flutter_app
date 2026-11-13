@@ -2740,6 +2740,38 @@ exit 3 means omitted checks were NOT RUN, while its child passed. Wider
 quiet-recovery/affected-storage checks were deferred to the batch by Kayan;
 these host receipts do not prove native SQLCipher or a signed upgrade.
 
+The batch checks exposed fixture dependencies omitted from that original C gate.
+Current database manifest expectations must use `currentIdentityDatabaseVersion`;
+historical migration tests should locate their owned version instead of assuming
+it is the registry tail. When a historical migration test opens the current
+registry, compare message rows projected onto captured pre-upgrade column keys,
+while retaining its owned-column defaults, column ordering and exact other-table
+checks. This keeps later nullable columns from invalidating historical equality.
+Full repository/lifecycle fixtures that execute current failed-retry SQL need
+the current production migration registry, not a hand-picked early subset.
+Preserve intentionally isolated historical schemas and callbacks that never run
+that SQL. The lifecycle missing-column failure passed on main and C RED, then
+failed on C tip; the owner change was traced to `4d21b6bcb`.
+
+C also changes the existing data adapter's DTR-18 normalized body through its
+terminal-retry capability and delegates. The parent reconstructs the old
+`1c151fd3` pin and C/current reconstruct `46b07764`; update only that reviewed
+pin, preserving location, stale-consumer and dependency assertions. The static
+schema audit found no further current production creator/import/recovery
+omission; three separate historical v8 smoke entrypoints were excluded and do
+not invoke these retry helpers. This audit is not runtime recovery evidence.
+
+Claude-Dev's bounded follow-ups pass the complete importer file at `37277b6f6`
+(13 cases), migration 112/113 plus lifecycle pause at `e808db43f` (8 cases), and
+the complete placement contract at `d97c36e6f` (4 cases). Every run has zero
+failures/errors/skips, successful completion and child exit zero; three clean
+HEAD/tree/lib boundaries match every individual pin (7, 8 and 5 respectively).
+Setup left each tree clean. Preserve the original batch failures and bisect.
+Raw evidence is in the Claude-Dev checkout's `build/cgate-proof/`; verification
+is in `/Users/I560101/.codex/investigations/bl24c-message-shape-audit-20261113/c-gates-runtime-verified.json`.
+These are isolated v131 proofs; a composed v132 candidate requires its own
+current-version expectations and evidence.
+
 Committed contact-key updates now wake failed-message recovery directly, without
 waiting for the periodic/reconnect pass or replaying already-encrypted custody.
 The contact-key retrier tests retain updates across startup, active full recovery,
