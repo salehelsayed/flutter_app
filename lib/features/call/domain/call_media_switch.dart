@@ -177,6 +177,7 @@ final class CallMediaSwitchMachine {
   bool get terminal => _terminal;
   bool get requiresReconciliation => _requiresReconciliation;
   String? get currentSwitchId => _current?.request.id;
+  MediaSwitchRequest? get currentRequest => null;
   String? get selectedSwitchId => _latestSelected?.request.id;
   MediaSwitchPhase? get phase => _current?.phase;
   int? get stageDeadlineMs =>

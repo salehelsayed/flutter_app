@@ -36,6 +36,192 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  for (final incoming in [false, true]) {
+    for (final state in CallCameraState.values) {
+      test('U3j-S receives camera ${state.name} incoming=$incoming', () async {
+        final h = _Rig(incoming: incoming);
+        addTearDown(h.close);
+        await h.connect();
+        final token = h.owner.negotiation;
+        final updates = h.mediaChanges;
+        final sent = h.sent.length;
+        final signal = h.switchWire('camera_state', {
+          'media_revision': 0,
+          'state': state.name,
+        });
+        expect(h.admit(signal), IncomingCallSignalOutcome.accepted);
+        expect(h.owner.remoteCamera, state);
+        expect(h.mediaChanges, updates + 1);
+        expect(h.admit(signal), IncomingCallSignalOutcome.duplicate);
+        expect(h.mediaChanges, updates + 1);
+        expect(h.owner.negotiation, same(token));
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.sent, hasLength(sent));
+        expect(h.engine.eventListeners, 1);
+        expect(h.engine.candidateListeners, 1);
+      });
+    }
+  }
+
+  test('U3j-S older camera sequence cannot overwrite newer hint', () async {
+    final h = _Rig();
+    addTearDown(h.close);
+    await h.connect();
+    final older = h.switchWire('camera_state', {
+      'media_revision': 0,
+      'state': 'on',
+    });
+    final newer = h.switchWire('camera_state', {
+      'media_revision': 0,
+      'state': 'off',
+    });
+    expect(h.admit(newer), IncomingCallSignalOutcome.accepted);
+    final updates = h.mediaChanges;
+    expect(h.admit(older), IncomingCallSignalOutcome.rejected);
+    expect(h.owner.remoteCamera, CallCameraState.off);
+    expect(h.mediaChanges, updates);
+  });
+
+  for (final invalid in ['revision', 'generation', 'handle', 'authority']) {
+    test('U3j-S refuses camera hint with stale $invalid', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      final updates = h.mediaChanges;
+      final signal = h.switchWire('camera_state', {
+        'media_revision': invalid == 'revision' ? 1 : 0,
+        'state': 'on',
+      }, generation: invalid == 'generation' ? 1 : 0);
+      expect(
+        h.admit(
+          signal,
+          handle: invalid == 'handle' ? _otherNegotiation : _handle,
+          allowed: () => invalid != 'authority',
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.mediaChanges, updates);
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  for (final state in CallCameraState.values) {
+    test(
+      'U3j-S publishes camera ${state.name} through existing custody',
+      () async {
+        final h = _Rig();
+        addTearDown(h.close);
+        await h.connect();
+        final token = h.owner.negotiation!;
+        final prior = h.sent.length;
+        expect(
+          await h.owner.publishLocalCameraState(state, canApply: () => true),
+          isTrue,
+        );
+        expect(h.sent, hasLength(prior + 1));
+        final signal = h.sent.last;
+        expect(signal.event, CallSignalV2Type.cameraState);
+        expect(signal.payload, {
+          'media_revision': token.mediaRevision,
+          'state': state.name,
+        });
+        expect(signal.iceGeneration, h.engine.iceGeneration);
+        expect(signal.senderAccountPeerId, 'local-account');
+        expect(signal.recipientAccountPeerId, 'remote-account');
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.owner.negotiation, same(token));
+        expect(h.owner.remoteCamera, CallCameraState.off);
+        h.delivered = false;
+        expect(
+          await h.owner.publishLocalCameraState(state, canApply: () => true),
+          isFalse,
+        );
+      },
+    );
+  }
+
+  for (final boundary in [
+    'before-commit',
+    'audio',
+    'disabled',
+    'v1',
+    'closed',
+  ]) {
+    test('U3j-S camera hint stays inert at $boundary', () async {
+      final h = _Rig(
+        media: boundary == 'audio' ? CallMediaKind.audio : CallMediaKind.video,
+        enabled: boundary != 'disabled',
+        v1: boundary == 'v1',
+      );
+      addTearDown(h.close);
+      if (boundary == 'audio' || boundary == 'closed') await h.connect();
+      if (boundary == 'closed') await h.close();
+      final prior = h.sent.length;
+      final signal = h.switchWire('camera_state', {
+        'media_revision': 0,
+        'state': 'on',
+      });
+      expect(h.admit(signal), IncomingCallSignalOutcome.rejected);
+      expect(
+        await h.owner.publishLocalCameraState(
+          CallCameraState.on,
+          canApply: () => true,
+        ),
+        isFalse,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.sent, hasLength(prior));
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  for (final boundary in ['authority', 'retirement', 'replacement']) {
+    test('U3j-S late camera publication is fenced after $boundary', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      var allowed = true;
+      final gate = Completer<bool>();
+      h.cameraDeliveryGate = gate;
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete(false);
+      });
+      final prior = h.sent.length;
+      final pending = h.owner.publishLocalCameraState(
+        CallCameraState.on,
+        canApply: () => allowed,
+      );
+      await _turn();
+      expect(h.sent, hasLength(prior + 1));
+      if (boundary == 'authority') allowed = false;
+      if (boundary == 'retirement') await h.owner.closeVideo();
+      if (boundary == 'replacement') h.current = false;
+      gate.complete(true);
+      expect(await pending, isFalse);
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  test(
+    'U3j-S retired video clears camera projection without reacquisition',
+    () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      expect(
+        h.admit(
+          h.switchWire('camera_state', {'media_revision': 0, 'state': 'on'}),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.on);
+      await h.owner.closeVideo();
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
   for (final withheldOldAnnouncement in [false, true]) {
     test(
       'U3j-R correction ignores a prior episode after audio interruption withheld=$withheldOldAnnouncement',
@@ -2519,6 +2705,10 @@ final class _Rig {
             expect(admittedEndpoint.signingPublicKey, 'signing');
             if (!canApply()) return false;
             sent.add(signal);
+            if (signal.event == CallSignalV2Type.cameraState &&
+                cameraDeliveryGate != null) {
+              return await cameraDeliveryGate!.future;
+            }
             return deliveryFor?.call(signal) ?? delivered;
           },
       canApply: () => current,
@@ -2528,6 +2718,7 @@ final class _Rig {
       maxPendingMedia: capacity,
       monotonicNowMs: () => elapsedMs,
       timerScheduler: timers,
+      onMediaChanged: () => mediaChanges++,
     );
   }
 
@@ -2559,6 +2750,8 @@ final class _Rig {
   int sequence = 0;
   bool current = true;
   bool delivered = true;
+  int mediaChanges = 0;
+  Completer<bool>? cameraDeliveryGate;
 
   MediaSwitchRequest get switchRequest => MediaSwitchRequest(
     id: _otherNegotiation,

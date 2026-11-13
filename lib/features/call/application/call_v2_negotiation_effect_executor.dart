@@ -642,6 +642,13 @@ final class CallV2NegotiationEffectExecutor
   CallVideoSession? get videoSession => _session;
   CallVideoNegotiation? get negotiation => _token;
 
+  CallCameraState get remoteCamera => CallCameraState.off;
+
+  Future<bool> publishLocalCameraState(
+    CallCameraState state, {
+    required bool Function() canApply,
+  }) async => false;
+
   /// Completes after currently adopted jobs and canonical dispatch settle.
   /// ICE awaiting a future description remains bounded without blocking this.
   Future<void> get workSettled async {
