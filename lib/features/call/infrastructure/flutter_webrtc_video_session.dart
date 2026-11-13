@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
@@ -6,6 +7,9 @@ import '../application/call_video_media_owner.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_id.dart';
 import '../domain/call_media.dart';
+import '../domain/call_video_quality_environment.dart';
+import '../domain/call_video_quality_policy.dart';
+import 'call_video_quality_stats_sampler.dart';
 import 'webrtc_types.dart';
 
 /// Injectable native boundaries; production defaults never request audio.
@@ -38,6 +42,13 @@ final class _Negotiation implements CallVideoNegotiation {
   bool retired = false;
 }
 
+final class _QualityIntent {
+  _QualityIntent(this.token, this.grant);
+  final _Negotiation token;
+  final CallLocalCameraGrant grant;
+  bool started = false;
+}
+
 /// Concrete optional resources on an existing audio peer. No method owns the
 /// microphone, audio route, ICE generation, or the peer connection lifetime.
 final class FlutterWebRtcVideoSession
@@ -45,7 +56,8 @@ final class FlutterWebRtcVideoSession
         CallVideoSession,
         CallVideoPresentationSource,
         CallVideoCameraSwitch,
-        CallVideoSdpReconciler {
+        CallVideoSdpReconciler,
+        CallVideoQualityEnvironmentConsumer {
   FlutterWebRtcVideoSession({
     required this.callId,
     required this.localIsCaller,
@@ -56,16 +68,13 @@ final class FlutterWebRtcVideoSession
     CallVideoCaptureFactory? capture,
     CallVideoRendererFactory? renderer,
     CallVideoStreamFactory? videoStream,
+    Duration Function()? qualityElapsed,
   }) : _connection = connection,
        _canApply = canApply,
        _validateDescription = validateDescription,
        _remoteDescriptionApplied = remoteDescriptionApplied,
-       _capture =
-           capture ??
-           (() => webrtc.navigator.mediaDevices.getUserMedia(<String, dynamic>{
-             'audio': false,
-             'video': true,
-           })),
+       _capture = capture,
+       _qualityElapsedOverride = qualityElapsed,
        _renderer = renderer ?? webrtc.RTCVideoRenderer.new,
        _videoStream =
            videoStream ?? (() => webrtc.createLocalMediaStream('call-video')) {
@@ -82,9 +91,206 @@ final class FlutterWebRtcVideoSession
   final bool Function() _canApply;
   final CallVideoDescriptionValidator _validateDescription;
   final Future<void> Function() _remoteDescriptionApplied;
-  final CallVideoCaptureFactory _capture;
+  final CallVideoCaptureFactory? _capture;
   final CallVideoRendererFactory _renderer;
   final CallVideoStreamFactory _videoStream;
+
+  final Duration Function()? _qualityElapsedOverride;
+  final Stopwatch _qualityClock = Stopwatch()..start();
+  final _qualityPolicy = CallVideoQualityPolicy();
+  final _qualityStats = CallVideoQualityStatsSampler();
+  _QualityIntent? _qualityIntent;
+  CallVideoQualityTier? _captureTier;
+  Timer? _qualityTimer, _qualityReadDeadline;
+  Object? _qualityRead;
+  Future<void>? _qualityWork;
+  bool _qualityDirty = false;
+  bool _frontFacing = true;
+
+  Duration get _qualityNow =>
+      _qualityElapsedOverride?.call() ?? _qualityClock.elapsed;
+
+  bool _qualityCurrent(_QualityIntent intent) =>
+      identical(_qualityIntent, intent) &&
+      _cameraAllowed(intent.token, intent.grant);
+
+  bool _checkQualityIntent(_QualityIntent intent) {
+    if (_qualityCurrent(intent)) return true;
+    if (identical(_qualityIntent, intent)) unawaited(stopLocalCamera());
+    return false;
+  }
+
+  @override
+  void updateQualityEnvironment(CallVideoQualityEnvironment environment) {
+    if (!_allowed()) return;
+    final previous = _qualityPolicy.decision;
+    _qualityPolicy.setEnvironment(environment, now: _qualityNow);
+    final current = _qualityPolicy.decision;
+    if (current.paused || current.tier.index < previous.tier.index) {
+      _closeSendGate();
+      _invalidate(CallVideoRendererSlot.local);
+    }
+    if (_qualityIntent != null) unawaited(_reconcileQuality());
+  }
+
+  void _retireQuality() {
+    _qualityIntent = null;
+    _captureTier = null;
+    _qualityDirty = false;
+    _qualityTimer?.cancel();
+    _qualityTimer = null;
+    _qualityReadDeadline?.cancel();
+    _qualityReadDeadline = null;
+    _qualityStats.reset();
+    // A native read is not cancellable. Its retained marker prevents a second
+    // concurrent read if a fresh camera intent arrives before it completes.
+  }
+
+  void _observeQuality(CallVideoQualityFeedback feedback) {
+    final previous = _qualityPolicy.decision;
+    _qualityPolicy.observe(feedback, now: _qualityNow);
+    final current = _qualityPolicy.decision;
+    if (current.paused || current.tier.index < previous.tier.index) {
+      _closeSendGate();
+      _invalidate(CallVideoRendererSlot.local);
+    }
+    if (current.paused != previous.paused || current.tier != previous.tier) {
+      unawaited(_reconcileQuality());
+    }
+  }
+
+  void _pollQuality() {
+    final intent = _qualityIntent;
+    if (intent == null) return;
+    if (!_checkQualityIntent(intent)) return;
+    if (_qualityRead != null || _qualityWork != null) {
+      _observeQuality(CallVideoQualityFeedback.unknown);
+      return;
+    }
+    final read = Object();
+    _qualityRead = read;
+    final capture = _senderCapture;
+    final track = capture?.tracks.singleOrNull;
+    final sending = track?.enabled == true;
+    var expired = false;
+    final deadline = Timer(const Duration(seconds: 1), () {
+      expired = true;
+      if (_checkQualityIntent(intent)) {
+        _observeQuality(CallVideoQualityFeedback.unknown);
+      }
+    });
+    _qualityReadDeadline = deadline;
+    // Keep this read outside the native mutation queue. It must never hold
+    // camera cleanup, SDP mutation or hangup behind an optional stats query.
+    unawaited(
+      Future.sync(() => _connection().getStats()).then<void>(
+        (reports) {
+          deadline.cancel();
+          if (identical(_qualityRead, read)) _qualityRead = null;
+          if (!_checkQualityIntent(intent) ||
+              expired ||
+              !identical(_senderCapture, capture)) {
+            return;
+          }
+          _observeQuality(
+            _qualityStats.sample(
+              reports,
+              videoSending: sending,
+              videoTrackId: track?.id,
+            ),
+          );
+        },
+        onError: (Object _, StackTrace _) {
+          deadline.cancel();
+          if (identical(_qualityRead, read)) _qualityRead = null;
+          if (_checkQualityIntent(intent) && !expired) {
+            _observeQuality(CallVideoQualityFeedback.unknown);
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _reconcileQuality() {
+    _qualityDirty = true;
+    final pending = _qualityWork;
+    if (pending != null) return pending;
+    final complete = Completer<void>();
+    _qualityWork = complete.future;
+    unawaited(_drainQuality(complete));
+    return complete.future;
+  }
+
+  Future<void> _drainQuality(Completer<void> complete) async {
+    try {
+      do {
+        await _applyQuality();
+      } while (_qualityDirty && _qualityIntent != null);
+    } catch (_) {
+      await stopLocalCamera();
+    } finally {
+      _qualityWork = null;
+      complete.complete();
+    }
+  }
+
+  Future<void> _applyQuality() async {
+    while (_qualityDirty) {
+      _qualityDirty = false;
+      final intent = _qualityIntent;
+      if (intent == null) return;
+      if (!_qualityCurrent(intent)) {
+        await stopLocalCamera();
+        return;
+      }
+      final decision = _qualityPolicy.decision;
+      if (decision.paused) {
+        if (!intent.started) {
+          await stopLocalCamera();
+        } else if (!await _stopCaptureForQuality()) {
+          if (identical(_qualityIntent, intent)) await stopLocalCamera();
+        }
+        continue;
+      }
+      if (_captureTier == decision.tier &&
+          _senderCapture?.tracks.singleOrNull?.enabled == true) {
+        continue;
+      }
+      if (!await _stopCaptureForQuality()) {
+        if (identical(_qualityIntent, intent)) await stopLocalCamera();
+        return;
+      }
+      if (!_qualityCurrent(intent)) {
+        if (identical(_qualityIntent, intent)) await stopLocalCamera();
+        return;
+      }
+      final target = _qualityPolicy.decision;
+      if (target.paused) {
+        _qualityDirty = true;
+        continue;
+      }
+      final applied = await _captureAtQuality(intent, target.tier);
+      if (!_qualityCurrent(intent)) {
+        if (identical(_qualityIntent, intent)) await stopLocalCamera();
+        return;
+      }
+      final latest = _qualityPolicy.decision;
+      if (latest.paused || latest.tier != target.tier) {
+        _qualityDirty = true;
+        continue;
+      }
+      if (!applied) {
+        await stopLocalCamera();
+        return;
+      }
+      intent.started = true;
+      _qualityTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollQuality(),
+      );
+    }
+  }
+
   webrtc.MediaStream? _sendStream;
   bool _streamDisposeFailed = false;
   Future<void>? _streamDisposal;
@@ -277,6 +483,7 @@ final class FlutterWebRtcVideoSession
     );
     if (!_currentGrant(canApply)) _reject();
     previous?.retired = true;
+    _retireQuality();
     _captureIntent = null;
     _invalidateAll();
     unawaited(_owner.retireVideo());
@@ -515,6 +722,7 @@ final class FlutterWebRtcVideoSession
       return Future.value(false);
     }
     raw.retired = true;
+    _retireQuality();
     _captureIntent = null;
     _invalidateAll();
     unawaited(_owner.retireVideo());
@@ -575,12 +783,41 @@ final class FlutterWebRtcVideoSession
     }
     await stopLocalCamera();
     if (!_cameraAllowed(raw, grant) || hasPendingCleanup) return false;
+    _qualityPolicy.resetForNewCameraIntent(now: _qualityNow);
+    if (_qualityPolicy.decision.paused) return false;
+    final quality = _QualityIntent(raw, grant);
+    _qualityIntent = quality;
+    await _reconcileQuality();
+    return _qualityCurrent(quality) &&
+        _senderCapture?.tracks.singleOrNull?.enabled == true;
+  }
+
+  bool _qualityAtTier(_QualityIntent quality, CallVideoQualityTier tier) =>
+      _qualityCurrent(quality) &&
+      !_qualityPolicy.decision.paused &&
+      _qualityPolicy.decision.tier == tier;
+
+  Future<bool> _captureAtQuality(
+    _QualityIntent quality,
+    CallVideoQualityTier tier,
+  ) async {
+    if (!_qualityAtTier(quality, tier) || hasPendingCleanup) return false;
     final intent = _owner.beginGrantedCapture(callId);
     if (intent == null) return false;
     _captureIntent = intent;
     final adopted = await _owner.acquireCapture(intent, () async {
-      if (!_cameraAllowed(raw, grant)) _reject();
-      final stream = await _capture();
+      if (!_qualityAtTier(quality, tier)) _reject();
+      final stream =
+          await (_capture?.call() ??
+              webrtc.navigator.mediaDevices.getUserMedia(<String, dynamic>{
+                'audio': false,
+                'video': <String, dynamic>{
+                  'width': tier.width,
+                  'height': tier.height,
+                  'frameRate': tier.framesPerSecond,
+                  'facingMode': _frontFacing ? 'user' : 'environment',
+                },
+              }));
       final capture = _Capture(this, stream);
       _captures.add(capture);
       // Disable before any sender attachment, including stale returned capture.
@@ -594,15 +831,16 @@ final class FlutterWebRtcVideoSession
     final resource = _owner.captureFor(intent);
     if (!adopted || resource == null) return false;
     final capture = resource.resource as _Capture;
-    if (!_cameraAllowed(raw, grant) ||
+    if (!_qualityAtTier(quality, tier) ||
         capture.tracks.length != 1 ||
         capture.tracks.single.kind != 'video') {
-      if (identical(_captureIntent, intent)) await stopLocalCamera();
+      if (identical(_captureIntent, intent)) await _stopCaptureForQuality();
       return false;
     }
     try {
       return await _serial(() async {
-        if (!_cameraAllowed(raw, grant) || _owner.captureFor(intent) == null) {
+        if (!_qualityAtTier(quality, tier) ||
+            _owner.captureFor(intent) == null) {
           return false;
         }
         final video = _video;
@@ -610,21 +848,78 @@ final class FlutterWebRtcVideoSession
         capture.sender = video.sender;
         _senderCapture = capture;
         await video.sender.replaceTrack(capture.tracks.single);
-        if (!_cameraAllowed(raw, grant) || _owner.captureFor(intent) == null) {
+        if (!_qualityAtTier(quality, tier) ||
+            _owner.captureFor(intent) == null) {
           return false;
         }
+        if (!await _setQualityParameters(
+          video.sender,
+          capture.tracks.single,
+          tier,
+        )) {
+          return false;
+        }
+        if (!_qualityAtTier(quality, tier) ||
+            _owner.captureFor(intent) == null) {
+          return false;
+        }
+        _captureTier = tier;
         capture.tracks.single.enabled = true;
         _publish(CallVideoRendererSlot.local);
-        return _cameraAllowed(raw, grant) && identical(_captureIntent, intent);
+        return _qualityAtTier(quality, tier) &&
+            identical(_captureIntent, intent);
       });
     } catch (_) {
       return false;
     } finally {
-      if ((!_cameraAllowed(raw, grant) || !capture.tracks.single.enabled) &&
+      if ((!_qualityAtTier(quality, tier) || !capture.tracks.single.enabled) &&
           identical(_captureIntent, intent)) {
-        await stopLocalCamera();
+        await _stopCaptureForQuality();
       }
     }
+  }
+
+  Future<bool> _setQualityParameters(
+    webrtc.RTCRtpSender sender,
+    webrtc.MediaStreamTrack track,
+    CallVideoQualityTier tier,
+  ) async {
+    final previous = sender.parameters;
+    final encodings = previous.encodings;
+    // This owner negotiates one camera encoding, never simulcast. An unknown
+    // layout cannot silently multiply or bypass the per-sender ceiling.
+    if (encodings == null || encodings.length != 1) return false;
+    final settings = track.getSettings();
+    final width = settings['width'];
+    final height = settings['height'];
+    if (width is! num ||
+        height is! num ||
+        !width.isFinite ||
+        !height.isFinite ||
+        width <= 0 ||
+        height <= 0) {
+      return false;
+    }
+    final encoding = webrtc.RTCRtpEncoding.fromMap(encodings.single.toMap())
+      ..maxBitrate = tier.maxBitrateBps
+      ..maxFramerate = tier.framesPerSecond
+      ..minBitrate = 0
+      ..scaleResolutionDownBy = math.max(
+        1.0,
+        math.max(width / tier.width, height / tier.height),
+      );
+    final parameters = webrtc.RTCRtpParameters(
+      transactionId: previous.transactionId,
+      rtcp: previous.rtcp,
+      headerExtensions: previous.headerExtensions,
+      encodings: [encoding],
+      codecs: previous.codecs,
+      degradationPreference: previous.degradationPreference,
+    );
+    // The pinned SDK caches this request before returning its acknowledgement.
+    // Require true before opening the video track gate. On iOS the SDK returns
+    // true unconditionally; native acceptance needs separate outbound-RTP proof.
+    return await sender.setParameters(parameters) == true;
   }
 
   @override
@@ -646,11 +941,17 @@ final class FlutterWebRtcVideoSession
         identical(_captureIntent, intent) &&
         identical(_owner.captureFor(intent)?.resource, capture) &&
         capture.tracks.single.enabled;
+    final quality = _qualityIntent;
     try {
       return await _serial(() async {
         if (!valid()) return false;
         // Native bool denotes front/rear facing, not success. Completion is success.
-        await webrtc.Helper.switchCamera(capture.tracks.single);
+        final frontFacing = await webrtc.Helper.switchCamera(
+          capture.tracks.single,
+        );
+        if (_cameraAllowed(raw, grant) && identical(_qualityIntent, quality)) {
+          _frontFacing = frontFacing;
+        }
         return valid();
       });
     } catch (_) {
@@ -670,7 +971,13 @@ final class FlutterWebRtcVideoSession
 
   @override
   Future<bool> stopLocalCamera() {
+    _retireQuality();
+    return _stopCaptureForQuality();
+  }
+
+  Future<bool> _stopCaptureForQuality() {
     _captureIntent = null;
+    _captureTier = null;
     _closeSendGate();
     _invalidate(CallVideoRendererSlot.local);
     return _owner.stopCapture();
@@ -807,6 +1114,7 @@ final class FlutterWebRtcVideoSession
 
   @override
   Future<bool> retireVideo() {
+    _retireQuality();
     _current?.retired = true;
     _receiveOpen = false;
     _remoteTrack?.enabled = false;
@@ -848,6 +1156,7 @@ final class FlutterWebRtcVideoSession
   @override
   Future<bool> close() async {
     _closed = true;
+    _qualityClock.stop();
     if (!_closeSignal.isCompleted) _closeSignal.complete();
     final cleanup = retireVideo();
     await _serial(() async {});
