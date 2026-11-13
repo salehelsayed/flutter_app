@@ -11590,6 +11590,32 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3h-final-host-adoption.json`.
   This closes the default-off unit; graph composition, native/live behavior,
   broader batch checks, activation and signed candidate proof remain separate.
+  **U3i initial typed v2 SDP and ICE:** the production v2 executor owns initial
+  typed negotiation while preserving the admitted endpoint, current call and
+  negotiation fences, bounded replay/ICE handling and camera-off defaults.
+  Frozen RED `41b599ce4e6c8b768d6fd85451f0d81257459feb` recorded 14 passing
+  controls, 19 assertion failures and two causal missing-SDP `Bad state: No
+  element` errors, with child exit 1 and no loader/compile/configuration error.
+  Direct GREEN child `6aaf6a6993c2aa7f7092dfcede31c44985fffaec` passed all
+  35 focused cases and 190 preservation cases: 73 legacy-executor, 46 v2
+  context, six context-store, 42 incoming-v2 and 23 video-session cases. Both
+  reporters completed successfully with zero failures/errors/skips and child
+  exits 0. The actual runner script analyzed four paths, including the focused
+  test; analysis, metadata validation and one selection preview exited 0.
+  The 13 broader selections remain unrun for the later batch. Seven runtime
+  checkpoints record clean tracked state, exact HEAD/tree/library-tree and
+  18 matching source/test/configuration hashes each; all 126 hashes were
+  independently checked against their frozen Git blobs. Setup used plain
+  `flutter pub get`, without the requested offline/enforced-lockfile flags.
+  The before/after setup and subsequent checkpoints show no tracked source,
+  configuration or generated-locale delta; this setup deviation remains
+  explicit and was not replaced by a rerun. Retained raw JSON, argv, stamps,
+  identity verification and the final Codex source/host verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3i-final-host-adoption.json`.
+  Source and scoped host review are closed with zero required findings. This
+  default-off initial-negotiation proof does not establish production graph
+  wiring, lifecycle/general recovery, native/live delivery, aggregate batch
+  validation, activation or a signed candidate.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
