@@ -99,7 +99,7 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 130);
+    expect(currentIdentityDatabaseVersion, 131);
     expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Registered exactly once in both registries, immediately after v112.
@@ -120,13 +120,16 @@ void main() {
       expect(registry[index112 + 2].version, 114);
     }
 
-    // Additive only: exactly the four new nullable columns, appended, with
-    // every pre-existing column preserved in order (no table rebuild).
-    expect(await _columnNames(db, 'messages'), <String>[
-      ...v112MessageColumns,
-      ..._newMessageColumns,
-      'quiet_recovery',
-    ]);
+    // v113 appends four nullable columns across these tables. Preserve the
+    // historical and v113-owned message columns in order; later migrations
+    // own their additional message fields and test their defaults separately.
+    expect(
+      await _columnNames(db, 'messages'),
+      containsAllInOrder(<String>[
+        ...v112MessageColumns,
+        ..._newMessageColumns,
+      ]),
+    );
     expect(await _columnNames(db, 'direct_inbox_custody_outbox'), <String>[
       ...v112CustodyColumns,
       ..._newV108Columns,
@@ -152,6 +155,7 @@ void main() {
       await db.query('messages'),
       v112Messages,
       _newMessageColumns,
+      historicalColumns: v112MessageColumns,
     );
     _expectPreservedWithNullNewColumns(
       await db.query('direct_inbox_custody_outbox'),
@@ -317,8 +321,9 @@ Future<List<String>> _columnNames(Database db, String table) async {
 void _expectPreservedWithNullNewColumns(
   List<Map<String, Object?>> current,
   List<Map<String, Object?>> before,
-  List<String> newColumns,
-) {
+  List<String> newColumns, {
+  Iterable<String>? historicalColumns,
+}) {
   expect(current, hasLength(before.length));
   for (var index = 0; index < before.length; index++) {
     final row = current[index];
@@ -337,6 +342,9 @@ void _expectPreservedWithNullNewColumns(
         0,
         reason: 'v119 does not infer quiet intent for historical rows',
       );
+    }
+    if (historicalColumns != null) {
+      projected.removeWhere((key, _) => !historicalColumns.contains(key));
     }
     expect(projected, before[index]);
   }

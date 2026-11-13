@@ -300,6 +300,78 @@ final class NotificationPreviewResolverTests: XCTestCase {
     ))
   }
 
+  func testBL9PublicFailureClassesForEveryKindNeverExposeRawDetails() throws {
+    let cases: [(String, String, String, String, String)] = [
+      ("chat", "missing_chat_secret", "missing_chat_decrypt_input", "chat_plaintext_parity_mismatch", "chat_recipient_policy_rejected"),
+      ("thought", "missing_thought_secret", "missing_thought_decrypt_input", "thought_plaintext_parity_mismatch", "thought_recipient_policy_rejected"),
+      ("reaction", "missing_reaction_secret", "missing_reaction_input", "reaction_parity_mismatch", "reaction_recipient_projection_rejected"),
+      ("group_reaction", "group_reaction_missing_key", "group_reaction_missing_input", "group_reaction_parity_mismatch", "group_reaction_local_member_missing"),
+      ("group", "missing_group_key", "missing_group_decrypt_input", "invalid_group_plaintext", "group_recipient_policy_rejected"),
+    ]
+    for (kind, key, input, plaintext, policy) in cases {
+      let classes = [
+        ("\(kind)_bridge_unavailable", "bridge_unavailable"),
+        ("\(kind)_bridge_invalid", "plaintext"),
+        (key, "missing_key"), (input, "missing_input"),
+        ("\(kind)_decrypt_error", "crypto"), (plaintext, "plaintext"),
+        (policy, "policy"), ("private-reason-must-not-escape", "unknown"),
+      ]
+      for (reason, expected) in classes {
+        let payload = try XCTUnwrap(nsePublicProofPayload(
+          event: "PUSH_NSE_DECRYPT_FAIL",
+          details: ["kind": kind, "reason": reason,
+                    "errorMessage": "private-error-must-not-escape",
+                    "ciphertext": "private-ciphertext-must-not-escape"]
+        ))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+        XCTAssertEqual(json["details"] as? [String: String],
+          ["kind": kind, "failureClass": expected], "\(kind): \(reason)")
+        XCTAssertFalse(payload.contains(reason))
+        XCTAssertFalse(payload.contains("must-not-escape"))
+      }
+    }
+    let unknown = try XCTUnwrap(nsePublicProofPayload(event: "PUSH_NSE_DECRYPT_FAIL",
+      details: ["kind": "private-kind-must-not-escape", "reason": "private-reason-must-not-escape"]))
+    let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(unknown.utf8)) as? [String: Any])
+    XCTAssertEqual(json["details"] as? [String: String], [:])
+    XCTAssertFalse(unknown.contains("must-not-escape"))
+  }
+
+  func testBL9ResolverSeparatesBridgeAvailabilityWithoutBridgeText() throws {
+    let fixture = try loadFixture("one_to_one_text")
+    let routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
+    let cases: [(NotificationPreviewError, String)] = [
+      (.bridgeUnavailable, "chat_bridge_unavailable"),
+      (.invalidBridgeInput, "chat_bridge_invalid"),
+      (.invalidBridgeResponse, "chat_bridge_invalid"),
+      (.bridgeFailure("private-error-must-not-escape"), "chat_decrypt_error"),
+    ]
+    for (error, reason) in cases {
+      let decryptor = MemoryPushDecryptor()
+      decryptor.chatError = error
+      let events = MemoryPushPreviewEventEmitter()
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([PushSharedKeyNames.identityMlKemSecretKey: "chat-secret"]),
+        decryptor: decryptor, dedupeStore: MemoryPushDedupeStore(), eventEmitter: events)
+      let result = resolver.resolve(userInfo: routeData, fallbackTitle: "New Message", fallbackBody: "New message")
+      XCTAssertFalse(result.didDecrypt)
+      XCTAssertEqual(result.reason, reason)
+      let failure = try XCTUnwrap(events.events.first { $0.event == "PUSH_NSE_DECRYPT_FAIL" })
+      XCTAssertEqual(failure.details["reason"], reason)
+      XCTAssertFalse(String(describing: failure.details).contains("must-not-escape"))
+    }
+  }
+
+  func testBL9MissingReactionInputIsTechnicalFailureNotProcessSuccess() {
+    let resolver = NotificationPreviewResolver(keyReader: MemoryPushKeyReader([:]),
+      decryptor: MemoryPushDecryptor(), dedupeStore: nil,
+      eventEmitter: MemoryPushPreviewEventEmitter())
+    let result = resolver.resolve(userInfo: ["type": "message_reaction", "action": "add"],
+      fallbackTitle: "Reaction", fallbackBody: "Reaction")
+    XCTAssertEqual(result.reason, "missing_reaction_input")
+    XCTAssertEqual(nsePreviewTechnicalFailureReason(result), "invalid_payload")
+  }
+
   func testDecryptsOneToOneFixturePreview() throws {
     let fixture = try loadFixture("one_to_one_text")
     let plaintext = try fixturePlaintextJSON(fixture)

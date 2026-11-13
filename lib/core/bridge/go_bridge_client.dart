@@ -1379,21 +1379,39 @@ class GoBridgeClient extends Bridge {
       } catch (_) {
         // Diagnostics never replace an ordinary bridge result.
       }
-      reportDiagnostic(
-        decoded['ok'] == true,
-        decoded['ok'] == true
-            ? 'none'
-            : switch ((cmd, decoded['errorCode'])) {
-                ('peer:dial', 'NOT_INITIALIZED') => 'bridge_unavailable',
-                ('peer:dial', 'INVALID_INPUT') => 'invalid_request',
-                // DIAL_ERROR includes several native causes; it does not
-                // establish that the peer is offline or the dial timed out.
-                ('peer:dial', 'DIAL_ERROR') => 'route_failed',
-                _ => 'bridge_rejected',
-              },
-        _bridgeRejectionKinds[decoded['errorCode']] ??
-            _BridgeRejectionKind.unknown,
-      );
+      final hasErrorCode = decoded.containsKey('errorCode');
+      // Only this exact uncoded lifecycle reply establishes not-ready. Coded
+      // rejections retain their code-derived kind, even with the same text.
+      final nodeStopped =
+          decoded['ok'] == false &&
+          !hasErrorCode &&
+          decoded['error'] == 'node stopped';
+      // These two best-effort calls return ordinary negative results when a
+      // peer/relay is unavailable. Preserve the result without a failure event.
+      final expectedMiss =
+          decoded['ok'] == false &&
+          !hasErrorCode &&
+          !nodeStopped &&
+          (cmd == 'peer:ping' || cmd == 'relay:presence_set');
+      if (!expectedMiss) {
+        reportDiagnostic(
+          decoded['ok'] == true,
+          decoded['ok'] == true
+              ? 'none'
+              : switch ((cmd, decoded['errorCode'])) {
+                  ('peer:dial', 'NOT_INITIALIZED') => 'bridge_unavailable',
+                  ('peer:dial', 'INVALID_INPUT') => 'invalid_request',
+                  // DIAL_ERROR includes several native causes; it does not
+                  // establish that the peer is offline or the dial timed out.
+                  ('peer:dial', 'DIAL_ERROR') => 'route_failed',
+                  _ => 'bridge_rejected',
+                },
+          nodeStopped
+              ? _BridgeRejectionKind.notReady
+              : _bridgeRejectionKinds[decoded['errorCode']] ??
+                    _BridgeRejectionKind.unknown,
+        );
+      }
       final deliveryObserver = debugGroupDeliveryObserver;
       if (deliveryObserver != null &&
           payload != null &&
@@ -1569,8 +1587,9 @@ enum _BridgeRejectionKind {
   final String wireValue;
 }
 
-// Only explicit codes establish a specific cause; broad native failures stay
-// unknown. Payloads, command prefixes and error text are never classifiers.
+// This table uses explicit codes; broad unclassified failures stay unknown.
+// Dispatch separately recognizes the exact uncoded lifecycle reply above.
+// Raw commands, payloads, peer identifiers and error text are never recorded.
 const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'BRIDGE_TIMEOUT': _BridgeRejectionKind.timeout,
   'NOT_INITIALIZED': _BridgeRejectionKind.notReady,
@@ -1591,6 +1610,7 @@ const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'CALL_UNAUTHORIZED': _BridgeRejectionKind.permission,
   'MEDIA_CUSTODY_NOT_AUTHORIZED': _BridgeRejectionKind.permission,
   'INTERNAL_ERROR': _BridgeRejectionKind.internal,
+  'PROFILE_ERROR': _BridgeRejectionKind.internal,
   'NULL_RESPONSE': _BridgeRejectionKind.malformedResponse,
   'MALFORMED_RESPONSE': _BridgeRejectionKind.malformedResponse,
   'CALL_CONTROL_INVALID_RESPONSE': _BridgeRejectionKind.malformedResponse,

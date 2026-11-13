@@ -118,7 +118,9 @@ const _relocations = <String, List<String>>{
     // same data adapter; placement is unchanged.
     // Wrote-back adds its query delegate and aggregation to the same adapter.
     // NAV-006 carries incoming recency through this existing data adapter.
-    '1c151fd322a39c59721fc0ea2496e640d7622d80f1f957b1d8064033a1d86cb3',
+    // BL-24C adds terminal retry capability and delegates in this existing
+    // data adapter (4d21b6bcb); placement and dependency direction are unchanged.
+    '46b077649b192ece0a3d34e2b628c096d92152d74b781fbf483eac3e504466c4',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

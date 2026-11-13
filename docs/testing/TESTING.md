@@ -853,6 +853,42 @@ hashes; absent or mismatched native phase still rejects it. Legacy typed markers
 remain supported, with exact kind boundaries. Production logging is unchanged.
 Evidence is retained under `ios-nse-probe-001/` in the same run directory.
 
+BL-9 adds fixed public NSE failure classes and allowlisted diagnostic-spool
+reasons while preserving the empty success details above. The native regressions
+cover per-kind failure classification, bridge availability versus decrypt
+failure, private-detail exclusion, generic fallback, and a renderer failure after
+the first decrypt that must report once without changing safe content.
+On 2026-11-12, unsigned simulator execution on iPhone 16e / iOS 26.5
+(`DBE8C32E-9F19-4593-860A-B41113791D79`) recorded three causal RED test-case
+failures (47 assertion failures, xcodebuild exit 65) at
+`1d59a5026dab28ec50927c3aaebf606cbc818ca8`. GREEN
+`a4e861e9cb4a86e7e51e0b16bd8e9527cd7baa91` passed 110 tests with no failures
+or skips, exit 0: resolver 74, diagnostic spool 23, mailbox coordinator 8 and
+configuration 5. Both scratch trees match these revisions and remain clean;
+the runner rebuilt Go iOS bindings in each worktree. Raw logs, commands and
+xcresult bundles are retained under `.codex-test-logs/bl9-20261112/`, with
+actual exits in `red-focused/xctest.log` and `green-full/xctest.log`.
+Flutter subsequently exercised the same source on iPhone 13 with in-place
+Release installs preserving identity and data. Controlled build 262 omitted the
+NSE Go bridge: public proof explicitly records chat and group
+`bridge_unavailable`, followed by unauthorized, sanitized content handoff.
+Normal build 263 records two `PUSH_NSE_DECRYPT_OK` events followed by authorized,
+active handoff; the runner identifies those pushes as chat and group, while the
+success events intentionally omit kind. The public runner receipt records the
+controlled/normal binary-link gate results; review verified redacted flow and
+install/build metadata without independently remeasuring those binaries.
+The first controlled attempt failed at the Pods copy step (exit 65); explicit
+pod installation corrected setup before the successful build. Both outcomes
+remain in `device-controlled-262.fail1/`, `device-controlled-262/` and
+`device-normal-263/` under the same evidence root. Scoped adoption is indexed by
+`/Users/I560101/.codex/investigations/bl9-simulator-adoption-20261112/device-verification.json`.
+The fixed mailbox wake path is unreachable on production iOS devices: iPhones
+do not advertise `opaque_wake_v1` and receive rich pushes instead. That path has
+simulator proof only (`IosNseMailboxWakeCoordinatorTests`, 8/8); no crafted APNs
+fixed-wake or device mailbox proof is claimed. These receipts establish the
+specified source/build flows, not a subsequently integrated signed candidate
+or general APNs delivery certification.
+
 The group notification setup stops the Android app before clearing its private
 entries. An in-place install can restart background writers: attempt
 `ios-group-deployed-009/` failed deleting `shared_prefs` while the app was still
@@ -2676,6 +2712,33 @@ send or the root cause of the missing key. Explicit manual retry still reports t
 refusal, and already-encrypted custody still replays its exact envelope with
 no re-encryption when the current contact key is missing. Key acquisition and
 persistence remain separate concerns.
+
+Automatic failed-message recovery treats `invalidMessage` as terminal through
+nullable local `messages.auto_retry_terminal_reason` (DB v131). The loader
+excludes marked rows before its limit; the row retains status `failed`, and
+explicit manual retry clears/bypasses the marker. Exact snapshot qualification
+prevents an intervening row change from marking a different send incarnation.
+Null snapshot fields use `IS NULL` with no null whereArg: the earlier `IS ?`
+matched correctly but produced a sqflite compatibility warning. No wire or UI
+contract changes. Do not install an older build over a v131 phone database.
+
+BL-24(C) source `be40d7bb761ec5a7a069dc2fcededc345855cd5a` has verified
+Claude-Dev host evidence: the original RED produced two causal failures (second
+invalid send and missing migration column); corrected focused cases passed 3/3
+and the complete main retry file passed 55/55 without the warning. Unchanged
+receipts retain 43 tests across the other four failed-retry files, 26 unacked
+retry tests, 18 migration tests and metadata validation. The v130 upgrade test
+preserves all existing values, writes a marker on a null-field row, reopens,
+checks automatic exclusion, clears it, and rejects a stale snapshot. The real
+repository probe preserves the marker through reopen and permits manual retry.
+Raw first failures/warning remain in
+`/Volumes/CrucialX9/flutter_app-claude-dev/build/bl24c-proof/`; the bounded
+compatibility follow-up is in `build/bl24c-sql-proof/` under that same checkout.
+The follow-up began before the narrow review release under the author's packet
+and Kayan's two-run scope; retain that timing disclosure. Migration wrapper
+exit 3 means omitted checks were NOT RUN, while its child passed. Wider
+quiet-recovery/affected-storage checks were deferred to the batch by Kayan;
+these host receipts do not prove native SQLCipher or a signed upgrade.
 
 Committed contact-key updates now wake failed-message recovery directly, without
 waiting for the periodic/reconnect pass or replaying already-encrypted custody.
@@ -12285,6 +12348,28 @@ correlation alone does not prove custody, displayed content, or recipient open.
 Only report a checkpoint that the retained instrumentation actually observes.
 State an investigation area separately from a proven root cause.
 
+Incoming direct-chat rejection observations distinguish existing aggregate results
+with closed stage/reason pairs: unknown sender uses `preflight/authority_rejected`,
+unauthorized uses `verify/authority_rejected`, custody refusal uses
+`commit/protection_failed`, and missing original uses `prepare/prepare_failed`.
+These categories do not establish a precise cause or permanent rejection. The
+handler still executes on every pass; authorization, retry, ACK and disposition
+behavior is unchanged. Stable staged entries suppress a repeated terminal
+observation using private recipient/sender/entry/category digests, retained only
+after diagnostic admission. The collector keeps at most 256 digests for five
+monotonic minutes and clears them with its existing clear/consent/dispose paths.
+Keys never enter persistence, export or upload. Suppressed attempts still close;
+unstaged calls remain independent. Start/preflight/decrypt checkpoints still
+describe actual handling, so this is not a measured shipped-volume reduction.
+The BL24B pair `9f8935b5`/`50eede91` produced two positive controls and seven causal
+RED failures, then nine GREEN cases, one core admission/closure case, 134 incoming
+preservation cases, two exact recovery sentinels and 299 diagnostics cases passed.
+Analysis, validation and schema-copy check passed. The scoped diagnostics child
+passed; wrapper exit 3 retains omitted groups as `NOT RUN`, not full-change PASS.
+The host tests do not advance the five-minute expiry clock or prove native or
+signed-candidate behavior. Exact commands, identities and first failures are in
+`/Users/I560101/.codex/investigations/bl24b-incoming-authority-20261112-mb0024a5d/runtime-raw-facts.json`.
+
 Contact-request reports use closed source/action/disposition/consent enums with
 no peer or content fields. Local delete completion reports unknown consent:
 the purge result's `deletedContact` means the contact is absent, not that a row
@@ -12405,14 +12490,37 @@ Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
 Bridge failure records use closed `bridgeCommandFamily` and
 `bridgeRejectionKind` values. The command family is required in the existing
-dispatch registry; rejection kinds come only from explicit native error codes,
-with `unknown` for broad or unclassified failures. Raw command strings, payloads,
+dispatch registry; explicit native error codes determine rejection kinds,
+with `unknown` for broad or unclassified failures. The one bounded lifecycle
+exception is an uncoded negative reply whose `error` is exactly `node stopped`;
+it remains a reported failure with the existing `not_ready` kind.
+Raw command strings, payloads,
 peer identifiers and error text are not diagnostic values. Preserve ordinary
 return envelopes, the six network operation reasons, raw background responses,
 and diagnostic-upload recursion suppression. The bridge-label tests exercise
 native-boundary results through collection, export and upload; relay/Python
 fixtures preserve old records and reject free-form enum values. Evidence is
 retained in `.codex-test-logs/bridge-labels-20261101/`.
+
+**BL-24(A) expected bridge misses:** ordinary `ok:false` replies without an
+`errorCode` key from `peer:ping` and `relay:presence_set` are best-effort misses,
+not failed bridge observations. Their return envelopes remain unchanged. A
+present code, including null, empty or unknown, retains the failure path and
+existing mapping; `PROFILE_ERROR` now uses existing `internal`. The exact
+uncoded lifecycle exception above takes precedence over miss suppression.
+Presence lookup already returns a successful `unknown` hint; other uncoded
+command failures remain visible. No rejection vocabulary or schema copy changed.
+Frozen RED `f79367b56db1909484ee15076d1483f52a73fd33` produced one positive-control
+PASS and four causal failures. GREEN `209f48d56103c1ffa6e6825c6102f89354663e8c`
+passed 98 focused and 431 curated bridge/diagnostics cases without failures or
+skips; changed-path analysis, metadata validation and schema parity also passed.
+All sixteen source/schema/localization/lock pins matched at eight recorded
+boundaries; both dependency-setup deltas were empty. Original outcomes and raw
+receipts are retained in
+`.codex-test-logs/codex-ui-bl24a-bridge-telemetry-20261112/official-host-verdict.json`
+and `official-claude-dev/`. This proves the mock bridge and local diagnostics
+privacy/export/upload contract. It does not measure the inferred production
+volume reduction or establish native/device or aggregate candidate behavior.
 
 Native `bgEnd` intentionally completes with a void result. The Dart bridge
 accepts that result only for `bg:end` and returns its normal success envelope;
