@@ -218,6 +218,48 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   /// preparation succeeds and the close is replayed for the current call.
   CallEngineEvent? _heldCloseEvent;
 
+  /// Reuses the existing observer for an exact canonical recovery episode.
+  bool rearmMediaRecoveryObservation(CallSessionSnapshot snapshot) {
+    final current = _readSnapshotSafely();
+    if (_closed ||
+        snapshot.callId == null ||
+        snapshot.state != CallState.reconnecting ||
+        current?.callId != snapshot.callId ||
+        current?.state != CallState.reconnecting ||
+        current?.reconnectGeneration != snapshot.reconnectGeneration) {
+      return false;
+    }
+    _closedMediaReadinessPhases.remove((
+      snapshot.callId!,
+      CallEventType.mediaRecovered,
+    ));
+    return true;
+  }
+
+  /// Starts existing readiness observation after successful current typed SDP.
+  void deferMediaRecoveryObservation(
+    CallSessionSnapshot snapshot,
+    int generation,
+  ) {
+    if (snapshot.state != CallState.reconnecting) return;
+    // Native CONNECTED can survive a restart without another state callback.
+    // Never await canonical dispatch inside its coordinator-owned effect.
+    scheduleMicrotask(() async {
+      if (!_isCurrentRemoteWork(snapshot, generation)) return;
+      final current = _readSnapshotSafely();
+      if (current == null ||
+          current.state != CallState.reconnecting ||
+          current.reconnectGeneration != snapshot.reconnectGeneration) {
+        return;
+      }
+      try {
+        await _startMediaReadinessWatch(current, CallEventType.mediaRecovered);
+      } catch (error) {
+        await _handleAsyncFailure(error, current, 'postSdpReadiness');
+      }
+    });
+  }
+
   @override
   Future<CallEvent?> execute(
     CallEffect effect,
