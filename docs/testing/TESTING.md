@@ -12051,6 +12051,34 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jgq-runtime-adoption.json`;
   final scoped review:
   `/Users/I560101/.codex/investigations/bl16-u3jgq-source-review-20261113-m4b06a9bb/final-scoped-verdict.json`.
+  **OS PiP unit 2 — Dart host policy:** source and scoped host evidence is
+  closed at `c91c63847cb6d9febd6dbb7846e352d504094160` on composed base
+  `a3a58ffa7e8d97ea53c9f1ec2c72de0c41115b40`. The controller qualifies native
+  callbacks by graph instance, call, lease, sequence and exact remote source;
+  late attach cleanup cannot retire a successor. Camera restoration requires
+  a previously user-enabled camera, the same call/session/negotiation/intent
+  epoch, accepted PiP entry, permission without a prompt and the quality gates.
+  Unsupported, missing-source, preparing, rejected, failed and blocked fallback
+  retains ordinary background revoke/no-resume. Close preserves audio; only
+  explicit End terminates the call. Enter/restore never create camera consent.
+  Original RED `518a74171` had 3 passing controls and 23 causal failures;
+  fallback RED `f59bc103f` had six causal camera-stays-on failures. First GREEN
+  `e61ef7290` passed 322 cases and failed one existing source-text sentinel:
+  its expected resume body omitted the three approved PiP lifecycle calls.
+  The test-only correction adds those ordered lines, preserving all previous
+  assertions and the entire production library tree. Corrected composition
+  passed 239 cases; five previously unrun preservation files passed 239 cases.
+  Another 84 unchanged focused passes carry from the first GREEN: 562 assembled
+  passes across nine files, not a repeated nine-file invocation. Both corrected
+  commands had zero failures/errors/skips, successful reporters and child exit 0.
+  First-run 228 and corrected-run 114 individual file hashes matched all 18 clean
+  HEAD/parents/tree/lib/test checkpoints; first failures remain retained. Evidence:
+  `/Users/I560101/.codex/investigations/bl16-pip-host-20261113/first-runtime-verified.json`
+  and `followup-runtime-verified.json` in the same directory. Video stays OFF;
+  native unit 3 reports `cameraInPip: false` on both platforms. Host fixtures with
+  true capability do not certify native capture continuation, OS entry/rendering,
+  device/RTP/lock-screen behavior, signed candidates or activation. Preview selected
+  20 checks; the full selected wrapper set was not executed for this scoped result.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
