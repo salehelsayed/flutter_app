@@ -57,6 +57,33 @@ void captures(harness.Fixture f, int count) {
   }
 }
 
+Future<void> closeFixture(WidgetTester tester, harness.Fixture f) async {
+  var settled = false;
+  Object? failure;
+  StackTrace? failureStack;
+  unawaited(
+    f.engine.close().then<void>(
+      (_) => settled = true,
+      onError: (Object error, StackTrace stack) {
+        failure = error;
+        failureStack = stack;
+        settled = true;
+      },
+    ),
+  );
+  // Stream shutdown crosses real and fake-async microtask queues. Awaiting it
+  // before pumping can hide the body's assertion behind a teardown timeout.
+  for (var turn = 0; turn < 100 && !settled; turn++) {
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  await tester.pump();
+  if (!settled) {
+    throw TestFailure('Engine cleanup did not settle after 100 async turns.');
+  }
+  if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
+}
+
 void qualityTest(
   String name,
   Future<void> Function(WidgetTester, harness.Fixture) body, {
@@ -65,8 +92,13 @@ void qualityTest(
   testWidgets('U3j-Q $name', (tester) async {
     final f = harness.Fixture();
     await f.start(nativeVideoCapture: nativeCapture);
+    Object? bodyFailure;
+    StackTrace? bodyStack;
     try {
       await body(tester, f);
+    } catch (error, stack) {
+      bodyFailure = error;
+      bodyStack = stack;
     } finally {
       f.current = false;
       final capture = f.captureGate;
@@ -82,10 +114,20 @@ void qualityTest(
           replacement.complete();
         }
       }
-      await f.engine.close();
-      await tester.pump();
+      try {
+        await closeFixture(tester, f);
+      } catch (error, stack) {
+        if (bodyFailure == null) Error.throwWithStackTrace(error, stack);
+        throw TestFailure(
+          'Test body failed: $bodyFailure\n$bodyStack\n'
+          'Cleanup also failed: $error\n$stack',
+        );
+      }
     }
-  });
+    if (bodyFailure != null) {
+      Error.throwWithStackTrace(bodyFailure, bodyStack!);
+    }
+  }, timeout: const Timeout(Duration(seconds: 30)));
 }
 
 void main() {
@@ -514,7 +556,7 @@ void main() {
       expect(f.captures, 0);
       expect(f.peer.statsReads, 0);
       expect(f.peer.nativeTransceivers, isEmpty);
-      await f.engine.close();
+      await closeFixture(tester, f);
     },
   );
   qualityTest(
