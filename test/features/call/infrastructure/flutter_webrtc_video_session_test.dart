@@ -913,6 +913,179 @@ void main() {
     expect(f.renderer.disposals, 2);
     f.preserved();
   });
+  group('SDP-C close cancels state reads', () {
+    Future<Object?> runProbe(
+      Fixture f,
+      CallVideoNegotiation token,
+      String operation,
+    ) async {
+      try {
+        if (operation == 'commit') {
+          await f.session.commit(token);
+          return null;
+        }
+        if (operation.startsWith('rollback')) {
+          return await f.session.rollbackPending(token);
+        }
+        return await (f.session as CallVideoSdpReconciler).reconcilePending(
+          token,
+          canApply: () => true,
+        );
+      } catch (error) {
+        return error;
+      }
+    }
+
+    for (final operation in [
+      'commit',
+      'rollback-first',
+      'rollback-final',
+      'reconcile-first',
+      'reconcile-final',
+    ]) {
+      for (final lateError in [false, true]) {
+        test('$operation closes before probe; lateError=$lateError', () async {
+          final f = Fixture();
+          await f.start();
+          final token = operation == 'commit' ? await f.committed() : f.begin();
+          if (operation == 'commit') {
+            await f.session.setLocalCamera(token, f.grant());
+            await f.session.attachRenderer(token, CallVideoRendererSlot.local);
+          } else {
+            await f.session.applyLocal(
+              token,
+              await f.session.createOffer(token),
+            );
+          }
+          final entered = Completer<void>();
+          final native = Completer<rtc.RTCSignalingState?>();
+          var reads = 0;
+          f.peer.probe = () async {
+            reads++;
+            if (reads == (operation.endsWith('final') ? 2 : 1)) {
+              entered.complete();
+              return await native.future;
+            }
+            return f.peer.signalingState;
+          };
+          var settled = false;
+          final result = runProbe(f, token, operation).then((value) {
+            settled = true;
+            return value;
+          });
+          await entered.future;
+          final queued = expectLater(
+            f.session.commit(token),
+            throwsA(isA<CallEngineException>()),
+          );
+          var closed = false;
+          final closing = f.session.close().then((value) {
+            closed = true;
+            return value;
+          });
+          final closingAgain = f.session.close();
+          final localCount = f.peer.local.length;
+          final remoteCount = f.peer.remote.length;
+          try {
+            await flush();
+            expect(
+              closed,
+              isTrue,
+              reason: 'close must not await a native read',
+            );
+            expect(settled, isTrue);
+            expect(native.isCompleted, isFalse);
+            expect(await closing, isTrue);
+            expect(await closingAgain, isTrue);
+            expect(
+              await result,
+              operation == 'commit'
+                  ? isA<CallEngineException>()
+                  : operation.startsWith('rollback')
+                  ? isFalse
+                  : CallVideoSdpReconciliationOutcome.unreconciled,
+            );
+          } finally {
+            if (lateError) {
+              native.completeError(StateError('late native probe'));
+            } else {
+              native.complete(rtc.RTCSignalingState.RTCSignalingStateStable);
+            }
+            await result;
+            await closing;
+            await closingAgain;
+            await queued;
+            await flush();
+          }
+          expect(f.peer.local, hasLength(localCount));
+          expect(f.peer.remote, hasLength(remoteCount));
+          if (operation == 'commit') {
+            expect(f.track.enabled, isFalse);
+            expect(f.track.stops, 1);
+            expect(f.renderer.disposals, 1);
+          }
+          expect(f.session.hasPendingCleanup, isFalse);
+          f.preserved();
+        });
+      }
+    }
+
+    for (final caller in [true, false]) {
+      test('native rollback mutation still drains caller=$caller', () async {
+        final f = Fixture();
+        await f.start(caller: caller);
+        final token = f.begin();
+        if (caller) {
+          await f.session.applyLocal(token, await f.session.createOffer(token));
+        } else {
+          await f.session.applyRemote(
+            token,
+            description(CallSessionDescriptionType.offer, video: 'sendrecv'),
+          );
+        }
+        final entered = Completer<void>();
+        final mutation = Completer<void>();
+        f.peer.beforeApply = (description, _) async {
+          if (description.type == 'rollback') {
+            entered.complete();
+            await mutation.future;
+          }
+        };
+        final result = runProbe(f, token, 'reconcile-first');
+        await entered.future;
+        var closed = false;
+        final closing = f.session.close().then((value) {
+          closed = true;
+          return value;
+        });
+        try {
+          await flush();
+          expect(closed, isFalse);
+        } finally {
+          mutation.complete();
+          await closing;
+        }
+        expect(await result, CallVideoSdpReconciliationOutcome.unreconciled);
+        expect((caller ? f.peer.local : f.peer.remote).last.type, 'rollback');
+        f.preserved();
+      });
+    }
+
+    for (final operation in ['commit', 'rollback-first']) {
+      test('$operation preserves native errors before close', () async {
+        final f = Fixture();
+        await f.start();
+        final token = operation == 'commit' ? await f.committed() : f.begin();
+        if (operation != 'commit') {
+          await f.session.applyLocal(token, await f.session.createOffer(token));
+        }
+        f.peer.probe = () async => throw StateError('native probe');
+        expect(await runProbe(f, token, operation), isA<StateError>());
+        await f.session.close();
+        f.preserved();
+      });
+    }
+  });
   group('SDP reconciliation', () {
     Future<CallVideoSdpReconciliationOutcome> reconcile(
       Fixture f,
