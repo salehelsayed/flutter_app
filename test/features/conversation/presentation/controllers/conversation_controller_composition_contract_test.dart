@@ -168,7 +168,11 @@ const _expectedGroupApiFingerprint = '2b594730';
 // BL-11: the direct handoff adds only isWaitingForSecureConnection, derived
 // from an unblocked contact's missing ML-KEM key for the approved readiness
 // label and origin markers. Wired APIs and the group handoff are unchanged.
-const _expectedDirectHandoffFingerprint = '80f91789';
+// U6-entry (b920b21b5): the direct handoff adds only `callStartingMessage`,
+// the localized status text the screen shows while an outgoing call starts.
+// Wired APIs and the group handoff are unchanged; without it the fingerprint
+// is the previous 80f91789.
+const _expectedDirectHandoffFingerprint = 'f9991687';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
