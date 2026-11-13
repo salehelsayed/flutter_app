@@ -298,4 +298,26 @@ void main() {
       expect(p.decision.tier, CallVideoQualityTier.medium);
     },
   );
+  test(
+    'U3j-Q unknown thermal input during cooling cannot authorize recovery',
+    () {
+      final p = policy();
+      p.setEnvironment(
+        const CallVideoQualityEnvironment(
+          thermalState: CallVideoThermalState.critical,
+        ),
+        now: Duration.zero,
+      );
+      p.setEnvironment(wifi, now: const Duration(seconds: 1));
+      observeSeconds(p, headroom, 1, 10);
+      p.setEnvironment(
+        CallVideoQualityEnvironment.unknown,
+        now: const Duration(seconds: 11),
+      );
+      observeSeconds(p, headroom, 11, 40);
+      expect(p.decision.paused, isTrue);
+      p.resetForNewCameraIntent(now: const Duration(seconds: 41));
+      expect(p.decision.paused, isTrue);
+    },
+  );
 }

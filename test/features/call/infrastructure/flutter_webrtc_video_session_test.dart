@@ -370,6 +370,12 @@ class Fixture {
         videoEnabled: true,
         canApply: () => current,
       );
+      addTearDown(() {
+        current = false;
+        // Retirement cancels owned polling synchronously. Some tests deliberately
+        // leave a native future unresolved, so teardown must not wait on it.
+        unawaited(session.retireVideo());
+      });
     }
   }
 

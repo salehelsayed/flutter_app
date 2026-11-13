@@ -517,4 +517,31 @@ void main() {
       await f.engine.close();
     },
   );
+  qualityTest(
+    'revoked first acquisition cannot revive when its old grant becomes true again',
+    (tester, f) async {
+      var foreground = true;
+      final token = await f.committed();
+      f.captureGate = Completer<rtc.MediaStream>();
+      final starting = f.session.setLocalCamera(
+        token,
+        f.grant(fresh: () => foreground),
+      );
+      await tester.pump();
+      expect(f.captures, 1);
+      foreground = false;
+      f.captureGate!.complete(f.stream);
+      expect(await starting, isFalse);
+      expect(f.track.enabled, isFalse);
+      foreground = true;
+      environment(f, wifi);
+      f.peer.stats = () async =>
+          feedback.reports(f.qualityNow.inSeconds, track: 'video');
+      await advance(tester, f, 40);
+      expect(f.captures, 1);
+      expect(f.peer.statsReads, 0);
+      expect(f.peer.video.sender.track, isNull);
+      f.preserved();
+    },
+  );
 }
