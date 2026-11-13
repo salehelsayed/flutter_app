@@ -93,7 +93,19 @@ void main() {
         r'<activity\s+[^>]*android:name="\.MainActivity"[^>]*>',
         dotAll: true,
       ).firstMatch(manifest)!.group(0)!;
-      expect(mainDeclaration, isNot(contains('supportsPictureInPicture')));
+      // BL-16 live-call PiP (Kayan m-69a3dbc5 / m-5abe7078): MainActivity
+      // declares PiP support for the live call only. Received-video playback
+      // keeps its dedicated activity above; MainActivity gains no intent
+      // filter or task change for it.
+      expect(
+        mainDeclaration,
+        contains('android:supportsPictureInPicture="true"'),
+      );
+      expect(
+        RegExp('supportsPictureInPicture').allMatches(mainDeclaration),
+        hasLength(1),
+      );
+      expect(mainDeclaration, contains('android:launchMode="singleTask"'));
     },
   );
 
