@@ -23,6 +23,267 @@ final _call = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
 void main() {
   test(
+    'U3j-T unselected cancellation preserves the established revision',
+    () async {
+      final r = _Rig(settledRevision: 3);
+      r.owner.request(
+        MediaSwitchRequest(
+          id: 'unselected',
+          baseRevision: 3,
+          target: _video,
+          requesterIsCaller: true,
+          createdAtMs: r.host.now,
+          deadlineMs: r.host.now + 30000,
+        ),
+      );
+      await r.owner.workSettled;
+      final machine = r.owner.machine;
+      expect(machine.phase, MediaSwitchPhase.decision);
+      r.beginRecovery();
+      await r.owner.workSettled;
+      expect(r.owner.machine, same(machine));
+      expect(machine.settledRevision, 3);
+      expect(machine.settledMedia, _audio);
+      expect(machine.phase, MediaSwitchPhase.declined);
+      expect(
+        r.host.controls.where((e) => e.kind == MediaSwitchEffectKind.sendAbort),
+        isEmpty,
+      );
+      expect(r.video.captureCalls, 0);
+    },
+  );
+
+  for (final terminal in [false, true]) {
+    test(
+      'U3j-T late authority cannot revive consent after ${terminal ? 'End' : 'reconnection'}',
+      () async {
+        final r = _Rig();
+        final held = Completer<bool>();
+        r.host.authorityGate = held;
+        r.owner.request(r.request(), localGrant: r.grant);
+        await _turn();
+        r.beginRecovery();
+        if (terminal) {
+          r.owner.terminate();
+        } else {
+          r.recoveryCurrent = false;
+          r.host.current = true;
+        }
+        held.complete(true);
+        await r.owner.workSettled;
+        expect(r.owner.machine.currentSwitchId, isNull);
+        expect(r.host.controls, isEmpty);
+        expect(r.video.captureCalls, 0);
+        expect(
+          r.video.events.where((e) => e == 'offer' || e == 'answer'),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  test(
+    'U3j-T completed agreement keeps its revision but retires a held camera grant',
+    () async {
+      final r = _Rig();
+      await r.select();
+      r.owner.receiveDescription(
+        id: 'switch',
+        negotiationId: r.token.negotiationId,
+        revision: 1,
+        media: _video,
+        description: _answer,
+      );
+      await r.owner.workSettled;
+      final camera = Completer<void>();
+      r.video.cameraGate = camera;
+      r.owner.receiveAck(id: 'switch', revision: 1, media: _video);
+      await _turn();
+      try {
+        expect(r.video.events, contains('commit:video'));
+        expect(r.owner.machine.settledRevision, 1);
+        r.beginRecovery();
+        expect(r.video.events.last, 'retire');
+        expect(r.owner.machine.settledMedia, _video);
+        expect(r.owner.machine.settledRevision, 1);
+        r.recoveryCurrent = false;
+        r.host.current = true;
+      } finally {
+        camera.complete();
+        await r.owner.workSettled;
+      }
+      expect(r.video.captureCalls, 0);
+      expect(
+        r.host.controls.where((e) => e.kind == MediaSwitchEffectKind.sendAbort),
+        isEmpty,
+      );
+    },
+  );
+
+  for (final caller in [true, false]) {
+    for (final description in ['offer', 'answer']) {
+      test(
+        'U3j-T retires held $description for ${caller ? 'caller' : 'callee'} before audio repair',
+        () async {
+          final r = _Rig(caller: caller);
+          final held = Completer<void>();
+          if (caller && description == 'offer') {
+            await r.requestWork();
+            r.video.applyGate = held;
+            r.video.applyGateType = 'local:offer';
+            r.respond();
+          } else {
+            await r.select();
+            r.video.applyGate = held;
+            r.video.applyGateType = caller
+                ? 'remote:answer'
+                : '${description == 'offer' ? 'remote' : 'local'}:$description';
+            r.owner.receiveDescription(
+              id: 'switch',
+              negotiationId: caller ? r.token.negotiationId : 'remote-switch',
+              revision: 1,
+              media: _video,
+              description: caller ? _answer : _offer,
+            );
+          }
+          await _turn();
+          try {
+            final descriptions = r.host.descriptions.length;
+            r.beginRecovery();
+            expect(r.video.events.last, 'retire');
+            expect(r.owner.machine.settledMedia, _audio);
+            expect(r.owner.machine.settledRevision, 1);
+            expect(r.owner.machine.phase, MediaSwitchPhase.aborted);
+            expect(r.host.descriptions, hasLength(descriptions));
+            expect(r.video.reconcileCalls, 0);
+          } finally {
+            held.complete();
+            await r.owner.workSettled;
+          }
+          expect(r.video.reconcileCalls, 1);
+          expect(
+            r.host.descriptions.where((d) => d.repair),
+            hasLength(caller ? 1 : 0),
+          );
+          expect(
+            r.host.controls.where(
+              (e) => e.kind == MediaSwitchEffectKind.sendCommit,
+            ),
+            isEmpty,
+          );
+          expect(r.video.captureCalls, 0);
+          expect(r.video.closeCalls, 0);
+        },
+      );
+    }
+  }
+
+  test(
+    'U3j-T interrupted downgrade stays audio at the consumed revision',
+    () async {
+      final r = _Rig(initialMedia: _video, settledRevision: 3);
+      final held = Completer<void>();
+      r.video.applyGate = held;
+      expect(
+        r.owner.request(
+          MediaSwitchRequest(
+            id: 'downgrade',
+            baseRevision: 3,
+            target: _audio,
+            requesterIsCaller: true,
+            createdAtMs: r.host.now,
+            deadlineMs: r.host.now + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      await r.owner.workSettled;
+      expect(
+        r.owner.respond(
+          id: 'downgrade',
+          baseRevision: 3,
+          fromCaller: false,
+          response: MediaSwitchResponse.accept,
+          camera: CallCameraState.off,
+        ),
+        isTrue,
+      );
+      await _turn();
+      try {
+        expect(r.owner.machine.selectedSwitchId, 'downgrade');
+        expect(r.owner.machine.phase, MediaSwitchPhase.negotiating);
+        expect(r.video.events, contains('local:offer'));
+        r.beginRecovery();
+        expect(r.owner.machine.settledRevision, 4);
+        expect(r.owner.machine.settledMedia, _audio);
+        expect(r.owner.machine.phase, MediaSwitchPhase.aborted);
+      } finally {
+        held.complete();
+        await r.owner.workSettled;
+      }
+      expect(r.video.captureCalls, 0);
+      expect(r.video.events.where((e) => e == 'begin:video'), isEmpty);
+    },
+  );
+
+  test(
+    'U3j-T existing repair keeps its earlier deadline across takeover',
+    () async {
+      final r = _Rig();
+      await r.select();
+      final proof = Completer<CallVideoSdpReconciliationOutcome>();
+      r.video.reconcileGate = proof;
+      r.owner.abort(id: 'switch', baseRevision: 0, revision: 1);
+      await _turn();
+      final deadline = r.owner.machine.nextDeadlineMs!;
+      r.host.now = deadline - 1000;
+      r.beginRecovery();
+      expect(r.owner.machine.nextDeadlineMs, deadline);
+      r.host.now = deadline + 1;
+      proof.complete(CallVideoSdpReconciliationOutcome.alreadyStable);
+      await r.owner.workSettled;
+      expect(r.host.descriptions.where((d) => d.repair), isEmpty);
+      expect(r.owner.machine.settledRevision, 1);
+      expect(r.owner.machine.settledMedia, _audio);
+      expect(r.video.captureCalls, 0);
+    },
+  );
+
+  test('U3j-T executor starts at the retained media revision', () async {
+    final r = _Rig(initialMedia: _video, settledRevision: 3);
+    expect(r.owner.machine.settledRevision, 3);
+    expect(r.owner.machine.settledMedia, _video);
+    expect(
+      r.owner.request(
+        MediaSwitchRequest(
+          id: 'fresh-stop',
+          baseRevision: 3,
+          target: _audio,
+          requesterIsCaller: true,
+          createdAtMs: r.host.now,
+          deadlineMs: r.host.now + 30000,
+        ),
+      ),
+      isTrue,
+    );
+    await r.owner.workSettled;
+    expect(
+      r.owner.respond(
+        id: 'fresh-stop',
+        baseRevision: 3,
+        fromCaller: false,
+        response: MediaSwitchResponse.accept,
+        camera: CallCameraState.off,
+      ),
+      isTrue,
+    );
+    await r.owner.workSettled;
+    expect(r.token.mediaRevision, 4);
+    expect(r.token.media, _audio);
+    expect(r.video.captureCalls, 0);
+  });
+
+  test(
     'local stop remains available when transaction custody is full',
     () async {
       final r = _Rig(maximumTransactions: 1);
@@ -587,11 +848,14 @@ final class _Rig {
     this.caller = true,
     bool enabled = true,
     int maximumTransactions = 32,
+    CallMediaKind initialMedia = _audio,
+    int settledRevision = 0,
   }) {
     owner = CallMediaSwitchEffectExecutor(
       host: host,
       localIsCaller: caller,
-      initialMedia: _audio,
+      initialMedia: initialMedia,
+      settledRevision: settledRevision,
       nowMs: () => host.now,
       idSource: () => 'negotiation-${++ids}',
       videoEnabled: enabled,
@@ -604,6 +868,17 @@ final class _Rig {
   late final CallMediaSwitchEffectExecutor owner;
   int ids = 0;
   bool permission = true;
+  bool recoveryCurrent = true;
+  int recoveryGeneration = 0;
+  void beginRecovery({int? deadline}) {
+    host.current = false;
+    owner.beginRecovery(
+      reconnectGeneration: ++recoveryGeneration,
+      deadlineMs: deadline ?? host.now + 15000,
+      canApply: () => recoveryCurrent,
+    );
+  }
+
   _Video get video => host.video;
   _Token get token => host.token!;
   CallLocalCameraGrant get grant => CallLocalCameraGrant(
@@ -756,6 +1031,8 @@ final class _Video implements CallVideoSession, CallVideoSdpReconciler {
   int reconcileCalls = 0;
   bool failOffer = false;
   Completer<void>? applyGate;
+  String? applyGateType;
+  Completer<void>? cameraGate;
   Completer<void>? commitGate;
   Completer<CallVideoSdpReconciliationOutcome>? reconcileGate;
   CallVideoSdpReconciliationOutcome outcome =
@@ -793,7 +1070,10 @@ final class _Video implements CallVideoSession, CallVideoSdpReconciler {
     CallSessionDescription description,
   ) async {
     events.add('local:${description.type.name}');
-    await (applyGate?.future ?? Future<void>.value());
+    if (applyGateType == null ||
+        applyGateType == 'local:${description.type.name}') {
+      await (applyGate?.future ?? Future<void>.value());
+    }
   }
 
   @override
@@ -802,7 +1082,10 @@ final class _Video implements CallVideoSession, CallVideoSdpReconciler {
     CallSessionDescription description,
   ) async {
     events.add('remote:${description.type.name}');
-    await (applyGate?.future ?? Future<void>.value());
+    if (applyGateType == null ||
+        applyGateType == 'remote:${description.type.name}') {
+      await (applyGate?.future ?? Future<void>.value());
+    }
   }
 
   @override
@@ -833,6 +1116,8 @@ final class _Video implements CallVideoSession, CallVideoSdpReconciler {
     CallVideoNegotiation token,
     CallLocalCameraGrant grant,
   ) async {
+    await (cameraGate?.future ?? Future<void>.value());
+    if (!grant.isCurrent()) return false;
     captureCalls++;
     events.add('camera');
     return grant.isCurrent();

@@ -1,12 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_material_store.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/call_v2_negotiation_effect_executor.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
+import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
@@ -33,6 +36,192 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  for (final incoming in [false, true]) {
+    for (final state in CallCameraState.values) {
+      test('U3j-S receives camera ${state.name} incoming=$incoming', () async {
+        final h = _Rig(incoming: incoming);
+        addTearDown(h.close);
+        await h.connect();
+        final token = h.owner.negotiation;
+        final updates = h.mediaChanges;
+        final sent = h.sent.length;
+        final signal = h.switchWire('camera_state', {
+          'media_revision': 0,
+          'state': state.name,
+        });
+        expect(h.admit(signal), IncomingCallSignalOutcome.accepted);
+        expect(h.owner.remoteCamera, state);
+        expect(h.mediaChanges, updates + 1);
+        expect(h.admit(signal), IncomingCallSignalOutcome.duplicate);
+        expect(h.mediaChanges, updates + 1);
+        expect(h.owner.negotiation, same(token));
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.sent, hasLength(sent));
+        expect(h.engine.eventListeners, 1);
+        expect(h.engine.candidateListeners, 1);
+      });
+    }
+  }
+
+  test('U3j-S older camera sequence cannot overwrite newer hint', () async {
+    final h = _Rig();
+    addTearDown(h.close);
+    await h.connect();
+    final older = h.switchWire('camera_state', {
+      'media_revision': 0,
+      'state': 'on',
+    });
+    final newer = h.switchWire('camera_state', {
+      'media_revision': 0,
+      'state': 'off',
+    });
+    expect(h.admit(newer), IncomingCallSignalOutcome.accepted);
+    final updates = h.mediaChanges;
+    expect(h.admit(older), IncomingCallSignalOutcome.rejected);
+    expect(h.owner.remoteCamera, CallCameraState.off);
+    expect(h.mediaChanges, updates);
+  });
+
+  for (final invalid in ['revision', 'generation', 'handle', 'authority']) {
+    test('U3j-S refuses camera hint with stale $invalid', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      final updates = h.mediaChanges;
+      final signal = h.switchWire('camera_state', {
+        'media_revision': invalid == 'revision' ? 1 : 0,
+        'state': 'on',
+      }, generation: invalid == 'generation' ? 1 : 0);
+      expect(
+        h.admit(
+          signal,
+          handle: invalid == 'handle' ? _otherNegotiation : _handle,
+          allowed: () => invalid != 'authority',
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.mediaChanges, updates);
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  for (final state in CallCameraState.values) {
+    test(
+      'U3j-S publishes camera ${state.name} through existing custody',
+      () async {
+        final h = _Rig();
+        addTearDown(h.close);
+        await h.connect();
+        final token = h.owner.negotiation!;
+        final prior = h.sent.length;
+        expect(
+          await h.owner.publishLocalCameraState(state, canApply: () => true),
+          isTrue,
+        );
+        expect(h.sent, hasLength(prior + 1));
+        final signal = h.sent.last;
+        expect(signal.event, CallSignalV2Type.cameraState);
+        expect(signal.payload, {
+          'media_revision': token.mediaRevision,
+          'state': state.name,
+        });
+        expect(signal.iceGeneration, h.engine.iceGeneration);
+        expect(signal.senderAccountPeerId, 'local-account');
+        expect(signal.recipientAccountPeerId, 'remote-account');
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.owner.negotiation, same(token));
+        expect(h.owner.remoteCamera, CallCameraState.off);
+        h.delivered = false;
+        expect(
+          await h.owner.publishLocalCameraState(state, canApply: () => true),
+          isFalse,
+        );
+      },
+    );
+  }
+
+  for (final boundary in [
+    'before-commit',
+    'audio',
+    'disabled',
+    'v1',
+    'closed',
+  ]) {
+    test('U3j-S camera hint stays inert at $boundary', () async {
+      final h = _Rig(
+        media: boundary == 'audio' ? CallMediaKind.audio : CallMediaKind.video,
+        enabled: boundary != 'disabled',
+        v1: boundary == 'v1',
+      );
+      addTearDown(h.close);
+      if (boundary == 'audio' || boundary == 'closed') await h.connect();
+      if (boundary == 'closed') await h.close();
+      final prior = h.sent.length;
+      final signal = h.switchWire('camera_state', {
+        'media_revision': 0,
+        'state': 'on',
+      });
+      expect(h.admit(signal), IncomingCallSignalOutcome.rejected);
+      expect(
+        await h.owner.publishLocalCameraState(
+          CallCameraState.on,
+          canApply: () => true,
+        ),
+        isFalse,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.sent, hasLength(prior));
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  for (final boundary in ['authority', 'retirement', 'replacement']) {
+    test('U3j-S late camera publication is fenced after $boundary', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      var allowed = true;
+      final gate = Completer<bool>();
+      h.cameraDeliveryGate = gate;
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete(false);
+      });
+      final prior = h.sent.length;
+      final pending = h.owner.publishLocalCameraState(
+        CallCameraState.on,
+        canApply: () => allowed,
+      );
+      await _turn();
+      expect(h.sent, hasLength(prior + 1));
+      if (boundary == 'authority') allowed = false;
+      if (boundary == 'retirement') await h.owner.closeVideo();
+      if (boundary == 'replacement') h.current = false;
+      gate.complete(true);
+      expect(await pending, isFalse);
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  test(
+    'U3j-S retired video clears camera projection without reacquisition',
+    () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.connect();
+      expect(
+        h.admit(
+          h.switchWire('camera_state', {'media_revision': 0, 'state': 'on'}),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(h.owner.remoteCamera, CallCameraState.on);
+      await h.owner.closeVideo();
+      expect(h.owner.remoteCamera, CallCameraState.off);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
   for (final withheldOldAnnouncement in [false, true]) {
     test(
       'U3j-R correction ignores a prior episode after audio interruption withheld=$withheldOldAnnouncement',
@@ -107,6 +296,643 @@ void main() {
         expect(h.admit(announcement), IncomingCallSignalOutcome.duplicate);
         expect(h.engine.eventListeners, 1);
         expect(h.engine.candidateListeners, 1);
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+  }
+
+  test(
+    'U3j-T revision three and older tombstones survive cancelling a newer unselected request',
+    () async {
+      final h = _Rig(recovery: true, takeover: true);
+      addTearDown(h.close);
+      await h.connect();
+      const old = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+      await h.settleCallerSwitch(old, CallMediaKind.audio);
+      await h.settleCallerSwitch(
+        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        CallMediaKind.video,
+      );
+      await h.settleCallerSwitch(
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        CallMediaKind.audio,
+      );
+      final switches = h.owner.mediaSwitch!;
+      expect(switches.machine.settledRevision, 3);
+      switches.request(
+        MediaSwitchRequest(
+          id: _otherNegotiation,
+          baseRevision: 3,
+          target: CallMediaKind.video,
+          requesterIsCaller: true,
+          createdAtMs: h.elapsedMs,
+          deadlineMs: h.elapsedMs + 30000,
+        ),
+      );
+      await h.owner.workSettled;
+      expect(switches.machine.phase, MediaSwitchPhase.decision);
+      await h.loseMedia();
+      await h.owner.workSettled;
+      expect(switches.machine.phase, MediaSwitchPhase.declined);
+      expect(switches.machine.settledRevision, 3);
+      final offer = h.sent.lastWhere((s) => s.event == CallSignalV2Type.offer);
+      expect(offer.payload['purpose'], 'ice_restart');
+      expect(offer.payload['media_revision'], 3);
+      expect(offer.payload['media'], 'audio');
+      h.engine.mediaReady = true;
+      h.admit(
+        h.remote(
+          'answer',
+          negotiation: offer.payload['negotiation_id']! as String,
+          purpose: 'ice_restart',
+          generation: 1,
+          revision: 3,
+          media: CallMediaKind.audio,
+        ),
+      );
+      await h.owner.workSettled;
+      await _turn();
+      expect(h.snapshot.state, CallState.connected);
+      expect(h.owner.mediaSwitch, same(switches));
+      expect(
+        h.admit(
+          h.switchWire('media_abort', {
+            'switch_id': old,
+            'base_revision': 0,
+            'media_revision': 1,
+            'media': 'audio',
+            'reason': 'transport',
+          }, generation: 1),
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(switches.machine.settledRevision, 3);
+      expect(
+        switches.request(
+          MediaSwitchRequest(
+            id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+            baseRevision: 3,
+            target: CallMediaKind.video,
+            requesterIsCaller: true,
+            createdAtMs: h.elapsedMs,
+            deadlineMs: h.elapsedMs + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      await h.owner.workSettled;
+      expect(switches.machine.phase, MediaSwitchPhase.decision);
+      expect(switches.machine.settledMedia, CallMediaKind.audio);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
+  for (final boundary in ['End', 'authority loss']) {
+    test('U3j-T $boundary fences held native proof before repair', () async {
+      final h = _Rig(
+        recovery: true,
+        takeover: true,
+        media: CallMediaKind.audio,
+      );
+      addTearDown(h.close);
+      await h.connect();
+      await h.selectVideoSwitch();
+      final switches = h.owner.mediaSwitch!;
+      final held = Completer<CallVideoSdpReconciliationOutcome>();
+      h.engine.video.reconcileGate = held;
+      await h.loseMedia();
+      await _turn();
+      try {
+        expect(switches.machine.settledRevision, 1);
+        expect(switches.machine.settledMedia, CallMediaKind.audio);
+        expect(h.engine.video.reconciliations, 1);
+        if (boundary == 'End') {
+          await h.end();
+        } else {
+          h.current = false;
+        }
+      } finally {
+        held.complete(CallVideoSdpReconciliationOutcome.alreadyStable);
+        await h.owner.workSettled;
+      }
+      expect(
+        h.sent.where((s) => s.payload['purpose'] == 'media_repair'),
+        isEmpty,
+      );
+      expect(h.engine.restartCalls, 0);
+      expect(h.engine.video.cameraStarts, 0);
+    });
+  }
+
+  for (final saturated in [false, true]) {
+    test(
+      'U3j-T caller repairs selected audio before ICE and retains terminal custody saturated=$saturated',
+      () async {
+        final h = _Rig(
+          recovery: true,
+          takeover: true,
+          media: CallMediaKind.audio,
+        );
+        addTearDown(h.close);
+        await h.connect();
+        if (saturated) {
+          for (var i = 0; i < 127; i++) {
+            expect(
+              h.admit(
+                h.remote(
+                  'ice',
+                  negotiation: h.owner.negotiation!.negotiationId,
+                ),
+              ),
+              IncomingCallSignalOutcome.accepted,
+            );
+            await h.owner.workSettled;
+          }
+        }
+        await h.selectVideoSwitch();
+        h.admit(
+          h.switchWire('answer', {
+            'switch_id': _otherNegotiation,
+            'negotiation_id': h.owner.negotiation!.negotiationId,
+            'purpose': 'media_switch',
+            'media_revision': 1,
+            'media': 'video',
+            'description': 'answer-before-lost-ack',
+            'fingerprint': 'fingerprint',
+          }),
+        );
+        await h.owner.workSettled;
+        final switches = h.owner.mediaSwitch!;
+        final machine = switches.machine;
+        expect(machine.phase, MediaSwitchPhase.acknowledgement);
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(machine.phase, MediaSwitchPhase.aborted);
+        expect(machine.settledRevision, 1);
+        expect(machine.settledMedia, CallMediaKind.audio);
+        expect(h.engine.restartCalls, 0);
+        final abort = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.mediaAbort,
+        );
+        final repair = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.offer,
+        );
+        expect(repair.payload['purpose'], 'media_repair');
+        expect(repair.iceGeneration, 0);
+        expect(h.sent.indexOf(abort), lessThan(h.sent.indexOf(repair)));
+        expect(
+          h.admit(
+            h.switchWire('answer', {
+              'switch_id': _otherNegotiation,
+              'negotiation_id': repair.payload['negotiation_id'],
+              'purpose': 'media_repair',
+              'media_revision': 1,
+              'media': 'audio',
+              'description': 'repair-answer',
+              'fingerprint': 'fingerprint',
+            }),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+        expect(h.engine.restartCalls, 1);
+        final restart = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.offer,
+        );
+        expect(restart.payload['purpose'], 'ice_restart');
+        expect(restart.payload['media_revision'], 1);
+        expect(restart.payload['media'], 'audio');
+        h.engine.mediaReady = true;
+        h.admit(
+          h.remote(
+            'answer',
+            negotiation: restart.payload['negotiation_id']! as String,
+            purpose: 'ice_restart',
+            generation: 1,
+            revision: 1,
+            media: CallMediaKind.audio,
+          ),
+        );
+        await h.owner.workSettled;
+        await _turn();
+        expect(h.snapshot.state, CallState.connected);
+        expect(h.owner.mediaSwitch, same(switches));
+        expect(switches.machine, same(machine));
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.engine.candidateListeners, 1);
+        expect(h.engine.eventListeners, 1);
+        expect(
+          h.admit(
+            h.remote(
+              'ice',
+              negotiation: repair.payload['negotiation_id']! as String,
+            ),
+          ),
+          IncomingCallSignalOutcome.rejected,
+        );
+
+        // Semantic tombstones survive generations; prepared transport bytes do not
+        // get retagged. Repeating within the successor generation is immutable.
+        switches.reconnect();
+        await h.owner.workSettled;
+        final fresh = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.mediaAbort,
+        );
+        expect(fresh.iceGeneration, 1);
+        expect(fresh.messageId, isNot(abort.messageId));
+        expect(fresh.payload, abort.payload);
+        switches.reconnect();
+        await h.owner.workSettled;
+        expect(
+          h.sent.lastWhere((s) => s.event == CallSignalV2Type.mediaAbort),
+          same(fresh),
+        );
+        h.admit(
+          h.switchWire('media_commit_ack', {
+            'switch_id': _otherNegotiation,
+            'media_revision': 1,
+            'media': 'video',
+          }, generation: 1),
+        );
+        await h.owner.workSettled;
+        expect(machine.phase, MediaSwitchPhase.aborted);
+        expect(machine.settledMedia, CallMediaKind.audio);
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+  }
+
+  for (final offerFirst in [false, true]) {
+    test(
+      'U3j-T callee completes caller-owned repair before next-generation recovery offerFirst=$offerFirst',
+      () async {
+        final h = _Rig(
+          recovery: true,
+          takeover: true,
+          incoming: true,
+          media: CallMediaKind.audio,
+        );
+        addTearDown(h.close);
+        await h.connect();
+        await h.selectVideoSwitch();
+        h.admit(
+          h.switchWire('offer', {
+            'switch_id': _otherNegotiation,
+            'negotiation_id': _remoteNegotiation,
+            'purpose': 'media_switch',
+            'media_revision': 1,
+            'media': 'video',
+            'description': 'switch-offer',
+            'fingerprint': 'fingerprint',
+          }),
+        );
+        await h.owner.workSettled;
+        final switches = h.owner.mediaSwitch!;
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(switches.machine.settledRevision, 1);
+        expect(switches.machine.settledMedia, CallMediaKind.audio);
+        expect(
+          h.sent.where((s) => s.event == CallSignalV2Type.iceRestart),
+          isEmpty,
+        );
+        const repairId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        expect(
+          h.admit(
+            h.switchWire('offer', {
+              'switch_id': _otherNegotiation,
+              'negotiation_id': repairId,
+              'purpose': 'media_repair',
+              'media_revision': 1,
+              'media': 'audio',
+              'description': 'repair-offer',
+              'fingerprint': 'fingerprint',
+            }),
+          ),
+          IncomingCallSignalOutcome.accepted,
+        );
+        await h.owner.workSettled;
+        expect(h.engine.restartCalls, 0);
+        final request = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.iceRestart,
+        );
+        expect(request.iceGeneration, 0);
+        expect(request.payload['media_revision'], 1);
+        const restartId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        h.engine.mediaReady = true;
+        if (!offerFirst) {
+          h.admit(
+            h.remote(
+              'ice_restart',
+              negotiation: restartId,
+              generation: 1,
+              revision: 1,
+            ),
+          );
+        }
+        h.admit(
+          h.remote(
+            'offer',
+            negotiation: restartId,
+            generation: 1,
+            revision: 1,
+            media: CallMediaKind.audio,
+            purpose: 'ice_restart',
+          ),
+        );
+        await h.owner.workSettled;
+        await _turn();
+        expect(h.snapshot.state, CallState.connected);
+        expect(h.owner.mediaSwitch, same(switches));
+        expect(h.engine.restartCalls, 1);
+        expect(h.engine.video.cameraStarts, 0);
+        expect(h.engine.candidateListeners, 1);
+        if (offerFirst) {
+          expect(
+            h.admit(
+              h.remote(
+                'ice_restart',
+                negotiation: restartId,
+                generation: 1,
+                revision: 1,
+              ),
+            ),
+            IncomingCallSignalOutcome.duplicate,
+          );
+        }
+      },
+    );
+  }
+
+  test(
+    'U3j-T lost abort retries the same envelope before any repair or restart',
+    () async {
+      final h = _Rig(
+        recovery: true,
+        takeover: true,
+        media: CallMediaKind.audio,
+      );
+      addTearDown(h.close);
+      await h.connect();
+      await h.selectVideoSwitch();
+      var deliverAbort = false;
+      h.deliveryFor = (s) =>
+          s.event != CallSignalV2Type.mediaAbort || deliverAbort;
+      await h.loseMedia();
+      await h.owner.workSettled;
+      final first = h.sent.lastWhere(
+        (s) => s.event == CallSignalV2Type.mediaAbort,
+      );
+      expect(
+        h.sent.where((s) => s.payload['purpose'] == 'media_repair'),
+        isEmpty,
+      );
+      expect(h.engine.restartCalls, 0);
+      final deadline = h.reconnectDeadline;
+      deliverAbort = true;
+      await h.resumeRecovery();
+      await h.owner.workSettled;
+      final attempts = h.sent
+          .where((s) => s.event == CallSignalV2Type.mediaAbort)
+          .toList();
+      expect(attempts, hasLength(2));
+      expect(attempts.last, same(first));
+      expect(attempts.last.toMap(), first.toMap());
+      expect(
+        h.sent.where((s) => s.payload['purpose'] == 'media_repair'),
+        hasLength(1),
+      );
+      expect(h.reconnectDeadline, same(deadline));
+      expect(h.reconnectTimers, 1);
+      expect(h.engine.restartCalls, 0);
+    },
+  );
+
+  for (final proof in [
+    'stable',
+    'rollback',
+    'unreconciled',
+    'missing',
+    'error',
+  ]) {
+    test(
+      'U3j-T $proof proof governs pending takeover without prematurely ending audio',
+      () async {
+        final h = _Rig(
+          recovery: true,
+          takeover: true,
+          media: CallMediaKind.audio,
+        );
+        addTearDown(h.close);
+        if (proof == 'missing') h.engine.video = _Video();
+        h.engine.video.failReconcile = proof == 'error';
+        h.engine.video.reconciliation = switch (proof) {
+          'rollback' => CallVideoSdpReconciliationOutcome.rolledBack,
+          'unreconciled' => CallVideoSdpReconciliationOutcome.unreconciled,
+          _ => CallVideoSdpReconciliationOutcome.alreadyStable,
+        };
+        await h.connect();
+        await h.selectVideoSwitch();
+        final switches = h.owner.mediaSwitch!;
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(switches.machine.settledRevision, 1);
+        expect(switches.machine.settledMedia, CallMediaKind.audio);
+        final positive = proof == 'stable' || proof == 'rollback';
+        expect(
+          h.sent.where((s) => s.payload['purpose'] == 'media_repair'),
+          hasLength(positive ? 1 : 0),
+        );
+        expect(h.engine.restartCalls, 0);
+        expect(h.snapshot.state, CallState.reconnecting);
+        expect(h.engine.video.closed, isFalse);
+        expect(h.engine.video.cameraStarts, 0);
+        if (!positive) {
+          expect(switches.machine.switchingDisabled, isTrue);
+        }
+      },
+    );
+  }
+
+  test(
+    'U3j-T an already advanced peer cannot bypass unresolved audio repair',
+    () async {
+      final h = _Rig(
+        recovery: true,
+        takeover: true,
+        incoming: true,
+        media: CallMediaKind.audio,
+      );
+      addTearDown(h.close);
+      await h.connect();
+      await h.selectVideoSwitch();
+      h.admit(
+        h.switchWire('offer', {
+          'switch_id': _otherNegotiation,
+          'negotiation_id': _remoteNegotiation,
+          'purpose': 'media_switch',
+          'media_revision': 1,
+          'media': 'video',
+          'description': 'switch-offer',
+          'fingerprint': 'fingerprint',
+        }),
+      );
+      await h.owner.workSettled;
+      await h.loseMedia();
+      await h.owner.workSettled;
+      final deadline = h.reconnectDeadline;
+      expect(
+        h.admit(
+          h.remote(
+            'offer',
+            negotiation: _otherNegotiation,
+            generation: 1,
+            revision: 1,
+            media: CallMediaKind.audio,
+            purpose: 'ice_restart',
+          ),
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      await h.owner.workSettled;
+      expect(h.engine.restartCalls, 0);
+      expect(h.reconnectDeadline, same(deadline));
+      h.advance(15000);
+      await deadline!.callback();
+      expect(
+        h.snapshot.isTerminal || h.snapshot.state == CallState.ending,
+        isTrue,
+      );
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
+  for (final observerThrows in [false, true]) {
+    test(
+      'U3j-T coordinator observes the original deadline before recovery effects observerThrows=$observerThrows',
+      () async {
+        final h = _Rig(recovery: true);
+        addTearDown(h.close);
+        await h.connect();
+        final order = <String>[];
+        var observations = 0;
+        late final CallCoordinator coordinator;
+        coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator(const []),
+          historyProjector: CallHistoryProjector(_RecoveryHistory()),
+          effectExecutor: _RecoveryCoordinatorEffects(h, order),
+          clock: () =>
+              DateTime.fromMillisecondsSinceEpoch(h.nowMs, isUtc: true),
+          idSource: () => _call,
+          timerScheduler: h.timers,
+          onTimerScheduled: (id, kind, at, requested, effective) {
+            if (kind != CallTimeoutKind.reconnect) return;
+            observations++;
+            h.snapshot = coordinator.activeSession!;
+            order.add('observer:${h.snapshot.reconnectGeneration}');
+            expect(id, _call);
+            expect(effective, const Duration(seconds: 15));
+            h.owner.observeReconnectTimer(h.snapshot, effective);
+            if (observerThrows) throw StateError('existing observer failed');
+          },
+        );
+        addTearDown(coordinator.dispose);
+        Future<void> dispatch(CallEventType type) async {
+          await coordinator.dispatch(
+            CallEvent(
+              type: type,
+              eventId: 'coordinator-${++h.eventIds}',
+              occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                h.nowMs,
+                isUtc: true,
+              ),
+              callId: _call,
+              contactPeerId: 'remote-account',
+              localAccountPeerId: 'local-account',
+              localDeviceId: 'local-device',
+              remoteAccountPeerId: 'remote-account',
+              remoteDeviceId: 'remote-device',
+            ),
+          );
+          h.snapshot = coordinator.activeSession ?? coordinator.lastSnapshot!;
+        }
+
+        for (final type in [
+          CallEventType.place,
+          CallEventType.outgoingInviteReady,
+          CallEventType.remoteAccept,
+          CallEventType.negotiationReady,
+          CallEventType.mediaConnected,
+        ]) {
+          await dispatch(type);
+        }
+        expect(h.snapshot.state, CallState.connected);
+        await dispatch(CallEventType.audioInterrupted);
+        h.advance(14000);
+        final held = Completer<void>();
+        h.engine.restartGate = held;
+        await dispatch(CallEventType.mediaLost);
+        await _turn();
+        try {
+          expect(observations, 1);
+          expect(
+            order.indexOf('observer:1'),
+            lessThan(order.indexOf('restartIce')),
+          );
+          expect(h.engine.restartCalls, 1);
+          h.advance(1001);
+        } finally {
+          held.complete();
+          await h.owner.workSettled;
+        }
+        expect(h.engine.video.offers, 1);
+        expect(
+          h.sent.where((s) => s.event == CallSignalV2Type.iceRestart),
+          isEmpty,
+        );
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+  }
+
+  for (final duplicateObservation in [false, true]) {
+    test(
+      'U3j-T original timer fences native completion before delayed timeout delivery duplicate=$duplicateObservation',
+      () async {
+        final h = _Rig(recovery: true, takeover: true);
+        addTearDown(h.close);
+        await h.connect();
+        await h.loseMedia(audioOnly: true);
+        final deadline = h.reconnectDeadline;
+        h.advance(14000);
+        if (duplicateObservation) {
+          h.owner.observeReconnectTimer(
+            h.snapshot,
+            const Duration(seconds: 15),
+          );
+        }
+        final held = Completer<void>();
+        h.engine.restartGate = held;
+        await h.loseMedia();
+        await _turn();
+        try {
+          expect(h.engine.restartCalls, 1);
+          h.advance(1001);
+          // A delayed canonical callback and wall-clock rollback cannot extend
+          // the monotonic budget captured before the transport upgrade.
+          h.nowMs -= 5000;
+        } finally {
+          held.complete();
+          await h.owner.workSettled;
+        }
+        expect(h.reconnectDeadline, same(deadline));
+        expect(h.reconnectTimers, 1);
+        expect(h.engine.video.offers, 1);
+        expect(
+          h.sent.where((s) => s.event == CallSignalV2Type.iceRestart),
+          isEmpty,
+        );
         expect(h.engine.video.cameraStarts, 0);
       },
     );
@@ -1731,10 +2557,40 @@ Future<void> _turn() async {
   }
 }
 
+final class _RecoveryHistory implements CallHistoryRepository {
+  @override
+  Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
+  @override
+  Future<List<CallHistoryEntry>> listForContact(
+    String contactAccountPeerId,
+  ) async => const [];
+  @override
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {}
+}
+
+final class _RecoveryCoordinatorEffects implements CallEffectExecutor {
+  _RecoveryCoordinatorEffects(this.rig, this.order);
+  final _Rig rig;
+  final List<String> order;
+  @override
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    rig.snapshot = snapshot;
+    order.add(effect.type.name);
+    if (snapshot.state == CallState.reconnecting) {
+      return rig.owner.execute(effect, snapshot);
+    }
+    return null;
+  }
+}
+
 final class _Rig {
   _Rig({
     this.incoming = false,
     this.recovery = false,
+    this.takeover = false,
     this.media = CallMediaKind.video,
     CallMediaKind? requestedMedia,
     bool accepted = true,
@@ -1849,6 +2705,10 @@ final class _Rig {
             expect(admittedEndpoint.signingPublicKey, 'signing');
             if (!canApply()) return false;
             sent.add(signal);
+            if (signal.event == CallSignalV2Type.cameraState &&
+                cameraDeliveryGate != null) {
+              return await cameraDeliveryGate!.future;
+            }
             return deliveryFor?.call(signal) ?? delivered;
           },
       canApply: () => current,
@@ -1858,11 +2718,13 @@ final class _Rig {
       maxPendingMedia: capacity,
       monotonicNowMs: () => elapsedMs,
       timerScheduler: timers,
+      onMediaChanged: () => mediaChanges++,
     );
   }
 
   final bool incoming;
   final bool recovery;
+  final bool takeover;
   final CallMediaKind media;
   final contexts = CallSignalingContextStore(videoEnabled: true);
   final engine = _Engine();
@@ -1888,6 +2750,8 @@ final class _Rig {
   int sequence = 0;
   bool current = true;
   bool delivered = true;
+  int mediaChanges = 0;
+  Completer<bool>? cameraDeliveryGate;
 
   MediaSwitchRequest get switchRequest => MediaSwitchRequest(
     id: _otherNegotiation,
@@ -1898,8 +2762,12 @@ final class _Rig {
     deadlineMs: elapsedMs + 30000,
   );
 
-  CallSignalV2 switchWire(String event, Map<String, Object?> payload) {
-    final map = remote('ringing').toMap();
+  CallSignalV2 switchWire(
+    String event,
+    Map<String, Object?> payload, {
+    int generation = 0,
+  }) {
+    final map = remote('ringing', generation: generation).toMap();
     map['event'] = event;
     map['payload'] = payload;
     return CallSignalV2.fromMap(map, videoEnabled: true);
@@ -1914,6 +2782,120 @@ final class _Rig {
     }
     await owner.workSettled;
     snapshot = snapshot.copyWith(state: CallState.connected);
+  }
+
+  Future<void> selectVideoSwitch() async {
+    final switches = owner.mediaSwitch!;
+    if (incoming) {
+      expect(
+        admit(
+          switchWire('media_request', {
+            'switch_id': _otherNegotiation,
+            'base_revision': switches.machine.settledRevision,
+            'target_media': 'video',
+            'camera': 'off',
+          }, generation: engine.iceGeneration),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await owner.workSettled;
+      expect(
+        switches.respond(
+          id: _otherNegotiation,
+          baseRevision: switches.machine.settledRevision,
+          fromCaller: false,
+          response: MediaSwitchResponse.accept,
+        ),
+        isTrue,
+      );
+    } else {
+      expect(
+        switches.request(
+          MediaSwitchRequest(
+            id: _otherNegotiation,
+            baseRevision: switches.machine.settledRevision,
+            target: CallMediaKind.video,
+            requesterIsCaller: true,
+            createdAtMs: elapsedMs,
+            deadlineMs: elapsedMs + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      await owner.workSettled;
+      expect(
+        admit(
+          switchWire('media_response', {
+            'switch_id': _otherNegotiation,
+            'base_revision': switches.machine.settledRevision,
+            'decision': 'accept',
+            'camera': 'off',
+          }, generation: engine.iceGeneration),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+    }
+    await owner.workSettled;
+  }
+
+  Future<void> settleCallerSwitch(String id, CallMediaKind target) async {
+    final switches = owner.mediaSwitch!;
+    final base = switches.machine.settledRevision;
+    expect(
+      switches.request(
+        MediaSwitchRequest(
+          id: id,
+          baseRevision: base,
+          target: target,
+          requesterIsCaller: true,
+          createdAtMs: elapsedMs,
+          deadlineMs: elapsedMs + 30000,
+        ),
+      ),
+      isTrue,
+    );
+    await owner.workSettled;
+    // The peer automatically accepts an audio downgrade, but that response must
+    // still arrive before the local caller can select its SDP transaction.
+    expect(
+      admit(
+        switchWire('media_response', {
+          'switch_id': id,
+          'base_revision': base,
+          'decision': 'accept',
+          'camera': 'off',
+        }, generation: engine.iceGeneration),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await owner.workSettled;
+    expect(
+      admit(
+        switchWire('answer', {
+          'switch_id': id,
+          'negotiation_id': owner.negotiation!.negotiationId,
+          'purpose': 'media_switch',
+          'media_revision': base + 1,
+          'media': target.name,
+          'description': 'settled-answer-${base + 1}',
+          'fingerprint': 'fingerprint',
+        }, generation: engine.iceGeneration),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await owner.workSettled;
+    expect(
+      admit(
+        switchWire('media_commit_ack', {
+          'switch_id': id,
+          'media_revision': base + 1,
+          'media': target.name,
+        }, generation: engine.iceGeneration),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await owner.workSettled;
+    expect(switches.machine.settledRevision, base + 1);
   }
 
   Future<CallEvent?> start() async {
@@ -1962,6 +2944,9 @@ final class _Rig {
                   })
                   as _TimerHandle;
           reconnectDeadline = deadline;
+          if (takeover) {
+            owner.observeReconnectTimer(snapshot, effect.delay!);
+          }
         } else if (effect.type == CallEffectType.cancelTimers) {
           reconnectDeadline?.cancel();
         } else {
@@ -2264,6 +3249,7 @@ class _Video implements CallVideoSession {
   Completer<void>? commitGate;
   Completer<CallVideoSdpReconciliationOutcome>? reconcileGate;
   int reconciliations = 0;
+  bool failReconcile = false;
   CallVideoSdpReconciliationOutcome reconciliation =
       CallVideoSdpReconciliationOutcome.alreadyStable;
   final List<CallVideoNegotiation> tokens = [];
@@ -2305,6 +3291,7 @@ class _Video implements CallVideoSession {
     required bool Function() canApply,
   }) async {
     reconciliations++;
+    if (failReconcile) throw StateError('native reconciliation failed');
     final result =
         await (reconcileGate?.future ?? Future.value(reconciliation));
     return canApply() ? result : CallVideoSdpReconciliationOutcome.unreconciled;

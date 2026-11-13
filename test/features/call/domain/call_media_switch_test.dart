@@ -113,6 +113,32 @@ List<MediaSwitchEffectKind> _kinds(MediaSwitchDecision decision) =>
     decision.effects.map((e) => e.kind).toList();
 
 void main() {
+  for (final requester in [true, false]) {
+    test('U3j-S exposes the immutable current request caller=$requester', () {
+      final rig = _Rig();
+      expect(rig.machine.currentRequest, isNull);
+      final request = rig.req('current-request', caller: requester);
+      expect(
+        rig.machine.request(request, freshUpgradeAdmitted: true).accepted,
+        isTrue,
+      );
+      expect(rig.machine.currentRequest, same(request));
+      expect(rig.machine.currentRequest!.requesterIsCaller, requester);
+      expect(rig.machine.currentRequest!.target, _video);
+      expect(rig.machine.currentRequest!.baseRevision, 0);
+      expect(rig.machine.currentRequest!.deadlineMs, request.deadlineMs);
+      expect(rig.machine.settledMedia, _audio);
+      expect(rig.machine.videoGatesOpen, isFalse);
+    });
+  }
+
+  test('U3j-S disabled machine does not expose a refused request', () {
+    final rig = _Rig(enabled: false);
+    rig.machine.request(rig.req('disabled'), freshUpgradeAdmitted: true);
+    expect(rig.machine.currentRequest, isNull);
+    expect(rig.machine.videoGatesOpen, isFalse);
+  });
+
   for (final caller in [true, false]) {
     test(
       'pending native offer abort arms original repair budget caller=$caller',
