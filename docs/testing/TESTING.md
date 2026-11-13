@@ -11647,6 +11647,40 @@ visible and cannot become an ordinary first-attempt PASS.
   The gate remains off. General recovery/takeover, graph/lifecycle composition,
   aggregate batch checks, native/live media and signed candidate proof remain
   separate; this unit does not establish those claims.
+  **U3j settled v2 ICE recovery:** recovery retains the canonical reconnect
+  episode, existing SDP queue and engine/candidate listeners. Its effect
+  returns before native work completes so End and the canonical timeout stay
+  responsive. Capture closes before native retirement; fresh endpoint/TURN
+  and replacement ICE work require positive native reconciliation. Bounded
+  retries preserve immutable signal custody. Current native readiness is
+  sampled after current SDP work outside the coordinator's await chain, so a
+  second native callback is unnecessary. A retained recovery record applies
+  only to its current canonical reconnect generation; two-episode cases
+  cover both normal advancement and a first-delivered older announcement.
+  Original RED `72b8e1f18b9b8ac09c9171b39dc21246400feb1c` recorded two
+  passes, 20 assertion failures and three BadState errors, with no loader
+  failure. Correction RED `799f755b606c7a915479a2c9ea34361ccf7c4e18`
+  failed both prior-episode cases by assertion. Corrected GREEN
+  `1599cf3d8146aa1570c63825812b8fb60b5e9685` passed all 143 focused cases
+  (76 legacy-executor and 67 v2-executor) and 243 preservation cases
+  (29 machine, 26 switch-executor, 44 wire, 21 media-owner, 35 video-session,
+  46 signaling-port and 42 incoming-v2). Both passing reporters completed
+  with zero failures, errors or skips and child exits 0. Four-path analysis,
+  metadata validation and the bounded selection preview exited 0; its 13
+  broader selections remain unrun for the later batch. Ten clean runtime
+  checkpoints pin exact HEAD/parent/tree/library-tree and 23 hashes each;
+  all 230 pins were independently checked against 69 distinct Git blobs.
+  All three setups used plain `flutter pub get` instead of the requested
+  offline/enforced-lockfile flags. Each exited 0, without a changed-dependency
+  line, tracked source/configuration/locale delta or restoration. This setup
+  deviation and every first failure remain retained. Codex closed source and
+  scoped host review with zero required findings; raw reporters, argv,
+  checkpoints and the final verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jr-final-host-adoption.json`.
+  This proof covers initial-complete and settled agreements. Pending-switch
+  takeover remains a separate required unit before activation. Graph and
+  lifecycle wiring, native/live delivery, aggregate validation and signed
+  candidate proof remain separate; the video gate stays off.
   **Phase-4 native video preparation:** optional media keys remain strict and
   inert while the video capability is off. Absent media preserves audio;
   explicitly invalid media is rejected. Native camera-lease revocation cannot
