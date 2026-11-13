@@ -5,7 +5,7 @@ import '../domain/call_audio_output_device.dart';
 import '../domain/call_engine.dart' show CallVideoView;
 import '../domain/call_media.dart' show CallMediaKind;
 import '../domain/call_session_snapshot.dart';
-import '../presentation/call_video_presentation.dart';
+import 'call_video_presentation.dart';
 import 'call_audio_controller.dart';
 
 /// Optional immutable video view issued by the canonical call/media owner.
