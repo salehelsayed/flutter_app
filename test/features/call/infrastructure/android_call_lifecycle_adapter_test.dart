@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
@@ -30,6 +31,165 @@ final _thirdCallId = CallId.parse('77777777-7777-4777-8777-777777777777');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  Future<(AndroidCallLifecycleAdapter, _NativeHarness, CallCoordinator)>
+  videoFixture({bool enabled = true}) async {
+    final native = _NativeHarness()
+      ..attachResult = _emptyBatch()
+      ..results['setCallMedia'] = true
+      ..results['setLocalCameraActive'] = true;
+    final coordinator = _coordinator();
+    final adapter = AndroidCallLifecycleAdapter(
+      invokeMethod: native.invoke,
+      nativeEvents: native.events.stream,
+      coordinator: coordinator,
+      resolveAuthenticatedHandle: (id) => id == _callId ? _callHandle : null,
+      clock: () => _now,
+      videoEnabled: enabled,
+    );
+    await adapter.start();
+    await _prepareIncoming(coordinator);
+    expect(await adapter.present(_presentation()), isTrue);
+    addTearDown(() async {
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    });
+    return (adapter, native, coordinator);
+  }
+
+  test(
+    'U3j-L gate off preserves native maps and sends no video commands',
+    () async {
+      final (adapter, native, _) = await videoFixture(enabled: false);
+      expect(native.callsOf('setCapabilityEnabled').single.arguments, {
+        'version': 1,
+        'enabled': true,
+      });
+      expect(await adapter.setCallMedia(_callId, CallMediaKind.video), isFalse);
+      expect(await adapter.setLocalCameraActive(_callId, true), isFalse);
+      expect(await adapter.setLocalCameraActive(_callId, false), isFalse);
+      expect(native.callsOf('setCallMedia'), isEmpty);
+      expect(native.callsOf('setLocalCameraActive'), isEmpty);
+    },
+  );
+
+  test('U3j-L enabled exact native maps never start audio or answer', () async {
+    final (adapter, native, _) = await videoFixture();
+    expect(adapter, isA<NativeCallVideoLifecycleAdapter>());
+    expect(native.callsOf('setCapabilityEnabled').single.arguments, {
+      'version': 1,
+      'enabled': true,
+      'video': true,
+    });
+    expect(await adapter.setCallMedia(_callId, CallMediaKind.video), isTrue);
+    expect(native.callsOf('setCallMedia').single.arguments, {
+      'version': 1,
+      'callHandle': _callHandle,
+      'media': 'video',
+    });
+    expect(native.callsOf('setLocalCameraActive'), isEmpty);
+    expect(await adapter.setLocalCameraActive(_callId, true), isTrue);
+    expect(await adapter.setLocalCameraActive(_callId, false), isTrue);
+    expect(native.callsOf('setLocalCameraActive').map((c) => c.arguments), [
+      {'version': 1, 'callHandle': _callHandle, 'active': true},
+      {'version': 1, 'callHandle': _callHandle, 'active': false},
+    ]);
+    expect(native.callsOf('activateAudio'), isEmpty);
+    expect(native.callsOf('answer'), isEmpty);
+  });
+
+  for (final result in <Object?>[false, null, 1, 'true']) {
+    test('U3j-L requires literal native true ($result)', () async {
+      final (adapter, native, _) = await videoFixture();
+      native.results['setCallMedia'] = result;
+      native.results['setLocalCameraActive'] = result;
+      expect(await adapter.setCallMedia(_callId, CallMediaKind.video), isFalse);
+      expect(await adapter.setLocalCameraActive(_callId, true), isFalse);
+    });
+  }
+
+  test('U3j-L native errors fail closed without exposing payload', () async {
+    final (adapter, native, _) = await videoFixture();
+    native.onInvoke = (method) {
+      if (method == 'setCallMedia' || method == 'setLocalCameraActive') {
+        throw StateError('private platform error');
+      }
+    };
+    expect(await adapter.setCallMedia(_callId, CallMediaKind.video), isFalse);
+    expect(await adapter.setLocalCameraActive(_callId, true), isFalse);
+  });
+
+  test(
+    'U3j-L wrong call and closed binding never invoke native video',
+    () async {
+      final (adapter, native, _) = await videoFixture();
+      expect(
+        await adapter.setCallMedia(_secondCallId, CallMediaKind.video),
+        isFalse,
+      );
+      expect(await adapter.setLocalCameraActive(_secondCallId, true), isFalse);
+      await adapter.close();
+      expect(await adapter.setCallMedia(_callId, CallMediaKind.video), isFalse);
+      expect(await adapter.setLocalCameraActive(_callId, true), isFalse);
+      expect(native.callsOf('setCallMedia'), isEmpty);
+      expect(native.callsOf('setLocalCameraActive'), isEmpty);
+    },
+  );
+
+  for (final revoke in [
+    'close',
+    'release',
+    'audio',
+    'deactivate',
+    'invalidate',
+  ]) {
+    test(
+      'U3j-L late camera success after $revoke releases exact acquired handle',
+      () async {
+        final (adapter, native, _) = await videoFixture();
+        final gate = Completer<Object?>();
+        native.queuedResults['setLocalCameraActive'] = [
+          gate.future,
+          true,
+          true,
+        ];
+        final pending = adapter.setLocalCameraActive(_callId, true);
+        Future<Object?>? revoked;
+        try {
+          await _until(() => native.callsOf('setLocalCameraActive').isNotEmpty);
+          switch (revoke) {
+            case 'close':
+              revoked = adapter.close();
+            case 'release':
+              revoked = adapter.setLocalCameraActive(_callId, false);
+            case 'audio':
+              revoked = adapter.setCallMedia(_callId, CallMediaKind.audio);
+            case 'deactivate':
+              revoked = adapter.deactivateAudio();
+            case 'invalidate':
+              native.events.addError(StateError('native disconnected'));
+              await _until(() => !adapter.isBoundTo(_callId));
+          }
+          gate.complete(true);
+          expect(await pending, isFalse);
+          if (revoked != null) await revoked;
+          final releases = native
+              .callsOf('setLocalCameraActive')
+              .where((c) => c.arguments['active'] == false);
+          expect(releases, isNotEmpty);
+          expect(
+            releases.every((c) => c.arguments['callHandle'] == _callHandle),
+            isTrue,
+          );
+        } finally {
+          if (!gate.isCompleted) gate.complete(true);
+          await pending;
+          if (revoked != null) await revoked;
+        }
+      },
+    );
+  }
+
   Map<String, Object?> pickerInventory({
     bool selectedB = false,
     bool unplugA = false,
