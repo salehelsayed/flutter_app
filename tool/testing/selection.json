@@ -351,6 +351,7 @@
         "test/features/call/infrastructure/bridge_call_ice_server_provider_test.dart",
         "test/features/call/application/call_negotiation_effect_executor_test.dart",
         "test/features/call/application/call_v2_negotiation_effect_executor_test.dart",
+        "test/features/call/application/call_media_switch_effect_executor_test.dart",
         "test/features/call/application/call_audio_interruption_coordinator_test.dart",
         "test/features/call/domain/call_state_machine_test.dart",
         "test/features/call/infrastructure/call_signaling_runtime_test.dart",
