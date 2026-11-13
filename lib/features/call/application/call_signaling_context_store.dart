@@ -172,6 +172,10 @@ final class CallSignalingContextStore
   ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) =>
       _contexts[callId]?.admittedEndpoint;
 
+  /// Immutable initial invitation expiry, never refreshed by ringing/accept.
+  int? originalV2InviteExpiresAtMs(CallId callId) =>
+      _contexts[callId]?.originalV2InviteExpiresAtMs;
+
   /// The immutable prepared invite already owns its first sender sequence.
   /// Fresh capability/permission admission remains the caller's responsibility.
   void storeOutgoingV2({
@@ -342,6 +346,7 @@ final class CallSignalingContextStore
       iceGeneration: iceGeneration,
       invitePayload: _copyPayload(invitePayload),
       preparedOutgoingV2Invite: preparedOutgoingV2Invite,
+      originalV2InviteExpiresAtMs: preparedOutgoingV2Invite?.expiresAtMs,
       admittedEndpoint: admittedEndpoint == null
           ? null
           : ResolvedCallEndpoint.frozen(admittedEndpoint),
@@ -491,6 +496,10 @@ final class CallSignalingContextStore
       invitePayload: event == 'invite'
           ? _copyPayload(signal.payload)
           : const <String, Object?>{},
+      originalV2InviteExpiresAtMs:
+          version == CallWireVersion.v2 && event == 'invite'
+          ? signal.expiresAtMs
+          : null,
       admittedEndpoint: admittedEndpoint == null
           ? null
           : ResolvedCallEndpoint.frozen(admittedEndpoint),
@@ -791,6 +800,7 @@ final class _StoredCallSignalingContext {
     required this.iceGeneration,
     required this.invitePayload,
     this.preparedOutgoingV2Invite,
+    this.originalV2InviteExpiresAtMs,
     this.admittedEndpoint,
   });
 
@@ -812,6 +822,7 @@ final class _StoredCallSignalingContext {
   int iceGeneration;
   final Map<String, Object?> invitePayload;
   final CallSignalV2? preparedOutgoingV2Invite;
+  final int? originalV2InviteExpiresAtMs;
   final ResolvedCallEndpoint? admittedEndpoint;
 
   CallSignalingContext snapshot() => CallSignalingContext._(
