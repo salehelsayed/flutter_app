@@ -3587,6 +3587,26 @@ RED pins and all GREEN pins match at eight clean ref/tree boundaries. These
 exits are not loader failures or substitute causal failures. The evidence does
 not measure production relay rows, battery/data use, devices or signed artifacts.
 
+Contact-request envelope signing uses the same injected `clock.now()` as retry
+admission and journal timing. Its default remains wall time; this change fixes
+clock-injected fixtures, not a demonstrated production clock divergence. The
+future-clock regression requires one durable retry transmission and matching
+signed payload/local `signedAtMs`. The rollback fixture must move that clock
+backward **after reservation and before signing**; setting an injected future
+time while relying on wall-time signing no longer simulates rollback. Preserve
+zero sends, an attempted signature at the rolled-back time, and the retained
+reservation without an envelope.
+
+BL24-CLK evidence: `5f58f04af` produces the intended causal assertion failure;
+`2bca274c9` first produced 43 policy passes and one obsolete rollback-fixture
+failure, plus 95 passes across the send, retry and lifecycle preservation files.
+The test-only correction `eea61c915` passes all 44 policy cases with identical
+production and preservation files. Claude-Dev's `build/clk-proof/` and
+`build/clkfix-proof/` retain the raw outcomes and child exits, including the first
+failure; 200 individual file hashes match across ten clean setup/run boundaries.
+These are host proofs with fake storage/transport/crypto; native delivery,
+devices, broad affected lanes and signed artifacts remain unverified here.
+
 E2 treats every nonarchived keyless contact as dormant for periodic, reconnect
 and resume work, including contacts with pending marker jobs. An explicit
 `requireFresh` event may send once for its pending marker through the existing
