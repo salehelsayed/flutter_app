@@ -335,6 +335,7 @@ class Fixture {
     bool bind = true,
     bool captureAudio = false,
     bool nativeVideoCapture = false,
+    Duration? debugStatsInterval,
     CallTransportPolicy policy = CallTransportPolicy.all,
   }) async {
     final adapter = FlutterWebRtcPeerConnectionAdapter(
@@ -348,6 +349,7 @@ class Fixture {
               return captureGate == null ? stream : await captureGate!.future;
             },
       videoQualityElapsed: () => qualityNow,
+      videoDebugStatsInterval: debugStatsInterval,
       videoRendererFactory: () =>
           renderers.isEmpty ? renderer : renderers.removeAt(0),
       videoStreamFactory: () async => association,

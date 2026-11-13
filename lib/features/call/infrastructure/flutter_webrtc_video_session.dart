@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../application/call_video_media_owner.dart';
@@ -69,7 +70,12 @@ final class FlutterWebRtcVideoSession
     CallVideoRendererFactory? renderer,
     CallVideoStreamFactory? videoStream,
     Duration Function()? qualityElapsed,
+    Duration? debugStatsInterval,
   }) : _connection = connection,
+       _debugStatsInterval = kDebugMode
+           ? debugStatsInterval ??
+                 (_statsLogDefine ? const Duration(seconds: 2) : null)
+           : null,
        _canApply = canApply,
        _validateDescription = validateDescription,
        _remoteDescriptionApplied = remoteDescriptionApplied,
@@ -96,6 +102,11 @@ final class FlutterWebRtcVideoSession
   final CallVideoStreamFactory _videoStream;
 
   final Duration Function()? _qualityElapsedOverride;
+
+  /// Device proofs opt in with --dart-define=CALL_VIDEO_STATS_LOG=true.
+  static const _statsLogDefine = bool.fromEnvironment('CALL_VIDEO_STATS_LOG');
+  // ignore: unused_field
+  final Duration? _debugStatsInterval;
   final Stopwatch _qualityClock = Stopwatch()..start();
   final _qualityPolicy = CallVideoQualityPolicy();
   final _qualityStats = CallVideoQualityStatsSampler();
