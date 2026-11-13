@@ -5500,4 +5500,8 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'Videosteuerung';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'Noch nicht verbunden. Bitte dein Gegenüber, deinen Code erneut zu scannen.';
 }

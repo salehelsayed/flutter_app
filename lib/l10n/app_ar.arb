@@ -2347,5 +2347,6 @@
   "call_video_action_turn_camera_off": "إيقاف الكاميرا",
   "call_video_action_switch_camera": "تبديل الكاميرا",
   "call_video_action_use_audio_only": "استخدام الصوت فقط",
-  "call_video_controls_label": "عناصر التحكم بالفيديو"
+  "call_video_controls_label": "عناصر التحكم بالفيديو",
+  "contact_retry_stopped_hint": "لم يكتمل الاتصال بعد. يمكن للطرف الآخر مسح رمزك مجددًا."
 }

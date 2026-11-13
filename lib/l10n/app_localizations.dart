@@ -8989,6 +8989,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Video controls'**
   String get call_video_controls_label;
+
+  /// No description provided for @contact_retry_stopped_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Still waiting. Ask them to scan your code again.'**
+  String get contact_retry_stopped_hint;
 }
 
 class _AppLocalizationsDelegate

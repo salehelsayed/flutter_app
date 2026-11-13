@@ -5377,4 +5377,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_video_controls_label => 'Video controls';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'Still waiting. Ask them to scan your code again.';
 }

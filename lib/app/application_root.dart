@@ -92,6 +92,7 @@ import 'package:flutter_app/features/posts/application/pending_post_delivery_ret
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -897,6 +898,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    unawaited(widget.keyExchangeRetrier.refreshRetryStatus());
     _foregroundCallBackGuard.attach();
     _updateRequiredBackGuard.attach();
     assert(
@@ -3565,7 +3567,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         navigatorObservers: [directPrivateMediaRouteObserver],
         builder: (context, child) {
           final stickerLibrary = widget.customStickerLibrary;
-          final page = child ?? const SizedBox.shrink();
+          final page = PendingContactRetryScope(
+            retrier: widget.keyExchangeRetrier,
+            child: child ?? const SizedBox.shrink(),
+          );
           final routedChild = DirectPrivateMediaRouteObserverScope(
             observer: directPrivateMediaRouteObserver,
             appVisibilityRouteRegistry: _appVisibilityRouteRegistry,

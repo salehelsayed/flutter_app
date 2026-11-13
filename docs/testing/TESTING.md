@@ -3618,6 +3618,25 @@ setup generated no delta. Raw evidence is retained in the Claude-Dev checkout's
 These are isolated host proofs; composed changes, native delivery and signed
 artifacts require their own evidence.
 
+E3 contact retry after expressed interest uses the existing silent journal: opening the
+chat or profile of an eligible stopped keyless contact starts a fresh signed
+seven-day cycle for that contact, at most once per seven days. The existing
+1h/6h/24h/daily schedule and authority/material checks still apply. Stopped
+status refresh reads local identity, contacts, consent and journal state; its
+identity reads are not a retry-count witness. Scheduled-retry tests observe
+the coordinator callback or actual transport, and root fakes implement the
+new typed async/listenable API. The local-status sentinel includes both a
+stopped peer and a fresh eligible peer, with zero bridge/transport calls.
+The two-file correction `ab09eebc2e21d65bbef81a894d40aa90d03cc538`
+passed all 137 cases in the ten-file focused suite and two-path analysis,
+with four clean matching 25-pin identity stamps and an empty setup delta.
+Retain the original RED 8 passes/7 assertion failures/12 binding errors,
+first GREEN 117 passes/6 failures/13 errors, and historical identity-family
+1153 passes/6 failures under
+`.codex-test-logs/codex-ui-bl24e3-interest-retry-20261113/`.
+The original nine-file preservation result remains 158 passes. The focused
+correction does not refresh the curated-family or combined release gate.
+
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
 stored row; `receivedAt` is not authenticated sender-time ordering. A new contact

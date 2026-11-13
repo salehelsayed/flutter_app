@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -1551,6 +1552,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _appLifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
     _contact = widget.contact;
+    PendingContactRetryScope.noteInterest(context, _contact.peerId);
     _bindOutgoingCallAvailability();
     _uploadActivityController =
         ConversationUploadActivityController<_DirectComposerSnapshot>(
