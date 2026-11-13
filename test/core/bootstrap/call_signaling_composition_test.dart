@@ -4138,10 +4138,55 @@ void main() {
     test(
       'U3j-G production invitation preserves explicit media choice mode=$mode',
       () async {
-        final fixture = await _createProductionIosFixture(
+        String? registeredHandle;
+        int? registeredExpiresAt;
+        late final _ProductionIosFixture fixture;
+        fixture = await _createProductionIosFixture(
           microphonePermission: const _GrantedCallMicrophonePermission(),
           outgoingContactAccountPeerId: 'video-contact',
           privacyFlags: {'video_call_v2_enabled': mode != 'legacy'},
+          // Preflight refresh rotates the short fixture grant. Model delivery
+          // of the current replacement instead of trusting the old receipt.
+          ensureOutgoingCallWakeAuthority: (peer) async {
+            final issued = await fixture.issuedCallWakeHandleStore
+                .readForContact(peer);
+            return issued != null &&
+                await fixture.graphs.single.markCallWakeHandleDistributed(
+                  peer,
+                  issued.grant,
+                );
+          },
+          lifecycleOverride: (method, arguments) async {
+            if (method == 'registerOutgoingAuthenticated') {
+              registeredHandle = arguments['callHandle']! as String;
+              registeredExpiresAt = arguments['expiresAtMs']! as int;
+              return true;
+            }
+            if (method == 'attach' && registeredHandle != null) {
+              return <String, Object?>{
+                'version': 1,
+                'descriptor': <String, Object?>{
+                  'callHandle': registeredHandle,
+                  'expiresAtMs': registeredExpiresAt,
+                  'presented': true,
+                  'phase': 'preStart',
+                  'direction': 'outgoing',
+                },
+                'nativeCallId': registeredHandle,
+                'highestSequence': 1,
+                'events': [
+                  <String, Object?>{
+                    'callHandle': registeredHandle,
+                    'sequence': 1,
+                    'eventId': '00000000-0000-4000-8000-000000000001',
+                    'type': 'presented',
+                    'occurredAtMs': 2_000_000,
+                  },
+                ],
+              };
+            }
+            return null;
+          },
         );
         await fixture.composition.start();
         await _configureCancellationEndpoint(
