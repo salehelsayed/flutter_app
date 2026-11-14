@@ -107,6 +107,9 @@ final class CallV2NegotiationEffectExecutor
   int _epoch = 0;
   bool _closed = false;
   bool _failed = false;
+  // NEG-DIAG: debug-only labels of the queued job and its current step.
+  _V2FailJob _failJob = _V2FailJob.none;
+  _V2FailStage _failStage = _V2FailStage.none;
 
   CallMediaSwitchEffectExecutor? _switch;
   final Map<String, _CachedSwitchSignal> _switchSignals = {};
@@ -755,13 +758,22 @@ final class CallV2NegotiationEffectExecutor
         !_initialPhase(snapshot.state)) {
       return null;
     }
-    if (!_bindContext(context!) || !_ensureInitialBudget()) {
+    final bound = _bindContext(context!);
+    if (!bound || !_ensureInitialBudget()) {
+      if (kDebugMode) {
+        _reportNegotiationFailure(
+          _jobFor(effect.type),
+          bound ? _V2FailStage.budget : _V2FailStage.context,
+          null,
+        );
+      }
       return _failure(snapshot);
     }
     switch (effect.type) {
       case CallEffectType.prepareAcceptedMedia:
-        return await _queue(snapshot, () async {
+        return await _queue(snapshot, _V2FailJob.prepareMedia, () async {
           _check();
+          _failStage = _V2FailStage.prepare;
           final failure = await legacy.execute(effect, snapshot);
           _check();
           return failure;
@@ -771,13 +783,17 @@ final class CallV2NegotiationEffectExecutor
           return null;
         }
         _offerStarted = true;
-        return await _queue(snapshot, () => _startInitial(snapshot));
+        return await _queue(
+          snapshot,
+          _V2FailJob.startOffer,
+          () => _startInitial(snapshot),
+        );
       case CallEffectType.deliverOffer:
       case CallEffectType.deliverAnswer:
         if (snapshot.recentEventIds.isEmpty) return null;
         final work = _descriptions.remove(snapshot.recentEventIds.last);
         if (work == null) return null;
-        return await _queue(snapshot, () async {
+        return await _queue(snapshot, _jobFor(effect.type), () async {
           if (effect.type == CallEffectType.deliverOffer &&
               work.signal.event == CallSignalV2Type.offer) {
             return await _applyOffer(snapshot, work);
@@ -1282,6 +1298,58 @@ final class CallV2NegotiationEffectExecutor
     );
   }
 
+  static _V2FailJob _jobFor(CallEffectType type) => switch (type) {
+    CallEffectType.prepareAcceptedMedia => _V2FailJob.prepareMedia,
+    CallEffectType.startNegotiation => _V2FailJob.startOffer,
+    CallEffectType.deliverOffer => _V2FailJob.applyOffer,
+    CallEffectType.deliverAnswer => _V2FailJob.applyAnswer,
+    _ => _V2FailJob.none,
+  };
+
+  /// NEG-DIAG: names the swallowed initial-negotiation failure. Closed
+  /// vocabulary only: no message text, SDP, ids or addresses.
+  void _reportNegotiationFailure(
+    _V2FailJob job,
+    _V2FailStage stage,
+    Object? error,
+  ) {
+    try {
+      final code = switch (error) {
+        CallNegotiationPortException(:final code) => code.name,
+        CallSignalingException(:final code) => code.name,
+        CallEngineException(:final code) => code.name,
+        _ => 'none',
+      };
+      final type = error?.runtimeType.toString() ?? 'none';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_V2_NEGOTIATION_FAILED',
+        details: {
+          'job': job.name,
+          'stage': stage.name,
+          'errorType': error == null || _diagnosticTypes.contains(type)
+              ? type
+              : 'other',
+          'code': code,
+        },
+      );
+    } catch (_) {
+      // Debug diagnostics cannot alter canonical failure handling.
+    }
+  }
+
+  static const _diagnosticTypes = {
+    'CallSignalingException',
+    'CallNegotiationPortException',
+    'CallEngineException',
+    'WebRtcAdapterException',
+    'PlatformException',
+    'StateError',
+    'ArgumentError',
+    'FormatException',
+    'TimeoutException',
+  };
+
   void _reportRecoveryFailure(_V2Recovery recovery, Object error) {
     // Closed vocabulary only: exception messages may contain SDP or addresses.
     const types = {
@@ -1609,11 +1677,15 @@ final class CallV2NegotiationEffectExecutor
     final failure = await _prepareAndBind(snapshot, idSource());
     if (failure != null) return failure;
     final token = _token!;
+    _failStage = _V2FailStage.createOffer;
     final offer = await _session!.createOffer(token);
     _check();
+    _failStage = _V2FailStage.validate;
     _validateDescription(offer, CallSessionDescriptionType.offer);
+    _failStage = _V2FailStage.applyLocal;
     await _session!.applyLocal(token, offer);
     _check();
+    _failStage = _V2FailStage.send;
     await _sendDescription(offer);
     _check();
     _localAnnounced = true;
@@ -1636,19 +1708,26 @@ final class CallV2NegotiationEffectExecutor
     );
     if (failure != null) return failure;
     final token = _token!;
+    _failStage = _V2FailStage.applyRemote;
     await _session!.applyRemote(token, _description(work.signal));
     _check(work);
     _remoteApplied = true;
+    _failStage = _V2FailStage.flushIce;
     await _flushRemoteCandidates();
     _check(work);
+    _failStage = _V2FailStage.createAnswer;
     final answer = await _session!.createAnswer(token);
     _check(work);
+    _failStage = _V2FailStage.validate;
     _validateDescription(answer, CallSessionDescriptionType.answer);
+    _failStage = _V2FailStage.applyLocal;
     await _session!.applyLocal(token, answer);
     _check(work);
+    _failStage = _V2FailStage.send;
     await _sendDescription(answer, work);
     _check(work);
     _localAnnounced = true;
+    _failStage = _V2FailStage.commit;
     await _session!.commit(token);
     _check(work);
     _completeInitial();
@@ -1664,12 +1743,16 @@ final class CallV2NegotiationEffectExecutor
         token.negotiationId != work.signal.payload['negotiation_id']) {
       return null;
     }
+    _failStage = _V2FailStage.authority;
     await _freshAuthority(work);
+    _failStage = _V2FailStage.applyRemote;
     await _session!.applyRemote(token, _description(work.signal));
     _check(work);
     _remoteApplied = true;
+    _failStage = _V2FailStage.flushIce;
     await _flushRemoteCandidates();
     _check(work);
+    _failStage = _V2FailStage.commit;
     await _session!.commit(token);
     _check(work);
     _completeInitial();
@@ -1681,7 +1764,9 @@ final class CallV2NegotiationEffectExecutor
     String negotiationId, [
     _V2MediaWork? work,
   ]) async {
+    _failStage = _V2FailStage.authority;
     await _freshAuthority(work);
+    _failStage = _V2FailStage.prepare;
     final failure = await legacy.execute(
       const CallEffect(CallEffectType.prepareAcceptedMedia),
       snapshot,
@@ -1838,7 +1923,7 @@ final class CallV2NegotiationEffectExecutor
     final snapshot = _snapshot;
     if (snapshot == null) return;
     _localDrainScheduled = true;
-    _queueBackground(snapshot, () async {
+    _queueBackground(snapshot, _V2FailJob.localIce, () async {
       try {
         if (!_candidateReady || !_localAnnounced || _localCandidates.isEmpty) {
           return null;
@@ -1850,6 +1935,7 @@ final class CallV2NegotiationEffectExecutor
           return null;
         }
         final candidate = pending.candidate;
+        _failStage = _V2FailStage.send;
         await _send(CallSignalV2Type.ice, {
           'negotiation_id': pending.token.negotiationId,
           'candidate': candidate.value,
@@ -1875,8 +1961,9 @@ final class CallV2NegotiationEffectExecutor
     final snapshot = _snapshot;
     if (snapshot == null) return;
     _remoteDrainScheduled = true;
-    _queueBackground(snapshot, () async {
+    _queueBackground(snapshot, _V2FailJob.remoteIce, () async {
       try {
+        _failStage = _V2FailStage.flushIce;
         await _flushRemoteCandidates();
         return null;
       } finally {
@@ -1931,19 +2018,23 @@ final class CallV2NegotiationEffectExecutor
 
   Future<CallEvent?> _queue(
     CallSessionSnapshot snapshot,
+    _V2FailJob label,
     Future<CallEvent?> Function() job,
   ) {
     final result = _tail.then<CallEvent?>((_) async {
       if (!_ready) return null;
+      _failJob = label;
+      _failStage = _V2FailStage.none;
       try {
         return await job();
       } on _V2WorkRetired {
         return null;
-      } catch (_) {
+      } catch (error) {
         if (_initialCommitted && _switch != null) {
           _switch!.failOptionalMedia();
           return null;
         }
+        if (kDebugMode) _reportNegotiationFailure(_failJob, _failStage, error);
         return _failure(snapshot);
       }
     });
@@ -1953,10 +2044,11 @@ final class CallV2NegotiationEffectExecutor
 
   void _queueBackground(
     CallSessionSnapshot snapshot,
+    _V2FailJob label,
     Future<CallEvent?> Function() job,
   ) {
     _track(
-      _queue(snapshot, job).then<void>((failure) async {
+      _queue(snapshot, label, job).then<void>((failure) async {
         if (failure != null) await _dispatchSafely(failure);
       }),
     );
@@ -2307,6 +2399,32 @@ final class _V2LocalCandidate {
 
 final class _V2WorkRetired implements Exception {
   const _V2WorkRetired();
+}
+
+enum _V2FailJob {
+  none,
+  prepareMedia,
+  startOffer,
+  applyOffer,
+  applyAnswer,
+  localIce,
+  remoteIce,
+}
+
+enum _V2FailStage {
+  none,
+  context,
+  budget,
+  prepare,
+  authority,
+  createOffer,
+  createAnswer,
+  validate,
+  applyLocal,
+  applyRemote,
+  send,
+  flushIce,
+  commit,
 }
 
 bool _allowed(bool Function() predicate) {
