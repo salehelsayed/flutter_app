@@ -475,6 +475,7 @@ class OrbitScreen extends StatefulWidget {
 /// swipe-yield gate (INV-7 preserved).
 class _OrbitScreenState extends State<OrbitScreen> {
   bool _innerEditing = false;
+  bool _innerExpanded = false;
 
   /// Nav-line find seat: poked by the nav-band rings find pill to open the
   /// surface's find bar, plus the open-flag the pill hides on. Both are owned
@@ -490,6 +491,12 @@ class _OrbitScreenState extends State<OrbitScreen> {
     widget.onInnerCircleEditSessionChanged?.call(active);
   }
 
+  void _onInnerExpanded(bool expanded) {
+    if (_innerExpanded != expanded) {
+      setState(() => _innerExpanded = expanded);
+    }
+  }
+
   void _onRingsFindOpenChanged(bool open) {
     _ringsFindOpen.value = open;
   }
@@ -501,6 +508,8 @@ class _OrbitScreenState extends State<OrbitScreen> {
     // the open-flag so the nav-band pill is back when the rings return.
     if (widget.viewMode != oldWidget.viewMode) {
       _ringsFindOpen.value = false;
+      // A rings surface mounted again starts with its arcs closed.
+      _innerExpanded = false;
       // Leaving the rings from 3D unmounts the surface that would show the
       // controls again.
       _hostChrome.value = 1;
@@ -593,6 +602,8 @@ class _OrbitScreenState extends State<OrbitScreen> {
     connectionIndicatorOverride: widget.connectionIndicatorOverride,
     innerEditing: _innerEditing,
     onInnerEdit: _onInnerEdit,
+    innerExpanded: _innerExpanded,
+    onInnerExpanded: _onInnerExpanded,
     ringsFindSignal: _ringsFindSignal,
     ringsFindOpenListenable: _ringsFindOpen,
     onRingsFindOpenChanged: _onRingsFindOpenChanged,
@@ -712,6 +723,11 @@ class _OrbitScreenView extends StatelessWidget {
 
   final bool innerEditing;
 
+  /// BL-27: the rings' overflow arcs are open; the expanded orbit owns
+  /// vertical drags (scroll) until they close.
+  final bool innerExpanded;
+  final ValueChanged<bool> onInnerExpanded;
+
   /// 205 item 6 — the surface's edit-active signal sink (flips [innerEditing]
   /// AND forwards to the 198 swipe-yield gate).
   final void Function(bool) onInnerEdit;
@@ -805,6 +821,8 @@ class _OrbitScreenView extends StatelessWidget {
     required this.onRingsFindOpenChanged,
     required this.innerEditing,
     required this.onInnerEdit,
+    required this.innerExpanded,
+    required this.onInnerExpanded,
     required this.hideShellNav,
   });
 
@@ -1317,6 +1335,7 @@ class _OrbitScreenView extends StatelessWidget {
           onGroupTap: onGroupTap,
           secureKeyStore: secureKeyStore,
           onEditSessionActiveChanged: onInnerEdit,
+          onOverflowExpandedChanged: onInnerExpanded,
           resetSignal: innerCircleResetListenable,
           // Persistent mode re-seats the collapsed find pill on the nav line
           // (host chrome, see the nav band Stack); the surface then only
@@ -1343,7 +1362,7 @@ class _OrbitScreenView extends StatelessWidget {
             ownSeat: ownDepthSeat,
             ownActivity: ownDepthActivity,
             active: depthActive,
-            gesturesEnabled: !innerEditing && !findOpen,
+            gesturesEnabled: !innerEditing && !findOpen && !innerExpanded,
             topClearance: _kHeaderRowClearance,
             bottomClearance: _innerCircleBottomClearance(context),
             resetSignal: innerCircleResetListenable,
