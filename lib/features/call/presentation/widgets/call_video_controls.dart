@@ -197,8 +197,6 @@ class CallVideoControls extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               caption,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: enabled

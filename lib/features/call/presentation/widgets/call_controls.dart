@@ -298,8 +298,10 @@ class _Control extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             label,
-            maxLines: videoStyle ? 1 : (constrainLabel ? 2 : null),
-            overflow: constrainLabel ? TextOverflow.ellipsis : null,
+            maxLines: videoStyle ? null : (constrainLabel ? 2 : null),
+            overflow: constrainLabel && !videoStyle
+                ? TextOverflow.ellipsis
+                : null,
             textAlign: constrainLabel ? TextAlign.center : null,
             style: TextStyle(
               color: semanticsEnabled

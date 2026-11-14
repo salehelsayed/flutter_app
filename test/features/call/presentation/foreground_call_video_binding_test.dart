@@ -699,12 +699,20 @@ void main() {
                   language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
                 );
                 final text = phase == _Phase.active
-                    ? l10n.call_video_action_turn_camera_off
+                    ? l10n.call_video_camera_caption
                     : l10n.call_video_action_use_audio_only;
+                if (phase == _Phase.active) {
+                  expect(
+                    tester.getSemantics(button).label,
+                    contains(l10n.call_video_action_turn_camera_off),
+                  );
+                }
                 final paragraph = tester.renderObject<RenderParagraph>(
                   find.text(text),
                 );
-                if (paragraph.didExceedMaxLines) {
+                if (phase == _Phase.active) {
+                  expect(paragraph.didExceedMaxLines, isFalse);
+                } else if (paragraph.didExceedMaxLines) {
                   expect(paragraph.overflow, TextOverflow.ellipsis);
                 }
                 await tester.tap(button);
