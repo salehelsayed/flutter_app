@@ -151,4 +151,38 @@ void main() {
       ]),
     );
   });
+
+  quality.qualityTest(
+    'DEFECT4 create, local and remote SDP each log one line',
+    (tester, f) async {
+      final lines = await cameraLines(() async {
+        await f.committed();
+      }, prefix: '[VIDEO] sdp');
+      expect(lines.map((l) => l.split(' ')[2]), [
+        'phase=create',
+        'phase=local',
+        'phase=remote',
+      ]);
+      final shape = RegExp(
+        r'^\[VIDEO\] sdp phase=(create|local|remote) type=(offer|answer) '
+        r'mediaRevision=\d+ videoSections=\d+ rejectedVideo=\d+ '
+        r'directions=[a-z,\-]+ hasVideoMsid=(true|false) '
+        r'hasVideoSsrc=(true|false) senderTrackPresent=(true|false)$',
+      );
+      for (final line in lines) {
+        expect(shape.hasMatch(line), isTrue, reason: line);
+      }
+    },
+  );
+
+  quality.qualityTest('DEFECT4 SDP lines are off in release default', (
+    tester,
+    f,
+  ) async {
+    FlutterWebRtcVideoSession.cameraDiagnostics = false;
+    final lines = await cameraLines(() async {
+      await f.committed();
+    }, prefix: '[VIDEO] sdp');
+    expect(lines, isEmpty);
+  });
 }
