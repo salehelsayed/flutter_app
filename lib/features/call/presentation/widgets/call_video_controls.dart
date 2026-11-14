@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_camera_tap_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/presentation/call_video_localizations.dart';
+import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 
 /// Optional video presentation alongside independently owned audio controls.
@@ -33,6 +36,48 @@ class CallVideoControls extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!presentation.isVisible) return audioControls;
     final colors = context.backgroundReadableColors;
+    final audio = audioControls;
+    if (presentation.acceptedMedia != null &&
+        presentation.agreedMedia == CallMediaKind.video &&
+        audio is CallControls) {
+      final labels = CallVideoLocalizations(AppLocalizations.of(context)!);
+      final cameraAction = presentation.localCamera == CallCameraState.off
+          ? CallVideoAction.turnCameraOn
+          : CallVideoAction.turnCameraOff;
+      return Semantics(
+        identifier: 'call_video_controls',
+        container: true,
+        explicitChildNodes: true,
+        label: controlsLabel,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              identifier: 'call_video_status',
+              container: true,
+              explicitChildNodes: true,
+              liveRegion: true,
+              label: statusLabel(presentation.status),
+              child: audio.withVideoControls([
+                _roundButton(
+                  CallVideoAction.switchCamera,
+                  labels.flipCaption,
+                  colors,
+                ),
+                _roundButton(cameraAction, labels.cameraCaption, colors),
+              ]),
+            ),
+            // Camera-off and switching the agreed medium to audio are distinct.
+            if (presentation.actions.contains(CallVideoAction.useAudioOnly))
+              _button(
+                CallVideoAction.useAudioOnly,
+                MediaQuery.sizeOf(context).width - 32,
+                colors,
+              ),
+          ],
+        ),
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -84,6 +129,80 @@ class CallVideoControls extends StatelessWidget {
         // Optional video never owns audio availability or its callbacks.
         audioControls,
       ],
+    );
+  }
+
+  Widget _roundButton(
+    CallVideoAction action,
+    String caption,
+    BackgroundReadableColors colors,
+  ) {
+    final enabled = presentation.isAvailable(action);
+    final camera = action != CallVideoAction.switchCamera;
+    final off = camera && presentation.localCamera == CallCameraState.off;
+    final label = actionLabel(action);
+    void emit() {
+      final intent = presentation.intentFor(action);
+      if (intent != null) onIntent(intent);
+    }
+
+    return Semantics(
+      key: ValueKey(action.identifier),
+      identifier: action.identifier,
+      container: true,
+      button: true,
+      enabled: enabled,
+      toggled: camera ? !off : null,
+      label: camera
+          ? '$label. ${localCameraLabel(presentation.localCamera)}'
+          : label,
+      onTap: enabled ? emit : null,
+      excludeSemantics: true,
+      child: _observeDisabledCameraTap(
+        action,
+        enabled,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: label,
+              onPressed: enabled ? emit : null,
+              icon: Icon(
+                camera
+                    ? (off
+                          ? Icons.videocam_off_outlined
+                          : Icons.videocam_outlined)
+                    : Icons.cameraswitch_outlined,
+              ),
+              iconSize: 28,
+              style: IconButton.styleFrom(
+                fixedSize: const Size.square(56),
+                backgroundColor: off ? Colors.white : colors.surfaceRaised,
+                foregroundColor: off
+                    ? const Color(0xFF10141E)
+                    : colors.iconPrimary,
+                disabledBackgroundColor: colors.disabledSurface,
+                disabledForegroundColor: colors.disabledForeground,
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              caption,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: enabled
+                    ? colors.textSecondary
+                    : colors.disabledForeground,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

@@ -2788,5 +2788,8 @@
   "call_video_entry_incoming": "Incoming video call",
   "call_video_entry_starting": "Starting video call",
   "call_video_entry_unavailable": "Video calling is unavailable right now.",
-  "call_video_entry_start_failed": "Couldn't start the video call. Please try again."
+  "call_video_entry_start_failed": "Couldn't start the video call. Please try again.",
+  "call_video_flip_caption": "Flip",
+  "call_video_camera_caption": "Camera",
+  "call_video_camera_off_caption": "Camera off"
 }

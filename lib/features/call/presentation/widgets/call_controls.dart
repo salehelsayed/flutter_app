@@ -23,6 +23,7 @@ class CallControls extends StatelessWidget {
     required this.onEnd,
     this.onChooseAudioOutput,
     this.constrainLabels = false,
+    this.leadingVideoControls = const [],
   });
 
   final bool isMuted;
@@ -38,6 +39,27 @@ class CallControls extends StatelessWidget {
   final VoidCallback onEnd;
   final VoidCallback? onChooseAudioOutput;
   final bool constrainLabels;
+  final List<Widget> leadingVideoControls;
+
+  /// Restyles the same projected audio controls; their owner/callbacks are kept.
+  CallControls withVideoControls(List<Widget> controls) => CallControls(
+    isMuted: isMuted,
+    isMuteAvailable: isMuteAvailable,
+    isSpeakerOn: isSpeakerOn,
+    isSpeakerAvailable: isSpeakerAvailable,
+    selectedRoute: selectedRoute,
+    audioStatusMessage: audioStatusMessage,
+    muteUnavailableMessage: muteUnavailableMessage,
+    speakerUnavailableMessage: speakerUnavailableMessage,
+    onMute: onMute,
+    onSpeaker: onSpeaker,
+    onEnd: onEnd,
+    onChooseAudioOutput: onChooseAudioOutput,
+    constrainLabels: true,
+    leadingVideoControls: controls,
+  );
+
+  bool get _videoStyle => leadingVideoControls.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -89,9 +111,12 @@ class CallControls extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
+              for (final control in leadingVideoControls)
+                Expanded(child: control),
               _fitControl(
                 _Control(
                   identifier: 'call_mute',
+                  videoStyle: _videoStyle,
                   tooltip: muteTooltip,
                   label: isMuted
                       ? l10n.media_viewer_unmute
@@ -100,10 +125,16 @@ class CallControls extends StatelessWidget {
                       ? Icons.mic_off_rounded
                       : Icons.mic_none_rounded,
                   backgroundColor: isMuteAvailable
-                      ? (isMuted ? colors.accent : colors.surfaceRaised)
+                      ? (isMuted
+                            ? (_videoStyle ? Colors.white : colors.accent)
+                            : colors.surfaceRaised)
                       : colors.disabledSurface,
                   foregroundColor: isMuteAvailable
-                      ? (isMuted ? colors.accentIcon : colors.iconPrimary)
+                      ? (isMuted
+                            ? (_videoStyle
+                                  ? const Color(0xFF10141E)
+                                  : colors.accentIcon)
+                            : colors.iconPrimary)
                       : colors.disabledForeground,
                   semanticsEnabled: isMuteAvailable,
                   constrainLabel: constrainLabels,
@@ -118,16 +149,23 @@ class CallControls extends StatelessWidget {
               _fitControl(
                 _Control(
                   identifier: 'call_speaker',
+                  videoStyle: _videoStyle,
                   tooltip: speakerTooltip,
                   label: l10n.call_speaker,
                   icon: isSpeakerOn
                       ? Icons.volume_up_rounded
                       : Icons.volume_down_outlined,
                   backgroundColor: isSpeakerAvailable
-                      ? (isSpeakerOn ? colors.accent : colors.surfaceRaised)
+                      ? (isSpeakerOn
+                            ? (_videoStyle ? Colors.white : colors.accent)
+                            : colors.surfaceRaised)
                       : colors.disabledSurface,
                   foregroundColor: isSpeakerAvailable
-                      ? (isSpeakerOn ? colors.accentIcon : colors.iconPrimary)
+                      ? (isSpeakerOn
+                            ? (_videoStyle
+                                  ? const Color(0xFF10141E)
+                                  : colors.accentIcon)
+                            : colors.iconPrimary)
                       : colors.disabledForeground,
                   semanticsEnabled: isSpeakerAvailable,
                   constrainLabel: constrainLabels,
@@ -142,6 +180,7 @@ class CallControls extends StatelessWidget {
               _fitControl(
                 _Control(
                   identifier: 'call_end',
+                  videoStyle: _videoStyle,
                   tooltip: l10n.call_end,
                   label: l10n.call_end_action,
                   icon: Icons.call_end_rounded,
@@ -215,6 +254,7 @@ class _Control extends StatelessWidget {
     required this.onPressed,
     this.semanticsEnabled = true,
     this.constrainLabel = false,
+    this.videoStyle = false,
   });
 
   final String identifier;
@@ -226,6 +266,7 @@ class _Control extends StatelessWidget {
   final VoidCallback onPressed;
   final bool semanticsEnabled;
   final bool constrainLabel;
+  final bool videoStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -248,13 +289,16 @@ class _Control extends StatelessWidget {
             iconSize: 28,
             style: IconButton.styleFrom(
               backgroundColor: backgroundColor,
-              fixedSize: const Size.square(64),
+              fixedSize: Size.square(videoStyle ? 56 : 64),
+              side: videoStyle
+                  ? BorderSide(color: Colors.white.withValues(alpha: 0.2))
+                  : null,
             ),
           ),
           const SizedBox(height: 8),
           Text(
             label,
-            maxLines: constrainLabel ? 2 : null,
+            maxLines: videoStyle ? 1 : (constrainLabel ? 2 : null),
             overflow: constrainLabel ? TextOverflow.ellipsis : null,
             textAlign: constrainLabel ? TextAlign.center : null,
             style: TextStyle(

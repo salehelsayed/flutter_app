@@ -5466,4 +5466,13 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get call_video_entry_start_failed =>
       'تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.';
+
+  @override
+  String get call_video_flip_caption => 'تبديل';
+
+  @override
+  String get call_video_camera_caption => 'الكاميرا';
+
+  @override
+  String get call_video_camera_off_caption => 'الكاميرا متوقفة';
 }

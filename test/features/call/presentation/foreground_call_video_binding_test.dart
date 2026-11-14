@@ -893,10 +893,20 @@ void main() {
             .presentation,
         same(initial.video!.presentation),
       );
-      expect(find.text(l10n.call_video_local_camera_off), findsOneWidget);
+      expect(
+        tester
+            .getSemantics(find.bySemanticsIdentifier('call_video_view_local'))
+            .label,
+        l10n.call_video_local_camera_off,
+      );
       cap.emit(_projection());
       await tester.pump();
-      expect(find.text(l10n.call_video_local_camera_on), findsOneWidget);
+      expect(
+        tester
+            .getSemantics(find.bySemanticsIdentifier('call_video_view_local'))
+            .label,
+        l10n.call_video_local_camera_on,
+      );
     });
   });
 
@@ -944,9 +954,9 @@ void main() {
         );
         final flip = find.descendant(
           of: find.byKey(const ValueKey('call_video_switch_camera')),
-          matching: find.byType(OutlinedButton),
+          matching: find.byType(IconButton),
         );
-        expect(tester.widget<OutlinedButton>(flip).onPressed, isNull);
+        expect(tester.widget<IconButton>(flip).onPressed, isNull);
         await _audioTap(tester, _Phase.active);
         expect(cap.audioCalls, [('end', _callA)]);
       });
@@ -1908,8 +1918,8 @@ void main() {
             final local = find.bySemanticsIdentifier('call_video_view_local');
             final remoteRect = tester.getRect(remote);
             final localRect = tester.getRect(local);
-            expect(remoteRect.left, greaterThanOrEqualTo(16));
-            expect(remoteRect.right, lessThanOrEqualTo(304));
+            expect(remoteRect.left, closeTo(0, 1));
+            expect(remoteRect.right, closeTo(320, 1));
             expect(remoteRect.top, greaterThanOrEqualTo(0));
             expect(remoteRect.bottom, lessThanOrEqualTo(640));
             expect(remoteRect.contains(localRect.topLeft), isTrue);

@@ -2352,5 +2352,8 @@
   "call_video_entry_incoming": "Eingehender Videoanruf",
   "call_video_entry_starting": "Videoanruf wird gestartet",
   "call_video_entry_unavailable": "Videoanrufe sind gerade nicht verfügbar.",
-  "call_video_entry_start_failed": "Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut."
+  "call_video_entry_start_failed": "Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.",
+  "call_video_flip_caption": "Wechseln",
+  "call_video_camera_caption": "Kamera",
+  "call_video_camera_off_caption": "Kamera aus"
 }

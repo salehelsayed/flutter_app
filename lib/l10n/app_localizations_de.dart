@@ -5518,4 +5518,13 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get call_video_entry_start_failed =>
       'Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.';
+
+  @override
+  String get call_video_flip_caption => 'Wechseln';
+
+  @override
+  String get call_video_camera_caption => 'Kamera';
+
+  @override
+  String get call_video_camera_off_caption => 'Kamera aus';
 }

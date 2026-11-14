@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/presentation/call_video_localizations.dart';
+import 'package:flutter_app/features/call/presentation/widgets/call_video_controls.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_video_screen_layout.dart';
@@ -84,6 +88,14 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
     final formattedDuration = _showsDuration ? _formattedDuration : null;
+    final video = widget.videoPresentation;
+    if (video != null &&
+        video.isVisible &&
+        video.acceptedMedia != null &&
+        video.agreedMedia == CallMediaKind.video &&
+        widget.onVideoIntent != null) {
+      return _buildVideoStage(video, formattedDuration);
+    }
 
     return ColoredBox(
       color: colors.surfaceBase,
@@ -146,6 +158,115 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoStage(CallVideoPresentation video, String? duration) {
+    final l10n = AppLocalizations.of(context)!;
+    final labels = CallVideoLocalizations(l10n);
+    // The owner supplies video pixels. This composition never starts a camera
+    // and the static backdrop does not compete with a call for animation time.
+    return Theme(
+      data: Theme.of(context).copyWith(
+        brightness: Brightness.dark,
+        extensions: [
+          ...Theme.of(context).extensions.values
+              .where((extension) => extension is! BackgroundReadableColors),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: CosmicBackground(
+        paused: true,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (video.remoteCamera != CallCameraState.on)
+              Align(
+                alignment: const Alignment(0, -0.18),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      UserAvatar(peerId: widget.contactPeerId, size: 132),
+                      const SizedBox(height: 24),
+                      Text(
+                        labels.remoteCameraLabel(video.remoteCamera),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFC7CCD6),
+                          fontSize: 17,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (widget.videoViews != null) widget.videoViews!,
+            // Only the controls/identity consume safe-area padding. The
+            // background and current remote video occupy the entire call.
+            Positioned(
+              top: 0,
+              left: 72,
+              right: 72,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.contactUsername,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (duration != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          duration,
+                          semanticsLabel: l10n.call_duration(duration),
+                          style: const TextStyle(
+                            color: Color(0xFFE4E6EB),
+                            fontSize: 16,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: SafeArea(
+                top: false,
+                child: CallVideoControls(
+                  presentation: video,
+                  audioControls: widget.controls,
+                  onIntent: (intent) {
+                    if (mounted) widget.onVideoIntent?.call(intent);
+                  },
+                  controlsLabel: labels.controlsLabel,
+                  statusLabel: labels.statusLabel,
+                  localCameraLabel: labels.localCameraLabel,
+                  remoteCameraLabel: labels.remoteCameraLabel,
+                  actionLabel: labels.actionLabel,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

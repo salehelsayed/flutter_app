@@ -9019,6 +9019,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t start the video call. Please try again.'**
   String get call_video_entry_start_failed;
+
+  /// No description provided for @call_video_flip_caption.
+  ///
+  /// In en, this message translates to:
+  /// **'Flip'**
+  String get call_video_flip_caption;
+
+  /// No description provided for @call_video_camera_caption.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera'**
+  String get call_video_camera_caption;
+
+  /// No description provided for @call_video_camera_off_caption.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera off'**
+  String get call_video_camera_off_caption;
 }
 
 class _AppLocalizationsDelegate

@@ -2352,5 +2352,8 @@
   "call_video_entry_incoming": "مكالمة فيديو واردة",
   "call_video_entry_starting": "جارٍ بدء مكالمة الفيديو",
   "call_video_entry_unavailable": "مكالمات الفيديو غير متاحة حاليًا.",
-  "call_video_entry_start_failed": "تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا."
+  "call_video_entry_start_failed": "تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.",
+  "call_video_flip_caption": "تبديل",
+  "call_video_camera_caption": "الكاميرا",
+  "call_video_camera_off_caption": "الكاميرا متوقفة"
 }

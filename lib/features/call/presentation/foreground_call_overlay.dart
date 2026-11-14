@@ -367,31 +367,6 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         peerId != null) {
       final video = _visibleVideo(projection, capability);
       pictureInPictureVideo = _pictureInPictureVideo(projection, capability);
-      final videoViews =
-          surfaceKind == _ForegroundCallSurface.active &&
-              session!.state != CallState.ending &&
-              video != null &&
-              video.presentation.acceptedMedia != null &&
-              video.presentation.agreedMedia == CallMediaKind.video
-          ? Stack(
-              key: const ValueKey('call-video-views'),
-              children: [
-                CallVideoViewSurface(
-                  projection: projection,
-                  slot: CallVideoRendererSlot.remote,
-                ),
-                PositionedDirectional(
-                  end: 8,
-                  bottom: 8,
-                  width: 112,
-                  child: CallVideoViewSurface(
-                    projection: projection,
-                    slot: CallVideoRendererSlot.local,
-                  ),
-                ),
-              ],
-            )
-          : null;
       final capabilityGeneration = _capabilityGeneration;
       final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
           ? null
@@ -402,6 +377,67 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               generation: video.generation,
               intent: intent,
             );
+      final videoViews =
+          surfaceKind == _ForegroundCallSurface.active &&
+              session!.state != CallState.ending &&
+              video != null &&
+              video.presentation.acceptedMedia != null &&
+              video.presentation.agreedMedia == CallMediaKind.video
+          ? Stack(
+              key: const ValueKey('call-video-views'),
+              fit: StackFit.expand,
+              children: [
+                CallVideoViewSurface(
+                  projection: projection,
+                  slot: CallVideoRendererSlot.remote,
+                  fill: true,
+                  emptyRemote: true,
+                ),
+                PositionedDirectional(
+                  end: 16,
+                  top: MediaQuery.paddingOf(context).top + 118,
+                  width: 110,
+                  height: 145,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CallVideoViewSurface(
+                        projection: projection,
+                        slot: CallVideoRendererSlot.local,
+                        portrait: true,
+                      ),
+                      if (video.presentation.localCamera == CallCameraState.on)
+                        PositionedDirectional(
+                          end: 2,
+                          bottom: 2,
+                          child: IconButton(
+                            key: const ValueKey('call-video-preview-flip'),
+                            tooltip: AppLocalizations.of(context)!
+                                .call_video_action_switch_camera,
+                            style: IconButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: const Color(0x88000000),
+                              minimumSize: const Size.square(48),
+                            ),
+                            onPressed: video.presentation.isAvailable(
+                              CallVideoAction.switchCamera,
+                            )
+                                ? () {
+                                    final intent = video.presentation.intentFor(
+                                      CallVideoAction.switchCamera,
+                                    );
+                                    if (intent != null) onVideoIntent?.call(intent);
+                                  }
+                                : null,
+                            icon: const Icon(Icons.cameraswitch_outlined, size: 20),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : null;
       surface = switch (surfaceKind) {
         _ForegroundCallSurface.incoming => IncomingCallScreen(
           contactPeerId: peerId,
@@ -610,6 +646,10 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                               right: 8,
                               child: IconButton(
                                 key: const ValueKey('call-minimize'),
+                                color: projection?.video?.presentation.isVisible == true &&
+                                        projection?.video?.presentation.agreedMedia == CallMediaKind.video
+                                    ? Colors.white
+                                    : null,
                                 tooltip: AppLocalizations.of(
                                   context,
                                 )!.call_minimize,

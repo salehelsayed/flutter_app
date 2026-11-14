@@ -5395,4 +5395,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get call_video_entry_start_failed =>
       'Couldn\'t start the video call. Please try again.';
+
+  @override
+  String get call_video_flip_caption => 'Flip';
+
+  @override
+  String get call_video_camera_caption => 'Camera';
+
+  @override
+  String get call_video_camera_off_caption => 'Camera off';
 }
