@@ -12092,6 +12092,32 @@ visible and cannot become an ordinary first-attempt PASS.
   true capability do not certify native capture continuation, OS entry/rendering,
   device/RTP/lock-screen behavior, signed candidates or activation. Preview selected
   20 checks; the full selected wrapper set was not executed for this scoped result.
+  **OS PiP native unit and visible foreground camera:** scoped native evidence
+  is closed at composition `754bae54319ef9e21dd5fab334f699790f3e67c4`.
+  Android assemble and unit tasks exited 0 with 628 passing cases in 48 JUnit
+  files, zero failures/errors/skips. The executed case identities and arguments
+  match the first composition attempt: its 628-case/one-failure result and the
+  isolated camera 12-case/one-failure result remain retained. Camera correction
+  `83f45d91a` reuses the first decision's manifest fact while preserving the
+  original final fact-read order and epoch fence. All 12 camera authority cases,
+  including unchanged `NATIVE-VIDEO-1`, pass; do not retarget that late-window
+  test or add another manifest read before the final owner facts.
+  Android PiP RED `b97608442` compiles and runs 26 cases: four passing guards,
+  21 assertion failures and one missing-event `NoSuchElementException` from
+  the deliberate no-op scaffold. Calling all 22 failures assertions is inaccurate.
+  Original `04db` compile failure/zero tests stays noncausal first-attempt evidence.
+  Camera RED `be971c73d` ran 54 cases with four causal assertion failures and no
+  errors/skips. iOS GREEN on `e318ebcbf` passed all 21 cases on the pinned iPhone
+  16e simulator (iOS 26.5), xcodebuild exit 0; this carries to `754bae5` through
+  unchanged iOS/library/test/configuration identities, not a new iOS run.
+  iOS RED `f0` had two passes, seven completed assertion failures and one own
+  assertion failure followed by an index-out-of-range/restart, exit 65; retain
+  those mixed outcomes and the original xcresult. The optional successor is unrun.
+  Native metadata records initial HEAD/tree and clean before/after, without a
+  separate post-run HEAD/parent/full-file-pin census. These unit results do not
+  certify composed host, live device/RTP, camera continuation in PiP, signed
+  candidates or activation. Camera FGS `afa0e7970` remains excluded. Evidence:
+  `/Users/I560101/.codex/investigations/batch7-native-corrections-review-20261114-m90aa47a7/final-native-scoped-verdict.json`.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
