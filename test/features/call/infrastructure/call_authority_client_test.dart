@@ -93,6 +93,30 @@ void main() {
     );
   }
 
+  test(
+    'BL26-HA only typed bridge unavailability permits recovery fallback',
+    () async {
+      for (final entry in <(Object, bool)>[
+        (TimeoutException('fixture timeout'), true),
+        (const BridgeOperationUnavailableException(), true),
+        (StateError('unclassified bridge failure'), false),
+        (const FormatException('invalid native response'), false),
+      ]) {
+        bridge.pendingResponse = Future<String>.error(entry.$1);
+        await expectLater(
+          client.getEndpoint('contact-account'),
+          throwsA(
+            isA<CallAuthorityException>().having(
+              (error) => error.isTransient,
+              'explicit transient classification',
+              entry.$2,
+            ),
+          ),
+        );
+      }
+    },
+  );
+
   test('matches relay canonical endpoint JSON byte order exactly', () {
     final record = CallEndpointRecord(
       accountPeerId: 'contact-account',

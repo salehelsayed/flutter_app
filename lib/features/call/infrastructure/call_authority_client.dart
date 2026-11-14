@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../diagnostics/call_diagnostics.dart';
@@ -556,11 +557,13 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
               }),
             )
             .timeout(requestTimeout);
-      } catch (_) {
+      } catch (error) {
         record('failed', 'bridge_unavailable');
-        throw const CallAuthorityException(
+        throw CallAuthorityException(
           CallAuthorityErrorCode.bridgeFailure,
-          isTransient: true,
+          isTransient:
+              error is TimeoutException ||
+              error is BridgeOperationUnavailableException,
         );
       }
       final Object? response;
