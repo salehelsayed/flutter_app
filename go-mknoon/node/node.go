@@ -910,7 +910,15 @@ func (n *Node) connectRelay(ctx context.Context, info peer.AddrInfo) error {
 	if n.connectRelayHook != nil {
 		return n.connectRelayHook(ctx, info)
 	}
-	return n.host.Connect(ctx, info)
+	// Stop clears the host under n.mu while a Start warm-up goroutine may still
+	// be on its way here; read it under the lock and refuse a missing host.
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		return fmt.Errorf("node host not available")
+	}
+	return h.Connect(ctx, info)
 }
 
 func (n *Node) reserveRelaySlot(ctx context.Context, h host.Host, info peer.AddrInfo) (*relayclient.Reservation, error) {
