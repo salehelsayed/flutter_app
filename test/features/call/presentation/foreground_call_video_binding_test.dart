@@ -476,6 +476,72 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('VUI4 typed camera feedback binding', () {
+    for (final replacement in [
+      'successor',
+      'generation',
+      'end',
+      'capability',
+    ]) {
+      testWidgets(
+        'retained Settings rejects $replacement without another intent',
+        (tester) async {
+          final gateway = FakeMicPermissionGateway();
+          final cap = _VideoCapability(
+            _projection(media: _video(camera: CallCameraState.off)),
+          )..videoResult = () async => _cameraDenied;
+          _VideoCapability? successor;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            final oldSettings = tester
+                .widget<FilledButton>(
+                  find.byKey(const ValueKey('camera-result-settings')),
+                )
+                .onPressed!;
+            // The separate current-owner Settings test proves this action opens.
+            // No intent or Settings action may invalidate this closure before
+            // the owner replacement under test.
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(1));
+            if (replacement == 'capability') {
+              successor = _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              );
+              await tester.pumpWidget(_app(successor!, micPermission: gateway));
+            } else {
+              cap.emit(
+                _projection(
+                  callId: replacement == 'successor' ? _callB : _callA,
+                  generation: replacement == 'generation' ? 8 : 7,
+                  state: replacement == 'end'
+                      ? CallState.ended
+                      : CallState.connected,
+                  media: _video(camera: CallCameraState.off),
+                ),
+                notify: false,
+              );
+            }
+            // Current owner can change before its presentation stream emits.
+            oldSettings();
+            await tester.pump();
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(1));
+            expect(successor?.videoCalls ?? [], isEmpty);
+            if (successor == null) cap.emit(cap.current);
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsNothing,
+            );
+          }, micPermission: gateway);
+          await successor?.close();
+        },
+      );
+    }
+
     for (final (active, failure) in [
       (false, CallAudioFailure.none),
       (true, CallAudioFailure.engineFailed),
