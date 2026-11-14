@@ -39,6 +39,148 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  group('NEG-DIAG names the swallowed initial negotiation failure', () {
+    late List<Map<String, dynamic>> diag;
+    setUp(() {
+      diag = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'CALL_V2_NEGOTIATION_FAILED') diag.add(event);
+      });
+    });
+    tearDown(() => debugSetFlowEventSink(null));
+
+    void expectPrivate() {
+      expect(diag.toString(), isNot(contains(_call.value)));
+      expect(diag.toString(), isNot(contains(_handle)));
+    }
+
+    test('answer applyRemote engine refusal', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.start();
+      final id = h.sent.single.payload['negotiation_id']! as String;
+      final refused = Completer<void>();
+      refused.future.ignore();
+      refused.completeError(
+        const CallEngineException(CallEngineErrorCode.notReady),
+      );
+      h.engine.video.remoteApplyGate = refused;
+      expect(
+        h.admit(h.remote('answer', negotiation: id)),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await h.owner.workSettled;
+      expect(
+        h.events.where((e) => e.type == CallEventType.negotiationFailed),
+        hasLength(1),
+      );
+      expect(diag, hasLength(1));
+      expect(diag.single['details'], {
+        'job': 'applyAnswer',
+        'stage': 'applyRemote',
+        'errorType': 'CallEngineException',
+        'code': 'notReady',
+      });
+      expectPrivate();
+    });
+
+    test('answer fresh authority drift', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.start();
+      final id = h.sent.single.payload['negotiation_id']! as String;
+      h.freshEndpoint = _endpoint(signing: 'rotated');
+      h.admit(h.remote('answer', negotiation: id));
+      await h.owner.workSettled;
+      expect(h.engine.video.remote, isEmpty);
+      expect(diag.single['details'], {
+        'job': 'applyAnswer',
+        'stage': 'authority',
+        'errorType': 'CallNegotiationPortException',
+        'code': 'signalingUnavailable',
+      });
+      expectPrivate();
+    });
+
+    test('offer start authority drift', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      h.freshEndpoint = _endpoint(signing: 'rotated');
+      final result = await h.start();
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(diag.single['details'], {
+        'job': 'startOffer',
+        'stage': 'authority',
+        'errorType': 'CallNegotiationPortException',
+        'code': 'signalingUnavailable',
+      });
+    });
+
+    test('offer send without custody', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      h.delivered = false;
+      final result = await h.start();
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(diag.single['details'], {
+        'job': 'startOffer',
+        'stage': 'send',
+        'errorType': 'CallNegotiationPortException',
+        'code': 'transportUnavailable',
+      });
+    });
+
+    test('expired admitted endpoint at the effect guard', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      h.nowMs = 1 << 40;
+      final result = await h.start();
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(diag.single['details'], {
+        'job': 'startOffer',
+        'stage': 'context',
+        'errorType': 'none',
+        'code': 'none',
+      });
+    });
+
+    test('elapsed initial budget at the effect guard', () async {
+      final h = _Rig();
+      addTearDown(h.close);
+      await h.start();
+      expect(diag, isEmpty);
+      h.elapsedMs += 46000;
+      final result = await h.owner.execute(
+        const CallEffect(CallEffectType.startNegotiation),
+        h.snapshot,
+      );
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(diag.single['details'], {
+        'job': 'startOffer',
+        'stage': 'budget',
+        'errorType': 'none',
+        'code': 'none',
+      });
+    });
+
+    test('retired work stays silent', () async {
+      final h = _Rig();
+      final gate = Completer<void>();
+      h.engine.video.offerGate = gate;
+      addTearDown(() async {
+        if (!gate.isCompleted) gate.complete();
+        await h.close();
+      });
+      final pending = h.start();
+      await _microtasks();
+      h.current = false;
+      gate.complete();
+      await pending;
+      expect(h.sent, isEmpty);
+      expect(diag, isEmpty);
+    });
+  });
+
   for (final incoming in [false, true]) {
     test(
       'CAM-READY initial commit publishes readiness incoming=$incoming',
