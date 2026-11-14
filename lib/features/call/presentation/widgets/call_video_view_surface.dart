@@ -122,18 +122,20 @@ class CallVideoViewSurface extends StatelessWidget {
                   ),
                   if (portrait) ...[
                     const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Text(
-                        camera == CallCameraState.off
-                            ? labels.cameraOffCaption
-                            : labels.localCameraLabel(camera),
-                        textAlign: TextAlign.center,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          fontSize: 13,
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(
+                          camera == CallCameraState.off
+                              ? labels.cameraOffCaption
+                              : labels.localCameraLabel(camera),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
