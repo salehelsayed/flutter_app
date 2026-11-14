@@ -165,6 +165,8 @@ final class AndroidDirectMediaBlobCustodyE2ERequest {
   };
 }
 
+const _committedOutgoingStatuses = {'inboxed', 'sent', 'delivered', 'read'};
+
 /// Keeps the existing completion requirement while preserving the disposition
 /// when the process exits before its buffered flow events reach logcat.
 void requireAndroidDirectMediaVoiceSendCompletion({
@@ -800,6 +802,14 @@ Future<Map<String, Object?>> _resumeSender({
   }
   final (result, sentMessage) = await sendDebugVoiceUnderUploadLease(
     attachmentId: request.attachmentId,
+    completedByOtherOwner: () async {
+      final message = await messageRepo.getMessage(request.messageId);
+      return message != null &&
+              !message.isIncoming &&
+              _committedOutgoingStatuses.contains(message.status)
+          ? message
+          : null;
+    },
     send: () => sendVoiceMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,

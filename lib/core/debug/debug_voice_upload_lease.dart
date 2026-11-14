@@ -19,4 +19,26 @@ sendDebugVoiceUnderUploadLease({
   MediaUploadInFlightTracker? tracker,
   Duration leaseWait = const Duration(seconds: 30),
   Duration pollInterval = const Duration(milliseconds: 100),
-}) => send();
+}) async {
+  final leases = tracker ?? mediaUploadInFlightTracker;
+  final waited = Stopwatch()..start();
+  MediaUploadLease? lease;
+  while (true) {
+    lease = leases.tryClaimAll([
+      attachmentId,
+    ], source: MediaUploadTriggerSource.resume);
+    if (lease != null) break;
+    if (waited.elapsed >= leaseWait) {
+      return (SendVoiceMessageResult.sendFailed, null);
+    }
+    await Future<void>.delayed(pollInterval);
+  }
+  try {
+    // Checked under our own lease, so no other owner can be mid-send.
+    final committed = await completedByOtherOwner?.call();
+    if (committed != null) return (SendVoiceMessageResult.success, committed);
+    return await send();
+  } finally {
+    leases.release(lease);
+  }
+}
