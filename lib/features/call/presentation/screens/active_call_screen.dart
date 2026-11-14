@@ -88,7 +88,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     final formattedDuration = _showsDuration ? _formattedDuration : null;
     final video = widget.videoPresentation;
     if (video != null &&
@@ -99,8 +98,20 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       return _buildVideoStage(video, formattedDuration);
     }
 
-    return ColoredBox(
-      color: colors.surfaceBase,
+    final showUpgradeStage =
+        video != null &&
+        video.isVisible &&
+        video.acceptedMedia != null &&
+        video.agreedMedia == CallMediaKind.audio &&
+        widget.onVideoIntent != null &&
+        (video.status == CallVideoStatus.incomingUpgrade ||
+            video.status == CallVideoStatus.outgoingUpgrade ||
+            video.status == CallVideoStatus.switchingToVideo);
+    final colors = showUpgradeStage
+        ? BackgroundReadableColors.dark
+        : context.backgroundReadableColors;
+    final surface = ColoredBox(
+      color: showUpgradeStage ? Colors.transparent : colors.surfaceBase,
       child: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -112,6 +123,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             final onVideoIntent = widget.onVideoIntent;
             if (video != null && video.isVisible && onVideoIntent != null) {
               return CallVideoScreenLayout(
+                peerDisplayName: widget.contactUsername,
                 profile: _buildProfile(
                   colors,
                   formattedDuration,
@@ -162,6 +174,18 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
           },
         ),
       ),
+    );
+    if (!showUpgradeStage) return surface;
+    return Theme(
+      data: Theme.of(context).copyWith(
+        brightness: Brightness.dark,
+        extensions: [
+          ...Theme.of(context).extensions.values
+              .where((extension) => extension is! BackgroundReadableColors),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: CosmicBackground(paused: true, child: surface),
     );
   }
 
@@ -258,6 +282,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 top: widget.cameraFeedback != null,
                 child: _withCameraFeedback(
                   CallVideoControls(
+                    peerDisplayName: widget.contactUsername,
                     presentation: video,
                     audioControls: widget.controls,
                     onIntent: (intent) {
