@@ -152,6 +152,9 @@ final class CallMediaSwitchEffectExecutor {
           id: pending.request.id,
           baseRevision: pending.request.baseRevision,
           revision: pending.revision,
+          // Recovery retires transport work; it is not a user withdrawal
+          // requiring a peer selection witness before ICE can restart.
+          reason: MediaSwitchAbortReason.transport,
         ),
       );
     }
