@@ -556,8 +556,8 @@ void main() {
           cap,
           (l10n) async {
             for (final text in [
-              l10n.call_video_action_accept_upgrade,
-              l10n.call_video_action_use_audio_only,
+              l10n.call_answer,
+              l10n.call_video_status_audio_only,
             ]) {
               final finder = find.text(text);
               expect(finder, findsOneWidget);
@@ -575,6 +575,18 @@ void main() {
             expect(
               find.bySemanticsIdentifier('call_accept_audio'),
               findsOneWidget,
+            );
+            expect(
+              tester
+                  .getSemantics(find.bySemanticsIdentifier('call_accept_video'))
+                  .tooltip,
+              l10n.call_video_action_accept_upgrade,
+            );
+            expect(
+              tester
+                  .getSemantics(find.bySemanticsIdentifier('call_accept_audio'))
+                  .tooltip,
+              l10n.call_video_action_use_audio_only,
             );
             expect(tester.takeException(), isNull);
           },
