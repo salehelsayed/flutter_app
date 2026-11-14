@@ -12193,6 +12193,27 @@ visible and cannot become an ordinary first-attempt PASS.
   Verified packet:
   `/Users/I560101/.codex/investigations/batch9-video-ui-20261114/codex-vui3b-final-focused-verdict-288c25f48.json`
   (SHA-256 `fb522417d36e3f00d60d76fb4bffe5c6d96801a8f4feed3bb1232dc2a603b779`).
+  **Reconnecting video presentation (VUI5a):** no frozen-frame lease is exposed;
+  either the session or video reconnect flag requires the truthful avatar and
+  passive localized status, with the video-view layer absent. An already-passing
+  no-`Texture` assertion does not prove that the avatar is visible or unobscured.
+  Async-broadcast widget fixtures need two finite pumps after projection emission:
+  the first may deliver the event only at its final microtask flush, scheduling
+  the next frame. Verify mounted `ActiveCallScreen.state` and exact presentation
+  identity before causal assertions. At 320px/2x DE/AR, complete control captions
+  require a finite bottom layout area; whole-screen scrolling can leave essential
+  controls below the viewport despite containing every widget in the tree.
+  Original `97790a4d9` stale-frame false RED (raw hash prefix `5c589`) is retained
+  and not adopted. Corrected `b1bcdb461` RED had ten causal reporter ERROR results:
+  eight missing-avatar and two missing-pill assertions. First GREEN `ca5924b70`
+  retained eight passes and two DE/AR control-bound layout ERROR results.
+  Corrected `32306a020` preserved the adopted test tree and passed ten causal
+  plus 273 preservation executions (283 overlapping executions, not unique
+  cases), with no failures/errors/skips, analysis exit 0/no issues and 176
+  matching pin observations. The essential-control layout P2 is closed.
+  Broad VUI4–8 and native/device evidence remain separate. Verified packet:
+  `/Users/I560101/.codex/investigations/batch9-video-ui-20261114/codex-vui5a-final-focused-verdict-32306a020.json`
+  (SHA-256 `f26bf39c2b5e8061ad8fbbd00da16ce68aa0cbcda35b3631375a80d5bf2af044`).
   **V2 terminal delivery through cleanup and shutdown:** a terminate/reject
   admitted by the active terminal call captures its exact terminal snapshot
   before asynchronous authorization. Its own context purge and active-session
