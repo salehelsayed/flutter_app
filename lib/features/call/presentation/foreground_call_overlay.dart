@@ -7,6 +7,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../application/call_audio_controller.dart';
+import '../application/call_camera_tap_diagnostics.dart';
 import '../application/foreground_call_capability.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
@@ -933,17 +934,43 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           _minimizedCallId == callId ||
           _pickerCallId == callId ||
           capability is! ForegroundCallVideoCapability) {
+        reportCallCameraTap(
+          intent.action,
+          CallCameraTapOutcome.refused,
+          CallCameraTapReason.staleOwner,
+        );
         return null;
       }
       // Re-read the owner immediately before dispatch, including updates that
       // have not reached the presentation stream yet. The root revalidates
       // these tokens atomically before performing any media effect.
       final current = capability.current;
-      if (current == null || current.session.callId != callId) return null;
+      if (current == null || current.session.callId != callId) {
+        reportCallCameraTap(
+          intent.action,
+          CallCameraTapOutcome.refused,
+          CallCameraTapReason.staleOwner,
+        );
+        return null;
+      }
       final video = _visibleVideo(current, capability);
-      if (video == null || video.generation != generation) return null;
+      if (video == null || video.generation != generation) {
+        reportCallCameraTap(
+          intent.action,
+          CallCameraTapOutcome.refused,
+          CallCameraTapReason.staleOwner,
+        );
+        return null;
+      }
       final available = video.presentation.intentFor(intent.action);
       if (available == null || available.upgradeId != intent.upgradeId) {
+        reportCallCameraTap(
+          intent.action,
+          CallCameraTapOutcome.refused,
+          video.presentation.videoActionPending
+              ? CallCameraTapReason.actionPending
+              : CallCameraTapReason.notReady,
+        );
         return null;
       }
       return (capability as ForegroundCallVideoCapability).applyVideoIntent(

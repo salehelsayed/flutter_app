@@ -2016,6 +2016,13 @@ final class CallV2NegotiationEffectExecutor
     _initialCommitted = true;
     _initialTimer?.cancel();
     _initialTimer = null;
+    try {
+      // Session commit can publish its synchronous renderer event before this
+      // owner becomes ready. Publish the readiness change itself as well.
+      onMediaChanged?.call();
+    } catch (_) {
+      // A presentation observer cannot fail committed media.
+    }
   }
 
   bool get _ready =>

@@ -41,6 +41,56 @@ const _configuration = CallConnectionConfiguration(
 void main() {
   for (final incoming in [false, true]) {
     test(
+      'CAM-READY initial commit publishes readiness incoming=$incoming',
+      () async {
+        final h = _Rig(incoming: incoming);
+        final commit = Completer<void>();
+        final started = Completer<void>();
+        addTearDown(() async {
+          if (!commit.isCompleted) commit.complete();
+          await h.close();
+        });
+        final published = <bool>[];
+        h.afterMediaChanged = () => published.add(h.owner.current);
+        h.engine.video.commitGate = commit;
+        h.engine.video.onCommit = started.complete;
+        final connecting = h.connect();
+        await started.future;
+        // ICE can connect before the initial SDP commit finishes. Neither that
+        // observation nor the pending commit authorizes local camera capture.
+        h.snapshot = h.snapshot.copyWith(state: CallState.connected);
+        expect(h.owner.current, isFalse);
+        expect(published, isEmpty);
+        expect(h.engine.video.cameraStarts, 0);
+        commit.complete();
+        await connecting;
+        expect(h.owner.current, isTrue);
+        expect(
+          published,
+          [true],
+          reason:
+              'Publish after committed readiness changes, without another media event',
+        );
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+  }
+
+  test(
+    'CAM-READY a throwing readiness observer cannot fail committed media',
+    () async {
+      final h = _Rig(incoming: true);
+      addTearDown(h.close);
+      h.afterMediaChanged = () => throw StateError('fixture observer');
+      await h.connect();
+      expect(h.owner.current, isTrue);
+      expect(h.mediaChanges, 1);
+      expect(h.engine.video.cameraStarts, 0);
+    },
+  );
+
+  for (final incoming in [false, true]) {
+    test(
       'V2-RECOVERY transport exception retries exact signal incoming=$incoming',
       () async {
         final h = _Rig(recovery: true, incoming: incoming);
@@ -2969,7 +3019,10 @@ final class _Rig {
       maxPendingMedia: capacity,
       monotonicNowMs: () => elapsedMs,
       timerScheduler: timers,
-      onMediaChanged: () => mediaChanges++,
+      onMediaChanged: () {
+        mediaChanges++;
+        afterMediaChanged?.call();
+      },
     );
   }
 
@@ -3002,6 +3055,7 @@ final class _Rig {
   bool current = true;
   bool delivered = true;
   int mediaChanges = 0;
+  void Function()? afterMediaChanged;
   Completer<bool>? cameraDeliveryGate;
 
   MediaSwitchRequest get switchRequest => MediaSwitchRequest(
@@ -3498,6 +3552,7 @@ class _Video implements CallVideoSession {
   Completer<void>? remoteApplyGate;
   Completer<void>? localApplyGate;
   Completer<void>? commitGate;
+  void Function()? onCommit;
   Completer<CallVideoSdpReconciliationOutcome>? reconcileGate;
   int reconciliations = 0;
   bool failReconcile = false;
@@ -3585,6 +3640,7 @@ class _Video implements CallVideoSession {
   @override
   Future<void> commit(CallVideoNegotiation token) async {
     commits++;
+    onCommit?.call();
     await commitGate?.future;
   }
 

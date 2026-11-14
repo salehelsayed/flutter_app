@@ -19,6 +19,7 @@ import '../../features/call/domain/call_session_snapshot.dart';
 import '../../features/call/domain/call_state.dart';
 import '../../features/call/domain/call_media.dart';
 import '../../features/call/application/call_video_presentation.dart';
+import '../../features/call/application/call_camera_tap_diagnostics.dart';
 
 typedef AwaitCallSignalingReadiness = Future<void> Function();
 typedef RequestOutgoingMicrophonePermission =
@@ -1457,6 +1458,11 @@ final class CallSignalingComposition
         _featureFlags['video_call_v2_enabled'] != true ||
         _foregroundCurrent?.video?.generation != generation ||
         graph is! ForegroundCallVideoCapability) {
+      reportCallCameraTap(
+        intent.action,
+        CallCameraTapOutcome.refused,
+        CallCameraTapReason.staleOwner,
+      );
       return Future.value(ForegroundCallActionResult.unavailable);
     }
     return (graph as ForegroundCallVideoCapability).applyVideoIntent(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
@@ -749,6 +750,52 @@ void main() {
         scale: 2,
       );
     });
+  }
+
+  for (final change in ['call', 'generation']) {
+    testWidgets(
+      'CAM-READY retained camera tap logs stale $change without dispatch',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        );
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        await _withOverlay(tester, cap, (_) async {
+          final controls = tester.widget<CallVideoControls>(
+            find.byType(CallVideoControls),
+          );
+          expect(
+            controls.presentation.intentFor(CallVideoAction.turnCameraOn),
+            isNotNull,
+          );
+          cap.emit(
+            _projection(
+              callId: change == 'call' ? _callB : _callA,
+              generation: change == 'generation' ? 8 : 7,
+              media: _video(camera: CallCameraState.off),
+            ),
+            notify: false,
+          );
+          controls.onIntent(
+            const CallVideoIntent(CallVideoAction.turnCameraOn),
+          );
+          await tester.pump();
+          expect(cap.videoCalls, isEmpty);
+          expect(cap.audioCalls, isEmpty);
+          final taps = flow
+              .where((e) => e['event'] == 'CALL_CAMERA_TAP')
+              .toList();
+          expect(taps, hasLength(1));
+          expect(taps.single['details'], {
+            'action': 'turnCameraOn',
+            'outcome': 'refused',
+            'reason': 'staleOwner',
+          });
+        });
+      },
+    );
   }
 
   for (final change in ['call', 'generation', 'ended', 'gone', 'gate']) {
