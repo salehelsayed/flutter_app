@@ -1087,6 +1087,15 @@ void main() {
                     );
                   }
                 }
+                // The semantic root includes the RenderView's physical-pixel
+                // transform; getRect reports global logical coordinates.
+                final ratio = tester.view.devicePixelRatio;
+                semanticRect = Rect.fromLTRB(
+                  semanticRect.left / ratio,
+                  semanticRect.top / ratio,
+                  semanticRect.right / ratio,
+                  semanticRect.bottom / ratio,
+                );
                 final endRect = tester.getRect(end);
                 expect(semanticRect.left, closeTo(endRect.left, 0.001));
                 expect(semanticRect.top, closeTo(endRect.top, 0.001));
