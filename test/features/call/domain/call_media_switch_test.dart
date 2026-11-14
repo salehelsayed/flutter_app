@@ -113,6 +113,60 @@ List<MediaSwitchEffectKind> _kinds(MediaSwitchDecision decision) =>
     decision.effects.map((e) => e.kind).toList();
 
 void main() {
+  test(
+    'BL16-CANCEL-EXTRA early unrelated tombstone cannot replace witness quarantine',
+    () {
+      final r = _Rig();
+      final request = r.req('waiting');
+      r.machine.request(request, freshUpgradeAdmitted: true);
+      r.machine.abort(id: 'waiting', baseRevision: 0, revision: 1);
+      expect(
+        r.machine
+            .abort(
+              id: 'early-other',
+              baseRevision: 0,
+              revision: 1,
+              remote: true,
+            )
+            .accepted,
+        isTrue,
+      );
+      r.machine.request(
+        r.req('early-other', caller: false),
+        freshUpgradeAdmitted: true,
+      );
+      expect(r.machine.currentSwitchId, 'waiting');
+      expect(r.machine.requiresReconciliation, isTrue);
+      expect(r.machine.nextDeadlineMs, request.deadlineMs);
+      expect(
+        r.machine.request(r.req('fresh'), freshUpgradeAdmitted: true).accepted,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'BL16-CANCEL-EXTRA established selected abort retains fresh delivery budget',
+    () {
+      final r = _Rig(caller: false);
+      r.select('established');
+      r.settle('established');
+      r.now = 40000;
+      final result = r.machine.abort(
+        id: 'established',
+        baseRevision: 0,
+        revision: 1,
+        remote: true,
+      );
+      expect(result.accepted, isTrue);
+      final abort = result.effects.singleWhere(
+        (e) => e.kind == MediaSwitchEffectKind.sendAbort,
+      );
+      expect(abort.deadlineMs, r.now + 30000);
+      expect(r.machine.settledRevision, 1);
+      expect(r.machine.settledMedia, _audio);
+    },
+  );
   for (final caller in [true, false]) {
     test(
       'BL16-CANCEL old unselected peer ignores abort and retains original timeout caller=$caller',
