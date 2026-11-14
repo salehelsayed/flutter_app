@@ -4478,9 +4478,10 @@ void main() {
     'VUI3b real graph cancellation drives the overlay notice lifetime',
     (tester) async {
       final connected = await tester.runAsync(
-        () =>
-            _connectedGraphVideo(acceptedMedia: CallMediaKind.audio)
-                .timeout(const Duration(seconds: 5)),
+        () => _connectedGraphVideo(
+          acceptedMedia: CallMediaKind.audio,
+          cleanupTimeout: const Duration(seconds: 5),
+        ).timeout(const Duration(seconds: 5)),
       );
       expect(connected, isNotNull);
       final (fixture, engine) = connected!;
@@ -10510,6 +10511,7 @@ Future<void> _deliverGraphVideoInvite(
 }
 
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
+  Duration? cleanupTimeout,
   CallEndpointPlatform platform = CallEndpointPlatform.ios,
   CallMediaKind acceptedMedia = CallMediaKind.video,
   int Function()? clockMs,
@@ -10523,10 +10525,15 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
 }) async {
   final connectedCallId = callId ?? _callA;
   final events = StreamController<Object?>.broadcast(sync: true);
-  addTearDown(events.close);
+  if (cleanupTimeout == null) {
+    addTearDown(events.close);
+  } else {
+    addTearDown(() => events.close().timeout(cleanupTimeout));
+  }
   var audioActive = false;
   final engine = _InitialVideoGraphEngine();
   final fixture = await _createProductionIosFixture(
+    cleanupTimeout: cleanupTimeout,
     nativePlatform: platform,
     clockMs: clockMs,
     microphonePermission: const _GrantedCallMicrophonePermission(),
@@ -11184,6 +11191,7 @@ final class _ProductionIosFixture {
 }
 
 Future<_ProductionIosFixture> _createProductionIosFixture({
+  Duration? cleanupTimeout,
   CallEndpointPlatform nativePlatform = CallEndpointPlatform.ios,
   IssuedCallWakeHandleStore? issuedStore,
   Stream<Object?>? lifecycleEventStream,
@@ -11396,13 +11404,26 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     nowMs: clockMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
   );
-  addTearDown(() async {
-    await composition.shutdown();
-    router.dispose();
-    await p2p.messages.close();
-    await tokenEvents.close();
-    if (databaseOverride == null) await database.close();
-  });
+  if (cleanupTimeout == null) {
+    addTearDown(() async {
+      await composition.shutdown();
+      router.dispose();
+      await p2p.messages.close();
+      await tokenEvents.close();
+      if (databaseOverride == null) await database.close();
+    });
+  } else {
+    // Registered teardowns run in reverse order, outside the widget fake zone.
+    // Separate callbacks preserve every failure and still release later owners
+    // if shutdown or a stream close exceeds its real-time bound.
+    if (databaseOverride == null) {
+      addTearDown(() => database.close().timeout(cleanupTimeout));
+    }
+    addTearDown(() => tokenEvents.close().timeout(cleanupTimeout));
+    addTearDown(() => p2p.messages.close().timeout(cleanupTimeout));
+    addTearDown(router.dispose);
+    addTearDown(() => composition.shutdown().timeout(cleanupTimeout));
+  }
   return _ProductionIosFixture(
     composition: composition,
     bridge: bridge,
