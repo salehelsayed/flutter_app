@@ -4821,6 +4821,154 @@ void main() {
     CallEndpointPlatform.android,
   ]) {
     test(
+      'CAM-READY permission pending publishes disabled controls on ${platform.name}',
+      () async {
+        final permission = Completer<bool>();
+        var requests = 0;
+        final (fixture, engine) = await _connectedGraphVideo(
+          platform: platform,
+          permission: () {
+            requests++;
+            return permission.future;
+          },
+        );
+        final graph = fixture.graphs.single;
+        final video =
+            (fixture.composition as Object) as ForegroundCallVideoCapability;
+        final generation = graph.current!.video!.generation;
+        final published = <CallVideoPresentation>[];
+        final subscription = graph.changes.listen((projection) {
+          final presentation = projection?.video?.presentation;
+          if (presentation != null) published.add(presentation);
+        });
+        addTearDown(subscription.cancel);
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final first = video.applyVideoIntent(
+          _callA,
+          generation: generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        );
+        try {
+          await _untilComposition(() => requests == 1);
+          expect(
+            published.any(
+              (p) =>
+                  p.videoActionPending &&
+                  !p.isAvailable(CallVideoAction.turnCameraOn),
+            ),
+            isTrue,
+            reason:
+                'The UI must receive the pending state before permission completes',
+          );
+          expect(engine.video!.cameraStarts, 0);
+          expect(
+            await video.applyVideoIntent(
+              _callA,
+              generation: generation,
+              intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+            ),
+            ForegroundCallActionResult.unavailable,
+          );
+          expect(requests, 1);
+          permission.complete(true);
+          expect(await first, ForegroundCallActionResult.applied);
+          expect(engine.video!.cameraStarts, 1);
+          expect(published.last.videoActionPending, isFalse);
+          expect(published.last.localCamera, CallCameraState.on);
+          final taps = flow
+              .where((e) => e['event'] == 'CALL_CAMERA_TAP')
+              .map((e) => e['details'] as Map)
+              .toList();
+          expect(taps.map((e) => e['outcome']), [
+            'pending',
+            'refused',
+            'accepted',
+          ]);
+          expect(taps.map((e) => e['reason']), [
+            'actionStarted',
+            'actionPending',
+            'completed',
+          ]);
+          for (final tap in taps) {
+            expect(tap.keys.toSet(), {'action', 'outcome', 'reason'});
+            expect(tap['action'], 'turnCameraOn');
+          }
+        } finally {
+          if (!permission.isCompleted) permission.complete(false);
+          await first;
+        }
+      },
+    );
+  }
+
+  test('CAM-READY stale generation logs refusal before permission', () async {
+    var requests = 0;
+    final (fixture, engine) = await _connectedGraphVideo(
+      permission: () async {
+        requests++;
+        return true;
+      },
+    );
+    final graph = fixture.graphs.single;
+    final flow = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flow.add);
+    addTearDown(() => debugSetFlowEventSink(null));
+    final video =
+        (fixture.composition as Object) as ForegroundCallVideoCapability;
+    expect(
+      await video.applyVideoIntent(
+        _callA,
+        generation: graph.current!.video!.generation - 1,
+        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+      ),
+      ForegroundCallActionResult.unavailable,
+    );
+    expect(requests, 0);
+    expect(engine.video!.cameraStarts, 0);
+    final taps = flow.where((e) => e['event'] == 'CALL_CAMERA_TAP').toList();
+    expect(taps, hasLength(1));
+    expect(taps.single['details'], {
+      'action': 'turnCameraOn',
+      'outcome': 'refused',
+      'reason': 'staleOwner',
+    });
+  });
+
+  test(
+    'CAM-READY diagnostic failures cannot change explicit camera consent',
+    () async {
+      final (fixture, engine) = await _connectedGraphVideo();
+      final graph = fixture.graphs.single;
+      var attempts = 0;
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'CALL_CAMERA_TAP') {
+          attempts++;
+          throw StateError('fixture diagnostic sink');
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
+      final video =
+          (fixture.composition as Object) as ForegroundCallVideoCapability;
+      expect(
+        await video.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      expect(engine.video!.cameraStarts, 1);
+      expect(attempts, 2);
+    },
+  );
+
+  for (final platform in [
+    CallEndpointPlatform.ios,
+    CallEndpointPlatform.android,
+  ]) {
+    test(
       'U3j-G explicit camera consent captures once on ${platform.name}',
       () async {
         var permissions = 0;

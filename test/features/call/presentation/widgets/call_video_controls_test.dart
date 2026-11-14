@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_video_controls.dart';
@@ -91,6 +92,7 @@ CallVideoPresentation view({
   CallCameraState local = CallCameraState.off,
   CallCameraState remote = CallCameraState.off,
   bool busy = false,
+  bool connected = true,
   bool reconnecting = false,
   String? incoming,
   String? outgoing,
@@ -103,7 +105,7 @@ CallVideoPresentation view({
   agreedMedia: audio ? CallMediaKind.audio : CallMediaKind.video,
   localCamera: local,
   remoteCamera: remote,
-  isConnected: true,
+  isConnected: connected,
   isReconnecting: reconnecting,
   videoActionPending: busy,
   incomingUpgradeId: incoming,
@@ -195,6 +197,81 @@ void compactView(WidgetTester tester, double width) {
 }
 
 void main() {
+  for (final light in [false, true]) {
+    for (final pending in [false, true]) {
+      testWidgets(
+        'CAM-READY disabled camera tap logs pending=$pending light=$light without dispatch',
+        (tester) async {
+          final semantics = tester.ensureSemantics();
+          final flow = <Map<String, dynamic>>[];
+          final intents = <CallVideoIntent>[];
+          final colors = light
+              ? BackgroundReadableColors.representativeLight
+              : BackgroundReadableColors.dark;
+          debugSetFlowEventSink(flow.add);
+          try {
+            await tester.pumpWidget(
+              wrap(
+                controls(view(connected: pending, busy: pending), [
+                  0,
+                  0,
+                  0,
+                ], onIntent: intents.add),
+                colors: colors,
+              ),
+            );
+            final target = find.byKey(const ValueKey('call_video_camera_on'));
+            final button = tester.widget<OutlinedButton>(
+              find.descendant(
+                of: target,
+                matching: find.byType(OutlinedButton),
+              ),
+            );
+            expect(button.onPressed, isNull);
+            expect(
+              tester.widget<Semantics>(target).properties.enabled,
+              isFalse,
+            );
+            expect(tester.widget<Semantics>(target).properties.onTap, isNull);
+            expect(
+              tester
+                  .getSemantics(target)
+                  .getSemanticsData()
+                  .hasAction(SemanticsAction.tap),
+              isFalse,
+            );
+            expect(
+              button.style!.foregroundColor!.resolve({WidgetState.disabled}),
+              colors.disabledForeground,
+            );
+            expect(
+              button.style!.backgroundColor!.resolve({WidgetState.disabled}),
+              colors.disabledSurface,
+            );
+            expect(colors.disabledForeground, isNot(colors.iconPrimary));
+            expect(colors.disabledSurface, isNot(colors.surfaceRaised));
+            await tester.tap(target);
+            expect(intents, isEmpty);
+            final taps = flow
+                .where((e) => e['event'] == 'CALL_CAMERA_TAP')
+                .toList();
+            expect(taps, hasLength(1));
+            expect(taps.single['details'], {
+              'action': 'turnCameraOn',
+              'outcome': 'refused',
+              'reason': pending ? 'actionPending' : 'notReady',
+            });
+            expect(find.text('Your camera is off'), findsOneWidget);
+          } finally {
+            debugSetFlowEventSink(null);
+            await tester.pumpWidget(const SizedBox.shrink());
+            semantics.dispose();
+          }
+        },
+      );
+    }
+  }
+
   testWidgets(
     'default-off presentation keeps only independent audio controls',
     (tester) async {
