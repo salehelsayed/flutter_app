@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_video_session.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 // Reuse the closed U3j-Q fixture: real engine, fake native peer and sender.
 import 'flutter_webrtc_video_quality_test.dart' as quality;
@@ -79,13 +80,16 @@ void main() {
     f,
   ) async {
     final token = await f.committed();
-    f.peer.video.sender.parameters.encodings = [];
+    f.peer.video.sender.parameters.encodings = [
+      rtc.RTCRtpEncoding(ssrc: 42),
+      rtc.RTCRtpEncoding(ssrc: 43),
+    ];
     final lines = await cameraLines(() async {
       expect(await f.session.setLocalCamera(token, f.grant()), isFalse);
     });
     expect(
       lines,
-      contains('[CAMERA] capture_stop stage=encodings encodings=0'),
+      contains('[CAMERA] capture_stop stage=encodings encodings=2'),
     );
   });
 
@@ -125,6 +129,25 @@ void main() {
       containsAllInOrder(<String>[
         '[VIDEO] prepare media=video direction=SendRecv readback=SendRecv',
         '[VIDEO] stats_start=disabled',
+      ]),
+    );
+  });
+
+  quality.qualityTest('CAM-DIAG a refreshed sender reports its fresh count', (
+    tester,
+    f,
+  ) async {
+    final token = await f.committed();
+    f.peer.video.sender.parameters.encodings = [];
+    f.peer.video.sender.nativeParameters = rtc.RTCRtpParameters(encodings: []);
+    final lines = await cameraLines(() async {
+      expect(await f.session.setLocalCamera(token, f.grant()), isFalse);
+    });
+    expect(
+      lines,
+      containsAllInOrder(<String>[
+        '[CAMERA] encodings_refresh cached=0 fresh=0',
+        '[CAMERA] capture_stop stage=encodings_fresh encodings=0',
       ]),
     );
   });

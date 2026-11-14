@@ -231,15 +231,109 @@ void main() {
     });
   }
 
-  qualityTest('unknown encoding layout cannot bypass the video ceiling', (
+  // Defect 3 (debug 266, Pixel): the pinned SDK caches sender parameters when
+  // the transceiver is created (before SDP); Android reported 0 encodings.
+  // An empty or missing cache is refreshed from the SAME native sender; only a
+  // fresh single encoding is capped. Everything else still stops.
+  rtc.RTCRtpParameters oneNative() => rtc.RTCRtpParameters(
+    transactionId: 'fresh-transaction',
+    encodings: [rtc.RTCRtpEncoding(ssrc: 77)],
+  );
+
+  for (final cached in <String>['empty', 'null']) {
+    qualityTest('a stale $cached cache refreshes the same sender and caps it', (
+      tester,
+      f,
+    ) async {
+      final token = await f.committed();
+      final sender = f.peer.video.sender;
+      sender.parameters.encodings = cached == 'empty' ? [] : null;
+      sender.nativeParameters = oneNative();
+      expect(await f.session.setLocalCamera(token, f.grant()), isTrue);
+      expect(f.track.enabled, isTrue);
+      expect(f.peer.senderReads, 1);
+      final write = sender.parameterWrites.single;
+      expect(write['transactionId'], 'fresh-transaction');
+      final encoding = (write['encodings'] as List).single as Map;
+      expect(
+        encoding['ssrc'],
+        77,
+      ); // the refreshed native encoding, not invented
+      expect(encoding['maxBitrate'], 600000);
+      expect(encoding['maxFramerate'], 24);
+      expect(encoding['minBitrate'], anyOf(isNull, 0));
+      f.preserved();
+    });
+  }
+
+  // Setup runs after commit: the video transceiver exists only then.
+  Future<void> refused(
+    harness.Fixture f,
+    void Function(harness.Sender sender) setup,
+  ) async {
+    final token = await f.committed();
+    setup(f.peer.video.sender);
+    expect(await f.session.setLocalCamera(token, f.grant()), isFalse);
+    expect(f.track.enabled, isFalse);
+    expect(f.peer.video.sender.parameterWrites, isEmpty);
+    f.preserved();
+  }
+
+  qualityTest('a genuinely empty native sender still stops', (tester, f) async {
+    await refused(f, (sender) {
+      sender.parameters.encodings = [];
+      sender.nativeParameters = rtc.RTCRtpParameters(encodings: []);
+    });
+  });
+
+  qualityTest('multiple fresh native encodings still stop', (tester, f) async {
+    await refused(f, (sender) {
+      sender.parameters.encodings = [];
+      sender.nativeParameters = rtc.RTCRtpParameters(
+        encodings: [rtc.RTCRtpEncoding(ssrc: 1), rtc.RTCRtpEncoding(ssrc: 2)],
+      );
+    });
+  });
+
+  qualityTest('a different sender is never borrowed', (tester, f) async {
+    await refused(f, (sender) {
+      sender.parameters.encodings = [];
+      f.peer.sendersOverride = () => [
+        harness.Sender()..parameters = oneNative(),
+      ];
+    });
+  });
+
+  qualityTest('a failed sender read still stops', (tester, f) async {
+    await refused(f, (sender) {
+      sender.parameters.encodings = [];
+      f.peer.failSenders = true;
+    });
+  });
+
+  qualityTest('a grant lost during the refresh stops before any write', (
     tester,
     f,
   ) async {
     final token = await f.committed();
     f.peer.video.sender.parameters.encodings = [];
+    f.peer.video.sender.nativeParameters = oneNative();
+    f.peer.beforeSenders = () async => f.current = false;
     expect(await f.session.setLocalCamera(token, f.grant()), isFalse);
     expect(f.track.enabled, isFalse);
     expect(f.peer.video.sender.parameterWrites, isEmpty);
+  });
+
+  qualityTest('a refreshed sender that refuses parameters still stops', (
+    tester,
+    f,
+  ) async {
+    final token = await f.committed();
+    f.peer.video.sender.parameters.encodings = [];
+    f.peer.video.sender.nativeParameters = oneNative();
+    f.peer.video.sender.acceptParameters = false;
+    expect(await f.session.setLocalCamera(token, f.grant()), isFalse);
+    expect(f.track.enabled, isFalse);
     f.preserved();
   });
 
