@@ -759,18 +759,22 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                           );
                         });
                       },
-                      child: _CallPictureInPictureTile(
-                        ownerIdentity: (
-                          callId.value,
-                          capabilityGeneration,
-                          video.generation,
+                      // This tile sits above the app Navigator, so its
+                      // tooltips need their own bounded overlay.
+                      child: Overlay.wrap(
+                        child: _CallPictureInPictureTile(
+                          ownerIdentity: (
+                            callId.value,
+                            capabilityGeneration,
+                            video.generation,
+                          ),
+                          video: video,
+                          onReturn: restore,
+                          onEnd: () => _runAction(() {
+                            if (!isCurrent()) return null;
+                            return capability.end(callId);
+                          }),
                         ),
-                        video: video,
-                        onReturn: restore,
-                        onEnd: () => _runAction(() {
-                          if (!isCurrent()) return null;
-                          return capability.end(callId);
-                        }),
                       ),
                     ),
                   ),
@@ -1121,18 +1125,26 @@ class _CallPictureInPictureTile extends StatelessWidget {
                   onPressed: onReturn,
                   icon: Icon(Icons.open_in_full, color: colors.textPrimary),
                 ),
-                IconButton(
-                  key: const ValueKey('call-pip-end'),
-                  tooltip: l10n.call_end,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: onEnd,
-                  icon: Icon(
-                    Icons.call_end_rounded,
-                    color: Theme.of(context).colorScheme.error,
+                Semantics(
+                  container: true,
+                  identifier: 'call_pip_end',
+                  button: true,
+                  label: l10n.call_end,
+                  onTap: onEnd,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    key: const ValueKey('call-pip-end'),
+                    tooltip: l10n.call_end,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 48,
+                      height: 48,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: onEnd,
+                    icon: Icon(
+                      Icons.call_end_rounded,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
               ],
