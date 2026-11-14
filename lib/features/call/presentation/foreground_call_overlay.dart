@@ -1121,18 +1121,26 @@ class _CallPictureInPictureTile extends StatelessWidget {
                   onPressed: onReturn,
                   icon: Icon(Icons.open_in_full, color: colors.textPrimary),
                 ),
-                IconButton(
-                  key: const ValueKey('call-pip-end'),
-                  tooltip: l10n.call_end,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: onEnd,
-                  icon: Icon(
-                    Icons.call_end_rounded,
-                    color: Theme.of(context).colorScheme.error,
+                Semantics(
+                  container: true,
+                  identifier: 'call_pip_end',
+                  button: true,
+                  label: l10n.call_end,
+                  onTap: onEnd,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    key: const ValueKey('call-pip-end'),
+                    tooltip: l10n.call_end,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 48,
+                      height: 48,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: onEnd,
+                    icon: Icon(
+                      Icons.call_end_rounded,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
               ],
