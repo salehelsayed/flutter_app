@@ -12235,6 +12235,33 @@ visible and cannot become an ordinary first-attempt PASS.
   and the RED/first-failure records alongside it. Old-peer tests model ignored
   cancellation; they do not certify old-binary interoperability. Native/device,
   signed-candidate and the broader 19 selected checks remain separate/unrun.
+  **V2 recovery transport classification and diagnostics:** the production
+  v2 signaling adapter can throw `CallSignalingException.transportUnavailable`;
+  catching only `CallNegotiationPortException.transportUnavailable` lets that
+  transient error reach generic negotiation failure. Recovery now classifies
+  both typed transport failures, preserving the same signal, existing 500 ms
+  retry and original recovery deadline. Other signaling errors remain fatal;
+  retired work cannot terminate or retry a successor. Only the caller starts
+  native ICE restart; the callee requests it. The v1 path is unchanged.
+  Debug builds emit `CALL_V2_RECOVERY_FAILED` at the current generic failure
+  boundary with one of 14 fixed recovery stages and an allowlisted exception
+  type (unknown types become `other`). No exception messages, call identifiers,
+  addresses or SDP are logged. Logging cannot alter failure handling.
+  RED `e90cdebcc4f6d9f4fd8bbe9e081fe333b6695b30` passed four fatal/retirement
+  controls and failed six assertions: four premature terminal transitions for
+  transport outages in both roles, and two missing sanitized diagnostic lines.
+  GREEN `689d0f07383a0e495e0ead7a9b741477b46417a7` preserves the entire RED
+  test tree. Claude-UI passed 121 v2 executor and 515 preservation cases (636
+  total), including all ten additions, with zero failures/errors/skips/loader
+  failures, reporter success and child exits 0. Five clean GREEN identity
+  boundaries verified 75 file pins; three RED boundaries verified 27. Both
+  offline locked setups exited 0. Source review passed; evidence/raw hashes are
+  indexed by `red-runtime-verified.json` and `green-runtime-verified.json` in
+  `/Users/I560101/.codex/investigations/v2-recovery-transport-20261114/`.
+  A failed preparation identity remains retired with its cached failed future;
+  retry classification must not recreate that identity. Such failures can wait
+  only until the original deadline. This is not a full network-handover fix:
+  device survival and the broader seven selected checks remain separate/unrun.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
