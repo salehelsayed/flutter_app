@@ -80,6 +80,7 @@ class _Fixture {
             videoPresentation: video,
             onVideoIntent: intents.add,
             controls: CallControls(
+              constrainLabels: true,
               isMuted: false,
               isMuteAvailable: true,
               isSpeakerOn: false,
