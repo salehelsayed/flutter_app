@@ -2,8 +2,10 @@
 
 The user-authorized Codex edition of pstack has one scoped exception: an affirmative request naming `poteto-mode` (including `pstack:poteto-mode`) authorizes that mode to select and apply its bundled pstack helper/principle skills for that task. It does not authorize any external plugin skill, project TDD/release skill, publication, or unrelated task. Installing, auditing, editing, or asking about pstack is not invocation. All other skill selection follows the default rules below.
 
+Owner standing instruction (2026-11-14): always use `@Pstack poteto-mode` for app coding work requested directly by the owner or relayed through Kayan. This explicitly authorizes the mode for those tasks without requiring the owner to repeat its name. Existing test ownership and approval boundaries still apply.
+
 - No skill may be selected implicitly in this project.
-- Invoke every skill only when the user's current message affirmatively asks to use that skill by name (for example, `use $tdd-exec`). A negative mention, question, or request to audit a skill is not an invocation.
+- Except for the standing `poteto-mode` authorization above, invoke a skill only when the user's current message affirmatively asks to use that skill by name (for example, `use $tdd-exec`). A negative mention, question, or request to audit a skill is not an invocation.
 - A matching task, a plan path, “implement/execute/continue/finish this plan,” skill names inside a plan or repo document, an existing `*-session-breakdown.md`, or a prior assistant recommendation is not permission to invoke a skill.
 - Without an explicit skill request, perform the requested work directly. Do not automatically use `tdd-exec`, decompose a plan into sessions, create session-breakdown artifacts, or route work through implementation rollout/pipeline/execution orchestrators.
 - Explicit permission for one skill does not authorize a different skill it references; each additional skill must also be affirmatively requested by the user.
