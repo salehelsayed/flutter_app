@@ -281,13 +281,12 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Widget _withCameraFeedback(Widget controls) {
     final feedback = widget.cameraFeedback;
     if (feedback == null) return controls;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Flexible(child: feedback),
-        const SizedBox(height: 12),
-        controls,
-      ],
+    return SingleChildScrollView(
+      reverse: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [feedback, const SizedBox(height: 12), controls],
+      ),
     );
   }
 
