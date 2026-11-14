@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/call/application/call_camera_tap_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 
@@ -139,46 +141,79 @@ class CallVideoControls extends StatelessWidget {
           : label,
       onTap: enabled ? emit : null,
       excludeSemantics: true,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: 48,
-          minHeight: 48,
-          maxWidth: maxWidth,
-        ),
-        child: OutlinedButton(
-          onPressed: enabled ? emit : null,
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(48, 48),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            foregroundColor: colors.iconPrimary,
-            disabledForegroundColor: colors.disabledForeground,
-            backgroundColor: colors.surfaceRaised,
-            disabledBackgroundColor: colors.disabledSurface,
-            side: BorderSide(color: colors.inputBorder),
+      child: _observeDisabledCameraTap(
+        action,
+        enabled,
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            minWidth: 48,
+            minHeight: 48,
+            maxWidth: maxWidth,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_icon(action), size: 20),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: enabled
-                        ? colors.textPrimary
-                        : colors.disabledForeground,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+          child: OutlinedButton(
+            onPressed: enabled ? emit : null,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              foregroundColor: colors.iconPrimary,
+              disabledForegroundColor: colors.disabledForeground,
+              backgroundColor: colors.surfaceRaised,
+              disabledBackgroundColor: colors.disabledSurface,
+              side: BorderSide(color: colors.inputBorder),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_icon(action), size: 20),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: enabled
+                          ? colors.textPrimary
+                          : colors.disabledForeground,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _observeDisabledCameraTap(
+    CallVideoAction action,
+    bool enabled,
+    Widget child,
+  ) {
+    if (!kDebugMode ||
+        enabled ||
+        !const {
+          CallVideoAction.turnCameraOn,
+          CallVideoAction.turnCameraOff,
+          CallVideoAction.switchCamera,
+        }.contains(action)) {
+      return child;
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
+      // Observe only: the button and its accessibility action stay disabled.
+      onTap: () => reportCallCameraTap(
+        action,
+        CallCameraTapOutcome.refused,
+        presentation.videoActionPending
+            ? CallCameraTapReason.actionPending
+            : CallCameraTapReason.notReady,
+      ),
+      child: child,
     );
   }
 
