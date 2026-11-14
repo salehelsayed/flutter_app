@@ -10102,6 +10102,26 @@ visible and cannot become an ordinary first-attempt PASS.
   Later preference changes affect subsequent calls, including when the settings
   feature is hidden. Approved STUN comes from the operator's build configuration
   and is kept alongside the existing authenticated TURN provider.
+  Outgoing privacy composition fixtures must also supply a current received
+  call-wake grant matching the trusted device and key epoch before holding
+  `call_endpoint_get_v1`. H-A checks local authority before endpoint lookup;
+  an empty grant store ends placement before that RPC. Await endpoint entry
+  against early placement completion, with a five-second bound inside cleanup,
+  rather than waiting indefinitely for an RPC the call may never reach.
+  The fixture-only correction `be95de151bae3740649d5b54b6cba852c2fbec40`
+  preserves the production code. Its 12 focused privacy cases, 1,953
+  call-signaling cases and 283 composition cases passed; these counts overlap.
+  All six former outgoing privacy timeouts now pass. The original `fffc96fca`
+  timeout/failure receipts remain retained; this was a fixture dependency,
+  not evidence of a production deadlock. The independent composition adoption
+  is retained as `final-composition-adoption-be95de151.json` under
+  `~/.codex/investigations/bl26-ha-review-20261114/` (SHA-256
+  `a1c71f9328209ba01986563a40fbb2f5974a08a25e63371f910292e70f4ce448`).
+  The original `ccb409ad8` caller/callee preservation baseline separately
+  passed 2/2; candidate passes were not substituted for that original-head run.
+  Its adoption is `codex-v1-preservation-baseline-adoption-ccb409ad8.json` in
+  `~/.codex/investigations/bl26-ha-20261114/`. Native/device recovery and
+  installed-old-binary proof remain separate from these host results.
   Production composition, secure-storage MethodChannel, settings-sheet and real
   WebRTC-adapter configuration tests cover these boundaries. Appium on physical
   Android, iPhone11 and iPhone13 additionally verified the enabled preference
