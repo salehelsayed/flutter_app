@@ -335,80 +335,116 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Widget _buildReconnectingVideo(String? duration, Widget controls) {
     final l10n = AppLocalizations.of(context)!;
     return SafeArea(
-      child: LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: IntrinsicHeight(
-              child: Padding(
-                // The root-owned minimize button occupies the top corner.
-                padding: const EdgeInsets.fromLTRB(16, 56, 16, 16),
-                child: Column(
-                  children: [
-                    Text(
-                      widget.contactUsername,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // Full-size control captions determine the remaining space.
+                  // Compact only the call identity/fallback, never the actions.
+                  final compact = constraints.maxHeight < 400;
+                  final name = Text(
+                    widget.contactUsername,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: compact ? 16 : 20,
+                      fontWeight: FontWeight.w600,
                     ),
-                    if (duration != null) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        duration,
-                        semanticsLabel: l10n.call_duration(duration),
-                        style: const TextStyle(
-                          color: Color(0xFFE4E6EB),
-                          fontSize: 16,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
-                    const Spacer(),
-                    const SizedBox(height: 24),
-                    UserAvatar(peerId: widget.contactPeerId, size: 132),
-                    const SizedBox(height: 16),
-                    // Controls retain the single live-region announcement.
-                    ExcludeSemantics(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF171A22),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: const Color(0xFF414651)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
+                  );
+                  final elapsed = duration == null
+                      ? null
+                      : Text(
+                          duration,
+                          semanticsLabel: l10n.call_duration(duration),
+                          style: TextStyle(
+                            color: const Color(0xFFE4E6EB),
+                            fontSize: compact ? 14 : 16,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
-                          child: Text(
-                            l10n.call_video_status_reconnecting,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
+                        );
+                  return SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // Leave the root-owned minimize button unobstructed.
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 56),
+                            child: compact
+                                ? Row(
+                                    children: [
+                                      Expanded(child: name),
+                                      if (elapsed != null) ...[
+                                        const SizedBox(width: 8),
+                                        elapsed,
+                                      ],
+                                    ],
+                                  )
+                                : Column(
+                                    children: [
+                                      name,
+                                      if (elapsed != null) ...[
+                                        const SizedBox(height: 3),
+                                        elapsed,
+                                      ],
+                                    ],
+                                  ),
+                          ),
+                          SizedBox(height: compact ? 8 : 24),
+                          UserAvatar(
+                            peerId: widget.contactPeerId,
+                            size: compact ? 64 : 132,
+                          ),
+                          SizedBox(height: compact ? 8 : 16),
+                          // Controls retain the single live-region announcement.
+                          ExcludeSemantics(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF171A22),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: const Color(0xFF414651),
+                                ),
+                              ),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: compact ? 6 : 10,
+                                ),
+                                child: Text(
+                                  l10n.call_video_status_reconnecting,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: compact ? 14 : 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          if (widget.cameraFeedback != null) ...[
+                            const SizedBox(height: 12),
+                            widget.cameraFeedback!,
+                          ],
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    const Spacer(),
-                    if (widget.cameraFeedback != null) ...[
-                      widget.cameraFeedback!,
-                      const SizedBox(height: 12),
-                    ],
-                    controls,
-                  ],
-                ),
+                  );
+                },
               ),
             ),
-          ),
+            const SizedBox(height: 12),
+            controls,
+          ],
         ),
       ),
     );
