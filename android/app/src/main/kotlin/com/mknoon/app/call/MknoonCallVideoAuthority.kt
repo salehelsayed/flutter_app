@@ -28,9 +28,9 @@ internal interface MknoonCallLocalCameraFacts {
  */
 internal class MknoonCallVideoAuthority(
     private val facts: MknoonCallLocalCameraFacts,
-    /** CAM-DIAG sink; null (release) logs nothing. API scaffold: unused yet.
-     * Kept before [applier] so existing trailing-lambda callers still bind it. */
-    @Suppress("unused") private val log: ((String) -> Unit)? = null,
+    /** CAM-DIAG sink; null (release) logs nothing. Lines carry no ids. Kept
+     * before [applier] so existing trailing-lambda callers still bind it. */
+    private val log: ((String) -> Unit)? = null,
     private val applier: MknoonCallCameraForegroundApplier,
 ) {
     private val lock = Any()
@@ -48,7 +48,10 @@ internal class MknoonCallVideoAuthority(
             videoCapabilityEnabled = enabled
             if (enabled) null else { revocationEpoch += 1; takeLease() }
         }
-        released?.let { applier.apply(it, false) }
+        released?.let {
+            log?.invoke("lease released reason=capability_off")
+            applier.apply(it, false)
+        }
     }
 
     fun videoCapabilityEnabled(): Boolean = synchronized(lock) { videoCapabilityEnabled }
@@ -71,7 +74,10 @@ internal class MknoonCallVideoAuthority(
                 if (cameraLeaseCall == nativeCallId) takeLease() else null
             } else null
         }
-        released?.let { applier.apply(it, false) }
+        released?.let {
+            log?.invoke("lease released reason=media_audio")
+            applier.apply(it, false)
+        }
     }
 
     /** Call end: forget media and release any camera lease for it. */
@@ -81,27 +87,33 @@ internal class MknoonCallVideoAuthority(
             revocationEpoch += 1
             if (cameraLeaseCall == nativeCallId) takeLease() else null
         }
-        released?.let { applier.apply(it, false) }
+        released?.let {
+            log?.invoke("lease released reason=call_end")
+            applier.apply(it, false)
+        }
     }
 
     fun requestLocalCamera(nativeCallId: UUID): MknoonCallLocalCameraDecision {
         val epoch = synchronized(lock) { revocationEpoch }
         val first = inputs(nativeCallId)
         val decision = decideMknoonCallLocalCamera(first)
-        if (decision != MknoonCallLocalCameraDecision.Apply) return decision
+        if (decision != MknoonCallLocalCameraDecision.Apply) return refused("first", decision)
         // Without the manifest camera type the service keeps phoneCall|microphone;
         // the visible activity's while-in-use access covers the camera. Reuse the
         // decision's own read so the fact reads keep their original order.
         val typed = first.manifestDeclaresCameraType
         if (typed && !applier.apply(nativeCallId, true)) {
-            return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
+            return refused(
+                "platform",
+                MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE),
+            )
         }
         // Recheck after the platform call: anything that changed meanwhile
         // (media downgrade, capability off, backgrounded) wins.
         val recheck = decide(nativeCallId)
         if (recheck != MknoonCallLocalCameraDecision.Apply) {
             if (typed) applier.apply(nativeCallId, false)
-            return recheck
+            return refused("recheck", recheck)
         }
         val committed = synchronized(lock) {
             if (revocationEpoch == epoch) {
@@ -112,17 +124,31 @@ internal class MknoonCallVideoAuthority(
         }
         if (!committed) {
             if (typed) applier.apply(nativeCallId, false)
-            return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
+            return refused(
+                "commit",
+                MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE),
+            )
         }
+        log?.invoke("lease granted typed=$typed")
         return MknoonCallLocalCameraDecision.Apply
+    }
+
+    private fun refused(
+        stage: String,
+        decision: MknoonCallLocalCameraDecision,
+    ): MknoonCallLocalCameraDecision {
+        val reason = (decision as? MknoonCallLocalCameraDecision.Refuse)?.reason?.wireValue ?: "unknown"
+        log?.invoke("lease refused stage=$stage reason=$reason")
+        return decision
     }
 
     /** Always succeeds; no start guards on stop. */
     fun releaseLocalCamera(nativeCallId: UUID) {
-        synchronized(lock) {
+        val held = synchronized(lock) {
             revocationEpoch += 1
-            if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null
+            (cameraLeaseCall == nativeCallId).also { if (it) cameraLeaseCall = null }
         }
+        if (held) log?.invoke("lease released reason=explicit")
         applier.apply(nativeCallId, false)
     }
 
@@ -136,10 +162,11 @@ internal class MknoonCallVideoAuthority(
     /** Drops the lease without touching the platform, for a caller that is
      * itself about to re-apply the service types without the camera. */
     fun dropLease(nativeCallId: UUID) {
-        synchronized(lock) {
+        val held = synchronized(lock) {
             revocationEpoch += 1
-            if (cameraLeaseCall == nativeCallId) cameraLeaseCall = null
+            (cameraLeaseCall == nativeCallId).also { if (it) cameraLeaseCall = null }
         }
+        if (held) log?.invoke("lease released reason=dropped")
     }
 
     private fun takeLease(): UUID? {

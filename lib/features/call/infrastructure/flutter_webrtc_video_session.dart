@@ -121,6 +121,15 @@ final class FlutterWebRtcVideoSession
   // never touches the quality poll or its single-read guard.
   void _startDebugStats() {
     final interval = _debugStatsInterval;
+    if (_diag) {
+      _videoDiag(
+        'stats_start=${interval == null
+            ? 'disabled'
+            : _debugStatsTimer != null
+            ? 'already_running'
+            : 'started'}',
+      );
+    }
     if (interval == null || _debugStatsTimer != null) return;
     _debugStatsTimer = Timer.periodic(interval, (_) {
       if (_debugStatsReading) return;
@@ -129,13 +138,30 @@ final class FlutterWebRtcVideoSession
           .then<void>(
             (reports) {
               if (_debugStatsTimer == null) return;
-              _debugStatsLog.lines(reports).forEach(debugPrint);
+              final lines = _debugStatsLog.lines(reports);
+              // CAM-DIAG: say once that a sample had no video RTP reports, so
+              // "no lines" is distinguishable from "timer never ran".
+              if (lines.isEmpty) {
+                if (!_debugStatsEmptyReported) {
+                  debugPrint('[STATS] no video rtp reports');
+                  _debugStatsEmptyReported = true;
+                }
+                return;
+              }
+              _debugStatsEmptyReported = false;
+              lines.forEach(debugPrint);
             },
             onError: (Object error, StackTrace _) =>
                 debugPrint('[STATS] read failed: $error'),
           )
           .whenComplete(() => _debugStatsReading = false);
     });
+  }
+
+  bool _debugStatsEmptyReported = false;
+
+  void _videoDiag(String fields) {
+    if (_diag) debugPrint('[VIDEO] $fields');
   }
 
   void _stopDebugStats() {
@@ -616,6 +642,13 @@ final class FlutterWebRtcVideoSession
     await video.setDirection(direction);
     _check(token);
     final actual = await video.getDirection();
+    // CAM-DIAG: the existing readback only; no extra native call.
+    if (_diag) {
+      _videoDiag(
+        'prepare media=${token.media.name} direction=${direction.name} '
+        'readback=${actual.name}',
+      );
+    }
     _check(token);
     if (actual != direction) _reject();
     direction == webrtc.TransceiverDirection.SendRecv
@@ -880,9 +913,29 @@ final class FlutterWebRtcVideoSession
         _senderCapture?.tracks.singleOrNull?.enabled == true;
   }
 
-  /// CAM-DIAG: debug-only diagnostics switch (API scaffold; nothing prints yet).
+  /// CAM-DIAG: debug-only line for a capture this session gives up on. Fixed
+  /// stage names and counts only; no ids, SDP or exception text.
   @visibleForTesting
   static bool cameraDiagnostics = kDebugMode;
+
+  /// Release builds never print, even if a test flipped the flag.
+  static bool get _diag => kDebugMode && cameraDiagnostics;
+
+  void _cameraStop(String stage, {int? encodings}) {
+    if (!_diag) return;
+    debugPrint(
+      '[CAMERA] capture_stop stage=$stage'
+      '${encodings == null ? '' : ' encodings=$encodings'}',
+    );
+  }
+
+  /// Which part of _qualityAtTier failed: stale grant/token vs pause vs tier.
+  String _tierStage(_QualityIntent quality, CallVideoQualityTier tier) {
+    if (!_qualityCurrent(quality)) return 'not_current';
+    if (_qualityPolicy.decision.paused) return 'paused';
+    if (_qualityPolicy.decision.tier != tier) return 'tier_changed';
+    return 'tier_ok';
+  }
 
   bool _qualityAtTier(_QualityIntent quality, CallVideoQualityTier tier) =>
       _qualityCurrent(quality) &&
@@ -893,9 +946,21 @@ final class FlutterWebRtcVideoSession
     _QualityIntent quality,
     CallVideoQualityTier tier,
   ) async {
-    if (!_qualityAtTier(quality, tier) || hasPendingCleanup) return false;
+    if (!_qualityAtTier(quality, tier) || hasPendingCleanup) {
+      if (_diag) {
+        _cameraStop(
+          hasPendingCleanup
+              ? 'pre_pending_cleanup'
+              : 'pre_${_tierStage(quality, tier)}',
+        );
+      }
+      return false;
+    }
     final intent = _owner.beginGrantedCapture(callId);
-    if (intent == null) return false;
+    if (intent == null) {
+      if (_diag) _cameraStop('owner_refused');
+      return false;
+    }
     _captureIntent = intent;
     final adopted = await _owner.acquireCapture(intent, () async {
       if (!_qualityAtTier(quality, tier)) _reject();
@@ -921,11 +986,21 @@ final class FlutterWebRtcVideoSession
       );
     });
     final resource = _owner.captureFor(intent);
-    if (!adopted || resource == null) return false;
+    if (!adopted || resource == null) {
+      if (_diag) _cameraStop('not_adopted');
+      return false;
+    }
     final capture = resource.resource as _Capture;
     if (!_qualityAtTier(quality, tier) ||
         capture.tracks.length != 1 ||
         capture.tracks.single.kind != 'video') {
+      if (_diag) {
+        _cameraStop(
+          _qualityAtTier(quality, tier)
+              ? 'bad_track'
+              : 'post_capture_${_tierStage(quality, tier)}',
+        );
+      }
       if (identical(_captureIntent, intent)) await _stopCaptureForQuality();
       return false;
     }
@@ -933,15 +1008,31 @@ final class FlutterWebRtcVideoSession
       return await _serial(() async {
         if (!_qualityAtTier(quality, tier) ||
             _owner.captureFor(intent) == null) {
+          if (_diag) {
+            _cameraStop(_stillCurrentStage('serial', quality, tier, intent));
+          }
           return false;
         }
         final video = _video;
-        if (video == null) return false;
+        if (video == null) {
+          if (_diag) _cameraStop('no_transceiver');
+          return false;
+        }
         capture.sender = video.sender;
         _senderCapture = capture;
-        await video.sender.replaceTrack(capture.tracks.single);
+        try {
+          await video.sender.replaceTrack(capture.tracks.single);
+        } catch (_) {
+          if (_diag) _cameraStop('replace_track_threw');
+          rethrow;
+        }
         if (!_qualityAtTier(quality, tier) ||
             _owner.captureFor(intent) == null) {
+          if (_diag) {
+            _cameraStop(
+              _stillCurrentStage('after_replace', quality, tier, intent),
+            );
+          }
           return false;
         }
         if (!await _setQualityParameters(
@@ -953,15 +1044,31 @@ final class FlutterWebRtcVideoSession
         }
         if (!_qualityAtTier(quality, tier) ||
             _owner.captureFor(intent) == null) {
+          if (_diag) {
+            _cameraStop(
+              _stillCurrentStage('after_params', quality, tier, intent),
+            );
+          }
           return false;
         }
         _captureTier = tier;
         capture.tracks.single.enabled = true;
         _publish(CallVideoRendererSlot.local);
-        return _qualityAtTier(quality, tier) &&
-            identical(_captureIntent, intent);
+        final kept =
+            _qualityAtTier(quality, tier) && identical(_captureIntent, intent);
+        if (!kept) {
+          if (_diag) {
+            _cameraStop(
+              _qualityAtTier(quality, tier)
+                  ? 'intent_replaced'
+                  : 'final_${_tierStage(quality, tier)}',
+            );
+          }
+        }
+        return kept;
       });
     } catch (_) {
+      if (_diag) _cameraStop('threw');
       return false;
     } finally {
       if ((!_qualityAtTier(quality, tier) || !capture.tracks.single.enabled) &&
@@ -970,6 +1077,15 @@ final class FlutterWebRtcVideoSession
       }
     }
   }
+
+  String _stillCurrentStage(
+    String step,
+    _QualityIntent quality,
+    CallVideoQualityTier tier,
+    CallVideoCaptureIntent intent,
+  ) => _owner.captureFor(intent) == null
+      ? '${step}_capture_replaced'
+      : '${step}_${_tierStage(quality, tier)}';
 
   Future<bool> _setQualityParameters(
     webrtc.RTCRtpSender sender,
@@ -980,7 +1096,10 @@ final class FlutterWebRtcVideoSession
     final encodings = previous.encodings;
     // This owner negotiates one camera encoding, never simulcast. An unknown
     // layout cannot silently multiply or bypass the per-sender ceiling.
-    if (encodings == null || encodings.length != 1) return false;
+    if (encodings == null || encodings.length != 1) {
+      if (_diag) _cameraStop('encodings', encodings: encodings?.length ?? -1);
+      return false;
+    }
     final settings = track.getSettings();
     final width = settings['width'];
     final height = settings['height'];
@@ -990,6 +1109,7 @@ final class FlutterWebRtcVideoSession
         !height.isFinite ||
         width <= 0 ||
         height <= 0) {
+      if (_diag) _cameraStop('settings_missing', encodings: 1);
       return false;
     }
     final encoding = webrtc.RTCRtpEncoding.fromMap(encodings.single.toMap())
@@ -1011,7 +1131,15 @@ final class FlutterWebRtcVideoSession
     // The pinned SDK caches this request before returning its acknowledgement.
     // Require true before opening the video track gate. On iOS the SDK returns
     // true unconditionally; native acceptance needs separate outbound-RTP proof.
-    return await sender.setParameters(parameters) == true;
+    final bool accepted;
+    try {
+      accepted = await sender.setParameters(parameters) == true;
+    } catch (_) {
+      if (_diag) _cameraStop('set_parameters_threw', encodings: 1);
+      rethrow;
+    }
+    if (!accepted) _cameraStop('set_parameters_false', encodings: 1);
+    return accepted;
   }
 
   @override
