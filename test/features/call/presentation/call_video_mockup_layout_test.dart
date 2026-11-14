@@ -13,6 +13,7 @@ import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
+import 'package:flutter_app/features/call/presentation/screens/active_call_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -400,6 +401,20 @@ Future<void> _vui5aWithCall(
   }
 }
 
+Future<void> _vui5aPumpProjection(
+  WidgetTester tester,
+  _VUI5aCapability capability,
+) async {
+  // Async broadcast delivery can schedule the frame only at the first pump's
+  // final microtask flush. Draw that frame before checking presentation.
+  await tester.pump();
+  await tester.pump();
+  final screen = tester.widget<ActiveCallScreen>(find.byType(ActiveCallScreen));
+  final emitted = capability.current;
+  expect(screen.state, emitted.session.state);
+  expect(screen.videoPresentation, same(emitted.video!.presentation));
+}
+
 Finder _vui5aExpectFallback(WidgetTester tester) {
   final avatar = find.byType(UserAvatar);
   // Positive presentation assertions precede safety checks that already pass.
@@ -534,7 +549,7 @@ void _vui5aTests() {
             retainViews: retainViews,
           ),
         );
-        await tester.pump();
+        await _vui5aPumpProjection(tester, capability);
         final pill = _vui5aExpectFallback(tester);
         expect(find.text('01:05'), findsOneWidget);
         expect(
@@ -560,7 +575,7 @@ void _vui5aTests() {
         capability.emit(
           _vui5aProjection(state: CallState.reconnecting, reconnecting: true),
         );
-        await tester.pump();
+        await _vui5aPumpProjection(tester, capability);
         _vui5aExpectFallback(tester);
         now = now.add(const Duration(seconds: 2));
         await tester.pump(const Duration(seconds: 2));
@@ -568,7 +583,7 @@ void _vui5aTests() {
         capability.emit(
           _vui5aProjection(generation: 8, localTexture: 33, remoteTexture: 44),
         );
-        await tester.pump();
+        await _vui5aPumpProjection(tester, capability);
         expect(find.byType(UserAvatar), findsNothing);
         final l10n = AppLocalizations.of(tester.element(_control('call_end')))!;
         expect(find.text(l10n.call_video_status_reconnecting), findsNothing);
@@ -604,7 +619,7 @@ void _vui5aTests() {
                 reconnecting: true,
               ),
             );
-            await tester.pump();
+            await _vui5aPumpProjection(tester, capability);
             final pill = _vui5aExpectFallback(tester);
             final paragraph = tester.renderObject<RenderParagraph>(pill);
             expect(paragraph.didExceedMaxLines, isFalse);
