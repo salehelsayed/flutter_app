@@ -19,6 +19,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:just_audio/just_audio.dart';
 
 import 'android_voice_message_e2e_protocol.dart';
+import 'debug_voice_upload_lease.dart';
 
 export 'android_voice_message_e2e_protocol.dart';
 
@@ -206,20 +207,23 @@ Future<Map<String, Object?>> _runSender({
     }
     final recordingSha256 = sha256.convert(recordingBytes).toString();
 
-    final (sendResult, sentMessage) = await sendVoiceMessage(
-      p2pService: p2pService,
-      messageRepo: messageRepo,
-      targetPeerId: contact.peerId,
-      senderPeerId: identity.peerId,
-      senderUsername: identity.username,
-      recording: recording,
-      bridge: bridge,
-      recipientMlKemPublicKey: contact.mlKemPublicKey,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      mediaFileManager: mediaFileManager,
-      messageId: request.messageId,
-      preassignedMessageIdIsFresh: true,
-      blobId: request.attachmentId,
+    final (sendResult, sentMessage) = await sendDebugVoiceUnderUploadLease(
+      attachmentId: request.attachmentId,
+      send: () => sendVoiceMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: contact.peerId,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        recording: recording,
+        bridge: bridge,
+        recipientMlKemPublicKey: contact.mlKemPublicKey,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        messageId: request.messageId,
+        preassignedMessageIdIsFresh: true,
+        blobId: request.attachmentId,
+      ),
     );
     if (sendResult != SendVoiceMessageResult.success || sentMessage == null) {
       throw StateError('production voice send did not succeed');
