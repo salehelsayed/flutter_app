@@ -185,6 +185,8 @@ final class ProductionCallSignalingGraph
     Future<bool> Function()? checkCameraPermission,
     bool Function()? isForeground,
     Future<bool> Function()? requestCameraPermission,
+    Future<permissions.PermissionStatus> Function()?
+    requestCameraPermissionStatus,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -196,7 +198,11 @@ final class ProductionCallSignalingGraph
        _isVideoForeground = isForeground ?? (() => true),
        _checkCameraPermission = checkCameraPermission ?? (() async => false),
        _requestCameraPermission =
-           requestCameraPermission ?? (() async => false) {
+           requestCameraPermissionStatus ??
+           (() async =>
+               await (requestCameraPermission?.call() ?? Future.value(false))
+               ? permissions.PermissionStatus.granted
+               : permissions.PermissionStatus.denied) {
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
         videoEnabled: true,
@@ -422,7 +428,8 @@ final class ProductionCallSignalingGraph
   CallVideoSession? _qualityAppliedSession;
   CallVideoQualityEnvironment? _qualityAppliedEnvironment;
   final bool Function() _isVideoForeground;
-  final Future<bool> Function() _requestCameraPermission;
+  final Future<permissions.PermissionStatus> Function()
+  _requestCameraPermission;
   final Future<bool> Function() _checkCameraPermission;
   CallPictureInPictureController? _pip;
   StreamSubscription<void>? _pipSourceSubscription;
@@ -512,7 +519,7 @@ final class ProductionCallSignalingGraph
         _videoActionCurrent(callId, generation) &&
         identical(videoOwners?[callId], owner) &&
         owner.current;
-    bool applied;
+    var applied = false;
     try {
       switch (intent.action) {
         case CallVideoAction.requestVideo:
@@ -593,103 +600,139 @@ final class ProductionCallSignalingGraph
               switches.machine.settledMedia == CallMediaKind.video &&
               switches.machine.settledRevision == token?.mediaRevision;
           var acquiredLease = false;
-          try {
-            // Publish the existing pending state before permission/native work
-            // awaits, so another tap sees the same readiness as the owner.
-            _refreshVideo();
-            reportCallCameraTap(
-              intent.action,
-              CallCameraTapOutcome.pending,
-              CallCameraTapReason.actionStarted,
-            );
-            await _cameraRelease;
-            if (!cameraCurrent() || token == null || session == null) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.ownerChanged,
+          Future<ForegroundCallActionResult?> runCamera() async {
+            try {
+              // Publish the existing pending state before permission/native work
+              // awaits, so another tap sees the same readiness as the owner.
+              _refreshVideo();
+              reportCallCameraTap(
+                intent.action,
+                CallCameraTapOutcome.pending,
+                CallCameraTapReason.actionStarted,
               );
-            }
-            _applyQualityEnvironment();
-            // Switching an already-granted camera needs no new permission prompt.
-            final permission = intent.action == CallVideoAction.switchCamera
-                ? identical(_localCameraToken, token)
-                : await _requestCameraPermission();
-            if (!permission) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.permissionDenied,
-              );
-            }
-            if (!cameraCurrent()) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.ownerChanged,
-              );
-            }
-            if (androidCallLifecycleAdapter != null &&
-                intent.action == CallVideoAction.turnCameraOn) {
-              acquiredLease = await androidCallLifecycleAdapter!
-                  .setLocalCameraActive(callId, true);
-              if (!acquiredLease) {
+              await _cameraRelease;
+              if (!cameraCurrent() || token == null || session == null) {
                 return report(
                   ForegroundCallActionResult.unavailable,
-                  CallCameraTapReason.nativeLeaseRefused,
+                  CallCameraTapReason.ownerChanged,
                 );
               }
+              _applyQualityEnvironment();
+              // Switching an already-granted camera needs no new permission prompt.
+              final permission = intent.action == CallVideoAction.switchCamera
+                  ? (identical(_localCameraToken, token)
+                        ? permissions.PermissionStatus.granted
+                        : permissions.PermissionStatus.denied)
+                  : await _requestCameraPermission();
               if (!cameraCurrent()) {
                 return report(
                   ForegroundCallActionResult.unavailable,
                   CallCameraTapReason.ownerChanged,
                 );
               }
-            }
-            final grant = CallLocalCameraGrant(
-              foregroundConsent: true,
-              permissionGranted: true,
-              videoAgreed: true,
-              isCurrent: cameraCurrent,
-            );
-            applied = intent.action == CallVideoAction.switchCamera
-                ? session is CallVideoCameraSwitch &&
-                      await (session as CallVideoCameraSwitch).switchCamera(
-                        token,
-                        grant,
+              if (!permission.isGranted) {
+                return report(
+                  ForegroundCallActionResult(
+                    ForegroundCallActionStatus.unavailable,
+                    cameraFailure: intent.action == CallVideoAction.switchCamera
+                        ? ForegroundCallCameraFailure.unavailable
+                        : permission.isRestricted
+                        ? ForegroundCallCameraFailure.permissionRestricted
+                        : ForegroundCallCameraFailure.permissionDenied,
+                  ),
+                  CallCameraTapReason.permissionDenied,
+                );
+              }
+              if (androidCallLifecycleAdapter != null &&
+                  intent.action == CallVideoAction.turnCameraOn) {
+                acquiredLease = await androidCallLifecycleAdapter!
+                    .setLocalCameraActive(callId, true);
+                if (!cameraCurrent()) {
+                  return report(
+                    ForegroundCallActionResult.unavailable,
+                    CallCameraTapReason.ownerChanged,
+                  );
+                }
+                if (!acquiredLease) {
+                  return report(
+                    const ForegroundCallActionResult(
+                      ForegroundCallActionStatus.unavailable,
+                      cameraFailure: ForegroundCallCameraFailure.unavailable,
+                    ),
+                    CallCameraTapReason.nativeLeaseRefused,
+                  );
+                }
+              }
+              final grant = CallLocalCameraGrant(
+                foregroundConsent: true,
+                permissionGranted: true,
+                videoAgreed: true,
+                isCurrent: cameraCurrent,
+              );
+              applied = intent.action == CallVideoAction.switchCamera
+                  ? session is CallVideoCameraSwitch &&
+                        await (session as CallVideoCameraSwitch).switchCamera(
+                          token,
+                          grant,
+                        )
+                  : await session.setLocalCamera(token, grant);
+              if (!cameraCurrent()) {
+                return report(
+                  ForegroundCallActionResult.unavailable,
+                  CallCameraTapReason.ownerChanged,
+                );
+              }
+              if (!applied) {
+                return report(
+                  const ForegroundCallActionResult(
+                    ForegroundCallActionStatus.unavailable,
+                    cameraFailure: ForegroundCallCameraFailure.unavailable,
+                  ),
+                  CallCameraTapReason.captureRejected,
+                );
+              }
+              cameraStarted = true;
+              _localCameraToken = token;
+              acquiredLease =
+                  false; // Retained by this call until explicit revocation.
+              unawaited(
+                owner.publishLocalCameraState(
+                  CallCameraState.on,
+                  canApply: cameraCurrent,
+                ),
+              );
+            } catch (_) {
+              return report(
+                cameraCurrent()
+                    ? const ForegroundCallActionResult(
+                        ForegroundCallActionStatus.failed,
+                        cameraFailure: ForegroundCallCameraFailure.unavailable,
                       )
-                : await session.setLocalCamera(token, grant);
-            if (!applied) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.captureRejected,
+                    : ForegroundCallActionResult.unavailable,
+                CallCameraTapReason.failed,
               );
+            } finally {
+              if (acquiredLease) {
+                await androidCallLifecycleAdapter?.setLocalCameraActive(
+                  callId,
+                  false,
+                );
+              }
+              _cameraActionPending = false;
+              _cameraPermissionPending = false;
+              if (_videoForeground) _pip?.foreground();
+              _refreshVideo();
             }
-            if (!cameraCurrent()) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.ownerChanged,
-              );
-            }
-            cameraStarted = true;
-            _localCameraToken = token;
-            acquiredLease =
-                false; // Retained by this call until explicit revocation.
-            unawaited(
-              owner.publishLocalCameraState(
-                CallCameraState.on,
-                canApply: cameraCurrent,
-              ),
-            );
-          } finally {
-            if (acquiredLease) {
-              await androidCallLifecycleAdapter?.setLocalCameraActive(
-                callId,
-                false,
-              );
-            }
-            _cameraActionPending = false;
-            _cameraPermissionPending = false;
-            if (_videoForeground) _pip?.foreground();
-            _refreshVideo();
+            return null;
           }
+          final cameraResult = await runCamera();
+          if (!cameraCurrent()) {
+            return report(
+              ForegroundCallActionResult.unavailable,
+              CallCameraTapReason.ownerChanged,
+            );
+          }
+          if (cameraResult != null) return cameraResult;
       }
       _refreshVideo();
       return report(
@@ -3751,10 +3794,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
             () =>
                 WidgetsBinding.instance.lifecycleState ==
                 AppLifecycleState.resumed,
-        requestCameraPermission:
-            requestCameraPermission ??
-            () async =>
-                (await permissions.Permission.camera.request()).isGranted,
+        requestCameraPermission: requestCameraPermission,
+        requestCameraPermissionStatus: requestCameraPermission == null
+            ? () => permissions.Permission.camera.request()
+            : null,
         runtime: runtime,
         coordinator: coordinator,
         signalingService: signalingService,

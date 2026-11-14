@@ -368,6 +368,7 @@
         "test/features/call/infrastructure/call_stats_sampler_test.dart",
         "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart",
         "test/core/bootstrap/call_signaling_composition_test.dart",
+        "test/core/bootstrap/production_call_camera_feedback_test.dart",
         "test/core/bootstrap/production_headless_call_admission_test.dart",
         "test/features/call/application/headless_call_ringing_reply_test.dart",
         "test/features/call/application/headless_call_decline_reply_test.dart",

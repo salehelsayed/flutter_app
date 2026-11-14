@@ -49,9 +49,16 @@ final class ForegroundCallProjection {
 /// Detail-free outcome for every foreground call command.
 enum ForegroundCallActionStatus { applied, unavailable, failed }
 
+/// Camera-specific feedback, without native errors or signaling identities.
+enum ForegroundCallCameraFailure {
+  permissionDenied,
+  permissionRestricted,
+  unavailable,
+}
+
 /// Fixed-shape, redacted command result exposed to presentation.
 final class ForegroundCallActionResult {
-  const ForegroundCallActionResult(this.status);
+  const ForegroundCallActionResult(this.status, {this.cameraFailure});
 
   static const applied = ForegroundCallActionResult(
     ForegroundCallActionStatus.applied,
@@ -64,6 +71,7 @@ final class ForegroundCallActionResult {
   );
 
   final ForegroundCallActionStatus status;
+  final ForegroundCallCameraFailure? cameraFailure;
 
   @override
   String toString() => 'ForegroundCallActionResult(status: ${status.name})';

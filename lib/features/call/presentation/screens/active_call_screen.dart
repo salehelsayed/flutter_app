@@ -29,6 +29,7 @@ class ActiveCallScreen extends StatefulWidget {
     this.videoPresentation,
     this.onVideoIntent,
     this.videoViews,
+    this.cameraFeedback,
   });
 
   final String contactPeerId;
@@ -40,6 +41,7 @@ class ActiveCallScreen extends StatefulWidget {
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
   final Widget? videoViews;
+  final Widget? cameraFeedback;
 
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
@@ -250,25 +252,40 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             Positioned(
               left: 16,
               right: 16,
+              top: widget.cameraFeedback == null ? null : 0,
               bottom: 16,
               child: SafeArea(
-                top: false,
-                child: CallVideoControls(
-                  presentation: video,
-                  audioControls: widget.controls,
-                  onIntent: (intent) {
-                    if (mounted) onVideoIntent?.call(intent);
-                  },
-                  controlsLabel: labels.controlsLabel,
-                  statusLabel: labels.statusLabel,
-                  localCameraLabel: labels.localCameraLabel,
-                  remoteCameraLabel: labels.remoteCameraLabel,
-                  actionLabel: labels.actionLabel,
+                top: widget.cameraFeedback != null,
+                child: _withCameraFeedback(
+                  CallVideoControls(
+                    presentation: video,
+                    audioControls: widget.controls,
+                    onIntent: (intent) {
+                      if (mounted) onVideoIntent?.call(intent);
+                    },
+                    controlsLabel: labels.controlsLabel,
+                    statusLabel: labels.statusLabel,
+                    localCameraLabel: labels.localCameraLabel,
+                    remoteCameraLabel: labels.remoteCameraLabel,
+                    actionLabel: labels.actionLabel,
+                  ),
                 ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _withCameraFeedback(Widget controls) {
+    final feedback = widget.cameraFeedback;
+    if (feedback == null) return controls;
+    return SingleChildScrollView(
+      reverse: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [feedback, const SizedBox(height: 12), controls],
       ),
     );
   }
