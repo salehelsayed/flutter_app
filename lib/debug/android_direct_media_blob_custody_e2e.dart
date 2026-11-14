@@ -165,7 +165,7 @@ final class AndroidDirectMediaBlobCustodyE2ERequest {
   };
 }
 
-const _committedOutgoingStatuses = {'inboxed', 'sent', 'delivered', 'read'};
+const _committedOutgoingStatuses = {'inboxed', 'delivered', 'read'};
 
 /// Keeps the existing completion requirement while preserving the disposition
 /// when the process exits before its buffered flow events reach logcat.
