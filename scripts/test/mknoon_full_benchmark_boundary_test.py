@@ -177,6 +177,12 @@ class BenchmarkBoundaryTest(unittest.TestCase):
         for name in [*SCRIPTS, 'run_benchmark_suite.dart','benchmark_boundary.dart']:
             self.assertIn('integration_test/scripts/'+name,contract['sources'])
 
+    def test_default_device_leases_stay_out_of_the_real_lease_directory(self):
+        # BL-31: the route executor and this fixture take default-directory
+        # leases; they must not share /tmp/mknoon-device-leases-<uid> with real rows.
+        real = Path('/tmp') / f'mknoon-device-leases-{os.getuid()}'
+        self.assertNotEqual(preflight.lease_directory().resolve(), real.resolve())
+
     def test_partition_leases_preflight_exact_receipts_and_independent_failure(self):
         matrix = dict(errors=[], adb=[PINS['android-physical']],
                       ios_simulators=[PINS['ios-simulator-a']],

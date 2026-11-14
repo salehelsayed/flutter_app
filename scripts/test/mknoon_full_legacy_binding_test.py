@@ -69,6 +69,20 @@ class LegacyBindingTest(unittest.TestCase):
         self.env = {**os.environ, legacy.PIN:json.dumps(PINS), 'MKNOON_LEGACY_ISOLATED':'1',
                     'MKNOON_LEGACY_CONFIG_JSON':json.dumps({'relay_addresses':'/fixture/isolated-relay','ios_disposable_simulator_ids':','.join(PINS['ios-simulator-'+x] for x in 'abcd')})}
 
+    def test_leased_routes_never_touch_the_real_device_lease_directory(self):
+        # BL-31: workflow runs left a fresh nonce-named .lock in the shared
+        # /tmp/mknoon-device-leases-<uid> that real device rows lease from.
+        real = Path('/tmp') / f'mknoon-device-leases-{os.getuid()}'
+        def lock(target):
+            return real / (hashlib.sha256(target.encode()).hexdigest() + '.lock')
+        def launch(argv, cwd, timeout, env):
+            if 'dumpsys' in argv: return IDLE, 0, False, 0
+            return '00:01 +1: All tests passed!\n', 0, False, 0
+        with contextlib.redirect_stdout(io.StringIO()):
+            legacy.execute('full', ['integration_test posts_phase1_fake_test.dart'],
+                self.tmp/'isolated', env=self.env, matrix=MATRIX, launch=launch)
+        self.assertEqual([t for t in PINS.values() if lock(t).exists()], [])
+
     def test_exact_current_selections_have_audited_contracts(self):
         rules = json.loads((ROOT/checks.RULES).read_text())
         full = next(c for c in rules['full_commands'] if c['id']=='full-legacy')
