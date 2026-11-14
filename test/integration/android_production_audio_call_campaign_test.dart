@@ -10,6 +10,7 @@ import 'package:xml/xml.dart';
 import '../../integration_test/scripts/android_production_audio_call_campaign.dart';
 import '../../integration_test/support/android_app_state_guard.dart';
 import '../../integration_test/scripts/run_production_audio_call_sims.dart';
+import '../../integration_test/scripts/production_audio_call_local_fixture.dart';
 import '../../integration_test/support/android_production_audio_call_evidence.dart';
 
 const _apkSha =
@@ -1935,6 +1936,90 @@ Calls:
       expect(driver.restoreCalls, 1);
     },
   );
+
+  for (final scenario in [
+    (name: 'single row', regressions: false, override: '', minutes: 45),
+    (name: 'two rows', regressions: true, override: '', minutes: 90),
+    (name: 'long cohort', regressions: true, override: '', minutes: 240),
+    (
+      name: 'explicit override',
+      regressions: true,
+      override: '120m',
+      minutes: 120,
+    ),
+  ]) {
+    test('FIXTURE-LIFETIME ${scenario.name}', () async {
+      var elapsed = Duration.zero;
+      var expires = Duration.zero;
+      var stops = 0;
+      var centralCalls = 0;
+      final dependencies = AndroidProductionAudioCallSimsAdapterDependencies(
+        resolveFixtureHostIp: (_) async => '192.168.0.60',
+        startFixture:
+            ({
+              required String goExecutable,
+              required String hostIp,
+              required Map<String, String> environment,
+            }) async {
+              final flag = productionAudioCallFixtureGoTimeoutFlag(environment);
+              final minutes = int.parse(flag.substring(9, flag.length - 1));
+              expires = Duration(minutes: minutes);
+              return AndroidProductionAudioCallFixtureLease(
+                multiaddr: '/ip4/192.168.0.60/tcp/44001/p2p/12D3KooWFixture399',
+                fixtureIdentitySha256: _fixtureSha,
+                turnAuthoritySha256: _turnAuthoritySha,
+                coturnInstanceIdentitySha256: _coturnInstanceSha,
+                pionOracleResult: _pionOracleResult(),
+                stop: () async => stops++,
+              );
+            },
+        runCentralSims:
+            ({
+              required String dartExecutable,
+              required List<String> arguments,
+              required Map<String, String> environment,
+            }) async {
+              centralCalls++;
+              // Build preparation plus a long sequence crosses the former 45m
+              // fixture deadline. This clock models child lifetime, not row PASS.
+              elapsed += Duration(
+                minutes: centralCalls == 1
+                    ? 10
+                    : scenario.regressions
+                    ? 40
+                    : 20,
+              );
+              return elapsed < expires ? 0 : 17;
+            },
+      );
+      final result = await runAndroidProductionAudioCallSimsAdapter(
+        mode: 'major',
+        environment: {
+          'RELIABILITY_MULTI_DEVICE_IDS': 'pixel,emulator-5554',
+          if (scenario.override.isNotEmpty)
+            'PLAN399_FIXTURE_GO_TIMEOUT': scenario.override,
+        },
+        dependencies: dependencies,
+        includeRegressions: scenario.regressions,
+        excludedCohortIds: scenario.name == 'two rows'
+            ? (productionAudioCallCohort(
+                    {},
+                    'major',
+                  ).where((id) => id.startsWith('kx')).toList()..sort())
+                  .skip(1)
+                  .toList()
+            : const [],
+      );
+      expect(
+        result,
+        0,
+        reason: 'Fixture must survive build plus selected rows',
+      );
+      expect(expires.inMinutes, scenario.minutes);
+      expect(centralCalls, 2);
+      expect(stops, 1);
+    });
+  }
 
   test(
     'adapter pins every fixture and central build child to Go 1.27.1',
