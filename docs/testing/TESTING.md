@@ -12235,6 +12235,29 @@ visible and cannot become an ordinary first-attempt PASS.
   and the RED/first-failure records alongside it. Old-peer tests model ignored
   cancellation; they do not certify old-binary interoperability. Native/device,
   signed-candidate and the broader 19 selected checks remain separate/unrun.
+  **Camera encoding refresh and SDP summary (defects 3 and 4):** debug 266
+  CAM-DIAG named the Pixel camera stop as `[CAMERA] capture_stop
+  stage=encodings encodings=0` right after `lease granted typed=false`. The
+  pinned SDK caches `RTCRtpSender.parameters` at transceiver creation, before
+  SDP, and Android reported zero encodings there; its native merge never
+  creates an encoding. `_setQualityParameters` now re-reads the same sender
+  (`getSenders`, exact `senderId`, this connection only), rechecks grant, tier
+  and owner after the await, and caps only exactly one fresh native encoding,
+  keeping its negotiated fields and fresh transactionId. Fresh zero or several
+  encodings, a missing or ambiguous sender, a read error, a lost grant, several
+  cached encodings and refused parameters still stop with no write. Debug-only
+  lines: `[CAMERA] encodings_refresh cached=<n> fresh=<n>` and one fixed-field
+  `[VIDEO] sdp phase=create|local|remote` summary per created/applied SDP
+  (video section count, rejected count, per-section direction with the
+  session-level fallback, msid/ssrc presence, cached sender track); no raw SDP,
+  ids or addresses, no native read. RED `8cd037d31` failed only the two
+  stale-cache cases and the fresh-count diagnostic (30 pass); RED `b57e7386f`
+  failed only the three parser cases and the create/local/remote line (8 pass).
+  GREEN `dab841f24` passed 111/111 over five host files with five clean
+  identity checkpoints. The closed empty-layout refusal test was replaced by
+  these cases as an approved rule change. Host evidence only: the Pixel camera
+  start, the actual fresh native count and the initial-video SDP shape need the
+  build 267 device run.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
