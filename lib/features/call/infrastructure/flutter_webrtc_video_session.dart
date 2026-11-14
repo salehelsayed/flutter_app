@@ -16,6 +16,7 @@ import '../domain/call_media.dart';
 import '../domain/call_video_quality_environment.dart';
 import '../domain/call_video_quality_policy.dart';
 import 'call_video_debug_stats_log.dart';
+import 'call_video_sdp_summary.dart';
 import 'call_video_quality_stats_sampler.dart';
 import 'webrtc_types.dart';
 
@@ -159,6 +160,19 @@ final class FlutterWebRtcVideoSession
   }
 
   bool _debugStatsEmptyReported = false;
+
+  /// Defect 4: one fixed-field line per created/applied SDP (no raw SDP,
+  /// ids or addresses; parses the string already held, no native read).
+  void _sdpDiag(
+    String phase,
+    _Negotiation token,
+    CallSessionDescription description,
+  ) => _videoDiag(
+    'sdp phase=$phase type=${description.type.name} '
+    'mediaRevision=${token.mediaRevision} '
+    '${callVideoSdpSummary(description.value)} '
+    'senderTrackPresent=${_video?.sender.track != null}',
+  );
 
   void _videoDiag(String fields) {
     if (_diag) debugPrint('[VIDEO] $fields');
@@ -689,6 +703,7 @@ final class FlutterWebRtcVideoSession
       token.media,
       true,
     );
+    if (_diag) _sdpDiag('create', token, description);
     if (offer) {
       token.offer = description;
     } else {
@@ -729,6 +744,7 @@ final class FlutterWebRtcVideoSession
       _reject();
     }
     _validateDescription(description, token.media, local);
+    if (_diag) _sdpDiag(local ? 'local' : 'remote', token, description);
     // The callee adopts the remote-created transceiver after remote offer.
     _check(token);
     final native = webrtc.RTCSessionDescription(
