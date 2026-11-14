@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/app/bootstrap/background_write_window.dart';
 import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
@@ -519,6 +520,7 @@ final class ProductionApplicationBootstrap
     this.disposableProfileOverride,
     this.disposableResetOverride,
     this.normalPrepareOverride,
+    this.backgroundWriteWindow,
   });
 
   @visibleForTesting
@@ -529,6 +531,10 @@ final class ProductionApplicationBootstrap
 
   @visibleForTesting
   final Future<PreparedApplication> Function()? normalPrepareOverride;
+
+  /// BL-30: the iOS background assertion around the every-launch identity
+  /// database open and its post-open writes. Null uses the platform default.
+  final BackgroundWriteWindow? backgroundWriteWindow;
 
   @override
   Future<PreparedApplication> prepare() => _prepare();
@@ -914,57 +920,65 @@ final class ProductionApplicationBootstrap
       onCreate: runProductionOnCreate,
       onUpgrade: runProductionOnUpgrade,
     );
-    final db = canonicalWritableRuntimeSession == null
-        ? await openIdentityDatabase()
-        : await canonicalWritableRuntimeSession.open(
-            binding: canonicalRuntimeStartupBinding!.leaseBinding,
-            openDatabase: openIdentityDatabase,
-          );
-    accountPreviewPersistence = TranslatePreviewPersistence(
-      loadTranscript: (owner) => owner.messageId == null
-          ? Future<String?>.value()
-          : dbLoadLocalTranscript(db, owner.id, owner.messageId!),
-      saveTranscript: (owner, result) => owner.messageId == null
-          ? Future<bool>.value(false)
-          : dbSaveLocalTranscript(db, owner.id, owner.messageId!, result),
-      loadTranslation: (owner, source, target) => dbLoadLocalTranslation(
-        db,
-        ownerKind: owner.kind.name,
-        ownerId: owner.id,
-        messageId: owner.messageId,
-        source: source,
-        targetLanguage: target,
-      ),
-      saveTranslation: (owner, source, target, result) =>
-          dbSaveLocalTranslation(
+    final db = await openIdentityDatabaseWithPostOpenWrites<Database>(
+      window: backgroundWriteWindow ?? defaultBackgroundWriteWindow(),
+      open: () => canonicalWritableRuntimeSession == null
+          ? openIdentityDatabase()
+          : canonicalWritableRuntimeSession.open(
+              binding: canonicalRuntimeStartupBinding!.leaseBinding,
+              openDatabase: openIdentityDatabase,
+            ),
+      postOpenWrites: (db) async {
+        accountPreviewPersistence = TranslatePreviewPersistence(
+          loadTranscript: (owner) => owner.messageId == null
+              ? Future<String?>.value()
+              : dbLoadLocalTranscript(db, owner.id, owner.messageId!),
+          saveTranscript: (owner, result) => owner.messageId == null
+              ? Future<bool>.value(false)
+              : dbSaveLocalTranscript(db, owner.id, owner.messageId!, result),
+          loadTranslation: (owner, source, target) => dbLoadLocalTranslation(
             db,
             ownerKind: owner.kind.name,
             ownerId: owner.id,
             messageId: owner.messageId,
             source: source,
             targetLanguage: target,
-            result: result,
           ),
-    );
-    translatePreviewPersistence = accountPreviewPersistence;
-    await repairDirectNotificationDurabilityDeleteTriggers(db);
-    await repairLegacyPushMessageTransports(db);
-    StartupTiming.instance.mark('database_ready');
-    await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
-      documentsPath: appDocDir.path,
-      stage: GroupReactionNotificationIosSetupBootstrapStage.identityStore,
-    );
+          saveTranslation: (owner, source, target, result) =>
+              dbSaveLocalTranslation(
+                db,
+                ownerKind: owner.kind.name,
+                ownerId: owner.id,
+                messageId: owner.messageId,
+                source: source,
+                targetLanguage: target,
+                result: result,
+              ),
+        );
+        translatePreviewPersistence = accountPreviewPersistence;
+        await repairDirectNotificationDurabilityDeleteTriggers(db);
+        await repairLegacyPushMessageTransports(db);
+        StartupTiming.instance.mark('database_ready');
+        await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
+          documentsPath: appDocDir.path,
+          stage: GroupReactionNotificationIosSetupBootstrapStage.identityStore,
+        );
 
-    // 3. Run one-time secrets migration (DB → secure storage)
-    //    Must run BEFORE migration 005 so CHECK constraints don't reject
-    //    existing non-null secret values during the table rebuild.
-    await migrateSecretsToSecureStorage(db: db, secureKeyStore: secureKeyStore);
+        // 3. Run one-time secrets migration (DB → secure storage)
+        //    Must run BEFORE migration 005 so CHECK constraints don't reject
+        //    existing non-null secret values during the table rebuild.
+        await migrateSecretsToSecureStorage(
+          db: db,
+          secureKeyStore: secureKeyStore,
+        );
 
-    // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
-    await runSecretNullChecksMigration(db);
-    await scrubLegacyGroupSecretsToSecureStorage(
-      db: db,
-      secureKeyStore: secureKeyStore,
+        // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
+        await runSecretNullChecksMigration(db);
+        await scrubLegacyGroupSecretsToSecureStorage(
+          db: db,
+          secureKeyStore: secureKeyStore,
+        );
+      },
     );
     // A crash between the native authority fence and its secure-storage write
     // deliberately leaves recovery disabled.  Only this supported production
