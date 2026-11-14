@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
@@ -36,6 +39,160 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  for (final incoming in [false, true]) {
+    test(
+      'V2-RECOVERY transport exception retries exact signal incoming=$incoming',
+      () async {
+        final h = _Rig(recovery: true, incoming: incoming);
+        addTearDown(h.close);
+        await h.connect();
+        h.deliveryFor = (signal) {
+          if (signal.event == CallSignalV2Type.iceRestart) {
+            throw const CallSignalingException(
+              CallSignalingErrorCode.transportUnavailable,
+            );
+          }
+          return true;
+        };
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(h.snapshot.state, CallState.reconnecting);
+        final deadline = h.reconnectDeadline;
+        final first = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.iceRestart,
+        );
+        expect(h.engine.restartCalls, incoming ? 0 : 1);
+        h.deliveryFor = (_) => true;
+        h.advance(500);
+        await h.resumeRecovery();
+        await h.owner.workSettled;
+        final retry = h.sent.lastWhere(
+          (s) => s.event == CallSignalV2Type.iceRestart,
+        );
+        expect(identical(retry, first), isTrue);
+        expect(retry.toMap(), first.toMap());
+        expect(h.engine.restartCalls, incoming ? 0 : 1);
+        expect(h.reconnectDeadline, same(deadline));
+        expect(h.reconnectTimers, 1);
+        expect(h.engine.video.cameraStarts, 0);
+      },
+    );
+
+    test(
+      'V2-RECOVERY outage keeps original deadline incoming=$incoming',
+      () async {
+        final h = _Rig(recovery: true, incoming: incoming);
+        addTearDown(h.close);
+        await h.connect();
+        h.deliveryFor = (_) => throw const CallSignalingException(
+          CallSignalingErrorCode.transportUnavailable,
+        );
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(h.snapshot.state, CallState.reconnecting);
+        final deadline = h.reconnectDeadline!;
+        h.advance(14000);
+        await h.resumeRecovery();
+        await h.owner.workSettled;
+        expect(h.reconnectDeadline, same(deadline));
+        expect(h.reconnectTimers, 1);
+        h.advance(1000);
+        await deadline.callback();
+        await h.owner.workSettled;
+        expect(
+          h.snapshot.isTerminal || h.snapshot.state == CallState.ending,
+          isTrue,
+        );
+        final sent = h.sent.length;
+        await h.resumeRecovery();
+        await h.owner.workSettled;
+        expect(h.sent, hasLength(sent));
+        expect(h.engine.restartCalls, incoming ? 0 : 1);
+      },
+    );
+
+    test(
+      'V2-RECOVERY revoked work cannot terminate or retry incoming=$incoming',
+      () async {
+        final h = _Rig(recovery: true, incoming: incoming);
+        addTearDown(h.close);
+        await h.connect();
+        h.deliveryFor = (_) {
+          h.current = false;
+          throw const CallSignalingException(
+            CallSignalingErrorCode.transportUnavailable,
+          );
+        };
+        await h.loseMedia();
+        await h.owner.workSettled;
+        expect(h.snapshot.state, CallState.reconnecting);
+        final sent = h.sent.length;
+        h.advance(500);
+        await h.resumeRecovery();
+        await h.owner.workSettled;
+        expect(h.sent, hasLength(sent));
+        expect(h.engine.restartCalls, incoming ? 0 : 1);
+      },
+    );
+  }
+
+  for (final code in [
+    CallSignalingErrorCode.endpointMismatch,
+    CallSignalingErrorCode.migrationPaused,
+  ]) {
+    test('V2-RECOVERY fatal signaling error remains terminal $code', () async {
+      final h = _Rig(recovery: true);
+      addTearDown(h.close);
+      await h.connect();
+      h.deliveryFor = (_) => throw CallSignalingException(code);
+      await h.loseMedia();
+      await h.owner.workSettled;
+      expect(
+        h.snapshot.isTerminal || h.snapshot.state == CallState.ending,
+        isTrue,
+      );
+      expect(h.snapshot.endReason, CallEndReason.mediaFailed);
+    });
+  }
+
+  for (final stage in ['resolveEndpoint', 'readIceServers']) {
+    test('V2-RECOVERY sanitized failure stage $stage', () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'CALL_V2_RECOVERY_FAILED') events.add(event);
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
+      final h = _Rig(recovery: true);
+      addTearDown(h.close);
+      await h.connect();
+      if (stage == 'resolveEndpoint') {
+        h.lookupGate = Completer<ResolvedCallEndpoint>();
+      } else {
+        h.serversGate = Completer<List<CallIceServer>>();
+      }
+      await h.loseMedia();
+      await _turn();
+      final error = StateError('private message with call-id and address');
+      if (stage == 'resolveEndpoint') {
+        h.lookupGate!.completeError(error);
+      } else {
+        h.serversGate!.completeError(error);
+      }
+      await h.owner.workSettled;
+      expect(
+        h.snapshot.isTerminal || h.snapshot.state == CallState.ending,
+        isTrue,
+      );
+      expect(events, hasLength(1));
+      expect(events.single['details'], {
+        'stage': stage,
+        'errorType': 'StateError',
+      });
+      expect(events.toString(), isNot(contains('private message')));
+      expect(events.toString(), isNot(contains(_call.value)));
+    });
+  }
+
   for (final beforeRequest in [true, false]) {
     test(
       'BL16-CANCEL authenticated remote abort suppresses prompt beforeRequest=$beforeRequest',
