@@ -28,6 +28,9 @@ internal interface MknoonCallLocalCameraFacts {
  */
 internal class MknoonCallVideoAuthority(
     private val facts: MknoonCallLocalCameraFacts,
+    /** CAM-DIAG sink; null (release) logs nothing. API scaffold: unused yet.
+     * Kept before [applier] so existing trailing-lambda callers still bind it. */
+    @Suppress("unused") private val log: ((String) -> Unit)? = null,
     private val applier: MknoonCallCameraForegroundApplier,
 ) {
     private val lock = Any()

@@ -253,6 +253,11 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         applier = { nativeCallId, withCamera ->
             liveForegroundRuntime?.applyCameraType(nativeCallId, withCamera) ?: !withCamera
         },
+        // CAM-DIAG: debug builds only; fixed stage/reason words, no ids.
+        log = { line: String ->
+            android.util.Log.d("MknoonCallCamera", line)
+            Unit
+        }.takeIf { BuildConfig.DEBUG },
     )
     private val incomingCallRinger = MknoonIncomingCallRinger(
         AndroidMknoonCallRingtoneStarter(applicationContext),

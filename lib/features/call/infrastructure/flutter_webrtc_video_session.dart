@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, visibleForTesting;
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 // ignore: implementation_imports
@@ -878,6 +879,10 @@ final class FlutterWebRtcVideoSession
     return _qualityCurrent(quality) &&
         _senderCapture?.tracks.singleOrNull?.enabled == true;
   }
+
+  /// CAM-DIAG: debug-only diagnostics switch (API scaffold; nothing prints yet).
+  @visibleForTesting
+  static bool cameraDiagnostics = kDebugMode;
 
   bool _qualityAtTier(_QualityIntent quality, CallVideoQualityTier tier) =>
       _qualityCurrent(quality) &&
