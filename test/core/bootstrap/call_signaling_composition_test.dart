@@ -3954,6 +3954,109 @@ void main() {
 
   setUpAll(sqfliteFfiInit);
 
+  for (final callerRequests in [true, false]) {
+    test(
+      'BL16-CANCEL two graphs dismiss peer prompt without consuming revision caller=$callerRequests',
+      () async {
+        final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+        final id = caller.graphs.single.coordinator.activeSession!.callId!;
+        final (callee, calleeEngine) = await _connectedGraphVideo(
+          acceptedMedia: CallMediaKind.audio,
+          callId: id,
+        );
+        final requester = callerRequests ? caller : callee;
+        final responder = callerRequests ? callee : caller;
+        final graph = requester.graphs.single;
+        final peer = responder.graphs.single;
+        final actions = requester.composition as ForegroundCallVideoCapability;
+        expect(
+          await actions.applyVideoIntent(
+            id,
+            generation: graph.current!.video!.generation,
+            intent: const CallVideoIntent(CallVideoAction.requestVideo),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        await _untilGraphVideo(
+          () => _upgradeSignals(requester, 'media_request').isNotEmpty,
+        );
+        final request = _upgradeSignals(requester, 'media_request').single;
+        await _deliverUpgradeSignal(responder, request);
+        await _untilGraphVideo(
+          () => peer.current!.video!.presentation.incomingUpgradeId != null,
+        );
+        final requestId = graph.current!.video!.presentation.outgoingUpgradeId!;
+        expect(
+          await actions.applyVideoIntent(
+            id,
+            generation: graph.current!.video!.generation,
+            intent: CallVideoIntent(
+              CallVideoAction.cancelUpgrade,
+              upgradeId: requestId,
+            ),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        expect(graph.current!.video!.presentation.outgoingUpgradeId, isNull);
+        await _untilGraphVideo(
+          () => _upgradeSignals(requester, 'media_abort').isNotEmpty,
+        );
+        final abort = _upgradeSignals(requester, 'media_abort').single;
+        expect((abort['payload'] as Map)['media_revision'], 1);
+        expect((abort['payload'] as Map)['media'], 'audio');
+        await _deliverUpgradeSignal(responder, abort);
+        await _untilGraphVideo(
+          () => peer.current!.video!.presentation.incomingUpgradeId == null,
+        );
+        await _untilGraphVideo(
+          () => _upgradeSignals(responder, 'media_response').isNotEmpty,
+        );
+        final decline = _upgradeSignals(responder, 'media_response').single;
+        expect((decline['payload'] as Map)['decision'], 'decline');
+        await _deliverUpgradeSignal(requester, decline);
+        await _untilGraphVideo(
+          () => !graph
+              .videoOwners![id]!
+              .mediaSwitch!
+              .machine
+              .requiresReconciliation,
+        );
+        await _deliverUpgradeSignal(responder, abort, mailbox: true);
+        await _deliverUpgradeSignal(responder, request, mailbox: true);
+        expect(peer.current!.video!.presentation.incomingUpgradeId, isNull);
+        for (final owner in [graph, peer]) {
+          expect(owner.coordinator.activeSession!.state, CallState.connected);
+          expect(
+            owner.videoOwners![id]!.mediaSwitch!.machine.settledRevision,
+            0,
+          );
+          expect(
+            owner.current!.video!.presentation.status,
+            CallVideoStatus.audioOnly,
+          );
+        }
+        expect(callerEngine.video!.cameraStarts, 0);
+        expect(calleeEngine.video!.cameraStarts, 0);
+        expect(
+          await actions.applyVideoIntent(
+            id,
+            generation: graph.current!.video!.generation,
+            intent: const CallVideoIntent(CallVideoAction.requestVideo),
+          ),
+          ForegroundCallActionResult.applied,
+        );
+        await _untilGraphVideo(
+          () => _upgradeSignals(requester, 'media_request').length == 2,
+        );
+        expect(
+          (_upgradeSignals(requester, 'media_request').last['payload']
+              as Map)['base_revision'],
+          0,
+        );
+      },
+    );
+  }
+
   for (final callerEnds in [true, false]) {
     for (final boundary in [
       'endpoint',

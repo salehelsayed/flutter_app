@@ -24,6 +24,77 @@ const _answer = CallSessionDescription(
 final _call = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
 void main() {
+  for (final caller in [true, false]) {
+    test(
+      'BL16-CANCEL executor late consent never captures video caller=$caller',
+      () async {
+        final r = _Rig(caller: caller);
+        final request = MediaSwitchRequest(
+          id: 'cancelled',
+          baseRevision: 0,
+          target: _video,
+          requesterIsCaller: caller,
+          createdAtMs: r.host.now,
+          deadlineMs: r.host.now + 30000,
+        );
+        expect(r.owner.request(request), isTrue);
+        await r.owner.workSettled;
+        expect(
+          r.owner.abort(id: request.id, baseRevision: 0, revision: 1),
+          isTrue,
+        );
+        await r.owner.workSettled;
+        expect(
+          r.host.controls.where(
+            (e) => e.kind == MediaSwitchEffectKind.sendAbort,
+          ),
+          hasLength(1),
+        );
+        expect(r.owner.machine.requiresReconciliation, isTrue);
+        expect(
+          r.owner.respond(
+            id: request.id,
+            baseRevision: 0,
+            fromCaller: !caller,
+            response: MediaSwitchResponse.accept,
+            camera: CallCameraState.on,
+          ),
+          isTrue,
+        );
+        await r.owner.workSettled;
+        expect(r.video.captureCalls, 0);
+        expect(r.video.events, isNot(contains('begin:video')));
+        expect(r.host.descriptions.every((d) => d.repair), isTrue);
+        expect(r.owner.machine.settledMedia, _audio);
+        expect(r.owner.machine.settledRevision, 1);
+        expect(r.owner.machine.videoGatesOpen, isFalse);
+        expect(r.video.closeCalls, 0);
+      },
+    );
+  }
+
+  test(
+    'BL16-CANCEL executor original cutoff survives successful abort transport',
+    () async {
+      final r = _Rig();
+      await r.requestWork();
+      final deadline = r.owner.machine.currentRequest!.deadlineMs;
+      r.owner.abort(id: 'switch', baseRevision: 0, revision: 1);
+      await r.owner.workSettled;
+      expect(r.owner.machine.requiresReconciliation, isTrue);
+      expect(r.owner.machine.nextDeadlineMs, deadline);
+      r.host.now = deadline;
+      r.owner.tick();
+      await r.owner.workSettled;
+      expect(r.owner.machine.switchingDisabled, isTrue);
+      expect(r.owner.machine.settledMedia, _audio);
+      expect(r.video.captureCalls, 0);
+      expect(r.video.closeCalls, 0);
+      r.owner.terminate();
+      expect(r.owner.machine.terminal, isTrue);
+    },
+  );
+
   test(
     'BL16-UPGRADE transition diagnostics are redacted and deduplicated',
     () async {

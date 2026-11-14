@@ -113,6 +113,322 @@ List<MediaSwitchEffectKind> _kinds(MediaSwitchDecision decision) =>
     decision.effects.map((e) => e.kind).toList();
 
 void main() {
+  for (final caller in [true, false]) {
+    test(
+      'BL16-CANCEL old unselected peer ignores abort and retains original timeout caller=$caller',
+      () {
+        final requester = _Rig(caller: caller);
+        final oldPeer = _Rig(caller: !caller);
+        final request = requester.req('old-peer', caller: caller);
+        requester.machine.request(request, freshUpgradeAdmitted: true);
+        oldPeer.machine.request(request, freshUpgradeAdmitted: true);
+        requester.machine.abort(id: request.id, baseRevision: 0, revision: 1);
+        // Compatibility fixture: the old receiver rejects the unselected abort;
+        // no cancellation or outcome witness is delivered to either machine.
+        expect(oldPeer.machine.phase, MediaSwitchPhase.decision);
+        oldPeer.now = request.createdAtMs + 15000;
+        oldPeer.machine.tick();
+        expect(oldPeer.machine.phase, MediaSwitchPhase.declined);
+        requester.now = request.deadlineMs;
+        requester.machine.tick();
+        expect(requester.machine.switchingDisabled, isTrue);
+        expect(requester.machine.settledRevision, 0);
+        expect(oldPeer.machine.settledRevision, 0);
+        expect(requester.machine.settledMedia, _audio);
+        expect(requester.machine.videoGatesOpen, isFalse);
+      },
+    );
+  }
+  for (final requester in [true, false]) {
+    test(
+      'BL16-CANCEL unselected cancellation converges without revision caller=$requester',
+      () {
+        final local = _Rig(caller: requester);
+        final peer = _Rig(caller: !requester);
+        final request = local.req('cancel', caller: requester);
+        local.machine.request(request, freshUpgradeAdmitted: true);
+        peer.machine.request(request, freshUpgradeAdmitted: true);
+        final cancel = local.machine.abort(
+          id: 'cancel',
+          baseRevision: 0,
+          revision: 1,
+        );
+        expect(cancel.accepted, isTrue);
+        final abort = cancel.effects.singleWhere(
+          (e) => e.kind == MediaSwitchEffectKind.sendAbort,
+        );
+        expect(abort.media, _audio);
+        expect(abort.revision, 1);
+        expect(abort.abortReason, MediaSwitchAbortReason.cancelled);
+        expect(abort.deadlineMs, request.deadlineMs);
+        expect(local.machine.requiresReconciliation, isTrue);
+        expect(local.machine.nextDeadlineMs, request.deadlineMs);
+        final received = peer.machine.abort(
+          id: 'cancel',
+          baseRevision: 0,
+          revision: 1,
+          remote: true,
+        );
+        expect(received.accepted, isTrue);
+        final decline = received.effects.singleWhere(
+          (e) => e.kind == MediaSwitchEffectKind.sendResponse,
+        );
+        expect(decline.response, MediaSwitchResponse.decline);
+        expect(
+          local.machine
+              .respond(
+                id: 'cancel',
+                baseRevision: 0,
+                fromCaller: !requester,
+                response: decline.response!,
+              )
+              .accepted,
+          isTrue,
+        );
+        for (final rig in [local, peer]) {
+          expect(rig.machine.settledRevision, 0);
+          expect(rig.machine.settledMedia, _audio);
+          expect(rig.machine.requiresReconciliation, isFalse);
+          expect(rig.machine.videoGatesOpen, isFalse);
+          expect(
+            _kinds(rig.machine.request(request, freshUpgradeAdmitted: true)),
+            isNot(contains(MediaSwitchEffectKind.prompt)),
+          );
+        }
+        expect(
+          local.machine
+              .request(
+                local.req('fresh', caller: requester),
+                freshUpgradeAdmitted: true,
+              )
+              .accepted,
+          isTrue,
+        );
+        final duplicate = peer.machine.abort(
+          id: 'cancel',
+          baseRevision: 0,
+          revision: 1,
+          remote: true,
+        );
+        expect(
+          duplicate.effects
+              .where((e) => e.kind == MediaSwitchEffectKind.replayRecorded)
+              .single
+              .response,
+          MediaSwitchResponse.decline,
+        );
+      },
+    );
+
+    test(
+      'BL16-CANCEL late accept selects cancelled audio repair caller=$requester',
+      () {
+        final r = _Rig(caller: requester);
+        final request = r.req('cross', caller: requester);
+        r.machine.request(request, freshUpgradeAdmitted: true);
+        r.machine.abort(id: 'cross', baseRevision: 0, revision: 1);
+        final result = r.machine.respond(
+          id: 'cross',
+          baseRevision: 0,
+          fromCaller: !requester,
+          response: MediaSwitchResponse.accept,
+          camera: _on,
+        );
+        expect(result.accepted, isTrue);
+        expect(
+          _kinds(result),
+          isNot(contains(MediaSwitchEffectKind.createOffer)),
+        );
+        expect(
+          _kinds(result),
+          isNot(contains(MediaSwitchEffectKind.openVideo)),
+        );
+        expect(
+          _kinds(result),
+          contains(
+            requester
+                ? MediaSwitchEffectKind.repairAudio
+                : MediaSwitchEffectKind.awaitAudioRepair,
+          ),
+        );
+        expect(r.machine.settledRevision, 1);
+        expect(r.machine.settledMedia, _audio);
+        expect(r.machine.videoGatesOpen, isFalse);
+        expect(
+          r.machine
+              .respond(
+                id: 'cross',
+                baseRevision: 0,
+                fromCaller: !requester,
+                response: MediaSwitchResponse.accept,
+                camera: _on,
+              )
+              .effects,
+          isEmpty,
+        );
+      },
+    );
+
+    for (final stage in ['accepted', 'offer', 'answer', 'committed']) {
+      test(
+        'BL16-CANCEL responder preserves original accept at $stage caller=$requester',
+        () {
+          final r = _Rig(caller: !requester);
+          r.machine.request(
+            r.req('cross', caller: requester),
+            freshUpgradeAdmitted: true,
+          );
+          final accepted = r.machine.respond(
+            id: 'cross',
+            baseRevision: 0,
+            fromCaller: !requester,
+            response: MediaSwitchResponse.accept,
+            camera: _on,
+          );
+          final original = accepted.effects.singleWhere(
+            (e) => e.kind == MediaSwitchEffectKind.sendResponse,
+          );
+          if (stage != 'accepted') r.offer('cross');
+          if (stage == 'answer' || stage == 'committed') r.answer('cross');
+          if (stage == 'committed') {
+            if (r.machine.localIsCaller) {
+              r.machine.receiveAck(id: 'cross', revision: 1, media: _video);
+            } else {
+              r.machine.receiveCommit(id: 'cross', revision: 1, media: _video);
+            }
+          }
+          final result = r.machine.abort(
+            id: 'cross',
+            baseRevision: 0,
+            revision: 1,
+            remote: true,
+          );
+          final replay = result.effects
+              .where(
+                (e) =>
+                    e.kind == MediaSwitchEffectKind.replayRecorded &&
+                    e.replayOf == MediaSwitchEffectKind.sendResponse,
+              )
+              .single;
+          expect(replay.response, MediaSwitchResponse.accept);
+          expect(replay.camera, original.camera);
+          expect(replay.deadlineMs, original.deadlineMs);
+          expect(r.machine.settledRevision, 1);
+          expect(r.machine.settledMedia, _audio);
+          expect(r.machine.videoGatesOpen, isFalse);
+        },
+      );
+    }
+  }
+
+  test(
+    'BL16-CANCEL transport custody cannot resolve unknown selection or renew cutoff',
+    () {
+      final r = _Rig();
+      final request = r.req('lost');
+      r.machine.request(request, freshUpgradeAdmitted: true);
+      r.machine.abort(id: 'lost', baseRevision: 0, revision: 1);
+      r.machine.reconciliationCompleted(id: 'lost', delivered: true);
+      expect(r.machine.requiresReconciliation, isTrue);
+      expect(r.machine.nextDeadlineMs, request.deadlineMs);
+      expect(
+        r.machine
+            .request(r.req('blocked'), freshUpgradeAdmitted: true)
+            .accepted,
+        isFalse,
+      );
+      r.now = request.deadlineMs;
+      r.machine.tick();
+      expect(r.machine.switchingDisabled, isTrue);
+      expect(r.machine.settledRevision, 0);
+      expect(r.machine.settledMedia, _audio);
+      expect(
+        r.machine
+            .respond(
+              id: 'lost',
+              baseRevision: 0,
+              fromCaller: false,
+              response: MediaSwitchResponse.accept,
+            )
+            .accepted,
+        isFalse,
+      );
+      expect(r.machine.terminate().accepted, isTrue);
+    },
+  );
+
+  test('BL16-CANCEL authenticated abort before request suppresses prompt', () {
+    final r = _Rig(caller: false);
+    expect(
+      r.machine
+          .abort(id: 'early', baseRevision: 0, revision: 1, remote: true)
+          .accepted,
+      isTrue,
+    );
+    expect(r.machine.currentRequest, isNull);
+    final result = r.machine.request(
+      r.req('early'),
+      freshUpgradeAdmitted: true,
+    );
+    expect(_kinds(result), isNot(contains(MediaSwitchEffectKind.prompt)));
+    expect(
+      result.effects
+          .singleWhere((e) => e.kind == MediaSwitchEffectKind.sendResponse)
+          .response,
+      MediaSwitchResponse.decline,
+    );
+    expect(r.machine.settledRevision, 0);
+    expect(r.machine.videoGatesOpen, isFalse);
+  });
+
+  test(
+    'BL16-CANCEL wrong requester revision and unknown successor cannot mutate pending request',
+    () {
+      final r = _Rig();
+      r.machine.request(r.req('owned'), freshUpgradeAdmitted: true);
+      for (final wrong in ['role', 'base', 'revision', 'id']) {
+        final result = r.machine.abort(
+          id: wrong == 'id' ? 'other' : 'owned',
+          baseRevision: wrong == 'base' ? 1 : 0,
+          revision: wrong == 'revision' ? 2 : 1,
+          remote: wrong == 'role',
+        );
+        expect(result.accepted, isFalse);
+        expect(r.machine.currentSwitchId, 'owned');
+        expect(r.machine.phase, MediaSwitchPhase.decision);
+      }
+    },
+  );
+
+  test(
+    'BL16-CANCEL contradictory witness disables optional switching without revision mutation',
+    () {
+      final r = _Rig();
+      r.machine.request(r.req('conflict'), freshUpgradeAdmitted: true);
+      r.machine.abort(id: 'conflict', baseRevision: 0, revision: 1);
+      expect(
+        r.machine
+            .respond(
+              id: 'conflict',
+              baseRevision: 0,
+              fromCaller: false,
+              response: MediaSwitchResponse.decline,
+            )
+            .accepted,
+        isTrue,
+      );
+      r.machine.respond(
+        id: 'conflict',
+        baseRevision: 0,
+        fromCaller: false,
+        response: MediaSwitchResponse.accept,
+      );
+      expect(r.machine.switchingDisabled, isTrue);
+      expect(r.machine.settledRevision, 0);
+      expect(r.machine.videoGatesOpen, isFalse);
+    },
+  );
+
   for (final requester in [true, false]) {
     test('U3j-S exposes the immutable current request caller=$requester', () {
       final rig = _Rig();
