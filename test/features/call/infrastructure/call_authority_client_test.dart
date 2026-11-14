@@ -67,6 +67,32 @@ void main() {
     client = BridgeCallAuthorityClient(bridge: bridge);
   });
 
+  for (final response in [
+    'not-json',
+    'null',
+    '[]',
+    '{}',
+    '{"ok":false,"errorCode":"MALFORMED_RESPONSE"}',
+  ]) {
+    test(
+      'BL26-HA malformed endpoint response $response is not a transient bridge failure',
+      () async {
+        bridge.pendingResponse = Future<String>.value(response);
+        await expectLater(
+          client.getEndpoint('contact-account'),
+          throwsA(
+            isA<CallAuthorityException>().having(
+              (error) => error.code,
+              'malformed responses cannot authorize admitted-pin reuse',
+              CallAuthorityErrorCode.malformedResponse,
+            ),
+          ),
+        );
+        expect(bridge.requests, hasLength(1));
+      },
+    );
+  }
+
   test('matches relay canonical endpoint JSON byte order exactly', () {
     final record = CallEndpointRecord(
       accountPeerId: 'contact-account',
