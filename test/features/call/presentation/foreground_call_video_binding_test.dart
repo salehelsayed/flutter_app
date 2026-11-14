@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
@@ -185,6 +187,7 @@ class _VideoCapability extends _AudioCapability
   final videoCalls =
       <({CallId callId, int generation, CallVideoIntent intent})>[];
   VoidCallback? afterVideo;
+  Future<ForegroundCallActionResult> Function()? videoResult;
 
   @override
   Future<ForegroundCallActionResult> applyVideoIntent(
@@ -194,7 +197,7 @@ class _VideoCapability extends _AudioCapability
   }) async {
     videoCalls.add((callId: callId, generation: generation, intent: intent));
     afterVideo?.call();
-    return ForegroundCallActionResult.applied;
+    return videoResult?.call() ?? ForegroundCallActionResult.applied;
   }
 }
 
@@ -234,12 +237,14 @@ Widget _app(
   double scale = 1,
   Widget? retainedChild,
   bool rootBuilder = false,
+  MicPermissionGateway? micPermission,
 }) {
   final retained =
       retainedChild ??
       const Scaffold(body: Center(child: Text('retained route')));
   Widget overlay(Widget child) => ForegroundCallOverlay(
     capability: capability,
+    micPermission: micPermission,
     loadContactDisplayName: (_) async => locale.languageCode == 'ar'
         ? 'اسم صديق تجريبي طويل للغاية'
         : 'Alexandria Very Long Synthetic Contact Name',
@@ -274,6 +279,7 @@ Future<void> _withOverlay(
   double scale = 1,
   Widget? retainedChild,
   bool rootBuilder = false,
+  MicPermissionGateway? micPermission,
 }) async {
   final semantics = tester.ensureSemantics();
   try {
@@ -284,6 +290,7 @@ Future<void> _withOverlay(
         scale: scale,
         retainedChild: retainedChild,
         rootBuilder: rootBuilder,
+        micPermission: micPermission,
       ),
     );
     await tester.pumpAndSettle();
@@ -448,8 +455,392 @@ Map<String, Object?> _viewAudioSignature(WidgetTester tester) {
   };
 }
 
+const _cameraDenied = ForegroundCallActionResult(
+  ForegroundCallActionStatus.unavailable,
+  cameraFailure: ForegroundCallCameraFailure.permissionDenied,
+);
+
+Future<void> _feedbackTap(WidgetTester tester, _VideoCapability cap) async {
+  final before = cap.videoCalls.length;
+  final controls = tester.widget<CallVideoControls>(
+    find.byType(CallVideoControls),
+  );
+  final intent = controls.presentation.intentFor(CallVideoAction.turnCameraOn);
+  expect(intent, isNotNull);
+  controls.onIntent(intent!);
+  await tester.pump();
+  expect(cap.videoCalls, hasLength(before + 1));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('VUI4 typed camera feedback binding', () {
+    for (final (active, failure) in [
+      (false, CallAudioFailure.none),
+      (true, CallAudioFailure.engineFailed),
+    ]) {
+      testWidgets(
+        'audio active=$active failure=$failure never claims hearing',
+        (tester) async {
+          final initial = _projection(
+            media: _video(camera: CallCameraState.off),
+          );
+          final cap = _VideoCapability(initial)
+            ..videoResult = () async => _cameraDenied;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                l10n.call_video_camera_permission_body(
+                  'Alexandria Very Long Synthetic Contact Name',
+                ),
+              ),
+              findsOneWidget,
+            );
+            cap.emit(
+              ForegroundCallProjection(
+                session: initial.session,
+                video: initial.video,
+                audio: CallAudioControlState(
+                  muted: false,
+                  selectedRoute: initial.audio.selectedRoute,
+                  supportedRoutes: initial.audio.supportedRoutes,
+                  active: active,
+                  failure: failure,
+                ),
+              ),
+            );
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_body_without_audio),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                l10n.call_video_camera_permission_body(
+                  'Alexandria Very Long Synthetic Contact Name',
+                ),
+              ),
+              findsNothing,
+            );
+          });
+        },
+      );
+    }
+
+    for (final size in [const Size(360, 640), const Size(600, 320)]) {
+      testWidgets('Arabic 2x card at $size keeps End reachable', (
+        tester,
+      ) async {
+        _viewport(tester, size.width, size.height);
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(
+          tester,
+          cap,
+          (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            expect(tester.takeException(), isNull);
+            final end = find.bySemanticsIdentifier('call_end');
+            expect(end, findsOneWidget);
+            await tester.ensureVisible(end);
+            await tester.tap(end);
+            await tester.pump();
+            expect(cap.audioCalls, contains(('end', _callA)));
+            expect(tester.takeException(), isNull);
+          },
+          locale: const Locale('ar'),
+          scale: 2,
+          micPermission: FakeMicPermissionGateway(),
+        );
+      });
+    }
+
+    testWidgets('disposed overlay ignores late camera feedback', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(
+        _projection(media: _video(camera: CallCameraState.off)),
+      )..videoResult = () async => _cameraDenied;
+      await _withOverlay(tester, cap, (l10n) async {
+        await _feedbackTap(tester, cap);
+        expect(
+          find.text(l10n.call_video_camera_permission_title),
+          findsOneWidget,
+        );
+        final pending = Completer<ForegroundCallActionResult>();
+        cap.videoResult = () => pending.future;
+        await _feedbackTap(tester, cap);
+        await tester.pumpWidget(const SizedBox.shrink());
+        pending.complete(_cameraDenied);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(
+          find.text(l10n.call_video_camera_permission_title),
+          findsNothing,
+        );
+      });
+    });
+
+    testWidgets(
+      'permission card opens Settings only explicitly and never retries capture',
+      (tester) async {
+        final gateway = FakeMicPermissionGateway();
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final settings = find.byKey(const ValueKey('camera-result-settings'));
+          expect(settings, findsOneWidget);
+          expect(gateway.openAppSettingsCallCount, 0);
+          await tester.tap(settings);
+          await tester.pump();
+          expect(gateway.openAppSettingsCallCount, 1);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pump();
+          expect(cap.videoCalls, hasLength(1));
+          expect(gateway.requestCallCount, 0);
+          await tester.tap(find.byKey(const ValueKey('camera-result-dismiss')));
+          await tester.pump();
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+        }, micPermission: gateway);
+      },
+    );
+
+    for (final failure in [
+      ForegroundCallCameraFailure.permissionRestricted,
+      ForegroundCallCameraFailure.unavailable,
+    ]) {
+      testWidgets('$failure has no Settings or hearing claim', (tester) async {
+        final cap =
+            _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              )
+              ..videoResult = () async => ForegroundCallActionResult(
+                ForegroundCallActionStatus.unavailable,
+                cameraFailure: failure,
+              );
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('camera-result-settings')),
+            findsNothing,
+          );
+          expect(
+            find.text(l10n.call_video_camera_permission_body_without_audio),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('camera-result-dismiss')),
+            findsOneWidget,
+          );
+        }, micPermission: FakeMicPermissionGateway());
+      });
+    }
+
+    testWidgets(
+      'hearing sentence follows current audio truth while card remains visible',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final audible = l10n.call_video_camera_permission_body(
+            'Alexandria Very Long Synthetic Contact Name',
+          );
+          expect(find.text(audible), findsOneWidget);
+          for (final muted in [true, false]) {
+            cap.emit(
+              _projection(
+                media: _video(camera: CallCameraState.off),
+                muted: muted,
+              ),
+            );
+            await tester.pump();
+            expect(
+              find.text(
+                muted
+                    ? l10n.call_video_camera_permission_body_without_audio
+                    : audible,
+              ),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                muted
+                    ? audible
+                    : l10n.call_video_camera_permission_body_without_audio,
+              ),
+              findsNothing,
+            );
+          }
+          cap.emit(
+            _projection(
+              media: _video(camera: CallCameraState.off, reconnecting: true),
+              state: CallState.reconnecting,
+            ),
+          );
+          await tester.pump();
+          expect(find.text(audible), findsNothing);
+        });
+      },
+    );
+
+    for (final replacement in [
+      'successor',
+      'generation',
+      'end',
+      'capability',
+    ]) {
+      testWidgets(
+        'late denial cannot cross $replacement or retain old Settings action',
+        (tester) async {
+          final gateway = FakeMicPermissionGateway();
+          final cap = _VideoCapability(
+            _projection(media: _video(camera: CallCameraState.off)),
+          )..videoResult = () async => _cameraDenied;
+          _VideoCapability? successor;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            final oldSettings = tester
+                .widget<FilledButton>(
+                  find.byKey(const ValueKey('camera-result-settings')),
+                )
+                .onPressed!;
+            final pending = Completer<ForegroundCallActionResult>();
+            cap.videoResult = () => pending.future;
+            await _feedbackTap(tester, cap);
+            if (replacement == 'capability') {
+              successor = _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              );
+              await tester.pumpWidget(_app(successor!, micPermission: gateway));
+            } else {
+              cap.emit(
+                _projection(
+                  callId: replacement == 'successor' ? _callB : _callA,
+                  generation: replacement == 'generation' ? 8 : 7,
+                  state: replacement == 'end'
+                      ? CallState.ended
+                      : CallState.connected,
+                  media: _video(camera: CallCameraState.off),
+                ),
+              );
+              await tester.pump();
+            }
+            oldSettings();
+            pending.complete(_cameraDenied);
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsNothing,
+            );
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(2));
+            expect(successor?.videoCalls ?? [], isEmpty);
+          }, micPermission: gateway);
+          await successor?.close();
+        },
+      );
+    }
+
+    testWidgets(
+      'new intent supersedes older feedback in the same call generation',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final pending = Completer<ForegroundCallActionResult>();
+          cap.videoResult = () => pending.future;
+          await _feedbackTap(tester, cap);
+          cap.videoResult = () async => const ForegroundCallActionResult(
+            ForegroundCallActionStatus.unavailable,
+            cameraFailure: ForegroundCallCameraFailure.unavailable,
+          );
+          await _feedbackTap(tester, cap);
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          pending.complete(_cameraDenied);
+          await tester.pump();
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+        });
+      },
+    );
+
+    testWidgets(
+      'generic stale result and a missing settings route remain safe',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('camera-result-settings')),
+            findsNothing,
+          );
+          cap.videoResult = () async => ForegroundCallActionResult.unavailable;
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+          expect(find.text(l10n.call_video_camera_unavailable), findsNothing);
+        });
+      },
+    );
+  });
 
   for (final media in [CallMediaKind.video, CallMediaKind.audio]) {
     testWidgets('U6-entry initial $media answer reaches exact owner once', (

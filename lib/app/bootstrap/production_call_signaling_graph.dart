@@ -185,6 +185,8 @@ final class ProductionCallSignalingGraph
     Future<bool> Function()? checkCameraPermission,
     bool Function()? isForeground,
     Future<bool> Function()? requestCameraPermission,
+    Future<permissions.PermissionStatus> Function()?
+    requestCameraPermissionStatus,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -195,8 +197,9 @@ final class ProductionCallSignalingGraph
        _nowMs = nowMs,
        _isVideoForeground = isForeground ?? (() => true),
        _checkCameraPermission = checkCameraPermission ?? (() async => false),
-       _requestCameraPermission =
-           requestCameraPermission ?? (() async => false) {
+       _requestCameraPermission = requestCameraPermissionStatus == null
+           ? requestCameraPermission ?? (() async => false)
+           : (() async => (await requestCameraPermissionStatus()).isGranted) {
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
         videoEnabled: true,
