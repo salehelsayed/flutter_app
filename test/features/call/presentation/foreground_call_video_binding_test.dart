@@ -238,6 +238,7 @@ Widget _app(
   Widget? retainedChild,
   bool rootBuilder = false,
   MicPermissionGateway? micPermission,
+  DateTime Function()? now,
 }) {
   final retained =
       retainedChild ??
@@ -248,7 +249,7 @@ Widget _app(
     loadContactDisplayName: (_) async => locale.languageCode == 'ar'
         ? 'اسم صديق تجريبي طويل للغاية'
         : 'Alexandria Very Long Synthetic Contact Name',
-    now: () => _now,
+    now: now ?? () => _now,
     child: child,
   );
   return MaterialApp(
@@ -2581,4 +2582,337 @@ void main() {
       },
     );
   });
+  _vui6Tests();
+}
+
+ForegroundCallProjection _vui6Projection({
+  required DateTime? connectedAt,
+  int generation = 7,
+  int textureId = 41,
+}) {
+  final base = _pipProjection(
+    generation: generation,
+    view: CallVideoView(textureId: textureId, width: 1280, height: 720),
+  );
+  return ForegroundCallProjection(
+    session: base.session.copyWith(connectedAt: connectedAt),
+    audio: base.audio,
+    video: base.video,
+  );
+}
+
+Future<void> _vui6WithOverlay(
+  WidgetTester tester,
+  _VideoCapability capability,
+  Future<void> Function(AppLocalizations, String) body, {
+  String language = 'en',
+  double scale = 1,
+  Size size = const Size(390, 844),
+  DateTime Function()? now,
+}) async {
+  _viewport(tester, size.width, size.height);
+  addTearDown(tester.view.resetViewInsets);
+  final locale = Locale(language);
+  try {
+    await tester.pumpWidget(
+      _app(capability, locale: locale, scale: scale, now: now),
+    );
+    await tester.pump();
+    await tester.pump();
+    final screen = tester.widget<ActiveCallScreen>(
+      find.byType(ActiveCallScreen),
+    );
+    expect(
+      screen.videoPresentation,
+      same(capability.current!.video!.presentation),
+    );
+    await body(lookupAppLocalizations(locale), screen.contactUsername);
+    expect(tester.takeException(), isNull);
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(
+      () => capability.close().timeout(const Duration(seconds: 5)),
+    );
+  }
+}
+
+Finder _vui6TileText(String text) => find.descendant(
+  of: find.byKey(const ValueKey('call-pip-tile')),
+  matching: find.text(text),
+);
+
+void _vui6ExpectMetadata(
+  WidgetTester tester,
+  AppLocalizations l10n,
+  String name, {
+  String? duration,
+}) {
+  final tile = find.byKey(const ValueKey('call-pip-tile'));
+  expect(tile, findsOneWidget);
+  // The existing return bar already has these values; only the tile is new.
+  final tileName = _vui6TileText(name);
+  expect(tileName, findsOneWidget);
+  if (duration != null) expect(_vui6TileText(duration), findsOneWidget);
+  final caption = _vui6TileText(l10n.call_video_return_caption);
+  expect(caption, findsOneWidget);
+  expect(tester.getSemantics(tileName).label, contains(name));
+  expect(find.byType(CallReturnBar), findsOneWidget);
+  final tileRect = tester.getRect(tile);
+  final frame = tester.getRect(find.byKey(const ValueKey('call-pip-view')));
+  expect(frame.height, greaterThan(frame.width));
+  for (final finder in [
+    tileName,
+    caption,
+    if (duration != null) _vui6TileText(duration),
+  ]) {
+    final bounds = tester.getRect(finder);
+    expect(bounds.left, greaterThanOrEqualTo(tileRect.left));
+    expect(bounds.right, lessThanOrEqualTo(tileRect.right));
+    expect(bounds.top, greaterThanOrEqualTo(tileRect.top));
+    expect(bounds.bottom, lessThanOrEqualTo(tileRect.bottom));
+  }
+  for (final (key, label) in [
+    ('call-pip-restore', l10n.call_return),
+    ('call-pip-end', l10n.call_end),
+  ]) {
+    final action = find.byKey(ValueKey(key));
+    final bounds = tester.getRect(action);
+    expect(bounds.width, greaterThanOrEqualTo(48));
+    expect(bounds.height, greaterThanOrEqualTo(48));
+    expect(bounds.left, greaterThanOrEqualTo(tileRect.left));
+    expect(bounds.right, lessThanOrEqualTo(tileRect.right));
+    expect(bounds.top, greaterThanOrEqualTo(tileRect.top));
+    expect(bounds.bottom, lessThanOrEqualTo(tileRect.bottom));
+    expect(action.hitTestable(), findsOneWidget);
+    final node = tester.getSemantics(action);
+    expect(
+      node.tooltip.isNotEmpty ? node.tooltip : node.label,
+      contains(label),
+    );
+  }
+  final endNode = tester.getSemantics(
+    find.bySemanticsIdentifier('call_pip_end'),
+  );
+  expect(endNode.label, l10n.call_end);
+}
+
+void _vui6ExpectViewport(WidgetTester tester) {
+  final bounds = tester.getRect(find.byKey(const ValueKey('call-pip-tile')));
+  final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final keyboard = tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
+  expect(bounds.left, greaterThanOrEqualTo(0));
+  expect(bounds.right, lessThanOrEqualTo(size.width));
+  expect(bounds.top, greaterThanOrEqualTo(56));
+  expect(bounds.bottom, lessThanOrEqualTo(size.height - keyboard));
+}
+
+Future<void> _vui6DrawProjection(
+  WidgetTester tester,
+  _VideoCapability capability,
+) async {
+  await tester.pump();
+  await tester.pump();
+  final current = capability.current!;
+  final bar = tester.widget<CallReturnBar>(find.byType(CallReturnBar));
+  expect(bar.connectedAt, current.session.connectedAt);
+  // This is existing public renderer behavior and confirms the emitted frame.
+  expect(_viewTextureIds(tester), [current.video!.remoteView!.textureId]);
+}
+
+void _vui6Tests() {
+  testWidgets(
+    'VUI6 minimized tile owns portrait name duration and Return caption',
+    (tester) async {
+      final initial = _vui6Projection(
+        connectedAt: _now.subtract(const Duration(seconds: 65)),
+      );
+      final capability = _VideoCapability(initial);
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+        _vui6ExpectViewport(tester);
+        expect(_viewTextureIds(tester), [41]);
+        expect(capability.current, same(initial));
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+      });
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  testWidgets(
+    'VUI6 clock advances without projection and survives generation and restore',
+    (tester) async {
+      var now = _now;
+      final origin = now.subtract(const Duration(seconds: 65));
+      final initial = _vui6Projection(connectedAt: origin);
+      final capability = _VideoCapability(initial);
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+        now = now.add(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_vui6TileText('01:07'), findsOneWidget);
+        expect(capability.current, same(initial));
+        expect(
+          find.descendant(
+            of: find.byType(CallReturnBar),
+            matching: find.textContaining('01:07'),
+          ),
+          findsOneWidget,
+        );
+        final next = _vui6Projection(
+          connectedAt: origin,
+          generation: 8,
+          textureId: 53,
+        );
+        capability.emit(next);
+        await _vui6DrawProjection(tester, capability);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:07');
+        now = now.add(const Duration(seconds: 3));
+        await tester.pump(const Duration(seconds: 3));
+        expect(_vui6TileText('01:10'), findsOneWidget);
+        await tester.tap(_vui6TileText(l10n.call_video_return_caption));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(ActiveCallScreen), findsOneWidget);
+        now = now.add(const Duration(seconds: 4));
+        await tester.pump(const Duration(seconds: 4));
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:14');
+        expect(capability.current, same(next));
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 3));
+        expect(tester.takeException(), isNull);
+      }, now: () => now);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  for (final (label, connectedAt, expected) in <(String, DateTime?, String?)>[
+    ('no connected timestamp', null, null),
+    (
+      'future connected timestamp',
+      _now.add(const Duration(seconds: 30)),
+      '00:00',
+    ),
+    (
+      'more than one hour',
+      _now.subtract(const Duration(seconds: 3661)),
+      '1:01:01',
+    ),
+  ]) {
+    testWidgets('VUI6 $label has truthful elapsed text', (tester) async {
+      final capability = _VideoCapability(
+        _vui6Projection(connectedAt: connectedAt),
+      );
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: expected);
+        if (expected == null) {
+          final texts = tester.widgetList<Text>(
+            find.descendant(
+              of: find.byKey(const ValueKey('call-pip-tile')),
+              matching: find.byType(Text),
+            ),
+          );
+          expect(
+            texts
+                .map((text) => text.data ?? '')
+                .where(
+                  (text) => RegExp(r'^\d+:\d{2}(?::\d{2})?$').hasMatch(text),
+                ),
+            isEmpty,
+          );
+        }
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets('VUI6 $language 320px2x caption and metadata stay readable', (
+      tester,
+    ) async {
+      final capability = _VideoCapability(
+        _vui6Projection(
+          connectedAt: _now.subtract(const Duration(seconds: 65)),
+        ),
+      );
+      await _vui6WithOverlay(
+        tester,
+        capability,
+        (l10n, name) async {
+          await _minimizePip(tester);
+          _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+          _vui6ExpectViewport(tester);
+          for (final finder in [
+            _vui6TileText(l10n.call_video_return_caption),
+            _vui6TileText('01:05'),
+          ]) {
+            final paragraph = tester.renderObject<RenderParagraph>(finder);
+            expect(paragraph.didExceedMaxLines, isFalse);
+            expect(
+              paragraph.textDirection,
+              language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+            );
+          }
+          final caption = _vui6TileText(l10n.call_video_return_caption);
+          expect(caption.hitTestable(), findsOneWidget);
+          await tester.tap(caption);
+          await tester.pump();
+          await tester.pump();
+          expect(find.byType(ActiveCallScreen), findsOneWidget);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(capability.videoCalls, isEmpty);
+          expect(capability.audioCalls, isEmpty);
+        },
+        language: language,
+        scale: 2,
+        size: const Size(320, 640),
+      );
+    }, timeout: const Timeout.factor(1));
+  }
+
+  testWidgets('VUI6 portrait drag reclamps after resize and keyboard', (
+    tester,
+  ) async {
+    final capability = _VideoCapability(
+      _vui6Projection(connectedAt: _now.subtract(const Duration(seconds: 65))),
+    );
+    await _vui6WithOverlay(tester, capability, (l10n, name) async {
+      await _minimizePip(tester);
+      _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+      final tile = find.byKey(const ValueKey('call-pip-tile'));
+      final frame = find.byKey(const ValueKey('call-pip-view'));
+      await tester.drag(frame, const Offset(1000, 1000));
+      await tester.pump();
+      _vui6ExpectViewport(tester);
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 120);
+      await tester.pump();
+      await tester.pump();
+      _vui6ExpectViewport(tester);
+      final gesture = await tester.startGesture(tester.getCenter(frame));
+      // Admit the drag before measuring its next delta; touch slop is not UI motion.
+      await gesture.moveBy(const Offset(-30, -30));
+      await tester.pump();
+      final clamped = tester.getRect(tile);
+      await gesture.moveBy(const Offset(-20, -20));
+      await tester.pump();
+      final moved = tester.getRect(tile);
+      await gesture.up();
+      expect(moved.left, closeTo((clamped.left - 20).clamp(0, 320), 1));
+      expect(moved.top, closeTo((clamped.top - 20).clamp(56, 520), 1));
+      _vui6ExpectViewport(tester);
+      for (final key in ['call-pip-restore', 'call-pip-end']) {
+        expect(find.byKey(ValueKey(key)).hitTestable(), findsOneWidget);
+      }
+      expect(capability.videoCalls, isEmpty);
+      expect(capability.audioCalls, isEmpty);
+    });
+  }, timeout: const Timeout.factor(1));
 }
