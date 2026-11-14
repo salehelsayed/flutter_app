@@ -12244,21 +12244,51 @@ visible and cannot become an ordinary first-attempt PASS.
   (`getSenders`, exact `senderId`, this connection only), rechecks grant, tier
   and owner after the await, and caps only exactly one fresh native encoding,
   keeping its negotiated fields and fresh transactionId. Fresh zero or several
-  encodings, a missing or ambiguous sender, a read error, a lost grant, several
-  cached encodings stop before a parameter write; a refused parameter write
-  also leaves the camera disabled. Debug-only
+  encodings, a missing or ambiguous sender, a read error, a lost grant and
+  several cached encodings stop before any parameter write; a refreshed sender
+  whose setParameters returns false or throws has had its write attempted and
+  still stops with the track kept disabled. Debug-only
   lines: `[CAMERA] encodings_refresh cached=<n> fresh=<n>` and one fixed-field
   `[VIDEO] sdp phase=create|local|remote` summary per created/applied SDP
   (video section count, rejected count, per-section direction with the
   session-level fallback, msid/ssrc presence, cached sender track); no raw SDP,
-  ids or addresses, no native read. RED `8cd037d31` failed only the two
-  stale-cache cases and the fresh-count diagnostic (30 pass); RED `b57e7386f`
-  failed only the three parser cases and the create/local/remote line (8 pass).
-  GREEN `dab841f24` passed 111/111 over five host files with three clean
-  identity checkpoints. The closed empty-layout refusal test was replaced by
+  ids or addresses, no native read. RED `8cd037d31` had 30 passes and 3 widget
+  reporter errors (isFailure false, each with a correlated TestFailure): the two
+  stale-cache cases and the fresh-count diagnostic. RED `b57e7386f` had 8
+  passes, 3 assertion failures (the parser cases) and 1 such widget error (the
+  create/local/remote line). GREEN `dab841f24` passed 111/111 over five host
+  files with three clean identity checkpoints (before setup, after setup, after
+  run) and 30 pin checks. The closed empty-layout refusal test was replaced by
   these cases as an approved rule change. Host evidence only: the Pixel camera
   start, the actual fresh native count and the initial-video SDP shape need the
   build 267 device run.
+  **V2 recovery transport classification and diagnostics:** the production
+  v2 signaling adapter can throw `CallSignalingException.transportUnavailable`;
+  catching only `CallNegotiationPortException.transportUnavailable` lets that
+  transient error reach generic negotiation failure. Recovery now classifies
+  both typed transport failures, preserving the same signal, existing 500 ms
+  retry and original recovery deadline. Other signaling errors remain fatal;
+  retired work cannot terminate or retry a successor. Only the caller starts
+  native ICE restart; the callee requests it. The v1 path is unchanged.
+  Debug builds emit `CALL_V2_RECOVERY_FAILED` at the current generic failure
+  boundary with one of 14 fixed recovery stages and an allowlisted exception
+  type (unknown types become `other`). No exception messages, call identifiers,
+  addresses or SDP are logged. Logging cannot alter failure handling.
+  RED `e90cdebcc4f6d9f4fd8bbe9e081fe333b6695b30` passed four fatal/retirement
+  controls and failed six assertions: four premature terminal transitions for
+  transport outages in both roles, and two missing sanitized diagnostic lines.
+  GREEN `689d0f07383a0e495e0ead7a9b741477b46417a7` preserves the entire RED
+  test tree. Claude-UI passed 121 v2 executor and 515 preservation cases (636
+  total), including all ten additions, with zero failures/errors/skips/loader
+  failures, reporter success and child exits 0. Five clean GREEN identity
+  boundaries verified 75 file pins; three RED boundaries verified 27. Both
+  offline locked setups exited 0. Source review passed; evidence/raw hashes are
+  indexed by `red-runtime-verified.json` and `green-runtime-verified.json` in
+  `/Users/I560101/.codex/investigations/v2-recovery-transport-20261114/`.
+  A failed preparation identity remains retired with its cached failed future;
+  retry classification must not recreate that identity. Such failures can wait
+  only until the original deadline. This is not a full network-handover fix:
+  device survival and the broader seven selected checks remain separate/unrun.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
