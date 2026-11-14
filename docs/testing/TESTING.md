@@ -12170,6 +12170,29 @@ visible and cannot become an ordinary first-attempt PASS.
   Packets and independently checked raw hashes/exits are indexed by
   `/Users/I560101/.codex/investigations/bl16-upgrade-projection-20261114/green-runtime-verified.json`
   and `red-runtime-verified.json` in that directory.
+  **Video-upgrade outcome notices (VUI3b):** use the machine's immutable outcome
+  for the exact validated current request, never infer decline from a retained
+  request or terminal phase. Explicit decline, unanswered decision expiry and
+  genuine cancellation are distinct; selected negotiation timeout is not request
+  expiry. Late-accept expiry reaches the existing change callback even when the
+  accept is rejected. Cancellation witnesses/replays preserve the first outcome.
+  The overlay's three-second notice consumes capability/call/video-generation/
+  request identity; duplicate refreshes, withdrawal/return and remount must not
+  restart or resurrect it. New requests, End and successor owners clear display.
+  Adopted RED `428f87eea` completed 63 cases: 18 passed, 18 failed and 27 widget
+  reporter ERROR results, each a missing-banner `TestFailure`; retain those
+  classifications. GREEN `288c25f48` preserved the RED test tree and passed all
+  63 causal plus 491 preservation executions (554 executions, not a unique-case
+  census), with no failures/errors/skips and analysis exit 0/no issues. Eight
+  clean identity checkpoints supplied 304 matching individual pin observations.
+  Real-graph widget fixtures must drain registered shutdown work across fake
+  and real zones: bounded pumping, a real-time cleanup bound and per-resource
+  cleanup fixed this fixture, not production shutdown. Original `30996a4e4`
+  incomplete evidence and its one author probe remain retained; `ad4` was UNRUN.
+  Integrated VUI1–3b broad checks and native/device proof remain separate.
+  Verified packet:
+  `/Users/I560101/.codex/investigations/batch9-video-ui-20261114/codex-vui3b-final-focused-verdict-288c25f48.json`
+  (SHA-256 `fb522417d36e3f00d60d76fb4bffe5c6d96801a8f4feed3bb1232dc2a603b779`).
   **V2 terminal delivery through cleanup and shutdown:** a terminate/reject
   admitted by the active terminal call captures its exact terminal snapshot
   before asynchronous authorization. Its own context purge and active-session
