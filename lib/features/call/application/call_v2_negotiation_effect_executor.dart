@@ -606,6 +606,8 @@ final class CallV2NegotiationEffectExecutor
           baseRevision: p['base_revision']! as int,
           revision: p['media_revision']! as int,
           remote: true,
+          fromCaller: remoteIsCaller,
+          deadlineMs: _monotonicMs + min(signal.expiresAtMs - _nowMs, 30000),
           reason: MediaSwitchAbortReason.values.byName(p['reason']! as String),
         );
       default:
@@ -629,7 +631,9 @@ final class CallV2NegotiationEffectExecutor
         id == owner.machine.selectedSwitchId &&
             (signal.payload['purpose'] == 'media_switch' ||
                 signal.payload['purpose'] == 'media_repair'),
-      CallSignalV2Type.mediaAbort ||
+      CallSignalV2Type.mediaAbort =>
+        id == owner.machine.selectedSwitchId ||
+            id == owner.machine.currentSwitchId,
       CallSignalV2Type.mediaCommit ||
       CallSignalV2Type.mediaCommitAck => id == owner.machine.selectedSwitchId,
       _ => false,

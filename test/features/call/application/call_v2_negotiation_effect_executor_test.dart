@@ -36,6 +36,100 @@ const _configuration = CallConnectionConfiguration(
 );
 
 void main() {
+  for (final beforeRequest in [true, false]) {
+    test(
+      'BL16-CANCEL authenticated remote abort suppresses prompt beforeRequest=$beforeRequest',
+      () async {
+        final h = _Rig(incoming: true, media: CallMediaKind.audio);
+        addTearDown(h.close);
+        await h.connect();
+        final request = h.switchWire('media_request', {
+          'switch_id': _otherNegotiation,
+          'base_revision': 0,
+          'target_media': 'video',
+          'camera': 'off',
+        });
+        final abort = h.switchWire('media_abort', {
+          'switch_id': _otherNegotiation,
+          'base_revision': 0,
+          'media_revision': 1,
+          'media': 'audio',
+          'reason': 'cancelled',
+        });
+        if (!beforeRequest) {
+          h.admit(request);
+          await h.owner.workSettled;
+        }
+        expect(h.admit(abort), IncomingCallSignalOutcome.accepted);
+        await h.owner.workSettled;
+        if (beforeRequest) {
+          h.admit(request);
+          await h.owner.workSettled;
+        }
+        final decline = h.sent
+            .where(
+              (s) =>
+                  s.event == CallSignalV2Type.mediaResponse &&
+                  s.payload['decision'] == 'decline',
+            )
+            .single;
+        expect(h.owner.mediaSwitch!.machine.phase, MediaSwitchPhase.declined);
+        expect(h.owner.mediaSwitch!.machine.settledRevision, 0);
+        h.admit(request);
+        await h.owner.workSettled;
+        expect(
+          h.sent
+              .where((s) => s.event == CallSignalV2Type.mediaResponse)
+              .every((s) => s.messageId == decline.messageId),
+          isTrue,
+        );
+        expect(h.owner.mediaSwitch!.machine.videoGatesOpen, isFalse);
+      },
+    );
+  }
+
+  test(
+    'BL16-CANCEL selected responder replays original acceptance identity',
+    () async {
+      final h = _Rig(incoming: true, media: CallMediaKind.audio);
+      addTearDown(h.close);
+      await h.connect();
+      await h.selectVideoSwitch();
+      final accepted = h.sent.singleWhere(
+        (s) =>
+            s.event == CallSignalV2Type.mediaResponse &&
+            s.payload['decision'] == 'accept',
+      );
+      final abort = h.switchWire('media_abort', {
+        'switch_id': _otherNegotiation,
+        'base_revision': 0,
+        'media_revision': 1,
+        'media': 'audio',
+        'reason': 'cancelled',
+      });
+      expect(h.admit(abort), IncomingCallSignalOutcome.accepted);
+      await h.owner.workSettled;
+      final accepts = h.sent
+          .where(
+            (s) =>
+                s.event == CallSignalV2Type.mediaResponse &&
+                s.payload['decision'] == 'accept',
+          )
+          .toList();
+      expect(accepts.length, greaterThanOrEqualTo(2));
+      expect(
+        accepts.every(
+          (s) =>
+              s.messageId == accepted.messageId &&
+              s.expiresAtMs == accepted.expiresAtMs,
+        ),
+        isTrue,
+      );
+      expect(h.owner.mediaSwitch!.machine.settledMedia, CallMediaKind.audio);
+      expect(h.owner.mediaSwitch!.machine.videoGatesOpen, isFalse);
+    },
+  );
+
   for (final incoming in [false, true]) {
     for (final state in CallCameraState.values) {
       test('U3j-S receives camera ${state.name} incoming=$incoming', () async {

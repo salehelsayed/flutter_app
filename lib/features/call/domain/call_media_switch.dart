@@ -106,6 +106,8 @@ final class MediaSwitchDecision {
   final List<MediaSwitchEffect> effects;
 }
 
+enum _Cancellation { awaitingWitness, declined, accepted, disabled }
+
 final class _Transaction {
   _Transaction(
     this.request,
@@ -123,6 +125,8 @@ final class _Transaction {
   bool answerApplied = false;
   MediaSwitchDescription? pendingDescription;
   MediaSwitchEffect? lastResult;
+  MediaSwitchEffect? originalResponse;
+  _Cancellation? cancellation;
   int get revision => request.baseRevision + 1;
   bool get open => switch (phase) {
     MediaSwitchPhase.decision ||
@@ -144,17 +148,21 @@ final class CallMediaSwitchMachine {
     required CallMediaKind settledMedia,
     int settledRevision = 0,
     required int Function() nowMs,
+    this.maximumTransactions = 128,
   }) : _settledMedia = settledMedia,
        _settledRevision = settledRevision,
        _videoGatesOpen = settledMedia == CallMediaKind.video,
        _nowMs = nowMs;
 
+  final int maximumTransactions;
   final bool localIsCaller;
   final CallWireVersion wireVersion;
   final bool videoEnabled;
   final bool connected;
   final int Function() _nowMs;
   final Map<String, _Transaction> _transactions = {};
+  final Map<String, ({int base, bool requesterIsCaller, int deadline})>
+  _earlyCancellations = {};
   _Transaction? _current;
   _Transaction? _latestSelected;
   CallMediaKind _settledMedia;
@@ -175,7 +183,37 @@ final class CallMediaSwitchMachine {
   bool get videoGatesOpen => _videoGatesOpen;
   bool get switchingDisabled => _switchingDisabled;
   bool get terminal => _terminal;
-  bool get requiresReconciliation => _requiresReconciliation;
+  bool get requiresReconciliation =>
+      _requiresReconciliation ||
+      _current?.cancellation == _Cancellation.awaitingWitness;
+
+  bool cancellationSelected(String id) =>
+      _transactions[id]?.cancellation == _Cancellation.accepted;
+
+  bool cancellationPending(String id) =>
+      _transactions[id]?.cancellation == _Cancellation.awaitingWitness;
+
+  bool originalCancellationResponse(MediaSwitchEffect effect) {
+    final t = _transactions[effect.switchId];
+    final original = t?.originalResponse;
+    return t?.cancellation == _Cancellation.accepted &&
+        t?.request.requesterIsCaller != localIsCaller &&
+        original != null &&
+        original.response == MediaSwitchResponse.accept &&
+        effect.response == original.response &&
+        effect.camera == original.camera &&
+        effect.baseRevision == original.baseRevision &&
+        effect.revision == original.revision &&
+        effect.deadlineMs == original.deadlineMs &&
+        cancellationResultCurrent(effect.switchId);
+  }
+
+  bool cancellationResultCurrent(String id) =>
+      !_terminal &&
+      !_switchingDisabled &&
+      _current?.request.id == id &&
+      _current?.cancellation != null &&
+      _nowMs() < _current!.deadline;
   String? get currentSwitchId => _current?.request.id;
 
   /// The existing immutable request; reading it does not advance the machine.
@@ -191,6 +229,8 @@ final class CallMediaSwitchMachine {
       stageDeadlineMs,
       _repairDeadline,
       _reconciliationDeadline,
+      if (_current?.cancellation == _Cancellation.awaitingWitness)
+        _current!.deadline,
     ].whereType<int>();
     return deadlines.isEmpty ? null : deadlines.reduce(_min);
   }
@@ -213,12 +253,17 @@ final class CallMediaSwitchMachine {
     kind,
     switchId: t.request.id,
     baseRevision: t.request.baseRevision,
-    revision: t.selected ? t.revision : t.request.baseRevision,
-    media: t.phase == MediaSwitchPhase.aborted
+    revision: t.selected || kind == MediaSwitchEffectKind.sendAbort
+        ? t.revision
+        : t.request.baseRevision,
+    media:
+        kind == MediaSwitchEffectKind.sendAbort ||
+            t.phase == MediaSwitchPhase.aborted
         ? CallMediaKind.audio
         : t.request.target,
     deadlineMs: switch (kind) {
-      MediaSwitchEffectKind.sendAbort => _nowMs() + 30000,
+      MediaSwitchEffectKind.sendAbort =>
+        t.cancellation != null ? t.deadline : _nowMs() + 30000,
       MediaSwitchEffectKind.repairAudio ||
       MediaSwitchEffectKind.awaitAudioRepair ||
       MediaSwitchEffectKind.rollbackOffer => _repairDeadline ?? t.deadline,
@@ -239,12 +284,16 @@ final class CallMediaSwitchMachine {
   }) {
     final effect = _effect(t, kind, response: response, reason: reason);
     t.lastResult = effect;
+    if (kind == MediaSwitchEffectKind.sendResponse) {
+      t.originalResponse ??= effect;
+    }
     out.add(effect);
   }
 
   void _replay(_Transaction t, List<MediaSwitchEffect> out) {
     final recorded = t.lastResult;
     if (recorded == null) return;
+    if (recorded.deadlineMs <= _nowMs() && t.cancellation != null) return;
     if (recorded.kind == MediaSwitchEffectKind.sendAbort &&
         recorded.deadlineMs <= _nowMs()) {
       // A corrective abort gets a fresh bounded delivery envelope only. Its
@@ -257,6 +306,11 @@ final class CallMediaSwitchMachine {
       );
       return;
     }
+    _replayResult(recorded, out);
+  }
+
+  void _replayResult(MediaSwitchEffect recorded, List<MediaSwitchEffect> out) {
+    if (_nowMs() >= recorded.deadlineMs) return;
     out.add(
       MediaSwitchEffect(
         MediaSwitchEffectKind.replayRecorded,
@@ -338,7 +392,16 @@ final class CallMediaSwitchMachine {
       return MediaSwitchDecision(false, out);
     }
     final now = _nowMs();
-    final deadline = _min(request.deadlineMs, request.createdAtMs + 30000);
+    if (_transactions.length + _earlyCancellations.length >=
+            maximumTransactions &&
+        !_earlyCancellations.containsKey(request.id)) {
+      return MediaSwitchDecision(false, out);
+    }
+    final early = _earlyCancellations[request.id];
+    final deadline = _min(
+      _min(request.deadlineMs, request.createdAtMs + 30000),
+      early?.deadline ?? request.deadlineMs,
+    );
     final t = _Transaction(
       request,
       deadline,
@@ -370,7 +433,26 @@ final class CallMediaSwitchMachine {
             request.camera != CallCameraState.off)) {
       return reject(MediaSwitchResponse.stale);
     }
-    if (negotiationBusy || _repairId != null || _requiresReconciliation) {
+    if (early != null) {
+      if (local ||
+          early.base != request.baseRevision ||
+          early.requesterIsCaller != request.requesterIsCaller) {
+        return reject(MediaSwitchResponse.stale);
+      }
+      _earlyCancellations.remove(request.id);
+      _transactions[request.id] = t;
+      t.cancellation = _Cancellation.declined;
+      _retire(t, MediaSwitchPhase.declined, out);
+      _send(
+        t,
+        MediaSwitchEffectKind.sendResponse,
+        out,
+        response: MediaSwitchResponse.decline,
+      );
+      _current ??= t;
+      return MediaSwitchDecision(true, out);
+    }
+    if (negotiationBusy || _repairId != null || requiresReconciliation) {
       return reject(MediaSwitchResponse.busy);
     }
     if (pending != null && pending.open) {
@@ -426,13 +508,43 @@ final class CallMediaSwitchMachine {
         t == null ||
         t.request.id != id ||
         t.request.baseRevision != baseRevision ||
-        fromCaller == t.request.requesterIsCaller ||
-        t.phase != MediaSwitchPhase.decision) {
+        fromCaller == t.request.requesterIsCaller) {
       return MediaSwitchDecision(false, out);
     }
     if ((response != MediaSwitchResponse.accept ||
             t.request.target == CallMediaKind.audio) &&
         camera != CallCameraState.off) {
+      return MediaSwitchDecision(false, out);
+    }
+    if (t.cancellation != null &&
+        t.request.requesterIsCaller == localIsCaller) {
+      if (fromCaller == localIsCaller ||
+          _switchingDisabled ||
+          response != MediaSwitchResponse.accept &&
+              response != MediaSwitchResponse.decline) {
+        return MediaSwitchDecision(false, out);
+      }
+      final witness = response == MediaSwitchResponse.accept
+          ? _Cancellation.accepted
+          : _Cancellation.declined;
+      if (t.cancellation != _Cancellation.awaitingWitness) {
+        if (t.cancellation != witness &&
+            t.cancellation != _Cancellation.disabled) {
+          t.cancellation = _Cancellation.disabled;
+          _disable(t, out);
+        }
+        return MediaSwitchDecision(false, out);
+      }
+      t.cancellation = witness;
+      if (witness == _Cancellation.accepted) {
+        // The original acceptance proves selection, never fresh camera consent.
+        t.selected = true;
+        _latestSelected = t;
+        _abort(t, out, MediaSwitchAbortReason.cancelled, forceRepair: true);
+      }
+      return MediaSwitchDecision(true, out);
+    }
+    if (t.phase != MediaSwitchPhase.decision) {
       return MediaSwitchDecision(false, out);
     }
     if (fromCaller == localIsCaller) {
@@ -607,8 +719,9 @@ final class CallMediaSwitchMachine {
   void _abort(
     _Transaction t,
     List<MediaSwitchEffect> out,
-    MediaSwitchAbortReason reason,
-  ) {
+    MediaSwitchAbortReason reason, {
+    bool forceRepair = false,
+  }) {
     if (t.phase == MediaSwitchPhase.aborted) return;
     final pending = _current;
     if (pending != null && !identical(pending, t) && pending.open) {
@@ -626,10 +739,19 @@ final class CallMediaSwitchMachine {
     // exact result now, independently of the fixed native repair budget.
     _reconciliationId = t.request.id;
     _reconciliationDeadline = t.lastResult!.deadlineMs;
-    if (t.answerApplied || t.offerApplied || t.pendingDescription != null) {
+    if (forceRepair ||
+        t.answerApplied ||
+        t.offerApplied ||
+        t.pendingDescription != null) {
       _repairId = t.request.id;
       _repairDeadline = _nowMs() + 15000;
-      _rollbackPending = !t.answerApplied || t.pendingDescription != null;
+      _rollbackPending =
+          forceRepair &&
+              !t.offerApplied &&
+              !t.answerApplied &&
+              t.pendingDescription == null
+          ? false
+          : !t.answerApplied || t.pendingDescription != null;
       if (!_rollbackPending) {
         out.add(
           _effect(
@@ -650,27 +772,96 @@ final class CallMediaSwitchMachine {
     required int baseRevision,
     required int revision,
     bool remote = false,
+    bool? fromCaller,
+    int? deadlineMs,
     MediaSwitchAbortReason reason = MediaSwitchAbortReason.cancelled,
   }) {
     final out = _advance();
     if (_terminal) return MediaSwitchDecision(false, out);
+    final senderIsCaller =
+        fromCaller ?? (remote ? !localIsCaller : localIsCaller);
+    if (senderIsCaller != (remote ? !localIsCaller : localIsCaller)) {
+      return MediaSwitchDecision(false, out);
+    }
     final t = _transactions[id];
-    if (t == null ||
-        t.request.baseRevision != baseRevision ||
-        t.revision != revision) {
+    if (t == null) {
+      final now = _nowMs();
+      final deadline = _min(deadlineMs ?? now + 30000, now + 30000);
+      if (!remote ||
+          reason != MediaSwitchAbortReason.cancelled ||
+          !_available ||
+          id.isEmpty ||
+          baseRevision != _settledRevision ||
+          revision != baseRevision + 1 ||
+          deadline <= now ||
+          _transactions.length + _earlyCancellations.length >=
+              maximumTransactions) {
+        return MediaSwitchDecision(false, out);
+      }
+      final old = _earlyCancellations[id];
+      if (old != null) return MediaSwitchDecision(false, out);
+      // Inert, bounded identity custody only: no transaction, prompt or consent.
+      _earlyCancellations[id] = (
+        base: baseRevision,
+        requesterIsCaller: senderIsCaller,
+        deadline: deadline,
+      );
+      return MediaSwitchDecision(true, out);
+    }
+    if (t.request.baseRevision != baseRevision || t.revision != revision) {
       return MediaSwitchDecision(false, out);
     }
     if (!t.selected) {
-      if (remote || !t.open || !identical(t, _current)) {
+      if (reason != MediaSwitchAbortReason.cancelled) {
+        if (remote || !t.open || !identical(t, _current)) {
+          return MediaSwitchDecision(false, out);
+        }
+        _retire(t, MediaSwitchPhase.declined, out);
+        return MediaSwitchDecision(true, out);
+      }
+      if (senderIsCaller != t.request.requesterIsCaller ||
+          !identical(t, _current) ||
+          t.request.target != CallMediaKind.video ||
+          _switchingDisabled ||
+          _nowMs() >= t.deadline) {
         return MediaSwitchDecision(false, out);
       }
+      if (t.cancellation != null) {
+        _replay(t, out);
+        return MediaSwitchDecision(false, out);
+      }
+      if (!t.open) return MediaSwitchDecision(false, out);
       _retire(t, MediaSwitchPhase.declined, out);
+      if (remote) {
+        t.cancellation = _Cancellation.declined;
+        _send(
+          t,
+          MediaSwitchEffectKind.sendResponse,
+          out,
+          response: MediaSwitchResponse.decline,
+        );
+      } else {
+        t.cancellation = _Cancellation.awaitingWitness;
+        _send(t, MediaSwitchEffectKind.sendAbort, out, reason: reason);
+      }
       return MediaSwitchDecision(true, out);
     }
-    if (!identical(t, _latestSelected) || t.phase == MediaSwitchPhase.aborted) {
+    if (!identical(t, _latestSelected)) return MediaSwitchDecision(false, out);
+    final cancelledByRequester =
+        remote &&
+        reason == MediaSwitchAbortReason.cancelled &&
+        _nowMs() < t.deadline &&
+        senderIsCaller == t.request.requesterIsCaller &&
+        t.originalResponse?.response == MediaSwitchResponse.accept;
+    if (cancelledByRequester) {
+      t.cancellation = _Cancellation.accepted;
+      _replayResult(t.originalResponse!, out);
+    }
+    if (t.phase == MediaSwitchPhase.aborted) {
+      if (cancelledByRequester) _replay(t, out);
       return MediaSwitchDecision(false, out);
     }
-    _abort(t, out, reason);
+    _abort(t, out, reason, forceRepair: cancelledByRequester);
     return MediaSwitchDecision(true, out);
   }
 
@@ -688,7 +879,14 @@ final class CallMediaSwitchMachine {
     final out = <MediaSwitchEffect>[];
     if (_terminal) return out;
     final now = _nowMs();
+    _earlyCancellations.removeWhere((_, value) => now >= value.deadline);
     final t = _current;
+    if (t != null &&
+        t.cancellation == _Cancellation.awaitingWitness &&
+        now >= t.deadline) {
+      t.cancellation = _Cancellation.disabled;
+      _disable(t, out);
+    }
     if (t != null && t.open && now >= t.stageDeadline) {
       if (t.selected) {
         _abort(t, out, MediaSwitchAbortReason.timeout);
@@ -765,12 +963,14 @@ final class CallMediaSwitchMachine {
 
   MediaSwitchDecision reconnect() {
     final out = _advance();
-    final t = _latestSelected;
+    final t = _current?.cancellation == _Cancellation.awaitingWitness
+        ? _current
+        : _latestSelected;
     if (_terminal || t == null || t.lastResult == null) {
       return MediaSwitchDecision(false, out);
     }
     _replay(t, out);
-    if (!t.open) {
+    if (!t.open && t.cancellation != _Cancellation.awaitingWitness) {
       _requiresReconciliation = true;
       if (_reconciliationId == null) {
         _reconciliationId = t.request.id;
