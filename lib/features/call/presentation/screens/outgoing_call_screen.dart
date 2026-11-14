@@ -30,13 +30,15 @@ class OutgoingCallScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final status = _status(l10n);
 
     final video = videoPresentation;
     final onVideo = onVideoIntent;
     final hasVideo = video != null && video.isVisible && onVideo != null;
+    final colors = hasVideo
+        ? BackgroundReadableColors.dark
+        : context.backgroundReadableColors;
     final profile = <Widget>[
       UserAvatar(peerId: contactPeerId, size: 112),
       const SizedBox(height: 24),
@@ -79,34 +81,39 @@ class OutgoingCallScreen extends StatelessWidget {
       tooltip: l10n.call_cancel,
       onTap: onCancel,
       excludeSemantics: true,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            tooltip: l10n.call_cancel,
-            onPressed: onCancel,
-            icon: const Icon(Icons.call_end_rounded),
-            color: Colors.white,
-            iconSize: 30,
-            style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFFE5484D),
-              fixedSize: const Size.square(68),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onCancel,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: l10n.call_cancel,
+              onPressed: onCancel,
+              icon: const Icon(Icons.call_end_rounded),
+              color: Colors.white,
+              iconSize: 30,
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFFE5484D),
+                fixedSize: const Size.square(68),
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            l10n.btn_cancel,
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+            const SizedBox(height: 10),
+            Text(
+              l10n.btn_cancel,
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
     final videoLayout = hasVideo
         ? CallVideoScreenLayout(
+            preAnswer: true,
             profile: Semantics(
               container: true,
               explicitChildNodes: true,

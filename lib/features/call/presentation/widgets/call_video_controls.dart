@@ -21,8 +21,10 @@ class CallVideoControls extends StatelessWidget {
     required this.localCameraLabel,
     required this.remoteCameraLabel,
     required this.actionLabel,
+    this.preAnswer = false,
   });
 
+  final bool preAnswer;
   final CallVideoPresentation presentation;
   final Widget audioControls;
   final ValueChanged<CallVideoIntent> onIntent;
@@ -35,6 +37,12 @@ class CallVideoControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!presentation.isVisible) return audioControls;
+    if (preAnswer) {
+      return _buildEntryControls(
+        context,
+        CallVideoLocalizations(AppLocalizations.of(context)!),
+      );
+    }
     final colors = context.backgroundReadableColors;
     final audio = audioControls;
     if (presentation.acceptedMedia != null &&
@@ -137,6 +145,76 @@ class CallVideoControls extends StatelessWidget {
         // Optional video never owns audio availability or its callbacks.
         audioControls,
       ],
+    );
+  }
+
+  Widget _buildEntryControls(
+    BuildContext context,
+    CallVideoLocalizations labels,
+  ) {
+    final action = CallVideoAction.useAudioOnly;
+    final enabled = presentation.isAvailable(action);
+    void emit() {
+      if (!context.mounted) return;
+      final intent = presentation.intentFor(action);
+      if (intent != null) onIntent(intent);
+    }
+
+    return Semantics(
+      identifier: 'call_video_status',
+      container: true,
+      explicitChildNodes: true,
+      label: labels.statusLabel(presentation.status),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: audioControls),
+            if (presentation.actions.contains(action))
+              Expanded(
+                child: Semantics(
+                  key: ValueKey(action.identifier),
+                  identifier: action.identifier,
+                  button: true,
+                  enabled: enabled,
+                  label: labels.actionLabel(action),
+                  onTap: enabled ? emit : null,
+                  excludeSemantics: true,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: enabled ? emit : null,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: labels.actionLabel(action),
+                          onPressed: enabled ? emit : null,
+                          icon: const Icon(Icons.call_outlined),
+                          iconSize: 30,
+                          style: IconButton.styleFrom(
+                            fixedSize: const Size.square(68),
+                            backgroundColor:
+                                BackgroundReadableColors.dark.surfaceRaised,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          labels.actionLabel(action),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
