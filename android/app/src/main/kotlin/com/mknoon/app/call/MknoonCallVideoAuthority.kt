@@ -83,11 +83,13 @@ internal class MknoonCallVideoAuthority(
 
     fun requestLocalCamera(nativeCallId: UUID): MknoonCallLocalCameraDecision {
         val epoch = synchronized(lock) { revocationEpoch }
-        val decision = decide(nativeCallId)
+        val first = inputs(nativeCallId)
+        val decision = decideMknoonCallLocalCamera(first)
         if (decision != MknoonCallLocalCameraDecision.Apply) return decision
         // Without the manifest camera type the service keeps phoneCall|microphone;
-        // the visible activity's while-in-use access covers the camera.
-        val typed = facts.manifestDeclaresCameraType()
+        // the visible activity's while-in-use access covers the camera. Reuse the
+        // decision's own read so the fact reads keep their original order.
+        val typed = first.manifestDeclaresCameraType
         if (typed && !applier.apply(nativeCallId, true)) {
             return MknoonCallLocalCameraDecision.Refuse(MknoonCallLocalCameraDecision.Reason.NOT_ACTIVE)
         }
@@ -144,7 +146,9 @@ internal class MknoonCallVideoAuthority(
     }
 
     private fun decide(nativeCallId: UUID): MknoonCallLocalCameraDecision =
-        decideMknoonCallLocalCamera(
+        decideMknoonCallLocalCamera(inputs(nativeCallId))
+
+    private fun inputs(nativeCallId: UUID): MknoonCallLocalCameraInputs =
             MknoonCallLocalCameraInputs(
                 media = effectiveMedia(nativeCallId),
                 audioActive = facts.audioActive(nativeCallId),
@@ -152,6 +156,5 @@ internal class MknoonCallVideoAuthority(
                 cameraPermissionGranted = facts.cameraPermissionGranted(),
                 sdkInt = facts.sdkInt(),
                 manifestDeclaresCameraType = facts.manifestDeclaresCameraType(),
-            ),
-        )
+            )
 }
