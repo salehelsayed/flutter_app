@@ -1184,6 +1184,19 @@ final class ProductionCallSignalingGraph
     final incoming = decision && request != null && !outgoing;
     final token = owner?.negotiation;
     final ready = owner?.current == true && _videoForeground;
+    final outcome = machine?.lastOutcome;
+    final upgradeOutcome =
+        ready &&
+            !_shuttingDown &&
+            snapshot.state == CallState.connected &&
+            callId == _videoCallId &&
+            coordinator.activeSession?.callId == callId &&
+            outcome != null &&
+            request?.target == CallMediaKind.video &&
+            request?.id == outcome.switchId &&
+            request?.baseRevision == outcome.baseRevision
+        ? outcome
+        : null;
     final cameraOn =
         token != null && identical(_localCameraToken, token) && ready;
     final source = owner?.videoSession;
@@ -1203,6 +1216,7 @@ final class ProductionCallSignalingGraph
 
     return ForegroundCallVideoProjection(
       generation: _videoGeneration,
+      upgradeOutcome: upgradeOutcome,
       presentation: CallVideoPresentation.project(
         videoEnabled: true,
         wireVersion: CallWireVersion.v2,

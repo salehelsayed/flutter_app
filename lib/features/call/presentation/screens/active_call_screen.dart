@@ -30,6 +30,7 @@ class ActiveCallScreen extends StatefulWidget {
     this.onVideoIntent,
     this.videoViews,
     this.cameraFeedback,
+    this.upgradeNotice,
   });
 
   final String contactPeerId;
@@ -42,6 +43,7 @@ class ActiveCallScreen extends StatefulWidget {
   final ValueChanged<CallVideoIntent>? onVideoIntent;
   final Widget? videoViews;
   final Widget? cameraFeedback;
+  final Widget? upgradeNotice;
 
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
@@ -378,6 +380,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 ),
               ),
             ),
+          ],
+          if (widget.upgradeNotice != null) ...[
+            const SizedBox(height: 16),
+            widget.upgradeNotice!,
           ],
         ],
       ),

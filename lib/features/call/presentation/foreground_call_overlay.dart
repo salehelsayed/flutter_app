@@ -13,6 +13,7 @@ import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
 import '../domain/call_media.dart';
+import '../domain/call_media_switch.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_video_presentation.dart';
@@ -33,6 +34,18 @@ typedef _CameraActionOwner = ({
   CallId callId,
   int videoGeneration,
   int serial,
+});
+
+typedef _UpgradeNoticeOwner = ({
+  int capabilityGeneration,
+  CallId callId,
+  int videoGeneration,
+});
+
+typedef _UpgradeNoticeIdentity = ({
+  _UpgradeNoticeOwner owner,
+  String switchId,
+  int baseRevision,
 });
 
 typedef ContactDisplayNameLoader =
@@ -93,6 +106,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   int _cameraActionSerial = 0;
   _CameraActionOwner? _cameraActionOwner;
   ForegroundCallCameraFailure? _cameraFailure;
+  _UpgradeNoticeOwner? _upgradeObservationOwner;
+  _UpgradeNoticeIdentity? _consumedUpgradeOutcome;
+  ({_UpgradeNoticeIdentity identity, MediaSwitchOutcomeKind kind})?
+  _upgradeNotice;
+  Timer? _upgradeNoticeTimer;
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
@@ -183,6 +201,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     _nameGeneration += 1;
     unawaited(_subscription?.cancel());
     _terminalNoticeTimer?.cancel();
+    _clearUpgradeNotice();
     _lockedProjection.dispose();
     widget.backGuard?.surfaceOwnsBack = false;
     super.dispose();
@@ -237,6 +256,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
     void update() {
       _projection = projection;
+      _observeUpgradeOutcome(projection);
       final cameraOwner = _cameraActionOwner;
       if (cameraOwner != null &&
           !_cameraOwnerMatches(cameraOwner, projection)) {
@@ -333,6 +353,97 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     if (callId != null && peerId != null) {
       unawaited(_loadContactName(callId, peerId, lookupGeneration));
     }
+  }
+
+  void _observeUpgradeOutcome(ForegroundCallProjection? projection) {
+    final session = projection?.session;
+    final callId = session?.callId;
+    final video = projection == null
+        ? null
+        : _visibleVideo(projection, widget.capability);
+    if (callId == null ||
+        video == null ||
+        (session!.state != CallState.connected &&
+            session.state != CallState.reconnecting)) {
+      _upgradeObservationOwner = null;
+      _clearUpgradeNotice();
+      return;
+    }
+    final owner = (
+      capabilityGeneration: _capabilityGeneration,
+      callId: callId,
+      videoGeneration: video.generation,
+    );
+    final outcome = video.upgradeOutcome;
+    final identity = outcome == null
+        ? null
+        : (
+            owner: owner,
+            switchId: outcome.switchId,
+            baseRevision: outcome.baseRevision,
+          );
+    if (_upgradeObservationOwner != owner) {
+      _upgradeObservationOwner = owner;
+      _clearUpgradeNotice();
+      // Mount, replacement and return from withdrawal consume a baseline,
+      // never an outcome that happened while this owner was not observed.
+      if (identity != null) _consumedUpgradeOutcome = identity;
+      return;
+    }
+    final presentation = video.presentation;
+    if (presentation.acceptedMedia == null ||
+        presentation.agreedMedia != CallMediaKind.audio ||
+        presentation.incomingUpgradeId != null ||
+        presentation.outgoingUpgradeId != null ||
+        presentation.switchingTo != null ||
+        identity == null) {
+      if (identity != null) _consumedUpgradeOutcome = identity;
+      _clearUpgradeNotice();
+      return;
+    }
+    if (identity == _consumedUpgradeOutcome) return;
+    _consumedUpgradeOutcome = identity;
+    _clearUpgradeNotice();
+    _upgradeNotice = (identity: identity, kind: outcome!.kind);
+    _upgradeNoticeTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || _upgradeNotice?.identity != identity) return;
+      setState(_clearUpgradeNotice);
+    });
+  }
+
+  void _clearUpgradeNotice() {
+    _upgradeNoticeTimer?.cancel();
+    _upgradeNoticeTimer = null;
+    _upgradeNotice = null;
+  }
+
+  Widget? _buildUpgradeNotice() {
+    final notice = _upgradeNotice;
+    if (notice == null) return null;
+    final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final message = switch (notice.kind) {
+      MediaSwitchOutcomeKind.declined => l10n.call_video_request_declined,
+      MediaSwitchOutcomeKind.expired => l10n.call_video_request_expired,
+      MediaSwitchOutcomeKind.cancelled => l10n.call_video_request_cancelled,
+    };
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colors.surfaceRaised,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadContactName(
@@ -516,6 +627,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           ),
           videoViews: videoViews,
           cameraFeedback: _buildCameraFeedback(projection),
+          upgradeNotice: _buildUpgradeNotice(),
           videoPresentation: video?.presentation,
           onVideoIntent: onVideoIntent,
         ),
