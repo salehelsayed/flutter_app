@@ -44,6 +44,18 @@ IDLE = ('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n'
         '  mForceBackgroundCheck=false\n')
 
 
+def setUpModule():
+    # BL-31: every default-directory device lease taken by this module's
+    # fixtures stays in a private temp directory, never the shared real one.
+    leases = tempfile.TemporaryDirectory(prefix='legacy-device-leases-')
+    real = legacy.preflight.lease_directory
+    patch = mock.patch.object(legacy.preflight, 'lease_directory',
+                              lambda directory=None: real(directory or leases.name))
+    patch.start()
+    unittest.addModuleCleanup(leases.cleanup)
+    unittest.addModuleCleanup(patch.stop)
+
+
 class LegacyBindingTest(unittest.TestCase):
     def test_full_wifi_smoke_binds_the_required_cli_peer_without_retries(self):
         contract = legacy.contracts()['full']['integration_test wifi_relay_fallback_smoke_test.dart']

@@ -90,6 +90,18 @@ for event in events:print(json.dumps(event),flush=True)
 '''
 
 
+def setUpModule():
+    # BL-31: every default-directory device lease taken by this module's
+    # fixtures stays in a private temp directory, never the shared real one.
+    leases = tempfile.TemporaryDirectory(prefix='benchmark-device-leases-')
+    real = preflight.lease_directory
+    patch = mock.patch.object(preflight, 'lease_directory',
+                              lambda directory=None: real(directory or leases.name))
+    patch.start()
+    unittest.addModuleCleanup(leases.cleanup)
+    unittest.addModuleCleanup(patch.stop)
+
+
 class BenchmarkBoundaryTest(unittest.TestCase):
     def nested(self, *, script='run_benchmark_suite.dart', relay=RELAYS,
                target='boundary-sim', pins=PINS, mode='', protected=True):
