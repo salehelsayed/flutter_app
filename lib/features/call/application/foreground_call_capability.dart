@@ -4,6 +4,7 @@ import '../domain/call_id.dart';
 import '../domain/call_audio_output_device.dart';
 import '../domain/call_engine.dart' show CallVideoView;
 import '../domain/call_media.dart' show CallMediaKind;
+import '../domain/call_media_switch.dart' show MediaSwitchOutcome;
 import '../domain/call_session_snapshot.dart';
 import 'call_video_presentation.dart';
 import 'call_audio_controller.dart';
@@ -18,10 +19,12 @@ final class ForegroundCallVideoProjection {
     required this.presentation,
     this.localView,
     this.remoteView,
+    this.upgradeOutcome,
   });
 
   final int generation;
   final CallVideoPresentation presentation;
+  final MediaSwitchOutcome? upgradeOutcome;
 
   /// Current opaque texture metadata, published by the canonical media owner.
   /// Null means no current view; presentation never owns a native renderer.

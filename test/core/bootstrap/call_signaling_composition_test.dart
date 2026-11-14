@@ -6,6 +6,10 @@ import 'package:flutter_app/features/call/application/call_picture_in_picture.da
 
 import '../../features/call/support/fake_call_picture_in_picture_bridge.dart';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -4343,6 +4347,219 @@ void main() {
       expect(calleeEngine.video!.cameraStarts, 0);
     },
     timeout: const Timeout(Duration(seconds: 45)),
+  );
+
+  test(
+    'VUI3b public cancellation projects the actual current outcome',
+    () async {
+      final (fixture, engine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+      );
+      final graph = fixture.graphs.single;
+      final actions = fixture.composition as ForegroundCallVideoCapability;
+      final observed = <ForegroundCallProjection?>[];
+      final subscription = (fixture.composition as ForegroundCallCapability)
+          .changes
+          .listen(observed.add);
+      addTearDown(subscription.cancel);
+      expect(
+        await actions.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.requestVideo),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      await _untilGraphVideo(
+        () => graph.current!.video!.presentation.outgoingUpgradeId != null,
+      );
+      final request =
+          graph.videoOwners![_callA]!.mediaSwitch!.machine.currentRequest!;
+      expect(
+        await actions.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: CallVideoIntent(
+            CallVideoAction.cancelUpgrade,
+            upgradeId: request.id,
+          ),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      await Future<void>.delayed(Duration.zero);
+      final outcome = graph.current!.video!.upgradeOutcome;
+      expect(outcome, isNotNull);
+      expect(outcome!.kind, MediaSwitchOutcomeKind.cancelled);
+      expect(outcome.switchId, request.id);
+      expect(outcome.baseRevision, request.baseRevision);
+      expect(
+        observed.any((p) => p?.video?.upgradeOutcome?.switchId == request.id),
+        isTrue,
+      );
+      expect(
+        graph.current!.video!.presentation.agreedMedia,
+        CallMediaKind.audio,
+      );
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      expect(engine.video!.cameraStarts, 0);
+    },
+  );
+
+  test(
+    'VUI3b authenticated explicit decline reaches the requesting graph',
+    () async {
+      final (requester, requesterEngine) = await _connectedOutgoingGraphAudio();
+      final graph = requester.graphs.single;
+      final id = graph.coordinator.activeSession!.callId!;
+      final (responder, responderEngine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+        callId: id,
+      );
+      final peer = responder.graphs.single;
+      final actions = requester.composition as ForegroundCallVideoCapability;
+      expect(
+        await actions.applyVideoIntent(
+          id,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.requestVideo),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      await _untilGraphVideo(
+        () => _upgradeSignals(requester, 'media_request').isNotEmpty,
+      );
+      final wire = _upgradeSignals(requester, 'media_request').single;
+      await _deliverUpgradeSignal(responder, wire);
+      await _untilGraphVideo(
+        () => peer.current!.video!.presentation.incomingUpgradeId != null,
+      );
+      final request =
+          graph.videoOwners![id]!.mediaSwitch!.machine.currentRequest!;
+      expect(
+        await (responder.composition as ForegroundCallVideoCapability)
+            .applyVideoIntent(
+              id,
+              generation: peer.current!.video!.generation,
+              intent: CallVideoIntent(
+                CallVideoAction.declineUpgrade,
+                upgradeId: request.id,
+              ),
+            ),
+        ForegroundCallActionResult.applied,
+      );
+      await _untilGraphVideo(
+        () => _upgradeSignals(responder, 'media_response').isNotEmpty,
+      );
+      final decline = _upgradeSignals(responder, 'media_response').single;
+      expect((decline['payload'] as Map)['decision'], 'decline');
+      await _deliverUpgradeSignal(requester, decline);
+      await _untilGraphVideo(
+        () => graph.current!.video!.presentation.outgoingUpgradeId == null,
+      );
+      final outcome = graph.current!.video!.upgradeOutcome;
+      expect(outcome, isNotNull);
+      expect(outcome!.kind, MediaSwitchOutcomeKind.declined);
+      expect(outcome.switchId, request.id);
+      expect(outcome.baseRevision, request.baseRevision);
+      expect(
+        graph.current!.video!.presentation.agreedMedia,
+        CallMediaKind.audio,
+      );
+      expect(
+        peer.current!.video!.presentation.agreedMedia,
+        CallMediaKind.audio,
+      );
+      expect(requesterEngine.video!.cameraStarts, 0);
+      expect(responderEngine.video!.cameraStarts, 0);
+    },
+  );
+
+  testWidgets(
+    'VUI3b real graph cancellation drives the overlay notice lifetime',
+    (tester) async {
+      final connected = await tester.runAsync(
+        () => _connectedGraphVideo(acceptedMedia: CallMediaKind.audio),
+      );
+      expect(connected, isNotNull);
+      final (fixture, engine) = connected!;
+      final graph = fixture.graphs.single;
+      final capability = fixture.composition as ForegroundCallCapability;
+      final actions = fixture.composition as ForegroundCallVideoCapability;
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: ThemeData(extensions: const [BackgroundReadableColors.dark]),
+            home: ForegroundCallOverlay(
+              capability: capability,
+              loadContactDisplayName: (_) async => 'Video contact',
+              now: graph.coordinator.clock,
+              child: const Scaffold(),
+            ),
+          ),
+        );
+        await _pumpCallLifecycle(tester);
+        await tester.runAsync(() async {
+          expect(
+            await actions.applyVideoIntent(
+              _callA,
+              generation: graph.current!.video!.generation,
+              intent: const CallVideoIntent(CallVideoAction.requestVideo),
+            ),
+            ForegroundCallActionResult.applied,
+          );
+          await _untilGraphVideo(
+            () => graph.current!.video!.presentation.outgoingUpgradeId != null,
+          );
+        });
+        await _pumpCallLifecycle(tester);
+        final requestId = graph.current!.video!.presentation.outgoingUpgradeId!;
+        await tester.runAsync(() async {
+          expect(
+            await actions.applyVideoIntent(
+              _callA,
+              generation: graph.current!.video!.generation,
+              intent: CallVideoIntent(
+                CallVideoAction.cancelUpgrade,
+                upgradeId: requestId,
+              ),
+            ),
+            ForegroundCallActionResult.applied,
+          );
+        });
+        await _pumpCallLifecycle(tester);
+        final text = lookupAppLocalizations(const Locale('en'))
+            .call_video_request_cancelled;
+        expect(find.text(text), findsOneWidget);
+        final outcome = graph.current!.video!.upgradeOutcome;
+        expect(outcome, isNotNull);
+        expect(outcome!.kind, MediaSwitchOutcomeKind.cancelled);
+        expect(outcome.switchId, requestId);
+        for (final action in ['mute', 'speaker', 'end']) {
+          final control = find.bySemanticsIdentifier('call_$action');
+          expect(control, findsOneWidget);
+          await tester.ensureVisible(control);
+          await tester.pump();
+          expect(control.hitTestable(), findsOneWidget);
+        }
+        expect(
+          graph.current!.video!.presentation.agreedMedia,
+          CallMediaKind.audio,
+        );
+        expect(graph.coordinator.activeSession!.state, CallState.connected);
+        expect(engine.video!.cameraStarts, 0);
+        await tester.pump(const Duration(milliseconds: 2999));
+        expect(find.text(text), findsOneWidget);
+        await tester.pump(const Duration(milliseconds: 1));
+        expect(find.text(text), findsNothing);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.composition.shutdown);
+        await _pumpCallLifecycle(tester);
+      }
+    },
   );
 
   test(

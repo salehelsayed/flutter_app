@@ -9,6 +9,21 @@ enum MediaSwitchResponse {
   unsupported,
 }
 
+/// A presentation fact for one validated current video request.
+enum MediaSwitchOutcomeKind { declined, expired, cancelled }
+
+final class MediaSwitchOutcome {
+  const MediaSwitchOutcome({
+    required this.switchId,
+    required this.baseRevision,
+    required this.kind,
+  });
+
+  final String switchId;
+  final int baseRevision;
+  final MediaSwitchOutcomeKind kind;
+}
+
 enum MediaSwitchDescription { offer, answer }
 
 enum MediaSwitchAbortReason {
@@ -215,6 +230,8 @@ final class CallMediaSwitchMachine {
       _current?.cancellation != null &&
       _nowMs() < _current!.deadline;
   String? get currentSwitchId => _current?.request.id;
+
+  MediaSwitchOutcome? get lastOutcome => null;
 
   /// The existing immutable request; reading it does not advance the machine.
   MediaSwitchRequest? get currentRequest => _current?.request;
