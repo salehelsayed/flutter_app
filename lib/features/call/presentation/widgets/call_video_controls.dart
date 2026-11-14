@@ -67,6 +67,14 @@ class CallVideoControls extends StatelessWidget {
                 _roundButton(cameraAction, labels.cameraCaption, colors),
               ]),
             ),
+            // A paused camera has two existing intents: resume and revoke.
+            // Keep resume available in addition to the row's immediate stop.
+            if (presentation.localCamera == CallCameraState.paused)
+              _button(
+                CallVideoAction.turnCameraOn,
+                MediaQuery.sizeOf(context).width - 32,
+                colors,
+              ),
             // Camera-off and switching the agreed medium to audio are distinct.
             if (presentation.actions.contains(CallVideoAction.useAudioOnly))
               _button(
