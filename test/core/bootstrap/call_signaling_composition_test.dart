@@ -5200,6 +5200,84 @@ void main() {
     },
   );
 
+  for (final caller in [true, false]) {
+    test(
+      'BL26-HA v1 ${caller ? 'caller' : 'callee'} completes recovery within shared lookup ceiling',
+      () async {
+        final (fixture, engine) = await _connectedLegacyRecovery(
+          caller: caller,
+        );
+        final graph = fixture.graphs.single;
+        final id = graph.coordinator.activeSession!.callId!;
+        final response = fixture.bridge.responses['call_endpoint_get_v1']!;
+        var lookups = 0;
+        fixture.bridge.responseHandlers['call_endpoint_get_v1'] = (_) async {
+          lookups++;
+          return response;
+        };
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.mediaLost,
+            eventId: 'bl26-v1-loss',
+            occurredAt: graph.coordinator.clock(),
+            callId: id,
+          ),
+        );
+        if (caller) {
+          await _untilGraphVideo(
+            () => _upgradeSignals(
+              fixture,
+              'offer',
+            ).any((signal) => signal['ice_generation'] == 1),
+          );
+          await _deliverLegacyRecovery(fixture, CallSignalType.answer, 80, 1, {
+            'description': 'fixture-recovery-answer',
+            'fingerprint': _ProcessLossEngine._fingerprint,
+          });
+        } else {
+          await _untilGraphVideo(
+            () => _upgradeSignals(fixture, 'ice_restart').isNotEmpty,
+          );
+          await _deliverLegacyRecovery(
+            fixture,
+            CallSignalType.iceRestart,
+            80,
+            1,
+            {},
+          );
+          await _untilGraphVideo(() => engine.restarts == 1);
+          await _deliverLegacyRecovery(fixture, CallSignalType.offer, 81, 1, {
+            'description': 'fixture-recovery-offer',
+            'fingerprint': _ProcessLossEngine._fingerprint,
+          });
+          await _untilGraphVideo(
+            () => _upgradeSignals(
+              fixture,
+              'answer',
+            ).any((signal) => signal['ice_generation'] == 1),
+          );
+        }
+        await _untilGraphVideo(() => engine.remoteDescriptions == 2);
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.mediaRecovered,
+            eventId: 'bl26-v1-recovered',
+            occurredAt: graph.coordinator.clock(),
+            callId: id,
+            reconnectGeneration:
+                graph.coordinator.activeSession!.reconnectGeneration,
+          ),
+        );
+        expect(graph.coordinator.activeSession!.state, CallState.connected);
+        expect(engine.restarts, 1);
+        expect(engine.localDescriptions, 2);
+        expect(lookups, greaterThan(0));
+        expect(lookups, lessThanOrEqualTo(3));
+        expect(graph.videoContexts!.read(id)!.wireVersion, CallWireVersion.v1);
+      },
+    );
+  }
+
   test(
     'BL26-HA caller recovery caps remote lookup across fresh authorization',
     () async {
@@ -10330,6 +10408,162 @@ List<Map<String, dynamic>> _upgradeSignals(
     .where((r) => r['event'] == event)
     .toList();
 
+Future<(_ProductionIosFixture, _ProcessLossEngine)> _connectedLegacyRecovery({
+  required bool caller,
+}) async {
+  final engine = _ProcessLossEngine();
+  late final _ProductionIosFixture fixture;
+  fixture = await _createProductionIosFixture(
+    nativePlatform: CallEndpointPlatform.android,
+    outgoingContactAccountPeerId: 'remote-account',
+    privacyFlags: const {
+      'video_call_v2_enabled': true,
+      'voice_call_android_native_enabled': false,
+    },
+    microphonePermission: const _GrantedCallMicrophonePermission(),
+    callEngineFactory: (_) => engine,
+    ensureOutgoingCallWakeAuthority: (peer) async {
+      final issued = await fixture.issuedCallWakeHandleStore.readForContact(
+        peer,
+      );
+      return issued != null &&
+          await fixture.graphs.single.markCallWakeHandleDistributed(
+            peer,
+            issued.grant,
+          );
+    },
+  );
+  final presentation = fixture.composition.changes.listen((_) {});
+  addTearDown(presentation.cancel);
+  await fixture.composition.start();
+  await _configureCancellationEndpoint(fixture, 'remote-account');
+  final wall = DateTime.now().millisecondsSinceEpoch;
+  final credentials = <String, Object?>{
+    'ok': true,
+    'schema': 'turn_credentials',
+    'version': 1,
+    'urls': ['turn:relay.invalid:3478?transport=udp'],
+    'username': 'fixture-user',
+    'password': 'fixture-secret',
+    'ttlSeconds': 600,
+    'serverTimeMs': wall,
+    'expiresAtMs': wall + 600000,
+  };
+  fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+  fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+      credentials;
+  final graph = fixture.graphs.single;
+  if (caller) {
+    expect(
+      await fixture.composition.startOutgoingCall('remote-account'),
+      OutgoingCallStartResult.started,
+    );
+    await _deliverLegacyRecovery(fixture, CallSignalType.accept, 2, 0, {});
+    await _untilGraphVideo(() => _upgradeSignals(fixture, 'offer').isNotEmpty);
+    await _deliverLegacyRecovery(fixture, CallSignalType.answer, 3, 0, {
+      'description': 'fixture-initial-answer',
+      'fingerprint': _ProcessLossEngine._fingerprint,
+    });
+  } else {
+    final invite = _killedCallSignal(CallSignalType.invite);
+    fixture.bridge.responses['message.decrypt'] = {
+      'ok': true,
+      'plaintext': jsonEncode(invite.toMap()),
+    };
+    fixture.p2p.messages.add(
+      ChatMessage(
+        from: 'remote-account',
+        to: 'local-account',
+        content: _killedCallEnvelope(invite, _killedCallHandle),
+        timestamp: _callNow.toIso8601String(),
+        isIncoming: true,
+        transport: 'direct',
+      ),
+    );
+    await _untilGraphVideo(
+      () =>
+          graph.coordinator.activeSession?.incomingValidated == true &&
+          graph.coordinator.activeSession?.state == CallState.ringing,
+    );
+    await graph.coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.answer,
+        eventId: 'bl26-v1-answer',
+        occurredAt: graph.coordinator.clock(),
+        callId: invite.callId,
+      ),
+    );
+    await _deliverLegacyRecovery(fixture, CallSignalType.offer, 2, 0, {
+      'description': 'fixture-initial-offer',
+      'fingerprint': _ProcessLossEngine._fingerprint,
+    });
+    await _untilGraphVideo(() => _upgradeSignals(fixture, 'answer').isNotEmpty);
+  }
+  await _untilGraphVideo(
+    () => engine.localDescriptions == 1 && engine.remoteDescriptions == 1,
+  );
+  await graph.coordinator.dispatch(
+    CallEvent(
+      type: CallEventType.mediaConnected,
+      eventId: 'bl26-v1-connected',
+      occurredAt: graph.coordinator.clock(),
+      callId: graph.coordinator.activeSession!.callId,
+    ),
+  );
+  expect(graph.coordinator.activeSession!.state, CallState.connected);
+  expect(
+    graph.videoContexts!
+        .read(graph.coordinator.activeSession!.callId!)!
+        .wireVersion,
+    CallWireVersion.v1,
+  );
+  return (fixture, engine);
+}
+
+Future<void> _deliverLegacyRecovery(
+  _ProductionIosFixture fixture,
+  CallSignalType type,
+  int sequence,
+  int generation,
+  Map<String, Object?> payload,
+) async {
+  final graph = fixture.graphs.single;
+  final id = graph.coordinator.activeSession!.callId!;
+  final context = graph.videoContexts!.read(id)!;
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    'remote-account',
+  )).devices.single;
+  final signal = CallSignal.create(
+    callId: id,
+    messageId:
+        '00000000-0000-4000-8000-${sequence.toString().padLeft(12, '0')}',
+    event: type,
+    senderAccountPeerId: 'remote-account',
+    senderDevicePeerId: device.devicePeerId,
+    recipientAccountPeerId: 'local-account',
+    recipientDevicePeerId: 'local-account',
+    senderSequence: sequence,
+    iceGeneration: generation,
+    createdAtMs: 2000000,
+    expiresAtMs: 2040000,
+    payload: payload,
+  );
+  fixture.bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(signal.toMap()),
+  };
+  fixture.p2p.messages.add(
+    ChatMessage(
+      from: device.devicePeerId,
+      to: 'local-account',
+      content: _killedCallEnvelope(signal, context.callHandle),
+      timestamp: _callNow.toIso8601String(),
+      isIncoming: true,
+      transport: 'direct',
+    ),
+  );
+}
+
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)>
 _connectedOutgoingGraphAudio() async {
   String? handle;
@@ -11624,6 +11858,11 @@ Future<Database> _openKilledCallDatabase(String path) {
 }
 
 final class _ProcessLossEngine extends _ProductionSpeakerRouteEngine {
+  int restarts = 0;
+  int localDescriptions = 0;
+  int remoteDescriptions = 0;
+  @override
+  int get iceGeneration => restarts;
   final _events = StreamController<CallEngineEvent>.broadcast(sync: true);
   @override
   Stream<CallEngineEvent> get events => _events.stream;
@@ -11657,14 +11896,20 @@ final class _ProcessLossEngine extends _ProductionSpeakerRouteEngine {
         fingerprint: _fingerprint,
       );
   @override
-  Future<void> setLocalDescription(CallSessionDescription description) async {}
+  Future<void> setLocalDescription(CallSessionDescription description) async {
+    localDescriptions++;
+  }
+
   @override
-  Future<void> setRemoteDescription(CallSessionDescription description) async {}
+  Future<void> setRemoteDescription(CallSessionDescription description) async {
+    remoteDescriptions++;
+  }
+
   @override
   Future<void> addIceCandidates(List<CallIceCandidate> candidates) async {}
   @override
   Future<int> restartIce({List<CallIceServer> iceServers = const []}) async =>
-      1;
+      ++restarts;
 }
 
 const _graphCellularQuality = CallVideoQualityEnvironment(
