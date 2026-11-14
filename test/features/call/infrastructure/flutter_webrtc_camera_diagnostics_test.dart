@@ -127,7 +127,7 @@ void main() {
     expect(
       lines,
       containsAllInOrder(<String>[
-        '[VIDEO] prepare media=video direction=SendRecv readback=SendRecv',
+        '[VIDEO] prepare media=video direction=SendRecv readback=created',
         '[VIDEO] stats_start=disabled',
       ]),
     );
