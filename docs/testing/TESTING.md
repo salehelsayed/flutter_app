@@ -5984,7 +5984,10 @@ and its contracts runner listed 54 command groups. The completeness gate
 classified 1,583/1,583 Dart test files. None is an actual test-case count.
 The legacy full script's “95-case” label refers to runner items, some containing
 whole suites. Generated/parameterized counts must come from runner output;
-do not count `test(...)` strings as executions. Runner listings took about
+do not count `test(...)` strings as executions. Expected packet counts must use
+the latest retained raw receipt for the same file with revision/hash provenance,
+or state `count unknown`; never estimate them (owner rule `m-175f545f`).
+Runner listings took about
 1.55s, 0.51s and 0.02s respectively and executed no assertions.
 
 ## Shared dependency lessons
@@ -12351,6 +12354,32 @@ visible and cannot become an ordinary first-attempt PASS.
   `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u6-real-screen-host-adoption.json`
   and its `u6-real-screen-retained-host/` evidence directory. This is a scoped
   host result for the frozen unit, not a combined integration or release gate.
+  Minimized in-app End has an explicit localized `call_pip_end` semantics node
+  and dispatches canonical End only for the current call and generation. Its
+  widget fixture must place the call surface in `MaterialApp.builder`, above
+  the Navigator, as production does. A fixture inside a home route supplies
+  an ancestor Overlay that production does not have. The bounded local
+  `Overlay.wrap` around the tile owns its Restore/End tooltips; a descendant
+  Navigator Overlay cannot supply that ancestor contract. At GREEN
+  `ba07420adf86503ec3ec08c36a5d6c0a9ad13658`, the unchanged eight new tests pass
+  strict localized End labels, semantic and hit-target bounds, canonical
+  single dispatch and stale call/generation rejection. EN/DE/AR use 2x text,
+  keyboard/drag and synthetic compact geometry; the reference DPR is not a
+  measured phone density. The nine focused cases and all 112 binding cases
+  pass. The baseline is 104 actual cases from Unit C's retained raw receipt
+  at `8bb1154ca`; its file is byte-identical to base `17fcd8afd`, and all 104
+  names plus exactly eight new names are preserved. The earlier packet's
+  142/150 counts were wrong; keep its controller stop as metadata evidence.
+  First RED remains one passing control and eight widget errors, each with
+  missing End labels and missing Overlay assertions. All eleven GREEN host
+  invocations pass, including the affected lanes and 335 workflow cases in
+  222.182 seconds within the original 360-second deadline; 25 clean identity
+  checkpoints match all 32 pins. Original raw outcomes and the scoped audit
+  are under `.codex-test-logs/codex-ui-bl16-end-exposure-20261114/host-final/`.
+  The selected Android native check remains unrun. Phone logs showed no
+  matching crash: Pixel's direct launcher start may leave assertions off,
+  unlike the SDK's debug tool launch, but assertion state was not measured.
+  These host results certify neither live devices nor a composed/signed build.
   **U6 explicit video entry:** the conversation menu uses a fresh same-contact
   video-capability check and the shared cancellable call preflight. Initial
   validated v2 offers expose explicit video or audio-only acceptance bound to
