@@ -991,6 +991,7 @@ class _Plan257Capture {
   String _mutedPreMuteNotificationDump = '';
   String _mutedPostMuteNotificationDump = '';
   String _mutedPreMuteCardGroup = 'muted';
+  int _mutedRejectedPollDumps = 0;
   String _mutedSqlCipherObservation = '';
   int _mutedUnreadBaseline = 0;
   int _mutedUnreadAfter = 0;
@@ -7064,15 +7065,40 @@ class _Plan257Capture {
       )
       .toList(growable: false);
 
+  /// [_mutedAttributableCards] for polling loops only.
+  ///
+  /// A dump the strict parser rejects is written out for diagnosis and read as
+  /// "not yet", so one inconsistent dumpsys snapshot cannot end the capture
+  /// with a bare FormatException. Assertions keep the strict filter above.
+  Future<List<ActiveNotificationCard>?> _mutedPolledCards(
+    String dump, {
+    required String groupName,
+  }) async {
+    final cards = tryExtractActiveContentNotificationCards(
+      dump,
+      packageName: appPackage,
+    );
+    if (cards == null) {
+      _mutedRejectedPollDumps += 1;
+      await _writeMutedDiagnosticDump(
+        'rejected_poll_dump_$_mutedRejectedPollDumps',
+        dump,
+      );
+      return null;
+    }
+    return cards
+        .where((card) => card.title == groupName)
+        .toList(growable: false);
+  }
+
   Future<String> _waitForGroupNotificationDump(String groupName) =>
       _waitForValue<String>(
         'notification card for $groupName',
         const Duration(seconds: 120),
         () async {
           final dump = await _notificationDump(recipientId);
-          return _mutedAttributableCards(dump, groupName: groupName).length == 1
-              ? dump
-              : null;
+          final cards = await _mutedPolledCards(dump, groupName: groupName);
+          return cards != null && cards.length == 1 ? dump : null;
         },
       );
 
@@ -7111,7 +7137,8 @@ class _Plan257Capture {
     const Duration(seconds: 180),
     () async {
       final dump = await _notificationDump(recipientId);
-      final cards = _mutedAttributableCards(dump, groupName: groupName);
+      final cards = await _mutedPolledCards(dump, groupName: groupName);
+      if (cards == null) return null;
       // At least one card whose body is no longer any known baseline.
       // Deliberately not "exactly one": a reaction may post ALONGSIDE the
       // baseline message card rather than replacing it in place, and both
@@ -7138,10 +7165,9 @@ class _Plan257Capture {
     const Duration(seconds: 180),
     () async {
       final dump = await _notificationDump(recipientId);
-      final matched = _mutedAttributableCards(
-        dump,
-        groupName: groupName,
-      ).where((card) => card.body.contains(marker));
+      final cards = await _mutedPolledCards(dump, groupName: groupName);
+      if (cards == null) return null;
+      final matched = cards.where((card) => card.body.contains(marker));
       return matched.isEmpty ? null : dump;
     },
   );
@@ -7191,10 +7217,13 @@ class _Plan257Capture {
   Future<void> _waitForGroupNotificationCleared(String groupName) => _waitFor(
     'cleared notification cards for $groupName',
     const Duration(seconds: 60),
-    () async => _mutedAttributableCards(
-      await _notificationDump(recipientId),
-      groupName: groupName,
-    ).isEmpty,
+    () async {
+      final cards = await _mutedPolledCards(
+        await _notificationDump(recipientId),
+        groupName: groupName,
+      );
+      return cards != null && cards.isEmpty;
+    },
   );
 
   /// Saves a raw UI tree next to the artifact so an on-device targeting

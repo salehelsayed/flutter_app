@@ -7385,6 +7385,25 @@ List<ActiveNotificationCard> extractActiveContentNotificationCards(
   ).where((card) => !card.isGroupSummary).toList(growable: false);
 }
 
+/// Polling form of [extractActiveContentNotificationCards].
+///
+/// A dump the strict parser rejects (for example one live key caught mid-update
+/// in two diagnostic views) yields null, so a polling loop asks again instead
+/// of ending the capture. Final assertions keep the strict, fail-closed parser.
+List<ActiveNotificationCard>? tryExtractActiveContentNotificationCards(
+  String dump, {
+  required String packageName,
+}) {
+  try {
+    return extractActiveContentNotificationCards(
+      dump,
+      packageName: packageName,
+    );
+  } on FormatException {
+    return null;
+  }
+}
+
 /// Distinguishes Android's synthetic notification-group summary from the
 /// content-bearing notification records posted by the app.
 bool isAndroidGroupSummaryNotificationRecord(String record) {
