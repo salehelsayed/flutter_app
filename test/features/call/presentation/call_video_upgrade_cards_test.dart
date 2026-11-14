@@ -103,10 +103,8 @@ class _Fixture {
 void _prepare(WidgetTester tester, {double width = 400}) {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 900);
-  final semantics = tester.ensureSemantics();
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());
-    semantics.dispose();
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   });
