@@ -27,6 +27,7 @@ final class ProductionCallV2ControlSignalingAdapter
     outgoingMediaFor,
     required bool Function(CallId callId) isOutgoingPreparationCurrent,
     required bool Function(CallSignalV2 signal) canSend,
+    bool Function()? Function(CallSignalV2 signal)? captureTerminalAuthority,
     required int Function() nowMs,
     required CallId Function() idSource,
     bool videoEnabled = false,
@@ -37,6 +38,7 @@ final class ProductionCallV2ControlSignalingAdapter
        _outgoingMediaFor = outgoingMediaFor,
        _preparationCurrent = isOutgoingPreparationCurrent,
        _canSend = canSend,
+       _captureTerminalAuthority = captureTerminalAuthority,
        _nowMs = nowMs,
        _idSource = idSource,
        _videoEnabled = videoEnabled;
@@ -48,6 +50,7 @@ final class ProductionCallV2ControlSignalingAdapter
   final CallMediaKind? Function(CallSessionSnapshot) _outgoingMediaFor;
   final bool Function(CallId) _preparationCurrent;
   final bool Function(CallSignalV2) _canSend;
+  final bool Function()? Function(CallSignalV2)? _captureTerminalAuthority;
   final int Function() _nowMs;
   final CallId Function() _idSource;
   final bool _videoEnabled;
@@ -177,7 +180,15 @@ final class ProductionCallV2ControlSignalingAdapter
       // the original admission authority of an existing call.
       final original = _contexts.admittedV2Endpoint(signal.callId);
       if (original == null) throw _endpointMismatch;
-      bool canApply() => _canSend(signal);
+      var canApply = () => _canSend(signal);
+      final captureTerminal = _captureTerminalAuthority;
+      if (captureTerminal != null &&
+          (signal.event == CallSignalV2Type.terminate ||
+              signal.event == CallSignalV2Type.reject)) {
+        final captured = captureTerminal(signal);
+        if (captured == null) throw _transportUnavailable;
+        canApply = captured;
+      }
       final prepared = await _signaling.prepare(
         signal: signal,
         callHandle: callHandle,

@@ -140,14 +140,20 @@ final class CallSignalingService {
     required bool Function() canApply,
     bool videoEnabled = false,
   }) async {
-    if (!videoEnabled || _closed || _terminalRetriesStopped || !canApply()) {
+    final terminalPriority =
+        signal.event == CallSignalV2Type.reject ||
+        signal.event == CallSignalV2Type.terminate;
+    if (!videoEnabled ||
+        _closed ||
+        (_terminalRetriesStopped && !terminalPriority) ||
+        !canApply()) {
       throw const CallSignalingException(
         CallSignalingErrorCode.migrationPaused,
       );
     }
     bool current() =>
         !_closed &&
-        !_terminalRetriesStopped &&
+        (!_terminalRetriesStopped || terminalPriority) &&
         canApply() &&
         _nowMs() < signal.expiresAtMs &&
         _validV2Endpoint(
@@ -160,9 +166,6 @@ final class CallSignalingService {
         CallSignalingErrorCode.endpointMismatch,
       );
     }
-    final terminalPriority =
-        signal.event == CallSignalV2Type.reject ||
-        signal.event == CallSignalV2Type.terminate;
     final key = '${signal.callId.value}:${signal.messageId}';
     _v2Identities.removeWhere((_, expiry) => _nowMs() >= expiry);
     // Optional churn cannot fill the last terminal identity slots either.
@@ -256,7 +259,7 @@ final class CallSignalingService {
       ..._transmissionRetries.values,
       ..._v2Retries.values,
     ]) {
-      entry.close();
+      if (!entry._replayable || !entry._terminalPriority) entry.close();
     }
   }
 
@@ -266,6 +269,11 @@ final class CallSignalingService {
     if (_closed) return;
     _closed = true;
     stopRetries();
+    // stopRetries preserves one owned v2 terminal for the shutdown drain.
+    // Hard close revokes that custody even if retries were already stopped.
+    for (final entry in _v2Retries.values.toList(growable: false)) {
+      entry.close();
+    }
   }
 
   static final RegExp _wakeHandleGrammar = RegExp(r'^[0-9a-f]{32}$');
@@ -515,7 +523,9 @@ final class CallSignalingService {
         localDeadlineMs ?? signal.expiresAtMs,
       ),
     );
-    if (_closed || _terminalRetriesStopped || _nowMs() >= deadlineMs) {
+    if (_closed ||
+        (_terminalRetriesStopped && !(replayable && terminalPriority)) ||
+        _nowMs() >= deadlineMs) {
       return null;
     }
     final key = '${signal.callId.value}:${signal.messageId}';
@@ -561,7 +571,8 @@ final class CallSignalingService {
 
   bool _transmissionRetryIsCurrent(CallSignalTransmissionRetry retry) =>
       !_closed &&
-      !_terminalRetriesStopped &&
+      (!_terminalRetriesStopped ||
+          (retry._replayable && retry._terminalPriority)) &&
       identical(
         (retry._replayable ? _v2Retries : _transmissionRetries)[retry._key],
         retry,
@@ -591,7 +602,8 @@ final class CallSignalingService {
   }) async {
     if (!_transmissionRetryIsCurrent(retry) ||
         !canApply() ||
-        retry._attempts >= 4) {
+        retry._attempts >= 4 ||
+        (_terminalRetriesStopped && retry._attempts > 0)) {
       retry.close();
       throw const CallSignalingException(
         CallSignalingErrorCode.transportUnavailable,

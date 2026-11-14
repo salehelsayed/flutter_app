@@ -3110,6 +3110,23 @@ CallSignalingComposition createProductionCallSignalingComposition({
                     (diagnosticGraph?._shuttingDown != true ||
                         signal.event == CallSignalV2Type.terminate ||
                         signal.event == CallSignalV2Type.reject),
+                captureTerminalAuthority: (signal) {
+                  final terminal = coordinator.activeSession;
+                  if (terminal == null ||
+                      !terminal.isTerminal ||
+                      terminal.callId != signal.callId ||
+                      !identical(coordinator.lastSnapshot, terminal) ||
+                      (signal.event != CallSignalV2Type.terminate &&
+                          signal.event != CallSignalV2Type.reject)) {
+                    return null;
+                  }
+                  // Own cleanup clears active/context, but keeps this exact
+                  // terminal snapshot. Any successor replaces it permanently.
+                  // Service/adapter close ends the bounded shutdown drain.
+                  return () =>
+                      identical(coordinator.lastSnapshot, terminal) &&
+                      clock() < signal.expiresAtMs;
+                },
                 nowMs: clock,
                 idSource: _newCallId,
                 videoEnabled: true,
