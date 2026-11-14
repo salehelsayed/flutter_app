@@ -320,7 +320,7 @@ final class CallSignalingRuntime {
         while (_terminalSettlements.length > maxPendingTerminalSettlements) {
           _terminalSettlements.remove(_terminalSettlements.keys.first);
         }
-        _settlementDiagnostic('authenticated', terminal.signal.event.name);
+        _settlementDiagnostic('authenticated', terminal.signal.eventWireName);
       } else if (outcome != IncomingCallSignalOutcome.duplicate) {
         // A retained proof may cover only its byte-identical replay. A
         // newly rejected row cannot borrow prior authenticated authority.
@@ -340,7 +340,10 @@ final class CallSignalingRuntime {
     }
     if (fingerprint != null) _terminalSettlements.remove(fingerprint);
     if (pending != null && !_disposed && !_shuttingDown) {
-      _settlementDiagnostic('acknowledged', pending.terminal.signal.event.name);
+      _settlementDiagnostic(
+        'acknowledged',
+        pending.terminal.signal.eventWireName,
+      );
       try {
         await pending.commit(
           pending.terminal,
@@ -348,7 +351,7 @@ final class CallSignalingRuntime {
         );
       } catch (_) {
         // The durable ACK remains complete; native custody fails closed.
-        _settlementDiagnostic('failed', pending.terminal.signal.event.name);
+        _settlementDiagnostic('failed', pending.terminal.signal.eventWireName);
       }
     }
     return true;
@@ -370,9 +373,10 @@ final class CallSignalingRuntime {
     onQueuedBehindMediaPreparation: onQueuedBehindMediaPreparation,
   );
 
-  /// Indexes of invites in [events] whose call also has a terminal signal in
-  /// the same page. Peeking never consumes an event. A peek that fails leaves
-  /// its event unmarked, which at worst rings for a call the next frame ends.
+  /// Indexes of invites in [events] with an exactly bound, same-schema terminal
+  /// in the same page. Cross-schema pairs take the ordinary handler path so the
+  /// context's narrow unsupported-response exception still checks call phase.
+  /// Peeking never consumes an event. Missing binding leaves an event unmarked.
   Future<Set<int>> _supersededInvites(List<CallMailboxEvent> events) async {
     final peek = _peekIncoming;
     if (peek == null || events.length < 2) return const <int>{};
@@ -387,14 +391,20 @@ final class CallSignalingRuntime {
       }
       peeks.add(result);
     }
-    final endedCalls = <CallId>{
+    final endedCalls = <(CallId, AuthenticatedIncomingCallBinding)>{
       for (final peek in peeks)
-        if (peek != null && peek.isTerminal) peek.callId,
+        if (peek != null &&
+            peek.isTerminal &&
+            peek.authenticatedBinding != null)
+          (peek.callId, peek.authenticatedBinding!),
     };
     final superseded = <int>{};
     for (var index = 0; index < peeks.length; index++) {
       final peek = peeks[index];
-      if (peek != null && peek.isInvite && endedCalls.contains(peek.callId)) {
+      if (peek != null &&
+          peek.isInvite &&
+          peek.authenticatedBinding != null &&
+          endedCalls.contains((peek.callId, peek.authenticatedBinding!))) {
         superseded.add(index);
       }
     }

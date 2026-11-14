@@ -2,9 +2,20 @@ import 'sticker_catalog.dart';
 
 const int kMaxRecentStickers = 16;
 
-/// What the sticker panel shows: the Recent tab, or one group of one pack.
+/// What the sticker panel shows: My stickers, Recent, or one group of one
+/// pack.
 sealed class StickerPanelSelection {
   const StickerPanelSelection();
+}
+
+final class MyStickersSelection extends StickerPanelSelection {
+  const MyStickersSelection();
+
+  @override
+  bool operator ==(Object other) => other is MyStickersSelection;
+
+  @override
+  int get hashCode => 1;
 }
 
 final class RecentStickersSelection extends StickerPanelSelection {

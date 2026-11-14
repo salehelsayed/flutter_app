@@ -1042,6 +1042,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_delete_chat => 'حذف المحادثة؟';
 
   @override
+  String get block_contact_body =>
+      'لن يتمكن من إرسال رسائل إليك. يمكنك إلغاء الحظر لاحقًا.';
+
+  @override
   String delete_contact_body(String username) {
     return 'سيؤدي هذا إلى إزالة $username والرسائل وسجل المكالمات بينكما نهائيًا. لا يمكن التراجع عن ذلك.';
   }
@@ -1219,6 +1223,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_section_identity => 'الهوية';
+
+  @override
+  String get settings_badge_new => 'جديد';
 
   @override
   String get settings_section_preferences => 'التفضيلات';
@@ -1487,11 +1494,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة';
 
   @override
-  String connected_date(String date) {
-    return 'تمت الإضافة في $date';
-  }
-
-  @override
   String get date_today => 'اليوم';
 
   @override
@@ -1556,6 +1558,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get connected_title => 'تمت الإضافة!';
+
+  @override
+  String get contact_waiting_for_secure_connection => 'في انتظار اتصال آمن';
 
   @override
   String get send_message => 'إرسال رسالة';
@@ -3315,13 +3320,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get feed_connected => 'متصل';
 
   @override
-  String get qr_added_to_circle => 'تمت الإضافة إلى دائرتك!';
+  String get qr_added_to_circle => 'تم حفظ جهة الاتصال';
 
   @override
   String get btn_ok => 'حسنًا';
 
   @override
-  String get qr_already_in_circle => 'موجود بالفعل في دائرتك!';
+  String get qr_already_in_circle => 'جهة الاتصال محفوظة مسبقًا';
 
   @override
   String get qr_contact_added_previously => 'تمت إضافة جهة الاتصال هذه سابقًا';
@@ -3812,6 +3817,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get private_media_invalid_shape =>
       'تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.';
+
+  @override
+  String get private_media_caption_blocked =>
+      'احذف التعليق ليبقى هذا المحتوى خاصًا.';
 
   @override
   String get private_media_notification_body => 'وسائط خاصة';
@@ -5050,6 +5059,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_settings_mobile_data => 'التنزيل عبر بيانات الجوال';
 
   @override
+  String get translate_header_tooltip => 'الترجمة';
+
+  @override
+  String get translate_to_title => 'ترجمة إلى';
+
+  @override
+  String get translate_to_subtitle => 'اللغة التي تقرأ بها الترجمات.';
+
+  @override
+  String get translate_to_same_as_app => 'مثل لغة التطبيق';
+
+  @override
+  String get translate_to_all_languages => 'كل اللغات';
+
+  @override
+  String get translate_show_translation => 'إظهار الترجمة';
+
+  @override
   String get translator_remove_title => 'إزالة الترجمة؟';
 
   @override
@@ -5212,6 +5239,69 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sticker_pack_nujoom => 'نجوم';
 
   @override
+  String get stickers_mine => 'ملصقاتي';
+
+  @override
+  String get stickers_create => 'إنشاء';
+
+  @override
+  String get stickers_delete => 'حذف';
+
+  @override
+  String get stickers_drag_to_reorder => 'اسحب لإعادة الترتيب';
+
+  @override
+  String get stickers_move_earlier => 'نقل إلى موضع سابق';
+
+  @override
+  String get stickers_move_later => 'نقل إلى موضع لاحق';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'ملصق $position من $count';
+  }
+
+  @override
+  String get stickers_record_clip => 'تسجيل مقطع';
+
+  @override
+  String get stickers_library_full => 'ملصقاتي ممتلئة. احذف ملصقًا لإضافة آخر.';
+
+  @override
+  String get stickers_save_failed => 'تعذّر حفظ هذا الملصق. حاول مرة أخرى.';
+
+  @override
+  String get stickers_no_subject =>
+      'لا يوجد عنصر واضح. اقتصّ الصورة بدلًا من ذلك.';
+
+  @override
+  String get stickers_new => 'ملصق جديد';
+
+  @override
+  String get stickers_take_photo => 'التقاط صورة';
+
+  @override
+  String get stickers_gallery => 'المعرض';
+
+  @override
+  String get stickers_crop => 'اقتصاص';
+
+  @override
+  String get stickers_square => 'مربع';
+
+  @override
+  String get stickers_circle => 'دائرة';
+
+  @override
+  String get stickers_saved => 'تم الحفظ في ملصقاتي';
+
+  @override
+  String get stickers_use_as_sticker => 'استخدام كملصق';
+
+  @override
+  String get stickers_save_to_mine => 'حفظ في ملصقاتي';
+
+  @override
   String get settings_app_updates => 'تحديث التطبيق';
 
   @override
@@ -5222,4 +5312,158 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_updates_checking => 'جارٍ التحقق من التحديثات';
+
+  @override
+  String you_seen_all(int count) {
+    return 'عرض الكل ($count)';
+  }
+
+  @override
+  String get you_thought_replaced => 'استُبدلت بخاطرة أحدث';
+
+  @override
+  String get sticker_editor_text => 'نص';
+
+  @override
+  String get sticker_editor_save => 'حفظ الملصق';
+
+  @override
+  String get sticker_editor_colour => 'اللون';
+
+  @override
+  String get sticker_editor_delete => 'حذف';
+
+  @override
+  String get sticker_editor_undo => 'تراجع';
+
+  @override
+  String get sticker_editor_font => 'الخط';
+
+  @override
+  String get sticker_editor_move_up => 'تحريك للأعلى';
+
+  @override
+  String get sticker_editor_move_down => 'تحريك للأسفل';
+
+  @override
+  String get sticker_editor_move_left => 'تحريك لليسار';
+
+  @override
+  String get sticker_editor_move_right => 'تحريك لليمين';
+
+  @override
+  String get sticker_editor_bigger => 'أكبر';
+
+  @override
+  String get sticker_editor_smaller => 'أصغر';
+
+  @override
+  String get sticker_editor_rotate_left => 'تدوير لليسار';
+
+  @override
+  String get sticker_editor_rotate_right => 'تدوير لليمين';
+
+  @override
+  String get sticker_colour_white => 'أبيض';
+
+  @override
+  String get sticker_colour_black => 'أسود';
+
+  @override
+  String get sticker_colour_yellow => 'أصفر';
+
+  @override
+  String get sticker_colour_red => 'أحمر';
+
+  @override
+  String get sticker_colour_blue => 'أزرق';
+
+  @override
+  String get call_video_status_video_requested => 'تم طلب الفيديو';
+
+  @override
+  String get call_video_status_audio_only => 'صوت فقط';
+
+  @override
+  String get call_video_status_video => 'مكالمة فيديو';
+
+  @override
+  String get call_video_status_incoming_upgrade =>
+      'الطرف الآخر يريد تشغيل الفيديو';
+
+  @override
+  String get call_video_status_outgoing_upgrade => 'بانتظار قبول الطرف الآخر';
+
+  @override
+  String get call_video_status_switching_to_video => 'جارٍ التبديل إلى الفيديو';
+
+  @override
+  String get call_video_status_switching_to_audio => 'جارٍ التبديل إلى الصوت';
+
+  @override
+  String get call_video_status_reconnecting => 'جارٍ إعادة الاتصال';
+
+  @override
+  String get call_video_local_camera_on => 'كاميرتك قيد التشغيل';
+
+  @override
+  String get call_video_local_camera_off => 'كاميرتك متوقفة';
+
+  @override
+  String get call_video_local_camera_paused => 'كاميرتك متوقفة مؤقتًا';
+
+  @override
+  String get call_video_remote_camera_on => 'كاميرا الطرف الآخر قيد التشغيل';
+
+  @override
+  String get call_video_remote_camera_off => 'كاميرا الطرف الآخر متوقفة';
+
+  @override
+  String get call_video_remote_camera_paused =>
+      'كاميرا الطرف الآخر متوقفة مؤقتًا';
+
+  @override
+  String get call_video_action_request_video => 'طلب الفيديو';
+
+  @override
+  String get call_video_action_accept_upgrade => 'قبول الفيديو';
+
+  @override
+  String get call_video_action_decline_upgrade => 'الاستمرار بالصوت فقط';
+
+  @override
+  String get call_video_action_cancel_upgrade => 'إلغاء الطلب';
+
+  @override
+  String get call_video_action_turn_camera_on => 'تشغيل الكاميرا';
+
+  @override
+  String get call_video_action_turn_camera_off => 'إيقاف الكاميرا';
+
+  @override
+  String get call_video_action_switch_camera => 'تبديل الكاميرا';
+
+  @override
+  String get call_video_action_use_audio_only => 'استخدام الصوت فقط';
+
+  @override
+  String get call_video_controls_label => 'عناصر التحكم بالفيديو';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'لم يكتمل الاتصال بعد. يمكن للطرف الآخر مسح رمزك مجددًا.';
+
+  @override
+  String get call_video_entry_incoming => 'مكالمة فيديو واردة';
+
+  @override
+  String get call_video_entry_starting => 'جارٍ بدء مكالمة الفيديو';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'مكالمات الفيديو غير متاحة حاليًا.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.';
 }

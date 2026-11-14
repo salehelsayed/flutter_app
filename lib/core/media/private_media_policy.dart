@@ -81,15 +81,16 @@ class PrivateMediaEligibility {
         !isForward;
   }
 
-  bool get allowsNewPrivateMedia {
+  bool get allowsNewPrivateMedia =>
+      allowsPrivateMediaSelection && !hasTextOrCaption;
+
+  // A caption blocks sending private media, not choosing or retaining its
+  // mode. Wire admission still uses the caption-free eligibility above.
+  bool get allowsPrivateMediaSelection {
     final allowedKind =
         attachmentKind == PrivateMediaAttachmentKind.image ||
         attachmentKind == PrivateMediaAttachmentKind.video;
-    return attachmentCount == 1 &&
-        allowedKind &&
-        !hasTextOrCaption &&
-        !isEdit &&
-        !isForward;
+    return attachmentCount == 1 && allowedKind && !isEdit && !isForward;
   }
 
   @override
@@ -287,11 +288,11 @@ PrivateMediaPolicy normalizePrivateMediaComposerPolicy({
   required bool eligibleAttachmentIdentityChanged,
 }) {
   if (!selectedPolicy.isPrivate) return const PrivateMediaPolicy.ordinary();
-  if (!isPrivateMediaComposerPolicyEligible(
-        selectedPolicy: selectedPolicy,
-        eligibility: eligibility,
-      ) ||
-      eligibleAttachmentIdentityChanged) {
+  final canSelect =
+      eligibility.allowsPrivateMediaSelection &&
+      (selectedPolicy.mode != PrivateMediaMode.viewOnce ||
+          eligibility.attachmentKind == PrivateMediaAttachmentKind.image);
+  if (!canSelect || eligibleAttachmentIdentityChanged) {
     return const PrivateMediaPolicy.ordinary();
   }
   return selectedPolicy;

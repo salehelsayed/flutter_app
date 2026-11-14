@@ -102,6 +102,19 @@ did not build or distribute an IPA; later local candidate identities are recorde
 in `Network-Arch/IPV6-Infra-Ops.md`. Candidate evidence must bind the actual selected build
 configuration and signed artifact, not just the Dart revision or version label.
 
+Tester video has a separate build configuration after the owner's 2026-11-13
+"I give the go to switch video on for testers": explicitly select
+`tool/build/voice_call_tester_defines.json`. It differs from the store/release
+file only by `VIDEO_CALL_V2_ENABLED=true`; all existing voice/native/privacy/STUN
+defines remain equal. Store entrypoints and their release file remain unchanged,
+with video absent, and ordinary no-define builds retain default-off gates.
+`VC-GATE-GUARD` covers this separation. Its host evidence must record the actual
+default, store-file or tester-file compiler arguments and the selected file hash.
+Configuration guards do not establish native camera or signed artifact behavior.
+Camera FGS commit `afa0e7970` remains excluded per Kayan m-ab11ba0e while the
+foreground-camera feasibility question is checked; its parked Play declaration
+is not a claim that background/lock-screen camera or OS PiP works.
+
 ## Sources of truth
 
 - `tool/testing/selection.json` owns check selectors, requirements, timeouts,
@@ -230,6 +243,16 @@ tracked-source inventory, and preserve the original missing-input failure.
 Do not claim runtime-input equivalence from source hashes alone. The
 [group replay preservation receipts](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-replay-transport/ios-config-input-restoration.json)
 record this boundary without logging configuration contents.
+
+BL-17 reproduced this prerequisite failure in its isolated core checkout
+(1,355 passed, one missing-plist failure). Restoring the matching ignored file
+left tracked source and tests unchanged; the existing iOS config file then
+passed all ten cases. Preserve the input hash in
+`~/.codex/investigations/custom-stickers-core-20261111/sticker-core-ios-firebase-setup-repair.json`
+and the original `sticker-core-boundary-current-main-host-run/affected-push-1.raw.log`.
+The combined 14-case focused verdict is
+`sticker-core-bootstrap-push-setup-focused-verdict.json` in that evidence root;
+host configuration assertions do not certify native push delivery.
 
 When the owner reserves Firebase configuration staging to `flutter_app`, Codex
 must leave the file untouched and delegate this source-contract check with the
@@ -476,6 +499,26 @@ preserve deliberate re-adds and capability follow-ups. Evidence:
 `.codex-test-logs/contact-request-burst-20261024/`. These
 host assertions do not certify a device run or promise one packet when new
 capability material genuinely needs distribution.
+
+
+For inbox storage with a cold node and a nonempty received wake token, startup
+readiness consumes the caller's total timeout budget instead of a separate
+three-second cutoff. The default remains 15 seconds; an explicit three-second
+budget remains three seconds. After startup, the coordinator rechecks account
+network authority and node readiness, then makes at most one bridge store call
+with only the remaining budget. This is a scoped startup fix, not an explanation
+of every background send failure or a measured production failure rate.
+At `98f9599f20c26499c03f7122487dff478c87bfa1`, the complete readiness file passed
+8 cases and five exact preservation files passed 48 cases, with successful
+reporter completion, child exit 0 and no skips. RED
+`a6da15ff2e7482ccef49142ff25d7765c88dfd65` had two passing controls and three
+causal assertion failures (delayed readiness, revoked authority and lost node
+readiness). Two-path analysis and metadata validation passed. All eight
+before/after setup and execution boundaries match the exact heads, trees and
+17 pins with clean status; setup deltas are empty. Commands and raw hashes:
+`/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/D2-raw-facts.json`.
+Host bridge fakes establish this budget and admission behavior; device,
+composed-build and signed-candidate proof remain separate.
 
 Legacy active-contact key recovery must not require a call-wake grant that
 cannot be issued until the missing ML-KEM key is known. The authenticated
@@ -842,6 +885,42 @@ inventory validator binds the expected phase, nonce, device and group/event
 hashes; absent or mismatched native phase still rejects it. Legacy typed markers
 remain supported, with exact kind boundaries. Production logging is unchanged.
 Evidence is retained under `ios-nse-probe-001/` in the same run directory.
+
+BL-9 adds fixed public NSE failure classes and allowlisted diagnostic-spool
+reasons while preserving the empty success details above. The native regressions
+cover per-kind failure classification, bridge availability versus decrypt
+failure, private-detail exclusion, generic fallback, and a renderer failure after
+the first decrypt that must report once without changing safe content.
+On 2026-11-12, unsigned simulator execution on iPhone 16e / iOS 26.5
+(`DBE8C32E-9F19-4593-860A-B41113791D79`) recorded three causal RED test-case
+failures (47 assertion failures, xcodebuild exit 65) at
+`1d59a5026dab28ec50927c3aaebf606cbc818ca8`. GREEN
+`a4e861e9cb4a86e7e51e0b16bd8e9527cd7baa91` passed 110 tests with no failures
+or skips, exit 0: resolver 74, diagnostic spool 23, mailbox coordinator 8 and
+configuration 5. Both scratch trees match these revisions and remain clean;
+the runner rebuilt Go iOS bindings in each worktree. Raw logs, commands and
+xcresult bundles are retained under `.codex-test-logs/bl9-20261112/`, with
+actual exits in `red-focused/xctest.log` and `green-full/xctest.log`.
+Flutter subsequently exercised the same source on iPhone 13 with in-place
+Release installs preserving identity and data. Controlled build 262 omitted the
+NSE Go bridge: public proof explicitly records chat and group
+`bridge_unavailable`, followed by unauthorized, sanitized content handoff.
+Normal build 263 records two `PUSH_NSE_DECRYPT_OK` events followed by authorized,
+active handoff; the runner identifies those pushes as chat and group, while the
+success events intentionally omit kind. The public runner receipt records the
+controlled/normal binary-link gate results; review verified redacted flow and
+install/build metadata without independently remeasuring those binaries.
+The first controlled attempt failed at the Pods copy step (exit 65); explicit
+pod installation corrected setup before the successful build. Both outcomes
+remain in `device-controlled-262.fail1/`, `device-controlled-262/` and
+`device-normal-263/` under the same evidence root. Scoped adoption is indexed by
+`/Users/I560101/.codex/investigations/bl9-simulator-adoption-20261112/device-verification.json`.
+The fixed mailbox wake path is unreachable on production iOS devices: iPhones
+do not advertise `opaque_wake_v1` and receive rich pushes instead. That path has
+simulator proof only (`IosNseMailboxWakeCoordinatorTests`, 8/8); no crafted APNs
+fixed-wake or device mailbox proof is claimed. These receipts establish the
+specified source/build flows, not a subsequently integrated signed candidate
+or general APNs delivery certification.
 
 The group notification setup stops the Android app before clearing its private
 entries. An in-place install can restart background writers: attempt
@@ -2549,8 +2628,9 @@ Thirty-five causal oracle/registry tests pass in
 first attempt's two host-fixture type errors remain in `005-units.log`.
 Three focused integration-tagged Go host contracts pass in the same evidence
 directory's `007-go-checkpoint-summary.json`. These are host results, not device
-coverage. GC-005 still needs its separate membership process-death companion,
-and call content audio still needs the unapproved test-build audio hook.
+coverage. GC-005 still needs its separate membership process-death companion.
+The earlier audio-hook approval gap is historical for VC-024; its current scoped
+PCM and OS-route decision is recorded in the [long-call runbook](vc024-long-call-runbook.md).
 
 The additional journey preparation is documented in
 `docs/testing/priority-e2e-codex-mcp-execution.md`, using the shared camera
@@ -2564,6 +2644,20 @@ videos must pass a full host decode as well as the recorded native viewer
 checks. Equality with the processed encryption input is additional proof and
 remains `NOT RUN` when its existing sender receipt was not captured. Available
 target discovery supports an explicit unavailable-target N/A rather than a pass.
+
+MEDIA-035's two `GroupConversationWired` camera cases exercise the actual
+`Take Photo` action with injected camera/processor/transport, verify Original
+and Compressed processing, exact multilingual caption and one processed
+attachment, and reject gallery/document/video-picker substitution. This is the
+legacy group host path, not native camera or device-delivery proof. The real-file
+receipt regression now retains all six recipient outcomes across both qualities
+when an earlier export is corrupt, missing or differs from the processed send
+input; later valid recipients remain visible and absent sender-byte proof stays
+`NOT RUN`. The camera selection passed 2 tests; the full receipt suite and
+existing fanout/allowed-peer tests passed 72 tests, including removed-member and
+partial-delivery preservation. Commands, causal RED and first preparation
+failures remain in `.codex-test-logs/p0-journeys-20261110/` in the owned P0
+journey worktree. These results do not certify a native group-camera campaign.
 
 CONTACT-001 separates logical requests from transport retries. A contact missing
 its reciprocal ML-KEM key remains in the durable retry set across reopen, and
@@ -2632,6 +2726,142 @@ with the parent and all custody rows; failed staging or transaction rollback
 retains the intent. Contact/conversation/message deletion cancels pending
 intents, and Delete for me accepts the pre-custody projection. Ordinary awaited
 non-UI send callers and Share keep their existing authoring behavior.
+
+Automatic recovery defers authored intents and failed-row reconstruction while
+the recipient ML-KEM key is null, empty, or whitespace-only. It retains the
+original message rather than opening another diagnosed send attempt on every
+recovery pass. The BL-2 cases in `direct_text_restart_sqlite_test.dart` and
+`retry_failed_messages_use_case_test.dart` preserve the initial encryption
+refusal, exercise repeated recovery, then provide a key and require one send
+with the original identity, content, and timestamps. The SQLite cases also
+close and reopen the database before key arrival. Their contact/key port is
+fake and is explicitly restored after reopen; this does not prove contact-key
+persistence. The automatic bulk pass now emits at most one anonymous
+message/recover/blocked marker across both missing-key guards, with empty values
+and no trace/attempt binding. `recovery_block_observation_test.dart` covers each
+guard and their combination for null, empty and whitespace-only keys, repeated
+passes and unavailable/opted-out collectors. This proves deferral, not a failed
+send or the root cause of the missing key. Explicit manual retry still reports the normal missing-key
+refusal, and already-encrypted custody still replays its exact envelope with
+no re-encryption when the current contact key is missing. Key acquisition and
+persistence remain separate concerns.
+
+Automatic failed-message recovery treats `invalidMessage` as terminal through
+nullable local `messages.auto_retry_terminal_reason` (DB v131). The loader
+excludes marked rows before its limit; the row retains status `failed`, and
+explicit manual retry clears/bypasses the marker. Exact snapshot qualification
+prevents an intervening row change from marking a different send incarnation.
+Null snapshot fields use `IS NULL` with no null whereArg: the earlier `IS ?`
+matched correctly but produced a sqflite compatibility warning. No wire or UI
+contract changes. Do not install an older build over a v131 phone database.
+
+BL-24(C) source `be40d7bb761ec5a7a069dc2fcededc345855cd5a` has verified
+Claude-Dev host evidence: the original RED produced two causal failures (second
+invalid send and missing migration column); corrected focused cases passed 3/3
+and the complete main retry file passed 55/55 without the warning. Unchanged
+receipts retain 43 tests across the other four failed-retry files, 26 unacked
+retry tests, 18 migration tests and metadata validation. The v130 upgrade test
+preserves all existing values, writes a marker on a null-field row, reopens,
+checks automatic exclusion, clears it, and rejects a stale snapshot. The real
+repository probe preserves the marker through reopen and permits manual retry.
+Raw first failures/warning remain in
+`/Volumes/CrucialX9/flutter_app-claude-dev/build/bl24c-proof/`; the bounded
+compatibility follow-up is in `build/bl24c-sql-proof/` under that same checkout.
+The follow-up began before the narrow review release under the author's packet
+and Kayan's two-run scope; retain that timing disclosure. Migration wrapper
+exit 3 means omitted checks were NOT RUN, while its child passed. Wider
+quiet-recovery/affected-storage checks were deferred to the batch by Kayan;
+these host receipts do not prove native SQLCipher or a signed upgrade.
+
+The batch checks exposed fixture dependencies omitted from that original C gate.
+Current database manifest expectations must use `currentIdentityDatabaseVersion`;
+historical migration tests should locate their owned version instead of assuming
+it is the registry tail. When a historical migration test opens the current
+registry, compare message rows projected onto captured pre-upgrade column keys,
+while retaining its owned-column defaults, column ordering and exact other-table
+checks. This keeps later nullable columns from invalidating historical equality.
+Full repository/lifecycle fixtures that execute current failed-retry SQL need
+the current production migration registry, not a hand-picked early subset.
+Preserve intentionally isolated historical schemas and callbacks that never run
+that SQL. The lifecycle missing-column failure passed on main and C RED, then
+failed on C tip; the owner change was traced to `4d21b6bcb`.
+
+C also changes the existing data adapter's DTR-18 normalized body through its
+terminal-retry capability and delegates. The parent reconstructs the old
+`1c151fd3` pin and C/current reconstruct `46b07764`; update only that reviewed
+pin, preserving location, stale-consumer and dependency assertions. The static
+schema audit found no further current production creator/import/recovery
+omission; three separate historical v8 smoke entrypoints were excluded and do
+not invoke these retry helpers. This audit is not runtime recovery evidence.
+
+Claude-Dev's bounded follow-ups pass the complete importer file at `37277b6f6`
+(13 cases), migration 112/113 plus lifecycle pause at `e808db43f` (8 cases), and
+the complete placement contract at `d97c36e6f` (4 cases). Every run has zero
+failures/errors/skips, successful completion and child exit zero; three clean
+HEAD/tree/lib boundaries match every individual pin (7, 8 and 5 respectively).
+Setup left each tree clean. Preserve the original batch failures and bisect.
+Raw evidence is in the Claude-Dev checkout's `build/cgate-proof/`; verification
+is in `/Users/I560101/.codex/investigations/bl24c-message-shape-audit-20261113/c-gates-runtime-verified.json`.
+These are isolated v131 proofs; a composed v132 candidate requires its own
+current-version expectations and evidence.
+
+Committed contact-key updates now wake failed-message recovery directly, without
+waiting for the periodic/reconnect pass or replaying already-encrypted custody.
+The contact-key retrier tests retain updates across startup, active full recovery,
+and resume/group recovery gates, and ignore them after disposal. The reverse
+ordering matters too: a
+full recovery request arriving during a key-only pass must retain its exact
+initial/periodic/age options and run afterward. Dropping that request reproduced
+a second causal RED even though the original key-arrival case already passed.
+`pending_message_retrier_contact_key_test.dart` and
+`pending_message_retrier_contact_key_serialization_test.dart` cover both orders
+and duplicate events; the transport/key ports remain fakes, so this is host
+recovery evidence, not key persistence or live-device delivery certification.
+Claude-UI verified corrected source `d876998cd` with six focused cases, 126
+preservation cases and clean analysis. Causal RED and GREEN raw evidence is in
+`flutter_app-ui-update/.audit/bl12/{out,out2,green}/`; the reverse RED hash is
+`2bc1bd725f0b999412eea695eb735182e335c5028173bbdf010f073eec4abcaf`
+and the focused GREEN hash is
+`08819e523651f4d78e01a446d4163a3fd6878ddff2ba174a72abdb50659e52da`.
+Batch affected/native acceptance remains separate from this focused result.
+
+BL-24(D1) retains existing v1 delivery/mutation receipt envelopes in the
+DB v132 `delivery_receipt_outbox`. Durable staging finishes before transport;
+queue admission alone still returns false, and only existing live ACK or inbox
+store acceptance settles custody. Retries preserve the original recipient,
+serialized payload and stable receipt key. The existing lifecycle owns one
+drain and per-key flight, with an attempt claimed before transport, five-second
+to fifteen-minute backoff and seven-day expiry. Startup/online/periodic/resume
+and the OS-restored light pass use that same drain. These tests do not certify
+atomic canonical receive plus receipt enqueue across a crash.
+
+The isolated original GREEN `0c975200f` has 12 focused receipt cases and
+41 plus 11 preservation cases passing. Keep its original RED classifications
+(zero passes, two assertion failures and five errors, plus a separate passing
+migration control) and the first importer/schema results: five importer
+expectations still assumed v130. The historical fixture follow-up `ec50a47c5`
+passed 25 cases across nine files. Its three clean HEAD/tree/lib captures
+checked eleven pins in aggregate; the individual hashes were printed only
+in a later clean-scratch read. That later read is not a run-time capture.
+
+The main rebase `b14e2775cc9822da60c8c19ede691ae388516f24` onto
+`c2da32fab21e28b61d412b1deea764faea4e2299` preserves the reviewed production
+patch (stable patch ID `23e3dda16b101427a82004c6b56a667cbc19c264`). Keep v132
+and the landed importer's `currentIdentityDatabaseVersion` expectations;
+retain historical version lookups, C's explicit v131 presence check and its
+message-column projections. On this composed source, the complete importer
+plus those nine migration files pass 38/38 (13 plus 25), with zero
+failures/errors/skips, successful reporter completion and child exit zero.
+Three clean HEAD/tree/lib checkpoints print all 50 pins individually, 150
+matching entries. Raw evidence is in
+`flutter_app-ui-update/.audit/bl24d1rb/out/`; independent source/runtime
+review is in
+`/Users/I560101/.codex/investigations/bl24d1-source-review-codex2-20261112/main-rebase-final-scoped-verdict.json`.
+Resolved-test analysis, metadata validation and the explicit main-base preview
+pass. The preview selects 56 checks with no unmapped changes; broader checks
+remain unrun for the batch. Original causal/preservation results remain scoped
+to their original candidate. This closes the authorized rebase gate, not the
+whole batch, device/native or signed-candidate gate.
 
 Conversation and Feed hold the editable draft and withhold the bubble until
 the intent commit. The UI tests positively hold that write, exercise refusal,
@@ -3299,8 +3529,8 @@ defines a separate disposable available-simulator leg after UI-Update lands.
 
 CR-002's SQLite-backed decline cases keep the original envelope rejected after
 reopening the database with an empty in-memory replay cache. The authenticated
-public key and decoded signature bytes identify the persisted declined request; a genuinely
-different signed request still requires manual consent. Unit fixtures for that
+public key and decoded signature bytes identify the persisted declined request;
+a fresh manual or legacy request still requires manual consent. Unit fixtures for that
 fresh path must use a different old signature rather than the same constant
 signature for both requests. CR-020 keeps a valid request retryable when its SQL
 save fails: the storage exception reaches the existing negative-confirmation
@@ -3322,6 +3552,131 @@ under the same artifact directory. `signature-go-decoder-probe-cached.log` check
 the actual Go 1.27.1 verification helper: canonical, CR/LF, filler-bit and combined
 aliases verify, while a tab does not. This is a host helper probe, not a signed
 mobile-binary proof.
+
+Fresh automatic `key_exchange_retry` envelopes also remain ignored after a
+stored decline when no current contact exists, even with a valid new signature
+and a timestamp beyond the decision cutoff. Authentication and current-authority
+checks still run first; the unsigned outer intent only suppresses a request and
+never grants consent. The SQLite/Ed25519 cases in
+`declining_request_adds_no_contact_test.dart` prove no new prompt, pending row,
+contact or auto-add, with the declined row and consent cutoff unchanged in the
+live receiver and after SQL reopen. A fresh manual request still prompts once,
+and a first-ever automatic retry still recovers the initial request. The two
+causal failures on unchanged production and the 156-case receive, decision and
+authority preservation pass are retained as `contact-red-01.log` and
+`contact-green-01.log` under
+`.codex-test-logs/contact-request-decline-20261109/`. These are host receive/state
+proofs; native delivery and signed artifacts remain separate. Sender-side
+authored-message recovery is a different producer and is not changed by this
+receiver guard.
+
+Dormant keyless contact-request retries retain one encrypted, silent
+`key_exchange_retry` envelope in a bounded secure-store journal before sending.
+The same ID, signed body and ciphertext survive reconnects and process restart;
+regenerating a signed body under its old operation ID would conflict with the
+receiver's digest guard. Reservations pace attempts at 1 hour, 6 hours,
+24 hours, then daily, and stop at the earlier scan or signed-timestamp
+seven-day cutoff. The journal holds at most 200 live contact generations and
+defers new work rather than evicting a live ID. Reconciliation removes accepted,
+declined, withdrawn, removed, expired or replaced generations before retry;
+after an asynchronous build, current account and contact authority are checked
+again. Existing account-reset inventory erases the journal. First-send and
+acceptance wire payloads remain unchanged; `signedAtMs` is local envelope
+metadata, not a new wire field. E2 extends the dormant policy to explicit
+ML-KEM, notification wake-token and call-wake marker jobs as described below.
+There is no manual resend UI in this baseline.
+
+Live-retry preservation fixtures need a current `scannedAt` and durable fake
+secure storage; old 2024/January fixtures now intentionally represent expired
+contacts. Explicit call-grant distribution fixtures retain their pending-grant
+owner and their explicit fresh-event send under E2; a locally issued grant is
+not received-material authority. Keep their assertions and deadlines intact. The causal policy file produces one passing v2 control and
+seven assertion failures before the fix; 156 focused and 1,105 curated identity
+case executions pass afterwards without failures or skips. Evidence is in
+`.codex-test-logs/codex-ui-bl24e-contact-request-retry-20261112/` at
+`21bfa4986` / `c4a74d8d8`. Three retained RED hash-command exits are caused only
+by the new GREEN-only journal file being absent from the RED tree: all existing
+RED pins and all GREEN pins match at eight clean ref/tree boundaries. These
+exits are not loader failures or substitute causal failures. The evidence does
+not measure production relay rows, battery/data use, devices or signed artifacts.
+
+Contact-request envelope signing uses the same injected `clock.now()` as retry
+admission and journal timing. Its default remains wall time; this change fixes
+clock-injected fixtures, not a demonstrated production clock divergence. The
+future-clock regression requires one durable retry transmission and matching
+signed payload/local `signedAtMs`. The rollback fixture must move that clock
+backward **after reservation and before signing**; setting an injected future
+time while relying on wall-time signing no longer simulates rollback. Preserve
+zero sends, an attempted signature at the rolled-back time, and the retained
+reservation without an envelope.
+
+BL24-CLK evidence: `5f58f04af` produces the intended causal assertion failure;
+`2bca274c9` first produced 43 policy passes and one obsolete rollback-fixture
+failure, plus 95 passes across the send, retry and lifecycle preservation files.
+The test-only correction `eea61c915` passes all 44 policy cases with identical
+production and preservation files. Claude-Dev's `build/clk-proof/` and
+`build/clkfix-proof/` retain the raw outcomes and child exits, including the first
+failure; 200 individual file hashes match across ten clean setup/run boundaries.
+These are host proofs with fake storage/transport/crypto; native delivery,
+devices, broad affected lanes and signed artifacts remain unverified here.
+
+E2 treats every nonarchived keyless contact as dormant for periodic, reconnect
+and resume work, including contacts with pending marker jobs. An explicit
+`requireFresh` event may send once for its pending marker through the existing
+equivalent-request coalescer. It preserves the original seven-day cutoff and an
+existing future reservation; a first or already-due attempt takes the normal
+reservation without resetting attempts or expiry. Missing optional secure-store
+wiring retains the legacy fresh-event path, while a configured but unavailable
+journal fails closed. Fresh work excludes peers without a pending marker. After
+asynchronous construction and authority reads, the final material check runs
+immediately before transmission. A local issued grant does not exempt a keyless
+contact from the dormant periodic policy.
+
+The coordinator carries fresh-event authority through the unchanged zero-argument
+callback using scoped execution context. A queued fresh request waits behind a
+newer periodic pass and then runs its single coalesced fresh follow-up; it may
+share a newer fresh pass. The policy fixture covers periodic A, periodic B and
+two queued fresh callers sharing one future, as well as late key material,
+reservation preservation, expiry and unrelated-peer suppression.
+
+E2's initial causal REDs and first GREEN outcome (37 policy passes, then
+125 preservation passes and one A-D burst failure) remain evidence. The burst
+failure exposed lost explicit fresh-event authority; its existing test bytes
+were retained. At corrected source `85b68ebc0`, Claude-Dev's two exact runs pass
+43 policy and 126 preservation cases with no errors or skips and both child
+exits zero. All 21 individual pins match at four clean HEAD/tree boundaries;
+setup generated no delta. Raw evidence is retained in the Claude-Dev checkout's
+`build/e2qf-proof/`, with verification in
+`/Users/I560101/.codex/investigations/bl24e2-markers-20261112/queued-fresh-runtime-verified.json`.
+These are isolated host proofs; composed changes, native delivery and signed
+artifacts require their own evidence.
+
+E3 contact retry after expressed interest uses the existing silent journal: opening the
+chat or profile of an eligible stopped keyless contact starts a fresh signed
+seven-day cycle for that contact, at most once per seven days. The existing
+1h/6h/24h/daily schedule and authority/material checks still apply. Stopped
+status refresh reads local identity, contacts, consent and journal state; its
+identity reads are not a retry-count witness. Scheduled-retry tests observe
+the coordinator callback or actual transport, and root fakes implement the
+new typed async/listenable API. The local-status sentinel includes both a
+stopped peer and a fresh eligible peer, with zero bridge/transport calls.
+The two-file correction `ab09eebc2e21d65bbef81a894d40aa90d03cc538`
+passed all 137 cases in the ten-file focused suite and two-path analysis,
+with four clean matching 25-pin identity stamps and an empty setup delta.
+Retain the original RED 8 passes/7 assertion failures/12 binding errors,
+first GREEN 117 passes/6 failures/13 errors, and historical identity-family
+1153 passes/6 failures under
+`.codex-test-logs/codex-ui-bl24e3-interest-retry-20261113/`.
+The original nine-file preservation result remains 158 passes. The focused
+correction does not refresh the curated-family or combined release gate.
+The CLK/E3 merge `3954f3dea` preserves explicit `signingTime` precedence and
+uses `clock.now()` as the fallback for both the signed payload and encrypted
+envelope timestamp. Its ten-file E3 suite (including the policy file once)
+passes 138 cases, with future-clock assertions on the interest signed payload
+and ordinary retry outer timestamp. Claude-Dev's `build/clke3-proof/` retains
+raw JSON, child exit 0 and three clean 32-pin identity records (96 matches),
+including both merge parents; setup produced no tracked delta. This host merge
+proof does not refresh broader lanes, native/device or signed-artifact evidence.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
@@ -3566,12 +3921,26 @@ a missed notification open replays the still-pending request without another
 network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All fourteen shell cases pass, including remount, blocked-peer filtering, duplicate
+All fifteen shell cases pass, including remount, blocked-peer filtering, duplicate
 input/restart and reciprocal acceptance with both Feed and Orbit retained, and
 repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
+
+Overlapping receives can both pass the pending-row admission read before either
+upsert commits. The second upsert replaces the local `received_at`, while the
+presentation queue coalesces that peer into the first snapshot's lease. The
+repository correctly rejects the stale snapshot; after releasing its lease, the
+listener must replay durable pending rows through the existing consent,
+blocked-peer and suppression guards. The BL-19 shell case controls those real SQL
+write boundaries, retains the same Orbit State, and requires one dialog for the
+current row without reattachment or implicit contact creation. It fails with no
+dialog before the fix and passes unchanged afterward; the full shell file is
+15 PASS / 0 FAIL / 0 SKIP. Preserve the initial fixture timeout separately from
+that causal RED. The native CR-003 trace lacks payload and pre-relaunch DB state,
+so this host proof does not establish the device incident's cause or resolution.
+Evidence: `.codex-test-logs/bl19-contact-request-reveal-20261111/`.
 
 Repeated Feed contact acceptance must publish the committed contact through
 `ChatMessageListener.contactUpdatedStream` before opening the conversation,
@@ -3584,6 +3953,21 @@ preserves the same Orbit State, and checks both circle and all-chats grow from
 one to two to three contacts without avatars. This is host UI/stream/SQL proof,
 not device/native delivery. Evidence:
 `.codex-test-logs/contact-accept-refresh-20261024/`.
+
+Saved-contact connection readiness is presentation state derived from an
+unblocked contact whose ML-KEM public key is null, empty or whitespace. It must
+not imply remote acceptance or decline, or add a persisted consent state. Orbit,
+Feed and the conversation header use the approved localized waiting label;
+empty and compact conversation origin markers use neutral `Contact saved`
+until a key arrives. Mounted Feed, retained Orbit and the conversation header
+must update for the affected peer without reopening, while unrelated peer
+updates and existing previews/actions remain unchanged. The unchanged BL-11
+host cases cover all three locales, ready/blocked controls and mounted updates:
+causal RED 19 expected failures / 2 passes, then 21/21 PASS at `d89d3ff91`. The first
+20/1 candidate result and the German filter overflow it exposed remain retained.
+This is host presentation/stream evidence, not native delivery or consent proof.
+Evidence: `.codex-test-logs/bl11-verified-focused-20261112/`; retained copy and
+SHA256 manifest: `/Users/I560101/.codex/investigations/bl11-requester-pending-20261112/retained-focused-evidence/`.
 
 Contact deletion must also refresh retained Orbit when Conversation opens through
 Feed or a notification, without Orbit's own route-pop callback. The production
@@ -3708,6 +4092,23 @@ RED run and the subsequent layout failure in
 `.codex-test-logs/intro-dismiss-connected-20261101/` in the matching worktree.
 Host tests fake the secure-storage platform boundary; real persistence across
 an application restart and OS notification retirement remain device evidence.
+
+German action-fit coverage mounts the processing IntroRow, Feed's full-conversation
+link, BlockedBanner, the actual 180-pixel unarchive slot and GroupInfoScreen at
+360 by 780 logical pixels, DPR 1 and text scales 1 and 2. Introduction buttons
+wrap inside a finite flex allocation while retaining disabled actions and the
+processing spinner. Other affected labels use a constrained single line with
+ellipsis; wording, icons and callbacks stay unchanged. Check initial group
+header layout errors before scrolling to its lazy add-member action: looking
+for that offscreen action first masked the header overflow with a fixture
+failure in the original baseline. The corrected ten-case RED has nine causal
+RenderFlex failures and one normal-scale group pass; all 75 cases in the five
+existing widget files then pass, with clean analysis of the ten changed Dart
+files. These checks require positive paragraph bounds and full text or clean
+ellipsis, but do not certify native fonts, signed visuals or screen readers.
+Keep the original baseline/fixture failure and final pair under
+`.codex-test-logs/codex-ui-german-overflow-20261112/`; broader integration belongs
+to the batch gate rather than another per-fix sweep.
 
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
@@ -4090,6 +4491,28 @@ and device deadlines remain unchanged. A composition contract checks both the
 selection and budget against the canonical workflow entry. Evidence:
 `full-workflow-budget-repair-001/`; owning verification remains pending.
 
+The legacy-binding workflow fixture
+`test_real_protected_full_and_reliability_cli_launch_every_configured_route`
+formerly shared fixed `closure-*` device lease IDs across worktrees. Overlapping
+workflow runs could therefore report `BLOCKED` synthetic routes despite using
+stubbed commands. The temporary requirement to serialize this fixture is
+superseded by per-process synthetic ID suffixes and a per-fixture temporary
+lease directory. The fixture dispatcher and its busy-lock probes use that same
+directory through the existing lease API; production lease paths and exclusion
+are unchanged. The concurrent regression holds both real fixture leases before
+releasing either child, then requires both original 80/67-route fixtures to pass,
+disjoint IDs and distinct lease roots. Its RED retains actual dispatcher lease
+contention in an owned temporary ambient root; GREEN passes with isolation.
+Receipts are in
+`/Users/I560101/.codex/investigations/workflow-fixture-isolation-20261111-m9ee370e6/`
+(`red-causal.raw.log` and `worker/green-causal.raw.log`).
+The unchanged fixture passed alone (1/0/0 in 39.220 seconds) after overlapping
+BL-11 and DTR-13 runs failed it. This is host orchestration evidence, not device
+proof. Source equality, overlap, and evidence limits are recorded in
+`/Users/I560101/.codex/investigations/scanner-wording-20261110/workflow-contention-proof-01.json`;
+the serial receipt is `workflow-serial-diagnostic-01.json` under the scanner
+worktree's `.codex-test-logs/scanner-wording-20261110/` directory.
+
 The generic `testNotificationTap`, `testColdNotificationTap`, and
 `testTapExistingNotification` full-suite entries use the existing simulator
 APNs fixture campaign's explicit `--native-selector` mode. It accepts only the
@@ -4391,6 +4814,15 @@ they do not certify device image decoding. The [scoped host receipts](../../.cod
 retain initial failures and the 214-test Orbit integration rerun. These host
 checks do not prove real transport, OS notification taps or device rendering.
 
+Orbit thought stars mark titles hidden by a pinch. Sculpt entry temporarily
+owns that visibility reason; exit restores the prior reason only while titles
+remain hidden. Spreading titles back out must keep the star off, and a badge
+hide must never become a pinch on sculpt exit. `orbit_thought_star_test.dart`
+drives pinch → sculpt → exit and spread, retaining a five-second sculpt check
+and the badge-hidden control. The causal RED and focused GREEN are retained in
+`.codex-test-logs/codex-ui-orbit-sculpt-star-20261111/`; this is host gesture
+evidence, with the installed Pixel recheck remaining separate.
+
 Animated 2D Thought layout must observe the real Surface clock; geometry
 fixtures with Reduce Motion enabled do not exercise normal motion. Re-solving
 discrete collision gaps on every tick can change avatar seats with identical
@@ -4490,6 +4922,26 @@ overview bubble must not make a replacement thought a read target. Binding-clock
 expiry tests need a second live peer and must assert its face rotates to the
 front as well as its card changing. A static replacement-card assertion misses
 that geometry failure.
+
+Friend full-screen Thought reactions use the same four circles, quoted-chat
+sender and send ledger as the 3D bar; own Thoughts expose no reaction controls.
+The wiring tests cover text and decoded-photo cards, all four quoted sends,
+selection in both directions and duplicate suppression after returning to 3D.
+The card tests retain the own-card exclusion and verify a later failed
+delivery retries the same message ID, plus 320-point EN/AR layouts at 2× text.
+The dial's unsent drafts remain local when shared answer state changes.
+
+Positive reaction-selection fixtures must start the fake P2P node and seed a
+connected peer. Its default stopped state legitimately stages a quoted reply
+as failed (`CHAT_MSG_SEND_NODE_NOT_RUNNING`), leaving the reaction unpressed
+in both views; a staged row alone does not prove delivery. The original
+stopped-node failures and diagnostic traces are retained. The corrected
+ready-transport RED on `e0b942a2f` still fails for the three missing friend
+controls, with the own-card control passing. The four complete wiring, card,
+depth-answer and visit-state files pass 301 cases on `f2e3f8128`, with no
+failures or skips. Evidence is under
+`.codex-test-logs/codex-ui-orbit-fullscreen-reactions-20261111/`; this is host
+widget/state coverage, not a phone-rendering or transport acceptance receipt.
 
 Depth media must resolve persisted relative paths through
 `MediaFileManager.resolveStoredPathSync` before checking for cached files.
@@ -5128,6 +5580,41 @@ Full product/physical-device and signed-candidate execution: **NOT RUN**.
 No speedup or release acceptance is inferred from fixture timing. Full regression
 is not the default per-plan gate; follow the wave/release cadence in `AGENTS.md`.
 
+Flutter native-asset preparation is serialized per worktree by
+`scripts/flutter_native_asset_lock.py`; the lock is released on the canonical
+Flutter machine `testStart` event, so independent test bodies can overlap after
+setup. BL20 verified source `e9ceb5bf28df840e615102142e259ab0326b447e` with
+`scripts/test/bl20_native_asset_concurrency_proof.py`: three fresh repeats each
+ran four real SQLite test bodies concurrently, with all 12 child exits zero,
+no failed/skipped tests, and scheduler maximum four. Barrier timestamps establish
+four-body overlap in each repeat; they do not establish a throughput speedup.
+The four lock unit tests and manifest validation also passed. Raw proof remains
+under `/Volumes/CrucialX9/flutter_app-ui-update/.audit/wt/bl20/.codex-test-logs/bl20-concurrency-20261112-fresh/`;
+aggregate `results.json` SHA-256 is
+`514495224ac5c5d2572c175739e877732a186d97ef624b8d63f10b07d0b7c3fe`.
+The runner started after observing no batch process, without an explicit
+confirmation that the other runner's batch half had finished; retain this
+scheduling caveat and do not infer an isolated-host timing benchmark.
+
+The concurrency proof did not establish full-workflow composition. Batch2
+exposed two integration regressions: the new lock test was absent from the
+mirrored `full-workflow` paths/command, and the disposable legacy CLI fixture
+did not copy the newly imported lock module. Preserve both registration mirrors
+when extending the canonical workflow, and copy imported wrapper dependencies
+into disposable CLI fixtures. The two failures reproduce on original BL20 and
+Batch2 but pass on main `d58446b31`; raw bisect evidence remains under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/batch2/out/bisect/`.
+Correction `3394a2e879897c45540d5da37a54b0ef2789e4d0` adds only those three
+entries. Claude-UI verified both complete focused files (44 tests), validation,
+and the workflow lane (335 passed, zero failed/skipped, child exit zero), with
+matching before/after source hashes and a clean worktree. Raw evidence is under
+`/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl20fix/out/`; the workflow
+`results.json` is in that runner's `.audit/wt/bl20fix/build/bl20-batch-fix-3394/workflow/`.
+The separate planning command stalled and was stopped with exit 143; its log is
+retained, not counted as a result. The workflow-only wrapper exited 3 because
+other change-selected checks remained NOT RUN. This is scoped workflow proof,
+not full-change, batch integration, native, or release acceptance.
+
 `.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
 for three distinct acceptance modes. Its final hosted job always runs after
 metadata and selected execution; only a PR emits **`Mknoon regression checks`**,
@@ -5716,10 +6203,30 @@ do not count `test(...)` strings as executions. Runner listings took about
   `.codex-test-logs/r2-5-affected-media.log`.
   Ordinary pending-video summaries and picker disclosure use the existing
   selected media kind and say “Normal video”; photo wording stays unchanged.
-  The full private-media composer widget file passes 14 cases, including one
+  The full private-media composer widget file passes 15 cases, including one
   photo/video distinction case across English, German and Arabic. This is copy
   and kind-wiring proof, not native video preparation or device certification.
   Group composers do not enable this private-media chip.
+
+  Private-media selection must survive caption entry in either action order.
+  A caption disables Send and shows the approved localized inline explanation;
+  clearing it or explicitly choosing Keep in chat removes that restriction.
+  The prior caption-to-ordinary reset silently authorized an ordinary send and
+  is superseded by the BL-22 owner decision. The relevant reset and admission
+  code was identical at store-131 source `3a55bc50e` and `e0a28d94`.
+  Six wired-composer/picker cases cover all three private modes and both action
+  orders. They invoke current-caption and stale empty-text send callbacks:
+  admission must check both submitted text and the live draft caption before
+  any message save, send or staged-media adoption. The stale-empty extension
+  fails before that guard and passes unchanged afterward; caption removal and
+  explicit Keep in chat still unblock. These cases use a local PNG and a fake
+  message repository, so their no-save assertions prove the host boundary.
+  Selection eligibility remains separate from caption-free wire admission;
+  existing policy, boundary and receiver egress tests preserve that distinction.
+  The full 15-case composer file also checks EN/AR/DE inline placement for
+  photos and videos. Native picker, transport and signed store-131 device
+  behavior are not proved by these host tests.
+  Evidence: `.codex-test-logs/bl22-caption-private-policy-20261112/`.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.
@@ -5833,6 +6340,30 @@ do not count `test(...)` strings as executions. Runner listings took about
   First RED and fixture-cleanup failures remain under
   `.codex-test-logs/notify004-20261101/`. These host channel mocks do not prove
   installed Android Settings behavior.
+- A connection-readiness label in the conversation header must share the
+  existing action row beneath the contact name. A separate full-width status
+  band added 35 px to the conversation root while the sticker composer was
+  open: the same three sticker cases passed on `98a2a71f1` and failed on
+  `d89d3ff91`. The header-only fix at `04d008861` preserves normal text scaling
+  and a bounded single-line label; those three cases pass, and the full
+  ConversationWired/composition preservation pair passes 274/274 (271 + 3),
+  including all ten BL-11 conversation cases. Keyless empty-conversation
+  markers still use `Contact saved` after deleting the final message; the
+  composition sentinel accounts for the readiness argument without changing
+  its protected API. Analysis of the header and two changed tests is clean.
+  First failures and the same-environment A/B remain retained. Evidence:
+  `.codex-test-logs/bl11-verified-focused-20261112/final04d/`; raw/exits and
+  SHA256 adoption: `/Users/I560101/.codex/investigations/bl11-requester-pending-20261112/affected-failures/final04d-adoption.json`.
+- Orbit filter labels must share their bounded tab width with count badges.
+  Flexible single-line labels with ellipsis preserve counts and tab actions for
+  long translations. The German filter checks at 360 dp include the actual 16 dp
+  side margins, all three counts and 1x/2x text; the retained Feed/Orbit cases
+  exercise en/ar/de at 390 dp. These constraints/tap assertions use the widget
+  host font, so they do not replace the real-font glyph checks below or native
+  rendering evidence. The original main-equivalent filter produced 52 px / 13 px
+  German overflows in the first BL-11 GREEN attempt; the bounded-label fix at
+  `d89d3ff91` passes all 7 filter tests, 3 locale cases and the unchanged 21-case
+  combined run. Evidence: `.codex-test-logs/bl11-verified-focused-20261112/`.
 - The approved UI-25 loading label fits Orbit's existing top-strip reservation;
   skeleton geometry and settled list position are unchanged. Geometry checks
   must advance the existing zero-delay, 400 ms row entrance before comparing
@@ -5927,6 +6458,60 @@ visible and cannot become an ordinary first-attempt PASS.
   `StateError` before the publication guard; all 25 listener and seven view
   delivery cases pass afterward. Red/green receipts are retained in
   `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+- **Thought relay replay before persistence:** the composed `Thought reconnect`
+  cases in `test/core/services/p2p_service_inbox_ack_ordering_test.dart` use
+  real P2PServiceImpl, IncomingMessageRouter and PostListener with a gated
+  in-memory post write and fake relay custody. A failed pending fetch retains
+  the relay copy. After reconnect, a failed first post write leaves no post,
+  no recoverable staging row and no relay copy; a later drain cannot recover
+  the live Thought. The successful-write control passes. The failure case is
+  deliberately RED on base `416fa15d6` (RED commit `7c9ac52d6`). It proves
+  the Dart completion/custody gap, not a real network fault, SQLite crash,
+  encryption failure or tester incident. Preserve the first result under
+  `.codex-test-logs/thought-poor-connection-20261107/` in the delivering
+  `astra/thought-poor-connection-red-20261107` worktree. The fix routes relay
+  replay through the active PostListener's typed completion and allows relay
+  ACK only after durable Thought/media/key rows or a terminal rejection.
+  Partial media-row saves must be completed on duplicate replay; matching saved
+  keys stay intact. Missing listener/key/bridge prerequisites retain custody.
+  Media downloads do not delay the durable outcome. Both original reconnect
+  cases pass unchanged, and ten cases in `p2p_service_thought_replay_test.dart`
+  cover media-row gating/retry, missing listener/key/bridge, permanent decrypt
+  rejection, failed ACK/duplicate handling, and exact-envelope terminal ACK
+  recovery. These use fake transport/crypto and in-memory repositories; OS
+  process death, real SQLite faults and signed-device delivery remain separate.
+  The existing `affected-transport` directory selector includes both files;
+  `affected-surfaces` retains the existing direct-ACK and media-ingest cases.
+  GREEN receipts and full affected-selection results belong under
+  `.codex-test-logs/thought-poor-connection-green-20261107/`. Initial new-fixture
+  compile and media-kind errors are retained alongside their corrected runs.
+  The three beyond-cap recovery cases first failed after prolonged missing-key,
+  bridge and storage failures: restoring the prerequisite still left the post
+  absent because the shared attempt cap had quarantined its staging row.
+  Retryable `post_create` outcomes now retain custody beyond that cap and can
+  commit and ACK on a later drain. The existing non-Thought attempt-cap controls
+  still quarantine as before; no new retry timing or backoff is introduced.
+  All 14 focused Thought and non-Thought cap controls pass, including the
+  unchanged original reconnect cases. Preserve the three initial failures and
+  the passing follow-up under `.codex-test-logs/thought-retry-cap-20261108/`;
+  these remain host fake proofs, not process-restart or signed-device evidence.
+  The exemption is bounded by local staging age: a still-retryable row becomes
+  terminal 24 hours after its local `stagedAt`, using the existing rejection/
+  exact-envelope ACK retry path. The earlier readable-authored-expiry rule is
+  superseded: a sender timestamp in the past released custody too early, while
+  one far in the future could keep the oldest batch indefinitely. Sender wire
+  expiry is never used for this retry-retention decision. Causal regressions
+  cover missing crypto/listener, readable past/future expiries, and 500 expired
+  oldest encrypted or readable-future rows preceding a healthy staged Thought;
+  the shared query ordering is unchanged. All 19 focused checks pass. Preserve
+  the three clock-skew RED failures and passing GREEN under
+  `.codex-test-logs/thought-staging-lifetime-20261108/` in the same worktree.
+  The live reconnect fixture must use a current authored time, and the staged
+  lifetime boundary must derive from the actual staging timestamp; the listener
+  clock alone does not freeze transport staging time. Initial RED, the first
+  GREEN attempt's clock-fixture failures, corrected RED and passing GREEN are
+  retained under `.codex-test-logs/thought-retry-expiry-20261108/` in the same
+  delivering worktree. These are host fake custody/fairness proofs only.
 - **Relay Thought aggregate snapshot boundary:**
   `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
   dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
@@ -5948,8 +6533,12 @@ visible and cannot become an ordinary first-attempt PASS.
   within seven days of switch-off and verify deletion. Build 129 admission counts
   only outer `post_create` envelopes with `thoughts_metrics_opt_out` absent or
   explicitly false. True, null, strings, numbers, objects and arrays skip both
-  sketches before hashing; both accepted retry copies still reach each recipient
-  unchanged. No per-person exclusion history is retained: an already-submitted
+  sketches before hashing. Pending `post_create` custody now deduplicates by
+  authenticated sender and stable envelope `event_id`, separately per recipient:
+  an ambiguous store retry returns `Duplicate` and retains the first immutable
+  row. ACK removes that custody identity, so a later submission may be stored
+  again. This supersedes the earlier fixture expectation of two pending copies.
+  No per-person exclusion history is retained: an already-submitted
   eligible copy arriving after an opted-out copy can still count, and a later
   opted-out retry cannot subtract it. Actual InboxStore cases prove that boundary.
   Keep custody timestamps on the relay's current clock when authored metric
@@ -6435,6 +7024,250 @@ visible and cannot become an ordinary first-attempt PASS.
   dimensions. Evidence: `.codex-test-logs/sticker-outgoing-alignment-131/`.
   These host cases do not certify device screenshots or transport behavior.
 
+- **Custom sticker animation:** encoding tests require the actual `image 4.12.0`
+  graph; `image 4.8.0` has no `WebPEncoder`. Execute both compile-time flag
+  states: default-off cases prove capture/export inertness but do not exercise
+  the enabled worker and silent-capture paths. The codec cases compare sources
+  differing only outside the circle, require identical animation/poster bytes,
+  and check real WebP timing, frame counts, byte caps and decoded alpha-zero
+  RGB. Nonzero RGB reconstructed by a lossy decoder alone does not establish
+  retention of the original camera background. Independent libwebp decoding
+  checked every final circle frame and the static poster. Exporter cases prove
+  byte/hash metadata, malformed native-output rejection, concurrent-export
+  refusal and cancellation that joins the mocked native response before
+  removing its owned job; caller clips stay intact. Camera cases use the real
+  `CameraController` with a fake platform to preserve ordinary recording while
+  proving silent capture, the two-second deadline and cancellation cleanup.
+  Source `84d15cec4` with dependency snapshot `0fc60c598` passed 28 enabled
+  and 24 default-off app cases plus targeted analysis at candidate `e2295d8ad`.
+  Evidence and all first failures are retained in
+  `.codex-test-logs/codex-ui-bl17-animation-spike-20261111/`, including
+  `app-focused-completion.json` and `exact-codec-alpha-validation.json`.
+  Native extraction/orientation/cancellation latency, Flutter font shaping,
+  installed old-build compatibility, transport and phone cost remain separate
+  proofs; these host receipts do not certify an integrated or signed candidate.
+
+- **Custom sticker native registration:** six host contract cases first failed
+  on missing registration, then passed with 28 neighboring lifecycle/configuration
+  cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
+  four frame-channel ownership, four clip-input/RGBA controls, 21 cutout bridge,
+  six real-host POSIX controls, four cutout engine-registration, and eight runtime,
+  call-teardown and new-intent sentinels. Its caller owns the shared native-build
+  lease. The runner archives
+  old XML, removes only the eight selected class reports before one Gradle
+  invocation, and requires fresh exact case counts and execution of the selected
+  task before reporting success; cached XML is not execution evidence.
+  `android-cutout-curated-43-second-verdict.json` records 43 PASS / 0 FAIL /
+  0 SKIP at `e84d6238c3f4e46901c30f3462b1688769b1fd16` plus the recorded local
+  fixture, runner and selection hashes. The first combined 37 PASS / 6 fixture
+  FAIL result remains in `android-cutout-curated-43-first/`.
+  Controls that passed alone failed together because Robolectric reused
+  `Libcore.rawOs`/`os` instances holding default shadows after switching to the
+  custom shadow map. The controls-only repair saves those references,
+  reinitializes the OS chain under the active map before each case, and restores
+  the original references in cleanup. All six bodies and 77 assertion calls,
+  production bytes and neighboring cases remained unchanged; the combined run
+  verifies that repair without relying on class ordering.
+  The pinned CameraX plugin (`camera_android_camerax` 0.7.6+1) calls
+  `withAudioEnabled(initialMuted: !enableRecordingAudio)` even for silent
+  capture, so its camera source can retain a muted AAC track. Android frame
+  extraction ignores that track while retaining exactly-one-video validation;
+  only video RGBA leaves the helper. `StickerClipFrameInputTest` exercises the
+  real bridge with controlled framework tracks and Bitmap pixels: muted-AAC
+  and video-only acceptance, zero/multiple-video rejection, and opaque dark
+  RGBA preservation. The unchanged acceptance case fails at `0bbd6fdc2`; the
+  47-case suite passes without skips at `e77a19138`. The original RED, fresh
+  eight-class XML and matching source hashes are retained under
+  `/Volumes/CrucialX9/flutter_app-ui-update/.codex-test-logs/codex-ui-bl17-black-clips-20261112/`
+  (`android-red/original-completion/` and `android-green/original-completion/`).
+  This is Android JVM/Robolectric evidence, not real phone decoder proof.
+  The five real-helper `StickerClipFramePluginTests` XCTest cases also passed
+  at `333a0a3981a4ba464d72af401fcd81dc9de96cc2` on the iPhone 17 / iOS 26.5
+  simulator, as recorded in `ios-stickers-native-333-verdict.json`; this
+  supersedes the earlier compile/typecheck-only status. The XCTest owner tests
+  observe fake messengers, and Android registration isolates Flutter superclass
+  cleanup and engine construction while running MainActivity's real cleanup
+  override. Actual engine callback timing, device frame extraction and phone
+  performance remain separate proof; these receipts do not certify a signed
+  or subsequently integrated candidate. Evidence is under
+  `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`, including
+  `native-registration-host-verdict.json` and the native verdicts named above.
+  Initial standalone XCTest setup and fixture compile failures remain retained
+  in `native-registration-swift-typecheck-{first,second,third}/`.
+
+- **Wake-token binary gate prerequisites:**
+  `test/core/bridge/wake_token_binary_freshness_test.dart` reads the ignored
+  iOS device/simulator, macOS and Android gomobile payloads through
+  `scripts/check_wake_token_binary_freshness.sh`. Fresh worktrees do not contain
+  those files; its generic stale-binary error also covers missing payloads.
+  Restore existing reviewed payloads with recorded hashes and matching Go
+  source identity before rerunning the unchanged gate. The gate checks two
+  wake-token symbol names; it does not certify a new native build or signed
+  candidate. The first four-file absence failure and the restoration's fresh
+  SHA audit are retained in the BL-17 proof above (`transport-first-audit/`
+  and `native-payload-restoration.json`).
+
+- **Custom sticker admission and storage:** the normalizer's 57 real PNG/WebP
+  cases validate byte/hash and decoded claims, metadata removal/rejection,
+  transparent-pixel privacy, bounded frames and duration, and independent temp
+  ownership. A multi-frame asset must have positive total duration, matching
+  schema 130; the real 0 ms rejection and byte-identical 1 ms control preserve
+  that boundary. `sqlite_custom_sticker_library_test.dart` passes 15 cases using
+  the production migration chain, host SQLite and real files/codecs. It covers
+  canonical dedup, both quota limits, serialized admission, exact reorder,
+  owned deletion, independent canonical/poster sends, tamper rejection and
+  retirement/access revocation while normalization is paused. The core-owned
+  `defaultCustomStickerSendRepresentation` is temporarily `staticPoster` until
+  the permitted supported baseline has accepted animation-decoding proof. The
+  real-file library cases apply this default to both static and animated assets:
+  static bytes stay exact, the animated send contains the bounded first visual
+  frame, and the stored animation remains unchanged. Explicit canonical
+  preparation stays covered; changing the default later needs one production
+  constant change, not a capability handshake or per-recipient representation.
+  These host codec checks do not close v1 animated-delivery acceptance; current
+  receiver animation and supported-baseline compatibility need separate proof.
+  The focused policy receipt is `default-send-policy-focused-verdict.json` in
+  the evidence directory below. Listing does not
+  prune missing-file accounting rows. The implementation assumes one library
+  instance and trusted account roots; account replacement/erase must retire and
+  drain it before closing SQL or replacing those roots. The stable account
+  facade has 16 real-DB host cases for synchronous generation revocation,
+  pending initialization and file drains, same-account replacement, explicit
+  activation failure, and subscriptions surviving replacement. The bound
+  factory has 21 real-DB host cases for passive identity, migration-authority
+  and mobile-binding reads, legacy/noAccount eligibility, linked-independent
+  local access, and revocation during awaited provider resolution. It checks
+  account ownership again before publishing the concrete delegate. Disabled
+  composition does not read providers or SQL. The production-schema fixture
+  stores both secret columns as NULL; empty strings violate migration 005.
+  Six AST cases verify the bootstrap facade, export drain and import/erase/
+  shutdown retirement callsites, but do not execute the app. Full bootstrap/UI
+  activation, transport and device SQLCipher remain separate proof.
+  For image 4.12, `WebPDecoder.maxPixels` is a property; full animation decoding
+  uses the bounded aggregate frame budget to retain first-frame composition.
+  Evidence: `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`
+  (`normalizer-duration-fix-verdict.json`, `library-red-verdict.json`,
+  `library-green-second-exit.json`). The first library compile failure remains
+  retained; targeted library analysis subsequently found no issues. Facade
+  evidence is `sticker-lifecycle-red-verdict.json` and
+  `sticker-lifecycle-green-verdict.json`, `sticker-bootstrap-red-verdict.json`
+  and `sticker-bootstrap-green-verdict.json` in that evidence directory.
+
+  Received-sticker actions belong to the existing direct/group action
+  controllers. Their read-only visibility probe shares dispatch qualification;
+  a prior positive probe never authorizes a later save. View Once (also called
+  limited-view), protected, unexpired disappearing, unsupported, stale and
+  foreign-owned sources are excluded before snapshot allocation. Group actions
+  require authoritative `knownClear` local-deletion state; a legacy null
+  tombstone lookup cannot substitute for missing or unknown authority. The
+  existing chat/announcement save policy also excludes non-keepable QA media.
+  Strict-group
+  transport alone is not a privacy restriction: eligible unmarked photos use
+  the editor, while canonical WebP keeps its full bytes and animation without
+  a creator/catalog dependency. The real-file/SQLite received-action cases
+  cover those boundaries, independent snapshot/editor ownership and cleanup,
+  and same-account/cross-account replacement during copy or editor awaits.
+  The account facade binds preparation to one concrete generation and checks
+  passive account authority around awaits; retirement does not wait for an
+  open editor. Editor Ready and Cancelled both fail unavailable after
+  revocation. `contentHash` belongs to the relay ciphertext; the canonical
+  descriptor hashes the owned plaintext snapshot. Evidence is
+  `received-sticker-save-focused-verdict.json` in the directory above. The
+  original 26 PASS/4 assertion failures for missing/unknown group deletion
+  authority remain in `received-sticker-save-red-verdict.json`. This
+  host scope does not certify route/editor wiring or device rendering.
+
+  Received-photo UI guards also recheck the originating chat before invoking
+  the lent-photo editor, after the file read and crop await, and before late
+  feedback. The direct predicate retains the peer identity; groups retain the
+  group and send-lane generation. Both capture the originating ModalRoute and
+  require it to remain active: an accepted Back pop revokes it before the
+  reverse transition disposes the still-mounted chat. A real Navigator test
+  releases pending photo preparation and saved feedback in that interval;
+  custom-sticker-enabled execution must open no editor and show no snackbar.
+  The feedback and real-temp photo-editor
+  regressions cover retirement during preparation, reading, cropping and
+  feedback without changing core requalification or snapshot lease cleanup.
+  Evidence: `.codex-test-logs/codex-ui-bl17-received-lifecycle-20261111/`
+  (`red-first/`, `green-focused-first/`, `route-pop-red-corrected-first/`,
+  `route-pop-green-first/`). These host tests do not replace
+  live direct/group navigation proof.
+
+  TC-294-09 also freezes the pure-screen handoffs. Reviewed BL-17 commits
+  `5b8bee021` and `e09ee8637` add only `onSendCustom` inside `stickerPanel`
+  and the direct/group received-sticker callbacks. Exact AST projections
+  confirm both public Wired APIs, every other argument and argument order
+  remain unchanged; undoing those additions restores both previous hashes.
+  The handoff pins retain the full assertions and six transferred-owner
+  normalizations. Static evidence is Astra's
+  `custom-stickers-core-20261111/fingerprint-diagnosis/diagnosis.json`;
+  the original integrated assertion failure remains in
+  `final-integrated-host-20261111/host-first/affected-conversation-1.raw.log`.
+
+- **Custom sticker migration and erasure:** canonical sticker files are critical
+  manifest entries bound to persisted paths, byte lengths and hashes. Missing,
+  changed or linked files block export rather than downgrade to missing chat
+  media. Discovery excludes orphan and editor/send files. The 24 focused host
+  cases use production SQLite schema, real canonical assets and bundle import
+  to preserve rows, ordering and quota totals while the UI flag is off; they
+  also prove exact owned-temp erasure and symlink refusal. Existing manifest,
+  bundle, schema-roundtrip and erasure preservation passes 65 cases with the
+  unchanged native SQLCipher capability host skip. These file-level checks
+  require the separate runtime pause/retire barriers; they do not prove native
+  encryption or device transfer. Evidence in the directory above:
+  `sticker-migration-green-verdict.json` and
+  `sticker-migration-preservation-verdict.json`; targeted migration analysis is
+  clean after an assertion-preserving test-loop brace fix.
+
+- **Custom sticker cutout boundary:** the Dart channel suite passes 38 cases
+  with the shipping flag value and 37 with the compile-time flag enabled.
+  Disabled construction/extraction performs no channel or filesystem work.
+  Enabled cases use real PNG bytes and controlled native responses to verify
+  the private per-job output path, 2048-pixel axis and 24 MiB bounds, descriptor
+  validation, strict PNG chunk/CRC framing, one frame, metadata exclusion and
+  zero RGB beneath transparent pixels. Validation and decoding use an isolate;
+  the service republishes the validated snapshot before transferring ownership.
+  Cancel acknowledgement or platform failure releases admission while late
+  responses can clean only their retired job; returned caller-owned PNGs and
+  source files survive subsequent jobs and cancellation. Missing native plugins
+  report unsupported, permitting the crop fallback. These Dart receipts establish
+  the channel boundary with a fake native channel.
+  The Android native slice separately passes 21 bridge cases with controlled
+  model tasks and real host files/codecs as part of the combined 43-case runner
+  above. The iOS `StickerCutoutBridgeTests` suite passed all 19 XCTest cases at
+  `d3c74fb0e69384f38615fcba934f16b9fab82574` on the iPhone 17 / iOS 26.5 simulator.
+  Its injected segmenter and real ImageIO/PNG path cover all eight EXIF
+  orientations, bounded thumbnails without upscaling, full-canvas transparent
+  output, tight bounds, metadata/hidden-RGB exclusion, path ownership and
+  cancellation, duplicate completion, detach and successor safety. These native
+  tests do not establish real ML Kit/Vision model availability or segmentation
+  quality, physical-device performance, or signed-app behavior.
+  `ios-cutout-native-d3-verdict.json` pins the 19-case result and xcresult
+  `result-20261111T084410Z.xcresult`. The preceding 17 PASS / 2 fixture FAIL
+  result remains in `ios-stickers-native-333-verdict.json`: the messenger fixture
+  omitted the semantic handler-removal count in `cleanUpConnection`; its
+  connection-identity guard, all 19 test bodies and production bytes stayed
+  unchanged when the count was repaired. Dart evidence remains in
+  `cutout-red-verdict.json`, `cutout-green-verdict.json` and their first
+  command/raw/exit receipts under
+  `/Users/I560101/.codex/investigations/custom-stickers-core-20261111/`, alongside
+  the native verdicts above. Initial analyzer style findings remain retained;
+  final targeted analysis is clean. No behavioral assertion was removed.
+
+  Creation-route widget checks instantiate the production Dart cutout service
+  under both compile-time flag states. They verify that validated native bytes
+  reach the editor, unsupported devices use crop, the disabled flag makes no
+  channel calls, and cancellation preserves the original photo while deleting
+  owned files without library admission. Native-response PNG fixtures require
+  an alpha channel; RGB-only output correctly fails the cutout validator.
+  Editor cancellation uses its localized Cancel control. The default sticker
+  lane passed 271 cases and enabled creation passed 16, with zero failures or
+  skips; the exact 14-case changed selector reused the default lane's receipt.
+  `final-integration-cutout-final-scoped-verdict.json` in the evidence directory
+  above pins the source and toolchain identities and retains both earlier
+  fixture failures. Its four omitted integration scopes remain NOT RUN; this
+  scoped host result does not certify the final integrated or device candidate.
+
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
   discovery indefinitely. StartupRouter now starts its existing group
@@ -6900,6 +7733,20 @@ visible and cannot become an ordinary first-attempt PASS.
   its snapshot, commits the competing claim, then verifies the loser returns
   no claim. Red/green evidence is retained in the adjacent
   `quiet-recovery-go-claim-conflict-*` logs.
+  Concurrent Redis inbox Store and ACK both replace the same watched list.
+  Five immediate attempts can exhaust with only one Store worker and one ACK
+  worker. The [bounded contention regression](../../go-relay-server/backend_redis_contention_test.go)
+  uses two TCP miniredis clients, stays below the inbox cap, injects no
+  conflicts and accounts for every successful write and acknowledged row.
+  The shared retry helper retains five attempts and error propagation, but
+  requests positive exponential jitter between conflict attempts, totaling
+  150 to less than 300 ms of requested sleep. There is no wait after success,
+  a non-conflict error or final exhaustion. A smaller 5 ms base still exhausted
+  ACK retries under race instrumentation despite ordinary host passes. Ten
+  unchanged race-instrumented repetitions with the 10 ms base completed with
+  no Store or ACK exhaustion; keep this case in race coverage. This verifies
+  the contention mechanism, not an outage, message loss or the exact cause of
+  historical production error bursts.
   Mixed-version recovery additionally requires action-level relay admission:
   `store_quiet_v1` and `store_custody_quiet_v1` preserve the existing storage
   and custody owners, but an older relay rejects them before accepting a row
@@ -8203,6 +9050,23 @@ visible and cannot become an ordinary first-attempt PASS.
   not a production cancellation defect. The corrected case and its complete
   245-case file pass with stable source/configuration.
 
+  The sibling `serialized group cancellation preserves same id direct pending
+  media` still uses a bounded fake-clock wait. On unchanged group source at
+  `576a4d097` versus `f688a0ae7`, its pending-row assertion failed just before
+  real file preparation persisted the row. The assertion also skips completing
+  its upload gate; that can retain the process-scoped `group-1` authority phase
+  needed by later cases. The [source and event trace](../../.codex-test-logs/contact-request-decline-20261109/group-source-trace-01.json)
+  supports this fixture failure and subsequent stall mechanism, without a
+  runtime stack proving the wait. Two unchanged isolated runs pass. Per
+  coordinator instruction `m-41ffe988`, record this as the known pending-media
+  fixture intermittency and stop the bounded investigation. Neither the exact
+  shared-temporary-directory cause nor a baseline failure was established.
+  The [retained gate and isolated results](../../.codex-test-logs/contact-request-decline-20261109/group-fixture-disposition-01.json)
+  keep the original group gate failed and incomplete: the following case was
+  interrupted after the owned check stalled, 30 selected files were unobserved,
+  and no suite completion was recorded. Isolated passes do not replace that
+  missing coverage; no group fixture or production code was changed.
+
 - **Strict forwarded-media fixture consistency:** prepared group-media staging
   writes its parent and attachments into the same database. Pairing it with an
   unrelated in-memory message repository hides that durable parent and omits
@@ -8272,6 +9136,37 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged. The four DTR-18 cases pass after the two-pin update; retain
   `.codex-test-logs/contact-request-decisions-20261026/bootstrap-pin-proof.json`
   and `bootstrap-owner-diff.patch`.
+  BL-17's lazy sticker-library composition, lifecycle barriers and optional
+  app-root activation hook change all three composition pins at the same owners.
+  Exact reverse diffs of reviewed `832ef7add` reproduce the prior fingerprints;
+  the historical notification callback remains byte-identical and unique, and
+  relocation/import assertions are unchanged. Refresh only the three explained
+  baselines. The four DTR-18 cases pass after the update; retain the original
+  bootstrap result (20 passed, three stale-pin failures) and the reconstruction
+  proof under `~/.codex/investigations/custom-stickers-core-20261111/`:
+  `bootstrap-preservation-fix-staging/source-fingerprint-proof.json`,
+  `sticker-core-boundary-current-main-host-run/bootstrap-1.raw.log` and
+  `sticker-core-bootstrap-push-setup-focused-verdict.json`.
+  BL-24C's retry-marker callbacks (`4d21b6bcb`, three bootstrap lines) change
+  both bootstrap pins; batch 3 re-pinned them in `105f6e34f`. The same C change
+  also moves the Conversation message-adapter placement pin
+  (`dtr18_placement_closure_contract_test.dart`, `d97c36e6f`). A census of every
+  test that reads a changed `lib/` file by path and hashes it must run before
+  the lanes start; it found that placement pin, which the bootstrap-only review
+  missed. Batch 4's BL-24 D1 receipt drain (`4b24b6ae6`, `93b733f44`,
+  `2d2d18f84`) and E2 dormant key-exchange retries (`0163ad0b3`) change four
+  pins: resume orchestration, application root, bootstrap without the
+  historical callback, and the full normalized bootstrap
+  (`_productionBootstrapNormalizedSha256`). D1 also adds one reviewed resume
+  importer, `delivery_receipt_outbox_sqlite_test.dart`, to
+  `_resumeDirectiveFiles`. Each DTR-18 case stops at its first failing expect,
+  so a first re-pin round (`d1f87e05a`) hid the full-bootstrap pin and the
+  importer set; the follow-up `d2d5557ff` closes both. All 25 URI rewrites and
+  the single historical notification callback stay unchanged, and the eight
+  layering plus placement cases pass on `d2d5557ff`. Retain the first outcomes
+  (`d1f87e05a`: resume line 725 and Posts line 792) under
+  `.codex-test-logs/batch4-20261112/` and Codex's verdict under
+  `~/.codex/investigations/batch4-dtr18-repin-review-20261113-m9a15cbf3/`.
 
 - **Post notification readiness:** the active-direct-contact listener test waits
   with its existing bounded `_until` helper for the observable notification before
@@ -8323,6 +9218,39 @@ visible and cannot become an ordinary first-attempt PASS.
   Nearby action assertions failed with the ordinal selector; all three cases in
   `settings_wired_posts_nearby_test.dart` pass with the row-scoped selector.
 
+- **Thought notification expiry and duplicate alerts:** delayed pushes use the
+  decrypted snapshot expiry, with optional routing `expires_at` as the fallback
+  for compact or routing-only payloads. Android checks expiry before staging and
+  again immediately before native presentation; expired attempts own no shown
+  marker. A live card uses the remaining lifetime, bounded to 24 hours. Missing
+  or malformed legacy expiry retains the existing bounded fallback. The shared
+  Thought-only Android notification details set `onlyAlertOnce`, so an inbox
+  card and later rich push reuse the same ID without requesting another alert;
+  ordinary message details remain unchanged. The focused handler regressions
+  use the actual PostListener and notification service, and verify plugin
+  arguments, not OS audibility. NSE expiry suppression precedes the dedupe claim
+  and preserves the existing silent backup sanitizer contract.
+  Relay regressions use the actual dispatch gateway and memory, limited-memory
+  and Redis custody backends. Existing outer `created_at` supplies the 24-hour
+  deadline; future timestamps are clamped and malformed/missing legacy values
+  retain prior behavior. Android TTL and APNs expiration are set before payload
+  budget selection, and retries retain the absolute deadline. Expired Thoughts
+  do not reach the recording provider; independent mixed mailbox wakes remain
+  eligible. Oversized Android fallbacks with a nonblank `post_id` are data-only
+  and carry authenticated sender routing so archived contacts cannot bypass
+  the app's presentation policy. Legacy envelopes without a usable `post_id`
+  retain the existing provider-owned copy and channel because the app cannot
+  route them. iOS dispatch uses the existing memory/Redis admission backend and
+  lifetime with recipient, authenticated sender and stable Thought `event_id`:
+  recipient ACK permits fresh custody for the same ciphertext without another
+  provider alert while that admission remains live. Gateway regressions observe
+  the provider and completed admission outcome, including a reopened Redis
+  layer; distinct recipient/sender/event identities and chat-only policy remain
+  covered. iOS generic payload projection and canonical inbox ciphertext remain
+  unchanged. Preserve the original and review REDs plus corrected receipts in
+  `.codex-test-logs/notification-fixes-20261108/`; host assertions do not certify
+  provider delivery, native tray behavior or a signed candidate.
+
 - **Photo Thought push size fallback:** photo-only Thoughts may carry optional
   `push_encrypted` metadata encrypted separately for the same recipient through
   the existing message-encryption API. Its plaintext contains only the snapshot
@@ -8338,7 +9266,7 @@ visible and cannot become an ordinary first-attempt PASS.
   focused Thought resolver XCTests exercise trusted-name/Photo presentation,
   policy and post/author parity; the minimal schema needs no NSE production
   change. Host fixtures and simulator XCTest remain separate from signed-device
-  APNs delivery. Generic alerts have no mutable-content flag, so absent NSE
+  APNs delivery. Generic iOS alerts have no mutable-content flag, so absent NSE
   activity alone cannot establish a missing or delayed visible alert. Preserve
   causal REDs, source identities, byte counts and focused results under
   `.codex-test-logs/photo-thought-compact-push-20261103/`.
@@ -10287,6 +11215,15 @@ visible and cannot become an ordinary first-attempt PASS.
   result exists. A newer refresh generation cannot be satisfied by an older
   in-flight grant or denial. Account cutover, disable and disposal fence both
   paths; automatic token/timer retries keep their existing no-reprompt policy.
+  Resume and automatic relay recovery must also retain passive permission-read
+  intent when they arrive while the first system prompt is still open. Turning
+  that unknown state into explicit Retry queues a second prompt after denial.
+  Without a permission reader, passive recovery keeps a known denial until an
+  explicit request; a real reader still observes a later Settings grant. The
+  coordinator and Android method-channel regressions in
+  [the denial host evidence](../../.codex-test-logs/notification-denial-20261110/worker-green-preservation-01.log)
+  preserve one prompt, denied health, no retry timer, Settings recovery, and
+  explicit Retry. They do not establish the exact installed-device interleaving.
   The [binding regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-binding-red.log),
   [permission regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-permission-red.log)
   and [focused verification](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/push-recovery/audio-beta-push-recovery-final.log)
@@ -10334,6 +11271,28 @@ visible and cannot become an ordinary first-attempt PASS.
   no automatic re-prompt and late successful/failed initialization after
   disable, disposal or account cutover. This source repair does not replace
   the missing build input or establish successful registration on a new APK.
+  Android's default permission request now uses the existing
+  `flutter_local_notifications` requester, then reads Firebase settings and
+  retains the effective OS/channel confirmation. Firebase readiness still
+  precedes the native prompt; injected requesters and the iOS/web Firebase
+  request path are unchanged. In pinned `firebase_messaging` 15.2.10, the
+  permission manager arms its callback flag after dispatching the Android
+  request from a worker. An immediate no-requestable-permission callback can
+  arrive first and leave the request unresolved. The existing Android local
+  notifications requester arms its state before dispatch on the main thread.
+  No timeout abandons an open prompt or permits a concurrent native request.
+  The host probe copies the unchanged Firebase permission-manager class and
+  forces both callback orderings: the early denial is lost and a later denial
+  completes. The default-channel regression uses the real permission use case
+  and coordinator to require denied startup without resume, plus one held
+  three-minute prompt, coalesced callers, eventual grant, and retained iOS
+  requesting. Unchanged production fails two new cases with twelve controls
+  passing; the six-file permission/readiness/coordinator selection passes all
+  81 cases after the routing fix. Evidence is under
+  `flutter_app-astra-notification-permission-20261109/.codex-test-logs/notification-permission-20261109/`.
+  These are host class, method-channel and coordinator proofs; they do not
+  establish the exact device callback interleaving or replace a fresh G7 run
+  on the reviewed candidate.
   Foreground startup can also overlap a headless recovery lease. The retained
   143 process failed before `runApp` on typed `lease_unavailable` while native
   authority reported ACTIVE/RECOVERY; later MAIN intents did not rerun the
@@ -10604,6 +11563,30 @@ visible and cannot become an ordinary first-attempt PASS.
   each retain their publication. Evidence and the five causal RED failures are
   under `.codex-test-logs/call-capability-reuse-20261026/`; these host counts do
   not establish device latency or provider delivery.
+  **Routine authority observations:** the resume advertisement producer opts
+  into a 60-second monotonic diagnostics window only while no call is live.
+  For an unchanged endpoint or per-recipient wake state, the archive keeps the
+  first start and final success with `values.count`; actual native publications,
+  freshness epochs and completion timing still use the existing path. Changed
+  semantic state, trace-bound/active-call work, unknown provenance and failures
+  retain their observations. Token publications remain whole because native
+  generation validation occurs after the shared invoke boundary. Private
+  stream/state fingerprints stay in memory. Consent clear/disable discards the
+  buffer; export/dispose and every non-resumed lifecycle persistence boundary
+  flush it. The classifier/context and real client plus
+  collector files `routine_authority_publication_test.dart` and
+  `routine_authority_publication_producer_test.dart` pass 19 host cases, including
+  reused operation IDs, interleaved failure, a call becoming active during an
+  await, consent reset, wall-clock rollback and a frozen paused disk image that
+  cold-loads the final success/count before graceful dispose can rescue it.
+  The original candidate's RAM-only lifecycle loss was confirmed by independent
+  review and the same causal regression; that first failure is retained in the
+  `lifecycle/` evidence. Causal RED and first invalid
+  synthetic routing-handle fixture evidence remain under
+  `.codex-test-logs/authority-telemetry-app/`. Historical diagnostics lack the
+  private command/semantic state needed to prove exact eligibility; a structural
+  replay savings estimate is an upper bound, not measured production savings.
+  These host proofs do not establish device overhead or signed-build behavior.
   **Explicit contact endpoint repair:** an explicit call or redial can reuse
   the authenticated contact exchange once when a trusted contact has a current
   received grant but no endpoint or an authenticated expired endpoint. The
@@ -10625,6 +11608,665 @@ visible and cannot become an ordinary first-attempt PASS.
   the reported incident's cause, native/provider delivery, device recovery or
   signed-build behavior. The broader wrapper-selected lanes remain unrun for
   this bounded host verification.
+  **Signed video capability admission:** `CallEndpointResolver` snapshots the
+  signed capability set before awaiting signature verification and returns an
+  immutable set. `resolveVideoCallEndpoint` is disabled by default, performs no
+  lookup while disabled, and resolves afresh on each enabled invocation. It
+  requires both `voice_call_v1` and `video_call_v2`, the exact contact account,
+  and an endpoint still unexpired after the asynchronous lookup. These checks
+  do not grant camera permission or replace the caller's later ownership and
+  transaction checks. On U2 `469256e64abc188a6e5ae003e5e03d5c04882a84`, the
+  corrected RED produced 21 passing controls and ten causal failures; GREEN
+  passed all 31 focused cases and 50 preservation cases, with clean changed-path
+  analysis and metadata validation. The first invalid compile fixture remains
+  retained. Raw evidence is in
+  `/Volumes/CrucialX9/flutter_app-ui-update/.audit/bl16u2/out/`; independent
+  adoption and hashes are in
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u2-final-adoption.json`.
+  The v1 byte fixtures and synthetic 126/131 capability matrix prove host
+  compatibility boundaries only, not those installed builds, native cleanup,
+  camera capture, video activation or a signed candidate.
+  **Default-off v2 video foundations:** the model and envelope gates cover the
+  strict inner-v2 schema, immutable initial media agreement, shared authenticated
+  outer envelope and replay handling. Typed legacy decode/admission methods
+  remain v1-only. The context gates bind the wire version and initial accepted
+  media to the call and peers; same-bound legacy unsupported cleanup ends at the
+  first initial offer. Versioned admission authenticates without presenting a
+  call and preserves provisional replay reservation ownership. Transport tests
+  cover prepared-byte reuse, fresh authority checks, bounded retry custody and
+  terminal capacity under optional-media/ICE churn. They do not establish that
+  a production adapter correctly owns the preparation and transaction lifecycle.
+  Media-switch tests cover caller-owned negotiation, consent, immutable
+  deadlines, selected-abort precedence and bounded audio repair. Video-resource
+  ownership tests cover exact call/generation fencing, a close-only send gate,
+  independent remote rendering and retained cleanup failures for explicit retry;
+  they do not exercise a native camera or renderer. Presentation/localization
+  tests cover projection and bound intents, preserved audio controls, approved
+  EN/DE/AR text, RTL, compact widths, large text and semantics.
+
+  | Boundary | Actual GREEN host passes | Behavior GREEN / later correction |
+  | --- | --- | --- |
+  | Model/schema U1 | 54 new + 9 schema in one 63-case run | `c4a0dc0a8` |
+  | Envelope U3a | 36 + 89 preservation | `cae0cf5b8` |
+  | Context U3b | 37 + 73 preservation; corrected 37-case rerun | `2309833e2` / `2f3296aa9` |
+  | Transport U3c | 30 + 30 preservation | `e7ef74de4` / `739a079af` |
+  | Admission U3d | 43 + 134 preservation | `f06da2018` / `b9c2ded0c` |
+  | Media switching U4 | 23 + 53 schema preservation | `df12dad9a` |
+  | Video ownership U5 | 21 + 23 ownership preservation | `3f3323cd6` |
+  | Presentation U6 | 35 new + 28 preservation in one 63-case run | `208cf1c05` / `012b10aa1` |
+  | Localization U6-L10n | 80 new + 41 preservation in one 121-case run | `3462cece4` |
+
+  Every listed GREEN run had zero failures/skips and an actual child exit of
+  zero. U2's capability proof is recorded above. These counts are per recorded
+  command, with overlapping preservation coverage; do not sum them as unique
+  tests or treat them as a combined candidate run. Executable selection remains
+  in `tool/testing/selection.json`; the thirteen new test files are registered
+  under `call-signaling`.
+  First analyzer findings remain in the raw evidence. U3b's correction removes
+  unused private constructor parameters while retaining null/false field
+  defaults; its focused 37 cases and four-path official analysis were rerun.
+  U3c/U3d only added existing test-guard braces and U6 removed a redundant test
+  import. Their original behavior receipts plus clean corrected analysis are
+  the accepted evidence; no behavior rerun at those three correction heads is
+  claimed. U4's initial RED forecast of 21 failures was superseded by one
+  passing negative control and 20 causal failures: empty effects and null
+  deadlines satisfy its duplicate/binding control, which alone proves no media
+  feature. The later abort-delivery/repair RED had 21 passes and two causal
+  failures. Assertions were not changed to force the control to fail.
+  U6-L10n's sole official Claude-UI run preserved the frozen source: both
+  pub-get generation diffs were saved and the three concrete locale files were
+  restored before testing; all nine unit-file hashes matched, the after-test
+  trees were clean, and the helper/test were identical across the pair. With
+  Flutter 3.47.2, author setup and official GREEN setup produced the same
+  `app_localizations_ar/de/en.dart` formatting delta (SHA-256
+  `ba54d2ade04b616c2126abaca1bab738ba3ee839508d69c083288250de53d9ad`):
+  import spacing and three existing plural branches changed, without string
+  changes. The specific formatter/configuration cause was not established.
+  The author six-path analysis also preserved the nine frozen hashes after
+  restoration. If aggregate composition regenerates these files, freeze and
+  record its actual generated formatting before candidate/build identity gates;
+  a frozen unit receipt must not silently certify different generated source.
+  Retain the paired receipts and U6 core correction `012b10aa1`, and preserve
+  conservative executable localization selection. A later Claude-Dev duplicate
+  tested regenerated files and is excluded from certification of the frozen
+  revisions. The official RED retained all 79 causal failures and its passing
+  default-off control. The exact setup and source audit is retained in
+  `/Volumes/CrucialX9/flutter_app-ui-update/.codex-test-logs/codex-ui-u6-localization-20261112/claude-ui-official/`.
+  Full paired/corrected revisions, raw hashes, real exits, source identities,
+  first failures and this excluded duplicate are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/foundation-host-unit-verdicts.json`
+  and its ten unit-adoption receipts. This establishes the individual host
+  boundaries, not combined engine/graph behavior, native SDP/camera integration,
+  platform lifecycle handling, video activation or a signed candidate.
+  **U3e prepared outgoing v2 signaling:** the production adapter's host tests
+  cover sharing the preparation Future before awaiting, immutable message-ID
+  custody, sealed-byte replay, retained preparation failures, fresh endpoint
+  authority and current-owner checks across awaits, bounded terminal capacity,
+  and retirement/expiry. Retries do not reseal a message or turn a stale
+  authority into a valid send. Frozen RED
+  `c0bdd422d15fd496e71b305167f060ef11fd3af4` produced nine passing controls,
+  23 causal `migrationPaused` errors and one causal assertion failure, with
+  successful loading and exit 1. GREEN
+  `84c56c93ad2cd312c0c582f3be1978c669039645` passed all 33 focused cases and
+  92 cases across the three preservation suites, without failures or skips,
+  with successful reporter completion and child exits 0. Official two-path
+  analysis and metadata validation also exited 0. Four before/after identity
+  snapshots bind both heads and the adapter, identical test and selection
+  manifest; generated locale changes were restored before testing and the
+  after-test trees were clean. The retained RED startup-lock wait line precedes
+  the completed causal run; it is not a test failure. Exact commands, stdout,
+  raw results and hashes are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3e-final-host-adoption.json`.
+  This proves the adapter's host boundary, not its later production graph
+  wiring, live delivery or video activation.
+  **U3f incoming v2 dispatch and mailbox custody:** same-page terminal
+  suppression requires the same wire schema and exact authenticated call,
+  handle and both account/device peer identities. Cross-version pairs use
+  ordinary context/phase validation; the same-bound unsupported-v1 cleanup
+  exception ends at the first initial offer. Typed media dispatch preserves
+  current-owner, expiry, replay and native-cancellation fences without falling
+  back to legacy media effects. An idle orphan terminal remains rejected with
+  `stateMismatch`: it creates no canonical episode or tombstone. Context
+  cleanup, exact terminal custody proof, native cancellation and mailbox
+  acknowledgement/settlement remain separate from that reducer outcome.
+  The answer fixture must establish an outgoing accepted call and await the
+  fake executor's recorded `startNegotiation` before taking its effects
+  baseline. Handler acceptance alone does not mean its setup effects have
+  completed; allowing a late effect or sleeping would hide that distinction.
+  Original feature RED `c9c796b32a9c168cf9a2afe7729ca783f428b45f` recorded six
+  passes and 27 failures. Corrective RED
+  `1b55bcd687bfe4368361d83e0c23f6163b2382b5` recorded two passes and six
+  failures: five causal schema/binding failures and one invalid orphan-episode
+  expectation. Production GREEN `5b540a6c7e6c38c0e5b2a807d72fbd0ab4b97eb1`
+  initially recorded 38 passes/three failures; the first test-only correction
+  `a2e68b68127ded471d9240c3c0cbad485d989bbe` recorded 40 passes/one setup
+  timing failure. These attempts remain retained and failed. Final test-only
+  GREEN `b6dc44272cdbc653064932958ad71c0278835c0e` passed all 41 cases, with
+  zero failures/errors/skips, successful loading/reporter completion and child
+  exit 0. Its production/configuration is byte-identical to `5b540a6c7`; the
+  earlier 190 passing preservation cases, six-path analysis and metadata
+  validation are adopted unchanged, with fresh corrected-test analysis passing.
+  The sole runner's raw receipt pins the initial HEAD/parent/library tree,
+  before/after test and lock hashes, recorded locale restoration before the
+  test result, and final clean tracked status. It omits the exact CLI, an
+  immediate post-restoration/pretest clean stamp and a repeated final HEAD/tree
+  stamp; the exact command comes from the actor message and frozen handoff.
+  Those evidence limits remain explicit without extra stamps or reruns. Raw
+  first failures, corrected results and the independent source/runtime review
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3f-final-host-adoption.json`.
+  This closes the frozen default-off host unit; production graph, real native
+  effects, live video and combined candidate proof remain separate.
+  **U3g typed v2 control effects:** the optional v2 port preserves the prepared
+  outgoing invitation and its identity/sequence, rejects expired preparation,
+  and retains existing native cancellation, current-call and mailbox custody
+  boundaries. Accepted media is explicit and local camera remains off; an
+  absent v2 port cannot downgrade a v2 context to legacy signaling. Frozen
+  RED `278e4621478e70aad1a8a3f1b7d8f48d97ab8676` recorded five passes,
+  26 failures and seven errors with successful loading and child exit 1.
+  GREEN `aba7844ab3852a1aea64c18a06f7db4b292b740b` passed all 38 focused
+  cases without failures/errors/skips, with successful reporter completion
+  and child exit 0; three-path analysis and metadata validation also passed.
+  Its original preservation run recorded 132 passes and three inherited U3f
+  fixture failures, including 94 passing cases in the other four suites.
+  Both baseline/serial diagnostics retained the same three failures; those
+  diagnostics overlapped and do not establish an idle-host result.
+  Final source-equivalent composition
+  `bcdf6648b9cde8d9eac2071341b88ef75e54065d` has parent U3f `b6dc44272`
+  and preserves the original four U3g source/test/selection blobs. Only the
+  dependent incoming-handler test changes to the reviewed U3f fixture. The
+  sole Claude-Dev follow-up ran that one file once: 41 authored passes, zero
+  failures/errors/skips, successful loading/reporter completion and child
+  exit 0. All three identity boundaries (before setup, restored before test,
+  after test) match the exact HEAD, library tree, test/lock/locale hashes and
+  clean tracked status. The saved generated-locale delta was restored before
+  execution. The earlier 38 focused and 94 other preservation passes, analysis
+  and metadata are adopted unchanged; this is not a fresh full preservation
+  run. Original failed receipts remain retained. The superseded `062f032ed`
+  composition on the first U3f fixture correction was never run. Exact command,
+  retained raw reports and final independent review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3g-dependent-host-adoption.json`.
+  This closes the scoped host unit and its inherited fixture follow-up, without
+  certifying production graph wiring, native effects or a combined candidate.
+  **U3h original endpoint custody and production v2 control:** authenticated
+  invitation admission freezes the full signed endpoint separately from the
+  mutable legacy pin. Neither later directory lookup nor duplicate context
+  capture can replace or retrofit that original authority. The production
+  control bridge rechecks fresh authority against that original, retains sealed
+  signaling bytes and terminal custody, and purges port-owned context when
+  outgoing preparation is cancelled. Accepted media remains explicit and
+  camera remains off. Frozen RED
+  `607dd01157cb6090db15de19be81c4bb4b1dfa39` recorded six passing controls,
+  27 assertion failures and seven causal stub/missing-authority errors, without
+  loader failures and with child exit 1. Its direct GREEN child
+  `22306cedc0e27e57246963c9e5dcd3a09b5308ff` passed 232 cases in the five
+  complete focused suites and 120 cases in six preservation suites, without
+  failures/errors/skips and with successful reporter completion/child exits 0.
+  All five test files are identical across RED/GREEN. Official 11-path analysis,
+  metadata validation and selection preview exited 0. The preview compared
+  shared base `726a8a48f14f17a43bbb521d72aa94ab855b80da`, mapped all 11
+  changed paths and selected 11 broader checks; those checks remain unrun for
+  the later batch. The first author preview was interrupted during source
+  identity file reading with exit -2 and remains incomplete, distinct from
+  the later passing official preview. Six runtime stamps record exact heads,
+  clean tracked status and 20 matching source/test/configuration hashes; setup
+  produced no generated locale delta. Runtime receipts omit explicit tree and
+  library-tree hashes, the six preservation-file hashes and a separate stamp
+  between focused and preservation runs. Source review verified the reference
+  preservation hashes; exact commands come from the frozen handoff and runner
+  acknowledgement rather than repeated raw argv stamps. These limits remain
+  explicit without fabricated stamps or additional runs. Codex-2 closed the
+  scoped source and host review with zero required findings. Retained raw
+  results, hashes and final review are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3h-final-host-adoption.json`.
+  This closes the default-off unit; graph composition, native/live behavior,
+  broader batch checks, activation and signed candidate proof remain separate.
+  **U3i initial typed v2 SDP and ICE:** the production v2 executor owns initial
+  typed negotiation while preserving the admitted endpoint, current call and
+  negotiation fences, bounded replay/ICE handling and camera-off defaults.
+  Frozen RED `41b599ce4e6c8b768d6fd85451f0d81257459feb` recorded 14 passing
+  controls, 19 assertion failures and two causal missing-SDP `Bad state: No
+  element` errors, with child exit 1 and no loader/compile/configuration error.
+  Direct GREEN child `6aaf6a6993c2aa7f7092dfcede31c44985fffaec` passed all
+  35 focused cases and 190 preservation cases: 73 legacy-executor, 46 v2
+  context, six context-store, 42 incoming-v2 and 23 video-session cases. Both
+  reporters completed successfully with zero failures/errors/skips and child
+  exits 0. The actual runner script analyzed four paths, including the focused
+  test; analysis, metadata validation and one selection preview exited 0.
+  The 13 broader selections remain unrun for the later batch. Seven runtime
+  checkpoints record clean tracked state, exact HEAD/tree/library-tree and
+  18 matching source/test/configuration hashes each; all 126 hashes were
+  independently checked against their frozen Git blobs. Setup used plain
+  `flutter pub get`, without the requested offline/enforced-lockfile flags.
+  The before/after setup and subsequent checkpoints show no tracked source,
+  configuration or generated-locale delta; this setup deviation remains
+  explicit and was not replaced by a rerun. Retained raw JSON, argv, stamps,
+  identity verification and the final Codex source/host verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3i-final-host-adoption.json`.
+  Source and scoped host review are closed with zero required findings. This
+  default-off initial-negotiation proof does not establish production graph
+  wiring, lifecycle/general recovery, native/live delivery, aggregate batch
+  validation, activation or a signed candidate.
+  **U4 live optional media switching:** the switch executor uses the retained
+  pure machine and the v2 owner's existing SDP queue and candidate listener.
+  Admitting a remote description does not authorize replaying its outcome:
+  duplicate answers remain inert until native application and the current
+  host callback succeed. This also holds when the ordinary replay ledger is
+  full. Camera authority still requires the current committed consent; abort
+  and repair close capture, and repair requires positive native reconciliation.
+  Original RED `a8813fcd8b760e0836ad31917401bc5adfb8782c` recorded 61 passes,
+  30 assertion failures and four null-assertion errors in the named missing
+  switch paths, with exit 1 and no hidden/loader failure. Correction RED
+  `37ed1d272cb0045534b2e07abe30f10bec15c9cf` failed all three pending-answer
+  replay cases by assertion, with exit 1. Corrected GREEN
+  `925e1efc6478993b059644b94dbcd197148ce8f0` passed all 98 focused cases
+  (29 machine, 26 switch-executor and 43 v2-executor) and 219 preservation
+  cases (73 legacy-executor, 44 wire, 21 media-owner, 35 video-session and
+  46 signaling-port). Both passing reporters completed with zero failures,
+  errors or skips and child exits 0. Six-path analysis, metadata validation
+  and one bounded selection preview exited 0; its ten broader selections
+  remain unrun for the later batch. Ten clean runtime checkpoints pin exact
+  HEAD/parent/tree/library-tree and 20 source/test/configuration hashes each.
+  All 200 printed pins were independently checked against 60 distinct Git
+  blobs. Setup used plain `flutter pub get`, without the requested offline
+  and enforced-lockfile flags; all three setup exits were 0 and the tracked
+  source/configuration stayed exact without generated drift or restoration.
+  This deviation and all first failures remain retained. Codex closed source
+  and scoped host review with zero required findings; raw results, argv,
+  checkpoints and the final verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u4-final-host-adoption.json`.
+  The gate remains off. General recovery/takeover, graph/lifecycle composition,
+  aggregate batch checks, native/live media and signed candidate proof remain
+  separate; this unit does not establish those claims.
+  **U3j settled v2 ICE recovery:** recovery retains the canonical reconnect
+  episode, existing SDP queue and engine/candidate listeners. Its effect
+  returns before native work completes so End and the canonical timeout stay
+  responsive. Capture closes before native retirement; fresh endpoint/TURN
+  and replacement ICE work require positive native reconciliation. Bounded
+  retries preserve immutable signal custody. Current native readiness is
+  sampled after current SDP work outside the coordinator's await chain, so a
+  second native callback is unnecessary. A retained recovery record applies
+  only to its current canonical reconnect generation; two-episode cases
+  cover both normal advancement and a first-delivered older announcement.
+  Original RED `72b8e1f18b9b8ac09c9171b39dc21246400feb1c` recorded two
+  passes, 20 assertion failures and three BadState errors, with no loader
+  failure. Correction RED `799f755b606c7a915479a2c9ea34361ccf7c4e18`
+  failed both prior-episode cases by assertion. Corrected GREEN
+  `1599cf3d8146aa1570c63825812b8fb60b5e9685` passed all 143 focused cases
+  (76 legacy-executor and 67 v2-executor) and 243 preservation cases
+  (29 machine, 26 switch-executor, 44 wire, 21 media-owner, 35 video-session,
+  46 signaling-port and 42 incoming-v2). Both passing reporters completed
+  with zero failures, errors or skips and child exits 0. Four-path analysis,
+  metadata validation and the bounded selection preview exited 0; its 13
+  broader selections remain unrun for the later batch. Ten clean runtime
+  checkpoints pin exact HEAD/parent/tree/library-tree and 23 hashes each;
+  all 230 pins were independently checked against 69 distinct Git blobs.
+  All three setups used plain `flutter pub get` instead of the requested
+  offline/enforced-lockfile flags. Each exited 0, without a changed-dependency
+  line, tracked source/configuration/locale delta or restoration. This setup
+  deviation and every first failure remain retained. Codex closed source and
+  scoped host review with zero required findings; raw reporters, argv,
+  checkpoints and the final verdict are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jr-final-host-adoption.json`.
+  This proof covers initial-complete and settled agreements. Pending-switch
+  takeover remains a separate required unit before activation. Graph and
+  lifecycle wiring, native/live delivery, aggregate validation and signed
+  candidate proof remain separate; the video gate stays off.
+  **U3j-T pending-switch takeover:** recovery retains the same switch machine,
+  SDP tail, engine/candidate listeners and canonical reconnect deadline. An
+  unselected request retires without consuming a media revision; selected
+  unfinished work consumes its revision and repairs to audio before a new ICE
+  generation. Committed agreements and older terminal tombstones survive, and
+  an earlier repair deadline is never restarted. The production graph must
+  observe the canonical reconnect timer synchronously before recovery effects;
+  that graph wiring is a separate unit, and its gate-off path must preserve the
+  original observer reference, including null.
+  A local audio request closes camera immediately but still needs the peer's
+  acceptance before SDP selection. Three original fixtures omitted that response.
+  Original RED `24ceed3d9` retained 3 passes, 25 assertion failures and one error;
+  original GREEN `8482c8345` retained 119 passes, two assertion failures and one
+  null-token error. The test-only correction preserves revision, media,
+  tombstone and deadline assertions and establishes peer acceptance first.
+  With identical corrected tests, RED `718a3ce99` fails exactly three cases by
+  assertion, without loader/compile errors; GREEN `ef983cce6` passes all 122
+  cases in both full executor files (37 switch and 85 v2), with zero failures,
+  errors or skips, successful reporter completion and child exit 0. Eight clean
+  HEAD/parent/tree/library-tree boundaries and all 200 file pins were checked.
+  Locked offline/enforced-lockfile setup exited 0 at both refs with no tracked
+  delta. Earlier 293 preservation passes remain applicable because the complete
+  production library tree, seven preservation tests and dependency/configuration
+  pins are unchanged; they were not rerun. Source analysis and the single
+  corrected-base metadata preview passed; its six broader selections remain
+  unrun. All first failures and the final independent source/host verdict are
+  indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jt-fixture-correction-runtime-adoption.json`.
+  This closes the host takeover boundary, not production graph wiring, native
+  camera/device behavior, activation or combined/signed candidate proof.
+  **Phase-4 native video preparation:** optional media keys remain strict and
+  inert while the video capability is off. Absent media preserves audio;
+  explicitly invalid media is rejected. Native camera-lease revocation cannot
+  be undone by a stale commit, and CallKit's video flag requires both enabled
+  capability and video media for the exact current call. These are native
+  preparation boundaries, not proof of camera capture or Dart graph wiring.
+  At frozen `11b03bd11101c3d207b5fa8a6965128d3b00a3e0`, Flutter's Kotlin
+  lane passed 651 tests across 49 classes, without failures/errors/skips and
+  with a successful build/child exit 0. This includes the camera-foreground
+  six cases, video-authority ten cases and native-bridge 36 cases, including
+  the `NATIVE-VIDEO-1` and `NATIVE-VIDEO-2` regressions. The unsigned serial
+  iPhone 16e/iOS 26.5 simulator run passed 93 CallKit lifecycle and 18 native
+  bridge cases; all four new `testPhase4*` cases passed and Xcode reported
+  `TEST SUCCEEDED`. The official actor reported child exit 0. The retained
+  iOS command/log pins the simulator and selected classes but does not repeat
+  a Git/source-hash vector or shell exit stamp; the exact head and clean
+  worktree are actor attestations. Kotlin's initial head/clean record and the
+  reviewed 15-file composition remain separate evidence. The first iOS
+  member-order contract failure is retained, with its source correction.
+  Source review, independently parsed raw results and these identity limits
+  are indexed by
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/native-prep-final-adoption.json`.
+  The video gate stays off and Android manifest commit `afa0e7970` stays
+  unmerged. Live camera/foreground-service behavior, PiP, Telecom C5 and
+  composed or signed candidate proof remain separate available-device legs.
+  **U3j-L Dart native video lifecycle port:** the optional port defaults off
+  and preserves the existing native capability map without a video key. Enabled
+  commands use only the bound call handle and strict native video argument
+  maps. A release, audio downgrade, audio deactivation, terminal observation,
+  invalidation or close fences an in-flight camera request; a late stale native
+  success releases its captured handle. iOS preserves its native refusal of an
+  Android-only camera lease. This port neither grants user consent nor starts
+  capture; ordinary Answer and audio APIs are unchanged.
+  At RED `11d913cef08b5c3599afa68aa56084ec5b11b877`, Claude-Dev's exact
+  `U3j-L` filter across both lifecycle adapter files produced eight passing
+  controls and seven causal assertion failures, without loader/timeout errors.
+  At GREEN `9046ac9b448f733c7dc4fd3d8bfc4f601ad3a2c3`, both complete adapter
+  files passed all 147 cases, with no failures/errors/skips, successful done
+  and child exit 0. Six clean HEAD/tree/lib checkpoints each printed and
+  matched all 17 individual file hashes; both setup deltas were empty. Raw
+  results and identity verification are retained in
+  `/Users/I560101/.codex/investigations/video-u3j-l-20261113/runtime-verified.json`.
+  This is scoped host evidence, not graph composition, native/device or
+  activation proof. Video remains off and the Android manifest remains held.
+
+  **U3j-QN read-only video quality inputs:** the platform source behind API
+  `007a5a6a0668739cb8ab59d72162565351ea6db5` stays inert while video is
+  disabled: `start` never listens, so neither platform registers a callback
+  or reads state. Snapshots are strict maps; missing, malformed or failing
+  fields stay unknown, and a channel error becomes an unknown snapshot rather
+  than a stream error. `close` fences late events synchronously and cannot
+  restart. Android reads the default network (a VPN stays unknown), Data
+  Saver (an allowlisted app still counts as active) and API 29+ thermal
+  status; iOS reads NWPath and ProcessInfo thermal state. No permission,
+  entitlement, manifest, wire or schema change. RED
+  `f11f8b96959be2966b54df86b800097d07dc6005` (compiling scaffold) recorded
+  two passing controls and five causal listen-count assertion failures, with
+  no loader error. GREEN `b577d2fa21819ce8b209a7d348e18caeb1142347` passed
+  all seven Dart cases with zero failures, errors or skips and child exit 0.
+  Two-path analysis and metadata validation exited 0; seven clean runtime
+  checkpoints pin HEAD/tree/library tree and the frozen 12-file vector. The
+  bounded preview against the API base selected 38 checks, none run here.
+  Flutter's native lanes at the same GREEN reported the five Kotlin mapping
+  cases passing inside a 656-test call run and the five XCTest mapping cases
+  passing with `TEST SUCCEEDED` (Flutter receipt `m-ca9cbd72`). Codex closed
+  source and scoped host review; the packet is
+  `build/qn-save/handoff.json` (sha256 `7fd80926...`). These are mapping and
+  contract proofs only: live network/thermal transitions on devices, Q/G
+  consumption was subsequently proved within the GQ host scope below; live
+  device consumption and activation remain separate, and the video gate stays off.
+  **U3j-Q adaptive video quality policy:** scoped Dart host evidence is closed
+  at `88276a9a25845ab130a16fc3b8a1bfebfa97bc1d`. The corrected native quality
+  file passed 19 cases; 20 policy, 15 sampler and 162 preservation cases carry
+  by unchanged production and test identities. The pinned SDK stream cleanup
+  method is `streamDispose`; an unbound receive-audio peer legitimately owns
+  one audio RecvOnly transceiver and must own no video transceiver. Widget
+  cleanup must drive both real and fake async queues with a bound, retaining
+  the original assertion if cleanup also fails. The original timeout, both
+  diagnostic probes and the first 51-pass/three-error GREEN remain evidence;
+  the corrected result does not replace them. Three original runtime identity
+  checkpoints (72 file hashes) were recovered verbatim from the runner's
+  transcript and verified, separately from its post-run identity snapshot.
+  Evidence: `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jq-fixture-runtime-audit.json`.
+  iOS SDK acknowledgement does not establish native acceptance or fail-closed
+  rejection detection; Kayan deferred that proof to the device work. Actual
+  encoder/thermal hardware behavior remains separate. Q/QN graph consumption
+  is covered by the subsequent bounded GQ host proof below.
+  **U3j-G graph core:** scoped source and host evidence is closed at
+  `f88b54ad87da47a35cc4ffe845591379dbc301b2`. The corrected composition file
+  passed 213 cases; six unchanged executor/bundle/control/lifecycle files
+  carry 380 passing cases by source identity. This is assembled coverage,
+  not a repeated seven-file run. Original RED had one passing control and 27
+  causal assertion failures; first GREEN had 590 passes and three invitation
+  fixture failures. Outgoing preflight rotates a caller wake grant with less
+  than 645 seconds remaining: fixtures must model delivery of the replacement
+  grant, and native-enabled outgoing fixtures must replay presented/adopted
+  state before expecting an invitation. Three original runtime checkpoints
+  matched all 90 file hashes. Evidence:
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jg-fixture-runtime-audit.json`.
+  Q consumer plus native QN environment composition was required dependent
+  work and is now closed within the GQ host scope below. Video stays off;
+  native/device/RTP/PiP/signed-candidate and activation claims are outside
+  this core result.
+  **U3j-GQ quality environment graph integration:** source and focused host
+  evidence is closed at `61e4dbc01f66bf5cabaf49cf945fa31e54ce35b2`, composed
+  from the closed G, Q and full QN stacks. RED
+  `98205d9271561ce44a7d79e1eba5dd569a9d4635` passed two gate-off controls
+  and failed eight causal assertions, with no non-assertion errors. One GREEN
+  invocation over ten complete files passed all 476 cases with zero failures,
+  errors or skips, reporter success and child exit 0. Eight original runtime
+  HEAD/parent/tree/library-tree/clean checkpoints matched 504 file hashes.
+  Runtime did not separately print HEAD:test; whole RED/GREEN test-tree
+  equality was source-verified and all relevant test files were pinned.
+  This proves optional default-off observation, nonblocking startup, current
+  session delivery, unknown fallback, camera-authority preservation and owned
+  shutdown in the host fixtures. It does not certify live native transitions,
+  encoder/thermal hardware, iOS native acceptance or fail-closed rejection,
+  RTP, PiP, signed candidates or activation. All 17 broader preview checks
+  remain unrun. Evidence:
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u3jgq-runtime-adoption.json`;
+  final scoped review:
+  `/Users/I560101/.codex/investigations/bl16-u3jgq-source-review-20261113-m4b06a9bb/final-scoped-verdict.json`.
+  **OS PiP unit 2 — Dart host policy:** source and scoped host evidence is
+  closed at `c91c63847cb6d9febd6dbb7846e352d504094160` on composed base
+  `a3a58ffa7e8d97ea53c9f1ec2c72de0c41115b40`. The controller qualifies native
+  callbacks by graph instance, call, lease, sequence and exact remote source;
+  late attach cleanup cannot retire a successor. Camera restoration requires
+  a previously user-enabled camera, the same call/session/negotiation/intent
+  epoch, accepted PiP entry, permission without a prompt and the quality gates.
+  Unsupported, missing-source, preparing, rejected, failed and blocked fallback
+  retains ordinary background revoke/no-resume. Close preserves audio; only
+  explicit End terminates the call. Enter/restore never create camera consent.
+  Original RED `518a74171` had 3 passing controls and 23 causal failures;
+  fallback RED `f59bc103f` had six causal camera-stays-on failures. First GREEN
+  `e61ef7290` passed 322 cases and failed one existing source-text sentinel:
+  its expected resume body omitted the three approved PiP lifecycle calls.
+  The test-only correction adds those ordered lines, preserving all previous
+  assertions and the entire production library tree. Corrected composition
+  passed 239 cases; five previously unrun preservation files passed 239 cases.
+  Another 84 unchanged focused passes carry from the first GREEN: 562 assembled
+  passes across nine files, not a repeated nine-file invocation. Both corrected
+  commands had zero failures/errors/skips, successful reporters and child exit 0.
+  First-run 228 and corrected-run 114 individual file hashes matched all 18 clean
+  HEAD/parents/tree/lib/test checkpoints; first failures remain retained. Evidence:
+  `/Users/I560101/.codex/investigations/bl16-pip-host-20261113/first-runtime-verified.json`
+  and `followup-runtime-verified.json` in the same directory. Video stays OFF;
+  native unit 3 reports `cameraInPip: false` on both platforms. Host fixtures with
+  true capability do not certify native capture continuation, OS entry/rendering,
+  device/RTP/lock-screen behavior, signed candidates or activation. Preview selected
+  20 checks; the full selected wrapper set was not executed for this scoped result.
+  **OS PiP native unit and visible foreground camera:** scoped native evidence
+  is closed at composition `754bae54319ef9e21dd5fab334f699790f3e67c4`.
+  Android assemble and unit tasks exited 0 with 628 passing cases in 48 JUnit
+  files, zero failures/errors/skips. The executed case identities and arguments
+  match the first composition attempt: its 628-case/one-failure result and the
+  isolated camera 12-case/one-failure result remain retained. Camera correction
+  `83f45d91a` reuses the first decision's manifest fact while preserving the
+  original final fact-read order and epoch fence. All 12 camera authority cases,
+  including unchanged `NATIVE-VIDEO-1`, pass; do not retarget that late-window
+  test or add another manifest read before the final owner facts.
+  Android PiP RED `b97608442` compiles and runs 26 cases: four passing guards,
+  21 assertion failures and one missing-event `NoSuchElementException` from
+  the deliberate no-op scaffold. Calling all 22 failures assertions is inaccurate.
+  Original `04db` compile failure/zero tests stays noncausal first-attempt evidence.
+  Camera RED `be971c73d` ran 54 cases with four causal assertion failures and no
+  errors/skips. iOS GREEN on `e318ebcbf` passed all 21 cases on the pinned iPhone
+  16e simulator (iOS 26.5), xcodebuild exit 0; this carries to `754bae5` through
+  unchanged iOS/library/test/configuration identities, not a new iOS run.
+  iOS RED `f0` had two passes, seven completed assertion failures and one own
+  assertion failure followed by an index-out-of-range/restart, exit 65; retain
+  those mixed outcomes and the original xcresult. The optional successor is unrun.
+  Native metadata records initial HEAD/tree and clean before/after, without a
+  separate post-run HEAD/parent/full-file-pin census. These unit results do not
+  certify composed host, live device/RTP, camera continuation in PiP, signed
+  candidates or activation. Camera FGS `afa0e7970` remains excluded. Evidence:
+  `/Users/I560101/.codex/investigations/batch7-native-corrections-review-20261114-m90aa47a7/final-native-scoped-verdict.json`.
+  **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
+  committed-media checks, stale asynchronous capture/SDP/rendering completion,
+  local-off versus remote reception, caller/callee offer rollback boundaries,
+  relay-only SDP, audio downgrade and retryable resource cleanup. An optional
+  video cleanup failure must not prevent microphone, stream and peer-connection
+  disposal; successful cleanup stages are not repeated on retry. Original
+  feature RED `2e0563a1d646d901f6854b6db56d329b3037fd3e` had one passing
+  control and 21 causal absent-factory errors. Corrected cleanup RED
+  `46466383383a368fa4eef1dff3147e1a9510b0a9` failed because microphone
+  `trackDispose` was never attempted, with exit 1. Final GREEN
+  `ee80fd033e29118e031b2d5906b0a86c4e2f05d0` passed all 23 focused cases,
+  without failures or skips, with successful reporter completion and exit 0.
+  The earlier regression RED `3c4e75a77` and GREEN `6216b5a76` failed an
+  incorrect exception-type expectation; those failures remain visible. The
+  correction asserts the existing `WebRtcAdapterException(other)` contract
+  and leaves the production library tree and preservation suites unchanged.
+  Their previous 90 passing cases, five-path analysis and metadata validation
+  are adopted within that unchanged scope, with fresh corrected-test analysis
+  passing. The corrected run recorded both initial heads and test/engine/lock
+  hashes, pretest locale restoration, and final GREEN hashes/clean status;
+  it did not record post-RED hashes or a final HEAD stamp. Those limits are
+  retained without inventing evidence or repeating unrelated checks. Raw
+  first failures, corrected results, source identities and adoption are indexed
+  by `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/live-video-final-host-adoption.json`.
+  The optional presentation stream and active-camera switch are covered at
+  `9af76e2e5e47027f5fb92baff99e1f0ccc9cfae2`: all 35 video-session cases pass,
+  with 72 unchanged owner/engine preservation cases adopted. Snapshot updates
+  follow current renderer ownership; stale callbacks cannot revive cleared
+  views. Camera switching uses the existing capture, checks fresh authority
+  around the native await, and treats the native facing boolean as metadata.
+  RED `454d6481f975859ff76aee08a7ea20ea1e9834b0` retained 12 causal assertion
+  failures. The first GREEN had 34 passes and one failure because the test
+  channel rejected flutter_webrtc initialization before camera switching. The
+  test-only correction accepts initialization and preserves switch assertions;
+  the production library tree is unchanged. Final reporter completion and
+  child exit are successful, with no skips; original two-path analysis and
+  validation passed. All eight original and three correction identity stamps
+  match their exact heads, trees and 13 pins, with clean status and empty setup
+  deltas. Raw hashes and scoped review adoption are recorded in
+  `/Users/I560101/.codex/investigations/runtime-adoption-20261112T2302Z/v2-view-raw-facts.json`.
+  The optional SDP reconciliation capability distinguishes `rolledBack`,
+  `alreadyStable` and `unreconciled`. It retires video gates immediately, waits
+  for owned native apply bookkeeping, then reads native signaling state.
+  Stable state needs no rollback; local/remote offer rollback requires the
+  exact owned offer and a confirming stable probe. Every await is followed by
+  fresh session/token/owner authority checks; null/error/stale state cannot
+  certify recovery. Existing audio, ICE and peer lifetime remain untouched.
+  At `b0e30b9370d6fbdb5e56fdd6c945bb0d54d2df9f`, all 54 session cases pass
+  with no failures/errors/skips, successful reporter completion and child
+  exit zero. The original RED has eight passing controls and eleven causal
+  assertion failures; the 72 owner/engine preservation cases also pass.
+  The first GREEN's 53 passes and one 30-second timeout remain evidence: the
+  close/probe fixture awaited close before releasing its own blocked native
+  probe. The test-only correction starts close, releases the gate, then awaits
+  the unreconciled result and close with every assertion retained. Production
+  remains byte-identical to `711e7423d`.
+  That fixture correction retained a known close-wait limit, subsequently
+  addressed by SDP-C at `eef24565e57e1f7b4c4c95cde9ad8af435c3e2a5`.
+  One idempotent close signal releases all five read-only signaling probes
+  (commit and both probes in legacy rollback and reconciliation). Each existing
+  post-await authority check still rejects a closed token; late native results
+  cannot publish or certify state, and late errors are consumed. Native
+  mutations, capture detach and resource cleanup remain serialized: close may
+  still wait for those operations. The native query itself is not cancelled.
+  The ten held-read cases require close and queued work to settle before the
+  probe is released, then cover late success/error, repeated close and owned
+  camera/renderer cleanup. Four controls preserve native rollback ordering and
+  errors that arrive before close. RED `513d89a3c` gives ten causal assertion
+  failures and four passing controls, without loader failures or timeouts.
+  GREEN passes all 68 session and 72 owner/engine cases, with zero
+  failures/errors/skips, successful reporter completion and child exits zero.
+  Eight clean HEAD/tree/lib boundaries match all 15 individual pins; both setup
+  deltas are empty. Analysis, metadata validation and explicit-base selection
+  preview pass; broader selected lanes remain unrun under the bounded scope.
+  Raw evidence is in the Claude-Dev checkout's `build/sdpc-proof/`, verified in
+  `/Users/I560101/.codex/investigations/video-sdp-c-20261113/runtime-verified.json`.
+  This resolves the read-probe wait within host proof, not native/device or
+  composed-video certification. The video gate remains off.
+  All eight initial and three correction HEAD/tree/clean identity boundaries
+  match 15 individual pins; correction boundaries also print the library tree.
+  All setup deltas are empty. Initial analysis and metadata validation passed;
+  corrected-test analysis passed. Raw evidence is in the Claude-Dev checkout's
+  `build/sdp-proof/` and `build/sdpfix-proof/`, with independent verification in
+  `/Users/I560101/.codex/investigations/video-sdp-reconcile-20261113/first-runtime-verified.json`
+  and `close-test-runtime-verified.json` in that directory.
+  These tests use host plugin fakes; real camera/frames, native renderer
+  cleanup, native rollback, device lifecycle and composed candidate proof
+  remain separate. The video gate stays off.
+  **U6 real-screen video binding:** the active, incoming and outgoing screens
+  bind video controls to the current foreground projection. Every intent
+  rechecks the canonical call and generation; upgrade actions also reject a
+  stale upgrade ID. Covered, minimized and disposed surfaces cannot dispatch
+  retained video actions. Existing Answer remains audio-only, including the
+  locked projection; presenting a video request does not grant camera consent.
+  Host widget evidence covers control/status semantics, EN/DE/AR at 320 and
+  360 logical pixels with 2x text, and the compact 600x320 layout. It does not
+  prove live video frames, camera capture, native effects or device behavior.
+  At frozen RED `f784c2ca1847e737aff461a38d164dbea0c37fb6`, the default-off
+  incoming Answer control passed and enabled active-screen binding failed
+  causally because `CallVideoControls` was absent. Flutter reported that
+  assertion as a widget-test error, with child exit 1, not a setup/load failure.
+  Frozen GREEN `049d15c4b483952fa982cd4bb5666afa7bcdcae5` passed all 45 focused
+  cases and 84 cases in the seven-file audio preservation run, without failures
+  or skips; both reporters completed successfully and both children exited 0.
+  Official eight-path analysis and metadata validation also exited 0. The
+  sole runner was Claude-Dev after Claude-UI explicitly released its unstarted
+  assignment. Three identity snapshots at each revision preserve the source,
+  seven localization files and lockfile, including restoration of generated
+  locale formatting before tests. RED's identity-command exit 1 is retained:
+  only the intentionally GREEN-only layout file was absent, while all 15
+  existing pins matched; all 16 GREEN pins matched throughout the recorded
+  boundaries. Exact commands, raw reports, hashes and independent adoption are
+  retained under
+  `/Users/I560101/.codex/investigations/bl16-video-phase1-20261112/u6-real-screen-host-adoption.json`
+  and its `u6-real-screen-retained-host/` evidence directory. This is a scoped
+  host result for the frozen unit, not a combined integration or release gate.
+  **U6 explicit video entry:** the conversation menu uses a fresh same-contact
+  video-capability check and the shared cancellable call preflight. Initial
+  validated v2 offers expose explicit video or audio-only acceptance bound to
+  the current call/generation; native/default Answer remains audio-only and
+  the video gate remains off. In widget fixtures, start the popup animation
+  with an initial zero-duration `pump()` before advancing its existing 400 ms
+  budget. Finding the menu text alone does not prove that a tap can reach it:
+  all four initial entry errors included the same missed-tap warning before
+  any call action ran. The one-line fixture correction
+  `075555500513f315f106d5237ff66dabf82811e6` preserves every assertion and
+  production byte. All 179 cases in the five focused files and one-path
+  analysis passed, with four clean matching 16-pin stamps and empty setup
+  delta. Retain RED 4 passes/15 binding errors and first GREEN 175 passes/
+  4 binding errors, plus the original 26 voice-preflight, 118 audio/UI and
+  2112 affected-call passes under
+  `.codex-test-logs/codex-ui-u6-entry-20261113/`. This host evidence does not
+  certify native camera effects, frames, device lifecycle or a combined
+  candidate; no broader family rerun was performed for the fixture fix.
+  **U6 owner-projected video views:** stateless remote/local tiles consume only
+  the current owner's texture ID and dimensions. Null or invalid metadata,
+  camera off/paused, reconnect, gate-off, audio agreement and call retirement
+  preserve safe placeholders or remove the views without media effects.
+  RED `9d07597b10500042203ce940db227936c296b8ff` retained 14 passing controls
+  and 35 missing-view widget binding errors (`isFailure=false`). Frozen GREEN
+  `f711a3679e83a4ee3ef66cdcc1e0f525f183eb97` passed 94 focused, 101 audio
+  preservation and 2328 affected-call cases, with zero failures/errors/skips,
+  successful reporter completion and child exits. Six-path analysis and
+  validation passed. All nine clean HEAD/tree snapshots matched their 38
+  individual pins and both setup deltas were empty. Paired tests, original
+  errors and independent raw adoption are retained under
+  `.codex-test-logs/codex-ui-u6-view-authoring-20261113/host-runtime/`.
+  These overlapping command counts certify the standalone host unit, not a
+  later combined merge, decoded video frames, native media or a signed build.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
@@ -10865,6 +12507,32 @@ visible and cannot become an ordinary first-attempt PASS.
   incident or certify a production soak. The
   [long-call runbook](vc024-long-call-runbook.md) defines the separately required
   device observations and approved resource investigation thresholds.
+  **VC-024 recorded resource contract:** `run_call_audio_soak.dart` now checks
+  retained, hashed process measurements bound to source/run/device/artifact and
+  one canonical call. The 43-case host suite covers the 1800-second floor, both
+  RSS growth branches, matched-route in-call CPU, post-idle recovery, stable
+  process/clock/counter identity, missing windows and replay/tamper rejection.
+  CPU uses cumulative process seconds on the one-core scale; the November 10
+  approval sets late route CPU to at most `max(1.20 * warm, warm + 5pp)`.
+  Post-idle observation follows owned cleanup and any recovery call, with its
+  actual start required; a sample at a declared start after the main call ends
+  must already be idle. These are synthetic parser/CLI fixtures, not sustained
+  device measurements. Resource success is only `PASS_RECORDED`; the CLI keeps
+  full-soak status `NOT RUN` and exit 78, and no-argument execution stays
+  `BLOCKED`/78. Android sampled decoded PCM and iOS route/active-session evidence
+  remain separate; physical output is `NOT PROVEN`, nonblocking under Kayan's
+  November 10 decision. The corrected resource suite passed all 43 cases;
+  the current coordinator/screen/RTP preservation selection passed 60 cases.
+  Evidence in `.codex-test-logs/p0-journeys-20261110/` retains the causal RED,
+  initial SDK-stderr assertion failure, focused correction and complete GREEN.
+  Two review probes first returned `PASS_RECORDED` for a missing post-idle start
+  and an active recovery call at that start; both now fail closed. Their
+  `vc024-post-idle-*` receipts retain RED (0 PASS / 2 FAIL), full resource GREEN
+  (43 PASS) and the complete five-check change gate against `4e9463e82`.
+  The original preparation's broader wrapper result remains 11 checks PASS and
+  88 NOT RUN; the review-fix gate does not replace that scope or provide a device
+  verdict. Its exact resource selector is
+  `call-audio-soak-resource-contract` in `tool/testing/selection.json`.
   An offline terminal send may fail immediately while local history, native
   acknowledgement and context cleanup complete. Its bounded delivery owner
   retains only the already sealed envelope and immutable destination metadata;
@@ -11261,6 +12929,28 @@ correlation alone does not prove custody, displayed content, or recipient open.
 Only report a checkpoint that the retained instrumentation actually observes.
 State an investigation area separately from a proven root cause.
 
+Incoming direct-chat rejection observations distinguish existing aggregate results
+with closed stage/reason pairs: unknown sender uses `preflight/authority_rejected`,
+unauthorized uses `verify/authority_rejected`, custody refusal uses
+`commit/protection_failed`, and missing original uses `prepare/prepare_failed`.
+These categories do not establish a precise cause or permanent rejection. The
+handler still executes on every pass; authorization, retry, ACK and disposition
+behavior is unchanged. Stable staged entries suppress a repeated terminal
+observation using private recipient/sender/entry/category digests, retained only
+after diagnostic admission. The collector keeps at most 256 digests for five
+monotonic minutes and clears them with its existing clear/consent/dispose paths.
+Keys never enter persistence, export or upload. Suppressed attempts still close;
+unstaged calls remain independent. Start/preflight/decrypt checkpoints still
+describe actual handling, so this is not a measured shipped-volume reduction.
+The BL24B pair `9f8935b5`/`50eede91` produced two positive controls and seven causal
+RED failures, then nine GREEN cases, one core admission/closure case, 134 incoming
+preservation cases, two exact recovery sentinels and 299 diagnostics cases passed.
+Analysis, validation and schema-copy check passed. The scoped diagnostics child
+passed; wrapper exit 3 retains omitted groups as `NOT RUN`, not full-change PASS.
+The host tests do not advance the five-minute expiry clock or prove native or
+signed-candidate behavior. Exact commands, identities and first failures are in
+`/Users/I560101/.codex/investigations/bl24b-incoming-authority-20261112-mb0024a5d/runtime-raw-facts.json`.
+
 Contact-request reports use closed source/action/disposition/consent enums with
 no peer or content fields. Local delete completion reports unknown consent:
 the purge result's `deletedContact` means the contact is absent, not that a row
@@ -11269,7 +12959,86 @@ classification; missing rows never invent past withdrawal. A fresh request from 
 absent withdrawn contact records an ignored observation before the existing
 option-A return; it does not create pending consent. Stored replay remains unknown
 unless its existing-contact decision proves activation. Automatic eligibility
-and completed acceptance are separate observations. Call preparation records
+and completed acceptance are separate observations. Durable decline observations
+claim declined/committed only after the repository decision confirms it;
+not-found/not-pending outcomes remain ignored with unknown consent, while write
+errors remain failed with unknown consent. Presentation observations cover the
+early and queued suppression gates and actual dialog route admission. A joined
+queue or a presenter callback by itself is not proof of a dialog, and suppression
+does not prove decline. The host tests in `test/core/diagnostics/` plus the FTE
+widget test exercise private-export canaries, consent and unavailable collectors,
+while preserving existing decisions and reads. These coarse producers omit
+optional trace/attempt handles and requestAction. Relay upload retains the
+`contact_request` feature and admitted closed `requestSource`, `consentClass`,
+`requestAction` and `requestDisposition` values. Unknown keys or unlisted enum
+values reject the entire event before local retention; they are not sanitized
+into an accepted record. Other app kinds retain their existing relay projection,
+including legacy call controls, and ACK/retry behavior is unchanged. The BL8
+causal RED/GREEN pair and 108-case six-file diagnostics preservation run retain
+their raw outcomes under
+`.codex-test-logs/codex-ui-bl8-contact-request-relay-20261112/`.
+Compatibility was checked offline against relay schema `88157ef6e`; host payload
+and privacy checks do not certify live relay acceptance or a signed application.
+
+Call setup observations use the closed `CallSetupFailure` classifications and
+existing diagnostic schema vocabulary. Signaling-port transport failures remain
+signaling/transport_failed; engine transport failures are media/transport_failed.
+ICE, configuration, media start, permission, TURN and checkpoint failures retain
+their bounded causal classifications, including runtime/write_failed for a failed
+checkpoint. Timeout classification follows the failing boundary. Exception text
+never becomes a diagnostic reason or a peer-facing call end reason. BL5 supersedes
+the earlier generic media/negotiation_failed and runtime/unknown classification. A successful effect's returned follow-up reduction owns
+its own checkpoint/effect failure observation: do not relabel a propagated
+checkpoint failure as media failure or count a nested effect failure twice.
+Retain the outer interruption fence before observing an actual execution error.
+Coordinator tests preserve original exceptions, terminal reason, cleanup, history
+and interruption behavior. The causal REDs, complete frozen host results and
+correction evidence are retained in `.codex-test-logs/diagnostic-gaps-131/`;
+passing the original diagnostic lane did not cover the missing nested case.
+BL5 final per-fix review passed source `404dbfff5243883817f128480d652072bd6b9497`:
+Claude-Dev retained two causal RED failures, two focused GREEN passes, 182 passes
+across four preservation files, and clean seven-path analysis with child exit 0.
+The three earlier test child exits were not retained; Kayan explicitly accepted
+the actual Flutter final summaries without a rerun. Raw receipts remain under
+`/Volumes/CrucialX9/flutter_app-claude-dev/build/bl5-proof/`; the final analysis
+`analyze-404dbfff5.log` SHA-256 is
+`17acc8d7833ac6f5e05a87a3390fd9eb579339ce72c0327e5e25b47a7edaaac3`.
+Flutter's native run on `899d6b9fa9bf3274db9fa292115854a02ab1fd6f` passed
+630 tests in 47 classes with zero failures, errors or skips and child exit 0.
+This component evidence was adopted because the Android tree and native runner
+are unchanged through the final source. Its `android-call-jvm.log` SHA-256 is
+`4252f8ca020e3b1287efc0c21018df37c34e1edd49074ff046dea2bed20a214e`
+under `/Volumes/CrucialX9/flutter_app/.codex-test-logs/bl5-native-20261112/`.
+These receipts establish the scoped per-fix result; integration-batch checks and
+device or signed-candidate behavior require their own evidence.
+
+The core sentinel `test/core/diagnostics/call_failure_observation_test.dart` also
+pins these classifications. It is covered by the diagnostics lane but sits
+outside the call-feature test directory; the original four-file BL5 preservation
+set omitted it. Batch bisect retained 15 passes before BL5 versus 7 passes and
+8 stale-expectation failures after it. Test-only `4cdd902c4` updates those expected
+stage/reason pairs while preserving exception identity, single observations,
+redaction, timeout outcomes, interruption fencing, terminal reason, cleanup and
+history. The generic media fixtures throw untyped `StateError`, so they assert
+`media/media_failed`; typed configuration/SDP failures still retain
+`media/negotiation_failed`. Checkpoints assert `runtime/write_failed`, and signaling
+failures/timeouts assert their signaling boundary.
+On clean integrated head `d58446b319a826922573381d0a7e4507f00433af`, the 15 distinct sentinel
+cases and all four requested preservation files passed: the combined run
+(including FriendRow) reported 173 passes, and the separate call-diagnostics run
+reported 63, both with actual child exit zero. The five requested test files
+match the author revision. Raw output is retained in
+`/Volumes/CrucialX9/flutter_app/.codex-test-logs/batch1-20261112/final/tests.log`
+and `final2/tests.log`. Global analysis exited 1 for seven existing infos in the
+audio-soak script and background-message-handler tests, with zero errors or
+warnings and no diagnostic in the changed sentinel; this is not a clean global
+analysis claim. Those separate infos are covered by the batch-2 cleanup.
+Permission observations use
+the existing posting-admission result, preserve original requester exceptions,
+and separately mark caught OS-check failures without changing fail-open policy.
+An unfinished request has only a started observation; it does not prove an OS
+grant, lost callback or timeout. These host checks do not prove native activation
+or signed application behavior. Call preparation records
 bounded input booleans, at most 16 trusted devices, and repair outcomes on the
 original attempt. Outgoing terminal summaries retain observed ringing and an
 optional bounded timestamp difference; incoming ringing is not remote evidence.
@@ -11302,14 +13071,45 @@ Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
 Bridge failure records use closed `bridgeCommandFamily` and
 `bridgeRejectionKind` values. The command family is required in the existing
-dispatch registry; rejection kinds come only from explicit native error codes,
-with `unknown` for broad or unclassified failures. Raw command strings, payloads,
+dispatch registry; explicit native error codes determine rejection kinds,
+with `unknown` for broad or unclassified failures. The one bounded lifecycle
+exception is an uncoded negative reply whose `error` is exactly `node stopped`;
+it remains a reported failure with the existing `not_ready` kind.
+Raw command strings, payloads,
 peer identifiers and error text are not diagnostic values. Preserve ordinary
 return envelopes, the six network operation reasons, raw background responses,
 and diagnostic-upload recursion suppression. The bridge-label tests exercise
 native-boundary results through collection, export and upload; relay/Python
 fixtures preserve old records and reject free-form enum values. Evidence is
 retained in `.codex-test-logs/bridge-labels-20261101/`.
+
+**BL-24(A) expected bridge misses:** ordinary `ok:false` replies without an
+`errorCode` key from `peer:ping` and `relay:presence_set` are best-effort misses,
+not failed bridge observations. Their return envelopes remain unchanged. A
+present code, including null, empty or unknown, retains the failure path and
+existing mapping; `PROFILE_ERROR` now uses existing `internal`. The exact
+uncoded lifecycle exception above takes precedence over miss suppression.
+Presence lookup already returns a successful `unknown` hint; other uncoded
+command failures remain visible. No rejection vocabulary or schema copy changed.
+Frozen RED `f79367b56db1909484ee15076d1483f52a73fd33` produced one positive-control
+PASS and four causal failures. GREEN `209f48d56103c1ffa6e6825c6102f89354663e8c`
+passed 98 focused and 431 curated bridge/diagnostics cases without failures or
+skips; changed-path analysis, metadata validation and schema parity also passed.
+All sixteen source/schema/localization/lock pins matched at eight recorded
+boundaries; both dependency-setup deltas were empty. Original outcomes and raw
+receipts are retained in
+`.codex-test-logs/codex-ui-bl24a-bridge-telemetry-20261112/official-host-verdict.json`
+and `official-claude-dev/`. This proves the mock bridge and local diagnostics
+privacy/export/upload contract. It does not measure the inferred production
+volume reduction or establish native/device or aggregate candidate behavior.
+
+Native `bgEnd` intentionally completes with a void result. The Dart bridge
+accepts that result only for `bg:end` and returns its normal success envelope;
+it must not emit a `malformed_response` failure after a successful release.
+The bridge regression also preserves null-response failure for `bg:begin` and
+explicit native rejection for `bg:end`. The causal RED and three focused GREEN
+controls are retained in `.codex-test-logs/bg-end-diagnostics/`. These mock-channel
+tests establish the Dart contract, not actual OS background-task release.
 
 Unlike the local-only incident detail above, these two optional schema-v1 fields
 remain on relay uploads. Deployment order is required: the owner-approved relay
@@ -11701,9 +13501,16 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   four-test census suite passed after that addition; exact equality, production
   source hashes and architecture guards remain unchanged. Preserve its first
   failure under `tdd-change-investigation/layering-census-assessment.json`.
-- **Translation/transcription preview host boundary:** `TRANSLATE_PREVIEW`
-  defaults to false. The Thought viewer returns its original text widget and
-  direct voice messages retain their original player subtree when disabled.
+- **Translation/transcription device gate:** Ordinary builds enable the feature
+  without `TRANSLATE_PREVIEW`. The delivery controller exposes static device
+  eligibility separately from model delivery and inference safety, using the
+  existing `supportsOnDeviceTranslation` policy below; unknown facts fail closed.
+  Settings hides the entire translator section on static rejection, while an
+  eligible phone blocked by inference or memory safety keeps manual recovery.
+  This boundary follows owner decisions 6-7 and Kayan clarification m-9e12cb44.
+  Disabled-rendering preservation tests explicitly set the test override: the
+  Thought viewer keeps its original text widget and direct voice messages keep
+  their original player subtree. Model download and consent are unchanged.
   `affected-translate-preview` in the selection manifest covers the preview
   module and its exact Thought/chat entrypoints. New feature folders also need
   critical ownership in `tool/sims/critical_features.json`; check selection alone
@@ -11711,6 +13518,29 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
+  Chat-header translation requires static device eligibility and `ModelReady`.
+  Group-chat translation remains deferred. In the pinned Material
+  theme, call/search/translation buttons use a 44-pixel style inside matching
+  48-pixel padded touch targets. Assert the actual shared target, not the style
+  value, and keep the 7-pixel active dot's 9-top/8-end geometry checks in both
+  text directions. A Tooltip populates the semantics tooltip field but does
+  not guarantee an accessible label. The translation action uses the existing
+  call-button pattern: an explicit localized semantics label and activation,
+  retained tooltip, and excluded child semantics. Decorative dots ignore
+  pointer events so they cannot steal a tap.
+  Widget tests must dispose an `ensureSemantics()` handle before returning;
+  use `try/finally` so failed assertions also release it. In this binding,
+  end-of-test verification precedes `addTearDown`. For a real light conversation
+  fixture, pass `BackgroundPreference.daylightLagoon` to `ConversationScreen`.
+  Its `AmbientBackground` deliberately replaces the outer readable-color
+  extension from its own background preference; an outer light Theme with the
+  default dark preference is still a dark conversation. Preserve semantic
+  palette assertions instead of changing production colors for that fixture.
+  The final U2 correction `64ce56865` passes 22 focused and 404 curated case
+  executions without failures, errors or skips. Original binding-error outcomes
+  (17/399 passes with five errors, then 19/401 passes with three errors), causal
+  RED and diagnostic compile/failed-run evidence remain under
+  `.codex-test-logs/codex-ui-bl25-u2-translation-header-20261112/`.
   Preview requests now keep task instructions in LiteRT-LM's supported
   `systemInstruction` and source audio/text in the user message. Prompt-contract
   tests check verbatim spoken-language and data-only translation instructions;

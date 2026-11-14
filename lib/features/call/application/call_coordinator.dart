@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
 
+import '../../../core/media/media_audio_session.dart';
+import '../diagnostics/call_diagnostics.dart';
+import '../diagnostics/call_setup_failure.dart';
+import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -132,6 +136,13 @@ final class CallCoordinator {
         terminalHistoryTimeout <= Duration.zero) {
       throw ArgumentError('coordinator bounds must be positive');
     }
+    MediaAudioSession.callOwnsSession = _callOwnsAudioSession;
+  }
+
+  /// While a call is live, voice notes leave the shared audio session to it.
+  bool _callOwnsAudioSession() {
+    final active = _active;
+    return active != null && !active.isTerminal;
   }
 
   final CallReducer reducer;
@@ -441,7 +452,8 @@ final class CallCoordinator {
     if (!snapshot.isTerminal && persist != null) {
       try {
         await persist(snapshot).timeout(effectTimeout);
-      } catch (_) {
+      } catch (error) {
+        _recordFailure(error, snapshot, checkpoint: true);
         await _dispatchNow(
           CallEvent(
             type: CallEventType.negotiationFailed,
@@ -488,6 +500,7 @@ final class CallCoordinator {
     final terminalDeliveries = <Future<void>>[];
     try {
       for (final effect in reduction.effects) {
+        var executionFailed = false;
         try {
           if (interruption?.requested.isCompleted == true) {
             await _finishPreparationInterruption(interruption!);
@@ -499,13 +512,19 @@ final class CallCoordinator {
                 Object error,
                 StackTrace stackTrace,
               ) {
+                _recordFailure(error, snapshot, effect: effect.type);
                 firstEffectError ??= error;
                 firstEffectStack ??= stackTrace;
               }),
             );
             continue;
           }
-          await _executeEffect(effect, snapshot, interruption: interruption);
+          await _executeEffect(
+            effect,
+            snapshot,
+            interruption: interruption,
+            onExecutionFailed: () => executionFailed = true,
+          );
           if (interruption?.requested.isCompleted == true) {
             await _finishPreparationInterruption(interruption!);
             break;
@@ -518,6 +537,9 @@ final class CallCoordinator {
           if (interruption?.requested.isCompleted == true) {
             await _finishPreparationInterruption(interruption!);
             break;
+          }
+          if (executionFailed) {
+            _recordFailure(error, snapshot, effect: effect.type);
           }
           firstEffectError ??= error;
           firstEffectStack ??= stackTrace;
@@ -627,44 +649,90 @@ final class CallCoordinator {
     CallEffect effect,
     CallSessionSnapshot snapshot, {
     _CallPreparationInterruption? interruption,
+    required void Function() onExecutionFailed,
   }) async {
-    switch (effect.type) {
-      case CallEffectType.scheduleNoAnswerTimeout:
-        _scheduleTimer(effect, snapshot, CallTimeoutKind.noAnswer);
-        return;
-      case CallEffectType.scheduleInviteExpiry:
-        _scheduleTimer(effect, snapshot, CallTimeoutKind.inviteExpiry);
-        return;
-      case CallEffectType.scheduleNegotiationTimeout:
-        _scheduleTimer(effect, snapshot, CallTimeoutKind.negotiation);
-        return;
-      case CallEffectType.scheduleReconnectTimeout:
-        _scheduleTimer(effect, snapshot, CallTimeoutKind.reconnect);
-        return;
-      case CallEffectType.cancelTimers:
-        _cancelTimers();
-        return;
-      case CallEffectType.cleanup:
-      case CallEffectType.projectHistory:
-        return;
-      default:
-        final execution = effectExecutor
-            .execute(effect, snapshot)
-            .timeout(
-              _isMediaPreparationEffect(effect.type)
-                  ? mediaPreparationTimeout
-                  : effectTimeout,
-            );
-        final followUp = await (interruption == null
-            ? execution
-            : Future.any<CallEvent?>(<Future<CallEvent?>>[
-                execution,
-                interruption.requested.future.then<CallEvent?>((_) => null),
-              ]));
-        // Cleanup retires the media bundle and fences late engine completion.
-        // A late preparation must never send Accept or advance another call.
-        if (interruption?.requested.isCompleted == true) return;
-        if (followUp != null) await _dispatchNow(followUp);
+    CallEvent? followUp;
+    try {
+      switch (effect.type) {
+        case CallEffectType.scheduleNoAnswerTimeout:
+          _scheduleTimer(effect, snapshot, CallTimeoutKind.noAnswer);
+          return;
+        case CallEffectType.scheduleInviteExpiry:
+          _scheduleTimer(effect, snapshot, CallTimeoutKind.inviteExpiry);
+          return;
+        case CallEffectType.scheduleNegotiationTimeout:
+          _scheduleTimer(effect, snapshot, CallTimeoutKind.negotiation);
+          return;
+        case CallEffectType.scheduleReconnectTimeout:
+          _scheduleTimer(effect, snapshot, CallTimeoutKind.reconnect);
+          return;
+        case CallEffectType.cancelTimers:
+          _cancelTimers();
+          return;
+        case CallEffectType.cleanup:
+        case CallEffectType.projectHistory:
+          return;
+        default:
+          final execution = effectExecutor
+              .execute(effect, snapshot)
+              .timeout(
+                _isMediaPreparationEffect(effect.type)
+                    ? mediaPreparationTimeout
+                    : effectTimeout,
+              );
+          followUp = await (interruption == null
+              ? execution
+              : Future.any<CallEvent?>(<Future<CallEvent?>>[
+                  execution,
+                  interruption.requested.future.then<CallEvent?>((_) => null),
+                ]));
+      }
+    } catch (_) {
+      // The outer interruption fence still decides whether to observe this
+      // execution failure. Follow-up reductions own their own failure markers.
+      onExecutionFailed();
+      rethrow;
+    }
+    // Cleanup retires the media bundle and fences late engine completion.
+    // A late preparation must never send Accept or advance another call.
+    if (interruption?.requested.isCompleted == true) return;
+    if (followUp != null) await _dispatchNow(followUp);
+  }
+
+  void _recordFailure(
+    Object error,
+    CallSessionSnapshot snapshot, {
+    CallEffectType? effect,
+    bool checkpoint = false,
+  }) {
+    try {
+      final diagnostics = CallDiagnostics.instance;
+      final timeout = error is TimeoutException;
+      final media = effect != null && _isNegotiationEffect(effect);
+      final failure = error is CallEngineException
+          ? CallSetupFailure.fromEngine(error.code)
+          : timeout
+          ? (media
+                ? CallSetupFailure.mediaTimeout
+                : effect != null
+                ? CallSetupFailure.signalingTimeout
+                : CallSetupFailure.runtimeTimeout)
+          : checkpoint
+          ? CallSetupFailure.checkpoint
+          : media
+          ? CallSetupFailure.mediaStart
+          : effect != null
+          ? CallSetupFailure.signaling
+          : CallSetupFailure.runtime;
+      diagnostics.record(
+        stage: failure.stage,
+        action: 'finish',
+        outcome: timeout ? 'timeout' : 'failed',
+        reason: failure.reason,
+        traceId: diagnostics.traceForCall(callId: snapshot.callId?.value),
+      );
+    } catch (_) {
+      // Cause observation cannot change reducer, cleanup, or exception handling.
     }
   }
 
@@ -1007,6 +1075,10 @@ final class CallCoordinator {
       if (deadline != null && !deadline.isCompleted) deadline.complete();
       _cancelTimers();
       _disposed = true;
+      // Tear-offs of one method on one object compare equal.
+      if (MediaAudioSession.callOwnsSession == _callOwnsAudioSession) {
+        MediaAudioSession.callOwnsSession = MediaAudioSession.noCall;
+      }
       _disposing = false;
       await _snapshots.close();
     }

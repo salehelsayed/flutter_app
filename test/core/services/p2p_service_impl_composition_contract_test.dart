@@ -101,6 +101,7 @@ const _publicFields = <String>{
 
 const _publicMethods = <String>{
   'setProtectedGroupReplayHandler',
+  'registerPostCreateReplayHandler',
   'currentState',
   'stateStream',
   'messageStream',
@@ -193,6 +194,7 @@ const _inboxFields = <String>{
   '_replayRecoveredInboxContactRequest',
   '_replayRecoveredInboxReaction',
   '_replayRecoveredInboxMessageDeletion',
+  '_replayRecoveredInboxPostCreate',
   '_replayRecoveredProtectedGroupEnvelope',
   '_predecryptInboxChatEntry',
   '_drainInProgress',
@@ -207,6 +209,7 @@ const _inboxFields = <String>{
 const _inboxMethods = <String>{
   '_isInitialDirectNotificationEnvelope',
   'setProtectedGroupReplayHandler',
+  'registerPostCreateReplayHandler',
   '_normalizeInboxTimestamp',
   '_messageTypeFromEnvelope',
   '_stagingEntryFromRawInboxMessage',
@@ -247,6 +250,7 @@ const _inboxMethods = <String>{
 
 const _inboxDelegates = <String>{
   'setProtectedGroupReplayHandler',
+  'registerPostCreateReplayHandler',
   'storeInInbox',
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
@@ -679,7 +683,10 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // Thought alert registration adds one optional durable-preference reader;
 // its backing field stays private and every prior public member is retained.
 // Exact AST delta: thought-notifications-switch-20261102/p2p-api-pin-proof.json.
-const _expectedFacadeApiFingerprint = 'ce285a77';
+// Thought replay adds one coordinator-owned registration method; the
+// constructor and all prior public members stay unchanged. Exact AST delta:
+// thought-poor-connection-green-20261107/facade-api-proof.json.
+const _expectedFacadeApiFingerprint = '73c5af07';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(

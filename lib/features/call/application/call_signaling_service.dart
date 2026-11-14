@@ -1,4 +1,5 @@
 import '../diagnostics/call_diagnostics.dart';
+
 import 'dart:async';
 import 'dart:math';
 
@@ -7,6 +8,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../domain/call_event.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
+import '../domain/call_wire_signal.dart';
 import '../infrastructure/call_mailbox_client.dart';
 import '../infrastructure/p2p_call_transport.dart';
 import '../infrastructure/secure_call_envelope_codec.dart';
@@ -114,6 +117,11 @@ final class CallSignalingService {
   final double Function() _retryJitter;
   final Map<String, _TerminalSignalRetry> _terminalRetries = {};
   final Map<String, CallSignalTransmissionRetry> _transmissionRetries = {};
+  // Separate optional-media custody cannot evict a v1 negotiation or terminal.
+  final Map<String, CallSignalTransmissionRetry> _v2Retries = {};
+  // No bytes or owner callbacks: fail closed rather than forget a live identity.
+  final Map<String, int> _v2Identities = {};
+  static const _maxV2Identities = 128;
   bool _closed = false;
   bool _terminalRetriesStopped = false;
 
@@ -122,9 +130,119 @@ final class CallSignalingService {
   static const _maxPendingTerminalRetries = 4;
   static int _systemNowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
 
+  /// Prepares one v2 envelope without writing either transport leg.
+  Future<CallSignalTransmissionRetry> prepareV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    required ResolvedCallEndpoint endpoint,
+    required String senderSigningPrivateKey,
+    required Future<bool> Function() authorize,
+    required bool Function() canApply,
+    bool videoEnabled = false,
+  }) async {
+    if (!videoEnabled || _closed || _terminalRetriesStopped || !canApply()) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.migrationPaused,
+      );
+    }
+    bool current() =>
+        !_closed &&
+        !_terminalRetriesStopped &&
+        canApply() &&
+        _nowMs() < signal.expiresAtMs &&
+        _validV2Endpoint(
+          endpoint,
+          signal.recipientAccountPeerId,
+          signal.recipientDevicePeerId,
+        );
+    if (!current()) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.endpointMismatch,
+      );
+    }
+    final terminalPriority =
+        signal.event == CallSignalV2Type.reject ||
+        signal.event == CallSignalV2Type.terminate;
+    final key = '${signal.callId.value}:${signal.messageId}';
+    _v2Identities.removeWhere((_, expiry) => _nowMs() >= expiry);
+    // Optional churn cannot fill the last terminal identity slots either.
+    final identityLimit =
+        _maxV2Identities - (terminalPriority ? 0 : _maxPendingTerminalRetries);
+    if (_v2Identities.containsKey(key) ||
+        _v2Identities.length >= identityLimit) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
+    }
+    // Reserve before the first await, including unsuccessful preparation. The
+    // root caches this preparation Future and never regenerates a closed ID.
+    _v2Identities[key] = signal.expiresAtMs;
+    final localDeadlineMs = _nowMs() + _terminalRetryBudget.inMilliseconds;
+    if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed) ||
+        !current()) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.migrationPaused,
+      );
+    }
+    if (!await authorize() || !current()) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.endpointMismatch,
+      );
+    }
+    final envelope = await _codec.encodeV2(
+      signal: signal,
+      callHandle: callHandle,
+      recipientMlKemPublicKey: endpoint.mlKemPublicKey,
+      senderSigningPrivateKey: senderSigningPrivateKey,
+    );
+    if (!current() || _nowMs() >= localDeadlineMs) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.endpointMismatch,
+      );
+    }
+    final retry = _retainTransmission(
+      signal: signal,
+      callHandle: callHandle,
+      endpoint: endpoint,
+      envelope: envelope,
+      replayable: true,
+      terminalPriority: terminalPriority,
+      localDeadlineMs: localDeadlineMs,
+      protectedResult: switch (signal.event) {
+        CallSignalV2Type.reject ||
+        CallSignalV2Type.terminate ||
+        CallSignalV2Type.mediaResponse ||
+        CallSignalV2Type.mediaCommit ||
+        CallSignalV2Type.mediaCommitAck ||
+        CallSignalV2Type.mediaAbort => true,
+        _ => false,
+      },
+    );
+    if (retry == null) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
+    }
+    return retry;
+  }
+
+  bool _validV2Endpoint(
+    ResolvedCallEndpoint endpoint,
+    String account,
+    String device,
+  ) =>
+      endpoint.accountPeerId == account &&
+      endpoint.devicePeerId == device &&
+      _nowMs() < endpoint.expiresAtMs &&
+      endpoint.routingHandle.trim().isNotEmpty &&
+      _wakeHandleGrammar.hasMatch(endpoint.wakeHandle) &&
+      endpoint.capabilities.contains('voice_call_v1') &&
+      endpoint.capabilities.contains('video_call_v2');
+
   /// Only fixed counts are exposed; retained signaling bytes stay private.
   int get pendingTerminalRetryCount => _terminalRetries.length;
-  int get pendingTransmissionRetryCount => _transmissionRetries.length;
+  int get pendingTransmissionRetryCount =>
+      _transmissionRetries.length + _v2Retries.length;
 
   /// Quiesces retry work immediately while preserving the coordinator's one
   /// normal appShutdown terminal send. No failed send can re-arm retries.
@@ -134,7 +252,10 @@ final class CallSignalingService {
     for (final entry in _terminalRetries.values.toList(growable: false)) {
       _removeTerminalRetry(entry);
     }
-    for (final entry in _transmissionRetries.values.toList(growable: false)) {
+    for (final entry in [
+      ..._transmissionRetries.values,
+      ..._v2Retries.values,
+    ]) {
       entry.close();
     }
   }
@@ -378,22 +499,41 @@ final class CallSignalingService {
   }
 
   CallSignalTransmissionRetry? _retainTransmission({
-    required CallSignal signal,
+    required CallWireSignal signal,
     required String callHandle,
     required ResolvedCallEndpoint endpoint,
     required String envelope,
+    bool replayable = false,
+    bool protectedResult = false,
+    bool terminalPriority = false,
+    int? localDeadlineMs,
   }) {
     final deadlineMs = min(
       min(signal.expiresAtMs, endpoint.expiresAtMs),
-      signal.createdAtMs + _terminalRetryBudget.inMilliseconds,
+      min(
+        signal.createdAtMs + _terminalRetryBudget.inMilliseconds,
+        localDeadlineMs ?? signal.expiresAtMs,
+      ),
     );
     if (_closed || _terminalRetriesStopped || _nowMs() >= deadlineMs) {
       return null;
     }
     final key = '${signal.callId.value}:${signal.messageId}';
-    _transmissionRetries[key]?.close();
-    while (_transmissionRetries.length >= _maxPendingTerminalRetries) {
-      _transmissionRetries.values.first.close();
+    final entries = replayable ? _v2Retries : _transmissionRetries;
+    entries[key]?.close();
+    while (entries.length >= _maxPendingTerminalRetries) {
+      CallSignalTransmissionRetry? victim;
+      for (final entry in entries.values) {
+        if (!entry._protectedResult ||
+            (terminalPriority && !entry._terminalPriority)) {
+          victim = entry;
+          break;
+        }
+      }
+      // Optional churn cannot erase selected results or terminal custody.
+      // Terminal delivery takes priority over optional reconciliation material.
+      if (victim == null) return null;
+      victim.close();
     }
     final retry = CallSignalTransmissionRetry._(
       this,
@@ -407,8 +547,11 @@ final class CallSignalingService {
         endpoint: endpoint,
         envelope: envelope,
       ),
+      replayable: replayable,
+      protectedResult: protectedResult,
+      terminalPriority: terminalPriority,
     );
-    _transmissionRetries[key] = retry;
+    entries[key] = retry;
     retry._expiryTimer = Timer(
       Duration(milliseconds: deadlineMs - _nowMs()),
       retry.close,
@@ -419,16 +562,26 @@ final class CallSignalingService {
   bool _transmissionRetryIsCurrent(CallSignalTransmissionRetry retry) =>
       !_closed &&
       !_terminalRetriesStopped &&
-      identical(_transmissionRetries[retry._key], retry) &&
+      identical(
+        (retry._replayable ? _v2Retries : _transmissionRetries)[retry._key],
+        retry,
+      ) &&
       retry._transmission != null &&
-      _nowMs() < retry._deadlineMs;
+      _nowMs() < retry._deadlineMs &&
+      (!retry._replayable ||
+          _validV2Endpoint(
+            retry._transmission!.endpoint,
+            retry._transmission!.endpoint.accountPeerId,
+            retry._transmission!.endpoint.devicePeerId,
+          ));
 
   void _closeTransmissionRetry(CallSignalTransmissionRetry retry) {
-    if (identical(_transmissionRetries[retry._key], retry)) {
-      _transmissionRetries.remove(retry._key);
-    }
+    final entries = retry._replayable ? _v2Retries : _transmissionRetries;
+    if (identical(entries[retry._key], retry)) entries.remove(retry._key);
     retry._expiryTimer?.cancel();
     retry._transmission = null;
+    retry._pendingDirect = null;
+    retry._pendingMailbox = null;
   }
 
   Future<CallSignalTransportResult> _retryTransmission(
@@ -461,32 +614,68 @@ final class CallSignalingService {
         );
       }
       final material = retry._transmission!;
-      final result = await _firstSufficientResult(
-        directFuture: _sendDirect(
+      bool admitted() => _transmissionRetryIsCurrent(retry) && canApply();
+      // A successful sibling must not make a still pending leg multiply on
+      // replay. Settled legs may be retried; pending legs keep the same bytes.
+      var direct = retry._replayable ? retry._pendingDirect : null;
+      if (direct == null) {
+        direct = _sendDirect(
           callHandle: material.callHandle,
           recipientDevicePeerId: material.endpoint.devicePeerId,
           envelopeJson: material.envelope,
-        ),
-        mailboxFuture: _storeMailbox(
+          admitted: retry._replayable ? admitted : null,
+        );
+        if (retry._replayable) {
+          final started = direct;
+          retry._pendingDirect = started;
+          unawaited(
+            started.then((_) {
+              if (identical(retry._pendingDirect, started)) {
+                retry._pendingDirect = null;
+              }
+            }),
+          );
+        }
+      }
+      var mailbox = retry._replayable ? retry._pendingMailbox : null;
+      if (mailbox == null) {
+        mailbox = _storeMailbox(
           messageId: material.messageId,
           createdAtMs: material.createdAtMs,
           expiresAtMs: material.expiresAtMs,
           callHandle: material.callHandle,
           endpoint: material.endpoint,
           envelope: material.envelope,
-        ),
+          admitted: retry._replayable ? admitted : null,
+        );
+        if (retry._replayable) {
+          final started = mailbox;
+          retry._pendingMailbox = started;
+          unawaited(
+            started.then((_) {
+              if (identical(retry._pendingMailbox, started)) {
+                retry._pendingMailbox = null;
+              }
+            }),
+          );
+        }
+      }
+      final result = await _firstSufficientResult(
+        directFuture: direct,
+        mailboxFuture: mailbox,
       );
       if (!_transmissionRetryIsCurrent(retry) || !canApply()) {
         throw const CallSignalingException(
           CallSignalingErrorCode.migrationPaused,
         );
       }
-      retry.close();
+      if (!retry._replayable || retry._attempts >= 4) retry.close();
       return result;
     } on CallSignalingException catch (error) {
       if (error.code != CallSignalingErrorCode.transportUnavailable ||
           !_transmissionRetryIsCurrent(retry) ||
-          retry._attempts >= 4) {
+          retry._attempts >= 4 ||
+          (retry._replayable && !canApply())) {
         retry.close();
       }
       rethrow;
@@ -638,6 +827,7 @@ final class CallSignalingService {
     required String callHandle,
     required String recipientDevicePeerId,
     required String envelopeJson,
+    bool Function()? admitted,
   }) async {
     final diagnostics = CallDiagnostics.instance;
     final traceId = diagnostics.traceForCall(callHandle: callHandle);
@@ -648,6 +838,12 @@ final class CallSignalingService {
       traceId: traceId,
     );
     try {
+      if (admitted != null && !admitted()) {
+        throw const CallSignalingException(
+          CallSignalingErrorCode.endpointMismatch,
+        );
+      }
+      admitted = null; // Do not retain owner callbacks across transport waits.
       final result = await _directTransport.send(
         recipientDevicePeerId: recipientDevicePeerId,
         envelopeJson: envelopeJson,
@@ -686,6 +882,7 @@ final class CallSignalingService {
     required String callHandle,
     required ResolvedCallEndpoint endpoint,
     required String envelope,
+    bool Function()? admitted,
   }) async {
     final diagnostics = CallDiagnostics.instance;
     final traceId = diagnostics.traceForCall(callHandle: callHandle);
@@ -698,6 +895,12 @@ final class CallSignalingService {
       values: <String, Object?>{'storeCommitted': stored},
     );
     try {
+      if (admitted != null && !admitted()) {
+        throw const CallSignalingException(
+          CallSignalingErrorCode.endpointMismatch,
+        );
+      }
+      admitted = null; // Do not retain owner callbacks across transport waits.
       final result = await _mailboxClient.store(
         CallMailboxStoreRequest(
           recipientDevicePeerId: endpoint.devicePeerId,
@@ -798,12 +1001,22 @@ final class CallSignalTransmissionRetry {
     this._owner,
     this._key,
     this._deadlineMs,
-    this._transmission,
-  );
+    this._transmission, {
+    bool replayable = false,
+    bool protectedResult = false,
+    bool terminalPriority = false,
+  }) : _replayable = replayable,
+       _protectedResult = protectedResult,
+       _terminalPriority = terminalPriority;
 
   final CallSignalingService _owner;
   final String _key;
   final int _deadlineMs;
+  final bool _replayable;
+  final bool _protectedResult;
+  final bool _terminalPriority;
+  Future<CallDirectSendResult>? _pendingDirect;
+  Future<_MailboxLegResult>? _pendingMailbox;
   _CallRetryTransmission? _transmission;
   Timer? _expiryTimer;
   Future<CallSignalTransportResult>? _inFlight;

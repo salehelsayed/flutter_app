@@ -103,9 +103,7 @@ void main() {
     });
 
     test('multiple URLs in one string', () {
-      final result = parseUrls(
-        'Visit https://a.com and https://b.com today',
-      );
+      final result = parseUrls('Visit https://a.com and https://b.com today');
       expect(result, hasLength(5));
       expect(result[0].text, 'Visit ');
       expect(result[0].isUrl, isFalse);
@@ -223,5 +221,78 @@ void main() {
       expect(result, hasLength(1));
       expect(result[0].isUrl, isFalse);
     });
+  });
+
+  group('parseUrls in Thoughts', () {
+    List<(String, bool)> parts(String text) => [
+      for (final segment in parseUrls(text)) (segment.text, segment.isUrl),
+    ];
+
+    test('a question mark, exclamation mark or colon after a link is text', () {
+      expect(
+        parts(
+          'Seen https://example.com/a? Wow https://b.example! '
+          'At https://c.example: now',
+        ),
+        [
+          ('Seen ', false),
+          ('https://example.com/a', true),
+          ('? Wow ', false),
+          ('https://b.example', true),
+          ('! At ', false),
+          ('https://c.example', true),
+          (': now', false),
+        ],
+      );
+    });
+
+    test('a link inside parentheses keeps its own parentheses', () {
+      expect(parts('(read https://en.wikipedia.org/wiki/Dart_(language))'), [
+        ('(read ', false),
+        ('https://en.wikipedia.org/wiki/Dart_(language)', true),
+        (')', false),
+      ]);
+    });
+
+    test('Arabic punctuation after a link is text', () {
+      expect(
+        parts('شاهد https://example.com/a، رائع؛ هل رأيت www.example.org؟'),
+        [
+          ('شاهد ', false),
+          ('https://example.com/a', true),
+          ('، رائع؛ هل رأيت ', false),
+          ('www.example.org', true),
+          ('؟', false),
+        ],
+      );
+    });
+
+    test('several links in Arabic text', () {
+      expect(parts('الأول https://a.example والثاني www.b.example'), [
+        ('الأول ', false),
+        ('https://a.example', true),
+        (' والثاني ', false),
+        ('www.b.example', true),
+      ]);
+    });
+
+    for (final text in [
+      'mailto:me@example.com',
+      'tel:+4930123456',
+      'javascript:alert(1)',
+      'file:///etc/hosts',
+      'intent://scan/#Intent;scheme=zxing;end',
+      'myapp://open/thing',
+      'myapp://www.example.com',
+      'mailto:www.example.com',
+      'file://www.example.com/a',
+      'intent://www.example.com/a',
+      'me@www.example.com',
+      'https://.',
+    ]) {
+      test('"$text" stays plain text', () {
+        expect(parts('try $text now'), [('try $text now', false)]);
+      });
+    }
   });
 }

@@ -19,6 +19,7 @@ class OrbitDepthMedia extends StatefulWidget {
     required this.load,
     required this.download,
     required this.onOpen,
+    this.onPlayVideo,
     this.onActivate,
     this.lastLoaded,
   });
@@ -27,6 +28,9 @@ class OrbitDepthMedia extends StatefulWidget {
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   download;
   final VoidCallback onOpen;
+
+  /// Replaces [onOpen] for a lone downloaded video, which plays at once.
+  final VoidCallback? onPlayVideo;
 
   /// The screen reader's open, when it must differ from a finger's [onOpen].
   final VoidCallback? onActivate;
@@ -129,6 +133,23 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     super.dispose();
   }
 
+  void _tap(List<PostMediaAttachmentModel> visual) {
+    final video = visual.length == 1 && visual.single.kind == 'video'
+        ? visual.single
+        : null;
+    final local = video?.localPath;
+    final play = widget.onPlayVideo;
+    if (play == null ||
+        video == null ||
+        video.downloadStatus != 'done' ||
+        local == null ||
+        !File(MediaFileManager.resolveStoredPathSync(local)).existsSync()) {
+      widget.onOpen();
+      return;
+    }
+    play();
+  }
+
   @override
   Widget build(BuildContext context) {
     final visual = _media.where((item) => item.kind != 'voice').toList();
@@ -162,7 +183,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
               onTap: widget.onActivate ?? widget.onOpen,
               child: GestureDetector(
                 key: const ValueKey('orbit-depth-photo-frame'),
-                onTap: widget.onOpen,
+                onTap: () => _tap(visual),
                 excludeFromSemantics: true,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(22),

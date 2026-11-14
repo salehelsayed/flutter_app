@@ -1040,11 +1040,16 @@ func TestBuildContactRequestPushMessage_DoesNotUseUnsignedSenderName(t *testing.
 
 const postCreatePushFixture = `{"type":"post_create","version":"2","event_id":"thought-evt-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-from","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
 
+func postCreatePushFixtureNow() time.Time {
+	return time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+}
+
 func TestBuildPostCreatePushMessage_UsesGenericThoughtAlert(t *testing.T) {
 	msg := buildPushMessage("fcm-token", "peer-from", postCreatePushFixture)
 
 	wantData := map[string]string{
 		"type":       "post_create",
+		"sender_id":  "peer-from",
 		"title":      "New thought",
 		"body":       "A friend shared a thought",
 		"message_id": "thought-evt-1",
@@ -1069,6 +1074,7 @@ func TestInboxStore_PostCreateEnvelopeSendsGenericPush(t *testing.T) {
 	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
 
 	push := NewPushServiceWithBackend(tokenStore)
+	push.now = postCreatePushFixtureNow
 	recorder := newRecordingPushSender()
 	push.sender = recorder.Send
 	inbox := NewInboxStore(push)
@@ -1146,6 +1152,7 @@ func TestBuildPostCreatePushMessage_FallsBackToGenericAlert(t *testing.T) {
 		strings.Repeat("k", 1500) + `","ciphertext":"` + strings.Repeat("c", 5000) + `","nonce":"n"}}`
 	genericWithPostID := map[string]string{
 		"type":       "post_create",
+		"sender_id":  "peer-from",
 		"title":      "New thought",
 		"body":       "A friend shared a thought",
 		"message_id": "thought-evt-1",
@@ -1158,10 +1165,11 @@ func TestBuildPostCreatePushMessage_FallsBackToGenericAlert(t *testing.T) {
 		wantData map[string]string
 	}{
 		{
-			name:     "no post_id keeps today's alert byte for byte",
+			name:     "no post_id keeps generic Thought copy",
 			envelope: postCreatePushFixture,
 			wantData: map[string]string{
 				"type":       "post_create",
+				"sender_id":  "peer-from",
 				"title":      "New thought",
 				"body":       "A friend shared a thought",
 				"message_id": "thought-evt-1",

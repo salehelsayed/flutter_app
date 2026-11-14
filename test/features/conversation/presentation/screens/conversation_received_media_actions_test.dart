@@ -92,6 +92,7 @@ void main() {
     int? width,
     int? height,
     int? durationMs,
+    String? stickerId,
   }) {
     return MediaAttachment(
       id: id,
@@ -106,6 +107,7 @@ void main() {
       downloadStatus: downloadStatus,
       createdAt: '2026-02-09T15:30:02.000Z',
       ownerLane: ownerLane,
+      stickerId: stickerId,
     );
   }
 
@@ -126,6 +128,7 @@ void main() {
     MediaPictureInPictureControllerFactory? pictureInPictureControllerFactory,
     MediaPictureInPictureAuthorizationLoader? loadPictureInPictureAuthorization,
     MediaViewerResumeStore? mediaViewerResumeStore,
+    DirectReceivedStickerSaveHandler? onSaveReceivedSticker,
   }) {
     return MaterialApp(
       locale: locale,
@@ -154,6 +157,7 @@ void main() {
           pictureInPictureControllerFactory: pictureInPictureControllerFactory,
           loadPictureInPictureAuthorization: loadPictureInPictureAuthorization,
           mediaViewerResumeStore: mediaViewerResumeStore,
+          onSaveReceivedSticker: onSaveReceivedSticker,
         ),
       ),
     );
@@ -2145,6 +2149,155 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('received sticker action', () {
+    final saved = <DirectReceivedMediaActionIdentity>[];
+    Future<void> onSave(DirectReceivedMediaActionIdentity identity) async =>
+        saved.add(identity);
+
+    setUp(saved.clear);
+
+    Future<void> openFor(
+      WidgetTester tester,
+      ConversationMessage message, {
+      Finder? target,
+      DirectReceivedStickerSaveHandler? handler,
+      bool wired = true,
+    }) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [message],
+          onMediaEgress: (identity, destination) async =>
+              performedOutcome(destination, identity.attachmentId),
+          onSaveReceivedSticker: wired ? (handler ?? onSave) : null,
+        ),
+      );
+      await pumpFrames(tester);
+      final pressed = target ?? cell(message.id, message.media.single.id);
+      expect(pressed, findsWidgets);
+      await tester.longPress(pressed.first);
+      await pumpFrames(tester);
+    }
+
+    ConversationMessage photo({
+      String id = 'msg-photo',
+      bool isIncoming = true,
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+      String? stickerId,
+      PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+      PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
+    }) => makeMessage(
+      id: id,
+      isIncoming: isIncoming,
+      text: 'photo row',
+      policy: policy,
+      state: state,
+      media: [
+        makeAttachment(
+          id: 'att-$id',
+          messageId: id,
+          localPath: writeMediaFile('$id.bin'),
+          mime: mime,
+          mediaType: mediaType,
+          durationMs: mediaType == 'video' ? 4000 : null,
+          stickerId: stickerId,
+        ),
+      ],
+    );
+
+    const useAsSticker = 'Use as sticker';
+    const saveToMine = 'Save to My stickers';
+
+    testWidgets('an ordinary received photo offers Use as sticker', (
+      tester,
+    ) async {
+      await openFor(tester, photo());
+
+      expect(find.text(useAsSticker), findsOneWidget);
+      expect(find.text(saveToMine), findsNothing);
+      await tester.tap(find.text(useAsSticker));
+      await pumpFrames(tester);
+
+      expect(saved.map((i) => (i.messageId, i.attachmentId)), [
+        ('msg-photo', 'att-msg-photo'),
+      ]);
+    });
+
+    testWidgets('a received custom sticker offers Save to My stickers', (
+      tester,
+    ) async {
+      await openFor(tester, photo(mime: 'image/webp', stickerId: 'custom'));
+
+      expect(find.text(saveToMine), findsOneWidget);
+      expect(find.text(useAsSticker), findsNothing);
+    });
+
+    for (final (name, policy, state) in [
+      (
+        'view-once',
+        const PrivateMediaPolicy.viewOnce(),
+        PrivateMediaLifecycleState.available,
+      ),
+      (
+        'protected',
+        const PrivateMediaPolicy.protected(),
+        PrivateMediaLifecycleState.available,
+      ),
+      (
+        'unexpired disappearing',
+        PrivateMediaPolicy.disappearing(3600),
+        PrivateMediaLifecycleState.available,
+      ),
+      (
+        'unsupported private',
+        const PrivateMediaPolicy.unsupported(),
+        PrivateMediaLifecycleState.unsupported,
+      ),
+    ]) {
+      testWidgets('$name media never offers a sticker action', (tester) async {
+        await openFor(
+          tester,
+          photo(policy: policy, state: state),
+          target: find.byWidgetPredicate(
+            (w) =>
+                w.key == const ValueKey('private-media-card-visual') ||
+                w.key == const ValueKey('private-media-mode-label') ||
+                w.key == const ValueKey('private-media-unsupported'),
+          ),
+        );
+
+        expect(find.text(useAsSticker), findsNothing);
+        expect(find.text(saveToMine), findsNothing);
+      });
+    }
+
+    testWidgets('outgoing media never offers a sticker action', (tester) async {
+      await openFor(tester, photo(isIncoming: false));
+
+      expect(find.text(useAsSticker), findsNothing);
+    });
+
+    testWidgets('a received video never offers a sticker action', (
+      tester,
+    ) async {
+      await openFor(tester, photo(mime: 'video/mp4', mediaType: 'video'));
+
+      expect(find.text(useAsSticker), findsNothing);
+    });
+
+    testWidgets('without the save handler no sticker action shows', (
+      tester,
+    ) async {
+      await openFor(tester, photo(), wired: false);
+
+      expect(find.text(useAsSticker), findsNothing);
+    });
+  });
 }
 
 class _DirectRoutePathAuthority implements AppOwnedMediaPathAuthority {

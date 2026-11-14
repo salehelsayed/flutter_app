@@ -54,7 +54,8 @@ void main() {
     privacySettings.dispose();
   });
 
-  test("a new thought replaces the author's older one here", () async {
+  test("a new thought replaces the author's older one and keeps it in "
+      'history', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     final media = FakeMediaFileManager();
     PostModel thought(String id, String author, {required bool incoming}) =>
@@ -103,8 +104,18 @@ void main() {
       (await posts.loadFeed()).map((post) => post.id),
       unorderedEquals([created!.post.id, 'bob-1']),
     );
-    expect(await posts.loadPostMediaAttachments('mine-old'), isEmpty);
-    expect(media.deletedPostIds, ['mine-old']);
+    final history = await posts.loadExpiredOwnPosts(
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    expect(history.map((post) => post.id), ['mine-old']);
+    expect(history.single.deliveryStatus, 'sent');
+    expect(
+      (await posts.loadPostMediaAttachments(
+        'mine-old',
+      )).map((media) => media.mediaId),
+      ['media-mine-old'],
+    );
+    expect(media.deletedPostIds, isEmpty);
     expect(changes, contains('mine-old'));
   });
 

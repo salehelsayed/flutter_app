@@ -118,7 +118,9 @@ const _relocations = <String, List<String>>{
     // same data adapter; placement is unchanged.
     // Wrote-back adds its query delegate and aggregation to the same adapter.
     // NAV-006 carries incoming recency through this existing data adapter.
-    '1c151fd322a39c59721fc0ea2496e640d7622d80f1f957b1d8064033a1d86cb3',
+    // BL-24C adds terminal retry capability and delegates in this existing
+    // data adapter (4d21b6bcb); placement and dependency direction are unchanged.
+    '46b077649b192ece0a3d34e2b628c096d92152d74b781fbf483eac3e504466c4',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -253,8 +255,11 @@ const _relocations = <String, List<String>>{
     // Round 9 keeps expired own Thoughts in the same adapter; imports are
     // unchanged. Thought history (build 131) adds the paged own-history read
     // (loadExpiredOwnPosts with limit and offset) to the same adapter;
-    // placement and imports are unchanged.
-    '03be22e2c51de2ab36818c15ab88ce551ed4dc5346dbdde3edd2d20f8e4df74c',
+    // placement and imports are unchanged. You page viewers (store 131
+    // item 9) add the own-Thought view count, view list and replaced-Thought
+    // retire callbacks to the same adapter; placement and imports are
+    // unchanged.
+    'b959bd955ece9641fcc99bca1ef1fa86cbb1f55f0881ffd480ded5f38c926c30',
   ],
 };
 

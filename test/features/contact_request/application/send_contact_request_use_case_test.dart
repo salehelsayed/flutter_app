@@ -25,6 +25,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -300,13 +301,13 @@ void main() {
 
   InMemoryContactRepository missingKeyContacts() =>
       InMemoryContactRepository()..addTestContact(
-        const ContactModel(
+        ContactModel(
           peerId: 'targetPeer123456789',
           publicKey: 'recipientPubKey',
           rendezvous: 'fixture-relay',
           username: 'Fixture contact',
           signature: 'fixture-signature',
-          scannedAt: '2026-10-24T00:00:00.000Z',
+          scannedAt: clock.now().toUtc().toIso8601String(),
         ),
       );
 
@@ -336,6 +337,10 @@ void main() {
             identityRepo: identityRepo,
             p2pService: p2pService,
             bridge: bridge,
+            // This burst distributes an explicit issued call-wake grant.
+            loadPendingCallWakeHandleContactIds: () async => [
+              'targetPeer123456789',
+            ],
             resolveCallWakeHandle: (_) async => receivedGrant,
           ),
         );
@@ -437,6 +442,7 @@ void main() {
             identityRepo: identityRepo,
             p2pService: p2pService,
             bridge: bridge,
+            secureKeyStore: FakeSecureKeyStore(),
           ),
           1,
         );

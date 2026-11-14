@@ -23,7 +23,9 @@ enum ConnectionHealth {
   offline,
 }
 
-enum ConnectionStatusIndicatorStyle { capsule, plain }
+/// [hairline] is the Orbit top-row capsule: a neutral hairline border and
+/// faint fill like the Orbit controls, with the state carried by the dot.
+enum ConnectionStatusIndicatorStyle { capsule, plain, hairline }
 
 /// Derives relay-only [ConnectionHealth] from a [NodeState].
 ConnectionHealth healthFromState(NodeState state) {
@@ -201,8 +203,8 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
     final readableColors = context.backgroundReadableColors;
     final isLightSurface = readableColors.isLightSurface;
 
-    final Color baseColor;
-    final Color textColor;
+    Color baseColor;
+    Color textColor;
     switch (badgeState) {
       case BadgeReadinessState.online:
       case BadgeReadinessState.onlineDotted:
@@ -225,6 +227,11 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
             : Colors.grey[400]!;
     }
     final plain = widget.style == ConnectionStatusIndicatorStyle.plain;
+    final hairline = widget.style == ConnectionStatusIndicatorStyle.hairline;
+    if (hairline) {
+      if (_isReadyBadgeState(badgeState)) baseColor = const Color(0xFF1DB954);
+      textColor = readableColors.chromeInk;
+    }
     final label = plain && _isReadyBadgeState(badgeState)
         ? l10n.connection_online
         : _labelForBadgeState(badgeState, l10n);
@@ -239,13 +246,13 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
           height: plain ? 6 : 8,
           decoration: BoxDecoration(color: baseColor, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 6),
+        SizedBox(width: hairline ? 7 : 6),
         Flexible(
           child: Text(
             label,
             style: TextStyle(
               color: textColor,
-              fontSize: 12,
+              fontSize: hairline ? 13 : 12,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -287,6 +294,17 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
                   padding: const EdgeInsets.symmetric(
                     horizontal: 4,
                     vertical: 5,
+                  ),
+                  child: contents,
+                )
+              : hairline
+              ? Container(
+                  height: 32,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: readableColors.chromeFaintFill,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: readableColors.chromeHairline),
                   ),
                   child: contents,
                 )

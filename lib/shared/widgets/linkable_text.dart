@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -15,11 +16,20 @@ import 'package:url_launcher/url_launcher.dart';
 class LinkableText extends StatefulWidget {
   final String text;
   final TextStyle? style;
+
+  /// Merged over [style], so a link keeps the size of the words around it.
   final TextStyle? linkStyle;
 
-  /// When set, each #tag outside a link is drawn in this style. Tags are
-  /// never tappable here.
+  /// When set, each #tag outside a link is drawn in this style.
   final TextStyle? tagStyle;
+
+  /// When set with [tagStyle], draws each #tag instead, for example as a
+  /// tappable chip.
+  final InlineSpan Function(ThoughtTag tag, String label)? tagSpan;
+
+  /// When set, only URLs written exactly like one of these are links; any
+  /// other URL stays plain text.
+  final Set<String>? onlyLinks;
   final void Function(String url)? onLinkTap;
   final int? maxLines;
   final TextOverflow? overflow;
@@ -38,6 +48,8 @@ class LinkableText extends StatefulWidget {
     this.style,
     this.linkStyle,
     this.tagStyle,
+    this.tagSpan,
+    this.onlyLinks,
     this.onLinkTap,
     this.maxLines,
     this.overflow,
@@ -54,6 +66,7 @@ class LinkableText extends StatefulWidget {
 
 class _LinkableTextState extends State<LinkableText> {
   List<InlineSpan> _spans = [];
+  List<TextSegment> _links = const [];
   final List<TapGestureRecognizer> _recognizers = [];
 
   /// Where [LinkableText.markQuery] occurs in the whole text, so a phrase
@@ -70,6 +83,11 @@ class _LinkableTextState extends State<LinkableText> {
   void didUpdateWidget(LinkableText oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.text != widget.text ||
+        oldWidget.style != widget.style ||
+        oldWidget.linkStyle != widget.linkStyle ||
+        oldWidget.tagStyle != widget.tagStyle ||
+        oldWidget.tagSpan != widget.tagSpan ||
+        !setEquals(oldWidget.onlyLinks, widget.onlyLinks) ||
         oldWidget.onLinkTap != widget.onLinkTap ||
         oldWidget.markQuery != widget.markQuery ||
         oldWidget.markStyle != widget.markStyle) {
@@ -92,30 +110,38 @@ class _LinkableTextState extends State<LinkableText> {
   }
 
   void _parse() {
-    final segments = parseUrls(widget.text);
+    final onlyLinks = widget.onlyLinks;
+    final segments = [
+      for (final segment in parseUrls(widget.text))
+        segment.isUrl && onlyLinks != null && !onlyLinks.contains(segment.text)
+            ? TextSegment(segment.text)
+            : segment,
+    ];
     final spans = <InlineSpan>[];
     _marks = widget.markStyle == null
         ? const []
         : textSearchRanges(widget.text, widget.markQuery ?? '');
 
-    final defaultLinkStyle = TextStyle(
-      color: FeedColors.accentTeal,
-      decoration: TextDecoration.underline,
-      decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
-    );
+    final linkStyle =
+        widget.linkStyle ??
+        TextStyle(
+          color: FeedColors.accentTeal,
+          decoration: TextDecoration.underline,
+          decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
+        );
 
     var offset = 0;
     for (final segment in segments) {
       if (segment.isUrl) {
         final recognizer = TapGestureRecognizer()
-          ..onTap = () => _handleTap(segment.text);
+          ..onTap = () => _handleTap(segment);
         _recognizers.add(recognizer);
 
         spans.addAll(
           _mark(
             segment.text,
             offset,
-            widget.linkStyle ?? defaultLinkStyle,
+            widget.style?.merge(linkStyle) ?? linkStyle,
             recognizer: recognizer,
           ),
         );
@@ -126,6 +152,10 @@ class _LinkableTextState extends State<LinkableText> {
     }
 
     _spans = spans;
+    _links = [
+      for (final segment in segments)
+        if (segment.isUrl) segment,
+    ];
   }
 
   Iterable<InlineSpan> _withTags(String text, int offset) sync* {
@@ -138,11 +168,12 @@ class _LinkableTextState extends State<LinkableText> {
       if (tag.start > at) {
         yield* _mark(text.substring(at, tag.start), offset + at, widget.style);
       }
-      yield* _mark(
-        text.substring(tag.start, tag.end),
-        offset + tag.start,
-        tagStyle,
-      );
+      final label = text.substring(tag.start, tag.end);
+      if (widget.tagSpan case final tagSpan?) {
+        yield tagSpan(tag, label);
+      } else {
+        yield* _mark(label, offset + tag.start, tagStyle);
+      }
       at = tag.end;
     }
     if (at < text.length || tags.isEmpty) {
@@ -197,19 +228,11 @@ class _LinkableTextState extends State<LinkableText> {
     }
   }
 
-  void _handleTap(String url) {
-    if (widget.onLinkTap != null) {
-      widget.onLinkTap!(url);
+  void _handleTap(TextSegment link) {
+    if (widget.onLinkTap case final onLinkTap?) {
+      onLinkTap(link.text);
     } else {
-      _launchDefault(url);
-    }
-  }
-
-  void _launchDefault(String url) {
-    final uriString = url.startsWith('www.') ? 'https://$url' : url;
-    final uri = Uri.tryParse(uriString);
-    if (uri != null) {
-      launchUrl(uri, mode: LaunchMode.externalApplication);
+      launchUrl(link.uri!, mode: LaunchMode.externalApplication);
     }
   }
 
@@ -221,25 +244,23 @@ class _LinkableTextState extends State<LinkableText> {
       if (widget.suffixSpans != null) ...widget.suffixSpans!,
     ];
 
-    final urls = parseUrls(
-      widget.text,
-    ).where((s) => s.isUrl).map((s) => s.text).toList();
     final richText = Text.rich(
       TextSpan(children: allSpans),
       maxLines: widget.maxLines,
       overflow: widget.overflow ?? TextOverflow.clip,
       textDirection: widget.textDirection,
     );
-    if (urls.isEmpty) return richText;
+    if (_links.isEmpty) return richText;
     // A link's recognizer splits RichText into accessibility fragments. Merge
     // the complete message while retaining inline timestamp/status widgets.
     return MergeSemantics(
       child: Semantics(
-        onTap: urls.length == 1 ? () => _handleTap(urls.single) : null,
-        customSemanticsActions: urls.length > 1
+        onTap: _links.length == 1 ? () => _handleTap(_links.single) : null,
+        customSemanticsActions: _links.length > 1
             ? {
-                for (final url in urls)
-                  CustomSemanticsAction(label: url): () => _handleTap(url),
+                for (final link in _links)
+                  CustomSemanticsAction(label: link.text): () =>
+                      _handleTap(link),
               }
             : null,
         child: richText,

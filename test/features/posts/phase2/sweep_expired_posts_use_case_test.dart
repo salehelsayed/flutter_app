@@ -77,7 +77,7 @@ void main() {
       final deleted = await sweepExpiredPosts(
         postRepo: posts,
         mediaFileManager: mediaFileManager,
-        nowProvider: () => now,
+        nowProvider: () => now.add(const Duration(hours: 48)),
       );
 
       expect(await posts.getPost('friend-expired'), isNull);
@@ -114,7 +114,7 @@ void main() {
     final deletedPostIds = await sweepExpiredPosts(
       postRepo: posts,
       mediaFileManager: mediaFileManager,
-      nowProvider: () => DateTime.parse('2026-03-16T09:00:00.000Z'),
+      nowProvider: () => DateTime.parse('2026-03-18T09:00:00.000Z'),
     );
 
     expect(deletedPostIds, ['post-expired']);
@@ -136,7 +136,7 @@ void main() {
     final deletedPostIds = await sweepExpiredPosts(
       postRepo: posts,
       mediaFileManager: failing,
-      nowProvider: () => DateTime.parse('2026-03-16T09:00:00.000Z'),
+      nowProvider: () => DateTime.parse('2026-03-18T09:00:00.000Z'),
     );
 
     expect(deletedPostIds, ['post-next']);

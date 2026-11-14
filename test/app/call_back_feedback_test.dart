@@ -737,7 +737,17 @@ class _IntroductionListener extends _Unused implements IntroductionListener {}
 class _IntroductionRepositoryImpl extends _Unused
     implements IntroductionRepositoryImpl {}
 
-class _KeyExchangeRetrier extends _Unused implements KeyExchangeRetrier {}
+class _KeyExchangeRetrier extends _Unused implements KeyExchangeRetrier {
+  @override
+  ValueListenable<Set<String>> get stoppedPeerIds =>
+      const AlwaysStoppedAnimation<Set<String>>(<String>{});
+
+  @override
+  Future<void> refreshRetryStatus() async {}
+
+  @override
+  Future<int> retryOnInterest(String peerId) async => 0;
+}
 
 class _MediaAttachmentRepositoryImpl extends _Unused
     implements MediaAttachmentRepositoryImpl {}

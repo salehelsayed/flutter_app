@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"math"
+	randv2 "math/rand/v2"
 	"slices"
 	"sort"
 	"strings"
@@ -176,7 +177,7 @@ func withRedisWatchRetryKeys(
 	ctx := context.Background()
 	var lastErr error
 
-	for range redisWatchRetries {
+	for attempt := range redisWatchRetries {
 		err := client.Watch(ctx, fn, keys...)
 		if err == nil {
 			return nil
@@ -185,6 +186,10 @@ func withRedisWatchRetryKeys(
 			return err
 		}
 		lastErr = err
+		if attempt+1 < redisWatchRetries {
+			delay := (10 * time.Millisecond) << attempt
+			time.Sleep(delay + time.Duration(randv2.Int64N(int64(delay))))
+		}
 	}
 
 	if lastErr == nil {
@@ -354,7 +359,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 	key := b.key(toPeerId)
 	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
-	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	dedupeKey := extractDirectInboxEntryDedupeKey(entry)
 	var result InboxStoreResult
 	pruned := 0
 	evicted := 0
@@ -373,7 +378,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 		if dedupeKey != "" {
 			for _, message := range validMessages {
-				if extractDirectInboxDedupeKey(message.Message) == dedupeKey {
+				if extractDirectInboxEntryDedupeKey(message) == dedupeKey {
 					if message.From == entry.From && message.Message == entry.Message {
 						validRaw = updateQuietRecoveryRows(validRaw, entry)
 						if err := b.replaceListsWithQuietRecovery(tx, map[string][]string{key: validRaw}, toPeerId, entry); err != nil {

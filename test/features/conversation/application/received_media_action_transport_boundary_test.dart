@@ -80,6 +80,10 @@ void main() {
       'package:flutter_app/features/conversation/domain/models/conversation_message.dart',
       'package:flutter_app/features/conversation/domain/models/media_attachment.dart',
       'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart',
+      // BL-17: local sticker snapshot/editor/admission only; no egress route.
+      'package:flutter_app/features/stickers/application/custom_sticker_library.dart',
+      'package:flutter_app/features/stickers/application/received_sticker_saver.dart',
+      'package:flutter_app/features/stickers/domain/custom_sticker.dart',
       'private_media_action_eligibility.dart',
     };
     final controllerImports = importTargets(controllerSrc).toSet();

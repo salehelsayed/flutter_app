@@ -135,8 +135,10 @@ const _closureConsumerUriRewrites = <String, String>{
 // Plans 347 and 370 deliberately add app-owned lifecycle callbacks ahead of
 // incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
+// BL-24 D1 adds the optional delivery-receipt drain ports to the existing resume
+// lifecycle (19 additive lines); no owner moves and the import floor holds.
 const _resumeSha256 =
-    '0b02fec7d3ab076b9d9f8fc0319dac317c035ec909144e493db560fc8c79a046';
+    '99d293b431d93b59fd9826751cf4b3a8388ec22caaf9101cc4d84d1efe580614';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -257,11 +259,21 @@ const _privacySha256 =
 // The iOS Thought switch uses the same coordinator for preference-only resend.
 // Normal registration preparation and all historical ownership stay in place.
 // Evidence: thought-switch-ios-stall-20261102/dtr18-pin-proof.json.
+// 2026-11-10: contact-request presentation diagnostics add only the helper
+// import and an observation after obtaining the existing showDialog future.
+// Inverting those hunks reproduces the complete b0fe24e3b owner source exactly;
+// resume/Posts relocation, dialog callbacks and awaited decisions stay intact.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
     // Round 9 combines the sticker and Thought-notification switch wiring.
-    '874a4e7453c5a29e4f95dd3a2627407bb4793de0e214b81648ec6c2b6ecbd8b4';
+    // BL-17 adds the reviewed optional library and success-only activation
+    // hook at this same app owner; the six-line reverse diff is exact.
+    // BL-17 piece 4 forwards that library to routes as CustomStickerScope
+    // around the existing route child only; no owner or resume dispatch moves.
+    // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
+    // this same app owner (3 lines); no owner or resume dispatch moves.
+    '0575d4f9ed306fe40e468609e785c07c49aaccb0e3bb0d2aba11ee77c2607b81';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -468,7 +480,18 @@ const _productionBootstrapNormalizedSha256 =
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
     // Thought history (build 131) wires the paged own-history database read
     // into the existing PostRepositoryImpl; no owner moves.
-    '17e5961f9bb933b48b63fb59bd55cabcb08e8ec019037f29188f3f9586a75e20';
+    // Item 9 (build 131): You page viewers and keep-replaced add three
+    // database callbacks to the same PostRepositoryImpl, 10 additive lines;
+    // no owner moves.
+    // BL-17 adds the reviewed lazy library and export/import/erase/shutdown
+    // barriers at this same bootstrap owner; no relocation URI changes.
+    // BL-14: the existing Thought expiry sweep callback also cancels the
+    // cards of Thoughts kept hidden for the clock grace; no owner moves.
+    // BL-24C passes the durable invalid-retry marker store into the existing
+    // message retry wiring at this bootstrap owner (3 lines); no owner moves.
+    // BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
+    // add callbacks at this same bootstrap owner; no owner moves.
+    '11ea685d312c2f75f4ed4abe3394d9afd47cb0e368669bc96a3625be834a9490';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -507,8 +530,15 @@ const _productionBootstrapNormalizedSha256 =
 // Local intro dismissal injects the existing settings store into the same
 // adapter; both reviewed notification callbacks remain exact.
 // The same paged own-history read leaves the historical callback exact.
+// The same item 9 viewer and keep-replaced callbacks leave it exact too.
+// BL-17 rebases the same reviewed composition. The historical notification
+// callback remains byte-identical and unique; no existing owner relocates.
+// The same BL-14 sweep callback change leaves the historical callback exact.
+// The same BL-24C retry-marker wiring leaves the historical callback exact.
+// BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
+// leave the historical callback exact; no owner relocates.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '65d08005d9afa8fe257bd4d482da547b186fc86f924b94871844254e14a0237f';
+    'e5381f388d60aa6bdc985bdb942c0cbe95b99716ec8798d673c2636fa658cc59';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -569,6 +599,8 @@ const _resumeDirectiveFiles = <String>{
   'test/core/services/p2p_service_fault_injection_test.dart',
   'test/features/contact_request/application/'
       'key_exchange_retry_smoke_test.dart',
+  'test/features/conversation/integration/'
+      'delivery_receipt_outbox_sqlite_test.dart',
   'test/features/groups/integration/group_resume_recovery_test.dart',
   'test/features/groups/integration/group_startup_rejoin_smoke_test.dart',
   'test/features/identity/presentation/screens/'

@@ -108,33 +108,29 @@ void main() {
       // from "cleared but still open".
       expect(find.byType(TextField), findsNothing,
           reason: 'field gone → keyboard dismissed');
-      expect(tester.getSize(pillF()), const Size(52, 52),
-          reason: 'reverted to the collapsed 52px circle (212)');
+      expect(tester.getSize(pillF()), const Size(44, 44),
+          reason: 'reverted to the collapsed 44px control circle');
       await settle(tester);
     });
 
     testWidgets(
-        'TC-212-11 collapsed pill is a 52px bordered, shadowed glass circle '
-        'with NO BackdropFilter', (tester) async {
+        'TC-212-11 collapsed pill is the shared 44px hairline control '
+        'circle with NO BackdropFilter', (tester) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(host(_friends(8)));
       await settle(tester);
 
-      expect(tester.getSize(pillF()), const Size(52, 52),
-          reason: '212 visual upgrade: 44 → 52');
+      expect(tester.getSize(pillF()), const Size(44, 44),
+          reason: 'owner 2026-11-10: every Orbit control is one 44px circle');
 
       final circle = tester.widget<Container>(find.descendant(
         of: pillF(),
         matching: find.byType(Container),
       ));
       final decoration = circle.decoration as BoxDecoration;
-      expect(decoration.border, isNotNull,
-          reason: 'the pill joins the glass-border vocabulary');
-      expect((decoration.border as Border).top.color,
-          BackgroundReadableColors.dark.glassBorder);
-      expect(decoration.boxShadow, isNotNull);
-      expect(decoration.boxShadow, isNotEmpty,
-          reason: 'the pill gains the shared soft drop shadow');
+      expect(decoration.border, Border.all(color: const Color(0x24FFFFFF)));
+      expect(decoration.color, const Color(0x0AFFFFFF));
+      expect(decoration.boxShadow, isNull);
 
       final lens = tester.widget<Icon>(find.descendant(
         of: pillF(),
@@ -194,7 +190,7 @@ void main() {
       await settle(tester);
     });
 
-    testWidgets('TC-205-04 all faint search lenses use iconPrimary', (
+    testWidgets('TC-205-04 search lenses use their readable ink', (
       tester,
     ) async {
       suppressAssetErrors(tester);
@@ -206,7 +202,8 @@ void main() {
         of: pillF(),
         matching: find.byIcon(Icons.search),
       ));
-      expect(collapsedLens.color, iconPrimary, reason: 'collapsed pill lens');
+      expect(collapsedLens.color, const Color(0xFFE6E9EF),
+          reason: 'the collapsed pill is an Orbit control and uses its ink');
 
       // (b) expanded find-pill lens.
       await tester.tap(pillF());

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/posts/application/ios_thoughts_switch.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -20,6 +22,7 @@ import 'package:flutter_app/features/posts/application/handle_incoming_post_use_
 import 'package:flutter_app/features/posts/application/handle_incoming_thought_view_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 
@@ -56,6 +59,7 @@ class PostListener {
   final EarlyThoughtRetractions earlyRetractions;
 
   StreamSubscription<ChatMessage>? _subscription;
+  void Function()? _unregisterInboxReplay;
   StreamSubscription<ChatMessage>? _retractSubscription;
   StreamSubscription<ChatMessage>? _viewSubscription;
   final _postController = StreamController<PostModel>.broadcast();
@@ -92,11 +96,19 @@ class PostListener {
       );
     }
     _subscription = postCreateStream.listen(_onMessage);
+    final stream = postCreateStream;
+    if (stream is PostCreateInboxStream) {
+      _unregisterInboxReplay = stream.registerReplayHandler(
+        _replayInboxMessage,
+      );
+    }
     _retractSubscription = postRetractStream.listen(_onRetract);
     _viewSubscription = postViewStream.listen(_onView);
   }
 
   void stop() {
+    _unregisterInboxReplay?.call();
+    _unregisterInboxReplay = null;
     _subscription?.cancel();
     _subscription = null;
     _retractSubscription?.cancel();
@@ -157,9 +169,33 @@ class PostListener {
     _postController.close();
   }
 
-  Future<void> _onMessage(ChatMessage message) async {
+  Future<RecoveredInboxReplayOutcome> _replayInboxMessage(
+    ChatMessage message, {
+    String? stagedEntryId,
+  }) {
+    final completion = Completer<RecoveredInboxReplayOutcome>();
+    unawaited(_onMessage(message, inboxCompletion: completion));
+    return completion.future;
+  }
+
+  Future<void> _onMessage(
+    ChatMessage message, {
+    Completer<RecoveredInboxReplayOutcome>? inboxCompletion,
+  }) async {
     final (HandleIncomingPostResult, PostModel?) outcome;
     var confirmed = false;
+    void completeInbox(
+      RecoveredInboxChatDisposition disposition,
+      String reason,
+    ) {
+      if (inboxCompletion == null || inboxCompletion.isCompleted) return;
+      inboxCompletion.complete((
+        disposition: disposition,
+        reasonCode: reason,
+        reasonDetail: null,
+      ));
+    }
+
     Future<void> confirmStored() async {
       if (confirmed) return;
       confirmed = true;
@@ -170,6 +206,7 @@ class PostListener {
     // itself; the thought, its media keys and its media kind are saved, so
     // the ack and the friend's card both go out now.
     Future<void> durablyStored(PostModel post, {required bool created}) async {
+      completeInbox(RecoveredInboxChatDisposition.committed, 'post_stored');
       await confirmStored();
       if (created) await _announce(post);
     }
@@ -178,6 +215,15 @@ class PostListener {
       final ownMlKemSecretKey = getOwnMlKemSecretKey == null
           ? null
           : await getOwnMlKemSecretKey!();
+      if (inboxCompletion != null &&
+          (bridge == null || ownMlKemSecretKey == null) &&
+          PostCreateEnvelope.parseEncryptedEnvelope(message.content) != null) {
+        completeInbox(
+          RecoveredInboxChatDisposition.retryable,
+          'crypto_unavailable',
+        );
+        return;
+      }
       outcome = await handleIncomingPost(
         message: message,
         postRepo: postRepo,
@@ -189,8 +235,13 @@ class PostListener {
         nowProvider: now,
         onDurablyStored: durablyStored,
         earlyRetractions: earlyRetractions,
+        throwOnBridgeUnavailable: inboxCompletion != null,
       );
     } catch (error) {
+      completeInbox(
+        RecoveredInboxChatDisposition.retryable,
+        'post_processing_failed',
+      );
       // Nothing final happened, so the sender keeps custody: Go withholds its
       // ack and the sender falls back to the relay inbox.
       if (!confirmed) await _maybeConfirmDirectNonce(message, ok: false);
@@ -203,8 +254,15 @@ class PostListener {
     }
     // Every returned result is final (stored, duplicate, or rejected for
     // good), so the sender's Go node may release its ack.
-    await confirmStored();
     final (result, post) = outcome;
+    completeInbox(
+      result == HandleIncomingPostResult.postCreated ||
+              result == HandleIncomingPostResult.duplicate
+          ? RecoveredInboxChatDisposition.committed
+          : RecoveredInboxChatDisposition.rejected,
+      'post_${result.name}',
+    );
+    await confirmStored();
     switch (result) {
       case HandleIncomingPostResult.postCreated when post != null:
         if (_expired(post)) {

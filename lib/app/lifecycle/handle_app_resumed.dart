@@ -88,6 +88,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryFailedGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? drainDirectInboxCustodyOutboxFn,
+  Future<int> Function()? drainDeliveryReceiptOutboxFn,
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
   Future<int> Function()? verifyInboxCustodyFn,
@@ -283,6 +284,24 @@ Future<bool?> handleAppResumed({
       );
       readinessProofRecorder?.noteTransportSessionReset(
         trigger: 'bridge_reinitialize',
+      );
+    }
+
+    // Receipt retries share one owner and stay independent of inbox/group
+    // recovery and UI readiness. The existing migration gate above still owns
+    // admission; the transport rechecks that gate on every send/store.
+    final drainReceipts = drainDeliveryReceiptOutboxFn;
+    if (drainReceipts != null) {
+      unawaited(
+        Future<void>.sync(() async {
+          await drainReceipts();
+        }).catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DELIVERY_RECEIPT_RESUME_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }),
       );
     }
 

@@ -10,6 +10,8 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_model_delivery_controller.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import '../../shared/fake_url_launcher.dart';
 
 class _FakeAi implements OnDeviceAi {
   final translations = <({String text, String languageName})>[];
@@ -443,5 +445,48 @@ void main() {
     expect(find.text('Übersetzen fehlgeschlagen'), findsOneWidget);
     expect(find.text('Transkribieren fehlgeschlagen'), findsOneWidget);
     expect(find.text('Erneut versuchen'), findsNWidgets(2));
+  });
+
+  testWidgets(
+    'Translate: a link the original has is a link in the translation, and a '
+    'link only the translation has stays text',
+    (tester) async {
+      final launcher = FakeUrlLauncher.install();
+      final ai = _FakeAi();
+      await tester.pumpWidget(
+        _host(
+          TranslatePreview(text: 'انظر القائمة https://example.com/a', ai: ai),
+        ),
+      );
+
+      await tester.tap(find.text('See translation'));
+      await tester.pump();
+      ai.next.complete(
+        'Look at the menu https://example.com/a or https://phish.example/b',
+      );
+      await tester.pump();
+
+      final preview = find.byType(TranslatePreview);
+      expect(tappableWords(tester, preview), ['https://example.com/a']);
+      await tapWords(tester, preview, 'https://example.com/a');
+      expect(launcher.launches, [
+        ('https://example.com/a', PreferredLaunchMode.externalApplication),
+      ]);
+    },
+  );
+
+  testWidgets('Transcribe: a link heard in a voice message stays text', (
+    tester,
+  ) async {
+    final ai = _FakeAi();
+    await tester.pumpWidget(
+      _host(TranscribePreview(audioPath: '/tmp/voice.m4a', ai: ai)),
+    );
+    await tester.tap(find.text('Transcribe'));
+    await tester.pump();
+    ai.next.complete('go to https://example.com now');
+    await tester.pump();
+    expect(find.text('go to https://example.com now'), findsOneWidget);
+    expect(tappableWords(tester, find.byType(TranscribePreview)), isEmpty);
   });
 }

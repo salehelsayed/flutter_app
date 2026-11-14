@@ -898,7 +898,11 @@ final class IosSetupReadinessEntryCoordinator {
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
+  private var stickerClipFramePlugin: StickerClipFramePlugin?
+  private var stickerCutoutPlugin: StickerCutoutPlugin?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
+  private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment?
+  private var callPictureInPictureController: CallPictureInPictureController?
   private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
   private var iosSetupReadinessEntryChannel: FlutterMethodChannel?
   private lazy var iosSetupReadinessEntryCoordinator: IosSetupReadinessEntryCoordinator = {
@@ -922,6 +926,8 @@ final class IosSetupReadinessEntryCoordinator {
   private var fcmMessagingPluginDelegate: UNUserNotificationCenterDelegate?
 
   deinit {
+    stickerClipFramePlugin?.close()
+    stickerCutoutPlugin?.close()
     iosCallNativeBridge?.dispose()
     iosAppVisibilityCoordinator?.stop()
     NotificationCenter.default.removeObserver(self)
@@ -1213,6 +1219,20 @@ final class IosSetupReadinessEntryCoordinator {
     captureFcmMessagingPluginDelegate(registry: engineBridge.pluginRegistry)
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
+    stickerClipFramePlugin?.close()
+    stickerClipFramePlugin = nil
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StickerClipFramePlugin") {
+      let plugin = StickerClipFramePlugin(messenger: registrar.messenger())
+      registrar.publish(plugin)
+      stickerClipFramePlugin = plugin
+    }
+    stickerCutoutPlugin?.close()
+    stickerCutoutPlugin = nil
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StickerCutoutPlugin") {
+      let plugin = StickerCutoutPlugin(messenger: registrar.messenger())
+      registrar.publish(plugin)
+      stickerCutoutPlugin = plugin
+    }
     let privateMediaImageViewFactory = PrivateMediaCaptureProtectedImageViewFactory(
       messenger: messenger
     )
@@ -1234,6 +1254,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupAppGroupPathBridge(messenger: messenger)
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
+    setupCallVideoQualityBridge(messenger: messenger)
     setupIosCallLifecycleBridges(messenger: messenger)
     updateCheckBackground.attach(messenger: messenger)
 
@@ -1939,7 +1960,17 @@ final class IosSetupReadinessEntryCoordinator {
     setupGemmaPreviewBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
+    setupCallVideoQualityBridge(messenger: controller.binaryMessenger)
+    setupCallPictureInPictureBridge(controller: controller)
     setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
+  }
+
+  /// BL-16 live-call PiP bridge (contract v1). Inert until Dart arms a lease.
+  private func setupCallPictureInPictureBridge(controller: FlutterViewController) {
+    guard callPictureInPictureController == nil else { return }
+    callPictureInPictureController = CallPictureInPictureController(
+      messenger: controller.binaryMessenger
+    ) { [weak controller] in controller?.view }
   }
 
   private func setupIosCallLifecycleBridges(
@@ -2009,6 +2040,13 @@ final class IosSetupReadinessEntryCoordinator {
   private func setupPrivateMediaProtectionBridge(messenger: FlutterBinaryMessenger) {
     guard privateMediaProtectionCoordinator == nil else { return }
     privateMediaProtectionCoordinator = PrivateMediaProtectionCoordinator(messenger: messenger)
+  }
+
+  /// U3j-QN: read-only video quality inputs. Observes nothing until Dart
+  /// listens, which it does only while video is enabled.
+  private func setupCallVideoQualityBridge(messenger: FlutterBinaryMessenger) {
+    guard callVideoQualityEnvironment == nil else { return }
+    callVideoQualityEnvironment = MknoonCallVideoQualityEnvironment(messenger: messenger)
   }
 
   private func setupDiskSpaceBridge(messenger: FlutterBinaryMessenger) {

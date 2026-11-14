@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:flutter_app/features/translate_preview/language_heuristic.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 /// Opens the existing Storage section from a link's download sheet. The
 /// Orbit screen registers it because it owns the storage manager and scopes.
@@ -160,8 +163,13 @@ class TranslatePreview extends StatelessWidget {
   final TranslatePreviewPersistence? persistence;
 
   @override
-  Widget build(BuildContext context) {
-    final target = Localizations.localeOf(context).languageCode;
+  Widget build(BuildContext context) => ValueListenableBuilder<String?>(
+    valueListenable: translationPreferences.target,
+    builder: (context, chosen, _) =>
+        _build(context, translationTargetOf(context, chosen)),
+  );
+
+  Widget _build(BuildContext context, String target) {
     final languageName = translateLanguageName(target);
     final store = persistence ?? translatePreviewPersistence;
     final offered = languageName != null && shouldOfferTranslate(text, target);
@@ -191,6 +199,7 @@ class TranslatePreview extends StatelessWidget {
           ? (result) => store.saveTranslation(item, text, target, result)
           : null,
       color: color,
+      linksFrom: text,
       gate: (child, restore) => _DeliveryGate(
         beforeOpen: restore,
         delivery: delivery,
@@ -207,6 +216,73 @@ class TranslatePreview extends StatelessWidget {
     );
   }
 }
+
+/// The translation under a received chat message, below a thin line. It runs
+/// as soon as it shows; the caller decides that [text] needs one.
+class MessageTranslation extends StatelessWidget {
+  const MessageTranslation({
+    super.key,
+    required this.account,
+    required this.text,
+    required this.targetLanguage,
+    required this.ai,
+    this.color,
+    this.dividerColor,
+  });
+
+  /// The signed-in account's peer ID, so one account never reads another's
+  /// cached translations.
+  final String? account;
+  final String text;
+  final String targetLanguage;
+  final OnDeviceAi ai;
+  final Color? color;
+  final Color? dividerColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final key = (account, text, targetLanguage);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Divider(height: 1, thickness: 1, color: dividerColor),
+        _AiAction(
+          identity: text,
+          targetLanguage: targetLanguage,
+          autoStart: true,
+          labels: _Labels(
+            action: l10n.translator_see_translation,
+            busy: l10n.translator_translating,
+            failure: l10n.translator_translate_failed,
+          ),
+          restore: () async => _messageTranslations[key],
+          run: () => ai.translate(
+            text,
+            languageName: translateLanguageName(targetLanguage)!,
+          ),
+          save: (result) async {
+            _messageTranslations.remove(key);
+            _messageTranslations[key] = result;
+            if (_messageTranslations.length > 300) {
+              _messageTranslations.remove(_messageTranslations.keys.first);
+            }
+            return true;
+          },
+          color: color,
+          linksFrom: text,
+          topPadding: 8,
+          resultLineHeight: 1.4,
+        ),
+      ],
+    );
+  }
+}
+
+/// Chat translations stay in memory only: a stored copy would outlive a
+/// message deleted for everyone.
+final _messageTranslations = <(String?, String, String), String>{};
 
 /// A small "Transcribe" link under a received voice message, then the
 /// transcript with "See translation" offered on it.
@@ -455,24 +531,37 @@ class _AiAction extends StatefulWidget {
     required this.run,
     this.color,
     this.below,
+    this.linksFrom,
     this.restore,
     this.save,
     this.gate,
     this.identity,
     this.targetLanguage,
     this.visible = true,
+    this.autoStart = false,
+    this.topPadding = 6,
+    this.resultLineHeight = 1.3,
   });
 
   final _Labels labels;
   final Future<String> Function() run;
   final Color? color;
   final Widget Function(String result)? below;
+
+  /// The result links only URLs this text has, so a model never adds a link
+  /// the sender did not write. Null keeps every URL plain.
+  final String? linksFrom;
   final Future<String?> Function()? restore;
   final Future<bool> Function(String result)? save;
   final Widget Function(Widget child, Future<bool> Function() restore)? gate;
   final Object? identity;
   final String? targetLanguage;
   final bool visible;
+  final double topPadding;
+  final double resultLineHeight;
+
+  /// Runs as soon as it shows instead of waiting for a tap.
+  final bool autoStart;
 
   @override
   State<_AiAction> createState() => _AiActionState();
@@ -485,7 +574,11 @@ class _AiActionState extends State<_AiAction> {
   @override
   void initState() {
     super.initState();
-    unawaited(_restore());
+    unawaited(_restore().then(_autoStart));
+  }
+
+  void _autoStart(bool restored) {
+    if (!restored && widget.autoStart && mounted) unawaited(_start());
   }
 
   Future<bool> _restore() async {
@@ -514,8 +607,9 @@ class _AiActionState extends State<_AiAction> {
       ++_generation;
       _phase = const _Idle();
       // A live language change waits for the user's request, then reuses cache.
-      if (oldWidget.targetLanguage == widget.targetLanguage) {
-        unawaited(_restore());
+      if (oldWidget.targetLanguage == widget.targetLanguage ||
+          widget.autoStart) {
+        unawaited(_restore().then(_autoStart));
       }
     }
   }
@@ -589,17 +683,25 @@ class _AiActionState extends State<_AiAction> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            text,
+          LinkableText(
+            text: text,
             textDirection: detectTextDirection(text),
-            style: TextStyle(color: base, fontSize: 15, height: 1.3),
+            style: TextStyle(
+              color: base,
+              fontSize: 15,
+              height: widget.resultLineHeight,
+            ),
+            onlyLinks: {
+              for (final segment in parseUrls(widget.linksFrom ?? ''))
+                if (segment.isUrl) segment.text,
+            },
           ),
           if (widget.below case final below?) below(text),
         ],
       ),
     };
     final result = Padding(
-      padding: const EdgeInsetsDirectional.only(top: 6),
+      padding: EdgeInsetsDirectional.only(top: widget.topPadding),
       child: body,
     );
     return _phase is _Done

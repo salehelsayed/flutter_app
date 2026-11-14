@@ -1,16 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 
-/// Owner preview: on-device translation of Thoughts and transcription of
-/// received voice messages. Off unless built with
-/// `--dart-define=TRANSLATE_PREVIEW=true`.
-const bool kTranslatePreviewEnabled = bool.fromEnvironment('TRANSLATE_PREVIEW');
-
 @visibleForTesting
 bool? debugTranslatePreviewEnabledOverride;
 
+/// On-device translation is available in ordinary builds. Device eligibility
+/// is enforced by model delivery; the chat icon additionally requires ModelReady.
 bool get translatePreviewEnabled =>
-    debugTranslatePreviewEnabledOverride ?? kTranslatePreviewEnabled;
+    debugTranslatePreviewEnabledOverride ?? true;
 
 /// What the preview widgets need from the on-device model. Everything runs on
 /// the phone; nothing is sent anywhere.
@@ -26,8 +23,7 @@ abstract interface class OnDeviceAi {
 @visibleForTesting
 OnDeviceAi? debugOnDeviceAiOverride;
 
-/// The one model the app keeps for the preview. Read only where
-/// [translatePreviewEnabled] is true, so a build without the flag never
-/// touches the plugin.
+/// The one on-device model. Download consent, device eligibility and inference
+/// safety remain owned by model delivery and the service.
 OnDeviceAi get translatePreviewAi =>
     debugOnDeviceAiOverride ?? GemmaPreviewService.instance;

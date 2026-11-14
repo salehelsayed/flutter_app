@@ -34,6 +34,7 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import '../support/contact_repair_harness.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 // Task 12b, two real phones in one process: each has its own production-schema
 // database, real listener, real repair store and real outbox worker; the
@@ -277,7 +278,9 @@ void main() {
     () async {
       // Pin the production asymmetry: A already knows B's key, while B's
       // accepted contact A has no ML-KEM key. No deletion/consent policy changes.
-      await b.contacts.addContact(contactFor(_aId));
+      await b.contacts.addContact(
+        contactFor(_aId, scannedAt: DateTime.now().toUtc().toIso8601String()),
+      );
       expect(await a.mlKemOfPeer(), 'mlkem-${_bId.peerId}');
       expect(await b.mlKemOfPeer(), isNull);
       const originalMessageId = 'missing-key-original-message';
@@ -387,6 +390,7 @@ void main() {
             identityRepo: b.identities,
             p2pService: b.p2p,
             bridge: b.bridge,
+            secureKeyStore: FakeSecureKeyStore(),
             shouldMarkAsNewRequest: eligible,
             resolveCallWakeHandle: (target) async {
               grantChecks++;

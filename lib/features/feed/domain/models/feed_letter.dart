@@ -79,12 +79,14 @@ class SystemLetter extends FeedLetter {
   final String displayName;
   final String? introducedBy;
   final String? introducedByPeerId;
+  final bool isWaitingForSecureConnection;
 
   const SystemLetter({
     required this.contactPeerId,
     required this.displayName,
     this.introducedBy,
     this.introducedByPeerId,
+    this.isWaitingForSecureConnection = false,
   });
 
   factory SystemLetter.fromConnection(ConnectionFeedItem item) {
@@ -93,6 +95,7 @@ class SystemLetter extends FeedLetter {
       displayName: item.contactUsername,
       introducedBy: item.introducedBy,
       introducedByPeerId: item.introducedByPeerId,
+      isWaitingForSecureConnection: item.isWaitingForSecureConnection,
     );
   }
 

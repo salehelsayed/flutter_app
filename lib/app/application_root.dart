@@ -40,11 +40,14 @@ import 'package:flutter_app/features/contact_request/data/repositories/contact_r
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
@@ -89,6 +92,7 @@ import 'package:flutter_app/features/posts/application/pending_post_delivery_ret
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -512,6 +516,7 @@ class MyApp extends StatefulWidget {
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
   final Future<int> Function()? drainDirectInboxCustodyOutbox;
+  final Future<int> Function()? drainDeliveryReceiptOutbox;
   final Future<int> Function()? drainDirectMediaBlobCustody;
   final Future<void> Function()? drainNotificationCompletedOutcomes;
   final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
@@ -583,6 +588,8 @@ class MyApp extends StatefulWidget {
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
   final PushRegistrationHealthNotifier? pushRegistrationHealthNotifier;
   final PushNotificationSettingsGateway pushNotificationSettingsGateway;
+  final CustomStickerLibrary? customStickerLibrary;
+  final Future<void> Function()? onCustomStickerAccountActivated;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
@@ -696,6 +703,7 @@ class MyApp extends StatefulWidget {
     required this.messageRouter,
     required this.pendingMessageRetrier,
     this.drainDirectInboxCustodyOutbox,
+    this.drainDeliveryReceiptOutbox,
     this.drainDirectMediaBlobCustody,
     this.drainNotificationCompletedOutcomes,
     required this.pendingPostMediaUploadRetrier,
@@ -760,6 +768,8 @@ class MyApp extends StatefulWidget {
     this.pushRegistrationHealthNotifier,
     this.pushNotificationSettingsGateway =
         const PlatformPushNotificationSettingsGateway(),
+    this.customStickerLibrary,
+    this.onCustomStickerAccountActivated,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.accountMigrationStartReceiver,
@@ -888,6 +898,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    unawaited(widget.keyExchangeRetrier.refreshRetryStatus());
     _foregroundCallBackGuard.attach();
     _updateRequiredBackGuard.attach();
     assert(
@@ -1003,7 +1014,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   return;
                 }
                 Future<void>? decision;
-                await showDialog<void>(
+                final route = showDialog<void>(
                   context: navigator.context,
                   barrierDismissible: false,
                   builder: (dialogContext) => ContactRequestDialog(
@@ -1018,6 +1029,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     },
                   ),
                 );
+                recordContactRequestPresentationDiagnostic(admitted: true);
+                await route;
                 await decision;
               },
           openConversation: ({required navigator, required contact}) =>
@@ -2910,6 +2923,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           requireOsConnectivity: true,
         ),
         drainDirectInboxCustodyOutboxFn: widget.drainDirectInboxCustodyOutbox,
+        drainDeliveryReceiptOutboxFn: widget.drainDeliveryReceiptOutbox,
         retryFailedMessagesFn: () => retryFailedMessages(
           directEventFanout: _directRouteAuthority.resolvedDirectEventFanout,
           messageRepo: widget.messageRepository,
@@ -3000,6 +3014,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       widget.p2pService.clearResumeStarted();
       _isResuming = false;
+      widget.pendingMessageRetrier.retryPendingContactKeyUpdates();
       debugPrint('[LIFECYCLE] _onResumed() finished');
     }
   }
@@ -3532,6 +3547,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         await pushRegistration?.completeAccountBindingCutover();
       }
     }
+    await widget.onCustomStickerAccountActivated?.call();
   }
 
   @override
@@ -3550,10 +3566,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
         navigatorObservers: [directPrivateMediaRouteObserver],
         builder: (context, child) {
+          final stickerLibrary = widget.customStickerLibrary;
+          final page = PendingContactRetryScope(
+            retrier: widget.keyExchangeRetrier,
+            child: child ?? const SizedBox.shrink(),
+          );
           final routedChild = DirectPrivateMediaRouteObserverScope(
             observer: directPrivateMediaRouteObserver,
             appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
-            child: child ?? const SizedBox.shrink(),
+            child: stickerLibrary == null
+                ? page
+                : CustomStickerScope(library: stickerLibrary, child: page),
           );
           final healthNotifier = widget.pushRegistrationHealthNotifier;
           final appChild = FullScreenCallAccessSurface(

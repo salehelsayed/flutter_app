@@ -1,10 +1,14 @@
 import 'dart:collection';
+import 'dart:convert';
 
 import '../diagnostics/call_diagnostics.dart';
 
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import '../domain/call_signal_v2.dart';
+import '../domain/call_wire_signal.dart';
 import 'call_endpoint_resolver.dart';
 
 enum CallSignalingContextErrorCode {
@@ -36,6 +40,17 @@ abstract interface class AuthenticatedCallSignalingContextObserver {
   });
 
   void purge(CallId callId);
+}
+
+/// Optional typed v2 context capture. Legacy observers retain their v1 API.
+abstract interface class AuthenticatedCallSignalingContextObserverV2
+    implements AuthenticatedCallSignalingContextObserver {
+  void captureAuthenticatedV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
+  });
 }
 
 /// One reserved local sender sequence and its non-regressing ICE generation.
@@ -72,6 +87,11 @@ final class CallSignalingContext {
     required this.remoteSenderSequence,
     required this.iceGeneration,
     required Map<String, Object?> invitePayload,
+    required this.preparedOutgoingV2Invite,
+    required this.wireVersion,
+    required this.requestedMedia,
+    required this.initialAcceptedMedia,
+    required this.initialOfferReceived,
   }) : invitePayload = Map<String, Object?>.unmodifiable(invitePayload);
 
   final CallId callId;
@@ -86,6 +106,16 @@ final class CallSignalingContext {
   final int remoteSenderSequence;
   final int iceGeneration;
   final Map<String, Object?> invitePayload;
+
+  /// Exact outgoing v2 invite, retained only for this bounded context lifetime.
+  final CallSignalV2? preparedOutgoingV2Invite;
+
+  final CallWireVersion wireVersion;
+  final CallMediaKind requestedMedia;
+
+  /// Immutable revision-zero choice, not the later switch machine's agreement.
+  final CallMediaKind? initialAcceptedMedia;
+  final bool initialOfferReceived;
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'direction': direction.name,
@@ -106,14 +136,15 @@ final class CallSignalingContext {
 /// exclusively in [CallCoordinator]/[CallReducer]; this store only supplies
 /// bytes that reducer-approved effects need in order to send one signal.
 final class CallSignalingContextStore
-    implements AuthenticatedCallSignalingContextObserver {
-  CallSignalingContextStore({this.maxContexts = 4}) {
+    implements AuthenticatedCallSignalingContextObserverV2 {
+  CallSignalingContextStore({this.maxContexts = 4, this.videoEnabled = false}) {
     if (maxContexts <= 0) {
       throw ArgumentError.value(maxContexts, 'maxContexts', 'must be positive');
     }
   }
 
   final int maxContexts;
+  final bool videoEnabled;
   final LinkedHashMap<CallId, _StoredCallSignalingContext> _contexts =
       LinkedHashMap<CallId, _StoredCallSignalingContext>();
   final ListQueue<CallId> _pendingIncomingInviteIds = ListQueue<CallId>();
@@ -136,6 +167,84 @@ final class CallSignalingContextStore
   ResolvedCallEndpoint? pinnedEndpoint(CallId callId) =>
       _pinnedEndpoints[callId];
 
+  /// Original v2 admission authority, independent of the mutable v1 retry pin.
+  /// Only transport owners may use this; it is never diagnostic/UI data.
+  ResolvedCallEndpoint? admittedV2Endpoint(CallId callId) =>
+      _contexts[callId]?.admittedEndpoint;
+
+  /// Immutable initial invitation expiry, never refreshed by ringing/accept.
+  int? originalV2InviteExpiresAtMs(CallId callId) =>
+      _contexts[callId]?.originalV2InviteExpiresAtMs;
+
+  /// The immutable prepared invite already owns its first sender sequence.
+  /// Fresh capability/permission admission remains the caller's responsibility.
+  void storeOutgoingV2({
+    required CallSignalV2 invite,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
+  }) {
+    if (!videoEnabled || invite.event != CallSignalV2Type.invite) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.invalidContext,
+      );
+    }
+    _storeOutgoing(
+      callId: invite.callId,
+      callHandle: callHandle,
+      localAccountPeerId: invite.senderAccountPeerId,
+      localDevicePeerId: invite.senderDevicePeerId,
+      remoteAccountPeerId: invite.recipientAccountPeerId,
+      remoteDevicePeerId: invite.recipientDevicePeerId,
+      admissionAuthority: admissionAuthority,
+      nextSenderSequence: invite.senderSequence + 1,
+      iceGeneration: invite.iceGeneration,
+      invitePayload: invite.payload,
+      wireVersion: CallWireVersion.v2,
+      requestedMedia: _media(invite.payload['media']),
+      preparedOutgoingV2Invite: invite,
+      admittedEndpoint: admittedEndpoint,
+    );
+  }
+
+  @override
+  void captureAuthenticatedV2({
+    required CallSignalV2 signal,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
+  }) {
+    if (!videoEnabled) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.invalidContext,
+      );
+    }
+    _captureAuthenticated(
+      signal: signal,
+      callHandle: callHandle,
+      admissionAuthority: admissionAuthority,
+      admittedEndpoint: admittedEndpoint,
+    );
+  }
+
+  /// Records an already-authorized local answer; it never opens capture.
+  void recordLocalAcceptance(CallId callId, {required CallMediaKind media}) {
+    final context = _contexts[callId];
+    if (context == null) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.contextUnavailable,
+      );
+    }
+    if (context.wireVersion != CallWireVersion.v2 ||
+        context.direction != CallDirection.incoming) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+    _validateInitialChoice(context, media);
+    context.initialAcceptedMedia = media;
+  }
+
   void storeOutgoing({
     required CallId callId,
     required String callHandle,
@@ -147,6 +256,36 @@ final class CallSignalingContextStore
     int nextSenderSequence = 1,
     int iceGeneration = 0,
     Map<String, Object?> invitePayload = const <String, Object?>{},
+  }) => _storeOutgoing(
+    callId: callId,
+    callHandle: callHandle,
+    localAccountPeerId: localAccountPeerId,
+    localDevicePeerId: localDevicePeerId,
+    remoteAccountPeerId: remoteAccountPeerId,
+    remoteDevicePeerId: remoteDevicePeerId,
+    admissionAuthority: admissionAuthority,
+    nextSenderSequence: nextSenderSequence,
+    iceGeneration: iceGeneration,
+    invitePayload: invitePayload,
+    wireVersion: CallWireVersion.v1,
+    requestedMedia: CallMediaKind.audio,
+  );
+
+  void _storeOutgoing({
+    required CallWireVersion wireVersion,
+    required CallMediaKind requestedMedia,
+    required CallId callId,
+    required String callHandle,
+    required String localAccountPeerId,
+    required String localDevicePeerId,
+    required String remoteAccountPeerId,
+    required String remoteDevicePeerId,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+    int nextSenderSequence = 1,
+    int iceGeneration = 0,
+    Map<String, Object?> invitePayload = const <String, Object?>{},
+    CallSignalV2? preparedOutgoingV2Invite,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
     _validateBindings(
       callHandle: callHandle,
@@ -161,8 +300,23 @@ final class CallSignalingContextStore
       );
     }
     final existing = _contexts[callId];
+    _validateAdmittedEndpoint(
+      admittedEndpoint,
+      existing: existing,
+      wireVersion: wireVersion,
+      remoteAccountPeerId: remoteAccountPeerId,
+      remoteDevicePeerId: remoteDevicePeerId,
+      admissionAuthority: admissionAuthority,
+    );
     if (existing != null) {
       if (existing.direction == CallDirection.outgoing &&
+          existing.wireVersion == wireVersion &&
+          existing.requestedMedia == requestedMedia &&
+          (wireVersion == CallWireVersion.v1 ||
+              (existing.preparedOutgoingV2Invite != null &&
+                  preparedOutgoingV2Invite != null &&
+                  jsonEncode(existing.preparedOutgoingV2Invite!.toMap()) ==
+                      jsonEncode(preparedOutgoingV2Invite.toMap()))) &&
           existing.callHandle == callHandle &&
           existing.localAccountPeerId == localAccountPeerId &&
           existing.localDevicePeerId == localDevicePeerId &&
@@ -178,6 +332,8 @@ final class CallSignalingContextStore
     _contexts[callId] = _StoredCallSignalingContext(
       callId: callId,
       direction: CallDirection.outgoing,
+      wireVersion: wireVersion,
+      requestedMedia: requestedMedia,
       callHandle: callHandle,
       localAccountPeerId: localAccountPeerId,
       localDevicePeerId: localDevicePeerId,
@@ -189,6 +345,11 @@ final class CallSignalingContextStore
       remoteHighWaterEvent: null,
       iceGeneration: iceGeneration,
       invitePayload: _copyPayload(invitePayload),
+      preparedOutgoingV2Invite: preparedOutgoingV2Invite,
+      originalV2InviteExpiresAtMs: preparedOutgoingV2Invite?.expiresAtMs,
+      admittedEndpoint: admittedEndpoint == null
+          ? null
+          : ResolvedCallEndpoint.frozen(admittedEndpoint),
     );
     final diagnostics = CallDiagnostics.instance;
     final traceId =
@@ -208,7 +369,22 @@ final class CallSignalingContextStore
     required CallSignal signal,
     required String callHandle,
     CallAdmissionAuthorityWitness? admissionAuthority,
+  }) => _captureAuthenticated(
+    signal: signal,
+    callHandle: callHandle,
+    admissionAuthority: admissionAuthority,
+  );
+
+  void _captureAuthenticated({
+    required CallWireSignal signal,
+    required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
+    ResolvedCallEndpoint? admittedEndpoint,
   }) {
+    final version = signal is CallSignalV2
+        ? CallWireVersion.v2
+        : CallWireVersion.v1;
+    final event = signal.eventWireName;
     _validateBindings(
       callHandle: callHandle,
       localAccountPeerId: signal.recipientAccountPeerId,
@@ -217,6 +393,19 @@ final class CallSignalingContextStore
       remoteDevicePeerId: signal.senderDevicePeerId,
     );
     final existing = _contexts[signal.callId];
+    if (admittedEndpoint != null && event != 'invite') {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+    _validateAdmittedEndpoint(
+      admittedEndpoint,
+      existing: existing,
+      wireVersion: version,
+      remoteAccountPeerId: signal.senderAccountPeerId,
+      remoteDevicePeerId: signal.senderDevicePeerId,
+      admissionAuthority: admissionAuthority,
+    );
     if (existing != null) {
       if (existing.callHandle != callHandle ||
           existing.localAccountPeerId != signal.recipientAccountPeerId ||
@@ -227,6 +416,8 @@ final class CallSignalingContextStore
           CallSignalingContextErrorCode.bindingConflict,
         );
       }
+      // Validate before mutating any counters or initial media facts.
+      final acceptedMedia = _validateVersionAndMedia(existing, signal, version);
       final senderSequenceRegressed =
           signal.senderSequence < existing.remoteSenderSequence;
       final reorderDistance =
@@ -235,16 +426,17 @@ final class CallSignalingContextStore
           senderSequenceRegressed &&
           reorderDistance <= CallSignal.maximumNegotiationReorderingDistance &&
           signal.iceGeneration == existing.iceGeneration &&
-          _isNegotiationSignal(signal.event) &&
+          _isNegotiationSignal(event, version) &&
           existing.remoteHighWaterEvent != null &&
-          _isNegotiationSignal(existing.remoteHighWaterEvent!);
+          _isNegotiationSignal(
+            existing.remoteHighWaterEvent!,
+            existing.wireVersion,
+          );
       final generationRegressed = signal.iceGeneration < existing.iceGeneration;
       // A peer can hang up before receiving our latest ICE restart. Terminal
       // authority belongs to the bound call, not one negotiation generation;
       // binding and sender ordering checks still apply below.
-      final terminalSignal =
-          signal.event == CallSignalType.reject ||
-          signal.event == CallSignalType.terminate;
+      final terminalSignal = event == 'reject' || event == 'terminate';
       final generationAdvancedWithoutNewerSequence =
           signal.iceGeneration > existing.iceGeneration &&
           signal.senderSequence <= existing.remoteSenderSequence;
@@ -261,18 +453,36 @@ final class CallSignalingContextStore
       // dispatched; replay/sequence reuse was rejected by the secure codec.
       if (signal.senderSequence > existing.remoteSenderSequence) {
         existing.remoteSenderSequence = signal.senderSequence;
-        existing.remoteHighWaterEvent = signal.event;
+        existing.remoteHighWaterEvent = event;
       }
       if (signal.iceGeneration > existing.iceGeneration) {
         existing.iceGeneration = signal.iceGeneration;
       }
+      if (acceptedMedia != null) existing.initialAcceptedMedia = acceptedMedia;
+      if (version == CallWireVersion.v2 &&
+          event == 'offer' &&
+          signal.payload['purpose'] == 'initial') {
+        existing.initialOfferReceived = true;
+      }
       return;
     }
 
+    if (version == CallWireVersion.v2 &&
+        event != 'invite' &&
+        event != 'reject' &&
+        event != 'terminate') {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.contextUnavailable,
+      );
+    }
     _ensureCapacity();
     _contexts[signal.callId] = _StoredCallSignalingContext(
       callId: signal.callId,
       direction: CallDirection.incoming,
+      wireVersion: version,
+      requestedMedia: version == CallWireVersion.v2 && event == 'invite'
+          ? _media(signal.payload['media'])
+          : CallMediaKind.audio,
       callHandle: callHandle,
       localAccountPeerId: signal.recipientAccountPeerId,
       localDevicePeerId: signal.recipientDevicePeerId,
@@ -281,11 +491,20 @@ final class CallSignalingContextStore
       admissionAuthority: admissionAuthority,
       nextSenderSequence: 1,
       remoteSenderSequence: signal.senderSequence,
-      remoteHighWaterEvent: signal.event,
+      remoteHighWaterEvent: event,
       iceGeneration: signal.iceGeneration,
-      invitePayload: const <String, Object?>{},
+      invitePayload: event == 'invite'
+          ? _copyPayload(signal.payload)
+          : const <String, Object?>{},
+      originalV2InviteExpiresAtMs:
+          version == CallWireVersion.v2 && event == 'invite'
+          ? signal.expiresAtMs
+          : null,
+      admittedEndpoint: admittedEndpoint == null
+          ? null
+          : ResolvedCallEndpoint.frozen(admittedEndpoint),
     );
-    if (signal.event == CallSignalType.invite) {
+    if (event == 'invite') {
       _pendingIncomingInviteIds.addLast(signal.callId);
     }
   }
@@ -372,10 +591,99 @@ final class CallSignalingContextStore
   @override
   String toString() => 'CallSignalingContextStore(${toDiagnosticMap()})';
 
-  static bool _isNegotiationSignal(CallSignalType event) => switch (event) {
-    CallSignalType.offer || CallSignalType.answer || CallSignalType.ice => true,
-    _ => false,
+  static bool _isNegotiationSignal(String event, CallWireVersion version) {
+    if (const {'offer', 'answer', 'ice'}.contains(event)) return true;
+    // Keep the v1 context policy unchanged; v2 optional transactions use the
+    // same bounded same-generation admission as their secure envelope path.
+    return version == CallWireVersion.v2 &&
+        const {
+          'ice_restart',
+          'media_request',
+          'media_response',
+          'media_commit',
+          'media_commit_ack',
+          'media_abort',
+          'camera_state',
+        }.contains(event);
+  }
+
+  static CallMediaKind _media(Object? value) => switch (value) {
+    'audio' => CallMediaKind.audio,
+    'video' => CallMediaKind.video,
+    _ => throw const CallSignalingContextException(
+      CallSignalingContextErrorCode.invalidContext,
+    ),
   };
+
+  static void _validateInitialChoice(
+    _StoredCallSignalingContext context,
+    CallMediaKind media,
+  ) {
+    if ((context.requestedMedia == CallMediaKind.audio &&
+            media != CallMediaKind.audio) ||
+        (context.initialAcceptedMedia != null &&
+            context.initialAcceptedMedia != media)) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+  }
+
+  static CallMediaKind? _validateVersionAndMedia(
+    _StoredCallSignalingContext context,
+    CallWireSignal signal,
+    CallWireVersion version,
+  ) {
+    if (context.wireVersion != version) {
+      // Caller cancellation can outrun a lost v2 accept. The callee has no
+      // proof the caller received its answer until the initial offer arrives.
+      // Actual terminal reduction/tombstones remain owned by the coordinator.
+      final compatibleCleanup =
+          context.wireVersion == CallWireVersion.v2 &&
+          version == CallWireVersion.v1 &&
+          context.direction == CallDirection.incoming &&
+          !context.initialOfferReceived &&
+          signal.eventWireName == 'terminate' &&
+          signal.payload['reason'] == 'unsupported';
+      if (compatibleCleanup) return null;
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+    if (version == CallWireVersion.v1) return null;
+    final event = signal.eventWireName;
+    if (event == 'invite') {
+      if (_media(signal.payload['media']) != context.requestedMedia ||
+          signal.payload['camera'] != context.invitePayload['camera']) {
+        throw const CallSignalingContextException(
+          CallSignalingContextErrorCode.bindingConflict,
+        );
+      }
+    }
+    if (event == 'accept') {
+      final accepted = _media(signal.payload['media']);
+      if (context.direction != CallDirection.outgoing) {
+        throw const CallSignalingContextException(
+          CallSignalingContextErrorCode.bindingConflict,
+        );
+      }
+      _validateInitialChoice(context, accepted);
+      return accepted;
+    }
+    if (event == 'offer' || event == 'answer') {
+      if (context.initialAcceptedMedia == null ||
+          (event == 'offer' && context.direction != CallDirection.incoming) ||
+          (event == 'answer' && context.direction != CallDirection.outgoing) ||
+          (signal.payload['purpose'] == 'initial' &&
+              _media(signal.payload['media']) !=
+                  context.initialAcceptedMedia)) {
+        throw const CallSignalingContextException(
+          CallSignalingContextErrorCode.bindingConflict,
+        );
+      }
+    }
+    return null;
+  }
 
   void _ensureCapacity() {
     if (_contexts.length >= maxContexts) {
@@ -384,6 +692,48 @@ final class CallSignalingContextStore
       );
     }
   }
+
+  static void _validateAdmittedEndpoint(
+    ResolvedCallEndpoint? endpoint, {
+    required _StoredCallSignalingContext? existing,
+    required CallWireVersion wireVersion,
+    required String remoteAccountPeerId,
+    required String remoteDevicePeerId,
+    required CallAdmissionAuthorityWitness? admissionAuthority,
+  }) {
+    if (endpoint == null) return;
+    final original = existing?.admittedEndpoint;
+    if (wireVersion != CallWireVersion.v2 ||
+        endpoint.accountPeerId != remoteAccountPeerId ||
+        endpoint.devicePeerId != remoteDevicePeerId ||
+        endpoint.admissionAuthority != admissionAuthority ||
+        !endpoint.capabilities.contains(CallEndpointResolver.voiceCapability) ||
+        !endpoint.capabilities.contains('video_call_v2') ||
+        (existing != null &&
+            (original == null || !_sameAdmittedEndpoint(original, endpoint)))) {
+      throw const CallSignalingContextException(
+        CallSignalingContextErrorCode.bindingConflict,
+      );
+    }
+  }
+
+  static bool _sameAdmittedEndpoint(
+    ResolvedCallEndpoint first,
+    ResolvedCallEndpoint next,
+  ) =>
+      first.accountPeerId == next.accountPeerId &&
+      first.devicePeerId == next.devicePeerId &&
+      first.signingPublicKey == next.signingPublicKey &&
+      first.mlKemPublicKey == next.mlKemPublicKey &&
+      first.deviceKeyEpoch == next.deviceKeyEpoch &&
+      first.preferenceEpoch == next.preferenceEpoch &&
+      first.admissionAuthority == next.admissionAuthority &&
+      first.platform == next.platform &&
+      first.expiresAtMs == next.expiresAtMs &&
+      first.routingHandle == next.routingHandle &&
+      first.wakeHandle == next.wakeHandle &&
+      first.capabilities.length == next.capabilities.length &&
+      first.capabilities.containsAll(next.capabilities);
 
   static void _validateBindings({
     required String callHandle,
@@ -436,6 +786,8 @@ final class _StoredCallSignalingContext {
   _StoredCallSignalingContext({
     required this.callId,
     required this.direction,
+    required this.wireVersion,
+    required this.requestedMedia,
     required this.callHandle,
     required this.localAccountPeerId,
     required this.localDevicePeerId,
@@ -447,10 +799,17 @@ final class _StoredCallSignalingContext {
     required this.remoteHighWaterEvent,
     required this.iceGeneration,
     required this.invitePayload,
+    this.preparedOutgoingV2Invite,
+    this.originalV2InviteExpiresAtMs,
+    this.admittedEndpoint,
   });
 
   final CallId callId;
   final CallDirection direction;
+  final CallWireVersion wireVersion;
+  final CallMediaKind requestedMedia;
+  CallMediaKind? initialAcceptedMedia;
+  bool initialOfferReceived = false;
   final String callHandle;
   final String localAccountPeerId;
   final String localDevicePeerId;
@@ -459,13 +818,20 @@ final class _StoredCallSignalingContext {
   final CallAdmissionAuthorityWitness? admissionAuthority;
   int nextSenderSequence;
   int remoteSenderSequence;
-  CallSignalType? remoteHighWaterEvent;
+  String? remoteHighWaterEvent;
   int iceGeneration;
   final Map<String, Object?> invitePayload;
+  final CallSignalV2? preparedOutgoingV2Invite;
+  final int? originalV2InviteExpiresAtMs;
+  final ResolvedCallEndpoint? admittedEndpoint;
 
   CallSignalingContext snapshot() => CallSignalingContext._(
     callId: callId,
     direction: direction,
+    wireVersion: wireVersion,
+    requestedMedia: requestedMedia,
+    initialAcceptedMedia: initialAcceptedMedia,
+    initialOfferReceived: initialOfferReceived,
     callHandle: callHandle,
     localAccountPeerId: localAccountPeerId,
     localDevicePeerId: localDevicePeerId,
@@ -476,5 +842,6 @@ final class _StoredCallSignalingContext {
     remoteSenderSequence: remoteSenderSequence,
     iceGeneration: iceGeneration,
     invitePayload: invitePayload,
+    preparedOutgoingV2Invite: preparedOutgoingV2Invite,
   );
 }

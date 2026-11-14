@@ -101,6 +101,11 @@ final class TranslatorMemoryUnsupported implements Exception {
 abstract class ModelDeliveryController {
   ValueListenable<ModelDeliveryState> get state;
 
+  /// Static OS, process ABI and total-RAM eligibility. False until known.
+  /// An eligible phone can still be blocked by inference or memory safety;
+  /// that does not remove its manual recovery entry in Settings.
+  ValueListenable<bool> get deviceSupported;
+
   /// The Settings "Download over mobile data" switch.
   ValueListenable<bool> get allowMobileData;
 
@@ -131,7 +136,7 @@ abstract class ModelDeliveryController {
 @visibleForTesting
 ModelDeliveryController? debugModelDeliveryOverride;
 
-/// The shared production download, or null when the preview is disabled.
+/// The shared production download, or null outside mobile or in disabled tests.
 /// A test override avoids constructing any production adapters.
 ModelDeliveryController? get translatePreviewDelivery =>
     debugModelDeliveryOverride ?? productionTranslatePreviewDelivery;

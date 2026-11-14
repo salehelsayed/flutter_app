@@ -16,6 +16,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -173,9 +174,9 @@ class _InnerCircleInteractiveSurfaceState
   bool _findOpen = false;
 
   bool _thoughtsVisible = true;
-  // The notes were put away for the "+N" arcs, not by a pinch; closing the
-  // arcs brings them back.
-  bool _thoughtsAwayForArcs = false;
+  // Why the notes are put away; null while they are shown.
+  _NotesAwayCause? _notesAwayCause;
+  _NotesAwayCause? _notesAwayBeforeSculpt;
   bool _thoughtMotionEnabled = true;
   final OrbitThoughtSwim _thoughtSwim = OrbitThoughtSwim();
   late final AnimationController _thoughtReveal = AnimationController(
@@ -255,7 +256,7 @@ class _InnerCircleInteractiveSurfaceState
   }
 
   void _setThoughtsVisible(bool visible) {
-    _thoughtsAwayForArcs = false;
+    _notesAwayCause = null;
     if (_thoughtsVisible == visible) return;
     setState(() {
       _thoughtsVisible = visible;
@@ -288,8 +289,9 @@ class _InnerCircleInteractiveSurfaceState
     if (_thoughtPointers.length != 2 || start == null || start < 1) return;
     final points = _thoughtPointers.values.toList();
     final ratio = (points[0] - points[1]).distance / start;
-    if (ratio < 0.88) {
+    if (ratio < 0.88 && _notesAwayCause != _NotesAwayCause.pinch) {
       _setThoughtsVisible(false);
+      setState(() => _notesAwayCause = _NotesAwayCause.pinch);
     } else if (ratio > 1.12) {
       _setThoughtsVisible(true);
       widget.onThoughtsSpread?.call();
@@ -336,7 +338,9 @@ class _InnerCircleInteractiveSurfaceState
     // Open "+N" arcs likewise keep a first thought's notes off the arc faces
     // until the arcs close.
     if ((_editing || _overflowExpanded) && _notesOut) {
-      _thoughtsAwayForArcs = _thoughtsAwayForArcs || _overflowExpanded;
+      _notesAwayCause = _overflowExpanded
+          ? _NotesAwayCause.arcs
+          : _NotesAwayCause.sculpt;
       _thoughtsVisible = false;
       _thoughtReveal.value = 0;
     }
@@ -398,7 +402,9 @@ class _InnerCircleInteractiveSurfaceState
   }
 
   void _restoreThoughtsAfterArcs() {
-    if (_thoughtsAwayForArcs && !_overflowExpanded && !_editing) {
+    if (_notesAwayCause == _NotesAwayCause.arcs &&
+        !_overflowExpanded &&
+        !_editing) {
       _setThoughtsVisible(true);
     }
   }
@@ -406,7 +412,14 @@ class _InnerCircleInteractiveSurfaceState
   void _setEditing(bool value) {
     if (_editing == value) return;
     _editing = value;
-    if (!value) {
+    if (value) {
+      _notesAwayBeforeSculpt = _notesAwayCause;
+      _notesAwayCause = _NotesAwayCause.sculpt;
+    } else {
+      if (_notesAwayCause == _NotesAwayCause.sculpt) {
+        _notesAwayCause = _thoughtsVisible ? null : _notesAwayBeforeSculpt;
+      }
+      _notesAwayBeforeSculpt = null;
       _armed = null;
       _dimFlashTimer?.cancel();
       _dimFlash = false;
@@ -613,7 +626,7 @@ class _InnerCircleInteractiveSurfaceState
   void _onBadgeTap() {
     if (_notesOut) {
       _setThoughtsVisible(false);
-      _thoughtsAwayForArcs = true;
+      _notesAwayCause = _NotesAwayCause.arcs;
       return;
     }
     setState(() {
@@ -913,6 +926,9 @@ class _InnerCircleInteractiveSurfaceState
                                   nowProvider: widget.nowProvider,
                                   thoughtSwim: _thoughtSwim,
                                   thoughtVisibility: _thoughtReveal.value,
+                                  thoughtStarsShown:
+                                      !_editing &&
+                                      _notesAwayCause == _NotesAwayCause.pinch,
                                   // 205 item 4: centering spacer (see build()).
                                   topInset: centerTopInset,
                                   thoughtClock:
@@ -1314,10 +1330,9 @@ class _InnerCircleInteractiveSurfaceState
           ),
         ),
 
-      // Pill: a 52px collapsed circle (bottom-right) that expands to a
+      // Pill: the shared 44px control circle (bottom-right) that expands to a
       // full-width (left/right 16) >=48-high search bar. Bottom band clears any
-      // host chrome via bottomClearance (persistent nav). 212: bordered +
-      // shadowed like every chrome sibling, but NO BackdropFilter — a
+      // host chrome via bottomClearance (persistent nav). NO BackdropFilter — a
       // permanently-mounted blur over the continuously-animating rings would
       // re-sample per frame (INV-212-3, 202 perf class).
       // Nav-line seat: when the HOST owns the collapsed pill (findOpenSignal
@@ -1406,27 +1421,7 @@ class _InnerCircleInteractiveSurfaceState
                     key: const ValueKey('orbit-find-pill'),
                     behavior: HitTestBehavior.opaque,
                     onTap: _openFind,
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: colors.glassSurface,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: colors.glassBorder),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x59000000),
-                            blurRadius: 18,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.search,
-                        size: 24,
-                        color: colors.iconPrimary,
-                      ),
-                    ),
+                    child: const OrbitControlCircle(icon: Icons.search),
                   ),
                 ),
         ),
@@ -1557,3 +1552,5 @@ class _FindChip extends StatelessWidget {
     ),
   };
 }
+
+enum _NotesAwayCause { pinch, arcs, sculpt }

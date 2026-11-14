@@ -8,6 +8,9 @@ import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/application/received_sticker_saver.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:uuid/uuid.dart';
 
 import 'private_media_action_eligibility.dart';
@@ -376,13 +379,15 @@ class ReceivedMediaActionController {
     // Sync existence probe: this controller also runs inside widget-test
     // fake-async zones where awaited real dart:io never completes.
     bool Function(String resolvedPath) fileExists = _defaultFileExists,
+    ReceivedStickerSaver? receivedStickerSaver,
   }) : _loadParentMessage = loadParentMessage,
        _mediaAttachmentRepo = mediaAttachmentRepo,
        _egressService = egressService,
        _qualifier = qualifier,
        _requestIdFactory = requestIdFactory,
        _resolveStoredPath = resolveStoredPath,
-       _fileExists = fileExists;
+       _fileExists = fileExists,
+       _receivedStickerSaver = receivedStickerSaver;
 
   final DirectParentMessageLoader _loadParentMessage;
   final MediaAttachmentRepository _mediaAttachmentRepo;
@@ -391,6 +396,55 @@ class ReceivedMediaActionController {
   final String Function() _requestIdFactory;
   final String Function(String storedPath) _resolveStoredPath;
   final bool Function(String resolvedPath) _fileExists;
+  final ReceivedStickerSaver? _receivedStickerSaver;
+
+  /// Saves canonical received bytes, or explicitly edits an ordinary photo.
+  /// Presentation supplies identity, never a path or an eligibility assertion.
+  Future<CustomSticker?> saveReceivedSticker({
+    required DirectReceivedMediaActionIdentity identity,
+    required CustomStickerLibrary library,
+    required ReceivedStickerEditor editPhoto,
+  }) => (_receivedStickerSaver ?? ReceivedStickerSaver()).save(
+    attachmentId: identity.attachmentId,
+    library: library,
+    editPhoto: editPhoto,
+    loadCurrent: () => _loadCurrentStickerSource(identity),
+  );
+
+  /// Read-only visibility probe. A true result never authorizes a later save.
+  Future<bool> canSaveReceivedSticker({
+    required DirectReceivedMediaActionIdentity identity,
+    required CustomStickerLibrary library,
+  }) => (_receivedStickerSaver ?? ReceivedStickerSaver()).canSave(
+    attachmentId: identity.attachmentId,
+    library: library,
+    loadCurrent: () => _loadCurrentStickerSource(identity),
+  );
+
+  Future<MediaAttachment?> _loadCurrentStickerSource(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final decision = await qualifyCurrentDirectMediaRow(
+      identity: identity,
+      loadParentMessage: _loadParentMessage,
+      mediaAttachmentRepo: _mediaAttachmentRepo,
+      qualifier: _qualifier,
+      resolveStoredPath: _resolveStoredPath,
+      fileExists: _fileExists,
+    );
+    if (!decision.isQualified) return null;
+    // Parent policy may change during the qualifier's awaited file/policy
+    // work. It is the final authority read, including all unexpired privacy
+    // modes, not only an already terminal/expired item.
+    final parent = await _loadParentMessage(identity.messageId);
+    final eligibility = DirectPrivateMediaActionEligibility.evaluate(
+      parent: parent,
+      attachment: decision.current,
+      expectedMessageId: identity.messageId,
+      expectedAttachmentId: identity.attachmentId,
+    );
+    return eligibility.isOrdinary ? decision.current : null;
+  }
 
   /// Reloads and qualifies the CURRENT direct parent/attachment, then calls
   /// [ReceivedMediaEgressService.perform] exactly once with one current-row

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Top-left toggle between the default Inner-Circle view and the classic
@@ -24,7 +24,6 @@ class OrbitViewToggleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final readableColors = context.backgroundReadableColors;
     final isInnerCircle = viewMode == OrbitViewMode.innerCircle;
 
     // On the Inner-Circle view the toggle opens the all-chats list; on the
@@ -54,16 +53,7 @@ class OrbitViewToggleButton extends StatelessWidget {
           key: const ValueKey('orbit-view-toggle'),
           behavior: HitTestBehavior.opaque,
           onTap: onToggle,
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: readableColors.surfaceSubtle,
-              shape: BoxShape.circle,
-              border: Border.all(color: readableColors.border, width: 0.5),
-            ),
-            child: Icon(icon, size: 20, color: readableColors.textPrimary),
-          ),
+          child: OrbitControlCircle(icon: icon, iconSize: 20),
         ),
       ),
     );

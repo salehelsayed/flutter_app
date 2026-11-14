@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 129);
+      expect(currentIdentityDatabaseVersion, 132);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -114,12 +114,14 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 18]
+        productionCreateMigrations
+            .singleWhere((entry) => entry.version == 112)
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 18]
+        productionUpgradeMigrations
+            .singleWhere((entry) => entry.version == 112)
             .version,
         112,
       );
@@ -136,8 +138,10 @@ void main() {
         '104_group_exit_diagnostics',
       );
       expect(
-        productionUpgradeMigrations.last.name,
-        '129_post_media_caption',
+        productionUpgradeMigrations
+            .singleWhere((entry) => entry.version == 130)
+            .name,
+        '130_custom_stickers',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

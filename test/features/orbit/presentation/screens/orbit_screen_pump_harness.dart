@@ -30,6 +30,7 @@ Widget buildOrbitScreenHarness({
   P2PService? p2pService,
   bool hideShellNav = false,
   VoidCallback? onOpenCalls,
+  VoidCallback? onOpenSettings,
 }) {
   final headerVN = ValueNotifier<OrbitHeaderProjection>(header);
   final listVN = ValueNotifier<OrbitViewProjection>(list);
@@ -75,6 +76,7 @@ Widget buildOrbitScreenHarness({
       p2pService: p2pService,
       hideShellNav: hideShellNav,
       onOpenCalls: onOpenCalls,
+      onOpenSettings: onOpenSettings,
     ),
   );
 }

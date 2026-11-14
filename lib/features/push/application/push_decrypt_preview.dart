@@ -872,6 +872,7 @@ final class _ThoughtPushPlaintext {
     required this.text,
     required this.mediaKind,
     required this.mediaCount,
+    required this.expiresAt,
   });
 
   final String postId;
@@ -879,6 +880,7 @@ final class _ThoughtPushPlaintext {
   final String text;
   final String mediaKind;
   final int mediaCount;
+  final DateTime? expiresAt;
 
   static _ThoughtPushPlaintext? parse(String plaintext) {
     try {
@@ -900,6 +902,9 @@ final class _ThoughtPushPlaintext {
         text: snapshot['text']?.toString() ?? '',
         mediaKind: _trimToNull(snapshot['media_kind']?.toString()) ?? 'none',
         mediaCount: media is List ? media.length : 0,
+        expiresAt: DateTime.tryParse(
+          snapshot['expires_at']?.toString() ?? '',
+        )?.toUtc(),
       );
     } catch (_) {
       return null;
@@ -917,10 +922,14 @@ Future<BackgroundPushNotificationFallback> _resolveThoughtPreview(
   required DirectMessageNotificationContext? context,
   required Locale? locale,
 }) async {
+  final routeExpiresAt = DateTime.tryParse(
+    data['expires_at']?.toString() ?? '',
+  )?.toUtc();
   final genericFallback = BackgroundPushNotificationFallback(
     title: backgroundPushThoughtFallbackTitle,
     body: backgroundPushThoughtFallbackBody,
     payload: fallback.payload,
+    thoughtExpiresAt: routeExpiresAt,
   );
   final outerSender =
       _trimToNull(data['sender_id']?.toString()) ??
@@ -947,6 +956,7 @@ Future<BackgroundPushNotificationFallback> _resolveThoughtPreview(
     title: localizedThoughtNotificationTitle(senderName, locale: locale),
     body: backgroundPushThoughtTrustedFallbackBody,
     payload: fallback.payload,
+    thoughtExpiresAt: routeExpiresAt,
   );
   if (decryptOneToOne == null ||
       kem == null ||
@@ -1005,6 +1015,7 @@ Future<BackgroundPushNotificationFallback> _resolveThoughtPreview(
       locale: locale,
     ),
     payload: fallback.payload,
+    thoughtExpiresAt: thought.expiresAt ?? routeExpiresAt,
   );
 }
 

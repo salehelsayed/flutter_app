@@ -25,4 +25,6 @@
     <string name="call_screen_unmute">Unmute</string>
     <string name="call_screen_speaker">Speaker</string>
     <string name="call_screen_duration">Call duration %1$s</string>
+    <string name="call_pip_camera_on">Turn camera on</string>
+    <string name="call_pip_camera_off">Turn camera off</string>
 </resources>

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -10,8 +11,10 @@ import '../application/foreground_call_capability.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
+import 'call_video_presentation.dart';
 import 'foreground_call_back_guard.dart';
 import 'locked_call_projection.dart';
 import 'screens/active_call_screen.dart';
@@ -20,6 +23,7 @@ import 'screens/outgoing_call_screen.dart';
 import 'widgets/call_controls.dart';
 import 'widgets/call_audio_output_picker.dart';
 import 'widgets/call_return_bar.dart';
+import 'widgets/call_video_view_surface.dart';
 
 typedef ContactDisplayNameLoader =
     Future<String?> Function(String contactPeerId);
@@ -74,6 +78,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   String _contactDisplayName = _unknownContactName;
   bool _nameLoaded = false;
   int _capabilityGeneration = 0;
+  (CallId, int, int)? _mediaAnswerPending;
   int _nameGeneration = 0;
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
@@ -82,6 +87,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   bool _navigatorCanHandlePop = false;
   bool? _publishedOwnsBack;
   CallId? _minimizedCallId;
+  Offset? _pictureInPictureOffset;
   CallId? _pickerCallId;
   final _lockedProjection = LockedCallProjection();
   bool _lockedLight = false;
@@ -219,6 +225,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     void update() {
       _projection = projection;
       final session = projection?.session;
+      final pending = _mediaAnswerPending;
+      if (pending != null &&
+          (pending.$1 != session?.callId ||
+              pending.$2 != projection?.video?.generation ||
+              pending.$3 != _capabilityGeneration)) {
+        _mediaAnswerPending = null;
+      }
       final surfaceKind = _surfaceKind(session);
       final wasMinimized =
           _minimizedCallId != null && _minimizedCallId == session?.callId;
@@ -339,16 +352,55 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     final surfaceKind = _surfaceKind(session);
     final callId = session?.callId;
     final peerId = session?.contactPeerId;
+    final capability = widget.capability;
     final minimized =
         surfaceKind == _ForegroundCallSurface.active &&
         callId != null &&
         _minimizedCallId == callId;
 
     Widget? surface;
+    ForegroundCallVideoProjection? pictureInPictureVideo;
     if (projection != null &&
         surfaceKind != _ForegroundCallSurface.hidden &&
         callId != null &&
         peerId != null) {
+      final video = _visibleVideo(projection, capability);
+      pictureInPictureVideo = _pictureInPictureVideo(projection, capability);
+      final videoViews =
+          surfaceKind == _ForegroundCallSurface.active &&
+              session!.state != CallState.ending &&
+              video != null &&
+              video.presentation.acceptedMedia != null &&
+              video.presentation.agreedMedia == CallMediaKind.video
+          ? Stack(
+              key: const ValueKey('call-video-views'),
+              children: [
+                CallVideoViewSurface(
+                  projection: projection,
+                  slot: CallVideoRendererSlot.remote,
+                ),
+                PositionedDirectional(
+                  end: 8,
+                  bottom: 8,
+                  width: 112,
+                  child: CallVideoViewSurface(
+                    projection: projection,
+                    slot: CallVideoRendererSlot.local,
+                  ),
+                ),
+              ],
+            )
+          : null;
+      final capabilityGeneration = _capabilityGeneration;
+      final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
+          ? null
+          : (intent) => _runVideoIntent(
+              capability: capability!,
+              capabilityGeneration: capabilityGeneration,
+              callId: callId,
+              generation: video.generation,
+              intent: intent,
+            );
       surface = switch (surfaceKind) {
         _ForegroundCallSurface.incoming => IncomingCallScreen(
           contactPeerId: peerId,
@@ -357,7 +409,32 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               : _contactDisplayName,
           state: session!.state,
           onAnswer: () => _runAction(() => widget.capability?.answer(callId)),
+          onAcceptVideo: _isInitialVideoOffer(projection, capability)
+              ? () => unawaited(
+                  _answerInitialMedia(
+                    capability!,
+                    capabilityGeneration,
+                    callId,
+                    video!.generation,
+                    CallMediaKind.video,
+                  ),
+                )
+              : null,
+          onUseAudioOnly: _isInitialVideoOffer(projection, capability)
+              ? () => unawaited(
+                  _answerInitialMedia(
+                    capability!,
+                    capabilityGeneration,
+                    callId,
+                    video!.generation,
+                    CallMediaKind.audio,
+                  ),
+                )
+              : null,
+          mediaChoiceInFlight: _mediaAnswerPending != null,
           onDecline: () => _runAction(() => widget.capability?.decline(callId)),
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.outgoing => OutgoingCallScreen(
           contactPeerId: peerId,
@@ -366,6 +443,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               : _contactDisplayName,
           state: session!.state,
           onCancel: () => _runAction(() => widget.capability?.cancel(callId)),
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.active => ActiveCallScreen(
           contactPeerId: peerId,
@@ -375,7 +454,14 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           state: session!.state,
           connectedAt: session.connectedAt,
           now: widget.now ?? DateTime.now,
-          controls: _buildControls(callId, projection.audio),
+          controls: _buildControls(
+            callId,
+            projection.audio,
+            constrainLabels: video != null,
+          ),
+          videoViews: videoViews,
+          videoPresentation: video?.presentation,
+          onVideoIntent: onVideoIntent,
         ),
         _ForegroundCallSurface.terminal =>
           _terminalNoticeVisible
@@ -481,6 +567,14 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               ),
             ),
           ),
+        if (minimized && pictureInPictureVideo != null)
+          _buildPictureInPicture(
+            capability: capability!,
+            capabilityGeneration: _capabilityGeneration,
+            callId: callId,
+            video: pictureInPictureVideo,
+            keyboardInset: keyboardInset,
+          ),
         if (modal)
           Positioned.fill(
             key: ValueKey<CallId?>(callId),
@@ -521,6 +615,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                                 onPressed: () => setState(() {
                                   _pickerCallId = null;
                                   _minimizedCallId = callId;
+                                  _pictureInPictureOffset = null;
                                 }),
                                 icon: const Icon(Icons.keyboard_arrow_down),
                               ),
@@ -551,6 +646,143 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     );
   }
 
+  ForegroundCallVideoProjection? _pictureInPictureVideo(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    if (_surfaceKind(projection.session) != _ForegroundCallSurface.active ||
+        projection.session.state == CallState.ending) {
+      return null;
+    }
+    final video = _visibleVideo(projection, capability);
+    if (video == null ||
+        video.presentation.acceptedMedia == null ||
+        video.presentation.agreedMedia != CallMediaKind.video) {
+      return null;
+    }
+    return video;
+  }
+
+  bool _ownsPictureInPicture({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required int generation,
+  }) {
+    if (!mounted ||
+        !identical(capability, widget.capability) ||
+        capabilityGeneration != _capabilityGeneration ||
+        _minimizedCallId != callId) {
+      return false;
+    }
+    try {
+      final current = capability.current;
+      return current != null &&
+          current.session.callId == callId &&
+          _pictureInPictureVideo(current, capability)?.generation == generation;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Widget _buildPictureInPicture({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required ForegroundCallVideoProjection video,
+    required double keyboardInset,
+  }) {
+    bool isCurrent() => _ownsPictureInPicture(
+      capability: capability,
+      capabilityGeneration: capabilityGeneration,
+      callId: callId,
+      generation: video.generation,
+    );
+    void restore() {
+      if (!isCurrent()) return;
+      setState(() => _minimizedCallId = null);
+    }
+
+    return Positioned.fill(
+      child: SafeArea(
+        child: Padding(
+          // Keep the existing return bar and the keyboard unobstructed.
+          padding: EdgeInsets.only(top: 56, bottom: keyboardInset),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = (constraints.maxWidth - 24)
+                  .clamp(0.0, 180.0)
+                  .toDouble();
+              final height = (constraints.maxHeight - 24)
+                  .clamp(0.0, width * 9 / 16 + 48)
+                  .toDouble();
+              if (width < 96 || height < 48) return const SizedBox.shrink();
+              final maxX = constraints.maxWidth - width;
+              final maxY = constraints.maxHeight - height;
+              final requested =
+                  _pictureInPictureOffset ??
+                  Offset(
+                    Directionality.of(context) == TextDirection.rtl
+                        ? 12
+                        : maxX - 12,
+                    maxY - 12,
+                  );
+              final position = Offset(
+                requested.dx.clamp(0.0, maxX).toDouble(),
+                requested.dy.clamp(0.0, maxY).toDouble(),
+              );
+              return Stack(
+                children: [
+                  Positioned(
+                    left: position.dx,
+                    top: position.dy,
+                    width: width,
+                    height: height,
+                    child: GestureDetector(
+                      onPanUpdate: (details) {
+                        if (!isCurrent()) return;
+                        // A resize can clamp the visible tile before the next
+                        // gesture; apply its delta from that visible position.
+                        final stored = _pictureInPictureOffset ?? position;
+                        final previous = Offset(
+                          stored.dx.clamp(0.0, maxX).toDouble(),
+                          stored.dy.clamp(0.0, maxY).toDouble(),
+                        );
+                        setState(() {
+                          _pictureInPictureOffset = Offset(
+                            (previous.dx + details.delta.dx)
+                                .clamp(0.0, maxX)
+                                .toDouble(),
+                            (previous.dy + details.delta.dy)
+                                .clamp(0.0, maxY)
+                                .toDouble(),
+                          );
+                        });
+                      },
+                      child: _CallPictureInPictureTile(
+                        ownerIdentity: (
+                          callId.value,
+                          capabilityGeneration,
+                          video.generation,
+                        ),
+                        video: video,
+                        onReturn: restore,
+                        onEnd: () => _runAction(() {
+                          if (!isCurrent()) return null;
+                          return capability.end(callId);
+                        }),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   void _publishFrameworkHandlesBack(bool ownsBack) {
     if (widget.backGuard == null) return;
     if (_publishedOwnsBack == ownsBack) return;
@@ -570,13 +802,18 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     });
   }
 
-  CallControls _buildControls(CallId callId, CallAudioControlState audio) {
+  CallControls _buildControls(
+    CallId callId,
+    CallAudioControlState audio, {
+    bool constrainLabels = false,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     final speakerOn = audio.selectedRoute == CallAudioOutputRoute.speaker;
     final speakerAvailable =
         audio.active &&
         audio.supportedRoutes.contains(CallAudioOutputRoute.speaker);
     return CallControls(
+      constrainLabels: constrainLabels,
       isMuted: audio.muted,
       isMuteAvailable: audio.active,
       isSpeakerOn: speakerOn,
@@ -602,6 +839,115 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           : null,
       onEnd: () => _runAction(() => widget.capability?.end(callId)),
     );
+  }
+
+  ForegroundCallVideoProjection? _visibleVideo(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    final session = projection.session;
+    final video = projection.video;
+    if (capability is! ForegroundCallVideoCapability ||
+        session.isIdle ||
+        session.isTerminal ||
+        session.state == CallState.incomingValidating ||
+        video == null ||
+        !video.presentation.isVisible) {
+      return null;
+    }
+    return video;
+  }
+
+  bool _isInitialVideoOffer(
+    ForegroundCallProjection projection,
+    ForegroundCallCapability? capability,
+  ) {
+    final video = _visibleVideo(projection, capability);
+    return capability is ForegroundCallMediaAnswerCapability &&
+        projection.session.direction == CallDirection.incoming &&
+        projection.session.incomingValidated &&
+        projection.session.state == CallState.ringing &&
+        video != null &&
+        video.presentation.requestedMedia == CallMediaKind.video &&
+        video.presentation.acceptedMedia == null;
+  }
+
+  Future<void> _answerInitialMedia(
+    ForegroundCallCapability capability,
+    int capabilityGeneration,
+    CallId callId,
+    int generation,
+    CallMediaKind acceptedMedia,
+  ) async {
+    if (!mounted ||
+        !identical(capability, widget.capability) ||
+        capabilityGeneration != _capabilityGeneration ||
+        _mediaAnswerPending != null) {
+      return;
+    }
+    ForegroundCallProjection? current;
+    try {
+      current = capability.current;
+    } catch (_) {
+      return;
+    }
+    if (current == null ||
+        current.session.callId != callId ||
+        current.video?.generation != generation ||
+        !_isInitialVideoOffer(current, capability)) {
+      return;
+    }
+    final pending = (callId, generation, capabilityGeneration);
+    setState(() => _mediaAnswerPending = pending);
+    try {
+      await _handleActionResult(
+        () =>
+            (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
+              callId,
+              generation: generation,
+              acceptedMedia: acceptedMedia,
+            ),
+      );
+    } finally {
+      if (mounted && _mediaAnswerPending == pending) {
+        setState(() => _mediaAnswerPending = null);
+      }
+    }
+  }
+
+  void _runVideoIntent({
+    required ForegroundCallCapability capability,
+    required int capabilityGeneration,
+    required CallId callId,
+    required int generation,
+    required CallVideoIntent intent,
+  }) {
+    _runAction(() {
+      if (!mounted ||
+          !identical(capability, widget.capability) ||
+          capabilityGeneration != _capabilityGeneration ||
+          _minimizedCallId == callId ||
+          _pickerCallId == callId ||
+          capability is! ForegroundCallVideoCapability) {
+        return null;
+      }
+      // Re-read the owner immediately before dispatch, including updates that
+      // have not reached the presentation stream yet. The root revalidates
+      // these tokens atomically before performing any media effect.
+      final current = capability.current;
+      if (current == null || current.session.callId != callId) return null;
+      final video = _visibleVideo(current, capability);
+      if (video == null || video.generation != generation) return null;
+      final available = video.presentation.intentFor(intent.action);
+      if (available == null || available.upgradeId != intent.upgradeId) {
+        return null;
+      }
+      return (capability as ForegroundCallVideoCapability).applyVideoIntent(
+        callId,
+        generation: generation,
+        intent: intent,
+      );
+    });
   }
 
   void _runAction(
@@ -676,6 +1022,125 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     _terminalNoticeTimer = null;
     if (!mounted || !_terminalNoticeVisible) return;
     setState(() => _terminalNoticeVisible = false);
+  }
+}
+
+/// Displays owner-issued metadata in the minimized call surface.
+class _CallPictureInPictureTile extends StatelessWidget {
+  const _CallPictureInPictureTile({
+    required this.ownerIdentity,
+    required this.video,
+    required this.onReturn,
+    required this.onEnd,
+  });
+
+  final Object ownerIdentity;
+  final ForegroundCallVideoProjection video;
+  final VoidCallback onReturn;
+  final VoidCallback onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final presentation = video.presentation;
+    final view = video.remoteView;
+    final label = presentation.isReconnecting
+        ? l10n.call_video_status_reconnecting
+        : switch (presentation.remoteCamera) {
+            CallCameraState.on => l10n.call_video_remote_camera_on,
+            CallCameraState.off => l10n.call_video_remote_camera_off,
+            CallCameraState.paused => l10n.call_video_remote_camera_paused,
+          };
+    Widget frame = Icon(
+      presentation.remoteCamera == CallCameraState.off
+          ? Icons.videocam_off_outlined
+          : Icons.videocam_outlined,
+      color: Colors.white,
+    );
+    if (presentation.isConnected &&
+        !presentation.isReconnecting &&
+        presentation.remoteCamera == CallCameraState.on &&
+        view != null &&
+        view.textureId >= 0 &&
+        view.width > 0 &&
+        view.height > 0) {
+      frame = FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: view.width.toDouble(),
+          height: view.height.toDouble(),
+          child: Texture(
+            key: ValueKey((
+              ownerIdentity,
+              view.textureId,
+              view.width,
+              view.height,
+            )),
+            textureId: view.textureId,
+          ),
+        ),
+      );
+    }
+    return Material(
+      key: const ValueKey('call-pip-tile'),
+      color: colors.surfaceRaised,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Expanded(
+            child: Semantics(
+              key: const ValueKey('call-pip-view'),
+              container: true,
+              button: true,
+              label: '${l10n.call_return}, $label',
+              onTap: onReturn,
+              excludeSemantics: true,
+              child: InkWell(
+                onTap: onReturn,
+                child: SizedBox.expand(
+                  child: ColoredBox(color: Colors.black, child: frame),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 48,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  key: const ValueKey('call-pip-restore'),
+                  tooltip: l10n.call_return,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onReturn,
+                  icon: Icon(Icons.open_in_full, color: colors.textPrimary),
+                ),
+                IconButton(
+                  key: const ValueKey('call-pip-end'),
+                  tooltip: l10n.call_end,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onEnd,
+                  icon: Icon(
+                    Icons.call_end_rounded,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

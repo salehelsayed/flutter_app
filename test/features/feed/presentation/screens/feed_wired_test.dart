@@ -30,6 +30,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_card_system.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -42,6 +43,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -176,6 +178,7 @@ void main() {
   /// [contactRequestListener] and [chatMessageListener] can be overridden
   /// for tests that need controllable streams.
   Widget buildFeedWired({
+    Locale locale = const Locale('en'),
     FakeIdentityRepository? identityRepository,
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
@@ -222,7 +225,7 @@ void main() {
         );
 
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
@@ -3045,6 +3048,115 @@ void main() {
       expect(find.byType(FeedScreen), findsOneWidget);
     });
   });
+  const readinessLabels = {
+    'en': 'Waiting for secure connection',
+    'ar': 'في انتظار اتصال آمن',
+    'de': 'Warten auf eine sichere Verbindung',
+  };
+  for (final entry in readinessLabels.entries) {
+    testWidgets(
+      'BL11 retained Feed and Orbit update key readiness in ${entry.key}',
+      (tester) async {
+        setPhoneViewport(tester);
+        identityRepo.seed(testIdentity);
+        final keyless = testContact.copyWith(mlKemPublicKey: '');
+        var other = testContact.copyWith(
+          peerId: 'bl11-unrelated-peer',
+          username: 'Cara',
+          mlKemPublicKey: 'other-key',
+        );
+        contactRepo.seed([keyless, other]);
+        final listener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        await tester.pumpWidget(
+          buildFeedWired(
+            chatMessageListener: listener,
+            locale: Locale(entry.key),
+          ),
+        );
+        await pumpFeedFrames(tester, count: 10);
+        final feedState = tester.state(find.byType(FeedWired));
+        final card = find.byWidgetPredicate(
+          (widget) =>
+              widget is LetterCardSystem &&
+              widget.letter.contactPeerId == keyless.peerId,
+        );
+        expect(card, findsOneWidget);
+        expect(
+          find.descendant(of: card, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: card, matching: find.byIcon(Icons.verified)),
+          findsNothing,
+        );
+
+        other = other.copyWith(mlKemPublicKey: 'other-key-2');
+        contactRepo.seed([keyless, other]);
+        listener.emitContactUpdate(other);
+        await pumpFeedFrames(tester);
+        expect(tester.state(find.byType(FeedWired)), same(feedState));
+        expect(
+          find.descendant(of: card, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+
+        appShellController.switchTo('orbit');
+        await pumpFeedFrames(tester, count: 10);
+        final orbitState = tester.state(find.byType(OrbitWired));
+        await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+        await pumpFeedFrames(tester, count: 4);
+        final row = find.byWidgetPredicate(
+          (widget) =>
+              widget is FriendRow && widget.friend.peerId == keyless.peerId,
+        );
+        expect(row, findsOneWidget);
+        expect(
+          find.descendant(of: row, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+
+        other = other.copyWith(mlKemPublicKey: 'other-key-3');
+        contactRepo.seed([keyless, other]);
+        listener.emitContactUpdate(other);
+        await pumpFeedFrames(tester);
+        expect(
+          find.descendant(of: row, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+
+        final ready = keyless.copyWith(mlKemPublicKey: 'reciprocal-key');
+        contactRepo.seed([ready, other]);
+        listener.emitContactUpdate(ready);
+        await pumpFeedFrames(tester);
+        expect(tester.state(find.byType(OrbitWired)), same(orbitState));
+        expect(
+          find.descendant(of: row, matching: find.text(entry.value)),
+          findsNothing,
+        );
+
+        appShellController.switchTo('feed');
+        await pumpFeedFrames(tester, count: 10);
+        expect(tester.state(find.byType(FeedWired)), same(feedState));
+        expect(
+          find.descendant(of: card, matching: find.text(entry.value)),
+          findsNothing,
+        );
+        final l10n = AppLocalizations.of(tester.element(card))!;
+        expect(
+          find.descendant(of: card, matching: find.text(l10n.feed_connected)),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: card, matching: find.byIcon(Icons.verified)),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
 }
 
 /// Fake [ChatMessageListener] with controllable streams for testing.

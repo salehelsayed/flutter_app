@@ -18,6 +18,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
 import 'package:flutter_app/app/bootstrap/canonical_runtime_shutdown_sequence.dart';
+import 'package:flutter_app/app/bootstrap/custom_sticker_library_composition.dart';
+import 'package:flutter_app/features/stickers/application/account_custom_sticker_library.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
@@ -60,6 +62,7 @@ import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/local_ai_preview_db_helpers.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -214,7 +217,8 @@ import 'package:flutter_app/features/conversation/application/direct_private_med
 import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
-    show sendDeliveryReceipt;
+    show DeliveryReceiptOutbox;
+import 'package:flutter_app/features/conversation/data/repositories/delivery_receipt_outbox_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -732,8 +736,10 @@ final class ProductionApplicationBootstrap
     // leave through Go before either is shut down.
     void Function()? disposeThoughtExpiry;
     TranslatePreviewPersistence? accountPreviewPersistence;
+    Future<void> Function()? retireCustomStickerLibrary;
     final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
-      shutdownRuntime: () {
+      shutdownRuntime: () async {
+        await retireCustomStickerLibrary?.call();
         if (identical(translatePreviewPersistence, accountPreviewPersistence)) {
           translatePreviewPersistence = null;
         }
@@ -1038,6 +1044,18 @@ final class ProductionApplicationBootstrap
     // Both group backfills and deferred Firebase/push eligibility await this
     // retained future below.
     final groupReactionProjectionIdentityReady = repository.loadIdentity();
+    final customStickerLibrary = AccountCustomStickerLibrary(
+      createLibrary: (isCurrent) => createBoundCustomStickerLibrary(
+        db: db,
+        documentsDirectory: appDocDir,
+        temporaryDirectory: getTemporaryDirectory,
+        readAuthority: accountMigrationAuthorityRepository.loadAuthority,
+        readAccountBinding:
+            canonicalRuntimeBindingCoordinator?.readCurrentAccountBinding,
+        isCurrent: isCurrent,
+      ),
+    );
+    retireCustomStickerLibrary = customStickerLibrary.retire;
     Future<bool> allowsAccountRuntimeNetworkSideEffects(
       String operation,
     ) async {
@@ -1563,6 +1581,10 @@ final class ProductionApplicationBootstrap
             beforeTimestamp: beforeTimestamp,
           ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+      dbIsMessageAutoRetryTerminal: (id) =>
+          dbIsMessageAutoRetryTerminal(db, id),
+      dbSetMessageAutoRetryTerminalReason: (expected, reason) =>
+          dbSetMessageAutoRetryTerminalReason(db, expected.toMap(), reason),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
       dbLoadInboxCustodyOutgoingMessages:
@@ -2269,6 +2291,14 @@ final class ProductionApplicationBootstrap
 
     final postRepository = PostRepositoryImpl(
       dbLoadThoughtViews: (postId) => dbLoadThoughtViews(db, postId),
+      dbCountOwnThoughtViews: ({required authorPeerId, required postIds}) =>
+          dbCountOwnThoughtViews(
+            db,
+            authorPeerId: authorPeerId,
+            postIds: postIds,
+          ),
+      dbLoadOwnThoughtViews: ({required authorPeerId, required postId}) =>
+          dbLoadOwnThoughtViews(db, authorPeerId: authorPeerId, postId: postId),
       dbQueueThoughtView:
           ({
             required receipt,
@@ -2301,6 +2331,8 @@ final class ProductionApplicationBootstrap
       dbLoadExpiredOwnPosts: (nowIso, {limit, offset = 0}) =>
           dbLoadExpiredOwnPosts(db, nowIso, limit: limit, offset: offset),
       dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
+      dbRetireReplacedThought: (postId, replacedAt) =>
+          dbRetireReplacedThought(db, postId, replacedAt),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),
       dbLoadRecipientDeliveries: (postId) =>
@@ -5910,7 +5942,11 @@ final class ProductionApplicationBootstrap
         availableBytesProvider: () =>
             diskSpaceChannel.getAvailableBytes(appDocDir.path),
       ),
-      bundleSource: accountMigrationBundleSource.call,
+      bundleSource: (output) async {
+        // The transfer runtime has persisted the export pause before this call.
+        await customStickerLibrary.drainForExport();
+        return accountMigrationBundleSource.call(output);
+      },
       streamCrypto: accountMigrationStreamCrypto,
       bundleReceiver: AccountMigrationProductionBundleReceiver(
         streamCrypto: accountMigrationStreamCrypto,
@@ -5988,13 +6024,16 @@ final class ProductionApplicationBootstrap
     // message sender (live send first, inbox fallback inside the use case).
     // F7: hoisted above the P2PServiceImpl construction so the deletion replay
     // callback below can reference it.
+    final deliveryReceiptOutbox = DeliveryReceiptOutbox(
+      repository: SqlDeliveryReceiptOutboxRepository(db),
+      p2pService: () => p2pService,
+    );
     Future<void> sendDeliveryReceiptForPeer({
       required String contactPeerId,
       required List<String> messageIds,
       Map<String, String>? mutationEventIds,
     }) {
-      return sendDeliveryReceipt(
-        p2pService: p2pService,
+      return deliveryReceiptOutbox.send(
         targetPeerId: contactPeerId,
         messageIds: messageIds,
         mutationEventIds: mutationEventIds,
@@ -6920,9 +6959,10 @@ final class ProductionApplicationBootstrap
     // Plan 375: persisted-token restore and every relay-health transition
     // route through this one late-installed retry owner; afterward no raw
     // bridge registration path remains in the service.
+    // Automatic recovery must not repeat a denied permission prompt.
     if (pushRegistrationCoordinator != null) {
       p2pService.installPushRegistrationRetryNow(
-        pushRegistrationCoordinator.retryNow,
+        pushRegistrationCoordinator.refreshOnResume,
       );
     }
     // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the
@@ -9318,6 +9358,8 @@ final class ProductionApplicationBootstrap
     }
 
     final pendingMessageRetrier = PendingMessageRetrier(
+      contactKeyUpdatedSignal: contactRequestListener.contactKeyUpdatedStream
+          .map<void>((_) {}),
       retryFailedMessagesOverride: () => retryFailedMessages(
         directEventFanout: resolveDirectEventFanout(),
         messageRepo: messageRepository,
@@ -9544,6 +9586,7 @@ final class ProductionApplicationBootstrap
       // reconnecting clients do not stampede the relay in lockstep.
       jitterRandom: Random(),
       drainDirectInboxCustodyOutboxFn: drainDirectInboxCustodyFamilies,
+      drainDeliveryReceiptOutboxFn: deliveryReceiptOutbox.drain,
       drainNotificationCompletedOutcomesFn: drainNotificationCompletedOutcomes,
       verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_inbox_custody_verify',
@@ -9643,10 +9686,19 @@ final class ProductionApplicationBootstrap
       ),
       loadNextExpiry: () => dbLoadNextPostExpiry(db),
       sweep: () async {
+        // Expired Thoughts kept for the clock grace are already hidden;
+        // retire their cards now instead of at the later delete.
+        final kept = <String>[];
         await sweepExpiredPosts(
           postRepo: postRepository,
           mediaFileManager: mediaFileManager,
+          onExpiredKept: kept.add,
         );
+        for (final postId in kept) {
+          await notificationService.cancelConversationNotification(
+            NotificationRouteTarget.post(postId).toPayload(),
+          );
+        }
       },
     );
     final postExpiryLifecycle = PostExpiryLifecycleBinding(postExpiryScheduler);
@@ -9680,6 +9732,8 @@ final class ProductionApplicationBootstrap
           accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     );
     final pendingPostDeliveryRetrier = PendingPostDeliveryRetrier(
+      contactKeyUpdatedSignal: contactRequestListener.contactKeyUpdatedStream
+          .map<void>((_) {}),
       p2pService: p2pService,
       postRepo: postRepository,
       contactRepo: contactRepository,
@@ -9708,6 +9762,7 @@ final class ProductionApplicationBootstrap
       // backfill for contacts whose ML-KEM exchange already completed.
       resolveWakeToken: wakeTokenResolver,
       shouldMarkAsNewRequest: contactRepairEligible,
+      readConsent: contactRepairRepository.readConsent,
       beforeRetry: () async {
         final contacts = await contactRepository.getActiveContacts();
         await issueWakeTokensForContacts(
@@ -10288,6 +10343,8 @@ final class ProductionApplicationBootstrap
       );
 
       return MyApp(
+        customStickerLibrary: customStickerLibrary,
+        onCustomStickerAccountActivated: customStickerLibrary.activate,
         thoughtNotificationsStore: thoughtNotificationsStore,
         repository: repository,
         updateCheckController: debugE2EComposition?.updateCheckController,
@@ -10361,6 +10418,7 @@ final class ProductionApplicationBootstrap
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
         drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
+        drainDeliveryReceiptOutbox: deliveryReceiptOutbox.drain,
         drainNotificationCompletedOutcomes: drainNotificationCompletedOutcomes,
         // 361: blob-free fanout authoring plus the restricted linked runtime
         // seams. The resolver builds the authoring owner at route-push time so
@@ -10783,6 +10841,9 @@ final class ProductionApplicationBootstrap
                   'receive an account. Use a phone that is not linked.',
             );
           }
+          // Retire before incoming files can replace account-owned content.
+          // Only committed receiver activation may open the next generation.
+          await customStickerLibrary.retire();
           return accountMigrationTransferRuntime.startNewPhoneReceiver(output);
         },
         accountMigrationStopReceiver:
@@ -10804,6 +10865,7 @@ final class ProductionApplicationBootstrap
         // the canonical lease until normal teardown, so a background engine
         // cannot reopen storage between deletion and secure-key cleanup.
         eraseLocalAccountDatabase: () async {
+          await customStickerLibrary.retire();
           disposeThoughtExpiry?.call();
           // Keep the database key and retired authority until every owned
           // media/cache/notification-state removal has succeeded, including readback.
@@ -10818,6 +10880,7 @@ final class ProductionApplicationBootstrap
             );
             await eraseAccountNotificationState(directory: shared);
           }
+          await translationPreferences.forgetChats();
           await eraseEncryptedDatabase(db);
         },
         accountMigrationRecoverExportPause: () async {

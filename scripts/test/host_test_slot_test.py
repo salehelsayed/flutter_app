@@ -1,4 +1,4 @@
-"""Host-only contracts for the two-slot host-test lease. No device or service is contacted."""
+"""Host-only contracts for the four-slot host-test lease. No device or service is contacted."""
 import json
 import os
 from pathlib import Path
@@ -59,11 +59,11 @@ class HostTestSlotTest(unittest.TestCase):
         kwargs.setdefault('wait_seconds', 0)
         return preflight.host_test_slot(self.dir, **kwargs)
 
-    def test_two_slots_then_busy(self):
-        with self.slot(), self.slot():
-            with self.assertRaisesRegex(preflight.HostSlotBusy, 'both host-test slots busy'):
+    def test_four_slots_then_busy(self):
+        with self.slot(), self.slot(), self.slot(), self.slot():
+            with self.assertRaisesRegex(preflight.HostSlotBusy, 'all host-test slots busy'):
                 with self.slot():
-                    self.fail('third holder admitted')
+                    self.fail('fifth holder admitted')
         with self.slot():
             pass
 

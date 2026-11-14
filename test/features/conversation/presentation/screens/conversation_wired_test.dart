@@ -2075,6 +2075,7 @@ void main() {
 
   Future<void> pumpScreen(
     WidgetTester tester, {
+    ContactModel? contact,
     required FakeIdentityRepository identityRepo,
     required MessageRepository messageRepo,
     required ChatMessageListener chatListener,
@@ -2136,7 +2137,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         theme: themeOverride,
         home: ConversationWired(
-          contact: makeContact(),
+          contact: contact ?? makeContact(),
           identityRepo: identityRepo,
           messageRepo: messageRepo,
           chatMessageListener: chatListener,
@@ -2203,6 +2204,160 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('BL11 requester key readiness', () {
+    const labels = {
+      'en': 'Waiting for secure connection',
+      'ar': 'في انتظار اتصال آمن',
+      'de': 'Warten auf eine sichere Verbindung',
+    };
+    for (final entry in labels.entries) {
+      for (final hasMessage in [false, true]) {
+        testWidgets(
+          'origin marker is a local save (${hasMessage ? "compact" : "empty"}) in ${entry.key}',
+          (tester) async {
+            final messages = FakeMessageRepository();
+            if (hasMessage) {
+              await messages.saveMessage(
+                ConversationMessage(
+                  id: 'bl11-existing-message',
+                  contactPeerId: makeContact().peerId,
+                  text: 'An existing message',
+                  senderPeerId: makeIdentity().peerId,
+                  timestamp: '2026-11-12T10:00:00Z',
+                  isIncoming: false,
+                  status: 'sent',
+                  createdAt: '2026-11-12T10:00:00Z',
+                ),
+              );
+            }
+            final listener = _CallContactUpdateListener(
+              messageRepo: messages,
+              contactRepo: FakeContactRepository(),
+            );
+            addTearDown(listener.dispose);
+            await pumpScreen(
+              tester,
+              identityRepo: FakeIdentityRepository(makeIdentity()),
+              messageRepo: messages,
+              chatListener: listener,
+              sendFn: _instantSuccessSendFn,
+              locale: Locale(entry.key),
+            );
+            final state = tester.state(find.byType(ConversationWired));
+            final l10n = AppLocalizations.of(
+              tester.element(find.byType(ConversationWired)),
+            )!;
+            expect(find.text(l10n.connected_title), findsNothing);
+            final saved = find.text(l10n.qr_added_to_circle);
+            expect(saved, findsOneWidget);
+            final style = tester.widget<Text>(saved).style!;
+            expect(
+              style.color,
+              tester.element(saved).backgroundReadableColors.textMuted,
+            );
+            expect(style.shadows, anyOf(isNull, isEmpty));
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+
+            listener.updates.add(makeContact().copyWith(mlKemPublicKey: 'key'));
+            await tester.pump();
+            expect(tester.state(find.byType(ConversationWired)), same(state));
+            expect(find.text(l10n.qr_added_to_circle), findsNothing);
+            expect(find.text(l10n.connected_title), findsOneWidget);
+            if (hasMessage) {
+              expect(find.text('An existing message'), findsOneWidget);
+            }
+            await tester.pumpWidget(const SizedBox.shrink());
+          },
+        );
+      }
+
+      testWidgets('chat header updates without reopening in ${entry.key}', (
+        tester,
+      ) async {
+        final messages = FakeMessageRepository();
+        final listener = _CallContactUpdateListener(
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(listener.dispose);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+          locale: Locale(entry.key),
+        );
+        final state = tester.state(find.byType(ConversationWired));
+        final header = find.byType(ConversationHeader);
+        expect(
+          find.descendant(of: header, matching: find.text(entry.value)),
+          findsOneWidget,
+        );
+
+        listener.updates.add(
+          makeContact().copyWith(
+            peerId: 'unrelated-peer',
+            mlKemPublicKey: 'key',
+          ),
+        );
+        await tester.pump();
+        expect(find.text(entry.value), findsOneWidget);
+
+        listener.updates.add(makeContact().copyWith(mlKemPublicKey: 'key'));
+        await tester.pump();
+        expect(tester.state(find.byType(ConversationWired)), same(state));
+        expect(find.text(entry.value), findsNothing);
+
+        for (final key in ['', '  \n ']) {
+          listener.updates.add(makeContact().copyWith(mlKemPublicKey: key));
+          await tester.pump();
+          expect(find.text(entry.value), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+          locale: Locale(entry.key),
+        );
+        expect(find.text(entry.value), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+
+    testWidgets('ready and blocked chat headers do not claim to be waiting', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final listener = _CallContactUpdateListener(
+        messageRepo: messages,
+        contactRepo: FakeContactRepository(),
+      );
+      addTearDown(listener.dispose);
+      for (final contact in [
+        makeContact().copyWith(mlKemPublicKey: 'key'),
+        makeContact().copyWith(isBlocked: true),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpScreen(
+          tester,
+          contact: contact,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: _instantSuccessSendFn,
+        );
+        expect(find.text(labels['en']!), findsNothing);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  });
 
   group('405 terminal call rows', () {
     testWidgets('TC-405-30 a missed call from the call source renders in the '
@@ -14269,7 +14424,10 @@ void main() {
 
       expect(find.text('Delete for me only'), findsNothing);
       expect(messageRepo.store.containsKey('delete-for-me-row'), isFalse);
-      expect(find.text('Connected!'), findsWidgets);
+      // The shared contact fixture has no ML-KEM key. Once the last row is
+      // deleted, its approved empty-state marker stays neutral until ready.
+      expect(find.text('Contact saved'), findsWidgets);
+      expect(find.text('Connected!'), findsNothing);
     });
 
     testWidgets('canceling the delete sheet leaves the message unchanged', (
@@ -18778,6 +18936,100 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
     });
 
+    for (final locale in const [Locale('en'), Locale('ar'), Locale('de')]) {
+      testWidgets(
+        'block confirmation localizes body and actions in ${locale.languageCode}',
+        (tester) async {
+          final expectedBody = switch (locale.languageCode) {
+            'ar' => 'لن يتمكن من إرسال رسائل إليك. يمكنك إلغاء الحظر لاحقًا.',
+            'de' =>
+              'Diese Person kann dir dann keine Nachrichten mehr senden. '
+                  'Du kannst sie später wieder entsperren.',
+            _ =>
+              'They won\'t be able to send you messages. You can unblock '
+                  'them later.',
+          };
+          final identityRepo = FakeIdentityRepository(makeIdentity());
+          final messageRepo = FakeMessageRepository();
+          final contactRepo = FakeContactRepository();
+          final chatListener = ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+
+          await pumpScreen(
+            tester,
+            identityRepo: identityRepo,
+            messageRepo: messageRepo,
+            chatListener: chatListener,
+            sendFn: _instantSuccessSendFn,
+            contactRepo: contactRepo,
+            locale: locale,
+          );
+          await tester.pump(const Duration(milliseconds: 400));
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(ConversationWired)),
+          )!;
+
+          await tester.tap(find.byIcon(Icons.more_vert));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.tap(
+            find.text(l10n.conversation_block_contact(makeContact().username)),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+
+          final description = find.text(expectedBody);
+          expect(description, findsOneWidget);
+          expect(
+            Directionality.of(tester.element(description)),
+            locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          final dialog = find
+              .ancestor(of: description, matching: find.byType(Material))
+              .first;
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(
+                l10n.conversation_block(makeContact().username),
+              ),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: dialog,
+              matching: find.text(l10n.orbit_block_action),
+            ),
+            findsOneWidget,
+          );
+          if (locale.languageCode != 'en') {
+            expect(
+              find.text(
+                'They won\'t be able to send you messages. You can unblock '
+                'them later.',
+              ),
+              findsNothing,
+            );
+            expect(
+              find.descendant(of: dialog, matching: find.text('Block')),
+              findsNothing,
+            );
+          }
+
+          await tester.tap(
+            find.descendant(of: dialog, matching: find.text(l10n.btn_cancel)),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(description, findsNothing);
+        },
+      );
+    }
+
     testWidgets(
       'Signal delete sheet uses warm roles and cancel leaves message unchanged',
       (tester) async {
@@ -19841,6 +20093,7 @@ void main() {
     late FakeMessageRepository repo;
     late FakeMediaPicker picker;
     late int sends;
+    late List<PrivateMediaPolicy> sentPolicies;
 
     setUp(() {
       pickedDir = Directory.systemTemp.createTempSync('composer_draft_1to1_');
@@ -19848,6 +20101,7 @@ void main() {
       repo = FakeMessageRepository();
       picker = FakeMediaPicker();
       sends = 0;
+      sentPolicies = <PrivateMediaPolicy>[];
     });
 
     tearDown(() {
@@ -19917,6 +20171,9 @@ void main() {
             directEventFanout,
           }) async {
             sends++;
+            sentPolicies.add(
+              privateMediaPolicy ?? const PrivateMediaPolicy.ordinary(),
+            );
             return _instantSuccessSendFn(
               p2pService: p2pService,
               messageRepo: messageRepo,
@@ -20024,6 +20281,168 @@ void main() {
       expect(stagedPaths(tester), [photo.path]);
       await leaveChat(tester);
     });
+
+    Future<void> choosePrivacyMode(
+      WidgetTester tester,
+      PrivateMediaPolicy policy,
+    ) async {
+      final selector = find.byKey(const ValueKey('private-media-selector'));
+      expect(selector, findsOneWidget);
+      await tester.tap(selector);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final suffix = switch (policy.mode) {
+        PrivateMediaMode.ordinary => 'ordinary',
+        PrivateMediaMode.protected => 'protected',
+        PrivateMediaMode.viewOnce => 'view-once',
+        PrivateMediaMode.disappearing => 'expiry',
+        PrivateMediaMode.unsupported => throw StateError('unsupported fixture'),
+      };
+      final scrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      final option = find.byKey(ValueKey('private-media-option-$suffix'));
+      await tester.scrollUntilVisible(option, 200, scrollable: scrollable);
+      expect(option.hitTestable(), findsOneWidget);
+      await tester.tap(option);
+      await tester.pump();
+      final confirm = find.byKey(const ValueKey('private-media-use-mode'));
+      await tester.scrollUntilVisible(confirm, 200, scrollable: scrollable);
+      expect(confirm.hitTestable(), findsOneWidget);
+      await tester.tap(confirm);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    GestureDetector sendButton(WidgetTester tester) =>
+        tester.widget<GestureDetector>(
+          find
+              .ancestor(
+                of: find.byIcon(Icons.arrow_upward_rounded),
+                matching: find.byType(GestureDetector),
+              )
+              .first,
+        );
+
+    for (final policy in <PrivateMediaPolicy>[
+      const PrivateMediaPolicy.protected(),
+      const PrivateMediaPolicy.viewOnce(),
+      PrivateMediaPolicy.disappearing(86400),
+    ]) {
+      for (final captionFirst in [false, true]) {
+        testWidgets(
+          'BL-22 ${policy.mode.wireValue} ${captionFirst ? 'caption then mode' : 'mode then caption'} retains private intent',
+          (tester) async {
+            installPrivateMediaProtectionEventChannelStub(tester);
+            addTearDown(() => leaveChat(tester));
+            final photo = pickedPhoto();
+            await openChat(tester);
+            await attachFromLibrary(tester, photo);
+            if (captionFirst) {
+              await tester.enterText(find.byType(TextField), 'Privacy caption');
+              await tester.pump();
+            }
+            await choosePrivacyMode(tester, policy);
+            expect(
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .privateMediaPolicy,
+              policy,
+            );
+
+            if (!captionFirst) {
+              await tester.enterText(find.byType(TextField), 'Privacy caption');
+              await tester.pump();
+            }
+            final policyAfterCaption = tester
+                .widget<ComposeArea>(find.byType(ComposeArea))
+                .privateMediaPolicy;
+            await tester.tap(
+              find.byIcon(Icons.arrow_upward_rounded),
+              warnIfMissed: false,
+            );
+            const hint = 'Remove the caption to keep this private.';
+            for (
+              var attempt = 0;
+              attempt < 100 && sends == 0 && find.text(hint).evaluate().isEmpty;
+              attempt++
+            ) {
+              await tester.runAsync(
+                () => Future<void>.delayed(const Duration(milliseconds: 10)),
+              );
+              await tester.pump(const Duration(milliseconds: 50));
+            }
+
+            expect(
+              sentPolicies,
+              isEmpty,
+              reason:
+                  'Typing a caption must not authorize an ordinary send after '
+                  '${policy.mode.wireValue} was selected; '
+                  'composer became ${policyAfterCaption.mode.wireValue}.',
+            );
+            expect(sends, 0);
+            expect(policyAfterCaption, policy);
+            expect(sendButton(tester).onTap, isNull);
+            expect(find.text(hint), findsOneWidget);
+            expect(find.byType(SnackBar), findsNothing);
+            // Both current and stale empty callbacks must be refused before
+            // an optimistic row while the live caption keeps Send disabled.
+            for (final submittedText in ['Privacy caption', '']) {
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .onSend(submittedText);
+              await tester.pump();
+              expect(
+                repo.saveMessageCallCount,
+                0,
+                reason:
+                    'A callback with "$submittedText" must not save a message '
+                    'while the live private draft still has a caption.',
+              );
+              expect(repo.store, isEmpty);
+              expect(sentPolicies, isEmpty);
+              expect(sends, 0);
+              expect(
+                tester
+                    .widget<ComposeArea>(find.byType(ComposeArea))
+                    .privateMediaPolicy,
+                policy,
+              );
+              expect(composerText(tester), 'Privacy caption');
+              expect(stagedPaths(tester), [photo.path]);
+              expect(sendButton(tester).onTap, isNull);
+              expect(find.text(hint), findsOneWidget);
+              expect(find.byType(SnackBar), findsNothing);
+            }
+
+            await tester.enterText(find.byType(TextField), '');
+            await tester.pump();
+            expect(find.text(hint), findsNothing);
+            expect(sendButton(tester).onTap, isNotNull);
+            expect(
+              tester
+                  .widget<ComposeArea>(find.byType(ComposeArea))
+                  .privateMediaPolicy,
+              policy,
+            );
+
+            await tester.enterText(find.byType(TextField), 'Privacy caption');
+            await tester.pump();
+            expect(find.text(hint), findsOneWidget);
+            await choosePrivacyMode(
+              tester,
+              const PrivateMediaPolicy.ordinary(),
+            );
+            expect(find.text(hint), findsNothing);
+            expect(sendButton(tester).onTap, isNotNull);
+            expect(composerText(tester), 'Privacy caption');
+            expect(stagedPaths(tester), [photo.path]);
+          },
+        );
+      }
+    }
 
     testWidgets('1:1 draft is gone after it is sent', (tester) async {
       final photo = pickedPhoto();

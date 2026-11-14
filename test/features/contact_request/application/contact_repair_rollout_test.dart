@@ -4,17 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/contact_repair_harness.dart';
 
-// Task 12b, owner decision 1(a): only verified-updated peers get the signed
-// marker. Unknown or older peers stay on the unmarked path.
+// Task 12b: the signed marker is on by default; rolloutEnabled: false is the
+// off switch, where only a peer that sent us a marker is eligible.
 
 void main() {
-  test(
-    'the rollout flag is off unless the coordinated build sets it',
-    () async {
-      expect(contactRepairRolloutEnabled, isFalse);
-      expect(await contactRepairRolloutEligible('any-peer-id-0000'), isFalse);
-    },
-  );
+  test('the marker is on by default (BL-21)', () async {
+    expect(contactRepairRolloutEnabled, isTrue);
+    expect(await contactRepairRolloutEligible('any-peer-id-0000'), isTrue);
+  });
 
   test('without the flag, only a peer that sent us a valid signed marker is '
       'eligible', () async {

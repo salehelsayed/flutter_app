@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'dart:convert';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
@@ -37,7 +39,7 @@ ContactModel _makeContact(
     rendezvous: '/p2p-circuit/rendezvous',
     username: 'user-$peerId',
     signature: 'sig-$peerId',
-    scannedAt: '2024-01-01T00:00:00Z',
+    scannedAt: clock.now().toUtc().toIso8601String(),
     mlKemPublicKey: mlKemPublicKey,
     isBlocked: isBlocked,
     blockedAt: isBlocked ? '2024-01-01T00:00:00Z' : null,
@@ -49,6 +51,7 @@ void main() {
   late FakeContactRepository contactRepo;
   late FakeIdentityRepository identityRepo;
   late FakeBridge bridge;
+  late FakeSecureKeyStore retryJournalStore;
 
   setUp(() {
     p2pService = FakeP2PService(
@@ -62,6 +65,7 @@ void main() {
     contactRepo = FakeContactRepository();
     identityRepo = FakeIdentityRepository();
     bridge = FakeBridge();
+    retryJournalStore = FakeSecureKeyStore();
     bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
     bridge.responses['contactrequest.encrypt'] = {
       'ok': true,
@@ -87,6 +91,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(sent, 1);
@@ -106,6 +111,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(sent, 0);
@@ -124,6 +130,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       // Only Carol should get the retry
@@ -144,6 +151,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(sent, 3);
@@ -166,6 +174,7 @@ void main() {
           identityRepo: identityRepo,
           p2pService: p2pService,
           bridge: bridge,
+          secureKeyStore: retryJournalStore,
         );
 
         // 2 contacts × 2 commands each = 4 commands
@@ -187,6 +196,7 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         bridge: bridge,
+        secureKeyStore: retryJournalStore,
       );
 
       expect(p2pService.lastStoreInInboxMessage, isNotNull);

@@ -54,6 +54,10 @@ class OrbitalAvatar extends StatefulWidget {
   final bool avatarGlowEnabled;
   final bool unreadCountBadge;
 
+  /// Non-null when this friend has an unopened thought and the thought titles
+  /// are hidden: a star orbits the node in this colour (light backgrounds).
+  final Color? thoughtStarColor;
+
   const OrbitalAvatar({
     super.key,
     required this.peerId,
@@ -76,6 +80,7 @@ class OrbitalAvatar extends StatefulWidget {
     this.focusTreatment = OrbitalAvatarFocusTreatment.none,
     this.avatarGlowEnabled = false,
     this.unreadCountBadge = false,
+    this.thoughtStarColor,
   });
 
   @override
@@ -120,13 +125,41 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
         ? widget.size
         : 48.0;
     final accent = widget.unreadAccent ?? UnreadOrbitIndicator.kUnreadAccent;
+    final face = Center(
+      child: Container(
+        width: widget.size,
+        height: widget.size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: widget.borderColor,
+            width: widget.borderWidth,
+          ),
+          boxShadow: widget.avatarGlowEnabled
+              ? [
+                  BoxShadow(
+                    color: widget.borderColor.withValues(alpha: 0.22),
+                    blurRadius: 9,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
+        ),
+        child: ClipOval(
+          child:
+              widget.child ??
+              UserAvatar(
+                peerId: widget.peerId,
+                size: widget.size - widget.borderWidth * 2,
+              ),
+        ),
+      ),
+    );
     final avatar = SizedBox(
       width: tapTargetSize,
       height: tapTargetSize,
-      // Stack is Clip.none so the unread indicator (ring at ~1.35x avatar
-      // radius) may overpaint the 48-box — the host visualization Stack is
-      // Clip.none too. The indicator is a sibling (not a wrapper) so satellite
-      // rotation cannot rebuild the avatar/child subtree (TC-194-36).
+      // Stack is Clip.none so the orbit may overpaint the 48-box — the host
+      // visualization Stack is Clip.none too.
       child: Stack(
         clipBehavior: Clip.none,
         alignment: Alignment.center,
@@ -151,66 +184,23 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
                 ],
               ),
             ),
-          Center(
-            child: Container(
-              width: widget.size,
-              height: widget.size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: widget.borderColor,
-                  width: widget.borderWidth,
-                ),
-                boxShadow: widget.avatarGlowEnabled
-                    ? [
-                        BoxShadow(
-                          color: widget.borderColor.withValues(alpha: 0.22),
-                          blurRadius: 9,
-                          spreadRadius: 1,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: ClipOval(
-                child:
-                    widget.child ??
-                    UserAvatar(
-                      peerId: widget.peerId,
-                      size: widget.size - widget.borderWidth * 2,
-                    ),
-              ),
-            ),
-          ),
-          if (widget.unreadCount > 0)
-            // Non-hit-testing + semantics-neutral: the unread state is conveyed
-            // through the node's own semantic label (built by the visualization),
-            // and the 48px opaque GestureDetector stays the sole tap target.
-            ExcludeSemantics(
-              child: IgnorePointer(
-                // The indicator sizes ITSELF to ~1.66x the avatar (ring at 1.35x
-                // radius + satellite halo) and lays its satellites out around
-                // that self-assumed box center. This tap-target Stack is only
-                // ~48px, which CLAMPS the indicator below its natural size so
-                // its internal center drifts from the real box center and the
-                // satellites shear off-axis. Clip.none stops the clip, not the
-                // constraint — so hand it unbounded constraints via OverflowBox
-                // and let it overpaint the box, centered on the node.
-                child: OverflowBox(
-                  minWidth: 0,
-                  maxWidth: double.infinity,
-                  minHeight: 0,
-                  maxHeight: double.infinity,
-                  child: UnreadOrbitIndicator(
-                    unreadCount: widget.unreadCount,
-                    diameter: widget.size,
-                    motionEnabled: widget.unreadMotionEnabled,
-                    accent: accent,
-                    showSatellites: !widget.unreadCountBadge,
-                    showCountBadge: widget.unreadCountBadge,
-                  ),
-                ),
-              ),
-            ),
+          if (widget.unreadCount > 0 || widget.thoughtStarColor != null)
+            // The orbit wraps the face so its back half paints under it and its
+            // front half over it. It adds no semantics and never hit-tests, so
+            // the node's own label and the 48px GestureDetector stay as they
+            // were; the face is passed through untouched (TC-194-36).
+            UnreadOrbitIndicator(
+              unreadCount: widget.unreadCount,
+              diameter: widget.size,
+              motionEnabled: widget.unreadMotionEnabled,
+              accent: accent,
+              showSatellites: !widget.unreadCountBadge,
+              showCountBadge: widget.unreadCountBadge,
+              thoughtStarColor: widget.thoughtStarColor,
+              child: face,
+            )
+          else
+            face,
         ],
       ),
     );

@@ -516,9 +516,6 @@ class _SettingsWiredState extends State<SettingsWired>
   Future<void> _openMediaStorageSheet() {
     final manager = widget.mediaStorageManager;
     final scopesProvider = widget.mediaStorageScopesProvider;
-    final translator = translatePreviewEnabled
-        ? translatePreviewDelivery
-        : null;
     return _showSettingsSheet(
       builder: (sheetContext, setSheetState) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -535,21 +532,6 @@ class _SettingsWiredState extends State<SettingsWired>
               setSheetState(() {});
             },
           ),
-          // Keep translator controls together under Media & storage.
-          if (translator != null)
-            PrivateTranslatorSettingsSection(
-              controller: translator,
-              onFreeUpSpace: manager == null || scopesProvider == null
-                  ? null
-                  : () => unawaited(
-                      _showSettingsSheet(
-                        builder: (_, _) => MediaStorageUsageSection(
-                          manager: manager,
-                          loadScopes: scopesProvider,
-                        ),
-                      ),
-                    ),
-            ),
           if (manager != null && scopesProvider != null)
             MediaStorageUsageSection(
               manager: manager,
@@ -1220,8 +1202,29 @@ class _SettingsWiredState extends State<SettingsWired>
     final canHostQr =
         widget.onMyQrRequested != null && widget.onScanQrRequested != null;
 
-    final screen = SettingsScreen(
+    final translator = translatePreviewEnabled
+        ? translatePreviewDelivery
+        : null;
+    final manager = widget.mediaStorageManager;
+    final scopesProvider = widget.mediaStorageScopesProvider;
+    Widget buildScreen() => SettingsScreen(
       username: identity?.username ?? 'Username',
+      privateTranslatorSection:
+          translator == null || !translator.deviceSupported.value
+          ? null
+          : PrivateTranslatorSettingsSection(
+              controller: translator,
+              onFreeUpSpace: manager == null || scopesProvider == null
+                  ? null
+                  : () => unawaited(
+                      _showSettingsSheet(
+                        builder: (_, _) => MediaStorageUsageSection(
+                          manager: manager,
+                          loadScopes: scopesProvider,
+                        ),
+                      ),
+                    ),
+            ),
       appUpdatesRow: const SettingsAppUpdatesRow(),
       peerId: identity?.peerId,
       avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,
@@ -1306,6 +1309,12 @@ class _SettingsWiredState extends State<SettingsWired>
       activeTab: widget.appShellController.activeTab,
       showNavigationBar: widget.showNavigationBar,
     );
+    final screen = translator == null
+        ? buildScreen()
+        : ListenableBuilder(
+            listenable: translator.deviceSupported,
+            builder: (_, _) => buildScreen(),
+          );
     final body = widget.showNavigationBar
         ? GestureDetector(
             behavior: HitTestBehavior.translucent,

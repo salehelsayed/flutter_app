@@ -129,6 +129,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
   final _attempts = <String, String>{};
   final _open = <String, Map<String, Object?>>{};
   final _finished = <String>{};
+  // Session-only replay suppression. Private keys never enter persisted state.
+  final _terminalObservations = <String, int>{};
+  static const _maxTerminalObservations = 256;
+  static const _terminalObservationLifetimeMs = 5 * 60 * 1000;
   final _elapsed = Stopwatch();
   DateTime Function() _now = DateTime.now;
   Directory? _directory;
@@ -675,30 +679,63 @@ final class AppDiagnostics with WidgetsBindingObserver {
     }
   }
 
-  void finishAttempt({
+  /// Returns whether a new terminal observation was retained. An admitted
+  /// observationKey suppresses repeats briefly, while still closing the scoped
+  /// attempt. The key and its bounded digest index are never persisted/exported.
+  bool finishAttempt({
     required String feature,
     required String? traceId,
     required String outcome,
+    String stage = 'finish',
     String reason = 'none',
+    String? observationKey,
     Map<String, Object?> values = const {},
   }) {
-    if (!enabled || !isValidTraceId(traceId)) return;
+    if (!enabled || !isValidTraceId(traceId)) return false;
     final attempt = _attemptFor(feature, traceId);
-    if (attempt == null || _finished.contains(attempt)) return;
-    if (!_closed('outcome', outcome) || !_closed('reason', reason)) return;
-    final retained = record(
-      feature: feature,
-      stage: 'finish',
-      outcome: outcome,
-      reason: reason,
-      traceId: traceId,
-      values: values,
-    );
-    if (retained) {
+    if (attempt == null || _finished.contains(attempt)) return false;
+    if (!_closed('stage', stage) ||
+        !_closed('outcome', outcome) ||
+        !_closed('reason', reason)) {
+      return false;
+    }
+    String? key;
+    final now = _elapsed.elapsedMilliseconds;
+    if (observationKey != null && observationKey.isNotEmpty) {
+      key = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode([feature, stage, outcome, reason, observationKey]),
+            ),
+          )
+          .toString();
+      _terminalObservations.removeWhere(
+        (_, at) => now - at >= _terminalObservationLifetimeMs,
+      );
+    }
+    final suppressed = key != null && _terminalObservations.containsKey(key);
+    final retained =
+        !suppressed &&
+        record(
+          feature: feature,
+          stage: stage,
+          outcome: outcome,
+          reason: reason,
+          traceId: traceId,
+          values: values,
+        );
+    if (retained && key != null) {
+      _terminalObservations[key] = now;
+      while (_terminalObservations.length > _maxTerminalObservations) {
+        _terminalObservations.remove(_terminalObservations.keys.first);
+      }
+    }
+    if (retained || suppressed) {
       _finished.add(attempt);
       _open.remove(attempt);
       _schedulePersist();
     }
+    return retained;
   }
 
   void captureError(
@@ -789,6 +826,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _open.clear();
     _attempts.clear();
     _finished.clear();
+    _terminalObservations.clear();
     _bindings.clear();
     _bindingTimes.clear();
     _nextBindingExpiryMs = null;
@@ -1014,10 +1052,9 @@ final class AppDiagnostics with WidgetsBindingObserver {
       localAppConnectionEnums,
     );
     final values = projected['values'];
-    // Incident detail remains local until a receiver explicitly negotiates it.
-    // A legacy relay must still accept the same event ID and ordinary outcome.
-    if (event['feature'] == 'contact_request') projected['feature'] = 'runtime';
-    if (values is Map) {
+    // Deployed v1 receivers already accept the closed contact-request labels.
+    // Other incident detail retains its existing legacy projection.
+    if (event['feature'] != 'contact_request' && values is Map) {
       for (final key in const [
         'requestSource',
         'consentClass',
@@ -1526,6 +1563,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     await _anonymousStickers?.dispose();
     await _persist();
     _disposed = true;
+    _terminalObservations.clear();
     await _archiveWriter?.dispose();
   }
 

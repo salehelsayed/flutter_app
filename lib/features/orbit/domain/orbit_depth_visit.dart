@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
@@ -43,7 +45,8 @@ class OrbitDepthSend {
 typedef OrbitDepthDispatch = ({OrbitDepthVisit visit, OrbitDepthSend send});
 
 /// What the user has answered on the ring's thoughts during one visit to the
-/// 3D view. The visit ends when the user leaves 3D, and all of it goes.
+/// 3D view. Drafts and composer end with that visit; the wired host can retain
+/// its answers for the full-screen card through [OrbitDepthAnswers].
 ///
 /// [sends] is the one ledger, in the order they started; which emoji is
 /// pressed and which status a thought shows are read from it.
@@ -65,6 +68,14 @@ class OrbitDepthVisit {
 
   /// The thought whose composer is open, if any.
   final String? composingPostId;
+
+  /// Share answers with the full-screen card without replacing the dial's
+  /// unsent drafts or opening/closing its composer.
+  OrbitDepthVisit withAnswersFrom(OrbitDepthVisit other) => OrbitDepthVisit._(
+    sends: other.sends,
+    drafts: drafts,
+    composingPostId: composingPostId,
+  );
 
   OrbitDepthSend? latestFor(String postId) =>
       sends.values.where((send) => send.postId == postId).lastOrNull;
@@ -181,5 +192,46 @@ class OrbitDepthVisit {
       ),
       send: send,
     );
+  }
+}
+
+/// One host's answers, shared by the ring and its full-screen Thought cards.
+/// The existing visit ledger owns duplicate suppression and stable retry IDs.
+class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
+  OrbitDepthAnswers({
+    Stream<({String messageId, ThoughtReplyStatus status})>? statusChanges,
+  }) : super(OrbitDepthVisit.empty) {
+    _statuses = statusChanges?.listen((update) {
+      if (!_disposed && value.sends.containsKey(update.messageId)) {
+        value = value.settle(update.messageId, update.status, finished: false);
+      }
+    });
+  }
+
+  StreamSubscription<({String messageId, ThoughtReplyStatus status})>?
+  _statuses;
+  bool _disposed = false;
+
+  Future<void> dispatch(
+    OrbitDepthDispatch? dispatch,
+    ThoughtReplySender sender,
+  ) async {
+    if (_disposed || dispatch == null) return;
+    value = dispatch.visit;
+    final send = dispatch.send;
+    ThoughtReplyStatus status;
+    try {
+      status = await sender(send.text, send.postId, send.messageId);
+    } catch (_) {
+      status = ThoughtReplyStatus.failed;
+    }
+    if (!_disposed) value = value.settle(send.messageId, status);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _statuses?.cancel();
+    super.dispose();
   }
 }

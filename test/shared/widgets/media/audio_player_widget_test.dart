@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter/services.dart';
@@ -745,6 +746,54 @@ void main() {
         expect(actions, observationsEnabled ? isNotEmpty : isEmpty);
       },
     );
+
+    for (final (label, inCall) in [('no call', false), ('in a call', true)]) {
+      testWidgets('pausing, then closing, a voice note hands the audio session '
+          'back once each ($label)', (tester) async {
+        var deactivations = 0;
+        MediaAudioSession.debugDeactivate = () async => deactivations++;
+        MediaAudioSession.callOwnsSession = () => inCall;
+        addTearDown(() {
+          MediaAudioSession.debugDeactivate = null;
+          MediaAudioSession.callOwnsSession = MediaAudioSession.noCall;
+        });
+        final load = fakePlatform.enqueueLoad(
+          reportedDuration: const Duration(seconds: 3),
+        );
+        await tester.pumpWidget(
+          buildApp(
+            availableAttachment(
+              id: 'session-voice',
+              localPath: '/tmp/session-voice.mp3',
+              durationMs: 3000,
+            ),
+            interruptionEvents: const Stream<AudioInterruptionEvent>.empty(),
+          ),
+        );
+        await tester.pump();
+        await load.started;
+        load.complete();
+        await settleCompletedLoad(tester);
+        expect(deactivations, 0, reason: 'never played, nothing to hand back');
+
+        await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+        for (var i = 0; i < 5 && fakePlatform.playCallCount < 1; i++) {
+          await flushAsyncPlayerTasks(tester);
+        }
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.pause_rounded));
+        await flushAsyncPlayerTasks(tester);
+        expect(deactivations, inCall ? 0 : 1);
+
+        await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+        for (var i = 0; i < 5 && fakePlatform.playCallCount < 2; i++) {
+          await flushAsyncPlayerTasks(tester);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await flushAsyncPlayerTasks(tester);
+        expect(deactivations, inCall ? 0 : 2);
+      });
+    }
 
     testWidgets(
       'transient pause retains an offscreen player through its owned resume',

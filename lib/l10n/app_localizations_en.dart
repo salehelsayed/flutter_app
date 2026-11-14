@@ -1017,6 +1017,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_delete_chat => 'Delete chat?';
 
   @override
+  String get block_contact_body =>
+      'They won\'t be able to send you messages. You can unblock them later.';
+
+  @override
   String delete_contact_body(String username) {
     return 'This will permanently remove $username, your messages and your call history with them. This cannot be undone.';
   }
@@ -1198,6 +1202,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_section_identity => 'IDENTITY';
+
+  @override
+  String get settings_badge_new => 'new';
 
   @override
   String get settings_section_preferences => 'PREFERENCES';
@@ -1466,11 +1473,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'This app needs notification access to alert you of incoming messages';
 
   @override
-  String connected_date(String date) {
-    return 'Connected $date';
-  }
-
-  @override
   String get date_today => 'Today';
 
   @override
@@ -1535,6 +1537,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connected_title => 'Connected!';
+
+  @override
+  String get contact_waiting_for_secure_connection =>
+      'Waiting for secure connection';
 
   @override
   String get send_message => 'Send Message';
@@ -3265,13 +3271,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get feed_connected => 'Connected';
 
   @override
-  String get qr_added_to_circle => 'Added to your circle!';
+  String get qr_added_to_circle => 'Contact saved';
 
   @override
   String get btn_ok => 'OK';
 
   @override
-  String get qr_already_in_circle => 'Already in your circle!';
+  String get qr_already_in_circle => 'Contact already saved';
 
   @override
   String get qr_contact_added_previously => 'This contact was added previously';
@@ -3747,6 +3753,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get private_media_invalid_shape =>
       'Private media needs one photo or video with no caption.';
+
+  @override
+  String get private_media_caption_blocked =>
+      'Remove the caption to keep this private.';
 
   @override
   String get private_media_notification_body => 'Private media';
@@ -4983,6 +4993,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_settings_mobile_data => 'Download over mobile data';
 
   @override
+  String get translate_header_tooltip => 'Translation';
+
+  @override
+  String get translate_to_title => 'Translate to';
+
+  @override
+  String get translate_to_subtitle => 'The language you read translations in.';
+
+  @override
+  String get translate_to_same_as_app => 'Same as the app';
+
+  @override
+  String get translate_to_all_languages => 'All languages';
+
+  @override
+  String get translate_show_translation => 'Show translation';
+
+  @override
   String get translator_remove_title => 'Remove translation?';
 
   @override
@@ -5142,6 +5170,69 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sticker_pack_nujoom => 'Nujoom';
 
   @override
+  String get stickers_mine => 'My stickers';
+
+  @override
+  String get stickers_create => 'Create';
+
+  @override
+  String get stickers_delete => 'Delete';
+
+  @override
+  String get stickers_drag_to_reorder => 'Drag to reorder';
+
+  @override
+  String get stickers_move_earlier => 'Move earlier';
+
+  @override
+  String get stickers_move_later => 'Move later';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'Sticker $position of $count';
+  }
+
+  @override
+  String get stickers_record_clip => 'Record clip';
+
+  @override
+  String get stickers_library_full =>
+      'My stickers is full. Delete one to add another.';
+
+  @override
+  String get stickers_save_failed => 'Couldn\'t save this sticker. Try again.';
+
+  @override
+  String get stickers_no_subject => 'No clear subject. Crop it instead.';
+
+  @override
+  String get stickers_new => 'New sticker';
+
+  @override
+  String get stickers_take_photo => 'Take photo';
+
+  @override
+  String get stickers_gallery => 'Gallery';
+
+  @override
+  String get stickers_crop => 'Crop';
+
+  @override
+  String get stickers_square => 'Square';
+
+  @override
+  String get stickers_circle => 'Circle';
+
+  @override
+  String get stickers_saved => 'Saved to My stickers';
+
+  @override
+  String get stickers_use_as_sticker => 'Use as sticker';
+
+  @override
+  String get stickers_save_to_mine => 'Save to My stickers';
+
+  @override
   String get settings_app_updates => 'App updates';
 
   @override
@@ -5152,4 +5243,156 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_updates_checking => 'Checking for updates';
+
+  @override
+  String you_seen_all(int count) {
+    return 'See all $count';
+  }
+
+  @override
+  String get you_thought_replaced => 'replaced by a newer Thought';
+
+  @override
+  String get sticker_editor_text => 'Text';
+
+  @override
+  String get sticker_editor_save => 'Save sticker';
+
+  @override
+  String get sticker_editor_colour => 'Colour';
+
+  @override
+  String get sticker_editor_delete => 'Delete';
+
+  @override
+  String get sticker_editor_undo => 'Undo';
+
+  @override
+  String get sticker_editor_font => 'Font';
+
+  @override
+  String get sticker_editor_move_up => 'Move up';
+
+  @override
+  String get sticker_editor_move_down => 'Move down';
+
+  @override
+  String get sticker_editor_move_left => 'Move left';
+
+  @override
+  String get sticker_editor_move_right => 'Move right';
+
+  @override
+  String get sticker_editor_bigger => 'Bigger';
+
+  @override
+  String get sticker_editor_smaller => 'Smaller';
+
+  @override
+  String get sticker_editor_rotate_left => 'Rotate left';
+
+  @override
+  String get sticker_editor_rotate_right => 'Rotate right';
+
+  @override
+  String get sticker_colour_white => 'White';
+
+  @override
+  String get sticker_colour_black => 'Black';
+
+  @override
+  String get sticker_colour_yellow => 'Yellow';
+
+  @override
+  String get sticker_colour_red => 'Red';
+
+  @override
+  String get sticker_colour_blue => 'Blue';
+
+  @override
+  String get call_video_status_video_requested => 'Video requested';
+
+  @override
+  String get call_video_status_audio_only => 'Audio only';
+
+  @override
+  String get call_video_status_video => 'Video call';
+
+  @override
+  String get call_video_status_incoming_upgrade => 'They want to turn on video';
+
+  @override
+  String get call_video_status_outgoing_upgrade => 'Waiting for them to accept';
+
+  @override
+  String get call_video_status_switching_to_video => 'Switching to video';
+
+  @override
+  String get call_video_status_switching_to_audio => 'Switching to audio';
+
+  @override
+  String get call_video_status_reconnecting => 'Reconnecting';
+
+  @override
+  String get call_video_local_camera_on => 'Your camera is on';
+
+  @override
+  String get call_video_local_camera_off => 'Your camera is off';
+
+  @override
+  String get call_video_local_camera_paused => 'Your camera is paused';
+
+  @override
+  String get call_video_remote_camera_on => 'Their camera is on';
+
+  @override
+  String get call_video_remote_camera_off => 'Their camera is off';
+
+  @override
+  String get call_video_remote_camera_paused => 'Their camera is paused';
+
+  @override
+  String get call_video_action_request_video => 'Request video';
+
+  @override
+  String get call_video_action_accept_upgrade => 'Accept video';
+
+  @override
+  String get call_video_action_decline_upgrade => 'Keep audio';
+
+  @override
+  String get call_video_action_cancel_upgrade => 'Cancel request';
+
+  @override
+  String get call_video_action_turn_camera_on => 'Turn camera on';
+
+  @override
+  String get call_video_action_turn_camera_off => 'Turn camera off';
+
+  @override
+  String get call_video_action_switch_camera => 'Switch camera';
+
+  @override
+  String get call_video_action_use_audio_only => 'Use audio only';
+
+  @override
+  String get call_video_controls_label => 'Video controls';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'Still waiting. Ask them to scan your code again.';
+
+  @override
+  String get call_video_entry_incoming => 'Incoming video call';
+
+  @override
+  String get call_video_entry_starting => 'Starting video call';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'Video calling is unavailable right now.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'Couldn\'t start the video call. Please try again.';
 }

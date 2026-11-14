@@ -78,6 +78,26 @@ expected_profiles = [
         },
         "declaredException": False
     },
+    # 899dcd853 (2026-10-27): the owned TURN outage proof adds an
+    # always-relay call-preference profile beside production_call_local.
+    {
+        "id": "android.e2e.production_call_preference",
+        "platform": "android",
+        "artifactKind": "universal-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "VOICE_CALL_CAPABILITY_V1": "true",
+            "VOICE_CALL_OUTGOING_ENABLED": "true",
+            "VOICE_CALL_INCOMING_ENABLED": "true",
+            "VOICE_CALL_TURN_ENABLED": "true",
+            "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+            "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
+            "VOICE_CALL_FORCE_RELAY_ENABLED": "false",
+            "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true"
+        },
+        "declaredException": False
+    },
     {
         "id": "android.e2e.direct_media_custody",
         "platform": "android",
@@ -217,7 +237,7 @@ expected_profiles = [
     },
 ]
 assert actual_profiles == expected_profiles, (
-    "DTR-13 must preserve the exact ordered seventeen-row Sims build-profile table"
+    "DTR-13 must preserve the exact ordered eighteen-row Sims build-profile table"
 )
 
 orchestrator = read("tool/sims/build_orchestrator.dart")

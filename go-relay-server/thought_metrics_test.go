@@ -127,13 +127,17 @@ func TestThoughtMetricsOptOutAdmissionPreservesInboxDelivery(t *testing.T) {
 			}
 			for _, recipient := range []string{"recipient-one", "recipient-two"} {
 				for retry := 0; retry < 2; retry++ {
-					if _, err := inbox.Store(recipient, entry); err != nil {
-						t.Fatal(err)
+					want := InboxStoreResultStored
+					if retry > 0 {
+						want = InboxStoreResultDuplicate
+					}
+					if result, err := inbox.Store(recipient, entry); err != nil || result != want {
+						t.Fatalf("withdrawal flag changed event custody: result=%q error=%v, want %q", result, err, want)
 					}
 				}
 				delivered := inbox.Retrieve(recipient, 100)
-				if len(delivered) != 2 {
-					t.Fatalf("withdrawal flag changed accepted retry delivery: %+v", delivered)
+				if len(delivered) != 1 {
+					t.Fatalf("withdrawal flag changed delivery of the single retried event: %+v", delivered)
 				}
 				for _, got := range delivered {
 					if got.Message != entry.Message || got.From != entry.From {
@@ -381,6 +385,7 @@ func TestThoughtMetricsBlockedWriterDoesNotDelayStoreOrPush(t *testing.T) {
 	tokens := newMemoryPushTokenStore()
 	tokens.RegisterToken("owned-thought-recipient", "fixture-push-token", "android")
 	push := NewPushServiceWithBackend(tokens)
+	push.now = func() time.Time { return now }
 	recorder := newRecordingPushSender()
 	push.sender = recorder.Send
 	inbox := NewInboxStore(push)

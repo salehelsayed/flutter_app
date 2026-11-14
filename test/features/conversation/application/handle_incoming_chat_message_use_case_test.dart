@@ -651,6 +651,24 @@ class QuietRecoveryMessageRepository extends FakeMessageRepository
   }
 }
 
+class _RetryableIncomingApplyRepository extends FakeMessageRepository {
+  bool ready = false;
+  int applyCalls = 0;
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    applyCalls++;
+    if (!ready) throw StateError('PRIVATE_BL24B_APPLY_UNAVAILABLE');
+    return super.applyIncomingOrdinaryTextMutation(
+      incoming: incoming,
+      kind: kind,
+    );
+  }
+}
+
 void main() {
   late FakeContactRepository contactRepo;
   late FakeMessageRepository messageRepo;
@@ -937,6 +955,312 @@ void main() {
       expect(jsonEncode(archive), isNot(contains(id)));
     },
   );
+
+  group('BL24B incoming rejection observations', () {
+    late Directory directory;
+    late AppDiagnostics diagnostics;
+    Map<String, Object?> persisted = {};
+    var receipts = 0;
+    var displays = 0;
+
+    const entryId = 'PRIVATE_BL24B_ENTRY';
+    const targetId = 'PRIVATE_BL24B_TARGET';
+    const captionEdit = MessagePayload(
+      id: targetId,
+      text: 'PRIVATE_BL24B_CAPTION',
+      senderPeerId: senderPeerId,
+      senderUsername: 'Alice',
+      timestamp: '2026-02-09T15:30:00.000Z',
+      action: MessagePayload.actionEdit,
+      eventId: '0ebd76c7-9ac2-4716-865c-cb0b7f55e24d',
+      editedAt: '2026-02-09T16:00:00.000Z',
+      media: [
+        {
+          'id': 'PRIVATE_BL24B_BLOB',
+          'mime': 'image/jpeg',
+          'size': 11,
+          'mediaType': 'image',
+        },
+      ],
+    );
+
+    Future<AppDiagnostics> install({bool enabled = true}) =>
+        AppDiagnostics.installForTesting(
+          directory: directory,
+          enabled: enabled,
+          persist: (_, state) async => persisted = state,
+        );
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('bl24b-incoming-');
+      diagnostics = await install();
+      receipts = 0;
+      displays = 0;
+    });
+    tearDown(() async {
+      await diagnostics.dispose();
+      await directory.delete(recursive: true);
+    });
+
+    ChatMessage captionMessage() => buildP2PMessage(
+      buildV2EncryptedEnvelopeJson(id: targetId, eventId: captionEdit.eventId),
+    );
+
+    Future<HandleChatMessageResult> receive(
+      ChatMessage message, {
+      String? stagedEntryId = entryId,
+      String? predecryptedText,
+    }) async {
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: predecryptedText,
+        transport: 'inbox',
+        stagedEntryId: stagedEntryId,
+        sendDeliveryReceipt: (_) async => receipts++,
+        sendMutationDeliveryReceipt: (_, {required mutationEventId}) async =>
+            receipts++,
+        stageNotificationDisplayCustody: (_) async => displays++,
+        promoteNotificationDisplayCustody: (_) async => displays++,
+      );
+      return result;
+    }
+
+    Future<List<Map<String, Object?>>> failures() async =>
+        (await diagnostics.eventsForTesting())
+            .where((e) => e['feature'] == 'message' && e['outcome'] == 'failed')
+            .toList();
+
+    for (final (rejection, stage, reason) in [
+      (
+        HandleChatMessageResult.unknownSender,
+        'preflight',
+        'authority_rejected',
+      ),
+      (HandleChatMessageResult.unauthorized, 'verify', 'authority_rejected'),
+      (
+        HandleChatMessageResult.strictMediaCustodyRefused,
+        'commit',
+        'protection_failed',
+      ),
+      (
+        HandleChatMessageResult.editMissingOriginal,
+        'prepare',
+        'prepare_failed',
+      ),
+    ]) {
+      test(
+        '$rejection has one closed boundary observation on replay',
+        () async {
+          if (rejection == HandleChatMessageResult.unknownSender) {
+            await contactRepo.deleteContact(senderPeerId);
+          }
+          final message = switch (rejection) {
+            HandleChatMessageResult.unauthorized => buildP2PMessage(
+              buildValidChatJson(id: targetId),
+            ).copyWith(from: 'PRIVATE_BL24B_CROSSED_SENDER'),
+            HandleChatMessageResult.strictMediaCustodyRefused =>
+              buildP2PMessage(
+                buildValidChatJson(
+                  id: targetId,
+                  media: [
+                    {
+                      'id': 'PRIVATE_BL24B_BLOB',
+                      'mime': 'image/jpeg',
+                      'size': 11,
+                      'mediaType': 'image',
+                      'blobCustody': <String, Object?>{},
+                    },
+                  ],
+                ),
+              ),
+            HandleChatMessageResult.editMissingOriginal => captionMessage(),
+            _ => buildP2PMessage(buildValidChatJson(id: targetId)),
+          };
+          for (var pass = 0; pass < 3; pass++) {
+            expect(
+              await receive(
+                message,
+                predecryptedText:
+                    rejection == HandleChatMessageResult.editMissingOriginal
+                    ? captionEdit.toInnerJson()
+                    : null,
+              ),
+              rejection,
+            );
+            final observations = await failures();
+            expect(observations, hasLength(1));
+            expect(observations.single['stage'], stage);
+            expect(observations.single['reason'], reason);
+            expect(
+              AppDiagnostics.validateEvent(observations.single),
+              isNotNull,
+            );
+            expect(persisted['open'], isEmpty);
+          }
+          expect(receipts, 0);
+          expect(displays, 0);
+          expect(messageRepo.saved, isEmpty);
+          expect(jsonEncode(persisted), isNot(contains('PRIVATE_BL24B')));
+          expect(
+            await diagnostics.exportPreview(),
+            isNot(contains(senderPeerId)),
+          );
+        },
+      );
+    }
+
+    test(
+      'suppression still retries an unavailable apply and later commits',
+      () async {
+        final repository = _RetryableIncomingApplyRepository();
+        messageRepo = repository;
+        final message = buildP2PMessage(buildValidChatJson(id: targetId));
+        for (var pass = 0; pass < 3; pass++) {
+          expect(await receive(message), HandleChatMessageResult.unauthorized);
+        }
+        expect(repository.applyCalls, 3);
+        expect(repository.saved, isEmpty);
+        expect(receipts, 0);
+        expect(displays, 0);
+        expect(await failures(), hasLength(1));
+
+        repository.ready = true;
+        expect(await receive(message), HandleChatMessageResult.chatMessage);
+        expect(repository.applyCalls, 4);
+        expect(repository.saved.single.id, targetId);
+        expect(receipts, 1);
+        expect(displays, 2);
+        final events = await diagnostics.eventsForTesting();
+        expect(
+          events.where(
+            (e) => e['stage'] == 'finish' && e['outcome'] == 'success',
+          ),
+          hasLength(1),
+        );
+        expect(persisted['open'], isEmpty);
+      },
+    );
+
+    test(
+      'new subreason entry recipient and sender remain observable',
+      () async {
+        final message = captionMessage();
+        final inner = captionEdit.toInnerJson();
+        final senderContact = (await contactRepo.getContact(senderPeerId))!;
+        await contactRepo.deleteContact(senderPeerId);
+        expect(
+          await receive(message, predecryptedText: inner),
+          HandleChatMessageResult.unknownSender,
+        );
+        await contactRepo.addContact(senderContact);
+        for (var pass = 0; pass < 2; pass++) {
+          expect(
+            await receive(message, predecryptedText: inner),
+            HandleChatMessageResult.editMissingOriginal,
+          );
+        }
+        expect(
+          await receive(
+            message,
+            stagedEntryId: 'PRIVATE_BL24B_OTHER_ENTRY',
+            predecryptedText: inner,
+          ),
+          HandleChatMessageResult.editMissingOriginal,
+        );
+        expect(
+          await receive(
+            message.copyWith(to: 'PRIVATE_BL24B_OTHER_RECIPIENT'),
+            predecryptedText: inner,
+          ),
+          HandleChatMessageResult.editMissingOriginal,
+        );
+        for (final sender in [
+          'PRIVATE_BL24B_SENDER_A',
+          'PRIVATE_BL24B_SENDER_B',
+        ]) {
+          expect(
+            await receive(
+              message.copyWith(from: sender),
+              predecryptedText: inner,
+            ),
+            HandleChatMessageResult.unauthorized,
+          );
+        }
+        expect((await failures()).map((e) => (e['stage'], e['reason'])), [
+          ('preflight', 'authority_rejected'),
+          ('prepare', 'prepare_failed'),
+          ('prepare', 'prepare_failed'),
+          ('prepare', 'prepare_failed'),
+          ('verify', 'authority_rejected'),
+          ('verify', 'authority_rejected'),
+        ]);
+        expect(receipts, 0);
+        expect(displays, 0);
+        expect(messageRepo.saved, isEmpty);
+        expect(persisted['open'], isEmpty);
+      },
+    );
+
+    test(
+      'opt-out clear and collector replacement do not consume observation',
+      () async {
+        await contactRepo.deleteContact(senderPeerId);
+        final message = buildP2PMessage(buildValidChatJson(id: targetId));
+        await diagnostics.setEnabled(false);
+        expect(await receive(message), HandleChatMessageResult.unknownSender);
+        expect(await failures(), isEmpty);
+        await diagnostics.setEnabled(true);
+        for (var pass = 0; pass < 2; pass++) {
+          expect(await receive(message), HandleChatMessageResult.unknownSender);
+        }
+        expect(await failures(), hasLength(1));
+        await diagnostics.clear();
+        expect(await receive(message), HandleChatMessageResult.unknownSender);
+        expect(await failures(), hasLength(1));
+
+        diagnostics = await install();
+        expect(await receive(message), HandleChatMessageResult.unknownSender);
+        expect(await failures(), hasLength(1));
+        expect(persisted['open'], isEmpty);
+      },
+    );
+
+    test('unstaged calls keep independent rejection observations', () async {
+      await contactRepo.deleteContact(senderPeerId);
+      final message = buildP2PMessage(buildValidChatJson(id: targetId));
+      for (var pass = 0; pass < 2; pass++) {
+        expect(
+          await receive(message, stagedEntryId: null),
+          HandleChatMessageResult.unknownSender,
+        );
+      }
+      expect(await failures(), hasLength(2));
+      expect(persisted['open'], isEmpty);
+    });
+
+    test('bounded suppression evicts old staged entry observations', () async {
+      await contactRepo.deleteContact(senderPeerId);
+      final message = buildP2PMessage(buildValidChatJson(id: targetId));
+      for (var index = 0; index <= 256; index++) {
+        expect(
+          await receive(message, stagedEntryId: '$entryId-$index'),
+          HandleChatMessageResult.unknownSender,
+        );
+      }
+      final previous = (await failures()).map((e) => e['eventId']).toSet();
+      expect(
+        await receive(message, stagedEntryId: '$entryId-0'),
+        HandleChatMessageResult.unknownSender,
+      );
+      expect(
+        (await failures()).where((e) => !previous.contains(e['eventId'])),
+        hasLength(1),
+      );
+      expect(persisted['open'], isEmpty);
+    });
+  });
 
   group('TC-361-03a linked transport authority', () {
     String linkedEnvelope({String id = 'linked-msg-1'}) => jsonEncode({

@@ -13,6 +13,7 @@ class MigrationFileManifestValidator {
        );
 
   Future<MigrationFileManifest> validateRows({
+    Iterable<Map<String, Object?>> customStickerRows = const [],
     Iterable<Map<String, Object?>> chatMediaRows = const [],
     Iterable<Map<String, Object?>> directMediaBlobCustodyRows = const [],
     Iterable<Map<String, Object?>> postMediaRows = const [],
@@ -22,6 +23,7 @@ class MigrationFileManifestValidator {
     Iterable<Map<String, Object?>> groupRows = const [],
   }) {
     return _builder.build(
+      customStickerRows: customStickerRows,
       chatMediaRows: chatMediaRows,
       directMediaBlobCustodyRows: directMediaBlobCustodyRows,
       postMediaRows: postMediaRows,

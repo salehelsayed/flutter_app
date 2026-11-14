@@ -5,6 +5,7 @@ import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/media/camera_video_recorder.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -173,6 +174,7 @@ void main() {
   Future<void> open(
     WidgetTester tester, {
     Locale locale = const Locale('en'),
+    bool sticker = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -184,7 +186,9 @@ void main() {
             body: TextButton(
               onPressed: () async {
                 try {
-                  result = await captureCameraVideo(context);
+                  result = sticker
+                      ? await captureStickerCameraClip(context)
+                      : await captureCameraVideo(context);
                 } catch (caught) {
                   error = caught;
                 }
@@ -210,6 +214,65 @@ void main() {
     await tester.pump(const Duration(milliseconds: 60));
     await tester.tap(preview);
     await frames(tester);
+  }
+
+  if (!kCustomStickersEnabled) {
+    testWidgets('sticker capture is inert with the default flag', (
+      tester,
+    ) async {
+      await open(tester, sticker: true);
+      expect(platform.created, isEmpty);
+      expect(platform.captures, isEmpty);
+      expect(find.byType(CameraVideoRecorder), findsNothing);
+      expect(result, isNull);
+      expect(error, isNull);
+    });
+  } else {
+    testWidgets('sticker capture is silent and stops once at two seconds', (
+      tester,
+    ) async {
+      await open(tester, sticker: true);
+      expect(find.byType(CameraVideoRecorder), findsOneWidget);
+      expect(platform.settings.single.enableAudio, isFalse);
+      expect(
+        platform.settings.single.resolutionPreset,
+        ResolutionPreset.medium,
+      );
+      await tester.tap(find.byKey(const ValueKey('camera-video-record')));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1999));
+      expect(platform.stops, 0);
+      await tester.pump(const Duration(milliseconds: 1));
+      await frames(tester);
+      expect(platform.captures, hasLength(1));
+      expect(platform.stops, 1);
+      expect(platform.disposed, [1]);
+      expect(result?.path, platform.file.path);
+      expect(platform.file.existsSync(), isTrue);
+      expect(error, isNull);
+      await tester.pump(const Duration(seconds: 3));
+      expect(platform.stops, 1);
+    });
+
+    testWidgets(
+      'sticker cancellation removes its clip and stops the deadline',
+      (tester) async {
+        await open(tester, sticker: true);
+        expect(find.byType(CameraVideoRecorder), findsOneWidget);
+        await start(tester);
+        await tester.tap(find.byKey(const ValueKey('camera-video-cancel')));
+        await finishDiscard(tester);
+        await frames(tester);
+        expect(platform.stops, 1);
+        expect(platform.disposed, [1]);
+        expect(result, isNull);
+        expect(platform.file.existsSync(), isFalse);
+        await tester.pump(const Duration(seconds: 3));
+        expect(platform.stops, 1);
+        expect(error, isNull);
+      },
+    );
   }
 
   testWidgets(

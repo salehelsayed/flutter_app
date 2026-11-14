@@ -25,4 +25,6 @@
     <string name="call_screen_unmute">إلغاء الكتم</string>
     <string name="call_screen_speaker">مكبر الصوت</string>
     <string name="call_screen_duration">مدة المكالمة %1$s</string>
+    <string name="call_pip_camera_on">تشغيل الكاميرا</string>
+    <string name="call_pip_camera_off">إيقاف الكاميرا</string>
 </resources>

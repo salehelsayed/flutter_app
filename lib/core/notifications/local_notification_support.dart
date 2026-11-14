@@ -1,4 +1,4 @@
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 import 'dart:ui' show Locale, PlatformDispatcher;
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -139,10 +139,17 @@ NotificationDetails mknoonThoughtNotificationDetails({Duration? remaining}) =>
         importance: Importance.high,
         priority: Priority.high,
         playSound: true,
+        onlyAlertOnce: true,
         audioAttributesUsage: mknoonMessageAudioAttributesUsage,
         timeoutAfter: remaining == null
             ? null
-            : max(1, remaining.inMilliseconds),
+            : max(
+                1,
+                min(
+                  ThoughtLifetime.duration.inMilliseconds,
+                  remaining.inMilliseconds,
+                ),
+              ),
       ),
       iOS: const DarwinNotificationDetails(
         presentSound: true,
@@ -151,8 +158,7 @@ NotificationDetails mknoonThoughtNotificationDetails({Duration? remaining}) =>
       ),
     );
 
-/// The push isolate's card: it shows a thought before knowing its expiry, but
-/// the thought was created no later than now, so it is gone within a lifetime.
+/// Legacy pushes without an expiry retain their bounded fallback lifetime.
 final mknoonThoughtsNotificationDetails = mknoonThoughtNotificationDetails(
   remaining: ThoughtLifetime.duration,
 );

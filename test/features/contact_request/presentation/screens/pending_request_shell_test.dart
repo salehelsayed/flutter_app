@@ -146,6 +146,115 @@ void main() {
   });
 
   testWidgets(
+    'BL-19 overlapping duplicate receives reveal the current pending request without shell reattach',
+    (tester) async {
+      final databaseZone = (await tester.runAsync(() async => Zone.current))!;
+      final firstWrite = databaseZone.run(Completer<void>.new);
+      final secondWrite = databaseZone.run(Completer<void>.new);
+      final releaseFirstWrite = databaseZone.run(Completer<void>.new);
+      final releaseSecondWrite = databaseZone.run(Completer<void>.new);
+      final presentationStarted = databaseZone.run(Completer<void>.new);
+      final releasePresentation = databaseZone.run(Completer<void>.new);
+      var writes = 0;
+      String? firstPresentationReceivedAt;
+      addTearDown(() {
+        for (final release in [
+          releaseFirstWrite,
+          releaseSecondWrite,
+          releasePresentation,
+        ]) {
+          if (!release.isCompleted) release.complete();
+        }
+      });
+      final h = await _open(
+        tester,
+        buildRequests: (db) {
+          final sql = buildWidgetRequestRepository(db);
+          final databaseZone = Zone.current;
+          return ContactRequestRepositoryImpl(
+            dbLoadPendingRequests: sql.dbLoadPendingRequests,
+            dbLoadRequest: sql.dbLoadRequest,
+            dbUpsertRequest: (row) async {
+              // Both receives finish their real SQL admission reads before
+              // either write commits. Keep the first presentation waiting
+              // until the second real upsert replaces its received timestamp.
+              final write = ++writes;
+              if (write <= 2) {
+                (write == 1 ? firstWrite : secondWrite).complete();
+                await (write == 1 ? releaseFirstWrite : releaseSecondWrite)
+                    .future;
+              }
+              await sql.dbUpsertRequest(row);
+            },
+            dbUpdateRequestStatus: sql.dbUpdateRequestStatus,
+            dbDeleteRequest: sql.dbDeleteRequest,
+            dbRequestExists: sql.dbRequestExists,
+            dbDecideRequest: (expected, accept, existingOnly, before) =>
+                databaseZone.run(() async {
+                  if (existingOnly && !presentationStarted.isCompleted) {
+                    firstPresentationReceivedAt =
+                        expected['received_at'] as String;
+                    presentationStarted.complete();
+                    await releasePresentation.future;
+                  }
+                  return sql.dbDecideRequest(
+                    expected,
+                    accept,
+                    existingOnly,
+                    before,
+                  );
+                }),
+          );
+        },
+      );
+      await h.mount(tester, withOrbit: true);
+      final orbit = tester.state(find.byType(OrbitWired, skipOffstage: false));
+      final wire = await h.makeWire(tester, 0x52, 'Bob');
+      late Future<HandleMessageResult> second;
+      await tester.runAsync(() async {
+        final first = h.listener.processIncomingMessage(wire);
+        await firstWrite.future;
+        second = h.listener.processIncomingMessage(wire);
+        await secondWrite.future;
+        releaseFirstWrite.complete();
+        await first;
+      });
+      // Deliver the retained shells' widget callbacks between real SQL phases;
+      // waiting for those callbacks inside runAsync would hold the fake clock.
+      await _frames(tester);
+      expect(presentationStarted.isCompleted, isTrue);
+      await tester.runAsync(() async {
+        releaseSecondWrite.complete();
+        await second;
+      });
+      await _frames(tester);
+      final pending = (await tester.runAsync(h.requests.getPendingRequests))!;
+      expect(writes, 2);
+      expect(pending, hasLength(1));
+      expect(pending.single.receivedAt, isNot(firstPresentationReceivedAt));
+      expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+      releasePresentation.complete();
+      await _frames(tester);
+
+      expect(_dialogs, findsOneWidget);
+      expect(
+        tester.widget<ContactRequestDialog>(_dialogs).request.receivedAt,
+        pending.single.receivedAt,
+      );
+      expect(
+        tester.state(find.byType(OrbitWired, skipOffstage: false)),
+        same(orbit),
+      );
+      await tester.tap(find.text('Decline'));
+      await _frames(tester);
+      expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+      expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+      expect(_dialogs, findsNothing);
+    },
+    timeout: const Timeout(Duration(seconds: 45)),
+  );
+
+  testWidgets(
     'CR-005 live plus inbox duplicate and listener restart retain one consent dialog',
     (tester) async {
       final h = await _open(tester);
@@ -700,7 +809,10 @@ Future<void> _frames(WidgetTester tester) async {
   }
 }
 
-Future<_Shell> _open(WidgetTester tester) async {
+Future<_Shell> _open(
+  WidgetTester tester, {
+  ContactRequestRepositoryImpl Function(Database)? buildRequests,
+}) async {
   tester.view.physicalSize = const Size(1440, 2960);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -716,7 +828,9 @@ Future<_Shell> _open(WidgetTester tester) async {
   addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
   final db = (await tester.runAsync(openContactWidgetDatabase))!;
   addTearDown(db.close);
-  final h = (await tester.runAsync(() async => _Shell(db)))!;
+  final h = (await tester.runAsync(
+    () async => _Shell(db, buildRequests: buildRequests),
+  ))!;
   addTearDown(h.dispose);
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());
@@ -743,7 +857,10 @@ class _Sender {
 }
 
 class _Shell {
-  _Shell(this.db) {
+  _Shell(
+    this.db, {
+    ContactRequestRepositoryImpl Function(Database)? buildRequests,
+  }) {
     bus.register(local);
     bridge = Ed25519ContactRequestBridge(bus)
       ..onCommand = (request) {
@@ -756,7 +873,7 @@ class _Shell {
       };
     identities = buildWidgetIdentityRepository(db, keys);
     contacts = buildWidgetContactRepository(db);
-    requests = buildWidgetRequestRepository(db);
+    requests = (buildRequests ?? buildWidgetRequestRepository)(db);
     messages = buildWidgetMessageRepository(db);
     repairs = SqlContactRepairRepository(db);
     restartListener();

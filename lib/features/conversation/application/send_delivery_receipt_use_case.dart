@@ -1,8 +1,11 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/features/conversation/domain/models/delivery_receipt_outbox_entry.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/delivery_receipt_outbox_repository.dart';
 
 /// 132 Phase 1 flag (LIVE by default since 2026-06-19, device-verified): when
 /// true, the receiver mints a confirmatory delivery receipt for direct/LAN/
@@ -83,9 +86,9 @@ bool shouldMintDeliveryReceipt({String? stagedEntryId, String? transport}) =>
 ///
 /// Plaintext v1 by design (D-4): `'delivery_receipt'` is the one envelope
 /// type old routers provably drop by name, making it the version-skew-safe
-/// choice. Live send first, relay-inbox fallback second. NO retry loop on
-/// failure (D-5): the sender's custody sweep and the duplicate-receive →
-/// receipt re-send path are the repair loop.
+/// choice. Live send first, relay-inbox fallback second. This compatibility
+/// entry point attempts once; production uses [DeliveryReceiptOutbox] to retain
+/// the exact envelope before transport and retry through the existing lifecycle.
 ///
 /// Returns true when the receipt went out (acked live or stored).
 Future<bool> sendDeliveryReceipt({
@@ -93,6 +96,52 @@ Future<bool> sendDeliveryReceipt({
   required String targetPeerId,
   required List<String> messageIds,
   Map<String, String>? mutationEventIds,
+}) => _sendDeliveryReceiptEnvelope(
+  p2pService: p2pService,
+  targetPeerId: targetPeerId,
+  messageIds: messageIds,
+  envelope: _buildDeliveryReceiptEnvelope(
+    messageIds: messageIds,
+    mutationEventIds: mutationEventIds,
+    now: DateTime.now(),
+  ),
+);
+
+String _buildDeliveryReceiptEnvelope({
+  required List<String> messageIds,
+  Map<String, String>? mutationEventIds,
+  required DateTime now,
+}) {
+  final messageIdSet = messageIds.toSet();
+  final filteredMutationEventIds = <String, String>{};
+  if (mutationEventIds != null) {
+    for (final entry in mutationEventIds.entries) {
+      final messageId = entry.key.trim();
+      final eventId = entry.value.trim();
+      if (messageId.isNotEmpty &&
+          eventId.isNotEmpty &&
+          messageIdSet.contains(messageId)) {
+        filteredMutationEventIds[messageId] = eventId;
+      }
+    }
+  }
+  return jsonEncode({
+    'type': 'delivery_receipt',
+    'version': '1',
+    'payload': {
+      'messageIds': messageIds,
+      if (filteredMutationEventIds.isNotEmpty)
+        'mutationEventIds': filteredMutationEventIds,
+      'ts': now.toUtc().toIso8601String(),
+    },
+  });
+}
+
+Future<bool> _sendDeliveryReceiptEnvelope({
+  required P2PService p2pService,
+  required String targetPeerId,
+  required List<String> messageIds,
+  required String envelope,
 }) async {
   AppDiagnostics? diagnostics;
   String? trace;
@@ -119,29 +168,6 @@ Future<bool> sendDeliveryReceipt({
     }
   }
 
-  final messageIdSet = messageIds.toSet();
-  final filteredMutationEventIds = <String, String>{};
-  if (mutationEventIds != null) {
-    for (final entry in mutationEventIds.entries) {
-      final messageId = entry.key.trim();
-      final eventId = entry.value.trim();
-      if (messageId.isNotEmpty &&
-          eventId.isNotEmpty &&
-          messageIdSet.contains(messageId)) {
-        filteredMutationEventIds[messageId] = eventId;
-      }
-    }
-  }
-  final envelope = jsonEncode({
-    'type': 'delivery_receipt',
-    'version': '1',
-    'payload': {
-      'messageIds': messageIds,
-      if (filteredMutationEventIds.isNotEmpty)
-        'mutationEventIds': filteredMutationEventIds,
-      'ts': DateTime.now().toUtc().toIso8601String(),
-    },
-  });
   final idPreview = messageIds.isEmpty
       ? ''
       : (messageIds.first.length > 8
@@ -207,4 +233,144 @@ Future<bool> sendDeliveryReceipt({
   );
   recordOutcome('failed');
   return false;
+}
+
+/// Account-scoped receipt owner shared by minting and lifecycle retry triggers.
+/// Queuing never means sent: only the unchanged live ACK/store result does.
+class DeliveryReceiptOutbox {
+  DeliveryReceiptOutbox({
+    required this.repository,
+    required this.p2pService,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+
+  final DeliveryReceiptOutboxRepository repository;
+  final P2PService Function() p2pService;
+  final DateTime Function() _now;
+  Future<int>? _draining;
+  final _attempting = <String>{};
+
+  Future<bool> send({
+    required String targetPeerId,
+    required List<String> messageIds,
+    Map<String, String>? mutationEventIds,
+  }) async {
+    try {
+      final now = _now();
+      final nowMs = now.millisecondsSinceEpoch;
+      final envelope = _buildDeliveryReceiptEnvelope(
+        messageIds: messageIds,
+        mutationEventIds: mutationEventIds,
+        now: now,
+      );
+      final payload = (jsonDecode(envelope) as Map)['payload'] as Map;
+      final mutations = payload['mutationEventIds'] as Map? ?? const {};
+      final mutationKeys = mutations.keys.cast<String>().toList()..sort();
+      // Dedupe only the same pending receipt. Keep its original bytes, ts,
+      // expiry and backoff; a later generation/recipient is a different key.
+      final key = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode([
+                targetPeerId,
+                messageIds,
+                {for (final id in mutationKeys) id: mutations[id]},
+              ]),
+            ),
+          )
+          .toString();
+      await repository.deleteExpired(nowMs: nowMs);
+      final entry = await repository.stage(
+        DeliveryReceiptOutboxEntry(
+          receiptKey: key,
+          recipientPeerId: targetPeerId,
+          receiptPayload: envelope,
+          createdAtMs: nowMs,
+          expiresAtMs: now.add(const Duration(days: 7)).millisecondsSinceEpoch,
+          nextAttemptAtMs: nowMs,
+          attemptCount: 0,
+        ),
+      );
+      return await _attempt(entry);
+    } catch (error) {
+      _recordQueueError(error);
+      return false;
+    }
+  }
+
+  /// Startup, online, restored-network, periodic and resume share this flight.
+  Future<int> drain() {
+    final active = _draining;
+    if (active != null) return active;
+    late final Future<int> attempt;
+    attempt = _drain().whenComplete(() {
+      if (identical(_draining, attempt)) _draining = null;
+    });
+    _draining = attempt;
+    return attempt;
+  }
+
+  Future<int> _drain() async {
+    try {
+      final nowMs = _now().millisecondsSinceEpoch;
+      await repository.deleteExpired(nowMs: nowMs);
+      final entries = await repository.loadDue(nowMs: nowMs);
+      var accepted = 0;
+      for (final entry in entries) {
+        if (await _attempt(entry)) accepted++;
+      }
+      return accepted;
+    } catch (error) {
+      _recordQueueError(error);
+      return 0;
+    }
+  }
+
+  Future<bool> _attempt(DeliveryReceiptOutboxEntry entry) async {
+    if (!_attempting.add(entry.receiptKey)) return false;
+    try {
+      final nowMs = _now().millisecondsSinceEpoch;
+      final delayMs = (5000 * (1 << entry.attemptCount.clamp(0, 8))).clamp(
+        5000,
+        15 * 60 * 1000,
+      );
+      final claimed = await repository.claimAttempt(
+        expected: entry,
+        nowMs: nowMs,
+        nextAttemptAtMs: nowMs + delayMs,
+      );
+      if (claimed == null) return false;
+      final payload =
+          (jsonDecode(claimed.receiptPayload) as Map)['payload'] as Map;
+      final accepted = await _sendDeliveryReceiptEnvelope(
+        p2pService: p2pService(),
+        targetPeerId: claimed.recipientPeerId,
+        messageIds: (payload['messageIds'] as List).cast<String>(),
+        envelope: claimed.receiptPayload,
+      );
+      if (accepted) {
+        try {
+          await repository.deleteIfExact(claimed);
+        } catch (error) {
+          // Transport acceptance is still true. Failed local cleanup retains
+          // an idempotent receipt until a later accepted retry or its expiry.
+          _recordQueueError(error);
+        }
+      }
+      return accepted;
+    } catch (error) {
+      _recordQueueError(error);
+      return false;
+    } finally {
+      _attempting.remove(entry.receiptKey);
+    }
+  }
+
+  void _recordQueueError(Object error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DELIVERY_RECEIPT_OUTBOX_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+  }
 }

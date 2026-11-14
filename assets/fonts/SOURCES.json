@@ -1,0 +1,59 @@
+[
+  {
+    "family": "Cairo",
+    "repository": "Gue3bara/Cairo",
+    "commit": "73d16933c6a0f341c27a69e401da83dcb0d53114",
+    "source_path": "fonts/Cairo/variable/Cairo[slnt,wght].ttf",
+    "git_blob_sha": "25641b1c828857698457bcd9f5a102616b4e8033",
+    "byte_length": 599548,
+    "destination": "assets/fonts/cairo/Cairo[slnt,wght].ttf",
+    "requested_weight": 700,
+    "license": {
+      "spdx": "OFL-1.1",
+      "source_path": "OFL.txt",
+      "git_blob_sha": "f6e87d489b3f459dde4e0f457fdd63e1f39bfe67",
+      "byte_length": 4473,
+      "destination": "assets/fonts/cairo/OFL.txt",
+      "sha256": "a4554e1799d42e1405924b61eb0e0722ae1623b1f1f07f995348f96c496362a9"
+    },
+    "sha256": "667c987182391c91f4e57a2f455b1794fb5e3ee6ca4ef3383e86bb690fa9c964"
+  },
+  {
+    "family": "Amiri",
+    "repository": "aliftype/amiri",
+    "commit": "d3d0c5cb6fe7196cb4a58608fc5c8ecd2e6e80fa",
+    "source_path": "fonts/Amiri-Bold.ttf",
+    "git_blob_sha": "5a31859164fbb10b8dc03758cbf37cc9aa123521",
+    "byte_length": 588208,
+    "destination": "assets/fonts/amiri/Amiri-Bold.ttf",
+    "requested_weight": 700,
+    "license": {
+      "spdx": "OFL-1.1",
+      "source_path": "OFL.txt",
+      "git_blob_sha": "a6051797e5f1910347b586dc06d4c1130f00da28",
+      "byte_length": 4389,
+      "destination": "assets/fonts/amiri/OFL.txt",
+      "sha256": "72de68e5954f4fdd24702292ef5a32f003ca960ec9330dc86e5eefb5dffb9b22"
+    },
+    "sha256": "3cd4a96bf6dca38649c9c7b4ca11a3aed55e272ae377a667f6f2138994c4baec"
+  },
+  {
+    "family": "Lalezar",
+    "repository": "BornaIz/Lalezar",
+    "commit": "238701c4241f207e92515f845a199be9131c1109",
+    "source_path": "fonts/Lalezar-Regular.ttf",
+    "git_blob_sha": "b4dfd64d62313abebd2e6a0fef81412ab231f045",
+    "byte_length": 290016,
+    "destination": "assets/fonts/lalezar/Lalezar-Regular.ttf",
+    "requested_weight": 400,
+    "license": {
+      "spdx": "OFL-1.1",
+      "source_path": "OFL.txt",
+      "git_blob_sha": "7f8e10fe7cd444340186b92554c77b8b9e9083dd",
+      "byte_length": 4383,
+      "destination": "assets/fonts/lalezar/OFL.txt",
+      "sha256": "327bac41d89cf9f32e0efe353228018e1661cff458a5d4905714958514df7bd5"
+    },
+    "sha256": "7b80807bc831f141de0f7dcf6816412bf0c548968d548c5156ca388733390ea9"
+  }
+]

@@ -412,6 +412,7 @@ dependencies {
     // firebase_messaging keeps this dependency non-transitive at the app
     // compile boundary, so declare the already-resolved SDK version directly.
     implementation("com.google.firebase:firebase-messaging:24.1.2")
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("androidx.core:core-telecom:1.1.0-beta01")
     implementation("com.google.guava:guava:33.3.1-android")
@@ -419,6 +420,9 @@ dependencies {
     // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
     // interface + does its own SRV/TXT/A resolution. See MdnsResolver.kt.
     implementation("org.jmdns:jmdns:3.5.9")
+    // Same webrtc-sdk as flutter_webrtc 1.6.0 ships at runtime; compile-only for the
+    // live-call PiP remote sink (BL-16 unit 3). Adds nothing to the APK.
+    compileOnly("io.github.webrtc-sdk:android:144.7559.09")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.work:work-testing:2.11.2")

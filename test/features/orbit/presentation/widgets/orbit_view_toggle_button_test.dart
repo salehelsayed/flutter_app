@@ -59,13 +59,13 @@ void main() {
     final decoration = toggleContainer(tester).decoration! as BoxDecoration;
     expect(
       decoration.color,
-      const Color(0xBF101218),
-      reason: 'fill = dark surfaceSubtle token (== 207 mockup rgba)',
+      const Color(0x0AFFFFFF),
+      reason: 'fill = dark faint chrome fill (white 4%)',
     );
     expect(
       (decoration.border! as Border).top.color,
-      const Color(0x80FFFFFF),
-      reason: 'hairline = dark border token (== 207 mockup rgba)',
+      const Color(0x24FFFFFF),
+      reason: 'hairline = dark chrome hairline (white 14%)',
     );
   });
 
@@ -83,13 +83,13 @@ void main() {
     const colors = BackgroundReadableColors.representativeLight;
     expect(
       decoration.color,
-      colors.surfaceSubtle,
-      reason: 'fill must resolve the LIGHT surfaceSubtle token',
+      colors.chromeFaintFill,
+      reason: 'fill must resolve the LIGHT faint chrome fill',
     );
     expect(
       (decoration.border! as Border).top.color,
-      colors.border,
-      reason: 'hairline must resolve the LIGHT border token',
+      colors.chromeHairline,
+      reason: 'hairline must resolve the LIGHT chrome hairline',
     );
   });
 

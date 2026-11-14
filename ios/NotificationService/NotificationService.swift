@@ -182,7 +182,13 @@ final class NotificationService: UNNotificationServiceExtension {
       requestIdentifier = nil
     }
     mailboxWakeCoordinator.resolve(
-      requestIdentifier: request.identifier
+      requestIdentifier: request.identifier,
+      onFailure: { [weak self] kind, reason in
+        diagnosticScope.recordDecryptFailure(nseAppDecryptFailureReason(kind: kind, reason: reason)) {
+          self?.previewEventEmitter.emit(event: "PUSH_NSE_DECRYPT_FAIL",
+            details: ["kind": kind, "reason": reason])
+        }
+      }
     ) { [weak self] resolution in
       self?.finish(
         generation: generation,
@@ -240,11 +246,15 @@ final class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    diagnosticScope?.record("process", expiry ? "timeout" : "ok", expiry ? "timeout" : "none")
+    diagnosticScope?.finishProcess(expired: expiry,
+      previewFailure: nsePreviewTechnicalFailureReason(preview))
     if let originalFixedContent {
       let resolution = fixedResolution ?? .generic(lease: nil)
       switch resolution {
       case let .authenticated(candidate, lease):
+        if candidate.preview.didDecrypt {
+          previewEventEmitter.emit(event: "PUSH_NSE_DECRYPT_OK", details: [:])
+        }
         let disposition = localNotificationFinalEffect?.complete(
           candidate: candidate,
           lease: lease,

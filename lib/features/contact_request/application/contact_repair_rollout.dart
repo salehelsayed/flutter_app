@@ -1,16 +1,13 @@
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 
-/// Task 12b, owner decision "1. (a)": automatic repair runs only between
-/// phones verified as updated in the coordinated rollout. There is no
-/// mixed-version fallback: an older receiver rejects the signed marker, so an
-/// initiator must never guess.
-///
-/// The coordinated rollout build sets `--dart-define=CONTACT_REPAIR_ROLLOUT=true`.
-/// Absent, every initiating send stays unmarked (today's behaviour). Receiving
-/// is always on: a valid stored-authority-signed marker proves its sender is
-/// updated, so an updated receiver may answer it.
+/// Task 12b sends the signed marker so a receiver that still holds us as a
+/// contact replies once with its key (BL-21: a one-sided QR re-add otherwise
+/// deadlocks). On by default: every build at or above minBuild 126 already
+/// receives the marker. `--dart-define=CONTACT_REPAIR_ROLLOUT=false` is the
+/// off switch. Receiving is always on.
 const bool contactRepairRolloutEnabled = bool.fromEnvironment(
   'CONTACT_REPAIR_ROLLOUT',
+  defaultValue: true,
 );
 
 /// Eligibility from the rollout flag alone.

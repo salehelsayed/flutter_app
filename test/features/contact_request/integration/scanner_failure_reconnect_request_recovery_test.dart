@@ -280,7 +280,7 @@ void main() {
             expect(await bobRequests.getPendingRequests(), isEmpty);
             expect(await bobContacts.getContactCount(), 0);
             await _pumpFrames(tester);
-            expect(find.text('Added to your circle!'), findsOneWidget);
+            expect(find.text('Contact saved'), findsOneWidget);
             expect(tester.takeException(), isNull);
             // Remove the entire scanner route before restarting repositories. The
             // continuation below cannot rescan or invoke that widget's callback.

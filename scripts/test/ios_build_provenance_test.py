@@ -312,6 +312,8 @@ class IosBuildProvenanceTest(unittest.TestCase):
         (self.root / "tool/build/voice_call_release_defines.json").write_text("{}")
         (self.root / "ios").mkdir()
         (self.root / "ios/ExportOptions-AppStore.plist").write_bytes(plistlib.dumps({"method": "app-store-connect"}))
+        nse_gate = scripts / "check_ios_nse_go_bridge.sh"
+        nse_gate.write_bytes((Path(__file__).resolve().parents[1] / nse_gate.name).read_bytes())
         helper = scripts / "ios_build_provenance.py"
         helper.write_text(textwrap.dedent('''\
             import json, pathlib, sys
@@ -333,6 +335,20 @@ class IosBuildProvenanceTest(unittest.TestCase):
         flutter.chmod(0o755)
         environment = {**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]}
         arguments = ["--build-number", "118", "--dart-define=FIXTURE=value with spaces"]
+        retained = self.root / "build/releases/fixture"
+        retained.mkdir(parents=True)
+
+        def retained_ipa(extension_binary):
+            with zipfile.ZipFile(retained / "Runner.ipa", "w") as archive:
+                archive.writestr("Payload/Runner.app/PlugIns/NotificationService.appex/NotificationService",
+                                 extension_binary)
+
+        retained_ipa(b"stub")
+        stub = subprocess.run(["bash", str(entrypoint), *arguments], cwd=self.root, env=environment,
+                              text=True, capture_output=True, timeout=10)
+        self.assertEqual(stub.returncode, 1, stub.stderr)
+        self.assertIn("NSE gate FAILED", stub.stderr)
+        retained_ipa(b"Go build ID runtime.goexit")
         for exit_code, stages in ((0, ["begin", "flutter", "retain"]), (17, ["begin", "flutter"])):
             (self.root / "events.jsonl").write_text("")
             result = subprocess.run(["bash", str(entrypoint), *arguments], cwd=self.root,

@@ -638,6 +638,20 @@ handleIncomingMessage({
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
+
+  // Automatic key repair cannot reopen a declined request. The unsigned
+  // outer intent only suppresses this request; it never grants consent.
+  if (priorRequest?.status == ContactRequestStatus.declined &&
+      existingContact == null &&
+      json['intent'] == 'key_exchange_retry') {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_DECLINED_RETRY_IGNORED',
+      details: {},
+    );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
   final requestDigest = contactRequestSignedDigest(dataToVerify);
 
   // 7c. The same signed request ID with a different signed body is a

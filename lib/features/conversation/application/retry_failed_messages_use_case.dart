@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:clock/clock.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
@@ -208,6 +209,22 @@ Future<int> retryFailedMessages({
   bool retryDirectInboxCustody = true,
   DirectEventFanoutAuthoring? directEventFanout,
 }) async {
+  var missingKeyObserved = false;
+  void observeMissingKey() {
+    if (missingKeyObserved) return;
+    missingKeyObserved = true;
+    try {
+      AppDiagnostics.instance.record(
+        feature: 'message',
+        stage: 'recover',
+        outcome: 'blocked',
+        reason: 'recipient_key_missing',
+      );
+    } catch (_) {
+      // Observation cannot change deferred recovery or its retry authority.
+    }
+  }
+
   var authoredSucceeded = 0;
   if (messageRepo is AuthoredDirectTextIntentRepository) {
     final intents = messageRepo as AuthoredDirectTextIntentRepository;
@@ -219,6 +236,12 @@ Future<int> retryFailedMessages({
           try {
             final contact = await contactRepo.getContact(intent.contactPeerId);
             if (contact == null || contact.isBlocked) continue;
+            // Keep the authored intent until encryption can be prepared.
+            final recipientKey = contact.mlKemPublicKey;
+            if (recipientKey == null || recipientKey.trim().isEmpty) {
+              observeMissingKey();
+              continue;
+            }
             final result = await runWithAutomaticRecoveryNotificationPolicy(
               originalTimestamp: intent.timestamp,
               manualRetry: false,
@@ -235,7 +258,7 @@ Future<int> retryFailedMessages({
                 timestamp: intent.timestamp,
                 quotedMessageId: intent.quotedMessageId,
                 bridge: bridge,
-                recipientMlKemPublicKey: contact.mlKemPublicKey,
+                recipientMlKemPublicKey: recipientKey,
                 directEventFanout: directEventFanout,
               ),
             );
@@ -267,6 +290,7 @@ Future<int> retryFailedMessages({
         manualRetry: false,
         retryDirectInboxCustody: retryDirectInboxCustody,
         loadFailedMessages: messageRepo.getFailedOutgoingMessages,
+        onMissingRecipientKey: observeMissingKey,
       );
 }
 
@@ -330,6 +354,7 @@ Future<int> _retryFailedMessagesInternal({
   required P2PService p2pService,
   required Bridge bridge,
   required Future<List<ConversationMessage>> Function() loadFailedMessages,
+  void Function()? onMissingRecipientKey,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
@@ -441,6 +466,7 @@ Future<int> _retryFailedMessagesInternal({
         manualRetry: manualRetry,
         retryDirectInboxCustody: retryDirectInboxCustody,
         storeExactCustody: storeExactCustody,
+        onMissingRecipientKey: onMissingRecipientKey,
       ),
     );
     if (retried) {
@@ -489,6 +515,7 @@ Future<bool> _retryFailedMessageCandidate({
   required bool manualRetry,
   required bool retryDirectInboxCustody,
   required StoreInAckCustodyInboxDetailedFn storeExactCustody,
+  void Function()? onMissingRecipientKey,
 }) async {
   if (!_retryInFlightMessageIds.add(msg.id)) {
     emitFlowEvent(
@@ -501,6 +528,12 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
+    final terminalRetryRepo = messageRepo is MessageAutoRetryTerminalRepository
+        ? messageRepo as MessageAutoRetryTerminalRepository
+        : null;
+    if (manualRetry) {
+      await terminalRetryRepo?.setAutoRetryTerminalReason(msg, null);
+    }
     // 356: an exact mutation outbox owner is stronger than the older v108
     // direct-event owner. Resolve the list-loaded event first so an ownerless
     // deletion refuses without any weaker lookup, while a surviving edit gets
@@ -1192,9 +1225,18 @@ Future<bool> _retryFailedMessageCandidate({
     // A linked survivor retry is already addressed by persisted v114 facts;
     // resolving the live logical contact here would let roster drift revoke a
     // committed obligation before v108 binding.
-    final mlKemPk = linkedMediaFanout == null && privateMediaFanout == null
+    final needsRecipientKey =
+        linkedMediaFanout == null && privateMediaFanout == null;
+    final mlKemPk = needsRecipientKey
         ? (await contactRepo.getContact(msg.contactPeerId))?.mlKemPublicKey
         : null;
+    // Defer automatic reconstruction; manual retry retains normal refusal.
+    if (!manualRetry &&
+        needsRecipientKey &&
+        (mlKemPk == null || mlKemPk.trim().isEmpty)) {
+      onMissingRecipientKey?.call();
+      return false;
+    }
 
     final attachments = resolution.attachments;
 
@@ -1203,6 +1245,10 @@ Future<bool> _retryFailedMessageCandidate({
     // preserves the receiver staleness-gate ordering), and plain rows keep
     // their original createdAt instead of re-minting it.
     final retryAction = deriveRetryAction(msg);
+    if (!manualRetry &&
+        await terminalRetryRepo?.isAutoRetryTerminal(msg.id) == true) {
+      return false;
+    }
     final (result, _) = await sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -1242,6 +1288,9 @@ Future<bool> _retryFailedMessageCandidate({
       return true;
     }
 
+    if (result == SendChatMessageResult.invalidMessage) {
+      await terminalRetryRepo?.setAutoRetryTerminalReason(msg, 'invalid_message');
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_FAILED_MESSAGE_STILL_FAILED',

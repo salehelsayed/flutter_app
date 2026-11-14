@@ -267,7 +267,36 @@ void main() {
         incoming: true,
       );
 
-      expect(await dbLoadNextPostExpiry(db), now.add(const Duration(hours: 1)));
+      expect(
+        await dbLoadNextPostExpiry(db, nowProvider: () => now),
+        now.add(const Duration(hours: 1)),
+      );
+    },
+  );
+
+  test(
+    'next expiry of an expired incoming thought is its delete deadline',
+    () async {
+      await seed(
+        'incoming-hidden',
+        now.subtract(const Duration(hours: 30)),
+        incoming: true,
+      );
+
+      expect(
+        await dbLoadNextPostExpiry(db, nowProvider: () => now),
+        now.add(const Duration(hours: 42)),
+      );
+
+      await seed(
+        'incoming-live',
+        now.subtract(const Duration(hours: 2)),
+        incoming: true,
+      );
+      expect(
+        await dbLoadNextPostExpiry(db, nowProvider: () => now),
+        now.add(const Duration(hours: 22)),
+      );
     },
   );
 

@@ -90,13 +90,54 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
-  testWidgets('without TRANSLATE_PREVIEW a received voice message has no '
-      'Transcribe', (tester) async {
-    expect(kTranslatePreviewEnabled, isFalse);
-    await tester.pumpWidget(_screen([_voice(id: 'in', incoming: true)]));
+  testWidgets(
+    'with preview explicitly disabled a received voice message has no '
+    'Transcribe',
+    (tester) async {
+      debugTranslatePreviewEnabledOverride = false;
+      expect(translatePreviewEnabled, isFalse);
+      await tester.pumpWidget(_screen([_voice(id: 'in', incoming: true)]));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('in-audio')), findsOneWidget);
+      expect(find.text('Transcribe'), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets('BL25U4 default chat icon requires both static support and '
+      'ModelReady and reacts to either changing', (tester) async {
+    expect(const bool.fromEnvironment('TRANSLATE_PREVIEW'), isFalse);
+    expect(debugTranslatePreviewEnabledOverride, isNull);
+    final controller =
+        debugModelDeliveryOverride! as FakeModelDeliveryController;
+    await tester.pumpWidget(_screen([]));
     await tester.pump();
-    expect(find.byKey(const ValueKey('in-audio')), findsOneWidget);
-    expect(find.text('Transcribe'), findsNothing);
+    expect(find.byTooltip('Translation'), findsOneWidget);
+    controller.deviceSupported.value = false;
+    await tester.pump();
+    expect(find.byTooltip('Translation'), findsNothing);
+    controller.deviceSupported.value = true;
+    await tester.pump();
+    expect(find.byTooltip('Translation'), findsOneWidget);
+    controller.state.value = const ModelUnsupported();
+    await tester.pump();
+    expect(find.byTooltip('Translation'), findsNothing);
+    controller.state.value = const ModelReady(sizeBytes: 2600000000);
+    await tester.pump();
+    expect(find.byTooltip('Translation'), findsOneWidget);
+    expect(controller.calls, isEmpty);
+    await finish(tester);
+  });
+
+  testWidgets('BL25U4 default chat hides an unsupported device even with a '
+      'stale ready model', (tester) async {
+    final controller =
+        debugModelDeliveryOverride! as FakeModelDeliveryController;
+    controller.deviceSupported.value = false;
+    await tester.pumpWidget(_screen([]));
+    await tester.pump();
+    expect(find.byTooltip('Translation'), findsNothing);
+    expect(controller.calls, isEmpty);
     await finish(tester);
   });
 

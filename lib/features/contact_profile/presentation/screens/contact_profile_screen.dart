@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
 
@@ -85,6 +86,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
   @override
   void initState() {
     super.initState();
+    PendingContactRetryScope.noteInterest(context, widget.contact.peerId);
     _accent = RingAvatarGenerator.glowColorForPeerId(widget.contact.peerId);
     _safetyNumber = _buildSafetyNumber(null);
     unawaited(_refreshRoster());

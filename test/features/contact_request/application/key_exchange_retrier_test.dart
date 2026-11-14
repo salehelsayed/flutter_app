@@ -2,12 +2,15 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../support/interest_retry_fixture.dart';
 
 void main() {
   late FakeP2PService p2pService;
@@ -37,17 +40,89 @@ void main() {
 
   group('KeyExchangeRetrier', () {
     test(
+      'status refresh reads the local journal without transport work',
+      () async {
+        final fixture = InterestRetryFixture();
+        fixture.contacts.seed([
+          fixture.contact,
+          ContactModel(
+            peerId: 'fresh-recipient',
+            publicKey: 'fresh-recipient-key',
+            rendezvous: '/p2p-circuit/relay',
+            username: 'Bob',
+            signature: 'fresh-qr-signature',
+            scannedAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        ]);
+        final statusRetrier = fixture.retrier();
+        try {
+          await statusRetrier.refreshRetryStatus();
+
+          expect(statusRetrier.stoppedPeerIds.value, contains(interestPeer));
+          expect(
+            (
+              fixture.transport.storeInInboxCallCount,
+              fixture.transport.sendMessageCallCount,
+              fixture.transport.sendMessageWithReplyCallCount,
+              fixture.transport.discoverPeerCallCount,
+              fixture.transport.dialPeerCallCount,
+              fixture.bridge.sentMessages.length,
+            ),
+            (0, 0, 0, 0, 0, 0),
+          );
+        } finally {
+          statusRetrier.dispose();
+          fixture.dispose();
+        }
+      },
+    );
+
+    test(
       'reconnect prepares authorization before attempting key distribution',
       () {
         fakeAsync((fake) {
           var preparations = 0;
+          identityRepo.seed(
+            FakeIdentityRepository.makeIdentity(
+              mlKemPublicKey: 'sender-mlkem',
+              mlKemSecretKey: 'sender-mlkem-secret',
+            ),
+          );
+          contactRepo.seed([
+            ContactModel(
+              peerId: 'recipient',
+              publicKey: 'recipient-key',
+              rendezvous: '/p2p-circuit/relay',
+              username: 'Alice',
+              signature: 'qr-signature',
+              scannedAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ]);
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'signature',
+          };
+          bridge.responses['contactrequest.encrypt'] = {
+            'ok': true,
+            'ephemeralPublicKey': 'ephemeral-key',
+            'ciphertext': 'ciphertext',
+            'nonce': 'nonce',
+          };
           retrier = KeyExchangeRetrier(
             p2pService: p2pService,
             contactRepo: contactRepo,
             identityRepo: identityRepo,
             bridge: bridge,
+            secureKeyStore: FakeSecureKeyStore(),
             beforeRetry: () async {
-              expect(identityRepo.loadIdentityCallCount, 0);
+              expect(
+                (
+                  p2pService.storeInInboxCallCount,
+                  p2pService.sendMessageCallCount,
+                  p2pService.sendMessageWithReplyCallCount,
+                ),
+                (0, 0, 0),
+              );
               preparations++;
             },
           );
@@ -63,7 +138,7 @@ void main() {
           fake.elapse(const Duration(seconds: 5));
           fake.flushMicrotasks();
           expect(preparations, 1);
-          expect(identityRepo.loadIdentityCallCount, 1);
+          expect(p2pService.storeInInboxCallCount, 1);
         });
       },
     );
@@ -77,6 +152,19 @@ void main() {
 
     test('triggers retry on offline to online transition', () {
       fakeAsync((fake) {
+        var retryAttempts = 0;
+        retrier = KeyExchangeRetrier(
+          p2pService: p2pService,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          coordinator: KeyExchangeRetryCoordinator(
+            performRetry: () async {
+              retryAttempts++;
+              return 0;
+            },
+          ),
+        );
         retrier.start();
 
         // Emit online state (isStarted + circuitAddresses non-empty)
@@ -91,25 +179,31 @@ void main() {
         // Just before the 5s debounce — no retry yet
         fake.elapse(const Duration(seconds: 4, milliseconds: 999));
         fake.flushMicrotasks();
-        expect(identityRepo.loadIdentityCallCount, 0);
+        expect(retryAttempts, 0);
 
         // At exactly 5s — timer fires
         fake.elapse(const Duration(milliseconds: 1));
         fake.flushMicrotasks(); // complete the async _retryIfNeeded body
 
-        // retryIncompleteKeyExchanges was called → it tried to load identity
-        expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
+        expect(retryAttempts, 1);
       });
     });
 
     test('account migration gate blocks scheduled retry work', () {
       fakeAsync((fake) {
         var gateCalls = 0;
+        var retryAttempts = 0;
         retrier = KeyExchangeRetrier(
           p2pService: p2pService,
           contactRepo: contactRepo,
           identityRepo: identityRepo,
           bridge: bridge,
+          coordinator: KeyExchangeRetryCoordinator(
+            performRetry: () async {
+              retryAttempts++;
+              return 0;
+            },
+          ),
           accountMigrationNetworkGate:
               ({String? peerId, required String operation}) async {
                 gateCalls++;
@@ -132,12 +226,13 @@ void main() {
         fake.flushMicrotasks();
 
         expect(gateCalls, 1);
-        expect(identityRepo.loadIdentityCallCount, 0);
+        expect(retryAttempts, 0);
       });
     });
 
     test('does not trigger when already online', () {
       fakeAsync((fake) {
+        var retryAttempts = 0;
         // Start in online state
         p2pService = FakeP2PService(
           initialState: const NodeState(
@@ -151,6 +246,12 @@ void main() {
           contactRepo: contactRepo,
           identityRepo: identityRepo,
           bridge: bridge,
+          coordinator: KeyExchangeRetryCoordinator(
+            performRetry: () async {
+              retryAttempts++;
+              return 0;
+            },
+          ),
         );
         retrier.start();
 
@@ -168,13 +269,25 @@ void main() {
         fake.elapse(const Duration(seconds: 6));
         fake.flushMicrotasks();
 
-        // No retry triggered (identity never loaded) because no transition
-        expect(identityRepo.loadIdentityCallCount, 0);
+        expect(retryAttempts, 0);
       });
     });
 
     test('debounces rapid state changes', () {
       fakeAsync((fake) {
+        var retryAttempts = 0;
+        retrier = KeyExchangeRetrier(
+          p2pService: p2pService,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          coordinator: KeyExchangeRetryCoordinator(
+            performRetry: () async {
+              retryAttempts++;
+              return 0;
+            },
+          ),
+        );
         retrier.start();
 
         // Go online → creates timer
@@ -204,12 +317,27 @@ void main() {
         );
         fake.flushMicrotasks();
 
-        // Advance 5s from LAST online event → retry fires
-        fake.elapse(const Duration(seconds: 5));
+        // A fourth rapid state event must not schedule another retry.
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'p',
+            circuitAddresses: ['/a'],
+          ),
+        );
+        fake.flushMicrotasks();
+
+        // The first timer's deadline must not perform retry work.
+        fake.elapse(const Duration(seconds: 4));
+        fake.flushMicrotasks();
+        expect(retryAttempts, 0);
+
+        // Advance 5s from LAST online transition → one retry fires.
+        fake.elapse(const Duration(seconds: 1));
         fake.flushMicrotasks();
 
         // Should only retry once (first timer was cancelled by the second online)
-        expect(identityRepo.loadIdentityCallCount, 1);
+        expect(retryAttempts, 1);
       });
     });
 
@@ -323,6 +451,19 @@ void main() {
 
     test('dispose cancels subscription and timer', () {
       fakeAsync((fake) {
+        var retryAttempts = 0;
+        retrier = KeyExchangeRetrier(
+          p2pService: p2pService,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          coordinator: KeyExchangeRetryCoordinator(
+            performRetry: () async {
+              retryAttempts++;
+              return 0;
+            },
+          ),
+        );
         retrier.start();
 
         // Go online → creates timer
@@ -343,7 +484,20 @@ void main() {
         fake.flushMicrotasks();
 
         // No retry should have been triggered
-        expect(identityRepo.loadIdentityCallCount, 0);
+        expect(retryAttempts, 0);
+
+        p2pService.emitState(NodeState.stopped);
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+          ),
+        );
+        fake.flushMicrotasks();
+        fake.elapse(const Duration(seconds: 6));
+        fake.flushMicrotasks();
+        expect(retryAttempts, 0);
       });
     });
   });

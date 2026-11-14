@@ -68,6 +68,7 @@ class BackgroundPushNotificationFallback {
   final BackgroundManagedGroupNotificationComparand? groupComparand;
   final ResolvedPushEventIdentity? resolvedEventIdentity;
   final ConversationNotificationSnapshot? snapshot;
+  final DateTime? thoughtExpiresAt;
 
   const BackgroundPushNotificationFallback({
     required this.title,
@@ -76,6 +77,7 @@ class BackgroundPushNotificationFallback {
     this.groupComparand,
     this.resolvedEventIdentity,
     this.snapshot,
+    this.thoughtExpiresAt,
   });
 
   BackgroundPushNotificationFallback withSnapshot(
@@ -87,6 +89,7 @@ class BackgroundPushNotificationFallback {
     groupComparand: groupComparand,
     resolvedEventIdentity: resolvedEventIdentity,
     snapshot: value,
+    thoughtExpiresAt: thoughtExpiresAt,
   );
 }
 

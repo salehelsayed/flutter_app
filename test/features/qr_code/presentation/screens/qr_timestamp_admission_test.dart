@@ -86,7 +86,7 @@ void main() {
               'Untrusted field types must fail through the scanner error UI.',
         );
         expect(find.byType(SnackBar), findsOneWidget);
-        expect(find.text('Added to your circle!'), findsNothing);
+        expect(find.text('Contact saved'), findsNothing);
       },
     );
   }
@@ -113,8 +113,8 @@ void main() {
       expect(h.network.sendMessageCallCount, 0);
       expect(h.network.storeInInboxCallCount, 0);
       expect(find.byType(SnackBar), findsOneWidget);
-      expect(find.text('Already in your circle!'), findsNothing);
-      expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.text('Contact already saved'), findsNothing);
+      expect(find.text('Contact saved'), findsNothing);
     },
   );
 
@@ -141,7 +141,7 @@ void main() {
         expect(contacts.single.peerId, h.sender.peerId);
         expect(contacts.single.publicKey, h.sender.publicKey);
         expect(h.bridge.verifyCalls, 1);
-        expect(find.text('Added to your circle!'), findsOneWidget);
+        expect(find.text('Contact saved'), findsOneWidget);
         expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
         expect(h.bridge.encrypts, hasLength(1));
         expect(h.network.sendMessageCallCount, 0);
@@ -219,7 +219,7 @@ void main() {
     ) async {
       final h = await _mount(tester);
       await h.scan(tester, DateTime.now().toUtc().toIso8601String());
-      expect(find.text('Added to your circle!'), findsOneWidget);
+      expect(find.text('Contact saved'), findsOneWidget);
       final contacts = await tester.runAsync(h.contacts.getAllContacts);
       expect(contacts?.map((c) => c.username).toList(), ['Bob']);
       expect(contacts?.single.peerId, h.sender.peerId);

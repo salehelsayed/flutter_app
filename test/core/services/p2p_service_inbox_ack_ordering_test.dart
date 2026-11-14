@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
@@ -31,6 +32,11 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/posts/application/post_listener.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -38,6 +44,8 @@ import '../../core/bridge/fake_bridge.dart' as test_bridge;
 import '../secure_storage/fake_secure_key_store.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/in_memory_group_repository.dart';
+import '../../shared/fakes/in_memory_contact_repository.dart';
+import '../../shared/fakes/in_memory_post_repository.dart';
 
 final class _DatabaseReadingGroupRepository extends InMemoryGroupRepository {
   _DatabaseReadingGroupRepository(this.database);
@@ -247,6 +255,175 @@ RecoveredInboxReplayOutcome _committed() => (
 String _requireAckOrExpiryCustodyContract(Map<String, dynamic>? payload) {
   expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
   return payload!['custodyContract'] as String;
+}
+
+class _GatedThoughtRepository extends InMemoryPostRepository {
+  _GatedThoughtRepository({required this.failFirstWrite});
+
+  final bool failFirstWrite;
+  final firstWriteStarted = Completer<void>();
+  final releaseFirstWrite = Completer<void>();
+  var writeAttempts = 0;
+  var firstWriteFinished = false;
+
+  @override
+  Future<void> savePost(PostModel post) async {
+    writeAttempts++;
+    if (writeAttempts == 1) {
+      firstWriteStarted.complete();
+      try {
+        await releaseFirstWrite.future;
+        if (failFirstWrite) throw StateError('synthetic local write failure');
+        await super.savePost(post);
+      } finally {
+        firstWriteFinished = true;
+      }
+      return;
+    }
+    await super.savePost(post);
+  }
+}
+
+Future<void> _exerciseThoughtReconnect({required bool failFirstWrite}) async {
+  final now = DateTime.now().toUtc();
+  const postId = 'synthetic-reconnect-thought';
+  const sender = 'synthetic-thought-author';
+  const entryId = 'synthetic-thought-entry';
+  final envelope = PostCreateEnvelope.fromPost(
+    PostModel(
+      id: postId,
+      eventId: 'synthetic-thought-event',
+      senderPeerId: sender,
+      authorPeerId: sender,
+      authorUsername: 'Synthetic author',
+      text: 'Synthetic live Thought',
+      audience: const PostAudience(kind: PostAudienceKind.allFriends),
+      createdAt: now.toIso8601String(),
+      visibleAt: now.toIso8601String(),
+      expiresAt: now.add(const Duration(hours: 24)).toIso8601String(),
+    ),
+  );
+  final bridge = _FakeBridge();
+  final staging = InMemoryInboxStagingRepository();
+  final posts = _GatedThoughtRepository(failFirstWrite: failFirstWrite);
+  final contacts = InMemoryContactRepository()
+    ..addTestContact(
+      ContactModel(
+        peerId: sender,
+        publicKey: 'synthetic-public-key',
+        rendezvous: '/dns4/example.invalid/tcp/443',
+        username: 'Synthetic author',
+        signature: 'synthetic-signature',
+        scannedAt: now.subtract(const Duration(days: 1)).toIso8601String(),
+      ),
+    );
+  var networkAvailable = false;
+  var relayHasCopy = true;
+  var ackBeforeFirstWriteFinished = false;
+  bridge.whenCommand('inbox:retrieve_pending', (payload) {
+    final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+    if (!networkAvailable) {
+      return jsonEncode({
+        'ok': false,
+        'errorCode': 'synthetic_connection_drop',
+      });
+    }
+    return jsonEncode({
+      'ok': true,
+      'custodyContract': custodyContract,
+      'messages': [
+        if (relayHasCopy)
+          {
+            'id': entryId,
+            'from': sender,
+            'message': envelope.toJson(),
+            'timestamp': now.toIso8601String(),
+          },
+      ],
+      'hasMore': false,
+    });
+  });
+  bridge.whenCommand('inbox:ack', (payload) {
+    final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+    expect(payload?['entryIds'], [entryId]);
+    ackBeforeFirstWriteFinished |= !posts.firstWriteFinished;
+    final acked = relayHasCopy ? 1 : 0;
+    relayHasCopy = false;
+    return jsonEncode({
+      'ok': true,
+      'acked': acked,
+      'custodyContract': custodyContract,
+    });
+  });
+  final service = P2PServiceImpl(
+    bridge: bridge,
+    inboxStagingRepository: staging,
+  );
+  await _start(service, bridge);
+  final router = IncomingMessageRouter(p2pService: service)..start();
+  final listener = PostListener(
+    postCreateStream: router.postCreateStream,
+    postRepo: posts,
+    contactRepo: contacts,
+    nowProvider: () => now,
+  )..start();
+  final firstReceiveFinished = Completer<void>();
+  debugSetFlowEventSink((event) {
+    if (event['event'] == 'POST_LISTENER_ERROR' &&
+        !firstReceiveFinished.isCompleted) {
+      firstReceiveFinished.complete();
+    }
+  });
+  final received = listener.incomingPostStream.listen((_) {
+    if (!firstReceiveFinished.isCompleted) firstReceiveFinished.complete();
+  });
+  try {
+    await service.drainOfflineInbox();
+    expect(
+      relayHasCopy,
+      isTrue,
+      reason: 'a failed fetch retains relay custody',
+    );
+    expect(bridge.payloadsFor('inbox:ack'), isEmpty);
+    expect(await posts.getPost(postId), isNull);
+
+    networkAvailable = true;
+    final firstDrain = service.drainOfflineInbox();
+    await posts.firstWriteStarted.future.timeout(const Duration(seconds: 3));
+    posts.releaseFirstWrite.complete();
+    await firstDrain;
+    await firstReceiveFinished.future.timeout(const Duration(seconds: 3));
+    final firstReceiveState = {
+      'stored': await posts.getPost(postId) != null,
+      'recoverableStagingRows': (await staging.getRecoverableEntries()).length,
+      'relayHasCopy': relayHasCopy,
+      'ackBeforeFirstWriteFinished': ackBeforeFirstWriteFinished,
+    };
+
+    networkAvailable = false;
+    await service.drainOfflineInbox();
+    networkAvailable = true;
+    await service.drainOfflineInbox();
+
+    expect(
+      await posts.getPost(postId),
+      isNotNull,
+      reason:
+          'A valid live Thought must remain recoverable after a transient '
+          'receive failure and reconnect. First receive: $firstReceiveState; '
+          'writeAttempts: ${posts.writeAttempts}',
+    );
+    expect(await posts.loadFeed(), hasLength(1));
+  } finally {
+    if (!posts.releaseFirstWrite.isCompleted) {
+      posts.releaseFirstWrite.complete();
+    }
+    await received.cancel();
+    listener.dispose();
+    router.dispose();
+    service.dispose();
+    posts.dispose();
+  }
 }
 
 Future<List<String>> _exerciseProtectedMetadataAckOrdering({
@@ -3026,6 +3203,16 @@ void main() {
   });
 
   group('replay-before-ack ordering', () {
+    test(
+      'Thought reconnect stores a live Thought when its first write succeeds',
+      () => _exerciseThoughtReconnect(failFirstWrite: false),
+    );
+
+    test(
+      'Thought reconnect retains custody after its first local write fails',
+      () => _exerciseThoughtReconnect(failFirstWrite: true),
+    );
+
     test(
       'TC-363-01b protected self bootstrap commits atomically before exact relay ACK',
       () async {

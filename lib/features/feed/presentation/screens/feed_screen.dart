@@ -421,9 +421,13 @@ class _FeedScreenState extends State<FeedScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  l10n.feed_open_full_conversation,
-                  style: tokens.textMeta.copyWith(color: tokens.teal400),
+                Flexible(
+                  child: Text(
+                    l10n.feed_open_full_conversation,
+                    style: tokens.textMeta.copyWith(color: tokens.teal400),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 const SizedBox(width: 4),
                 Icon(Icons.north_east, size: 14, color: tokens.teal400),

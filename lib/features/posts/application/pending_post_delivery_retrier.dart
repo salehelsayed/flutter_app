@@ -17,14 +17,19 @@ class PendingPostDeliveryRetrier {
   final Bridge? bridge;
   final Future<int> Function()? beforeRetry;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
+  final Stream<void>? contactKeyUpdatedSignal;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
 
   StreamSubscription? _stateSubscription;
+  StreamSubscription<void>? _contactKeySubscription;
   Timer? _debounceTimer;
   Timer? _periodicTimer;
   bool _wasOnline = false;
   bool _isRetrying = false;
+  bool _retryRequested = false;
+  bool _started = false;
+  bool _disposed = false;
 
   PendingPostDeliveryRetrier({
     required this.p2pService,
@@ -32,12 +37,18 @@ class PendingPostDeliveryRetrier {
     required this.contactRepo,
     this.bridge,
     this.beforeRetry,
+    this.contactKeyUpdatedSignal,
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.retryDebounce = const Duration(seconds: 5),
     this.periodicRetryInterval = const Duration(minutes: 5),
   });
 
   void start() {
+    if (_started || _disposed) return;
+    _started = true;
+    _contactKeySubscription = contactKeyUpdatedSignal?.listen((_) {
+      _scheduleRetry();
+    });
     emitFlowEvent(
       layer: 'FL',
       event: 'PENDING_POST_RETRIER_START',
@@ -77,6 +88,7 @@ class PendingPostDeliveryRetrier {
   }
 
   void _scheduleRetry() {
+    if (_disposed) return;
     _debounceTimer?.cancel();
     if (retryDebounce == Duration.zero) {
       unawaited(retryNow());
@@ -88,9 +100,15 @@ class PendingPostDeliveryRetrier {
   }
 
   Future<int> retryNow() async {
-    if (!_isOnline(p2pService.currentState) || _isRetrying) {
+    if (_disposed || !_isOnline(p2pService.currentState)) return 0;
+    if (_isRetrying) {
+      // Key, resume, periodic and reconnect requests share one pending pass.
+      _retryRequested = true;
       return 0;
     }
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    _retryRequested = false;
     _isRetrying = true;
 
     try {
@@ -102,10 +120,12 @@ class PendingPostDeliveryRetrier {
       )) {
         return 0;
       }
+      if (_disposed) return 0;
       final runBeforeRetry = beforeRetry;
       if (runBeforeRetry != null) {
         await runBeforeRetry();
       }
+      if (_disposed) return 0;
       final retried = await retryPendingPostDeliveries(
         postRepo: postRepo,
         contactRepo: contactRepo,
@@ -130,10 +150,17 @@ class PendingPostDeliveryRetrier {
       return 0;
     } finally {
       _isRetrying = false;
+      if (_retryRequested && !_disposed) {
+        _retryRequested = false;
+        _scheduleRetry();
+      }
     }
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _retryRequested = false;
     emitFlowEvent(
       layer: 'FL',
       event: 'PENDING_POST_RETRIER_DISPOSE',
@@ -143,6 +170,8 @@ class PendingPostDeliveryRetrier {
     _periodicTimer?.cancel();
     _stateSubscription?.cancel();
     _stateSubscription = null;
+    unawaited(_contactKeySubscription?.cancel());
+    _contactKeySubscription = null;
   }
 }
 

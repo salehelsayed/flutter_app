@@ -1035,6 +1035,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_delete_chat => 'Chat löschen?';
 
   @override
+  String get block_contact_body =>
+      'Diese Person kann dir dann keine Nachrichten mehr senden. Du kannst sie später wieder entsperren.';
+
+  @override
   String delete_contact_body(String username) {
     return 'Dadurch werden $username, deine Nachrichten und dein Anrufverlauf mit dieser Person dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.';
   }
@@ -1219,6 +1223,9 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_section_identity => 'IDENTITÄT';
+
+  @override
+  String get settings_badge_new => 'neu';
 
   @override
   String get settings_section_preferences => 'PRÄFERENZEN';
@@ -1495,11 +1502,6 @@ class AppLocalizationsDe extends AppLocalizations {
       'Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren';
 
   @override
-  String connected_date(String date) {
-    return 'Verbunden am $date';
-  }
-
-  @override
   String get date_today => 'Heute';
 
   @override
@@ -1566,6 +1568,10 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get connected_title => 'Verbunden!';
+
+  @override
+  String get contact_waiting_for_secure_connection =>
+      'Warten auf eine sichere Verbindung';
 
   @override
   String get send_message => 'Nachricht senden';
@@ -3333,13 +3339,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get feed_connected => 'Verbunden';
 
   @override
-  String get qr_added_to_circle => 'Zu deinem Kreis hinzugefügt!';
+  String get qr_added_to_circle => 'Kontakt gespeichert';
 
   @override
   String get btn_ok => 'OK';
 
   @override
-  String get qr_already_in_circle => 'Bereits in deinem Kreis!';
+  String get qr_already_in_circle => 'Kontakt bereits gespeichert';
 
   @override
   String get qr_contact_added_previously =>
@@ -3838,6 +3844,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get private_media_invalid_shape =>
       'Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.';
+
+  @override
+  String get private_media_caption_blocked =>
+      'Entferne die Bildunterschrift, damit der Inhalt privat bleibt.';
 
   @override
   String get private_media_notification_body => 'Private Medien';
@@ -5097,6 +5107,25 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_settings_mobile_data => 'Über mobile Daten laden';
 
   @override
+  String get translate_header_tooltip => 'Übersetzung';
+
+  @override
+  String get translate_to_title => 'Übersetzen in';
+
+  @override
+  String get translate_to_subtitle =>
+      'Die Sprache, in der du Übersetzungen liest.';
+
+  @override
+  String get translate_to_same_as_app => 'Wie die App';
+
+  @override
+  String get translate_to_all_languages => 'Alle Sprachen';
+
+  @override
+  String get translate_show_translation => 'Übersetzung anzeigen';
+
+  @override
   String get translator_remove_title => 'Übersetzung entfernen?';
 
   @override
@@ -5256,6 +5285,71 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sticker_pack_nujoom => 'Nujoom';
 
   @override
+  String get stickers_mine => 'Meine Sticker';
+
+  @override
+  String get stickers_create => 'Erstellen';
+
+  @override
+  String get stickers_delete => 'Löschen';
+
+  @override
+  String get stickers_drag_to_reorder => 'Zum Sortieren ziehen';
+
+  @override
+  String get stickers_move_earlier => 'Nach vorne verschieben';
+
+  @override
+  String get stickers_move_later => 'Nach hinten verschieben';
+
+  @override
+  String stickers_mine_semantics(int position, int count) {
+    return 'Sticker $position von $count';
+  }
+
+  @override
+  String get stickers_record_clip => 'Clip aufnehmen';
+
+  @override
+  String get stickers_library_full =>
+      '„Meine Sticker“ ist voll. Lösche einen, um einen neuen hinzuzufügen.';
+
+  @override
+  String get stickers_save_failed =>
+      'Dieser Sticker konnte nicht gespeichert werden. Versuch es noch einmal.';
+
+  @override
+  String get stickers_no_subject =>
+      'Kein klares Motiv. Schneide das Bild stattdessen zu.';
+
+  @override
+  String get stickers_new => 'Neuer Sticker';
+
+  @override
+  String get stickers_take_photo => 'Foto aufnehmen';
+
+  @override
+  String get stickers_gallery => 'Galerie';
+
+  @override
+  String get stickers_crop => 'Zuschneiden';
+
+  @override
+  String get stickers_square => 'Quadrat';
+
+  @override
+  String get stickers_circle => 'Kreis';
+
+  @override
+  String get stickers_saved => 'In Meine Sticker gespeichert';
+
+  @override
+  String get stickers_use_as_sticker => 'Als Sticker verwenden';
+
+  @override
+  String get stickers_save_to_mine => 'In Meine Sticker speichern';
+
+  @override
   String get settings_app_updates => 'App-Updates';
 
   @override
@@ -5266,4 +5360,162 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_updates_checking => 'Updates werden geprüft';
+
+  @override
+  String you_seen_all(int count) {
+    return 'Alle $count anzeigen';
+  }
+
+  @override
+  String get you_thought_replaced => 'durch einen neueren Gedanken ersetzt';
+
+  @override
+  String get sticker_editor_text => 'Text';
+
+  @override
+  String get sticker_editor_save => 'Sticker speichern';
+
+  @override
+  String get sticker_editor_colour => 'Farbe';
+
+  @override
+  String get sticker_editor_delete => 'Löschen';
+
+  @override
+  String get sticker_editor_undo => 'Rückgängig';
+
+  @override
+  String get sticker_editor_font => 'Schrift';
+
+  @override
+  String get sticker_editor_move_up => 'Nach oben';
+
+  @override
+  String get sticker_editor_move_down => 'Nach unten';
+
+  @override
+  String get sticker_editor_move_left => 'Nach links';
+
+  @override
+  String get sticker_editor_move_right => 'Nach rechts';
+
+  @override
+  String get sticker_editor_bigger => 'Größer';
+
+  @override
+  String get sticker_editor_smaller => 'Kleiner';
+
+  @override
+  String get sticker_editor_rotate_left => 'Nach links drehen';
+
+  @override
+  String get sticker_editor_rotate_right => 'Nach rechts drehen';
+
+  @override
+  String get sticker_colour_white => 'Weiß';
+
+  @override
+  String get sticker_colour_black => 'Schwarz';
+
+  @override
+  String get sticker_colour_yellow => 'Gelb';
+
+  @override
+  String get sticker_colour_red => 'Rot';
+
+  @override
+  String get sticker_colour_blue => 'Blau';
+
+  @override
+  String get call_video_status_video_requested => 'Video angefragt';
+
+  @override
+  String get call_video_status_audio_only => 'Nur Audio';
+
+  @override
+  String get call_video_status_video => 'Videoanruf';
+
+  @override
+  String get call_video_status_incoming_upgrade =>
+      'Dein Gegenüber möchte Video einschalten';
+
+  @override
+  String get call_video_status_outgoing_upgrade =>
+      'Warten, bis dein Gegenüber zustimmt';
+
+  @override
+  String get call_video_status_switching_to_video => 'Wechsel zu Video';
+
+  @override
+  String get call_video_status_switching_to_audio => 'Wechsel zu Audio';
+
+  @override
+  String get call_video_status_reconnecting =>
+      'Verbindung wird wiederhergestellt';
+
+  @override
+  String get call_video_local_camera_on => 'Deine Kamera ist an';
+
+  @override
+  String get call_video_local_camera_off => 'Deine Kamera ist aus';
+
+  @override
+  String get call_video_local_camera_paused => 'Deine Kamera ist pausiert';
+
+  @override
+  String get call_video_remote_camera_on =>
+      'Die Kamera deines Gegenübers ist an';
+
+  @override
+  String get call_video_remote_camera_off =>
+      'Die Kamera deines Gegenübers ist aus';
+
+  @override
+  String get call_video_remote_camera_paused =>
+      'Die Kamera deines Gegenübers ist pausiert';
+
+  @override
+  String get call_video_action_request_video => 'Video anfragen';
+
+  @override
+  String get call_video_action_accept_upgrade => 'Video annehmen';
+
+  @override
+  String get call_video_action_decline_upgrade => 'Bei Audio bleiben';
+
+  @override
+  String get call_video_action_cancel_upgrade => 'Anfrage abbrechen';
+
+  @override
+  String get call_video_action_turn_camera_on => 'Kamera einschalten';
+
+  @override
+  String get call_video_action_turn_camera_off => 'Kamera ausschalten';
+
+  @override
+  String get call_video_action_switch_camera => 'Kamera wechseln';
+
+  @override
+  String get call_video_action_use_audio_only => 'Nur Audio verwenden';
+
+  @override
+  String get call_video_controls_label => 'Videosteuerung';
+
+  @override
+  String get contact_retry_stopped_hint =>
+      'Noch nicht verbunden. Bitte dein Gegenüber, deinen Code erneut zu scannen.';
+
+  @override
+  String get call_video_entry_incoming => 'Eingehender Videoanruf';
+
+  @override
+  String get call_video_entry_starting => 'Videoanruf wird gestartet';
+
+  @override
+  String get call_video_entry_unavailable =>
+      'Videoanrufe sind gerade nicht verfügbar.';
+
+  @override
+  String get call_video_entry_start_failed =>
+      'Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.';
 }

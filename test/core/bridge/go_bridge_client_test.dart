@@ -606,6 +606,74 @@ void main() {
       );
     }
 
+    test('bg:end void success produces no failure diagnostic', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.mknoon/go_bridge'),
+            (call) async {
+              lastCall = call;
+              return null;
+            },
+          );
+
+      final response = await client.send(
+        jsonEncode({
+          'cmd': 'bg:end',
+          'payload': {'taskId': 'test-background-task'},
+        }),
+      );
+
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (event) => event['outcome'] == 'failed',
+        ),
+        isEmpty,
+      );
+      expect(jsonDecode(response), {'ok': true});
+      expect(lastCall!.method, 'bgEnd');
+      expect(jsonDecode(lastCall!.arguments as String), {
+        'taskId': 'test-background-task',
+      });
+    });
+
+    test('bg:begin null response remains a failure', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.mknoon/go_bridge'),
+            (call) async => null,
+          );
+
+      final response = await client.send(jsonEncode({'cmd': 'bg:begin'}));
+
+      expect((jsonDecode(response) as Map)['errorCode'], 'NULL_RESPONSE');
+      final failure = (await diagnostics.eventsForTesting()).singleWhere(
+        (event) => event['outcome'] == 'failed',
+      );
+      expect(failure['reason'], 'malformed_response');
+    });
+
+    test('bg:end explicit native rejection remains a failure', () async {
+      final native = {'ok': false, 'errorCode': 'INTERNAL_ERROR'};
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.mknoon/go_bridge'),
+            (call) async => jsonEncode(native),
+          );
+
+      final response = await client.send(
+        jsonEncode({
+          'cmd': 'bg:end',
+          'payload': {'taskId': 'test-background-task'},
+        }),
+      );
+
+      expect(jsonDecode(response), native);
+      final failure = (await diagnostics.eventsForTesting()).singleWhere(
+        (event) => event['outcome'] == 'failed',
+      );
+      expect(failure['reason'], 'bridge_rejected');
+    });
+
     test('successful native dial remains successful', () async {
       final native = {'ok': true};
       final response = await client.send(

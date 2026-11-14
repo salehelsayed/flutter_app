@@ -25,6 +25,7 @@ import 'package:flutter_app/features/contact_request/application/send_contact_re
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -238,7 +239,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     widget.contactRequestListener.presentRequest(request, () async {
       if (!mounted) return;
       Future<void>? decision;
-      await showDialog<void>(
+      final route = showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => ContactRequestDialog(
@@ -247,6 +248,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           onDecline: () => decision = _declineRequest(ctx, request),
         ),
       );
+      recordContactRequestPresentationDiagnostic(admitted: true);
+      await route;
       await decision;
     });
   }

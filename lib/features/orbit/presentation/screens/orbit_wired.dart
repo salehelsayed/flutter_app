@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'dart:async';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
@@ -156,6 +157,7 @@ import 'package:flutter_app/features/posts/presentation/screens/thought_card_scr
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/thought_view_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
 import 'package:flutter_app/features/posts/application/publish_thought_view_use_case.dart';
@@ -1439,11 +1441,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// A friend's card only shows the thought: reactions and replies are sent
-  /// from the 3D ring's action bar, or from the chat itself.
+  /// Friend cards share their reaction controls and sends with the 3D ring.
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
+    bool playVideoAtOnce = false,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1504,69 +1506,79 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       opened = true;
       final authorName =
           contact?.username ?? AppLocalizations.of(context)!.feed_you;
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ThoughtCardScreen(
-            initialPost: current,
-            authorName: authorName,
-            postRepo: repository,
-            loadCurrentThought: loadCurrent,
-            nowProvider: widget.thoughtNowProvider,
-            eligibilityChanges: _thoughtEligibilityChanges.stream,
-            downloadMedia: (attachment) => downloadPostMedia(
-              bridge: widget.bridge,
-              postRepo: repository,
-              mediaFileManager: widget.mediaFileManager,
-              attachment: attachment,
-            ),
-            replyChanges: widget.messageRepo is MessageRepositoryChangeSource
-                ? (widget.messageRepo as MessageRepositoryChangeSource)
-                      .messageChanges
-                : null,
-            retryPosting: isOwn ? widget.retryThoughtPosting : null,
-            onShown: isOwn
-                ? null
-                : (shownId) => publishThoughtView(
-                    postId: shownId,
-                    viewerPeerId: identity.peerId,
-                    postRepo: repository,
-                    contactRepo: widget.contactRepo,
-                    p2pService: widget.p2pService,
-                    bridge: widget.bridge,
-                    nowProvider: widget.thoughtNowProvider,
-                  ),
-            loadActivity: !isOwn
-                ? null
-                : (ownId) => loadThoughtActivity(
-                    postId: ownId,
-                    localPeerId: identity.peerId,
-                    postRepo: repository,
-                    messageRepo: widget.messageRepo,
-                    contactRepo: widget.contactRepo,
-                    nowProvider: widget.thoughtNowProvider,
-                  ),
-            onDelete: !isOwn
-                ? null
-                : (postId) async {
-                    final retraction = await retractThought(
-                      postRepo: repository,
-                      p2pService: widget.p2pService,
-                      mediaFileManager: widget.mediaFileManager,
-                      postId: postId,
-                      senderPeerId: identity.peerId,
-                      nowProvider: widget.thoughtNowProvider,
-                    );
-                    // Friends are told after the card has closed; anyone not
-                    // reached stays queued for the follow-on retrier.
-                    unawaited(
-                      retraction.delivery?.then(
-                        (_) {},
-                        onError: (Object error) => _reportThoughtFailure(error),
-                      ),
-                    );
-                  },
-          ),
+      Widget card(BuildContext _) => ThoughtCardScreen(
+        playVideoAtOnce: playVideoAtOnce,
+        initialPost: current,
+        authorName: authorName,
+        postRepo: repository,
+        answers: isOwn ? null : _depthAnswers,
+        onReply: isOwn ? null : _sendDepthReply,
+        loadCurrentThought: loadCurrent,
+        nowProvider: widget.thoughtNowProvider,
+        eligibilityChanges: _thoughtEligibilityChanges.stream,
+        downloadMedia: (attachment) => downloadPostMedia(
+          bridge: widget.bridge,
+          postRepo: repository,
+          mediaFileManager: widget.mediaFileManager,
+          attachment: attachment,
         ),
+        replyChanges: widget.messageRepo is MessageRepositoryChangeSource
+            ? (widget.messageRepo as MessageRepositoryChangeSource)
+                  .messageChanges
+            : null,
+        retryPosting: isOwn ? widget.retryThoughtPosting : null,
+        onShown: isOwn
+            ? null
+            : (shownId) => publishThoughtView(
+                postId: shownId,
+                viewerPeerId: identity.peerId,
+                postRepo: repository,
+                contactRepo: widget.contactRepo,
+                p2pService: widget.p2pService,
+                bridge: widget.bridge,
+                nowProvider: widget.thoughtNowProvider,
+              ),
+        loadActivity: !isOwn
+            ? null
+            : (ownId) => loadThoughtActivity(
+                postId: ownId,
+                localPeerId: identity.peerId,
+                postRepo: repository,
+                messageRepo: widget.messageRepo,
+                contactRepo: widget.contactRepo,
+                nowProvider: widget.thoughtNowProvider,
+              ),
+        onDelete: !isOwn
+            ? null
+            : (postId) async {
+                final retraction = await retractThought(
+                  postRepo: repository,
+                  p2pService: widget.p2pService,
+                  mediaFileManager: widget.mediaFileManager,
+                  postId: postId,
+                  senderPeerId: identity.peerId,
+                  nowProvider: widget.thoughtNowProvider,
+                );
+                // Friends are told after the card has closed; anyone not
+                // reached stays queued for the follow-on retrier.
+                unawaited(
+                  retraction.delivery?.then(
+                    (_) {},
+                    onError: (Object error) => _reportThoughtFailure(error),
+                  ),
+                );
+              },
+      );
+      // Played from the ring, the card stays blank and only carries the
+      // video, so it neither slides in nor out.
+      await Navigator.of(context).push<void>(
+        playVideoAtOnce
+            ? PageRouteBuilder<void>(
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                pageBuilder: (context, _, _) => card(context),
+              )
+            : MaterialPageRoute<void>(builder: card),
       );
     } catch (error) {
       if (mounted) _reportThoughtFailure(error);
@@ -1596,17 +1608,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// A reaction or typed reply from the 3D action bar, through the same
-  /// quoted-reply path the full-screen card used.
+  /// Reactions from either Thought view, and typed replies from the 3D bar,
+  /// use the same ordinary quoted-chat-reply path.
   Future<ThoughtReplyStatus> _sendDepthReply(
     String text,
     String postId,
     String messageId,
   ) async {
     final repository = _thoughtPosts;
-    final post = _depthThoughtsByPeerId.values
-        .where((thought) => thought.id == postId)
-        .firstOrNull;
+    final post = await repository?.getPost(postId);
     if (repository == null || post == null) return ThoughtReplyStatus.failed;
     return sendThoughtReply(
       messageId: messageId,
@@ -1623,6 +1633,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       nowProvider: widget.thoughtNowProvider,
     );
   }
+
+  late final _depthAnswers = OrbitDepthAnswers(
+    statusChanges: _depthReplyStatuses,
+  );
 
   late final Stream<({String messageId, ThoughtReplyStatus status})>?
   _depthReplyStatuses = switch (widget.messageRepo) {
@@ -3590,12 +3604,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _onBlockFriend(OrbitFriend friend) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: AppLocalizations.of(context)!.orbit_block_title(friend.username),
-      description:
-          'They won\'t be able to send you messages. You can unblock them later.',
-      confirmLabel: 'Block',
+      title: l10n.orbit_block_title(friend.username),
+      description: l10n.block_contact_body,
+      confirmLabel: l10n.orbit_block_action,
     );
     if (!confirmed || !mounted) return;
 
@@ -3690,8 +3704,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
-            // The chat's own composer answers a quoted thought; its card is
-            // view only, so the in-card sender goes unused.
+            // The card's reactions and chat's typed answers use the same
+            // quoted-reply path.
             onOpenThought: (postId, _) => _openThought(postId),
             postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
@@ -3750,6 +3764,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           builder: (routeContext) => YouPageScreen(
             load: (historyLimit, tag) =>
                 _loadYouPage(identity, historyLimit, tag),
+            loadViewers: (postId) => _loadYouViewers(identity, postId),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
@@ -3784,8 +3799,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<YouThought> _youThoughtResponses(
     PostRepository repository,
     PostModel post,
-    List<ContactModel> friends,
-  ) async {
+    List<ContactModel> friends, {
+    int seenCount = 0,
+  }) async {
     final messageRepo = widget.messageRepo;
     final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
         ? messageRepo as ThoughtReactionMessageRepository
@@ -3808,6 +3824,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         const <ThoughtWroteBack>[];
     return YouThought(
       post: post,
+      seenCount: seenCount,
       reactions: groupThoughtReactions(
         postId: post.id,
         replies: replies,
@@ -3823,6 +3840,39 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
       ],
     );
+  }
+
+  /// Who saw your Thought [postId], live or past, named only for the friends
+  /// it was sent to.
+  Future<List<YouViewer>> _loadYouViewers(
+    IdentityModel identity,
+    String postId,
+  ) async {
+    final repository = _thoughtPosts;
+    if (repository is! ThoughtViewRepository) return const [];
+    final recipients = {
+      for (final delivery in await repository!.getRecipientDeliveries(postId))
+        delivery.recipientPeerId,
+    };
+    final names = {
+      for (final contact in await widget.contactRepo.getAllContacts())
+        if (!contact.isBlocked &&
+            !contact.isArchived &&
+            recipients.contains(contact.peerId))
+          contact.peerId: contact.username,
+    };
+    final receipts = await (repository as ThoughtViewRepository)
+        .loadOwnThoughtViews(authorPeerId: identity.peerId, postId: postId);
+    return [
+      for (final receipt in receipts)
+        if ((names[receipt.viewerPeerId], DateTime.tryParse(receipt.viewedAt))
+            case (final name?, final viewedAt?))
+          YouViewer(
+            peerId: receipt.viewerPeerId,
+            name: name,
+            viewedAt: viewedAt,
+          ),
+    ];
   }
 
   /// Set once the note pointing at the You page's # has been seen.
@@ -3879,8 +3929,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           nowProvider: widget.thoughtNowProvider,
         );
 
-    Future<YouThought> responses(PostModel post) =>
-        _youThoughtResponses(repository, post, friends);
+    final shownPast = [
+      for (final post in past)
+        if (post.id != own?.id) post,
+    ];
+    final seen = switch (repository) {
+      final ThoughtViewRepository views => await views.countOwnThoughtViews(
+        authorPeerId: identity.peerId,
+        postIds: [?own?.id, for (final post in shownPast) post.id],
+      ),
+      _ => const <String, int>{},
+    };
+
+    Future<YouThought> responses(PostModel post) => _youThoughtResponses(
+      repository,
+      post,
+      friends,
+      seenCount: seen[post.id] ?? 0,
+    );
 
     final ownSurface = own == null
         ? null
@@ -3896,10 +3962,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       friendCount: friends.length,
       thought: ownSurface == null ? null : await responses(ownSurface),
       // The live and expired reads take the clock separately.
-      past: await Future.wait([
-        for (final post in past)
-          if (post.id != own?.id) responses(post),
-      ]),
+      past: await Future.wait([for (final post in shownPast) responses(post)]),
       tag: tag,
       tagCount: tag == null
           ? 0
@@ -4238,6 +4301,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _searchController.dispose();
     _searchFocusNode.dispose();
     _innerCircleResetTick.dispose();
+    _depthAnswers.dispose();
     _openRowNotifier.removeListener(_onOpenRowNotifierChanged);
     widget.appShellController?.removeListener(_onAppShellChanged);
     widget.onEmbeddedExitActionChanged?.call(null);
@@ -4289,8 +4353,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onThoughtVideoPlay: (postId) =>
+          unawaited(_openThought(postId, playVideoAtOnce: true)),
       onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
       depthReplyStatusChanges: _depthReplyStatuses,
+      depthAnswers: _depthAnswers,
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),

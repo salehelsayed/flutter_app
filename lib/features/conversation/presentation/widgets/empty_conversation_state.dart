@@ -11,11 +11,13 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 class EmptyConversationState extends StatefulWidget {
   final String contactPeerId;
   final String connectionDate;
+  final bool isWaitingForSecureConnection;
 
   const EmptyConversationState({
     super.key,
     required this.contactPeerId,
     required this.connectionDate,
+    this.isWaitingForSecureConnection = false,
   });
 
   @override
@@ -38,13 +40,26 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _syncGlowAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant EmptyConversationState oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isWaitingForSecureConnection !=
+        widget.isWaitingForSecureConnection) {
+      _syncGlowAnimation();
+    }
+  }
+
+  void _syncGlowAnimation() {
     // Honour the OS reduce-motion preference (as AmbientBackground does): a
     // perpetual loop keeps redrawing the screen for users who turned it off.
     final mediaQuery = MediaQuery.maybeOf(context);
     final reduceMotion =
         (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
-    if (reduceMotion) {
+    if (widget.isWaitingForSecureConnection || reduceMotion) {
       _glowController.stop();
     } else if (!_glowController.isAnimating) {
       _glowController.repeat();
@@ -60,6 +75,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         child: ConstrainedBox(
@@ -73,19 +89,24 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                   _buildAvatarWithGlow(readableColors),
                   const SizedBox(height: 16),
                   Text(
-                    AppLocalizations.of(context)!.connected_title,
+                    widget.isWaitingForSecureConnection
+                        ? l10n.qr_added_to_circle
+                        : l10n.connected_title,
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
-                      color: readableColors.connectedHeading,
-                      shadows: [
-                        Shadow(
-                          color: readableColors.connectedHeading.withValues(
-                            alpha: 0.4,
-                          ),
-                          blurRadius: 20,
-                        ),
-                      ],
+                      color: widget.isWaitingForSecureConnection
+                          ? readableColors.textMuted
+                          : readableColors.connectedHeading,
+                      shadows: widget.isWaitingForSecureConnection
+                          ? null
+                          : [
+                              Shadow(
+                                color: readableColors.connectedHeading
+                                    .withValues(alpha: 0.4),
+                                blurRadius: 20,
+                              ),
+                            ],
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -122,6 +143,19 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
   }
 
   Widget _buildAvatarWithGlow(BackgroundReadableColors readableColors) {
+    if (widget.isWaitingForSecureConnection) {
+      return SizedBox(
+        width: 160,
+        height: 160,
+        child: Center(
+          child: UserAvatar(
+            peerId: widget.contactPeerId,
+            size: 80,
+            showGlow: false,
+          ),
+        ),
+      );
+    }
     return SizedBox(
       width: 160,
       height: 160,

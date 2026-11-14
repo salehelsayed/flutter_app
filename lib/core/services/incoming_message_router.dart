@@ -2,8 +2,41 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+
+/// Direct deliveries remain a stream. Relay replay awaits the listener's
+/// durable outcome instead of treating stream publication as storage.
+class PostCreateInboxStream extends StreamView<ChatMessage> {
+  PostCreateInboxStream(super.stream);
+
+  ReplayRecoveredInboxChatMessage? _replay;
+
+  void Function() registerReplayHandler(
+    ReplayRecoveredInboxChatMessage handler,
+  ) {
+    _replay = handler;
+    return () {
+      if (identical(_replay, handler)) _replay = null;
+    };
+  }
+
+  Future<RecoveredInboxReplayOutcome> replay(
+    ChatMessage message, {
+    String? stagedEntryId,
+  }) async {
+    final handler = _replay;
+    if (handler == null) {
+      return (
+        disposition: RecoveredInboxChatDisposition.retryable,
+        reasonCode: 'typed_handler_unavailable',
+        reasonDetail: null,
+      );
+    }
+    return handler(message, stagedEntryId: stagedEntryId);
+  }
+}
 
 /// Routes incoming P2P messages to typed streams by message `type` field.
 ///
@@ -12,6 +45,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 class IncomingMessageRouter {
   final P2PService p2pService;
   StreamSubscription<ChatMessage>? _subscription;
+  void Function()? _unregisterPostReplay;
 
   final _contactRequestController = StreamController<ChatMessage>.broadcast();
   final _chatMessageController = StreamController<ChatMessage>.broadcast();
@@ -27,6 +61,9 @@ class IncomingMessageRouter {
       StreamController<ChatMessage>.broadcast();
   final _introductionController = StreamController<ChatMessage>.broadcast();
   final _postCreateController = StreamController<ChatMessage>.broadcast();
+  late final _postCreateStream = PostCreateInboxStream(
+    _postCreateController.stream,
+  );
   final _postCommentController = StreamController<ChatMessage>.broadcast();
   final _postReactionController = StreamController<ChatMessage>.broadcast();
   final _postCommentReactionController =
@@ -86,7 +123,7 @@ class IncomingMessageRouter {
   Stream<ChatMessage> get introductionStream => _introductionController.stream;
 
   /// Stream of incoming post_create messages.
-  Stream<ChatMessage> get postCreateStream => _postCreateController.stream;
+  Stream<ChatMessage> get postCreateStream => _postCreateStream;
 
   /// Stream of incoming post_comment messages.
   Stream<ChatMessage> get postCommentStream => _postCommentController.stream;
@@ -128,6 +165,13 @@ class IncomingMessageRouter {
   /// Start routing incoming messages.
   void start() {
     if (_subscription != null) return;
+
+    final service = p2pService;
+    if (service is P2PServiceImpl) {
+      _unregisterPostReplay = service.registerPostCreateReplayHandler(
+        _postCreateStream.replay,
+      );
+    }
 
     emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_START', details: {});
 
@@ -282,6 +326,8 @@ class IncomingMessageRouter {
   void stop() {
     emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STOP', details: {});
 
+    _unregisterPostReplay?.call();
+    _unregisterPostReplay = null;
     _subscription?.cancel();
     _subscription = null;
   }

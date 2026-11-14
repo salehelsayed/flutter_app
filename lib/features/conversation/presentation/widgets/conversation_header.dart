@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -7,11 +8,11 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 
 /// Frosted-glass sticky header for the conversation screen.
 ///
-/// Shows back button, contact avatar, name, connection status, and overflow menu.
+/// Shows back button, contact avatar, name, actions, and overflow menu.
 class ConversationHeader extends StatelessWidget {
   final String contactPeerId;
   final String contactUsername;
-  final String connectionDate;
+  final bool isWaitingForSecureConnection;
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
@@ -19,9 +20,13 @@ class ConversationHeader extends StatelessWidget {
 
   /// Opens in-chat search; no magnifier without it.
   final VoidCallback? onSearch;
+
+  /// Sits between search and the overflow menu.
+  final Widget? translateAction;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
+  final String callStartingMessage;
   final String callUnavailableMessage;
 
   /// Invoked when the avatar / name block is tapped (opens the contact profile).
@@ -31,16 +36,18 @@ class ConversationHeader extends StatelessWidget {
     super.key,
     required this.contactPeerId,
     required this.contactUsername,
-    required this.connectionDate,
+    this.isWaitingForSecureConnection = false,
     required this.onBack,
     this.onOverflow,
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
     this.onSearch,
+    this.translateAction,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
+    this.callStartingMessage = '',
     this.callUnavailableMessage = '',
   });
 
@@ -79,117 +86,140 @@ class ConversationHeader extends StatelessWidget {
                 stops: [0.0, 0.8, 1.0],
               ),
             ),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Back button
-                ActionSemantics(
-                  label: AppLocalizations.of(context)!.action_back,
-                  enabled: true,
-                  child: GestureDetector(
-                    onTap: onBack,
-                    behavior: HitTestBehavior.opaque,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Icon(
-                          Icons.chevron_left,
-                          size: 24,
-                          color: readableColors.iconSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // Avatar + name (tappable → contact profile)
-                Expanded(
-                  child: _profileAction(
-                    context,
-                    GestureDetector(
-                      onTap: onAvatarTap,
-                      behavior: HitTestBehavior.opaque,
-                      child: Row(
-                        children: [
-                          UserAvatar(peerId: contactPeerId, size: 36),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  contactUsername,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: readableColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 1),
-                                Text(
-                                  AppLocalizations.of(
-                                    context,
-                                  )!.connected_date(connectionDate),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w400,
-                                    color: readableColors.textMuted,
-                                  ),
-                                ),
-                              ],
+                Row(
+                  children: [
+                    // Back button
+                    ActionSemantics(
+                      label: AppLocalizations.of(context)!.action_back,
+                      enabled: true,
+                      child: GestureDetector(
+                        onTap: onBack,
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: Icon(
+                              Icons.chevron_left,
+                              size: 24,
+                              color: readableColors.iconSecondary,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (showCallAction)
-                  _ConversationCallAction(
-                    enabled: callActionEnabled && onCall != null,
-                    inFlight: callActionInFlight,
-                    unavailableMessage: callUnavailableMessage,
-                    onCall: onCall,
-                    onRetry: onCallRetry,
-                  ),
-                if (onSearch != null)
-                  IconButton(
-                    tooltip: AppLocalizations.of(context)!.chat_search_action,
-                    onPressed: onSearch,
-                    icon: const Icon(Icons.search_rounded),
-                    iconSize: 22,
-                    color: readableColors.iconSecondary,
-                    style: IconButton.styleFrom(
-                      fixedSize: const Size.square(44),
-                    ),
-                  ),
-                // Overflow button
-                ActionSemantics(
-                  label: AppLocalizations.of(
-                    context,
-                  )!.action_conversation_options,
-                  enabled: onOverflow != null,
-                  child: GestureDetector(
-                    onTap: onOverflow,
-                    behavior: HitTestBehavior.opaque,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Icon(
-                          Icons.more_vert,
-                          size: 20,
-                          color: readableColors.iconMuted,
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 6),
+                    // Avatar + name (tappable → contact profile)
+                    Expanded(
+                      child: _profileAction(
+                        context,
+                        GestureDetector(
+                          onTap: onAvatarTap,
+                          behavior: HitTestBehavior.opaque,
+                          child: Row(
+                            children: [
+                              UserAvatar(peerId: contactPeerId, size: 36),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      contactUsername,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: readableColors.textPrimary,
+                                      ),
+                                    ),
+                                    if (isWaitingForSecureConnection)
+                                      Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.contact_waiting_for_secure_connection,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: readableColors.textMuted,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (showCallAction)
+                      _ConversationCallAction(
+                        enabled: callActionEnabled && onCall != null,
+                        inFlight: callActionInFlight,
+                        startingMessage: callStartingMessage,
+                        unavailableMessage: callUnavailableMessage,
+                        onCall: onCall,
+                        onRetry: onCallRetry,
+                      ),
+                    if (onSearch != null)
+                      IconButton(
+                        tooltip: AppLocalizations.of(
+                          context,
+                        )!.chat_search_action,
+                        onPressed: onSearch,
+                        icon: const Icon(Icons.search_rounded),
+                        iconSize: 22,
+                        color: readableColors.iconSecondary,
+                        style: IconButton.styleFrom(
+                          fixedSize: const Size.square(44),
+                        ),
+                      ),
+                    ?translateAction,
+                    // Overflow button
+                    ActionSemantics(
+                      label: AppLocalizations.of(
+                        context,
+                      )!.action_conversation_options,
+                      enabled: onOverflow != null,
+                      child: GestureDetector(
+                        onTap: onOverflow,
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: Icon(
+                              Icons.more_vert,
+                              size: 20,
+                              color: readableColors.iconMuted,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                if (isWaitingForSecureConnection &&
+                    PendingContactRetryScope.isStopped(
+                      context,
+                      contactPeerId,
+                    )) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    AppLocalizations.of(context)!.contact_retry_stopped_hint,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: readableColors.textMuted,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -212,6 +242,7 @@ class _ConversationCallAction extends StatelessWidget {
   const _ConversationCallAction({
     required this.enabled,
     required this.inFlight,
+    required this.startingMessage,
     required this.unavailableMessage,
     required this.onCall,
     this.onRetry,
@@ -219,6 +250,7 @@ class _ConversationCallAction extends StatelessWidget {
 
   final bool enabled;
   final bool inFlight;
+  final String startingMessage;
   final String unavailableMessage;
   final VoidCallback? onCall;
   final VoidCallback? onRetry;
@@ -235,7 +267,9 @@ class _ConversationCallAction extends StatelessWidget {
     final colors = context.backgroundReadableColors;
     final canRetry = !inFlight && onRetry != null;
     final tooltip = inFlight
-        ? AppLocalizations.of(context)!.action_starting_voice_call
+        ? startingMessage.isEmpty
+              ? AppLocalizations.of(context)!.action_starting_voice_call
+              : startingMessage
         : enabled
         ? AppLocalizations.of(context)!.action_start_voice_call
         : _truthfulUnavailableMessage(context);

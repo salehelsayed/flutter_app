@@ -28,6 +28,105 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
     ))
   }
 
+  func testBL9MissingMailboxBridgeKeepsGenericFallbackAndReportsSafeCause() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let coordinator = NseMailboxWakeCoordinator(
+      credentialReader: NseInboxCredentialReader(keyReader: FixedKeyReader(try credentialKeys())),
+      retriever: BL9UnavailableRetriever(), candidateAdapter: FixedCandidateAdapter(candidate: nil),
+      recoveryStore: initializedRecoveryStore(root))
+    let done = expectation(description: "generic fallback")
+    var failures = [[String: String]]()
+    coordinator.resolve(requestIdentifier: "bl9-fixed", onFailure: { kind, reason in
+      failures.append(["kind": kind, "reason": reason])
+    }) { resolution in
+      if case .generic = resolution {} else { XCTFail("Failure must retain generic fallback") }
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 1)
+    XCTAssertEqual(failures, [["kind": "mailbox", "reason": "mailbox_bridge_unavailable"]])
+    let payload = try XCTUnwrap(nsePublicProofPayload(event: "PUSH_NSE_DECRYPT_FAIL", details: failures[0]))
+    XCTAssertTrue(payload.contains("bridge_unavailable"))
+    XCTAssertFalse(payload.contains("mailbox_bridge_unavailable"))
+  }
+
+  func testBL9FixedCandidatesReportMissingBridgeBeforeResolver() throws {
+    let fixture = try loadMailboxFixture()
+    let reader = FixedKeyReader(fixture.keychainValues)
+    let credential = try XCTUnwrap(NseInboxCredentialReader(keyReader: reader).read())
+    let decryptor = BL9UnavailableDecryptor()
+    let resolver = NotificationPreviewResolver(keyReader: reader, decryptor: decryptor,
+      dedupeStore: nil, eventEmitter: FixedNoopEmitter())
+    let adapter: NseInboxCandidateAdapting = NseInboxCandidateAdapter(keyReader: reader,
+      decryptor: decryptor, previewResolver: resolver,
+      now: { self.isoDate("2026-08-16T00:04:00.000000Z") })
+    for fixtureRow in fixture.rows where fixtureRow["classification"] as? String == "accepted" {
+      let page = try XCTUnwrap(fixtureRow["rawEnvelope"] as? [String: Any])
+      let messages = try XCTUnwrap(page["messages"] as? [[String: Any]])
+      let message = try XCTUnwrap(messages.first)
+      let row = NseInboxRetrievedMessage(id: try XCTUnwrap(message["id"] as? String),
+        from: try XCTUnwrap(message["from"] as? String),
+        message: try XCTUnwrap(message["message"] as? String),
+        timestamp: try XCTUnwrap((message["timestamp"] as? NSNumber)?.int64Value))
+      var failures = [[String: String]]()
+      XCTAssertNil(adapter.adapt(row, credential: credential, onFailure: { kind, reason in
+        failures.append(["kind": kind, "reason": reason])
+      }))
+      XCTAssertEqual(failures.count, 1, String(describing: fixtureRow["id"]))
+      if let failure = failures.first {
+        XCTAssertEqual(nseAppDecryptFailureReason(kind: failure["kind"]!, reason: failure["reason"]!), "bridge_unavailable")
+      }
+    }
+  }
+
+  func testBL9RendererFailureAfterFirstDecryptKeepsGenericAndReportsOnce() throws {
+    let fixture = try loadMailboxFixture()
+    let reader = FixedKeyReader(fixture.keychainValues)
+    let credential = try XCTUnwrap(NseInboxCredentialReader(keyReader: reader).read())
+    for (rowID, kind) in [("accepted-direct-text-linked", "chat"), ("accepted-group-message-text", "group")] {
+      let fixtureRow = try XCTUnwrap(fixture.rows.first { $0["id"] as? String == rowID })
+      let page = try XCTUnwrap(fixtureRow["rawEnvelope"] as? [String: Any])
+      let decryptor = BL9SecondDecryptFails()
+      let resolver = NotificationPreviewResolver(keyReader: reader, decryptor: decryptor,
+        dedupeStore: nil, eventEmitter: FixedNoopEmitter())
+      let adapter = NseInboxCandidateAdapter(keyReader: reader, decryptor: decryptor,
+        previewResolver: resolver, now: { self.isoDate("2026-08-16T00:04:00.000000Z") })
+      let root = try temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: root) }
+      let coordinator = NseMailboxWakeCoordinator(
+        credentialReader: NseInboxCredentialReader(keyReader: reader),
+        retriever: CountingNseRetriever(response: try canonicalJSONString(page)),
+        candidateAdapter: adapter,
+        recoveryStore: initializedRecoveryStore(root, binding: credential.opaqueBinding,
+          account: credential.logicalAccountPeerId))
+      var failures = [[String: String]]()
+      let done = expectation(description: "renderer failure keeps generic \(kind)")
+      let original = genericContent()
+      var handoffs = 0
+      coordinator.resolve(requestIdentifier: "bl9-second-\(kind)", onFailure: { observedKind, reason in
+        failures.append(["kind": observedKind, "reason": reason])
+      }) { resolution in
+        guard case let .generic(lease) = resolution else {
+          XCTFail("Renderer failure must retain generic fallback")
+          done.fulfill()
+          return
+        }
+        coordinator.handoffGeneric(lease: lease, content: original) { content in
+          handoffs += 1
+          XCTAssertTrue(content === original)
+        }
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 3)
+      XCTAssertEqual(decryptor.calls, 2)
+      XCTAssertEqual(handoffs, 1)
+      XCTAssertEqual(failures, [["kind": kind, "reason": "\(kind)_bridge_invalid"]])
+      if let failure = failures.first {
+        XCTAssertEqual(nseAppDecryptFailureReason(kind: kind, reason: failure["reason"]!), "invalid_payload")
+      }
+    }
+  }
+
   func testTC37303ExactFixedGrammarAndRichCompatibility() throws {
     let exact = fixedWake()
     XCTAssertTrue(NseMailboxWakeClassifier.isExactFixedWake(exact))
@@ -2582,4 +2681,34 @@ private struct RejectingDecryptor: PushPayloadDecrypting {
 
 private struct FixedNoopEmitter: PushPreviewEventEmitting {
   func emit(event: String, details: [String: String]) {}
+}
+
+private struct BL9UnavailableDecryptor: PushPayloadDecrypting {
+  func decryptOneToOne(secretKey: String, kem: String, ciphertext: String, nonce: String) throws -> String {
+    throw NotificationPreviewError.bridgeUnavailable
+  }
+  func decryptGroup(groupKey: String, ciphertext: String, nonce: String) throws -> String {
+    throw NotificationPreviewError.bridgeUnavailable
+  }
+}
+
+private struct BL9UnavailableRetriever: NseInboxRetrieving {
+  func retrievePending(requestJSON: String) throws -> String {
+    throw NseMailboxWakeError.bridgeUnavailable
+  }
+}
+
+private final class BL9SecondDecryptFails: PushPayloadDecrypting {
+  private let underlying = BridgePushDecryptor()
+  private(set) var calls = 0
+  func decryptOneToOne(secretKey: String, kem: String, ciphertext: String, nonce: String) throws -> String {
+    calls += 1
+    if calls > 1 { throw NotificationPreviewError.invalidBridgeResponse }
+    return try underlying.decryptOneToOne(secretKey: secretKey, kem: kem, ciphertext: ciphertext, nonce: nonce)
+  }
+  func decryptGroup(groupKey: String, ciphertext: String, nonce: String) throws -> String {
+    calls += 1
+    if calls > 1 { throw NotificationPreviewError.invalidBridgeResponse }
+    return try underlying.decryptGroup(groupKey: groupKey, ciphertext: ciphertext, nonce: nonce)
+  }
 }

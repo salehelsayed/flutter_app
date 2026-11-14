@@ -162,6 +162,7 @@ void main() {
     ValueChanged<String>? onOpenPrivateMedia,
     bool privateMediaEnabled = false,
     void Function(String messageId, String attachmentId)? onMediaSave,
+    void Function(String messageId, String attachmentId)? onMediaSaveSticker,
     void Function(String messageId, String attachmentId)? onMediaShare,
     ValueChanged<String>? onMediaDeleteForMe,
     Map<String, List<MediaAttachment>> mediaMap = const {},
@@ -215,6 +216,7 @@ void main() {
           onOpenPrivateMedia: onOpenPrivateMedia,
           privateMediaEnabled: privateMediaEnabled,
           onMediaSave: onMediaSave,
+          onMediaSaveSticker: onMediaSaveSticker,
           onMediaShare: onMediaShare,
           onMediaDeleteForMe: onMediaDeleteForMe,
           mediaMap: mediaMap,
@@ -3715,13 +3717,16 @@ void main() {
       required String id,
       String messageId = 'msg-media',
       String? localPath,
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+      String? stickerId,
     }) {
       return MediaAttachment(
         id: id,
         messageId: messageId,
-        mime: 'image/jpeg',
+        mime: mime,
         size: 2048,
-        mediaType: 'image',
+        mediaType: mediaType,
         localPath: localPath ?? 'media/group-1/$id.jpg',
         downloadStatus: 'done',
         contentHash: _validContentHash,
@@ -3729,6 +3734,7 @@ void main() {
         encryptionNonce: _validEncryptionNonce,
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         createdAt: '2026-07-10T09:30:00.000Z',
+        stickerId: stickerId,
         ownerLane: MediaOwnerLane.group,
       );
     }
@@ -4130,5 +4136,136 @@ void main() {
         expect(find.textContaining(sentinelRawPeerId), findsNothing);
       },
     );
+
+    group('received sticker action', () {
+      final stickerCalls = <String>[];
+      setUp(stickerCalls.clear);
+
+      GroupMessage groupMessage({
+        String id = 'msg-media',
+        bool isIncoming = true,
+        GroupPrivateMediaPolicy policy =
+            const GroupPrivateMediaPolicy.ordinary(),
+      }) => GroupMessage(
+        id: id,
+        groupId: 'group-1',
+        senderPeerId: isIncoming ? 'peer-2' : 'peer-1',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: DateTime.utc(2026, 7, 10, 9, 30),
+        createdAt: DateTime.utc(2026, 7, 10, 9, 30),
+        isIncoming: isIncoming,
+        privateMediaPolicy: policy,
+      );
+
+      Future<void> open(
+        WidgetTester tester, {
+        GroupMessage? message,
+        MediaAttachment? attachment,
+        bool wired = true,
+        bool pressCell = true,
+      }) async {
+        final m = message ?? groupMessage();
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [m],
+            mediaMap: {
+              m.id: [
+                attachment ?? groupOwnedImage(id: 'att-a', messageId: m.id),
+              ],
+            },
+            onMediaSave: (_, _) {},
+            onMediaShare: (_, _) {},
+            onMediaSaveSticker: wired
+                ? (messageId, attachmentId) =>
+                      stickerCalls.add('$messageId/$attachmentId')
+                : null,
+          ),
+        );
+        await tester.pump();
+        final cell = find.byKey(ValueKey('media-grid-cell-${m.id}-att-a'));
+        if (pressCell && cell.evaluate().isNotEmpty) {
+          await openMediaOverlay(tester, 'media-grid-cell-${m.id}-att-a');
+        } else {
+          await tester.longPress(find.byType(LetterCard).first);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 250));
+        }
+      }
+
+      testWidgets('an ordinary received group photo offers Use as sticker', (
+        tester,
+      ) async {
+        await open(tester);
+
+        expect(find.text('Use as sticker'), findsOneWidget);
+        await tapOverlayAction(tester, MessageContextOverlay.stickerActionKey);
+        expect(stickerCalls, ['msg-media/att-a']);
+      });
+
+      testWidgets(
+        'a received group custom sticker offers Save to My stickers',
+        (tester) async {
+          await open(
+            tester,
+            attachment: groupOwnedImage(
+              id: 'att-a',
+              mime: 'image/webp',
+              stickerId: 'custom',
+            ),
+          );
+
+          expect(find.text('Save to My stickers'), findsOneWidget);
+          expect(find.text('Use as sticker'), findsNothing);
+        },
+      );
+
+      for (final (name, policy) in [
+        ('view-once', const GroupPrivateMediaPolicy.viewOnce()),
+        ('protected', const GroupPrivateMediaPolicy.protected()),
+        ('unexpired disappearing', GroupPrivateMediaPolicy.disappearing(3600)),
+        ('unsupported', const GroupPrivateMediaPolicy.unsupported()),
+      ]) {
+        testWidgets('$name group media never offers a sticker action', (
+          tester,
+        ) async {
+          await open(tester, message: groupMessage(policy: policy));
+
+          expect(
+            find.byKey(MessageContextOverlay.stickerActionKey),
+            findsNothing,
+          );
+        });
+      }
+
+      testWidgets('a received group video never offers a sticker action', (
+        tester,
+      ) async {
+        await open(
+          tester,
+          attachment: groupOwnedImage(
+            id: 'att-a',
+            mime: 'video/mp4',
+            mediaType: 'video',
+          ),
+        );
+
+        expect(
+          find.byKey(MessageContextOverlay.stickerActionKey),
+          findsNothing,
+        );
+      });
+
+      testWidgets('without the sticker handler no sticker action shows', (
+        tester,
+      ) async {
+        await open(tester, wired: false);
+
+        expect(
+          find.byKey(MessageContextOverlay.stickerActionKey),
+          findsNothing,
+        );
+      });
+    });
   });
 }

@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 class FakeMessageRepository
     implements
         MessageRepository,
+        MessageAutoRetryTerminalRepository,
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
@@ -22,6 +23,7 @@ class FakeMessageRepository
         LinkedTransportIncomingApplyRepository,
         OutgoingDirectFanoutReceiptSettlementRepository {
   final List<ConversationMessage> _messages = [];
+  final Map<String, String> autoRetryTerminalReasons = {};
   final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
   final Map<String, DirectReactionInboxCustodyOutboxEntry>
   directMutationCustodyRows = {};
@@ -209,11 +211,37 @@ class FakeMessageRepository
   }
 
   @override
+  Future<bool> isAutoRetryTerminal(String messageId) async =>
+      autoRetryTerminalReasons.containsKey(messageId);
+
+  @override
+  Future<void> setAutoRetryTerminalReason(
+    ConversationMessage expected,
+    String? reason,
+  ) async {
+    final current = await getMessage(expected.id);
+    if (current == null || current.status != 'failed' || current.isIncoming) {
+      return;
+    }
+    final actual = current.toMap();
+    final snapshot = expected.toMap();
+    if (actual.length != snapshot.length ||
+        snapshot.entries.any((entry) => actual[entry.key] != entry.value)) {
+      return;
+    }
+    if (reason == null) {
+      autoRetryTerminalReasons.remove(expected.id);
+    } else {
+      autoRetryTerminalReasons[expected.id] = reason;
+    }
+  }
+
+  @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
     getFailedOutgoingCallCount++;
     if (failedOutgoingOverride != null) return failedOutgoingOverride!;
     return _messages
-        .where((m) => m.status == 'failed' && !m.isIncoming)
+        .where((m) => m.status == 'failed' && !m.isIncoming && !autoRetryTerminalReasons.containsKey(m.id))
         .toList();
   }
 

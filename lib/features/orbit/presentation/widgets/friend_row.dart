@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
@@ -34,6 +35,9 @@ class FriendRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final isWaitingForSecureConnection =
+        !friend.isBlocked &&
+        (friend.contact.mlKemPublicKey?.trim().isEmpty ?? true);
     // 409: a call can be the newest thing here, so the row's time follows the
     // newest activity rather than the newest message.
     final activityAt = friend.lastActivityAt;
@@ -191,6 +195,29 @@ class FriendRow extends StatelessWidget {
                               ],
                             ],
                           ),
+                        if (isWaitingForSecureConnection) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            l10n.contact_waiting_for_secure_connection,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: readableColors.textMuted,
+                            ),
+                          ),
+                          if (PendingContactRetryScope.isStopped(
+                            context,
+                            friend.peerId,
+                          )) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              l10n.contact_retry_stopped_hint,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: readableColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ],
                         if (previewText.isNotEmpty) ...[
                           const SizedBox(height: 4),
                           Text(

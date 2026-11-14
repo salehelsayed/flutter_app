@@ -8,6 +8,7 @@ enum MigrationFileManifestItemKind {
   groupAvatar,
   pendingUpload,
   videoThumbnail,
+  customSticker,
 }
 
 enum MigrationFileCriticality { critical, nonCriticalCache }

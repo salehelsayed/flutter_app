@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart'
+    show kCustomStickerMarkerId;
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_quote_block.dart';
 import 'package:flutter/services.dart';
@@ -44,6 +46,10 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/translate_preview/language_heuristic.dart';
+import 'package:flutter_app/features/translate_preview/translate_to_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translation_preferences.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
@@ -86,6 +92,11 @@ typedef DirectReceivedMediaInfoLoader =
     Future<DirectReceivedMediaInfo?> Function(
       DirectReceivedMediaActionIdentity identity,
     );
+
+/// Saves one received attachment to My stickers through core's
+/// requalifying received-sticker action.
+typedef DirectReceivedStickerSaveHandler =
+    Future<void> Function(DirectReceivedMediaActionIdentity identity);
 
 typedef DirectReceivedMediaForwardHandler =
     Future<bool> Function(String messageId, {String? currentAttachmentId});
@@ -299,6 +310,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback onBack;
   final ScrollController? scrollController;
   final bool isBlocked;
+  final bool isWaitingForSecureConnection;
   final VoidCallback? onUnblock;
   final VoidCallback? onOverflow;
   final VoidCallback? onAvatarTap;
@@ -312,6 +324,7 @@ class ConversationScreen extends StatefulWidget {
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
+  final String callStartingMessage;
   final String callUnavailableMessage;
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
@@ -402,6 +415,9 @@ class ConversationScreen extends StatefulWidget {
   final DirectReceivedMediaInfoLoader? onLoadMediaInfo;
   final DirectPrivateMediaActionDecisionLoader? onLoadMediaActionDecision;
   final DirectReceivedMediaForwardHandler? onForwardMedia;
+
+  /// Null hides the sticker action entirely (flag off or no library).
+  final DirectReceivedStickerSaveHandler? onSaveReceivedSticker;
   final DirectPrivateMediaViewerLauncher? onOpenPrivateMedia;
   final DirectPrivateMediaResultLauncher? onOpenPrivateMediaResult;
   final DirectPrivateParentDecisionLoader? onLoadPrivateParentDecision;
@@ -437,6 +453,7 @@ class ConversationScreen extends StatefulWidget {
     required this.onBack,
     this.scrollController,
     this.isBlocked = false,
+    this.isWaitingForSecureConnection = false,
     this.onUnblock,
     this.onOverflow,
     this.onAvatarTap,
@@ -446,6 +463,7 @@ class ConversationScreen extends StatefulWidget {
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
+    this.callStartingMessage = '',
     this.callUnavailableMessage = '',
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
@@ -513,6 +531,7 @@ class ConversationScreen extends StatefulWidget {
     this.onLoadMediaInfo,
     this.onLoadMediaActionDecision,
     this.onForwardMedia,
+    this.onSaveReceivedSticker,
     this.onOpenPrivateMedia,
     this.onOpenPrivateMediaResult,
     this.onLoadPrivateParentDecision,
@@ -650,9 +669,34 @@ class _ConversationScreenState extends State<ConversationScreen>
     }
   }
 
+  /// Read once: the delivery is app-wide and outlives this screen.
+  final ModelDeliveryController? _translator = translatePreviewEnabled
+      ? translatePreviewDelivery
+      : null;
+
+  void _onTranslationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The language this chat's received messages are translated into, or null
+  /// while "Show translation" is off or the translator is not ready.
+  String? _translateMessagesTo(BuildContext context) {
+    final prefs = translationPreferences;
+    if (_translator?.state.value is! ModelReady ||
+        !prefs.showsTranslationIn(widget.contactPeerId)) {
+      return null;
+    }
+    return translationTargetOf(context, prefs.target.value);
+  }
+
   @override
   void initState() {
     super.initState();
+    if (_translator case final translator?) {
+      translator.state.addListener(_onTranslationChanged);
+      translationPreferences.target.addListener(_onTranslationChanged);
+      translationPreferences.chats.addListener(_onTranslationChanged);
+    }
     _syncProtectedThumbnailProtection();
     widget.composerStateListenable?.addListener(_onComposerStateChanged);
     _composerExtraHeight = _composerExtraHeightFor(_currentComposerState);
@@ -886,6 +930,11 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   void dispose() {
+    if (_translator case final translator?) {
+      translator.state.removeListener(_onTranslationChanged);
+      translationPreferences.target.removeListener(_onTranslationChanged);
+      translationPreferences.chats.removeListener(_onTranslationChanged);
+    }
     widget.composerStateListenable?.removeListener(_onComposerStateChanged);
     _releaseProtectedThumbnailProtection();
     _privateMediaRouteObserver?.unsubscribe(this);
@@ -917,10 +966,17 @@ class _ConversationScreenState extends State<ConversationScreen>
                 ConversationHeader(
                   contactPeerId: widget.contactPeerId,
                   contactUsername: widget.contactUsername,
-                  connectionDate: widget.connectionDate,
+                  isWaitingForSecureConnection:
+                      widget.isWaitingForSecureConnection,
                   onBack: widget.onBack,
                   onOverflow: widget.onOverflow,
                   onAvatarTap: widget.onAvatarTap,
+                  translateAction: translatePreviewEnabled
+                      ? ChatTranslateAction(
+                          peerId: widget.contactPeerId,
+                          delivery: _translator,
+                        )
+                      : null,
                   onCall: widget.onCall,
                   onCallRetry: widget.onCallRetry,
                   onSearch: widget.search?.open,
@@ -932,6 +988,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                   callUnavailableMessage: widget.callUnavailableMessage.isEmpty
                       ? AppLocalizations.of(context)!.voice_call_unavailable
                       : widget.callUnavailableMessage,
+                  callStartingMessage: widget.callStartingMessage,
                 ),
               // Intro banner above messages (when messages exist)
               if (!compactForKeyboard)
@@ -1097,6 +1154,7 @@ class _ConversationScreenState extends State<ConversationScreen>
             child: EmptyConversationState(
               contactPeerId: widget.contactPeerId,
               connectionDate: widget.connectionDate,
+              isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
             ),
           ),
         ],
@@ -1106,6 +1164,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       key: const ValueKey('empty'),
       contactPeerId: widget.contactPeerId,
       connectionDate: widget.connectionDate,
+      isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
     );
   }
 
@@ -1137,6 +1196,8 @@ class _ConversationScreenState extends State<ConversationScreen>
       }
     }
 
+    final translateMessagesTo = _translateMessagesTo(context);
+
     return ListView.builder(
       key: const ValueKey('messages'),
       controller: widget.scrollController,
@@ -1152,6 +1213,7 @@ class _ConversationScreenState extends State<ConversationScreen>
             return CompactOriginMarker(
               contactPeerId: widget.contactPeerId,
               connectionDate: widget.connectionDate,
+              isWaitingForSecureConnection: widget.isWaitingForSecureConnection,
             );
           case _ItemType.dateSeparator:
             return DateSeparator(label: item.dateLabel!);
@@ -1648,6 +1710,14 @@ class _ConversationScreenState extends State<ConversationScreen>
               );
             }
 
+            final translateTo =
+                message.isIncoming &&
+                    !message.isDeleted &&
+                    displayText.isNotEmpty &&
+                    translateMessagesTo != null &&
+                    shouldOfferTranslate(displayText, translateMessagesTo)
+                ? translateMessagesTo
+                : null;
             LetterCard buildLetterCard({
               VoidCallback? onLongPress,
               void Function(int index)? onMediaLongPress,
@@ -1694,6 +1764,17 @@ class _ConversationScreenState extends State<ConversationScreen>
                     ? ValueKey('private-media-decorated-body-${message.id}')
                     : null,
                 privateContentSlot: privateContentSlotFactory?.call(),
+                textFooter: translateTo == null
+                    ? null
+                    : MessageTranslation(
+                        key: ValueKey('message-translation-${message.id}'),
+                        account: widget.ownPeerId,
+                        text: displayText,
+                        targetLanguage: translateTo,
+                        ai: translatePreviewAi,
+                        color: context.backgroundReadableColors.textSecondary,
+                        dividerColor: context.backgroundReadableColors.divider,
+                      ),
                 audioFooterBuilder:
                     translatePreviewEnabled &&
                         message.isIncoming &&
@@ -2077,6 +2158,17 @@ class _ConversationScreenState extends State<ConversationScreen>
         _isDirectMediaActionEligible(message, mediaTarget!) &&
         mediaDecision!.allows(DirectPrivateMediaAction.saveToFiles);
     final showShareAction = showSaveAction;
+    // Option A: the same synchronous gate as Save (ordinary, incoming, live,
+    // downloaded, direct-owned), narrowed to the image types core accepts.
+    // Core requalifies the current row on tap.
+    final stickerActionLabel =
+        showSaveAction &&
+            widget.onSaveReceivedSticker != null &&
+            _isReceivedStickerCandidate(mediaTarget)
+        ? (mediaTarget.stickerId == kCustomStickerMarkerId
+              ? AppLocalizations.of(context)!.stickers_save_to_mine
+              : AppLocalizations.of(context)!.stickers_use_as_sticker)
+        : null;
     final showForwardAction =
         widget.onForwardMedia != null &&
         !message.isDeleted &&
@@ -2144,6 +2236,13 @@ class _ConversationScreenState extends State<ConversationScreen>
             ? () {
                 Navigator.of(dialogContext).pop();
                 unawaited(_promptSaveDestinationAndPerform(mediaIdentity));
+              }
+            : null,
+        stickerActionLabel: stickerActionLabel,
+        onStickerTap: stickerActionLabel != null
+            ? () {
+                Navigator.of(dialogContext).pop();
+                unawaited(widget.onSaveReceivedSticker!(mediaIdentity!));
               }
             : null,
         onShareTap: showShareAction
@@ -2225,6 +2324,17 @@ class _ConversationScreenState extends State<ConversationScreen>
     if (localPath == null || localPath.isEmpty) return false;
     return File(MediaFileManager.resolveStoredPathSync(localPath)).existsSync();
   }
+
+  static const _receivedStickerMimes = {
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+  };
+
+  bool _isReceivedStickerCandidate(MediaAttachment attachment) =>
+      attachment.mediaType == 'image' &&
+      _receivedStickerMimes.contains(attachment.mime.toLowerCase());
 
   bool _isTrustedDirectMediaTarget(
     ConversationMessage message,

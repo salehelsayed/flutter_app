@@ -6,12 +6,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
+
+/// Returns a silent camera clip for the gated sticker editor.
+Future<XFile?> captureStickerCameraClip(BuildContext context) async {
+  if (!kCustomStickersEnabled) return null;
+  return _captureCameraVideo(context, const CameraVideoRecorder._sticker());
+}
 
 /// Returns one clip, including any front/back changes made while recording.
-Future<XFile?> captureCameraVideo(BuildContext context) async {
-  final result = await Navigator.of(context).push<_CameraCaptureOutcome>(
-    MaterialPageRoute(builder: (_) => const CameraVideoRecorder()),
-  );
+Future<XFile?> captureCameraVideo(BuildContext context) =>
+    _captureCameraVideo(context, const CameraVideoRecorder());
+
+Future<XFile?> _captureCameraVideo(
+  BuildContext context,
+  CameraVideoRecorder recorder,
+) async {
+  final result = await Navigator.of(
+    context,
+  ).push<_CameraCaptureOutcome>(MaterialPageRoute(builder: (_) => recorder));
   if (result?.error case final error?) {
     if (error is CameraException) {
       final code = switch (error.code) {
@@ -37,7 +50,11 @@ class _CameraCaptureOutcome {
 }
 
 class CameraVideoRecorder extends StatefulWidget {
-  const CameraVideoRecorder({super.key});
+  const CameraVideoRecorder({super.key}) : _sticker = false;
+
+  const CameraVideoRecorder._sticker() : _sticker = true;
+
+  final bool _sticker;
 
   @override
   State<CameraVideoRecorder> createState() => _CameraVideoRecorderState();
@@ -53,6 +70,7 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
   bool _disposed = false;
   final _elapsed = Stopwatch();
   Timer? _ticker;
+  Timer? _deadline;
 
   @override
   void initState() {
@@ -72,8 +90,8 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
     );
     final controller = CameraController(
       back.firstOrNull ?? _cameras.first,
-      ResolutionPreset.high,
-      enableAudio: true,
+      widget._sticker ? ResolutionPreset.medium : ResolutionPreset.high,
+      enableAudio: !widget._sticker,
     );
     _camera = controller;
     controller.addListener(_cameraChanged);
@@ -145,6 +163,11 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
       await camera.startVideoRecording(enablePersistentRecording: true);
       if (_ending) return;
       _elapsed.start();
+      if (widget._sticker) {
+        _deadline = Timer(const Duration(seconds: 2), () {
+          unawaited(_end(keep: true));
+        });
+      }
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!_disposed && mounted && !_ending) setState(() {});
       });
@@ -164,6 +187,7 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
     if (_ending) return;
     _ending = true;
     _ticker?.cancel();
+    _deadline?.cancel();
     _elapsed.stop();
     final camera = _camera;
     _camera = null;
@@ -216,6 +240,7 @@ class _CameraVideoRecorderState extends State<CameraVideoRecorder>
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _deadline?.cancel();
     unawaited(_end());
     super.dispose();
   }

@@ -474,16 +474,42 @@ class AccountMigrationProductionBundleSource {
     final exportedItems = <MigrationFileManifestItem>[];
     final runtimeIssues = <MigrationFileManifestIssue>[];
     final entries = <_FileEntryRef>[];
+    Future<bool> stickerPathIsValid(MigrationFileManifestItem item) async {
+      final issue = await migrationCustomStickerPathIssue(
+        documentsRootPath,
+        item.relativePath,
+      );
+      if (issue == null) return true;
+      runtimeIssues.add(
+        MigrationFileManifestIssue(
+          code: issue,
+          sourceTable: item.sourceTable,
+          sourceId: item.sourceId,
+          relativePath: item.relativePath,
+          criticality: item.criticality,
+        ),
+      );
+      return false;
+    }
+
     for (final item in fileManifest.items) {
+      final isSticker =
+          item.kind == MigrationFileManifestItemKind.customSticker;
+      if (isSticker && !await stickerPathIsValid(item)) continue;
       final absolutePath = _safeJoin(documentsRootPath, item.relativePath);
       // Streaming re-verification (size + hash) guards against the file
       // changing between manifest build and entry stream — file contents are
       // never materialized in RAM.
       final int sizeBytes;
       final String sha256Hex;
+      var stickerSizeChanged = false;
       try {
         sizeBytes = await fileReader.length(absolutePath);
         sha256Hex = await fileReader.sha256Hex(absolutePath);
+        if (isSticker) {
+          stickerSizeChanged =
+              await fileReader.length(absolutePath) != sizeBytes;
+        }
       } on FileSystemException {
         runtimeIssues.add(
           MigrationFileManifestIssue(
@@ -497,7 +523,10 @@ class AccountMigrationProductionBundleSource {
         continue;
       }
 
-      if (sizeBytes != item.sizeBytes || sha256Hex != item.sha256) {
+      if (isSticker && !await stickerPathIsValid(item)) continue;
+      if (sizeBytes != item.sizeBytes ||
+          sha256Hex != item.sha256 ||
+          stickerSizeChanged) {
         runtimeIssues.add(
           MigrationFileManifestIssue(
             code: MigrationFileManifestIssueCode.fileSizeMismatch,
@@ -569,6 +598,7 @@ class AccountMigrationProductionBundleSource {
       documentsRootPath: documentsRootPath,
       secureValueReader: primaryStore.read,
     ).build(
+      customStickerRows: rows.customStickerRows,
       chatMediaRows: rows.chatMediaRows,
       directMediaBlobCustodyRows: rows.directMediaBlobCustodyRows,
       postMediaRows: rows.postMediaRows,
@@ -2321,6 +2351,7 @@ class _VerifiedBundleImport {
 }
 
 class _BundleRows {
+  final List<Map<String, Object?>> customStickerRows;
   final List<Map<String, Object?>> chatMediaRows;
   final List<Map<String, Object?>> directMediaBlobCustodyRows;
   final List<Map<String, Object?>> postMediaRows;
@@ -2332,6 +2363,7 @@ class _BundleRows {
   final List<Map<String, Object?>> groupKeyDraftRows;
 
   const _BundleRows({
+    required this.customStickerRows,
     required this.chatMediaRows,
     required this.directMediaBlobCustodyRows,
     required this.postMediaRows,
@@ -2346,6 +2378,7 @@ class _BundleRows {
 
 Future<_BundleRows> _loadBundleRows(Database db) async {
   return _BundleRows(
+    customStickerRows: await _queryTableIfExists(db, 'custom_stickers'),
     chatMediaRows: await _queryChatMediaRows(db),
     directMediaBlobCustodyRows: await _queryTableIfExists(
       db,

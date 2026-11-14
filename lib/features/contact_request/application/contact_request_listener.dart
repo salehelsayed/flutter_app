@@ -250,6 +250,7 @@ class ContactRequestListener {
           generation == _presentationGeneration &&
           _presentationQueue.isNotEmpty) {
         final next = _presentationQueue.removeFirst();
+        var replayPendingAfterRelease = false;
         try {
           if (_presentations[next.peerId]?.allowSuppressed == true ||
               !_isPresentationSuppressed(next.peerId)) {
@@ -258,13 +259,26 @@ class ContactRequestListener {
               accept: true,
               existingContactOnly: true,
             );
+            replayPendingAfterRelease =
+                decision == ContactRequestDecisionResult.notPending;
             if (decision == ContactRequestDecisionResult.pending &&
                 !_disposed &&
                 generation == _presentationGeneration &&
                 (_presentations[next.peerId]?.allowSuppressed == true ||
                     !_isPresentationSuppressed(next.peerId))) {
               await next.present();
+            } else if (!_disposed && generation == _presentationGeneration) {
+              recordContactRequestPresentationDiagnostic(
+                admitted: false,
+                consent:
+                    decision == ContactRequestDecisionResult.accepted ||
+                        decision == ContactRequestDecisionResult.alreadyAccepted
+                    ? ContactRequestConsentClass.active
+                    : ContactRequestConsentClass.unknown,
+              );
             }
+          } else {
+            recordContactRequestPresentationDiagnostic(admitted: false);
           }
         } catch (error) {
           emitFlowEvent(
@@ -275,6 +289,12 @@ class ContactRequestListener {
         } finally {
           if (generation == _presentationGeneration) {
             _presentations.remove(next.peerId)?.completion.complete();
+            // Concurrent receives can replace the stored request while its
+            // first presentation owns the peer lease. Replay the current row
+            // only after releasing that stale lease, using the existing guards.
+            if (replayPendingAfterRelease && !_disposed) {
+              _replayPendingRequestsOnAttach();
+            }
           }
         }
       }
@@ -480,7 +500,7 @@ class ContactRequestListener {
       }
 
       if (result == HandleMessageResult.contactRequest && request != null) {
-        _routeToDialog(request);
+        _routeToDialog(request, source: ContactRequestDiagnosticSource.live);
       } else if (result == HandleMessageResult.contactAutoAdded &&
           request != null) {
         await _routeAutoAdd(request);
@@ -614,7 +634,10 @@ class ContactRequestListener {
   /// Routes a verified request to the manual-accept dialog (presentation
   /// gate-aware). Used for v1 requests, and as the fallback when auto-add is
   /// not wired or is rate-limited.
-  void _routeToDialog(ContactRequestModel request) {
+  void _routeToDialog(
+    ContactRequestModel request, {
+    ContactRequestDiagnosticSource? source,
+  }) {
     final peerIdPrefix = request.peerId.length > 10
         ? request.peerId.substring(0, 10)
         : request.peerId;
@@ -630,6 +653,10 @@ class ContactRequestListener {
       request.peerId,
     );
     if (shouldSuppressPresentation) {
+      recordContactRequestPresentationDiagnostic(
+        admitted: false,
+        source: source,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'CONTACT_REQUEST_LISTENER_PRESENTATION_SUPPRESSED',
@@ -685,7 +712,10 @@ class ContactRequestListener {
             },
           );
           if (decision == ContactRequestDecisionResult.pending && !_disposed) {
-            _routeToDialog(request);
+            _routeToDialog(
+              request,
+              source: ContactRequestDiagnosticSource.storedReplay,
+            );
           } else if (decision == ContactRequestDecisionResult.accepted ||
               decision == ContactRequestDecisionResult.alreadyAccepted) {
             emitFlowEvent(
@@ -734,7 +764,7 @@ class ContactRequestListener {
         action: ContactRequestDiagnosticAction.admit,
         disposition: ContactRequestDisposition.pending,
       );
-      _routeToDialog(request);
+      _routeToDialog(request, source: ContactRequestDiagnosticSource.live);
       return;
     }
 
@@ -758,7 +788,7 @@ class ContactRequestListener {
         action: ContactRequestDiagnosticAction.admit,
         disposition: ContactRequestDisposition.pending,
       );
-      _routeToDialog(request);
+      _routeToDialog(request, source: ContactRequestDiagnosticSource.live);
       return;
     }
 

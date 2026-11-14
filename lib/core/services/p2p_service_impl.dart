@@ -24,6 +24,7 @@ import '../utils/flow_event_emitter.dart';
 import '../utils/startup_timing.dart';
 import '../utils/cold_start_notif_anchor.dart';
 import '../utils/push_diagnostics_logger.dart';
+import '../utils/thought_lifetime.dart';
 import 'protected_group_content_contract.dart';
 import '../../features/account_migration/application/account_migration_runtime_network_gate.dart';
 import '../../features/p2p/domain/models/node_state.dart';
@@ -731,6 +732,12 @@ class P2PServiceImpl
   ) {
     _inboxCoordinator.setProtectedGroupReplayHandler(handler);
   }
+
+  /// The router binds its active Thought listener after services are composed.
+  /// Unregister only this binding so stopping an older router is harmless.
+  VoidCallback registerPostCreateReplayHandler(
+    ReplayRecoveredInboxChatMessage handler,
+  ) => _inboxCoordinator.registerPostCreateReplayHandler(handler);
 
   @override
   NodeState get currentState => _currentState;

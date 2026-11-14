@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
@@ -32,6 +34,9 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/bidi_layout_checks.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../translate_preview/fake_model_delivery_controller.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import '../../../shared/fake_url_launcher.dart';
 
 void main() {
   final initialNow = DateTime.utc(2026, 10, 21, 12);
@@ -42,6 +47,11 @@ void main() {
   late GlobalKey<NavigatorState> navigator;
   late _RecordingNavigatorObserver navigationObserver;
   late JustAudioPlatform originalAudioPlatform;
+  late OrbitDepthAnswers answers;
+  late StreamController<({String messageId, ThoughtReplyStatus status})>
+  reactionStatuses;
+  late List<({String text, String postId, String messageId})> reactions;
+  late ThoughtReplyStatus reactionResult;
 
   setUp(() {
     now = initialNow;
@@ -52,9 +62,15 @@ void main() {
     navigationObserver = _RecordingNavigatorObserver();
     originalAudioPlatform = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
+    reactions = [];
+    reactionResult = ThoughtReplyStatus.sent;
+    reactionStatuses = StreamController.broadcast();
+    answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
   });
 
   tearDown(() async {
+    answers.dispose();
+    await reactionStatuses.close();
     await eligibility.close();
     posts.dispose();
     JustAudioPlatform.instance = originalAudioPlatform;
@@ -84,9 +100,19 @@ void main() {
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
+    bool playVideoAtOnce = false,
+    double? textScale,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        builder: textScale == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(textScale)),
+                child: child!,
+              ),
         navigatorKey: navigator,
         navigatorObservers: [navigationObserver],
         locale: locale,
@@ -103,6 +129,11 @@ void main() {
             initialPost: initialPost,
             authorName: authorName,
             postRepo: posts,
+            answers: answers,
+            onReply: (text, postId, messageId) async {
+              reactions.add((text: text, postId: postId, messageId: messageId));
+              return reactionResult;
+            },
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
             replyChanges: replyChanges,
@@ -115,6 +146,7 @@ void main() {
                 (_) async => throw StateError('Unexpected media download'),
             eligibilityChanges: eligibility.stream,
             nowProvider: () => now,
+            playVideoAtOnce: playVideoAtOnce,
           ),
         ),
       ),
@@ -139,7 +171,7 @@ void main() {
   }
 
   testWidgets(
-    'shows name, age and text, marks shown thought and exposes no engagement',
+    'shows name, age and text, marks shown thought without legacy post controls',
     (tester) async {
       final thought = _thought(initialNow);
       await posts.savePost(thought);
@@ -159,7 +191,7 @@ void main() {
     },
   );
 
-  testWidgets("a friend's card is view only: no reactions, reply field or "
+  testWidgets("a friend's card shows reactions without a reply field or "
       'microphone, with its header and Close', (tester) async {
     final thought = _thought(initialNow);
     await posts.savePost(thought);
@@ -172,9 +204,12 @@ void main() {
     expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
     for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
-      expect(find.byKey(ValueKey('thought-react-$reaction')), findsNothing);
+      expect(
+        find.byKey(ValueKey('thought-react-$reaction')).hitTestable(),
+        findsOneWidget,
+      );
     }
-    expect(find.text('❤️'), findsNothing);
+    expect(find.text('❤️'), findsOneWidget);
     expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Reply to Alice…'), findsNothing);
@@ -183,6 +218,74 @@ void main() {
     expect(find.byKey(const ValueKey('thought-activity-open')), findsNothing);
     await finish(tester);
   });
+
+  testWidgets('a later failed card reaction retries the same quoted reply ID', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    reactionResult = ThoughtReplyStatus.queued;
+    await openCard(tester, thought);
+    final love = find.byKey(const ValueKey('thought-react-love'));
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, hasLength(1));
+    final first = reactions.single;
+    expect(first.text, '❤️');
+    expect(first.postId, thought.id);
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isTrue);
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, hasLength(1));
+    reactionStatuses.add((
+      messageId: first.messageId,
+      status: ThoughtReplyStatus.failed,
+    ));
+    await tester.pump();
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isFalse);
+    reactionResult = ThoughtReplyStatus.sent;
+    await tester.tap(love);
+    await tester.pump();
+    expect(reactions, [first, first]);
+    expect(answers.value.pressed(thought.id, ThoughtReaction.love), isTrue);
+    await finish(tester);
+  });
+
+  for (final locale in [const Locale('en'), const Locale('ar')]) {
+    for (final photo in [false, true]) {
+      testWidgets('friend ${photo ? 'photo' : 'text'} reactions fit at320px '
+          'with2x text in ${locale.languageCode}', (tester) async {
+        tester.view.physicalSize = const Size(320, 568);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final thought = _thought(
+          initialNow,
+        ).copyWith(mediaKind: photo ? 'image' : 'none');
+        await posts.savePost(thought);
+        if (photo) {
+          final file = _tempFile('reaction-photo.png', pngBytes: true);
+          await posts.savePostMediaAttachment(
+            _attachment(
+              'image',
+            ).copyWith(localPath: file.path, downloadStatus: 'done'),
+          );
+        }
+        await openCard(tester, thought, locale: locale, textScale: 2);
+        await pumpMediaFrames(tester);
+        for (final name in ['love', 'laugh', 'fire', 'applause']) {
+          final button = find.byKey(ValueKey('thought-react-$name'));
+          expect(button.hitTestable(), findsOneWidget);
+          final bounds = tester.getRect(button);
+          expect(bounds.left, greaterThanOrEqualTo(0));
+          expect(bounds.right, lessThanOrEqualTo(320));
+          expect(bounds.bottom, lessThanOrEqualTo(568));
+        }
+        expect(tester.takeException(), isNull);
+        await finish(tester);
+      });
+    }
+  }
 
   testWidgets("a friend's tags are plain words, as written", (tester) async {
     final thought = _thought(
@@ -208,6 +311,38 @@ void main() {
       find.text('river walk #Walks with #مشي', findRichText: true),
       findsOneWidget,
     );
+    await finish(tester);
+  });
+
+  testWidgets("a link in a friend's thought opens in the browser at the "
+      "thought's size", (tester) async {
+    final launcher = FakeUrlLauncher.install();
+    final thought = _thought(
+      initialNow,
+    ).copyWith(text: 'tickets www.example.com/t, hurry');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    final words = find.byWidgetPredicate(
+      (widget) => widget is LinkableText && widget.text == thought.text,
+    );
+    final links = <TextSpan>[];
+    for (final rich in tester.widgetList<RichText>(
+      find.descendant(of: words, matching: find.byType(RichText)),
+    )) {
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && span.recognizer != null) links.add(span);
+        return true;
+      });
+    }
+    expect([for (final link in links) link.text], ['www.example.com/t']);
+    expect(links.single.style?.fontSize, 28);
+    await tapWords(tester, words, 'www.example.com/t');
+    expect(launcher.launches, [
+      ('https://www.example.com/t', PreferredLaunchMode.externalApplication),
+    ]);
     await finish(tester);
   });
 
@@ -251,7 +386,9 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('thought-delete')), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+    for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
+      expect(find.byKey(ValueKey('thought-react-$reaction')), findsNothing);
+    }
     expect(find.byType(TextField), findsNothing);
     await finish(tester);
   });
@@ -1183,6 +1320,134 @@ void main() {
     await finish(tester);
   });
 
+  group('a video played at once from the ring', () {
+    Future<PostModel> videoThought({Duration? lifetime}) async {
+      final video = _tempFile('ring.mp4');
+      final thought = _thought(initialNow).copyWith(
+        text: 'card caption',
+        mediaKind: 'video',
+        expiresAt: lifetime == null
+            ? null
+            : initialNow.add(lifetime).toIso8601String(),
+      );
+      await posts.savePost(thought);
+      await posts.savePostMediaAttachment(
+        _attachment(
+          'video',
+        ).copyWith(localPath: video.path, downloadStatus: 'done'),
+      );
+      return thought;
+    }
+
+    final viewer = find.byType(FullScreenTypedMediaViewer, skipOffstage: false);
+    final card = find.byType(ThoughtCardScreen, skipOffstage: false);
+
+    testWidgets('opens the player with the card never shown', (tester) async {
+      final thought = await videoThought();
+      final shown = <String>[];
+      await openCard(
+        tester,
+        thought,
+        playVideoAtOnce: true,
+        onShown: (id) async => shown.add(id),
+      );
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsOneWidget);
+      expect(find.text('card caption', skipOffstage: false), findsNothing);
+      expect(shown, [thought.id]);
+
+      navigator.currentState!.pop();
+      await pumpMediaFrames(tester);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      expect(shown, [thought.id]);
+      await finish(tester);
+    });
+
+    testWidgets('deleting the thought closes the player', (tester) async {
+      final thought = await videoThought();
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsOneWidget);
+
+      await posts.deletePostCascade(thought.id);
+      await pumpMediaFrames(tester);
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('expiry closes the player', (tester) async {
+      final thought = await videoThought(lifetime: const Duration(seconds: 10));
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+      expect(viewer, findsOneWidget);
+
+      now = initialNow.add(const Duration(seconds: 10));
+      await tester.pump(const Duration(seconds: 10));
+      await pumpMediaFrames(tester);
+
+      expect(viewer, findsNothing);
+      expect(card, findsNothing);
+      expect(find.text('orbit-home'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a media read failure shows the card with its Retry', (
+      tester,
+    ) async {
+      final thought = await videoThought();
+      posts.mediaError = StateError('media read failed');
+      await openCard(tester, thought, playVideoAtOnce: true);
+      await pumpMediaFrames(tester);
+
+      expect(find.text('card caption'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(viewer, findsNothing);
+
+      // The user is on the card now: a Retry that works fills the card in
+      // rather than jumping into the player.
+      posts.mediaError = null;
+      await tester.tap(find.text('Retry'));
+      await pumpMediaFrames(tester);
+
+      expect(find.text('card caption'), findsOneWidget);
+      expect(find.text('Retry'), findsNothing);
+      expect(find.byType(MediaGrid), findsOneWidget);
+      expect(viewer, findsNothing);
+      expect(card, findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets(
+      '_loadFailed in play-at-once mode shows the failure view with its Retry',
+      (tester) async {
+        final thought = await videoThought();
+        await openCard(
+          tester,
+          thought,
+          playVideoAtOnce: true,
+          loadCurrent: () async => throw StateError('thought read failed'),
+        );
+        await pumpMediaFrames(tester);
+
+        expect(
+          find.text('Check your connection and try again.'),
+          findsOneWidget,
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        expect(viewer, findsNothing);
+        await finish(tester);
+      },
+    );
+  });
+
   testWidgets('expiry closes its owned media viewer and the card together', (
     tester,
   ) async {
@@ -1234,12 +1499,13 @@ void main() {
       debugModelDeliveryOverride = null;
     });
 
-    testWidgets('without the flag a foreign thought has no Translate', (
+    testWidgets('disabled preview keeps a foreign thought untranslated', (
       tester,
     ) async {
       tester.platformDispatcher.localeTestValue = const Locale('de');
       addTearDown(tester.platformDispatcher.clearLocaleTestValue);
-      expect(kTranslatePreviewEnabled, isFalse);
+      debugTranslatePreviewEnabledOverride = false;
+      expect(translatePreviewEnabled, isFalse);
       final thought = _thought(initialNow);
       await posts.savePost(thought);
 
@@ -1483,6 +1749,16 @@ class _CardPostRepository extends InMemoryPostRepository {
   Future<List<PostModel>> loadFeed() async {
     await feedGate?.future;
     return super.loadFeed();
+  }
+
+  Object? mediaError;
+
+  @override
+  Future<List<PostMediaAttachmentModel>> loadPostMediaAttachments(
+    String postId,
+  ) async {
+    if (mediaError != null) throw mediaError!;
+    return super.loadPostMediaAttachments(postId);
   }
 
   Object? focusError;

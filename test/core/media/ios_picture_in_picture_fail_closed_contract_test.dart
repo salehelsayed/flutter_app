@@ -117,15 +117,38 @@ void main() {
     final project = File(
       'ios/Runner.xcodeproj/project.pbxproj',
     ).readAsStringSync();
+    // Received-media PiP stays unsupported on iOS everywhere.
     for (final forbidden in <String>[
-      'AVPictureInPictureController',
-      'AVKit',
       'mknoon/picture_in_picture',
       'ReceivedVideoPictureInPicture',
     ]) {
       expect(iosSource, isNot(contains(forbidden)));
       expect(project, isNot(contains(forbidden)));
     }
+    // BL-16 live-call PiP (Kayan m-69a3dbc5) is the only AVKit user: it lives
+    // in exactly one Runner file and uses the video-call content source only.
+    const liveCallPip = 'ios/Runner/CallPictureInPictureController.swift';
+    final otherSource = <String>[
+      for (final root in <String>[
+        'ios/Runner',
+        'ios/RunnerTests',
+        'ios/RunnerUITests',
+      ])
+        for (final entity in Directory(root).listSync(recursive: true))
+          if (entity is File &&
+              entity.path != liveCallPip &&
+              (entity.path.endsWith('.swift') ||
+                  entity.path.endsWith('.m') ||
+                  entity.path.endsWith('.h')))
+            entity.readAsStringSync(),
+    ].join('\n');
+    for (final forbidden in <String>['AVPictureInPictureController', 'AVKit']) {
+      expect(otherSource, isNot(contains(forbidden)));
+      expect(project, isNot(contains(forbidden)));
+    }
+    final livePip = File(liveCallPip).readAsStringSync();
+    expect(livePip, contains('AVPictureInPictureVideoCallViewController'));
+    expect(livePip, isNot(contains('AVPlayer')));
     // UIBackgroundModes.audio is shared by the supported CallKit/WebRTC call
     // path, so it is not evidence that the unsupported iOS PiP path exists.
   });

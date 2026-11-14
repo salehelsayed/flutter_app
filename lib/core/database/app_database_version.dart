@@ -97,4 +97,8 @@
 // v129 adds nullable `caption` to post_media_attachments and
 // post_media_upload_recovery, the short text on a Thought voice note. No
 // default and no backfill.
-const int currentIdentityDatabaseVersion = 129;
+// v130 adds the account-owned custom sticker library and its portable user
+// ordering. The schema exists even when custom-sticker actions are disabled.
+// BL-24(C): nullable local terminal-auto-retry reason; no historical backfill.
+// v132 retains delivery/mutation receipt envelopes across transport failures.
+const int currentIdentityDatabaseVersion = 132;

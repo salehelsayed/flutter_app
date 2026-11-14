@@ -31,6 +31,117 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
     XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
   }
 
+  func testPhase4VideoKeysAreOptionalStrictAndInert() throws {
+    let rig = makeBridgeRig()
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil)
+    let handle = callId.uuidString.lowercased()
+    let registration: [String: Any] = ["version": 1, "callHandle": handle, "expiresAtMs": now + 20_000]
+
+    let invalidMedia = try XCTUnwrap(invoke(bridge, "presentAuthenticated", registration.merging(["media": "screen"]) { $1 }) as? FlutterError)
+    XCTAssertEqual(invalidMedia.code, "bad_args")
+    let badVideoFlag = try XCTUnwrap(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true, "video": "yes"]) as? FlutterError)
+    XCTAssertEqual(badVideoFlag.code, "bad_args")
+
+    XCTAssertEqual(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true]) as? Bool, true)
+    XCTAssertFalse(rig.controller.isVideoCapabilityEnabled(), "absent video flag keeps video off")
+    XCTAssertEqual(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": true, "video": true]) as? Bool, true)
+    XCTAssertTrue(rig.controller.isVideoCapabilityEnabled())
+
+    XCTAssertEqual(invoke(bridge, "presentAuthenticated", registration.merging(["media": "video"]) { $1 }) as? Bool, true)
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callId), .video)
+    XCTAssertEqual(invoke(bridge, "setCallMedia", ["version": 1, "callHandle": handle, "media": "audio"]) as? Bool, true)
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callId), .audio)
+    let missingMedia = try XCTUnwrap(invoke(bridge, "setCallMedia", identity(handle)) as? FlutterError)
+    XCTAssertEqual(missingMedia.code, "bad_args")
+
+    XCTAssertEqual(invoke(bridge, "setLocalCameraActive", ["version": 1, "callHandle": handle, "active": true]) as? Bool, false,
+                   "iOS grants no camera foreground lease")
+    XCTAssertEqual(invoke(bridge, "setLocalCameraActive", ["version": 1, "callHandle": handle, "active": false]) as? Bool, true)
+  }
+
+  func testAudioActivationRefusalHasCoarseReasonAndMayLaterRecover() throws {
+    let rig = makeBridgeRig()
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(true))
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, false)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent, "a refused checkpoint does not end the call")
+    XCTAssertTrue(rig.controller.handleAnswer(callId))
+    XCTAssertTrue(rig.controller.acknowledge(callId, through: 2, disposition: .adopted))
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callId))
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, true)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    let completed = events.filter { $0["outcome"] as? String != "started" }
+    XCTAssertEqual(completed.count, 2)
+    XCTAssertEqual(completed.map { $0["stage"] as? String }, ["audio", "audio"])
+    XCTAssertEqual(completed.map { $0["action"] as? String }, ["activate", "activate"])
+    XCTAssertEqual(completed.map { $0["outcome"] as? String }, ["rejected", "ok"])
+    XCTAssertEqual(completed.map { $0["reason"] as? String }, ["audio_activation_failed", "none"])
+    XCTAssertEqual((completed[0]["values"] as? [String: Any])?["accepted"] as? Bool, false)
+    XCTAssertEqual((completed[1]["values"] as? [String: Any])?["accepted"] as? Bool, true)
+    let exported = String(decoding: try JSONSerialization.data(withJSONObject: events), as: UTF8.self)
+    XCTAssertFalse(exported.contains(handle))
+  }
+
+  func testAnswerRefusalKeepsExistingReason() throws {
+    let rig = makeBridgeRig()
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(rig.controller.resolveCallHandle(handle), callId)
+    let before = try XCTUnwrap(rig.store.snapshot())
+    rig.transactions.nextError = NSError(domain: "answer-refusal-test", code: 1)
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(true))
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    // Answer replies on the main queue even when the transaction fake refuses.
+    let completed = expectation(description: "native answer refusal result")
+    var value: Any?
+    bridge.handle(FlutterMethodCall(methodName: "answer", arguments: identity(handle))) {
+      value = $0
+      completed.fulfill()
+    }
+    wait(for: [completed], timeout: 1)
+    XCTAssertEqual(value as? Bool, false)
+    XCTAssertEqual(rig.transactions.transactions.count, 1)
+    XCTAssertEqual(rig.store.snapshot(), before)
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    let rejected = try XCTUnwrap(events.first { $0["outcome"] as? String == "rejected" })
+    XCTAssertEqual(rejected["stage"] as? String, "answer")
+    XCTAssertEqual(rejected["reason"] as? String, "native_answer_refused")
+    XCTAssertEqual((rejected["values"] as? [String: Any])?["accepted"] as? Bool, false)
+  }
+
+  func testOptedOutAudioObservationCannotChangeRefusal() throws {
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(false))
+    let rig = makeBridgeRig()
+    rig.controller.presentIncoming(payload()) { result in XCTAssertEqual(result, .presented) }
+    let handle = callId.uuidString.lowercased()
+    XCTAssertEqual(rig.controller.resolveCallHandle(handle), callId)
+    let before = try XCTUnwrap(rig.store.snapshot())
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome,
+                     reason: reason, values: values, context: context)
+      })
+    XCTAssertEqual(invoke(bridge, "activateAudio", identity(handle)) as? Bool, false)
+    XCTAssertEqual(rig.store.snapshot(), before)
+    let events = try XCTUnwrap(spool.drain(16)["events"] as? [[String: Any]])
+    XCTAssertTrue(events.isEmpty)
+  }
+
   func testSharedWireContextSurvivesCapabilityWrapperWithoutChangingAuthorityFields() throws {
     for wire in try nativeDiagnosticWireContexts().values {
       let rig = makeBridgeRig()

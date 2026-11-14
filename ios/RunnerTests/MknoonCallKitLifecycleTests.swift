@@ -132,6 +132,57 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     )
   }
 
+  func testPhase4VideoFlagsStayOffUntilCapabilityAndMediaAreBothVideo() {
+    let rig = makeRig()
+    var presented: Bool?
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 20_000,
+      media: .video
+    ) { presented = $0 }
+
+    XCTAssertEqual(presented, true)
+    XCTAssertEqual(rig.provider.incomingReports.last?.1.hasVideo, false,
+                   "video media alone must not present video while the video capability is off")
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callA), .audio)
+
+    rig.controller.setVideoCapabilityEnabled(true)
+    XCTAssertEqual(rig.controller.effectiveMedia(for: callA), .video)
+    XCTAssertEqual(rig.provider.updates.last?.0, callA)
+    XCTAssertEqual(rig.provider.updates.last?.1.hasVideo, true)
+
+    rig.controller.setVideoCapabilityEnabled(false)
+    XCTAssertEqual(rig.provider.updates.last?.1.hasVideo, false,
+                   "disabling video clears video presentation without ending audio")
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+  }
+
+  func testPhase4SetCallMediaBindsTheExactCurrentCallAndUpdatesHasVideo() {
+    let rig = makeRig()
+    rig.controller.setVideoCapabilityEnabled(true)
+    var presented: Bool?
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 20_000
+    ) { presented = $0 }
+    XCTAssertEqual(presented, true)
+    XCTAssertEqual(rig.provider.incomingReports.last?.1.hasVideo, false, "absent media is audio")
+
+    XCTAssertTrue(rig.controller.setCallMedia(callHandle: callA.uuidString.lowercased(), media: .video))
+    XCTAssertEqual(rig.provider.updates.last?.1.hasVideo, true)
+    XCTAssertFalse(rig.controller.setCallMedia(callHandle: callB.uuidString.lowercased(), media: .video))
+    XCTAssertTrue(rig.controller.setCallMedia(callHandle: callA.uuidString.lowercased(), media: .audio))
+    XCTAssertEqual(rig.provider.updates.last?.1.hasVideo, false)
+  }
+
+  func testPhase4MediaWireParsingIsStrict() {
+    XCTAssertEqual(MknoonCallMedia.parse(nil), .audio)
+    XCTAssertEqual(MknoonCallMedia.parse("audio"), .audio)
+    XCTAssertEqual(MknoonCallMedia.parse("video"), .video)
+    XCTAssertNil(MknoonCallMedia.parse("VIDEO"))
+    XCTAssertNil(MknoonCallMedia.parse(true))
+  }
+
   func testAuthenticatedPresentationPreservesNearerExpiry() {
     let rig = makeRig()
     var presented: Bool?
@@ -1412,6 +1463,27 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(restored.store.snapshot()?.nativeCallId, callB)
   }
 
+  // MARK: - Media audio session release
+
+  func testMediaReleaseDeactivatesWhenNoCallExists() {
+    let rig = makeRig()
+    XCTAssertTrue(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 1)
+  }
+
+  func testMediaReleaseLeavesAnotherAppsCallItsSession() {
+    let rig = makeRig(liveCallIds: { [self.callB] })
+    XCTAssertFalse(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 0)
+  }
+
+  func testMediaReleaseLeavesAPresentedMknoonCallItsSession() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertFalse(rig.controller.releaseMediaAudioSessionIfIdle())
+    XCTAssertEqual(rig.audio.mediaDeactivationCount, 0)
+  }
+
   private func makeRig(
     backend: MemoryPendingCallBackend = MemoryPendingCallBackend(),
     nowMs: Int64? = nil,
@@ -1443,7 +1515,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       notificationCenter: notificationCenter,
       ringback: ringback,
       webRTCAudioSession: webRTCAudioSession,
-      isCallKitCallLive: { liveCallIds().contains($0) }
+      isCallKitCallLive: { liveCallIds().contains($0) },
+      isAnyCallKitCallLive: { !liveCallIds().isEmpty }
     )
     return CallKitRig(
       controller: controller,
@@ -2053,6 +2126,8 @@ final class FakeCallAudio: MknoonCallAudioManaging {
     if let prepareError { throw prepareError }
   }
   func releaseAfterCallKitDeactivation() { releaseCount += 1 }
+  var mediaDeactivationCount = 0
+  func deactivateForMedia() throws { mediaDeactivationCount += 1 }
   func routeState() -> (route: String, available: [String]) { state }
   func requestRoute(_ route: String) -> Bool {
     guard state.available.contains(route) else { return false }

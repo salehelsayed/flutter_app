@@ -7,6 +7,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'package:permission_handler/permission_handler.dart' as permissions;
+
+import '../../features/call/infrastructure/platform_call_picture_in_picture_bridge.dart';
 
 import '../../core/bridge/bridge.dart';
 import '../../core/secure_storage/secure_key_store.dart';
@@ -20,6 +23,8 @@ import '../../features/call/application/call_network_path_binding.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/diagnostics/call_setup_failure.dart';
+import '../../features/call/diagnostics/routine_authority_publication.dart';
 import '../../features/call/infrastructure/call_stats_sampler.dart';
 import '../../features/call/application/blocked_call_media_release.dart';
 import '../../features/call/application/call_cleanup_coordinator.dart';
@@ -30,6 +35,17 @@ import '../../features/call/application/call_control_effect_executor.dart';
 import '../../features/call/application/call_coordinator.dart';
 import '../../features/call/application/call_endpoint_resolver.dart';
 import '../../features/call/application/call_negotiation_effect_executor.dart';
+import '../../features/call/application/call_v2_negotiation_effect_executor.dart';
+import '../../features/call/domain/call_media.dart';
+import '../../features/call/domain/call_video_quality_environment.dart';
+import '../../features/call/domain/call_video_quality_policy.dart';
+import '../../features/call/infrastructure/platform_call_video_quality_environment_source.dart';
+import '../../features/call/domain/call_media_switch.dart';
+import '../../features/call/domain/call_signal_v2.dart';
+import '../../features/call/application/call_video_presentation.dart';
+import '../../features/call/application/call_picture_in_picture.dart';
+import '../../features/call/infrastructure/production_call_v2_signaling_adapter.dart';
+import '../../features/call/infrastructure/production_call_v2_control_signaling_adapter.dart';
 import '../../features/call/application/call_negotiation_material_store.dart';
 import '../../features/call/application/call_history_projector.dart';
 import '../../features/call/application/call_network_gate.dart';
@@ -121,7 +137,10 @@ final class PreparedOutgoingCall {
 final class ProductionCallSignalingGraph
     implements
         CallSignalingGraphLifecycle,
+        CallSignalingVideoAdmission,
         ForegroundCallCapability,
+        ForegroundCallVideoCapability,
+        ForegroundCallMediaAnswerCapability,
         ForegroundCallAudioPickerCapability,
         LockedCallPresentationPort,
         ForegroundCallBackgroundLifecycle,
@@ -154,6 +173,16 @@ final class ProductionCallSignalingGraph
     this.iosVoipTokenCoordinator,
     this.androidCallTokenCoordinator,
     this.ringback,
+    this.videoEnabled = false,
+    this.onOutgoingVideoAdmitted,
+    this.closeVideoSignaling,
+    this.videoContexts,
+    this.videoOwners,
+    this.qualityEnvironmentSource,
+    CallPictureInPictureBridge? pictureInPictureBridge,
+    Future<bool> Function()? checkCameraPermission,
+    bool Function()? isForeground,
+    Future<bool> Function()? requestCameraPermission,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -161,7 +190,20 @@ final class ProductionCallSignalingGraph
          androidCallLifecycleAdapter == null || iosCallLifecycleAdapter == null,
        ),
        _networkEffectsAllowed = networkEffectsAllowed,
-       _nowMs = nowMs {
+       _nowMs = nowMs,
+       _isVideoForeground = isForeground ?? (() => true),
+       _checkCameraPermission = checkCameraPermission ?? (() async => false),
+       _requestCameraPermission =
+           requestCameraPermission ?? (() async => false) {
+    if (videoEnabled && pictureInPictureBridge != null) {
+      _pip = CallPictureInPictureController(
+        videoEnabled: true,
+        bridge: pictureInPictureBridge,
+        canApply: _pipSourceCurrent,
+        onEvent: _onPipEvent,
+        onReady: _refreshVideo,
+      );
+    }
     _networkPathBinding = networkPathOutcomes == null
         ? null
         : CallNetworkPathBinding(
@@ -327,6 +369,7 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<bool> start() async {
+    _startQualityEnvironment();
     await _nativeCallLifecycleAdapter?.start();
     await iosVoipTokenCoordinator?.start();
     // Beta O6 (2026-10-08): publishing the FCM call token is a relay round
@@ -341,9 +384,13 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<void> onResume() async {
+    _videoForegroundAllowed = true;
     await runtime.onResume();
     final active = coordinator.activeSession;
     if (active != null) _onSessionSnapshot(active);
+    _pip?.foreground();
+    _refreshVideo();
+    await _resumePipCamera();
   }
 
   /// A native wake or relay recovery: drain the ephemeral call mailbox now.
@@ -354,15 +401,954 @@ final class ProductionCallSignalingGraph
 
   /// Intersects current local trust with the independently verified relay
   /// capability before the coordinator is permitted to create a session.
-  Future<PreparedOutgoingCall> prepareOutgoingCall(
+  final bool videoEnabled;
+  final void Function(CallId callId)? onOutgoingVideoAdmitted;
+  final void Function()? closeVideoSignaling;
+
+  final CallSignalingContextStore? videoContexts;
+  final Map<CallId, CallV2NegotiationEffectExecutor>? videoOwners;
+  final CallVideoQualityEnvironmentSource? qualityEnvironmentSource;
+  bool _qualityObservationStarted = false;
+  StreamSubscription<CallVideoQualityEnvironment>? _qualitySubscription;
+  CallVideoQualityEnvironment _qualityEnvironment =
+      CallVideoQualityEnvironment.unknown;
+  CallVideoSession? _qualityAppliedSession;
+  CallVideoQualityEnvironment? _qualityAppliedEnvironment;
+  final bool Function() _isVideoForeground;
+  final Future<bool> Function() _requestCameraPermission;
+  final Future<bool> Function() _checkCameraPermission;
+  CallPictureInPictureController? _pip;
+  StreamSubscription<void>? _pipSourceSubscription;
+  ({
+    CallV2NegotiationEffectExecutor owner,
+    CallVideoSession session,
+    CallVideoNegotiation token,
+    CallPipLease lease,
+    int generation,
+    int epoch,
+  })?
+  _pipCameraIntent;
+  bool _pipResumePending = false;
+  bool _pipThermalBlocked = false;
+
+  bool _videoForegroundAllowed = true;
+  CallId? _videoCallId;
+  int _videoGeneration = 0;
+  int _cameraEpoch = 0;
+  CallVideoNegotiation? _localCameraToken;
+  CallVideoSession? _observedVideoSession;
+  StreamSubscription<CallVideoPresentationState>? _videoSubscription;
+  CallVideoNegotiation? _rendererToken;
+  final Set<CallVideoRendererSlot> _rendererRequests = {};
+  ({CallId callId, int generation, CallMediaKind media})? _stagedAnswerMedia;
+
+  bool _cameraActionPending = false;
+  bool _cameraPermissionPending = false;
+  Future<void>? _cameraRelease;
+  ({CallId callId, CallMediaKind media})? _publishedNativeMedia;
+
+  @override
+  Future<ForegroundCallActionResult> applyVideoIntent(
+    CallId callId, {
+    required int generation,
+    required CallVideoIntent intent,
+  }) async {
+    if (!_videoActionCurrent(callId, generation)) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    final snapshot = coordinator.activeSession!;
+    final presentation = _projectVideo(snapshot)?.presentation;
+    if (intent.action == CallVideoAction.turnCameraOff &&
+        _pipCameraIntent != null) {
+      await _revokeLocalCamera();
+      _refreshVideo();
+      return ForegroundCallActionResult.applied;
+    }
+    final expected = presentation?.intentFor(intent.action);
+    if (expected == null || expected.upgradeId != intent.upgradeId) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    final owner = videoOwners?[callId];
+    final switches = owner?.mediaSwitch;
+    if (owner == null || switches == null) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    bool current() =>
+        _videoActionCurrent(callId, generation) &&
+        identical(videoOwners?[callId], owner) &&
+        owner.current;
+    bool applied;
+    try {
+      switch (intent.action) {
+        case CallVideoAction.requestVideo:
+        case CallVideoAction.useAudioOnly:
+          if (intent.action == CallVideoAction.useAudioOnly) {
+            await _revokeLocalCamera();
+            if (!current()) return ForegroundCallActionResult.unavailable;
+          }
+          final now = switches.nowMs();
+          applied = switches.request(
+            MediaSwitchRequest(
+              id: _newCallId().value,
+              baseRevision: switches.machine.settledRevision,
+              target: intent.action == CallVideoAction.requestVideo
+                  ? CallMediaKind.video
+                  : CallMediaKind.audio,
+              requesterIsCaller: snapshot.direction == CallDirection.outgoing,
+              createdAtMs: now,
+              deadlineMs: now + 30000,
+            ),
+            canApply: current,
+          );
+        case CallVideoAction.acceptUpgrade:
+        case CallVideoAction.declineUpgrade:
+          final request = switches.machine.currentRequest;
+          if (request == null || request.id != intent.upgradeId) {
+            return ForegroundCallActionResult.unavailable;
+          }
+          applied = switches.respond(
+            id: request.id,
+            baseRevision: request.baseRevision,
+            fromCaller: snapshot.direction == CallDirection.outgoing,
+            response: intent.action == CallVideoAction.acceptUpgrade
+                ? MediaSwitchResponse.accept
+                : MediaSwitchResponse.decline,
+            canApply: current,
+          );
+        case CallVideoAction.cancelUpgrade:
+          final request = switches.machine.currentRequest;
+          if (request == null || request.id != intent.upgradeId) {
+            return ForegroundCallActionResult.unavailable;
+          }
+          applied = switches.abort(
+            id: request.id,
+            baseRevision: request.baseRevision,
+            revision: switches.machine.selectedSwitchId == request.id
+                ? request.baseRevision + 1
+                : request.baseRevision,
+          );
+        case CallVideoAction.turnCameraOff:
+          await _revokeLocalCamera();
+          applied = true;
+        case CallVideoAction.turnCameraOn:
+        case CallVideoAction.switchCamera:
+          if (_cameraActionPending) {
+            return ForegroundCallActionResult.unavailable;
+          }
+          _cameraActionPending = true;
+          _cameraPermissionPending =
+              intent.action == CallVideoAction.turnCameraOn;
+          if (_cameraPermissionPending) _pip?.invalidate('prompt');
+          final token = owner.negotiation;
+          final session = owner.videoSession;
+          final epoch = intent.action == CallVideoAction.switchCamera
+              ? _cameraEpoch
+              : ++_cameraEpoch;
+          var cameraStarted = false;
+          bool cameraCurrent() =>
+              (current() ||
+                  cameraStarted &&
+                      _pipCameraExecutionCurrent(callId, generation, owner)) &&
+              epoch == _cameraEpoch &&
+              identical(owner.negotiation, token) &&
+              identical(owner.videoSession, session) &&
+              token?.media == CallMediaKind.video &&
+              switches.machine.videoGatesOpen &&
+              switches.machine.settledMedia == CallMediaKind.video &&
+              switches.machine.settledRevision == token?.mediaRevision;
+          var acquiredLease = false;
+          try {
+            await _cameraRelease;
+            if (!cameraCurrent() || token == null || session == null) {
+              return ForegroundCallActionResult.unavailable;
+            }
+            _applyQualityEnvironment();
+            // Switching an already-granted camera needs no new permission prompt.
+            final permission = intent.action == CallVideoAction.switchCamera
+                ? identical(_localCameraToken, token)
+                : await _requestCameraPermission();
+            if (!permission || !cameraCurrent()) {
+              return ForegroundCallActionResult.unavailable;
+            }
+            if (androidCallLifecycleAdapter != null &&
+                intent.action == CallVideoAction.turnCameraOn) {
+              acquiredLease = await androidCallLifecycleAdapter!
+                  .setLocalCameraActive(callId, true);
+              if (!acquiredLease || !cameraCurrent()) {
+                return ForegroundCallActionResult.unavailable;
+              }
+            }
+            final grant = CallLocalCameraGrant(
+              foregroundConsent: true,
+              permissionGranted: true,
+              videoAgreed: true,
+              isCurrent: cameraCurrent,
+            );
+            applied = intent.action == CallVideoAction.switchCamera
+                ? session is CallVideoCameraSwitch &&
+                      await (session as CallVideoCameraSwitch).switchCamera(
+                        token,
+                        grant,
+                      )
+                : await session.setLocalCamera(token, grant);
+            if (!applied || !cameraCurrent()) {
+              return ForegroundCallActionResult.unavailable;
+            }
+            cameraStarted = true;
+            _localCameraToken = token;
+            acquiredLease =
+                false; // Retained by this call until explicit revocation.
+            unawaited(
+              owner.publishLocalCameraState(
+                CallCameraState.on,
+                canApply: cameraCurrent,
+              ),
+            );
+          } finally {
+            if (acquiredLease) {
+              await androidCallLifecycleAdapter?.setLocalCameraActive(
+                callId,
+                false,
+              );
+            }
+            _cameraActionPending = false;
+            _cameraPermissionPending = false;
+            if (_videoForeground) _pip?.foreground();
+            _refreshVideo();
+          }
+      }
+      _refreshVideo();
+      return applied
+          ? ForegroundCallActionResult.applied
+          : ForegroundCallActionResult.unavailable;
+    } catch (_) {
+      return ForegroundCallActionResult.failed;
+    }
+  }
+
+  void _startQualityEnvironment() {
+    final source = qualityEnvironmentSource;
+    if (!videoEnabled ||
+        _shuttingDown ||
+        _qualityObservationStarted ||
+        source == null) {
+      return;
+    }
+    _qualityObservationStarted = true;
+    try {
+      _qualitySubscription = source.changes.listen(
+        _acceptQualityEnvironment,
+        onError: (Object _) =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+        onDone: () =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+      );
+      _acceptQualityEnvironment(source.current);
+    } catch (_) {
+      _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown);
+    }
+    // Optional OS observation never holds up call admission or audio runtime.
+    // close owns the source independently of a pending start completion.
+    unawaited(
+      Future<void>.sync(source.start).then<void>(
+        (_) {},
+        onError: (Object _) =>
+            _acceptQualityEnvironment(CallVideoQualityEnvironment.unknown),
+      ),
+    );
+  }
+
+  void _acceptQualityEnvironment(CallVideoQualityEnvironment environment) {
+    if (!videoEnabled || _shuttingDown) return;
+    _qualityEnvironment = environment;
+    if (environment.thermalState == CallVideoThermalState.critical) {
+      _pipThermalBlocked = true;
+    } else if (environment.thermalState != CallVideoThermalState.unknown) {
+      _pipThermalBlocked = false;
+    }
+    _applyQualityEnvironment();
+  }
+
+  void _applyQualityEnvironment() {
+    if (!videoEnabled || _shuttingDown) return;
+    final active = coordinator.activeSession;
+    if (active == null || active.isTerminal) return;
+    final owner = videoOwners?[active.callId];
+    final session = owner?.videoSession;
+    if (owner?.current != true ||
+        session is! CallVideoQualityEnvironmentConsumer) {
+      return;
+    }
+    if (identical(_qualityAppliedSession, session) &&
+        identical(_qualityAppliedEnvironment, _qualityEnvironment)) {
+      return;
+    }
+    // Publish the cache before the consumer can synchronously invalidate a
+    // presentation view and reenter the graph's existing refresh callback.
+    _qualityAppliedSession = session;
+    _qualityAppliedEnvironment = _qualityEnvironment;
+    (session as CallVideoQualityEnvironmentConsumer).updateQualityEnvironment(
+      _qualityEnvironment,
+    );
+  }
+
+  Future<void> _closeQualityEnvironment() async {
+    final subscription = _qualitySubscription;
+    _qualitySubscription = null;
+    _qualityAppliedSession = null;
+    _qualityAppliedEnvironment = null;
+    _qualityEnvironment = CallVideoQualityEnvironment.unknown;
+    final source = qualityEnvironmentSource;
+    await Future.wait<void>([
+      if (subscription != null) Future<void>.sync(subscription.cancel),
+      if (source != null) Future<void>.sync(source.close),
+    ]);
+  }
+
+  bool _pipSourceCurrent(CallPipSource source) {
+    final snapshot = coordinator.activeSession;
+    final owner = videoOwners?[source.negotiation.callId];
+    final session = owner?.videoSession;
+    final machine = owner?.mediaSwitch?.machine;
+    if (!videoEnabled ||
+        _shuttingDown ||
+        _callabilityInvalidated ||
+        _cameraPermissionPending ||
+        snapshot?.callId != source.negotiation.callId ||
+        snapshot?.state != CallState.connected ||
+        owner?.current != true ||
+        !identical(owner?.negotiation, source.negotiation) ||
+        machine?.videoGatesOpen != true ||
+        machine?.currentRequest != null ||
+        machine?.settledMedia != CallMediaKind.video ||
+        machine?.settledRevision != source.negotiation.mediaRevision ||
+        session is! CallVideoPictureInPictureSource ||
+        !source.isCurrent()) {
+      return false;
+    }
+    final actual =
+        (session as CallVideoPictureInPictureSource).pictureInPictureSource;
+    return actual != null && actual.sameBinding(source);
+  }
+
+  bool _pipCameraExecutionCurrent(
+    CallId callId,
+    int generation,
+    CallV2NegotiationEffectExecutor owner,
+  ) {
+    final lease = _pip?.current;
+    return !_videoForegroundAllowed &&
+        _videoCallId == callId &&
+        _videoGeneration == generation &&
+        identical(videoOwners?[callId], owner) &&
+        lease != null &&
+        lease.cameraInPip &&
+        lease.phase != CallPipPhase.preparing &&
+        _pipSourceCurrent(lease.source);
+  }
+
+  bool _pipIntentCurrent() {
+    final intent = _pipCameraIntent;
+    if (intent == null) return false;
+    final owner = intent.owner;
+    final machine = owner.mediaSwitch?.machine;
+    return !_shuttingDown &&
+        !_callabilityInvalidated &&
+        coordinator.activeSession?.state == CallState.connected &&
+        coordinator.activeSession?.callId == intent.token.callId &&
+        identical(videoOwners?[intent.token.callId], owner) &&
+        owner.current &&
+        identical(owner.videoSession, intent.session) &&
+        identical(owner.negotiation, intent.token) &&
+        _pipSourceCurrent(intent.lease.source) &&
+        _videoGeneration == intent.generation &&
+        _cameraEpoch == intent.epoch &&
+        machine?.videoGatesOpen == true &&
+        machine?.currentRequest == null &&
+        machine?.settledMedia == CallMediaKind.video &&
+        machine?.settledRevision == intent.token.mediaRevision;
+  }
+
+  void _pausePipCamera(CallPipLease? lease) {
+    final token = _localCameraToken;
+    final owner = token == null ? null : videoOwners?[token.callId];
+    final session = owner?.videoSession;
+    final retain =
+        lease != null &&
+        lease.phase != CallPipPhase.preparing &&
+        _pipSourceCurrent(lease.source) &&
+        token != null &&
+        owner != null &&
+        session != null &&
+        identical(owner.negotiation, token) &&
+        owner.current;
+    // A second background/exit notification cannot erase a prior OS pause.
+    if (token == null &&
+        lease != null &&
+        identical(_pipCameraIntent?.lease, lease) &&
+        _pipIntentCurrent()) {
+      return;
+    }
+    unawaited(_revokeLocalCamera(state: CallCameraState.paused));
+    if (retain) {
+      _pipCameraIntent = (
+        owner: owner,
+        session: session,
+        token: token,
+        lease: lease,
+        generation: _videoGeneration,
+        epoch: _cameraEpoch,
+      );
+    }
+  }
+
+  Future<bool> _cameraPermissionWithoutPrompt() async {
+    try {
+      return await _checkCameraPermission();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _resumePipCamera() async {
+    if (_pip == null || _pipResumePending) return;
+    _pipResumePending = true;
+    try {
+      final intent = _pipCameraIntent;
+      final token = _localCameraToken;
+      if (intent != null && !intent.lease.entryAccepted) {
+        _pipCameraIntent = null;
+        return;
+      }
+      if (intent == null && token == null) return;
+      final epoch = _cameraEpoch;
+      final permitted = await _cameraPermissionWithoutPrompt();
+      if (epoch != _cameraEpoch || !_videoForeground) return;
+      if (!permitted) {
+        _pip?.invalidate('permissionLost');
+        await _revokeLocalCamera();
+        _refreshVideo();
+        return;
+      }
+      if (intent == null ||
+          _pipCameraIntent != intent ||
+          !_pipIntentCurrent() ||
+          _pipThermalBlocked) {
+        return;
+      }
+      await _startPipCamera(
+        intent.owner,
+        intent.session,
+        intent.token,
+        intent.generation,
+        intent.epoch,
+        () =>
+            _videoForeground &&
+            _pipCameraIntent == intent &&
+            _pipIntentCurrent(),
+      );
+    } finally {
+      _pipResumePending = false;
+    }
+  }
+
+  Future<void> _startPipCamera(
+    CallV2NegotiationEffectExecutor owner,
+    CallVideoSession session,
+    CallVideoNegotiation token,
+    int generation,
+    int epoch,
+    bool Function() admitted,
+  ) async {
+    if (_cameraActionPending || _pipThermalBlocked || !admitted()) return;
+    _cameraActionPending = true;
+    var acquired = false;
+    bool current() =>
+        !_shuttingDown &&
+        !_callabilityInvalidated &&
+        epoch == _cameraEpoch &&
+        generation == _videoGeneration &&
+        identical(videoOwners?[token.callId], owner) &&
+        owner.current &&
+        identical(owner.videoSession, session) &&
+        identical(owner.negotiation, token) &&
+        owner.mediaSwitch?.machine.videoGatesOpen == true &&
+        owner.mediaSwitch?.machine.currentRequest == null &&
+        (_videoForeground ||
+            _pipCameraExecutionCurrent(token.callId, generation, owner));
+    try {
+      await _cameraRelease;
+      if (!admitted() || !current()) return;
+      _applyQualityEnvironment();
+      if (androidCallLifecycleAdapter != null) {
+        acquired = await androidCallLifecycleAdapter!.setLocalCameraActive(
+          token.callId,
+          true,
+        );
+        if (!acquired || !admitted() || !current()) return;
+      }
+      final applied = await session.setLocalCamera(
+        token,
+        CallLocalCameraGrant(
+          foregroundConsent: true,
+          permissionGranted: true,
+          videoAgreed: true,
+          isCurrent: current,
+        ),
+      );
+      if (!applied || !current()) return;
+      _localCameraToken = token;
+      _pipCameraIntent = null;
+      acquired = false;
+      unawaited(
+        owner.publishLocalCameraState(CallCameraState.on, canApply: current),
+      );
+    } catch (_) {
+      // Optional camera failure never terminates call audio.
+    } finally {
+      if (acquired) {
+        await androidCallLifecycleAdapter?.setLocalCameraActive(
+          token.callId,
+          false,
+        );
+      }
+      _cameraActionPending = false;
+      _refreshVideo();
+    }
+  }
+
+  void _onPipEvent(CallPipLease lease, CallPipEvent event) {
+    if (!_pipSourceCurrent(lease.source)) return;
+    if (event.type == CallPipEventType.action) {
+      switch (event.detail) {
+        case 'end':
+          unawaited(end(lease.identity.callId));
+        case 'mute':
+          final audio = mediaOwner.currentAudioController(
+            lease.identity.callId,
+          );
+          if (audio != null) {
+            unawaited(setMuted(lease.identity.callId, !audio.state.muted));
+          }
+        case 'camera':
+          unawaited(_pipCameraTap(lease));
+      }
+    } else if (event.type == CallPipEventType.failed ||
+        event.type == CallPipEventType.blocked ||
+        (event.type == CallPipEventType.exited &&
+            event.detail != 'closed' &&
+            event.detail != 'restored')) {
+      _pipCameraIntent = null;
+      if (!_videoForegroundAllowed || event.type == CallPipEventType.blocked) {
+        unawaited(_revokeLocalCamera(state: CallCameraState.paused));
+      }
+    } else if (event.type == CallPipEventType.exited &&
+        !_videoForegroundAllowed) {
+      _pausePipCamera(lease.entryAccepted ? lease : null);
+    }
+  }
+
+  Future<void> _pipCameraTap(CallPipLease lease) async {
+    bool current() =>
+        identical(_pip?.current, lease) &&
+        lease.phase == CallPipPhase.entered &&
+        lease.cameraInPip &&
+        _pipSourceCurrent(lease.source);
+    if (!current()) return;
+    if (_localCameraToken != null || _pipCameraIntent != null) {
+      await _revokeLocalCamera();
+      _refreshVideo();
+      return;
+    }
+    final epoch = _cameraEpoch;
+    final permitted = await _cameraPermissionWithoutPrompt();
+    if (!current() || epoch != _cameraEpoch) return;
+    if (!permitted) {
+      _pip?.invalidate('permissionLost');
+      await _revokeLocalCamera();
+      return;
+    }
+    final owner = videoOwners?[lease.identity.callId]!;
+    final session = owner?.videoSession;
+    if (owner == null || session == null) return;
+    await _startPipCamera(
+      owner,
+      session,
+      lease.source.negotiation,
+      _videoGeneration,
+      epoch,
+      current,
+    );
+  }
+
+  bool get _videoForeground =>
+      !_shuttingDown &&
+      !_callabilityInvalidated &&
+      _videoForegroundAllowed &&
+      _isVideoForeground();
+
+  bool _videoActionCurrent(CallId callId, int generation) =>
+      videoEnabled &&
+      _videoForeground &&
+      _videoCallId == callId &&
+      _videoGeneration == generation &&
+      coordinator.activeSession?.callId == callId &&
+      coordinator.activeSession?.isTerminal == false;
+
+  CallMediaKind _consumeAnswerMedia(CallId callId) {
+    final choice = _stagedAnswerMedia;
+    _stagedAnswerMedia = null;
+    return choice != null &&
+            choice.callId == callId &&
+            _videoActionCurrent(callId, choice.generation)
+        ? choice.media
+        : CallMediaKind.audio;
+  }
+
+  @override
+  Future<ForegroundCallActionResult> answerWithMedia(
+    CallId callId, {
+    required int generation,
+    required CallMediaKind acceptedMedia,
+  }) async {
+    final context = videoContexts?.read(callId);
+    if (!_videoActionCurrent(callId, generation) ||
+        context?.wireVersion != CallWireVersion.v2 ||
+        context?.direction != CallDirection.incoming ||
+        context?.initialAcceptedMedia != null ||
+        coordinator.activeSession?.state != CallState.ringing ||
+        (acceptedMedia == CallMediaKind.video &&
+            context?.requestedMedia != CallMediaKind.video) ||
+        _stagedAnswerMedia != null) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    final choice = (
+      callId: callId,
+      generation: generation,
+      media: acceptedMedia,
+    );
+    _stagedAnswerMedia = choice;
+    try {
+      final result = await _answer(
+        callId,
+        canAnswer: () =>
+            _videoActionCurrent(callId, generation) &&
+            identical(_stagedAnswerMedia, choice),
+      );
+      if (result.status != ForegroundCallActionStatus.applied &&
+          identical(_stagedAnswerMedia, choice)) {
+        _stagedAnswerMedia = null;
+      }
+      return result;
+    } catch (_) {
+      if (identical(_stagedAnswerMedia, choice)) _stagedAnswerMedia = null;
+      return ForegroundCallActionResult.failed;
+    }
+  }
+
+  ForegroundCallVideoProjection? _projectVideo(CallSessionSnapshot snapshot) {
+    final callId = snapshot.callId;
+    final context = callId == null ? null : videoContexts?.read(callId);
+    if (!videoEnabled || context?.wireVersion != CallWireVersion.v2) {
+      return null;
+    }
+    final owner = videoOwners?[callId];
+    final machine = owner?.mediaSwitch?.machine;
+    final request = machine?.currentRequest;
+    final decision = machine?.phase == MediaSwitchPhase.decision;
+    final localIsCaller = snapshot.direction == CallDirection.outgoing;
+    final outgoing = decision && request?.requesterIsCaller == localIsCaller;
+    final incoming = decision && request != null && !outgoing;
+    final token = owner?.negotiation;
+    final ready = owner?.current == true && _videoForeground;
+    final cameraOn =
+        token != null && identical(_localCameraToken, token) && ready;
+    final source = owner?.videoSession;
+    CallVideoView? view(CallVideoRendererSlot slot) {
+      if (source is! CallVideoPresentationSource ||
+          token == null ||
+          owner?.current != true) {
+        return null;
+      }
+      final state = (source as CallVideoPresentationSource).presentationFor(
+        slot,
+      );
+      return state.callId == callId && identical(state.negotiation, token)
+          ? state.view
+          : null;
+    }
+
+    return ForegroundCallVideoProjection(
+      generation: _videoGeneration,
+      presentation: CallVideoPresentation.project(
+        videoEnabled: true,
+        wireVersion: CallWireVersion.v2,
+        requestedMedia: context!.requestedMedia,
+        acceptedMedia: context.initialAcceptedMedia,
+        agreedMedia:
+            machine?.settledMedia ??
+            token?.media ??
+            context.initialAcceptedMedia ??
+            CallMediaKind.audio,
+        localCamera: cameraOn ? CallCameraState.on : CallCameraState.off,
+        remoteCamera: owner?.remoteCamera ?? CallCameraState.off,
+        videoActionPending: _cameraActionPending,
+        isConnected: snapshot.state == CallState.connected,
+        isReconnecting: snapshot.state == CallState.reconnecting,
+        switchingTo: request != null && !decision ? request.target : null,
+        incomingUpgradeId: incoming ? request.id : null,
+        outgoingUpgradeId: outgoing ? request!.id : null,
+        mayRequestVideo:
+            ready &&
+            machine?.switchingDisabled == false &&
+            machine?.requiresReconciliation == false,
+        mayTurnCameraOn: ready && machine?.videoGatesOpen == true,
+        maySwitchCamera: ready && cameraOn && source is CallVideoCameraSwitch,
+      ),
+      localView: view(CallVideoRendererSlot.local),
+      remoteView: view(CallVideoRendererSlot.remote),
+    );
+  }
+
+  void _bindVideoSource(CallVideoSession? session) {
+    if (identical(_observedVideoSession, session)) return;
+    _pip?.invalidate('sourceChanged');
+    final previousPip = _pipSourceSubscription;
+    _pipSourceSubscription = null;
+    if (previousPip != null) unawaited(previousPip.cancel());
+    if (session is CallVideoPictureInPictureSource) {
+      _pipSourceSubscription = (session as CallVideoPictureInPictureSource)
+          .pictureInPictureSourceChanges
+          .listen((_) {
+            if (identical(_observedVideoSession, session)) _refreshVideo();
+          }, onError: (Object _) => _pip?.invalidate('sourceError'));
+    }
+    final previous = _videoSubscription;
+    _videoSubscription = null;
+    _observedVideoSession = session;
+    _qualityAppliedSession = null;
+    _qualityAppliedEnvironment = null;
+    _rendererToken = null;
+    _rendererRequests.clear();
+    if (previous != null) unawaited(previous.cancel());
+    if (session is CallVideoPresentationSource) {
+      _videoSubscription = (session as CallVideoPresentationSource)
+          .presentationChanges
+          .listen((_) {
+            if (identical(_observedVideoSession, session)) _refreshVideo();
+          }, onError: (_) {});
+    }
+  }
+
+  void _refreshVideo() {
+    final snapshot = coordinator.activeSession;
+    if (!videoEnabled ||
+        _shuttingDown ||
+        snapshot == null ||
+        snapshot.isTerminal) {
+      _pip?.invalidate('inactive');
+      return;
+    }
+    final owner = videoOwners?[snapshot.callId];
+    final activeCamera = _localCameraToken;
+    if (activeCamera != null &&
+        (owner?.current != true ||
+            !identical(owner?.negotiation, activeCamera) ||
+            owner?.mediaSwitch?.machine.videoGatesOpen != true)) {
+      unawaited(_revokeLocalCamera());
+    }
+    final session = owner?.videoSession;
+    _bindVideoSource(session);
+    final pipSource = session is CallVideoPictureInPictureSource
+        ? (session as CallVideoPictureInPictureSource).pictureInPictureSource
+        : null;
+    _pip?.bind(
+      pipSource != null && _pipSourceCurrent(pipSource) ? pipSource : null,
+      muted:
+          mediaOwner.currentAudioController(snapshot.callId!)?.state.muted ??
+          false,
+      cameraOn: _localCameraToken != null,
+    );
+    final retained = _pipCameraIntent;
+    if (retained != null && !_pipIntentCurrent()) _pipCameraIntent = null;
+    _applyQualityEnvironment();
+    final token = owner?.negotiation;
+    if (!identical(_rendererToken, token)) {
+      _rendererToken = token;
+      _rendererRequests.clear();
+    }
+    if (owner?.current == true &&
+        token?.media == CallMediaKind.video &&
+        session is CallVideoPresentationSource) {
+      for (final slot in CallVideoRendererSlot.values) {
+        final state = (session as CallVideoPresentationSource).presentationFor(
+          slot,
+        );
+        if (identical(state.negotiation, token) &&
+            state.hasTrack &&
+            state.view == null &&
+            _rendererRequests.add(slot)) {
+          unawaited(
+            session!
+                .attachRenderer(token!, slot)
+                .then<void>(
+                  (view) {
+                    if (identical(_observedVideoSession, session) &&
+                        identical(_rendererToken, token)) {
+                      _rendererRequests.remove(slot);
+                      if (view != null) _refreshVideo();
+                    }
+                  },
+                  onError: (_) {
+                    if (identical(_observedVideoSession, session) &&
+                        identical(_rendererToken, token)) {
+                      _rendererRequests.remove(slot);
+                    }
+                  },
+                ),
+          );
+        }
+      }
+    }
+    final media =
+        owner?.mediaSwitch?.machine.settledMedia ??
+        videoContexts?.read(snapshot.callId!)?.initialAcceptedMedia;
+    if (media != null &&
+        videoContexts?.read(snapshot.callId!)?.wireVersion ==
+            CallWireVersion.v2) {
+      final value = (callId: snapshot.callId!, media: media);
+      if (_publishedNativeMedia != value) {
+        _publishedNativeMedia = value;
+        final native = _nativeCallLifecycleAdapter;
+        if (native is NativeCallVideoLifecycleAdapter) {
+          unawaited(
+            (native as NativeCallVideoLifecycleAdapter)
+                .setCallMedia(snapshot.callId!, media)
+                .then<void>((_) {}, onError: (_) {}),
+          );
+        }
+      }
+    }
+    _publishForeground(
+      ForegroundCallProjection(
+        session: snapshot,
+        audio:
+            mediaOwner.currentAudioController(snapshot.callId!)?.state ??
+            CallAudioControlState.idle,
+      ),
+    );
+  }
+
+  Future<void> _revokeLocalCamera({
+    CallCameraState state = CallCameraState.off,
+    bool preservePipIntent = false,
+  }) {
+    if (!preservePipIntent) _pipCameraIntent = null;
+    _cameraEpoch++;
+    final token = _localCameraToken;
+    _localCameraToken = null;
+    final callId = token?.callId ?? _videoCallId;
+    final session = callId == null ? null : videoOwners?[callId]?.videoSession;
+    final stopped = session
+        ?.stopLocalCamera(); // Gate closes before the first await.
+    final epoch = _cameraEpoch;
+    final previous = _cameraRelease;
+    // Lease release must not wait for a native track/renderer disposal.
+    // The existing media owner retains and drains that cleanup on close.
+    final cleanup = stopped?.then<void>((_) {}, onError: (_) {});
+    final release = () async {
+      await previous;
+      if (callId != null && androidCallLifecycleAdapter != null) {
+        try {
+          await androidCallLifecycleAdapter!.setLocalCameraActive(
+            callId,
+            false,
+          );
+        } catch (_) {}
+      }
+      final owner = callId == null ? null : videoOwners?[callId];
+      if (token != null && owner != null) {
+        unawaited(
+          owner.publishLocalCameraState(
+            state,
+            canApply: () =>
+                !_shuttingDown &&
+                epoch == _cameraEpoch &&
+                identical(videoOwners?[callId], owner) &&
+                identical(owner.negotiation, token),
+          ),
+        );
+      }
+    }();
+    _cameraRelease = release;
+    return () async {
+      await release;
+      await cleanup;
+    }();
+  }
+
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(
+    String contactAccountPeerId,
+  ) async {
+    if (!videoEnabled || _shuttingDown) return false;
+    try {
+      return await runCallNetworkActionIfAllowed(
+        gate: _networkEffectsAllowed,
+        action: () async {
+          final endpoint = await _resolveEndpoint(contactAccountPeerId);
+          return !_shuttingDown &&
+              endpoint.capabilities.contains('video_call_v2');
+        },
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
     String contactAccountPeerId, {
     OutgoingCallStartRequest? request,
   }) async {
+    if (!videoEnabled || _shuttingDown) {
+      return OutgoingCallStartResult.unavailable;
+    }
+    try {
+      final prepared = await prepareOutgoingCall(
+        contactAccountPeerId,
+        request: request,
+        video: true,
+      );
+      if (request?.isCanceled == true) return OutgoingCallStartResult.canceled;
+      return prepared.reduction.decision == CallEventDecision.applied
+          ? OutgoingCallStartResult.started
+          : OutgoingCallStartResult.unavailable;
+    } on OutgoingCallStartCanceled {
+      return OutgoingCallStartResult.canceled;
+    } catch (_) {
+      return OutgoingCallStartResult.unavailable;
+    }
+  }
+
+  Future<PreparedOutgoingCall> prepareOutgoingCall(
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+    bool video = false,
+  }) async {
+    if (video) {
+      final original = request;
+      request = OutgoingCallStartRequest(
+        isCurrent: () => original?.isCanceled != true && _videoForeground,
+        onAdmitted: () => original?.admit(),
+      );
+    }
     final diagnostics = CallDiagnostics.instance;
     var reason = 'graph_shutdown';
     try {
       request?.checkPending();
       _requireOutgoingGraphActive();
+      if (video && !videoEnabled) throw StateError('video disabled');
       reason = 'network_unavailable';
       return await runCallNetworkActionIfAllowed(
         gate: _networkEffectsAllowed,
@@ -374,6 +1360,9 @@ final class ProductionCallSignalingGraph
           final endpointElapsed = Stopwatch()..start();
           final endpoint = await _resolveEndpoint(contactAccountPeerId);
           request?.checkPending();
+          if (video && !endpoint.capabilities.contains('video_call_v2')) {
+            throw StateError('video endpoint unavailable');
+          }
           diagnostics.record(
             stage: 'preflight',
             action: 'lookup',
@@ -420,6 +1409,11 @@ final class ProductionCallSignalingGraph
             canPlace: () => request?.isCanceled != true && !_shuttingDown,
             onApplied: (reduction) {
               if (reduction.decision == CallEventDecision.applied) {
+                if (video) {
+                  onOutgoingVideoAdmitted?.call(
+                    coordinator.activeSession!.callId!,
+                  );
+                }
                 request?.admit();
               }
             },
@@ -597,7 +1591,15 @@ final class ProductionCallSignalingGraph
   }
 
   @override
-  Future<ForegroundCallActionResult> answer(CallId callId) async {
+  Future<ForegroundCallActionResult> answer(CallId callId) {
+    _stagedAnswerMedia = null;
+    return _answer(callId);
+  }
+
+  Future<ForegroundCallActionResult> _answer(
+    CallId callId, {
+    bool Function()? canAnswer,
+  }) async {
     final session = coordinator.activeSession;
     if (_shuttingDown ||
         session == null ||
@@ -612,7 +1614,8 @@ final class ProductionCallSignalingGraph
     } catch (_) {
       return ForegroundCallActionResult.failed;
     }
-    if (_shuttingDown ||
+    if (canAnswer?.call() == false ||
+        _shuttingDown ||
         coordinator.activeSession?.callId != callId ||
         coordinator.activeSession?.isTerminal != false) {
       return ForegroundCallActionResult.unavailable;
@@ -669,8 +1672,13 @@ final class ProductionCallSignalingGraph
       _dispatchForegroundAction(CallEventType.cancel, callId);
 
   @override
-  Future<ForegroundCallActionResult> end(CallId callId) =>
-      _dispatchForegroundAction(CallEventType.end, callId);
+  Future<ForegroundCallActionResult> end(CallId callId) {
+    if (coordinator.activeSession?.callId == callId) {
+      _pip?.invalidate('end');
+      _pipCameraIntent = null;
+    }
+    return _dispatchForegroundAction(CallEventType.end, callId);
+  }
 
   @override
   Future<ForegroundCallActionResult> setMuted(CallId callId, bool muted) async {
@@ -788,6 +1796,16 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<void> onBackgrounded() async {
+    _videoForegroundAllowed = false;
+    _stagedAnswerMedia = null;
+    final lease = _pip?.current;
+    if (lease == null ||
+        lease.phase == CallPipPhase.preparing ||
+        !lease.cameraInPip ||
+        !_pipSourceCurrent(lease.source)) {
+      _pausePipCamera(lease);
+    }
+    _pip?.background();
     if (_nativeCallLifecycleAdapter != null) {
       // Composition hides the Flutter surface. Keep the canonical projection
       // so its mailbox poller and live-call refresh guard retain this call.
@@ -831,6 +1849,17 @@ final class ProductionCallSignalingGraph
   void _onSessionSnapshot(CallSessionSnapshot session) {
     _recordDiagnosticSession(session);
     _ringback?.onSession(session);
+    if (videoEnabled) {
+      if (_videoCallId != session.callId || session.isTerminal) {
+        unawaited(_revokeLocalCamera());
+        _stagedAnswerMedia = null;
+        _videoCallId = session.isTerminal ? null : session.callId;
+        _videoGeneration++;
+        _bindVideoSource(null);
+      } else if (session.state == CallState.reconnecting) {
+        unawaited(_revokeLocalCamera());
+      }
+    }
     if (_shuttingDown || session.callId == null || session.isTerminal) {
       _clearConnectionSnapshotReader();
       _unbindAudio();
@@ -850,12 +1879,16 @@ final class ProductionCallSignalingGraph
     if (!identical(_observedAudioController, controller)) {
       _bindAudio(callId, controller);
     }
-    _publishForeground(
-      ForegroundCallProjection(
-        session: session,
-        audio: controller?.state ?? CallAudioControlState.idle,
-      ),
-    );
+    if (videoEnabled) {
+      _refreshVideo();
+    } else {
+      _publishForeground(
+        ForegroundCallProjection(
+          session: session,
+          audio: controller?.state ?? CallAudioControlState.idle,
+        ),
+      );
+    }
   }
 
   void _recordDiagnosticSession(CallSessionSnapshot session) {
@@ -1055,12 +2088,16 @@ final class ProductionCallSignalingGraph
     }
     final controller = bundle?.audioController;
     _bindAudio(callId, controller);
-    _publishForeground(
-      ForegroundCallProjection(
-        session: session,
-        audio: controller?.state ?? CallAudioControlState.idle,
-      ),
-    );
+    if (videoEnabled) {
+      _refreshVideo();
+    } else {
+      _publishForeground(
+        ForegroundCallProjection(
+          session: session,
+          audio: controller?.state ?? CallAudioControlState.idle,
+        ),
+      );
+    }
   }
 
   void _bindAudio(CallId callId, CallAudioController? controller) {
@@ -1097,6 +2134,7 @@ final class ProductionCallSignalingGraph
           },
         },
       );
+      if (!audio.active) unawaited(_revokeLocalCamera());
       _publishForeground(
         ForegroundCallProjection(session: session!, audio: audio),
       );
@@ -1119,6 +2157,24 @@ final class ProductionCallSignalingGraph
   }
 
   void _publishForeground(ForegroundCallProjection? projection) {
+    if (videoEnabled && projection != null && !projection.session.isTerminal) {
+      _bindVideoSource(videoOwners?[projection.session.callId]?.videoSession);
+      projection = ForegroundCallProjection(
+        session: projection.session,
+        audio: projection.audio,
+        video: _projectVideo(projection.session),
+      );
+    }
+    final lease = _pip?.current;
+    if (lease != null &&
+        projection != null &&
+        _pipSourceCurrent(lease.source)) {
+      _pip?.bind(
+        lease.source,
+        muted: projection.audio.muted,
+        cameraOn: _localCameraToken != null,
+      );
+    }
     _foregroundCurrent = projection;
     if (!_foregroundChanges.isClosed) _foregroundChanges.add(projection);
   }
@@ -1147,7 +2203,10 @@ final class ProductionCallSignalingGraph
         diagnostics.beginOperation(reason: 'resume_refresh');
     return diagnostics.runWithOperation(
       operationId,
-      _advertiseCapabilityInOperation,
+      () => runWithRoutineAuthorityDiagnostics(
+        eligible: () => _canAdvertiseCapability && !_hasLiveSession,
+        action: _advertiseCapabilityInOperation,
+      ),
     );
   }
 
@@ -1221,7 +2280,10 @@ final class ProductionCallSignalingGraph
         record: CallEndpointRecord(
           accountPeerId: localIdentity.peerId,
           devicePeerId: localIdentity.peerId,
-          capabilities: const <String>{CallEndpointResolver.voiceCapability},
+          capabilities: <String>{
+            CallEndpointResolver.voiceCapability,
+            if (videoEnabled) 'video_call_v2',
+          },
           platform: platform,
           expiresAtMs: now + callBackgroundReachabilityLifetime.inMilliseconds,
           preferenceEpoch: preferenceEpoch,
@@ -1336,6 +2398,9 @@ final class ProductionCallSignalingGraph
   Future<void> shutdown() async {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    unawaited(_pip?.close());
+    unawaited(_revokeLocalCamera());
+    _bindVideoSource(null);
     signalingService.stopRetries();
     _clearConnectionSnapshotReader();
     _publishForeground(null);
@@ -1351,6 +2416,7 @@ final class ProductionCallSignalingGraph
       }
     }
 
+    final qualityClose = attempt(_closeQualityEnvironment);
     await attempt(runtime.shutdown);
     signalingService.close();
     final networkPathBinding = _networkPathBinding;
@@ -1383,7 +2449,9 @@ final class ProductionCallSignalingGraph
     if (audioSubscription != null) {
       await attempt(audioSubscription.cancel);
     }
+    await attempt(() async => await _cameraRelease);
     await attempt(mediaOwner.close);
+    closeVideoSignaling?.call();
     await attempt(wakeAuthorizationCoordinator.close);
     final androidTokenCoordinator = androidCallTokenCoordinator;
     if (androidTokenCoordinator != null) {
@@ -1434,6 +2502,8 @@ final class ProductionCallSignalingGraph
         // Revocation is best effort; the signed endpoint also has a short TTL.
       }
     }
+    // Observe optional teardown only after native/audio/call authority release.
+    await qualityClose;
     if (firstError != null) {
       Error.throwWithStackTrace(firstError!, firstStack!);
     }
@@ -1527,6 +2597,7 @@ final class ProductionCallSignalingGraph
   /// next resume build a fresh adapter instead of silently rejecting every
   /// later incoming call until the process restarts.
   void _handleNativeLifecycleInvalidation() {
+    unawaited(_revokeLocalCamera());
     invalidationDiagnosticReason = 'native_lifecycle_failed';
     invalidationDiagnosticOperationId = CallDiagnostics.instance.beginOperation(
       reason: invalidationDiagnosticReason,
@@ -1545,6 +2616,7 @@ final class ProductionCallSignalingGraph
   }
 
   Future<void> _handleIosTokenInvalidation() {
+    unawaited(_revokeLocalCamera());
     invalidationDiagnosticReason =
         iosVoipTokenCoordinator?.invalidationDiagnosticReason ?? 'unknown';
     invalidationDiagnosticOperationId =
@@ -1638,9 +2710,14 @@ CallSignalingComposition createProductionCallSignalingComposition({
   bool Function()? isForeground,
   int Function()? nowMs,
   CallEngine Function(CallId)? callEngineFactory,
+  Future<bool> Function()? requestCameraPermission,
+  CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
+  CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
+  Future<bool> Function()? checkCameraPermission,
   Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) {
   final clock = nowMs ?? () => DateTime.now().toUtc().millisecondsSinceEpoch;
+  final videoEnabled = featureFlags['video_call_v2_enabled'] == true;
   final resolvedMicrophonePermission =
       microphonePermission ?? const CallMicrophonePermissionAdapter();
   DateTime callClock() =>
@@ -1711,6 +2788,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
         nowMs: clock,
         onEncoded: onCallEnvelopeEncoded,
+        videoEnabled: videoEnabled,
       );
       final mailbox = BridgeCallMailboxClient(bridge: bridge);
       final authority = BridgeCallAuthorityClient(bridge: bridge);
@@ -1755,7 +2833,15 @@ CallSignalingComposition createProductionCallSignalingComposition({
         return current.privateKey;
       }
 
-      final signalingContextStore = CallSignalingContextStore();
+      final signalingContextStore = CallSignalingContextStore(
+        videoEnabled: videoEnabled,
+      );
+      ProductionCallSignalingGraph? diagnosticGraph;
+      final pendingVideoRefreshes = <CallId>{};
+      final videoOwners = videoEnabled
+          ? <CallId, CallV2NegotiationEffectExecutor>{}
+          : null;
+      CallId? outgoingVideoCallId;
       final historyCheckpoint = ActiveCallHistoryCheckpoint(
         database: database,
         secureKeyStore: secureKeyStore,
@@ -1815,7 +2901,25 @@ CallSignalingComposition createProductionCallSignalingComposition({
         effectExecutor: boundEffects,
         clock: callClock,
         idSource: _newCallId,
-        onTimerScheduled: onCallTimerScheduled,
+        onTimerScheduled: videoEnabled
+            ? (callId, kind, scheduledAt, requestedDelay, effectiveDelay) {
+                final snapshot = coordinator.activeSession;
+                if (kind == CallTimeoutKind.reconnect &&
+                    snapshot?.callId == callId) {
+                  videoOwners?[callId]?.observeReconnectTimer(
+                    snapshot!,
+                    effectiveDelay,
+                  );
+                }
+                onCallTimerScheduled?.call(
+                  callId,
+                  kind,
+                  scheduledAt,
+                  requestedDelay,
+                  effectiveDelay,
+                );
+              }
+            : onCallTimerScheduled,
         terminalEffectTimeout: const Duration(milliseconds: 500),
         terminalHistoryTimeout: const Duration(milliseconds: 250),
         onAppliedStateTransition: (trigger, resultingState, endReason) {
@@ -1823,6 +2927,22 @@ CallSignalingComposition createProductionCallSignalingComposition({
           // native wake/adoption effects. A settings change during ringing
           // must apply to the next call too, not just after media starts.
           final session = coordinator.activeSession;
+          if (videoEnabled &&
+              session?.state == CallState.accepted &&
+              session?.direction == CallDirection.incoming &&
+              signalingContextStore.read(session!.callId!)?.wireVersion ==
+                  CallWireVersion.v2 &&
+              signalingContextStore
+                      .read(session.callId!)
+                      ?.initialAcceptedMedia ==
+                  null) {
+            signalingContextStore.recordLocalAcceptance(
+              session.callId!,
+              media:
+                  diagnosticGraph?._consumeAnswerMedia(session.callId!) ??
+                  CallMediaKind.audio,
+            );
+          }
           if (session != null && !session.isTerminal) {
             if (policyCallId != session.callId) {
               policyCallId = session.callId;
@@ -1847,13 +2967,23 @@ CallSignalingComposition createProductionCallSignalingComposition({
           );
         },
       );
+      AndroidCallLifecycleAdapter defaultAndroidLifecycleFactory({
+        required CallCoordinator coordinator,
+        required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
+        required DateTime Function() clock,
+      }) => _createMethodChannelAndroidCallLifecycleAdapter(
+        coordinator: coordinator,
+        resolveAuthenticatedHandle: resolveAuthenticatedHandle,
+        clock: clock,
+        videoEnabled: videoEnabled,
+      );
       final useAndroidNativeLifecycle =
           incomingCallPresenter == null &&
           endpointPlatform == CallEndpointPlatform.android &&
           featureFlags['voice_call_android_native_enabled'] == true;
       final androidLifecycleAdapter = useAndroidNativeLifecycle
           ? (androidCallLifecycleAdapterFactory ??
-                    _createMethodChannelAndroidCallLifecycleAdapter)
+                    defaultAndroidLifecycleFactory)
                 .call(
                   coordinator: coordinator,
                   resolveAuthenticatedHandle: (callId) =>
@@ -1862,19 +2992,27 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 )
           : null;
       retainedTerminalOwner = androidLifecycleAdapter;
+      IosCallLifecycleAdapter defaultIosLifecycleFactory({
+        required CallCoordinator coordinator,
+        required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
+        required DateTime Function() clock,
+      }) => _createMethodChannelIosCallLifecycleAdapter(
+        coordinator: coordinator,
+        resolveAuthenticatedHandle: resolveAuthenticatedHandle,
+        clock: clock,
+        videoEnabled: videoEnabled,
+      );
       final useIosNativeLifecycle =
           incomingCallPresenter == null &&
           endpointPlatform == CallEndpointPlatform.ios &&
           featureFlags['voice_call_ios_native_enabled'] == true;
       final iosLifecycleAdapter = useIosNativeLifecycle
-          ? (iosCallLifecycleAdapterFactory ??
-                    _createMethodChannelIosCallLifecycleAdapter)
-                .call(
-                  coordinator: coordinator,
-                  resolveAuthenticatedHandle: (callId) =>
-                      signalingContextStore.read(callId)?.callHandle,
-                  clock: callClock,
-                )
+          ? (iosCallLifecycleAdapterFactory ?? defaultIosLifecycleFactory).call(
+              coordinator: coordinator,
+              resolveAuthenticatedHandle: (callId) =>
+                  signalingContextStore.read(callId)?.callHandle,
+              clock: callClock,
+            )
           : null;
       final iosTokenCoordinator = useIosNativeLifecycle
           ? (iosVoipTokenCoordinatorFactory ??
@@ -1935,9 +3073,44 @@ CallSignalingComposition createProductionCallSignalingComposition({
         resolveCurrentEndpoint: resolveCurrentEndpoint,
         loadSenderSigningPrivateKey: loadSenderSigningPrivateKey,
       );
+      final videoSignaling = videoEnabled
+          ? ProductionCallV2SignalingAdapter(
+              signalingService: signalingService,
+              contextStore: signalingContextStore,
+              resolveCurrentEndpoint: resolveCurrentEndpoint,
+              loadSenderSigningPrivateKey: loadSenderSigningPrivateKey,
+              nowMs: clock,
+              videoEnabled: true,
+            )
+          : null;
       controlExecutor = CallControlEffectExecutor(
+        videoEnabled: videoEnabled,
         contextStore: signalingContextStore,
-        signalingPort: controlAdapter,
+        signalingPort: videoSignaling == null
+            ? controlAdapter
+            : ProductionCallV2ControlSignalingAdapter(
+                legacyPort: controlAdapter,
+                contextStore: signalingContextStore,
+                signalingAdapter: videoSignaling,
+                resolveCurrentEndpoint: resolveCurrentEndpoint,
+                outgoingMediaFor: (snapshot) =>
+                    snapshot.callId == outgoingVideoCallId
+                    ? CallMediaKind.video
+                    : null,
+                isOutgoingPreparationCurrent: (callId) =>
+                    diagnosticGraph?._shuttingDown != true &&
+                    coordinator.activeSession?.callId == callId &&
+                    coordinator.activeSession?.state == CallState.preparing,
+                canSend: (signal) =>
+                    coordinator.activeSession?.callId == signal.callId &&
+                    signalingContextStore.read(signal.callId) != null &&
+                    (diagnosticGraph?._shuttingDown != true ||
+                        signal.event == CallSignalV2Type.terminate ||
+                        signal.event == CallSignalV2Type.reject),
+                nowMs: clock,
+                idSource: _newCallId,
+                videoEnabled: true,
+              ),
         clock: callClock,
         idSource: _newCallId,
         isOutgoingPreparationCurrent: (callId) =>
@@ -1973,7 +3146,6 @@ CallSignalingComposition createProductionCallSignalingComposition({
         clock: callClock,
         messageIdSource: _newCallId,
       );
-      ProductionCallSignalingGraph? diagnosticGraph;
       mediaOwner = CallScopedMediaBundleOwner(
         createBundle: (callId) async {
           // Shared by incoming, outgoing and native wake/adoption paths. The
@@ -2034,6 +3206,13 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 ),
                 audioRoutePort: routeAdapter,
               );
+          if (videoEnabled &&
+              signalingContextStore.read(callId)?.wireVersion ==
+                  CallWireVersion.v2 &&
+              engine is! CallVideoEngine) {
+            await engine.close();
+            throw StateError('video media engine unavailable');
+          }
           final CallForegroundAudioSession audioSession =
               nativeLifecycleAdapter ??
               await CallForegroundAudioSessionAdapter.create();
@@ -2106,15 +3285,20 @@ CallSignalingComposition createProductionCallSignalingComposition({
               }
             },
           );
+          CallV2NegotiationEffectExecutor? videoOwner;
           final negotiationExecutor = CallNegotiationEffectExecutor(
+            consumeLocalCandidate: videoEnabled
+                ? (snapshot, candidate) =>
+                      videoOwner?.consumeLocalCandidate(snapshot, candidate) ??
+                      false
+                : null,
             onFailureObservation: (id, reason, disposition) {
+              final failure = CallSetupFailure.fromObservation(reason);
               CallDiagnostics.instance.record(
-                stage: 'media',
+                stage: failure.stage,
                 action: 'check',
                 outcome: 'failed',
-                reason: reason == CallFailureReason.iceConnectionFailed
-                    ? 'ice_failed'
-                    : 'transport_failed',
+                reason: failure.reason,
                 traceId: CallDiagnostics.instance.traceForCall(
                   callId: id.value,
                 ),
@@ -2140,6 +3324,43 @@ CallSignalingComposition createProductionCallSignalingComposition({
             readStagedIceServers: iceServerProvider.read,
             clock: callClock,
           );
+          if (videoSignaling != null &&
+              engine is CallVideoEngine &&
+              signalingContextStore.read(callId)?.wireVersion ==
+                  CallWireVersion.v2) {
+            videoOwner = CallV2NegotiationEffectExecutor(
+              callId: callId,
+              legacy: negotiationExecutor,
+              videoEngine: engine as CallVideoEngine,
+              contexts: signalingContextStore,
+              resolveEndpoint: resolveCurrentEndpoint,
+              sendSignal:
+                  ({
+                    required signal,
+                    required callHandle,
+                    required admittedEndpoint,
+                    required canApply,
+                  }) async {
+                    final prepared = await videoSignaling.prepare(
+                      signal: signal,
+                      callHandle: callHandle,
+                      admittedEndpoint: admittedEndpoint,
+                      canApply: canApply,
+                    );
+                    return (await prepared.transmit(
+                      canApply: canApply,
+                    )).delivered;
+                  },
+              canApply: () =>
+                  diagnosticGraph?._shuttingDown != true &&
+                  coordinator.activeSession?.callId == callId &&
+                  coordinator.activeSession?.isTerminal == false,
+              idSource: () => _newCallId().value,
+              videoEnabled: true,
+              onMediaChanged: () => diagnosticGraph?._refreshVideo(),
+            );
+            videoOwners![callId] = videoOwner;
+          }
           final interruptionCoordinator = CallAudioInterruptionCoordinator(
             intents: audioController.interruptionIntents,
             readActiveSession: () => coordinator.activeSession,
@@ -2153,14 +3374,21 @@ CallSignalingComposition createProductionCallSignalingComposition({
             callId: callId,
             engine: engine,
             audioController: audioController,
-            negotiationExecutor: negotiationExecutor,
-            close: () {
+            negotiationExecutor: videoOwner ?? negotiationExecutor,
+            close: () async {
               iceServerProvider.close();
-              return _closeCallMediaBundle(
-                interruptionCoordinator: interruptionCoordinator,
-                audioController: audioController,
-                negotiationExecutor: negotiationExecutor,
-              );
+              try {
+                await _closeCallMediaBundle(
+                  interruptionCoordinator: interruptionCoordinator,
+                  audioController: audioController,
+                  closeNegotiationExecutor:
+                      videoOwner?.close ?? negotiationExecutor.close,
+                );
+              } finally {
+                if (identical(videoOwners?[callId], videoOwner)) {
+                  videoOwners?.remove(callId);
+                }
+              }
             },
           );
         },
@@ -2190,6 +3418,38 @@ CallSignalingComposition createProductionCallSignalingComposition({
       );
       final handler = HandleIncomingCallSignal(
         codec: codec,
+        videoEnabled: videoEnabled,
+        resolveV2Endpoint: videoEnabled ? resolveCurrentEndpoint : null,
+        nowMs: clock,
+        incomingV2MediaHandler: !videoEnabled
+            ? null
+            : ({required signal, required callHandle, required canApply}) {
+                final owner = videoOwners?[signal.callId];
+                if (owner == null) return IncomingCallSignalOutcome.deferred;
+                final outcome = owner.handleAuthenticated(
+                  signal: signal,
+                  callHandle: callHandle,
+                  canApply: canApply,
+                );
+                // Observe the existing owner queue without delaying mailbox
+                // acknowledgement or creating a second negotiation queue.
+                if (pendingVideoRefreshes.add(signal.callId)) {
+                  unawaited(
+                    owner.workSettled.then<void>(
+                      (_) {
+                        pendingVideoRefreshes.remove(signal.callId);
+                        if (identical(videoOwners?[signal.callId], owner)) {
+                          diagnosticGraph?._refreshVideo();
+                        }
+                      },
+                      onError: (_) {
+                        pendingVideoRefreshes.remove(signal.callId);
+                      },
+                    ),
+                  );
+                }
+                return outcome;
+              },
         coordinator: coordinator,
         trustedRosterProvider: roster,
         localAuthorityProvider: () async {
@@ -2266,7 +3526,46 @@ CallSignalingComposition createProductionCallSignalingComposition({
         coordinator: coordinator,
         networkEffectsAllowed: networkEffectsAllowed,
       );
+      CallVideoQualityEnvironmentSource? qualitySource;
+      if (videoEnabled) {
+        try {
+          qualitySource = qualityEnvironmentSourceFactory != null
+              ? qualityEnvironmentSourceFactory()
+              : PlatformCallVideoQualityEnvironmentSource(videoEnabled: true);
+        } catch (_) {
+          // Optional environment construction cannot disable ordinary calls.
+        }
+      }
+      CallPictureInPictureBridge? pipBridge;
+      if (videoEnabled) {
+        try {
+          pipBridge =
+              pictureInPictureBridgeFactory?.call() ??
+              PlatformCallPictureInPictureBridge(videoEnabled: true);
+        } catch (_) {}
+      }
       final graph = ProductionCallSignalingGraph(
+        pictureInPictureBridge: pipBridge,
+        checkCameraPermission:
+            checkCameraPermission ??
+            () async => (await permissions.Permission.camera.status).isGranted,
+        qualityEnvironmentSource: qualitySource,
+        videoEnabled: videoEnabled,
+        onOutgoingVideoAdmitted: videoEnabled
+            ? (callId) => outgoingVideoCallId = callId
+            : null,
+        closeVideoSignaling: videoSignaling?.close,
+        videoContexts: videoEnabled ? signalingContextStore : null,
+        videoOwners: videoOwners,
+        isForeground:
+            isForeground ??
+            () =>
+                WidgetsBinding.instance.lifecycleState ==
+                AppLifecycleState.resumed,
+        requestCameraPermission:
+            requestCameraPermission ??
+            () async =>
+                (await permissions.Permission.camera.request()).isGranted,
         runtime: runtime,
         coordinator: coordinator,
         signalingService: signalingService,
@@ -2326,6 +3625,7 @@ AndroidCallLifecycleAdapter _createMethodChannelAndroidCallLifecycleAdapter({
   required CallCoordinator coordinator,
   required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
   required DateTime Function() clock,
+  bool videoEnabled = false,
 }) {
   const methodChannel = MethodChannel(
     AndroidCallLifecycleAdapter.methodChannelName,
@@ -2334,6 +3634,7 @@ AndroidCallLifecycleAdapter _createMethodChannelAndroidCallLifecycleAdapter({
     AndroidCallLifecycleAdapter.eventChannelName,
   );
   return AndroidCallLifecycleAdapter(
+    videoEnabled: videoEnabled,
     invokeMethod: (method, arguments) =>
         methodChannel.invokeMethod<Object?>(method, arguments),
     nativeEvents: eventChannel.receiveBroadcastStream().cast<Object?>(),
@@ -2367,12 +3668,14 @@ IosCallLifecycleAdapter _createMethodChannelIosCallLifecycleAdapter({
   required CallCoordinator coordinator,
   required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
   required DateTime Function() clock,
+  bool videoEnabled = false,
 }) {
   const methodChannel = MethodChannel(
     IosCallLifecycleAdapter.methodChannelName,
   );
   const eventChannel = EventChannel(IosCallLifecycleAdapter.eventChannelName);
   return IosCallLifecycleAdapter(
+    videoEnabled: videoEnabled,
     invokeMethod: (method, arguments) =>
         methodChannel.invokeMethod<Object?>(method, arguments),
     nativeEvents: eventChannel.receiveBroadcastStream().cast<Object?>(),
@@ -2642,14 +3945,14 @@ Future<List<CallWakeEligibleContact>> _loadProductionCallWakeEligibleContacts({
 Future<void> _closeCallMediaBundle({
   required CallAudioInterruptionCoordinator interruptionCoordinator,
   required CallAudioController audioController,
-  required CallNegotiationEffectExecutor negotiationExecutor,
+  required Future<void> Function() closeNegotiationExecutor,
 }) => _closeCallMediaBundleSteps(
   closeInterruptionCoordinator: interruptionCoordinator.close,
   closeAudioController: audioController.close,
   audioCleanupFailed: () =>
       audioController.state.failure == CallAudioFailure.cleanupFailed ||
       audioController.state.active,
-  closeNegotiationExecutor: negotiationExecutor.close,
+  closeNegotiationExecutor: closeNegotiationExecutor,
 );
 
 /// Test seam for the per-call media bundle close ordering and its

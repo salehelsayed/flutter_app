@@ -189,6 +189,18 @@ class _Replies extends InMemoryMessageRepository
 class _Views extends InMemoryPostRepository implements ThoughtViewRepository {
   final receipts = <ThoughtViewReceipt>[];
   @override
+  Future<Map<String, int>> countOwnThoughtViews({
+    required String authorPeerId,
+    required List<String> postIds,
+  }) async => const {};
+
+  @override
+  Future<List<ThoughtViewReceipt>> loadOwnThoughtViews({
+    required String authorPeerId,
+    required String postId,
+  }) async => const [];
+
+  @override
   Future<List<ThoughtViewReceipt>> loadThoughtViews(String postId) async =>
       receipts;
   @override

@@ -25,6 +25,18 @@ HOST_TOOL_SHIMS=(
   ideviceinstaller
 )
 
+# Every container states which Kayan agent it is, so hooks never guess from paths.
+# The main checkout (a real .git directory) defaults to "flutter". A git worktree
+# must name its agent, for example KAYAN_AGENT=claude-dev.
+if [ -z "${KAYAN_AGENT:-}" ]; then
+  if [ -d "${REPO_ROOT}/.git" ]; then
+    KAYAN_AGENT=flutter
+  else
+    printf 'KAYAN_AGENT is required when launching from a git worktree (%s).\n' "${REPO_ROOT}" >&2
+    exit 2
+  fi
+fi
+
 mkdir -p "${CLAUDE_DOCKER_HOME}" "${CLAUDE_DOCKER_HOME}/.android"
 
 is_image_update_request() {
@@ -366,6 +378,10 @@ start_host_bridge() {
   HOST_BRIDGE_PORT="$(pick_free_port)"
   HOST_BRIDGE_TOKEN="$(random_bridge_token)"
   bridge_log="${CLAUDE_DOCKER_HOME}/host-bridge.log"
+  # Each worktree session gets its own log, so two launches do not truncate one file.
+  if [ -f "${REPO_ROOT}/.git" ]; then
+    bridge_log="${CLAUDE_DOCKER_HOME}/host-bridge-$(basename "${REPO_ROOT}").log"
+  fi
   : >"${bridge_log}"
 
   python3 "${HOST_BRIDGE_SCRIPT}" serve \
@@ -408,6 +424,7 @@ DOCKER_RUN_ARGS+=(
   # not to Claude's in-container npm updater.
   -e DISABLE_AUTOUPDATER=1
   -e NO_COLOR="${NO_COLOR:-}"
+  -e KAYAN_AGENT="${KAYAN_AGENT}"
   -v "${REPO_ROOT}:/workspace"
   -v "${CLAUDE_DOCKER_HOME}:/claude-home"
   -w /workspace
@@ -479,12 +496,15 @@ if [ "${CLAUDE_DOCKER_REBUILD:-0}" = "1" ] || ! docker image inspect "${IMAGE_NA
 fi
 
 # In a git worktree, .git is a file that points into the main repository's
-# .git directory by its Mac path. Mount that directory at the same path so
-# git works inside the container.
+# .git directory by its Mac path. Mount that directory, and the worktree
+# itself, at the same Mac paths so git works inside the container.
 if [ -f "${REPO_ROOT}/.git" ]; then
   GIT_COMMON_DIR="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [ -n "${GIT_COMMON_DIR}" ] && [ -d "${GIT_COMMON_DIR}" ]; then
-    DOCKER_RUN_ARGS+=(-v "${GIT_COMMON_DIR}:${GIT_COMMON_DIR}")
+    DOCKER_RUN_ARGS+=(
+      -v "${GIT_COMMON_DIR}:${GIT_COMMON_DIR}"
+      -v "${REPO_ROOT}:${REPO_ROOT}"
+    )
   fi
 fi
 

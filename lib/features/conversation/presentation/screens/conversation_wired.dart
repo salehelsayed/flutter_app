@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -153,6 +154,12 @@ import 'package:flutter_app/features/translate_preview/private_translator_sheet.
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/core/config/custom_stickers_flag.dart';
+import 'package:flutter_app/features/stickers/application/received_sticker_feedback.dart';
+import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart'
+    show editReceivedStickerPhoto;
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart';
@@ -735,6 +742,8 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
   bool _outgoingCallStartInFlight = false;
+  bool _outgoingCallIsVideo = false;
+  bool _outgoingVideoCallContactAvailable = false;
   OutgoingCallStartRequest? _outgoingCallStartRequest;
   Timer? _outgoingCallPreflightTimer;
   String? _outgoingDiagnosticTraceId;
@@ -1545,6 +1554,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _appLifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
     _contact = widget.contact;
+    PendingContactRetryScope.noteInterest(context, _contact.peerId);
     _bindOutgoingCallAvailability();
     _uploadActivityController =
         ConversationUploadActivityController<_DirectComposerSnapshot>(
@@ -3852,6 +3862,7 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _onSend(
     String text, {
     ({String id, PendingComposerMedia media})? sticker,
+    VoidCallback? onStickerMediaAdopted,
   }) async {
     final identity = _identity;
     if (identity == null) return;
@@ -3876,6 +3887,15 @@ class _ConversationWiredState extends State<ConversationWired>
     final privateEligibility = _currentPrivateMediaEligibility(
       draftText: sanitizedText,
     );
+    // The composer disables Send and explains this combination inline. Keep
+    // the selected mode if a stale caller still reaches the send boundary,
+    // including an empty argument while the live draft retains its caption.
+    if (sticker == null &&
+        privateMediaPolicy.isPrivate &&
+        (privateEligibility.hasTextOrCaption ||
+            sanitizeMessageText(submittedDraftText).trim().isNotEmpty)) {
+      return;
+    }
     if (sticker == null &&
         (_privateMediaPolicyInvalidated ||
             (privateMediaPolicy.isPrivate &&
@@ -4154,6 +4174,8 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
       }
+      // From here the send and its retries own the sticker media.
+      if (sticker != null) onStickerMediaAdopted?.call();
 
       final now = DateTime.now().toUtc().toIso8601String();
       final optimisticMessageId =
@@ -5498,11 +5520,6 @@ class _ConversationWiredState extends State<ConversationWired>
         _clearRestoredFailedDraftTracking();
       }
     });
-    if (sanitizeMessageText(text).trim().isNotEmpty &&
-        _privateMediaPolicy.isPrivate) {
-      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
-      _privateMediaPolicyInvalidated = false;
-    }
     _updateComposerState(
       voiceTextNotice: endsVoiceText ? VoiceTextNotice.none : null,
     );
@@ -5998,6 +6015,65 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     if (!mounted) return;
     await _onSend('', sticker: (id: sticker.id, media: media));
+  }
+
+  /// Null hides the received-sticker action: flag off, no library or no
+  /// media controller.
+  DirectReceivedStickerSaveHandler? _receivedStickerSaveHandler(
+    BuildContext context,
+  ) {
+    if (!kCustomStickersEnabled) return null;
+    final library = CustomStickerScope.libraryOf(context);
+    final controller = _mediaActionController;
+    if (library == null || controller == null) return null;
+    return (identity) {
+      final navigator = Navigator.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+      final peerId = widget.contact.peerId;
+      final route = ModalRoute.of(context);
+      bool isCurrent() =>
+          mounted && route?.isActive == true && widget.contact.peerId == peerId;
+      return saveReceivedStickerWithFeedback(
+        l10n: AppLocalizations.of(context)!,
+        isCurrent: isCurrent,
+        editPhoto: ({required sourceImagePath, required outputDirectory}) =>
+            editReceivedStickerPhoto(
+              navigator,
+              sourceImagePath: sourceImagePath,
+              outputDirectory: outputDirectory,
+              isCurrent: isCurrent,
+            ),
+        save: (editPhoto) => controller.saveReceivedSticker(
+          identity: identity,
+          library: library,
+          editPhoto: editPhoto,
+        ),
+        show: (message) =>
+            messenger.showSnackBar(SnackBar(content: Text(message))),
+      );
+    };
+  }
+
+  Future<void> _sendCustomSticker(String id) async {
+    final library = CustomStickerScope.libraryOf(context);
+    if (library == null) return;
+    await sendCustomSticker(
+      library: library,
+      id: id,
+      isCurrent: () => mounted,
+      send: (markerId, media, adopt) => _onSend(
+        '',
+        sticker: (id: markerId, media: media),
+        onStickerMediaAdopted: adopt,
+      ),
+      discard: (media) =>
+          unawaited(media.file.delete().then((_) {}, onError: (Object _) {})),
+      onPrepareError: (error) => emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_STICKER_PREPARE_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      ),
+    );
   }
 
   void _recordStickerSent(String stickerId) {
@@ -8062,6 +8138,12 @@ class _ConversationWiredState extends State<ConversationWired>
         ? const Color(0xFFB4232F)
         : const Color(0xFFEF4444);
 
+    final videoCapability = widget.outgoingCallCapability;
+    final showVideo =
+        !_contact.isBlocked &&
+        _outgoingVideoCallContactAvailable &&
+        videoCapability is OutgoingVideoCallCapability &&
+        videoCapability.isOutgoingVideoCallAvailable;
     showMenu<String>(
       context: context,
       position: position,
@@ -8071,6 +8153,32 @@ class _ConversationWiredState extends State<ConversationWired>
         side: BorderSide(color: menuBorder),
       ),
       items: [
+        if (showVideo)
+          PopupMenuItem<String>(
+            key: const ValueKey('conversation-video-call-action'),
+            value: 'video_call',
+            enabled: !_outgoingCallStartInFlight,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.videocam_outlined,
+                  size: 18,
+                  color: readable.textPrimary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    l10n.call_video_status_video,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: readable.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         if (!_contact.isBlocked && _hasOtherFriends)
           PopupMenuItem<String>(
             value: 'introduce',
@@ -8154,7 +8262,11 @@ class _ConversationWiredState extends State<ConversationWired>
         ),
       ],
     ).then((value) {
-      if (value == 'introduce') {
+      if (value == 'video_call') {
+        if (mounted && videoCapability is OutgoingVideoCallCapability) {
+          unawaited(_startOutgoingCall(videoCapability, video: true));
+        }
+      } else if (value == 'introduce') {
         _onIntroduce();
       } else if (value == 'shared_media') {
         _openSharedMediaLibrary();
@@ -8174,14 +8286,12 @@ class _ConversationWiredState extends State<ConversationWired>
     final contactRepo = widget.contactRepo;
     if (contactRepo == null) return;
 
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: AppLocalizations.of(
-        context,
-      )!.conversation_block(_contact.username),
-      description:
-          'They won\'t be able to send you messages. You can unblock them later.',
-      confirmLabel: 'Block',
+      title: l10n.conversation_block(_contact.username),
+      description: l10n.block_contact_body,
+      confirmLabel: l10n.orbit_block_action,
     );
     if (!confirmed || !mounted) return;
 
@@ -8706,7 +8816,11 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _startOutgoingCall(
     OutgoingCallCapability capability, {
     Future<bool> Function()? isEligible,
+    bool video = false,
   }) async {
+    if (!mounted || !identical(capability, widget.outgoingCallCapability)) {
+      return;
+    }
     final diagnostics = CallDiagnostics.instance;
     if (_outgoingCallStartInFlight) {
       diagnostics.record(
@@ -8720,13 +8834,20 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     final traceId = diagnostics.beginAttempt();
     _outgoingDiagnosticTraceId = traceId;
-    if (_contact.isBlocked) {
+    if (_contact.isBlocked ||
+        (video &&
+            (capability is! OutgoingVideoCallCapability ||
+                !capability.isOutgoingVideoCallAvailable))) {
       diagnostics.finishAttempt(
         traceId: traceId,
         outcome: 'preflight_failed',
         reason: 'blocked',
       );
-      _showOutgoingCallMessage('Voice calling is unavailable right now');
+      _showOutgoingCallMessage(
+        video
+            ? AppLocalizations.of(context)!.call_video_entry_unavailable
+            : 'Voice calling is unavailable right now',
+      );
       return;
     }
     await diagnostics.runWithTrace(
@@ -8735,6 +8856,7 @@ class _ConversationWiredState extends State<ConversationWired>
         capability,
         traceId,
         isEligible: isEligible,
+        video: video,
       ),
     );
   }
@@ -8743,9 +8865,17 @@ class _ConversationWiredState extends State<ConversationWired>
     OutgoingCallCapability capability,
     String? traceId, {
     Future<bool> Function()? isEligible,
+    bool video = false,
   }) async {
     final diagnostics = CallDiagnostics.instance;
     final contactPeerId = _contact.peerId;
+    final l10n = AppLocalizations.of(context)!;
+    final unavailableMessage = video
+        ? l10n.call_video_entry_unavailable
+        : 'Voice calling is unavailable right now';
+    final failedMessage = video
+        ? l10n.call_video_entry_start_failed
+        : "Couldn't start voice call. Please try again.";
     final supersededMessage = AppLocalizations.of(
       context,
     )!.call_back_superseded;
@@ -8790,6 +8920,7 @@ class _ConversationWiredState extends State<ConversationWired>
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _outgoingCallStartInFlight = true;
+      _outgoingCallIsVideo = video;
       _outgoingCallStartRequest = request;
     });
     _outgoingCallPreflightTimer = Timer(const Duration(seconds: 30), () {
@@ -8859,13 +8990,16 @@ class _ConversationWiredState extends State<ConversationWired>
                 : 'graph_unavailable',
             values: startValues,
           );
-          _showOutgoingCallMessage('Voice calling is unavailable right now');
+          _showOutgoingCallMessage(unavailableMessage);
           return;
         }
       }
       final contactElapsed = Stopwatch()..start();
       final contactAvailable =
-          await (capability is OutgoingCallContactReadinessRecovery
+          await (video
+                  ? (capability as OutgoingVideoCallCapability)
+                        .isOutgoingVideoCallAvailableFor(contactPeerId)
+                  : capability is OutgoingCallContactReadinessRecovery
                   ? (capability as OutgoingCallContactReadinessRecovery)
                         .recoverOutgoingCallAvailabilityFor(
                           contactPeerId,
@@ -8876,9 +9010,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 const Duration(seconds: 10),
                 onTimeout: () {
                   if (stillOwnsCallAction()) {
-                    _showOutgoingCallMessage(
-                      'Voice calling is unavailable right now',
-                    );
+                    _showOutgoingCallMessage(unavailableMessage);
                   }
                   request.cancel();
                   diagnostics.finishAttempt(
@@ -8906,7 +9038,11 @@ class _ConversationWiredState extends State<ConversationWired>
         finishInterrupted();
         return;
       }
-      if (!contactAvailable || !capability.isOutgoingCallAvailable) {
+      if (!contactAvailable ||
+          !capability.isOutgoingCallAvailable ||
+          (video &&
+              !(capability as OutgoingVideoCallCapability)
+                  .isOutgoingVideoCallAvailable)) {
         diagnostics.finishAttempt(
           traceId: traceId,
           outcome: 'preflight_failed',
@@ -8917,14 +9053,30 @@ class _ConversationWiredState extends State<ConversationWired>
               ? const <String, Object?>{}
               : _outgoingCallStartDiagnostics(capability),
         );
-        if (_outgoingCallContactAvailable) {
-          setState(() => _outgoingCallContactAvailable = false);
+        if (video
+            ? _outgoingVideoCallContactAvailable
+            : _outgoingCallContactAvailable) {
+          setState(() {
+            if (video) {
+              _outgoingVideoCallContactAvailable = false;
+            } else {
+              _outgoingCallContactAvailable = false;
+            }
+          });
         }
-        _showOutgoingCallMessage('Voice calling is unavailable right now');
+        _showOutgoingCallMessage(unavailableMessage);
         return;
       }
-      if (!_outgoingCallContactAvailable) {
-        setState(() => _outgoingCallContactAvailable = true);
+      if (!(video
+          ? _outgoingVideoCallContactAvailable
+          : _outgoingCallContactAvailable)) {
+        setState(() {
+          if (video) {
+            _outgoingVideoCallContactAvailable = true;
+          } else {
+            _outgoingCallContactAvailable = true;
+          }
+        });
       }
       // Local history, rechecked after the contact and endpoint awaits so a
       // call that arrived meanwhile supersedes this row before admission.
@@ -8945,10 +9097,12 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
       shouldShowFailure = true;
-      result = await capability.startOutgoingCall(
-        contactPeerId,
-        request: request,
-      );
+      result = await (video
+          ? (capability as OutgoingVideoCallCapability).startOutgoingVideoCall(
+              contactPeerId,
+              request: request,
+            )
+          : capability.startOutgoingCall(contactPeerId, request: request));
       if (request.isCanceled) return;
       if (result != OutgoingCallStartResult.started) {
         diagnostics.finishAttempt(
@@ -8965,17 +9119,32 @@ class _ConversationWiredState extends State<ConversationWired>
         reason: 'authority_unreachable',
       );
       // Presentation receives no adapter, endpoint, or route failure detail.
-      if (!shouldShowFailure && mounted && _outgoingCallContactAvailable) {
-        setState(() => _outgoingCallContactAvailable = false);
+      if (!shouldShowFailure &&
+          mounted &&
+          (video
+              ? _outgoingVideoCallContactAvailable
+              : _outgoingCallContactAvailable)) {
+        setState(() {
+          if (video) {
+            _outgoingVideoCallContactAvailable = false;
+          } else {
+            _outgoingCallContactAvailable = false;
+          }
+        });
       }
       if (!shouldShowFailure) {
-        _showOutgoingCallMessage('Voice calling is unavailable right now');
+        _showOutgoingCallMessage(unavailableMessage);
       }
     } finally {
       if (identical(_outgoingCallStartRequest, request)) {
         _outgoingCallPreflightTimer?.cancel();
         _outgoingCallStartRequest = null;
-        if (mounted) setState(() => _outgoingCallStartInFlight = false);
+        if (mounted) {
+          setState(() {
+            _outgoingCallStartInFlight = false;
+            _outgoingCallIsVideo = false;
+          });
+        }
       }
     }
     if (!mounted ||
@@ -8986,19 +9155,23 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _showOutgoingCallMessage(
       result == OutgoingCallStartResult.microphoneDenied
-          ? 'Microphone permission is needed to make calls.'
-          : "Couldn't start voice call. Please try again.",
+          ? (video
+                ? l10n.call_audio_permission
+                : 'Microphone permission is needed to make calls.')
+          : failedMessage,
     );
   }
 
   void _cancelOutgoingCallPreflight({bool timedOut = false}) {
     final request = _outgoingCallStartRequest;
     if (request == null || request.isAdmitted) return;
+    final wasVideo = _outgoingCallIsVideo;
     request.cancel();
     _outgoingCallPreflightTimer?.cancel();
     setState(() {
       _outgoingCallStartRequest = null;
       _outgoingCallStartInFlight = false;
+      _outgoingCallIsVideo = false;
     });
     CallDiagnostics.instance.finishAttempt(
       traceId: _outgoingDiagnosticTraceId,
@@ -9009,7 +9182,11 @@ class _ConversationWiredState extends State<ConversationWired>
           : const <String, Object?>{},
     );
     if (timedOut) {
-      _showOutgoingCallMessage("Couldn't start voice call. Please try again.");
+      _showOutgoingCallMessage(
+        wasVideo
+            ? AppLocalizations.of(context)!.call_video_entry_start_failed
+            : "Couldn't start voice call. Please try again.",
+      );
     }
   }
 
@@ -9040,6 +9217,7 @@ class _ConversationWiredState extends State<ConversationWired>
   void _bindOutgoingCallAvailability() {
     _outgoingCallAvailabilityGeneration++;
     _outgoingCallContactAvailable = false;
+    _outgoingVideoCallContactAvailable = false;
     final previous = _outgoingCallAvailabilitySubscription;
     _outgoingCallAvailabilitySubscription = null;
     if (previous != null) unawaited(previous.cancel());
@@ -9059,8 +9237,12 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _hideOutgoingCallAvailability() {
     _outgoingCallAvailabilityGeneration++;
-    if (mounted && _outgoingCallContactAvailable) {
-      setState(() => _outgoingCallContactAvailable = false);
+    if (mounted &&
+        (_outgoingCallContactAvailable || _outgoingVideoCallContactAvailable)) {
+      setState(() {
+        _outgoingCallContactAvailable = false;
+        _outgoingVideoCallContactAvailable = false;
+      });
     }
   }
 
@@ -9082,6 +9264,25 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     if (_outgoingCallContactAvailable != available) {
       setState(() => _outgoingCallContactAvailable = available);
+    }
+    var videoAvailable = false;
+    if (!_contact.isBlocked &&
+        capability is OutgoingVideoCallCapability &&
+        capability.isOutgoingVideoCallAvailable) {
+      try {
+        videoAvailable = await capability.isOutgoingVideoCallAvailableFor(
+          contactPeerId,
+        );
+      } catch (_) {}
+    }
+    if (!mounted ||
+        generation != _outgoingCallAvailabilityGeneration ||
+        contactPeerId != _contact.peerId ||
+        !identical(capability, widget.outgoingCallCapability)) {
+      return;
+    }
+    if (_outgoingVideoCallContactAvailable != videoAvailable) {
+      setState(() => _outgoingVideoCallContactAvailable = videoAvailable);
     }
   }
 
@@ -9293,6 +9494,9 @@ class _ConversationWiredState extends State<ConversationWired>
           onBack: _handleBackNavigation,
           scrollController: _scrollController,
           isBlocked: _contact.isBlocked,
+          isWaitingForSecureConnection:
+              !_contact.isBlocked &&
+              (_contact.mlKemPublicKey?.trim().isEmpty ?? true),
           onUnblock: _onUnblock,
           onOverflow: widget.contactRepo != null ? _onOverflow : null,
           onAvatarTap: () => ContactProfileScreen.open(
@@ -9319,6 +9523,9 @@ class _ConversationWiredState extends State<ConversationWired>
           callActionEnabled:
               outgoingCallAvailable && !_outgoingCallStartInFlight,
           callActionInFlight: _outgoingCallStartInFlight,
+          callStartingMessage: _outgoingCallIsVideo
+              ? AppLocalizations.of(context)!.call_video_entry_starting
+              : '',
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,
@@ -9327,7 +9534,10 @@ class _ConversationWiredState extends State<ConversationWired>
           recordingState: _composerController.value.recordingState,
           onAttach: _onAttach,
           stickerPanel: _stickerPanelOpen
-              ? BundledStickerPanel(onSend: _sendSticker)
+              ? BundledStickerPanel(
+                  onSend: _sendSticker,
+                  onSendCustom: _sendCustomSticker,
+                )
               : null,
           onComposerTextTap: _closeStickerPanel,
           onStickerToggle: widget.modalityGate.allowsMediaAuthoring
@@ -9401,6 +9611,7 @@ class _ConversationWiredState extends State<ConversationWired>
           onLoadMediaActionDecision: _mediaActionController != null
               ? _loadDirectMediaActionDecision
               : null,
+          onSaveReceivedSticker: _receivedStickerSaveHandler(context),
           pictureInPictureControllerFactory: _mediaViewerResumeStore == null
               ? null
               : _createMediaPictureInPictureController,

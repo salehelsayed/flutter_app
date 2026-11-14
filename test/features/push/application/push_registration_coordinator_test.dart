@@ -69,6 +69,85 @@ void main() {
         },
       );
 
+      for (final hasReader in [true, false]) {
+        test('passive recovery during a denied startup prompt does not ask '
+            'again ${hasReader ? 'with' : 'without'} a permission reader', () {
+          fakeAsync((async) {
+            final firstPermission = Completer<bool>();
+            final notifier = PushRegistrationHealthNotifier();
+            var permissionCalls = 0;
+            var permissionReads = 0;
+            var registrations = 0;
+            var granted = false;
+            final coordinator = PushRegistrationCoordinator(
+              requestPermission: () {
+                permissionCalls++;
+                return permissionCalls == 1
+                    ? firstPermission.future
+                    : Future.value(granted);
+              },
+              readPermission: hasReader
+                  ? () async {
+                      permissionReads++;
+                      return granted;
+                    }
+                  : null,
+              registerPushToken: () async {
+                registrations++;
+                return RegisterPushTokenResult.success;
+              },
+              tokenRefreshStream: const Stream<String>.empty(),
+              healthStore: _MemoryHealthStore(),
+              healthNotifier: notifier,
+            );
+
+            try {
+              coordinator.ensureStarted();
+              async.flushMicrotasks();
+              coordinator.refreshOnResume();
+              async.flushMicrotasks();
+              expect(permissionCalls, 1);
+              expect(permissionReads, 0);
+              expect(registrations, 0);
+
+              firstPermission.complete(false);
+              async.flushMicrotasks();
+              expect(permissionCalls, 1);
+              expect(registrations, 0);
+              expect(
+                notifier.value.phase,
+                PushRegistrationHealthPhase.permissionDenied,
+              );
+              expect(async.pendingTimers, isEmpty);
+
+              coordinator.refreshOnResume();
+              coordinator.refreshOnResume();
+              async.flushMicrotasks();
+              expect(permissionCalls, 1);
+              expect(registrations, 0);
+              expect(async.pendingTimers, isEmpty);
+
+              granted = true;
+              if (hasReader) {
+                coordinator.refreshOnResume();
+              } else {
+                coordinator.retryNow();
+              }
+              async.flushMicrotasks();
+              expect(permissionCalls, hasReader ? 1 : 2);
+              expect(permissionReads, hasReader ? greaterThan(0) : 0);
+              expect(registrations, 1);
+              expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+            } finally {
+              coordinator.dispose();
+              if (!firstPermission.isCompleted) firstPermission.complete(false);
+              async.flushMicrotasks();
+              notifier.dispose();
+            }
+          });
+        });
+      }
+
       test('a resume picks up notifications turned on in Settings', () {
         fakeAsync((async) {
           var enabled = false;

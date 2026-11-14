@@ -17,6 +17,8 @@ import '../../features/call/domain/call_id.dart';
 import '../../features/call/domain/call_audio_output_device.dart';
 import '../../features/call/domain/call_session_snapshot.dart';
 import '../../features/call/domain/call_state.dart';
+import '../../features/call/domain/call_media.dart';
+import '../../features/call/application/call_video_presentation.dart';
 
 typedef AwaitCallSignalingReadiness = Future<void> Function();
 typedef RequestOutgoingMicrophonePermission =
@@ -74,6 +76,17 @@ abstract interface class CallSignalingGraphLifecycle {
   });
 
   Future<void> shutdown();
+}
+
+/// Explicit video admission shares the ordinary call graph and preflight.
+/// Passive discovery must not request microphone or camera permission.
+abstract interface class CallSignalingVideoAdmission {
+  Future<bool> isOutgoingVideoCallAvailableFor(String contactAccountPeerId);
+
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  });
 }
 
 /// Foreground-only call graphs implement this narrow lifecycle hook so an
@@ -137,11 +150,13 @@ abstract interface class CallWakeHandleDistributionLifecycle {
 /// capability advertisement is allowed to start.
 final class CallSignalingComposition
     implements
-        OutgoingCallCapability,
+        OutgoingVideoCallCapability,
         OutgoingCallReadinessRecovery,
         OutgoingCallContactReadinessRecovery,
         OutgoingCallStartDiagnostics,
         ForegroundCallCapability,
+        ForegroundCallVideoCapability,
+        ForegroundCallMediaAnswerCapability,
         ForegroundCallAudioPickerCapability,
         LockedCallPresentationPort,
         IncomingCallPresenter {
@@ -265,6 +280,34 @@ final class CallSignalingComposition
       isStarted &&
       _graph != null;
 
+  @override
+  bool get isOutgoingVideoCallAvailable =>
+      isOutgoingCallAvailable &&
+      _foregroundAllowed &&
+      _isForeground() &&
+      _featureFlags['video_call_v2_enabled'] == true &&
+      _graph is CallSignalingVideoAdmission;
+
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(
+    String contactAccountPeerId,
+  ) async {
+    final graph = _graph;
+    if (!isOutgoingVideoCallAvailable ||
+        graph is! CallSignalingVideoAdmission) {
+      return false;
+    }
+    try {
+      final available = await (graph as CallSignalingVideoAdmission)
+          .isOutgoingVideoCallAvailableFor(contactAccountPeerId);
+      return available &&
+          identical(_graph, graph) &&
+          isOutgoingVideoCallAvailable;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// An explicit tap may retry an idle graph withdrawn by a transient startup
   /// or advertisement failure. Passive probes keep observing current state.
   @override
@@ -387,11 +430,43 @@ final class CallSignalingComposition
     );
   }
 
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) {
+    if (!isOutgoingVideoCallAvailable) {
+      return Future.value(OutgoingCallStartResult.unavailable);
+    }
+    final graph = _graph;
+    final generation = _outgoingReadinessLifecycleGeneration;
+    final pending = OutgoingCallStartRequest(
+      isCurrent: () =>
+          request?.isCanceled != true &&
+          identical(_graph, graph) &&
+          generation == _outgoingReadinessLifecycleGeneration &&
+          isOutgoingVideoCallAvailable,
+      onAdmitted: () => request?.admit(),
+    );
+    final diagnostics = CallDiagnostics.instance;
+    final traceId = diagnostics.currentTraceId ?? diagnostics.beginAttempt();
+    return diagnostics.runWithTrace(
+      traceId,
+      () => _startOutgoingCallWithDiagnostics(
+        contactAccountPeerId,
+        traceId,
+        pending,
+        video: true,
+      ),
+    );
+  }
+
   Future<OutgoingCallStartResult> _startOutgoingCallWithDiagnostics(
     String contactAccountPeerId,
     String? traceId,
-    OutgoingCallStartRequest request,
-  ) async {
+    OutgoingCallStartRequest request, {
+    bool video = false,
+  }) async {
     final diagnostics = CallDiagnostics.instance;
     OutgoingCallStartResult reject(
       String reason, {
@@ -413,7 +488,9 @@ final class CallSignalingComposition
     }
 
     final graph = _graph;
-    if (!isOutgoingCallAvailable || graph == null) {
+    if (!isOutgoingCallAvailable ||
+        graph == null ||
+        (video && !isOutgoingVideoCallAvailable)) {
       return reject(_terminal ? 'graph_shutdown' : 'graph_unavailable');
     }
     final graphGeneration = _foregroundGeneration;
@@ -518,10 +595,15 @@ final class CallSignalingComposition
         return reject('graph_replaced');
       }
       failureReason = 'authority_unreachable';
-      final result = await graph.startOutgoingCall(
-        contactAccountPeerId,
-        request: request,
-      );
+      final result = video
+          ? await (graph as CallSignalingVideoAdmission).startOutgoingVideoCall(
+              contactAccountPeerId,
+              request: request,
+            )
+          : await graph.startOutgoingCall(
+              contactAccountPeerId,
+              request: request,
+            );
       if (result == OutgoingCallStartResult.canceled) return result;
       if (result != OutgoingCallStartResult.started) {
         return reject(
@@ -1343,6 +1425,46 @@ final class CallSignalingComposition
   @override
   Future<ForegroundCallActionResult> answer(CallId callId) =>
       _runForegroundAction(callId, (graph) => graph.answer(callId));
+
+  @override
+  Future<ForegroundCallActionResult> answerWithMedia(
+    CallId callId, {
+    required int generation,
+    required CallMediaKind acceptedMedia,
+  }) => _runForegroundAction(callId, (graph) {
+    if (!_foregroundAllowed ||
+        !_isForeground() ||
+        _featureFlags['video_call_v2_enabled'] != true ||
+        _foregroundCurrent?.video?.generation != generation ||
+        graph is! ForegroundCallMediaAnswerCapability) {
+      return Future.value(ForegroundCallActionResult.unavailable);
+    }
+    return (graph as ForegroundCallMediaAnswerCapability).answerWithMedia(
+      callId,
+      generation: generation,
+      acceptedMedia: acceptedMedia,
+    );
+  });
+
+  @override
+  Future<ForegroundCallActionResult> applyVideoIntent(
+    CallId callId, {
+    required int generation,
+    required CallVideoIntent intent,
+  }) => _runForegroundAction(callId, (graph) {
+    if (!_foregroundAllowed ||
+        !_isForeground() ||
+        _featureFlags['video_call_v2_enabled'] != true ||
+        _foregroundCurrent?.video?.generation != generation ||
+        graph is! ForegroundCallVideoCapability) {
+      return Future.value(ForegroundCallActionResult.unavailable);
+    }
+    return (graph as ForegroundCallVideoCapability).applyVideoIntent(
+      callId,
+      generation: generation,
+      intent: intent,
+    );
+  });
 
   @override
   Future<ForegroundCallActionResult> decline(CallId callId) =>

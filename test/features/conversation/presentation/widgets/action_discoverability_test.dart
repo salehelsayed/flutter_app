@@ -342,7 +342,6 @@ void main() {
           ConversationHeader(
             contactPeerId: 'fixture-peer',
             contactUsername: 'Alice',
-            connectionDate: '2026',
             onBack: () => calls[0]++,
             onAvatarTap: () => calls[1]++,
             onOverflow: () => calls[2]++,
@@ -364,7 +363,6 @@ void main() {
           ConversationHeader(
             contactPeerId: 'fixture-peer',
             contactUsername: 'Alice',
-            connectionDate: '2026',
             onBack: () {},
             showCallAction: true,
             callActionInFlight: true,
@@ -381,7 +379,6 @@ void main() {
           ConversationHeader(
             contactPeerId: 'fixture-peer',
             contactUsername: 'Alice',
-            connectionDate: '2026',
             onBack: () {},
             showCallAction: true,
           ),

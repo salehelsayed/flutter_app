@@ -13,7 +13,7 @@ import '../../../../core/services/fake_p2p_service.dart';
 import 'orbit_screen_pump_harness.dart';
 
 /// 207 — the intro dock joins the inner-circle top chrome row (Layer 4c,
-/// left:64 beside the view toggle, right-bounded by the 211 pill reserve,
+/// left:68 beside the view toggle, right-bounded by the 211 pill reserve,
 /// mounted BEFORE the FAB so the open-menu scrim covers it). Raw reviewCount
 /// gates the slot; unseenReviewCount selects dock vs remnant. Wired behavior
 /// (tap flip, dismissal, unseen math) lives in orbit_wired_test.dart — this
@@ -118,9 +118,10 @@ void main() {
       final dock = find.byKey(const ValueKey('orbit-intro-dock'));
       expect(dock, findsOneWidget);
       final rect = tester.getRect(dock);
-      expect(rect.left, 64);
-      // Test env has zero safe-area padding → band top = safeTop(0) + 8.
-      expect(rect.top, 8);
+      expect(rect.left, 68);
+      // Test env has zero safe-area padding → band top = safeTop(0) + 8, and
+      // the 40px dock is centered on the 44px control row.
+      expect(rect.top, 10);
     });
 
     testWidgets('TC-207-02 count-gated: present at >0 then absent at 0', (
@@ -220,7 +221,7 @@ void main() {
           tester.view.physicalSize.width / tester.view.devicePixelRatio;
       expect(find.byType(ConnectionStatusIndicator), findsNothing);
       dock = tester.getRect(dockF);
-      expect(dock.right, lessThanOrEqualTo(width - 206),
+      expect(dock.right, lessThanOrEqualTo(width - 223),
           reason: 'reserve-capped even without a pill');
       expect(tester.takeException(), isNull);
     });
@@ -328,7 +329,7 @@ void main() {
         ),
       );
 
-      expect(tester.getRect(find.byKey(const ValueKey('orbit-intro-dock'))).left, 64);
+      expect(tester.getRect(find.byKey(const ValueKey('orbit-intro-dock'))).left, 68);
     });
   });
 }

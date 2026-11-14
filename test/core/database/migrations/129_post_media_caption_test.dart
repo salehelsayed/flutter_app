@@ -155,16 +155,16 @@ void main() {
     );
   });
 
-  test('v129 is the last create and upgrade step', () {
-    expect(currentIdentityDatabaseVersion, 129);
+  test('v129 is registered after v128 for create and upgrade', () {
+    expect(currentIdentityDatabaseVersion, greaterThanOrEqualTo(129));
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
       expect(registry.where((e) => e.version == 129), hasLength(1));
-      expect(registry.last.version, 129);
-      expect(registry.last.name, '129_post_media_caption');
-      expect(registry[registry.length - 2].version, 128);
+      final index = registry.indexWhere((entry) => entry.version == 129);
+      expect(registry[index].name, '129_post_media_caption');
+      expect(registry[index - 1].version, 128);
     }
   });
 }

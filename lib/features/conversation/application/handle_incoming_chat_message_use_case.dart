@@ -219,17 +219,46 @@ handleIncomingChatMessage({
             );
           }
         }
-        final reason = switch (result.$1) {
-          HandleChatMessageResult.chatMessage => 'none',
+        // These closed pairs name existing aggregate boundaries, not a precise
+        // cause or a permanent disposition. Every replay still runs the handler.
+        final (stage, reason) = switch (result.$1) {
+          HandleChatMessageResult.unknownSender => (
+            'preflight',
+            'authority_rejected',
+          ),
+          HandleChatMessageResult.unauthorized => (
+            'verify',
+            'authority_rejected',
+          ),
+          HandleChatMessageResult.strictMediaCustodyRefused => (
+            'commit',
+            'protection_failed',
+          ),
+          HandleChatMessageResult.editMissingOriginal => (
+            'prepare',
+            'prepare_failed',
+          ),
+          HandleChatMessageResult.chatMessage => ('finish', 'none'),
           HandleChatMessageResult.duplicate ||
           HandleChatMessageResult.ignoredEdit ||
-          HandleChatMessageResult.durablySuperseded => 'duplicate',
-          HandleChatMessageResult.decryptionFailed => 'auth_failed',
-          HandleChatMessageResult.decryptionDeferred => 'bridge_unavailable',
-          HandleChatMessageResult.missingMlKemSecret => 'recipient_key_missing',
-          HandleChatMessageResult.notChatMessage => 'invalid_payload',
-          HandleChatMessageResult.linkedModalityRefused => 'unsupported',
-          _ => 'authority_rejected',
+          HandleChatMessageResult.durablySuperseded => ('finish', 'duplicate'),
+          HandleChatMessageResult.decryptionFailed => ('finish', 'auth_failed'),
+          HandleChatMessageResult.decryptionDeferred => (
+            'finish',
+            'bridge_unavailable',
+          ),
+          HandleChatMessageResult.missingMlKemSecret => (
+            'finish',
+            'recipient_key_missing',
+          ),
+          HandleChatMessageResult.notChatMessage => (
+            'finish',
+            'invalid_payload',
+          ),
+          HandleChatMessageResult.linkedModalityRefused => (
+            'finish',
+            'unsupported',
+          ),
         };
         if (result.$1 == HandleChatMessageResult.decryptionFailed ||
             result.$1 == HandleChatMessageResult.decryptionDeferred ||
@@ -250,6 +279,16 @@ handleIncomingChatMessage({
         diagnostics.finishAttempt(
           feature: 'message',
           traceId: traceId,
+          stage: stage,
+          // Only stable, account-scoped staged entries can suppress the four
+          // rejection observations. This private tuple never becomes telemetry.
+          observationKey:
+              stage != 'finish' &&
+                  stagedEntryId != null &&
+                  stagedEntryId.isNotEmpty &&
+                  message.to.isNotEmpty
+              ? jsonEncode([message.to, message.from, stagedEntryId])
+              : null,
           outcome: succeeded
               ? 'success'
               : pending

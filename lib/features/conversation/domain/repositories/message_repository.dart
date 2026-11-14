@@ -22,6 +22,16 @@ abstract interface class IncomingQuietRecoveryRepository {
   Future<void> markIncomingQuietRecovery(ConversationMessage expected);
 }
 
+/// Device-local retry policy. Manual retry clears the marker without changing
+/// visible delivery state; writes qualify the failed row that was inspected.
+abstract interface class MessageAutoRetryTerminalRepository {
+  Future<bool> isAutoRetryTerminal(String messageId);
+  Future<void> setAutoRetryTerminalReason(
+    ConversationMessage expected,
+    String? reason,
+  );
+}
+
 /// Repository interface for managing conversation messages.
 abstract class MessageRepository {
   /// Saves a message to the database.

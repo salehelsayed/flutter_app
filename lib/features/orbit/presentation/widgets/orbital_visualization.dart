@@ -50,6 +50,10 @@ class OrbitalVisualization extends StatelessWidget {
   final double thoughtVisibility;
   final double thoughtClock;
 
+  /// False while the notes are put away for the "+N" arcs or a sculpt
+  /// session: only a pinch-hide turns an unopened thought into a star.
+  final bool thoughtStarsShown;
+
   /// Empty space the host leaves above the canvas. Notes grow into it first,
   /// so the centre node stays put when they appear.
   final double topInset;
@@ -114,6 +118,7 @@ class OrbitalVisualization extends StatelessWidget {
     this.thoughtSwim,
     this.thoughtVisibility = 1,
     this.thoughtClock = 0,
+    this.thoughtStarsShown = true,
     this.topInset = 0,
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
@@ -606,6 +611,14 @@ class OrbitalVisualization extends StatelessWidget {
                       : OrbitalAvatarFocusTreatment.none,
                   avatarGlowEnabled: !v2 && quiet && focused,
                   unreadCountBadge: v2,
+                  // An unopened thought orbits as a star once its title is
+                  // put away (pinched in); the title itself says it otherwise.
+                  thoughtStarColor:
+                      thoughtStarsShown &&
+                          reveal == 0 &&
+                          notes[seat.index]?.isRead == false
+                      ? relationshipAccent
+                      : null,
                 ),
               ),
             ),
@@ -751,6 +764,7 @@ class OrbitalVisualization extends StatelessWidget {
         OrbitalAvatarFocusTreatment.none,
     bool avatarGlowEnabled = false,
     bool unreadCountBadge = false,
+    Color? thoughtStarColor,
   }) {
     switch (item) {
       case OrbitFriendItem(:final friend):
@@ -777,6 +791,7 @@ class OrbitalVisualization extends StatelessWidget {
           focusTreatment: focusTreatment,
           avatarGlowEnabled: avatarGlowEnabled,
           unreadCountBadge: unreadCountBadge,
+          thoughtStarColor: thoughtStarColor,
         );
       case OrbitGroupItem(:final group):
         return OrbitalAvatar(

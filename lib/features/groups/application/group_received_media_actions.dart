@@ -9,6 +9,11 @@ import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/application/received_sticker_saver.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 
 /// 238 seam: lifecycle restriction (expiry / protection / view-once) on one
 /// reloaded attachment row. Plan 235 has no lifecycle metadata to consult, so
@@ -35,13 +40,15 @@ class GroupReceivedMediaEgressAttempt {
 /// Reloaded dispatch-time result shared by single-item and library batch
 /// egress. A denial carries no path/hash/key material.
 class GroupMediaCurrentRowDecision {
-  const GroupMediaCurrentRowDecision.qualified(this.candidate)
+  const GroupMediaCurrentRowDecision.qualified(this.candidate, {this.current})
     : refusalReason = null;
 
   const GroupMediaCurrentRowDecision.refused(this.refusalReason)
-    : candidate = null;
+    : candidate = null,
+      current = null;
 
   final ReceivedMediaEgressCandidate? candidate;
+  final MediaAttachment? current;
   final String? refusalReason;
 
   bool get isQualified => candidate != null;
@@ -133,6 +140,7 @@ Future<GroupMediaCurrentRowDecision> qualifyCurrentGroupMediaRow({
       storedPath: storedPath,
       mime: normalizedMime,
     ),
+    current: attachment,
   );
 }
 
@@ -151,9 +159,13 @@ class GroupReceivedMediaActionsController {
     MediaFileManager? mediaFileManager,
     GroupMediaEgressRestriction? isEgressRestricted,
     String Function()? requestIdFactory,
+    ReceivedStickerSaver? receivedStickerSaver,
+    GroupRepository? groupRepository,
   }) : mediaFileManager = mediaFileManager ?? MediaFileManager(),
        isEgressRestricted = isEgressRestricted ?? _neverRestricted,
-       requestIdFactory = requestIdFactory ?? _defaultRequestId;
+       requestIdFactory = requestIdFactory ?? _defaultRequestId,
+       _receivedStickerSaver = receivedStickerSaver,
+       _groupRepository = groupRepository;
 
   final GroupMessageRepository messageRepository;
   final MediaAttachmentRepository mediaAttachmentRepository;
@@ -161,6 +173,96 @@ class GroupReceivedMediaActionsController {
   final MediaFileManager mediaFileManager;
   final GroupMediaEgressRestriction isEgressRestricted;
   final String Function() requestIdFactory;
+  final ReceivedStickerSaver? _receivedStickerSaver;
+  final GroupRepository? _groupRepository;
+
+  Future<CustomSticker?> saveReceivedSticker({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required CustomStickerLibrary library,
+    required ReceivedStickerEditor editPhoto,
+  }) =>
+      (_receivedStickerSaver ??
+              ReceivedStickerSaver(mediaFileManager: mediaFileManager))
+          .save(
+            attachmentId: attachmentId,
+            library: library,
+            editPhoto: editPhoto,
+            loadCurrent: () =>
+                _loadCurrentStickerSource(groupId, messageId, attachmentId),
+          );
+
+  /// Read-only visibility probe. Save independently reloads current authority.
+  Future<bool> canSaveReceivedSticker({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required CustomStickerLibrary library,
+  }) =>
+      (_receivedStickerSaver ??
+              ReceivedStickerSaver(mediaFileManager: mediaFileManager))
+          .canSave(
+            attachmentId: attachmentId,
+            library: library,
+            loadCurrent: () =>
+                _loadCurrentStickerSource(groupId, messageId, attachmentId),
+          );
+
+  Future<MediaAttachment?> _loadCurrentStickerSource(
+    String groupId,
+    String messageId,
+    String attachmentId,
+  ) async {
+    final group = await _groupRepository?.getGroup(groupId);
+    if (group == null || group.id != groupId) return null;
+    final decision = await qualifyCurrentGroupMediaRow(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      messageRepository: messageRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
+      isEgressRestricted: isEgressRestricted,
+    );
+    final current = decision.current;
+    if (!decision.isQualified ||
+        current == null ||
+        current.messageId != messageId ||
+        current.id != attachmentId) {
+      return null;
+    }
+    final repository = messageRepository;
+    if (repository is! GroupMessageLocalDeletionAuthority) return null;
+    final authority = repository as GroupMessageLocalDeletionAuthority;
+    final GroupMessageLocalDeletionState deletion;
+    try {
+      deletion = await authority.getGroupMessageLocalDeletionState(messageId);
+    } catch (_) {
+      return null;
+    }
+    if (deletion != GroupMessageLocalDeletionState.knownClear) return null;
+    // Privacy and ownership must be read after awaited deletion authority.
+    final parent = await messageRepository.getMessage(messageId);
+    if (parent == null ||
+        parent.id != messageId ||
+        parent.groupId != groupId ||
+        !parent.isIncoming ||
+        parent.privateMediaPolicy.requiresRedaction ||
+        parent.mediaExpiredAt != null ||
+        parent.mediaCleanupPending) {
+      return null;
+    }
+    return GroupReceivedMediaActionPolicy.capabilitiesFor(
+          groupType: group.type,
+          isIncoming: parent.isIncoming,
+          attachment: current,
+          canWrite: false,
+          mediaPolicy: parent.privateMediaPolicy,
+        ).contains(GroupReceivedMediaAction.save)
+        ? current
+        : null;
+  }
 
   static bool _neverRestricted(MediaAttachment _) => false;
 

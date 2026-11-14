@@ -39,6 +39,9 @@ class ConnectionFeedItem extends FeedItem {
   final String contactUsername;
   final String? contactAvatarPath;
   final bool isBlocked;
+
+  /// Secure-channel readiness only, not a remote acceptance decision.
+  final bool isWaitingForSecureConnection;
   final String? connectedVia;
   final String? introducedBy;
   final String? introducedByPeerId;
@@ -59,6 +62,7 @@ class ConnectionFeedItem extends FeedItem {
     required this.contactUsername,
     this.contactAvatarPath,
     this.isBlocked = false,
+    this.isWaitingForSecureConnection = false,
     this.connectedVia,
     this.introducedBy,
     this.introducedByPeerId,
@@ -77,6 +81,9 @@ class ConnectionFeedItem extends FeedItem {
       contactUsername: contact.username,
       contactAvatarPath: contact.avatarPath,
       isBlocked: contact.isBlocked,
+      isWaitingForSecureConnection:
+          !contact.isBlocked &&
+          (contact.mlKemPublicKey?.trim().isEmpty ?? true),
       introducedBy: contact.introducedBy,
       introducedByPeerId: contact.introducedByPeerId,
       hasConversationHistory: hasConversationHistory,

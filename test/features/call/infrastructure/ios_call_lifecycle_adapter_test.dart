@@ -8,6 +8,7 @@ import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
@@ -23,6 +24,52 @@ final _callId = CallId.parse('22222222-2222-4222-8222-222222222222');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  for (final enabled in [false, true]) {
+    test(
+      'U3j-L iOS exact video forwarding preserves Android lease refusal ($enabled)',
+      () async {
+        final native = _LifecycleNative();
+        final coordinator = _coordinator();
+        final adapter = _adapter(native, coordinator, videoEnabled: enabled);
+        addTearDown(() async {
+          await adapter.close();
+          await coordinator.dispose();
+          await native.events.close();
+        });
+        await _bindRinging(adapter, coordinator);
+        expect(native.callsOf('setCapabilityEnabled').single.arguments, {
+          'version': 1,
+          'enabled': true,
+          if (enabled) 'video': true,
+        });
+        expect(
+          await adapter.setCallMedia(_callId, CallMediaKind.video),
+          enabled,
+        );
+        expect(await adapter.setLocalCameraActive(_callId, true), isFalse);
+        expect(await adapter.setLocalCameraActive(_callId, false), enabled);
+        if (enabled) {
+          expect(native.callsOf('setCallMedia').single.arguments, {
+            'version': 1,
+            'callHandle': _callHandle,
+            'media': 'video',
+          });
+          expect(
+            native.callsOf('setLocalCameraActive').map((c) => c.arguments),
+            [
+              {'version': 1, 'callHandle': _callHandle, 'active': true},
+              {'version': 1, 'callHandle': _callHandle, 'active': false},
+            ],
+          );
+        } else {
+          expect(native.callsOf('setCallMedia'), isEmpty);
+          expect(native.callsOf('setLocalCameraActive'), isEmpty);
+        }
+        expect(native.callsOf('activateAudio'), isEmpty);
+        expect(native.callsOf('answer'), isEmpty);
+      },
+    );
+  }
   for (final terminal in [false, true]) {
     test('cold expired incoming snapshot requires native terminal proof '
         '(terminal=$terminal)', () async {
@@ -1396,6 +1443,7 @@ void main() {
 IosCallLifecycleAdapter _adapter(
   _LifecycleNative native,
   CallCoordinator coordinator, {
+  bool videoEnabled = false,
   int audioActivationMaxAttempts = 40,
   Duration audioActivationRetryInterval = const Duration(milliseconds: 50),
   Future<void> Function(Duration delay)? audioActivationDelay,
@@ -1405,6 +1453,7 @@ IosCallLifecycleAdapter _adapter(
 }) {
   final adapter = IosCallLifecycleAdapter(
     invokeMethod: native.invoke,
+    videoEnabled: videoEnabled,
     nativeEvents: native.events.stream,
     coordinator: coordinator,
     resolveAuthenticatedHandle: (callId) =>
@@ -1613,6 +1662,10 @@ final class _LifecycleNative {
   Future<Object?> invoke(String method, Map<String, Object?> arguments) async {
     calls.add(_Invocation(method, Map<String, Object?>.of(arguments)));
     switch (method) {
+      case 'setCallMedia':
+        return true;
+      case 'setLocalCameraActive':
+        return arguments['active'] == false;
       case 'attach':
         return attachResult;
       case 'activateAudio':

@@ -9,6 +9,7 @@ import '../domain/call_end_reason.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_audio_output_device.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'android_call_lifecycle_adapter.dart';
@@ -94,6 +95,7 @@ final class IosCallLifecycleAdapter
     implements
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
+        NativeCallVideoLifecycleAdapter,
         CallAudioOutputRouteChangeSource,
         ProvisionalNativeIncomingCallLifecycle,
         CallAudioDevicePort {
@@ -104,6 +106,7 @@ final class IosCallLifecycleAdapter
     required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
     DateTime Function()? clock,
     int maxEventsPerBatch = 32,
+    bool videoEnabled = false,
     this.audioActivationMaxAttempts = 40,
     this.audioActivationRetryInterval = const Duration(milliseconds: 50),
     IosAudioActivationDelay? audioActivationDelay,
@@ -126,6 +129,7 @@ final class IosCallLifecycleAdapter
          resolveAuthenticatedHandle: resolveAuthenticatedHandle,
          clock: clock,
          maxEventsPerBatch: maxEventsPerBatch,
+         videoEnabled: videoEnabled,
          projectState: _projectIosState,
          projectTerminalBeforeEnd: true,
          requireAdoptionForAudio: true,
@@ -172,6 +176,14 @@ final class IosCallLifecycleAdapter
 
   @override
   bool isBoundTo(CallId callId) => _delegate.isBoundTo(callId);
+
+  @override
+  Future<bool> setCallMedia(CallId callId, CallMediaKind media) =>
+      _delegate.setCallMedia(callId, media);
+
+  @override
+  Future<bool> setLocalCameraActive(CallId callId, bool active) =>
+      _delegate.setLocalCameraActive(callId, active);
 
   @override
   void bindNativeMuteApplier(IosNativeMuteApplier applier) =>

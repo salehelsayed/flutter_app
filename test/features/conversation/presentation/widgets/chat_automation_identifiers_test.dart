@@ -48,7 +48,6 @@ void main() {
           ConversationHeader(
             contactPeerId: contactPeerId,
             contactUsername: 'Alice',
-            connectionDate: 'February 9, 2026',
             onBack: () {},
             onCall: () {},
             showCallAction: true,

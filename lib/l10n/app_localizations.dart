@@ -1678,6 +1678,12 @@ abstract class AppLocalizations {
   /// **'Delete chat?'**
   String get conversation_delete_chat;
 
+  /// No description provided for @block_contact_body.
+  ///
+  /// In en, this message translates to:
+  /// **'They won\'t be able to send you messages. You can unblock them later.'**
+  String get block_contact_body;
+
   /// No description provided for @delete_contact_body.
   ///
   /// In en, this message translates to:
@@ -1989,6 +1995,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'IDENTITY'**
   String get settings_section_identity;
+
+  /// Badge beside the Translate to preference
+  ///
+  /// In en, this message translates to:
+  /// **'new'**
+  String get settings_badge_new;
 
   /// No description provided for @settings_section_preferences.
   ///
@@ -2446,12 +2458,6 @@ abstract class AppLocalizations {
   /// **'This app needs notification access to alert you of incoming messages'**
   String get perm_notifications;
 
-  /// No description provided for @connected_date.
-  ///
-  /// In en, this message translates to:
-  /// **'Connected {date}'**
-  String connected_date(String date);
-
   /// No description provided for @date_today.
   ///
   /// In en, this message translates to:
@@ -2577,6 +2583,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Connected!'**
   String get connected_title;
+
+  /// No description provided for @contact_waiting_for_secure_connection.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for secure connection'**
+  String get contact_waiting_for_secure_connection;
 
   /// No description provided for @send_message.
   ///
@@ -5411,7 +5423,7 @@ abstract class AppLocalizations {
   /// No description provided for @qr_added_to_circle.
   ///
   /// In en, this message translates to:
-  /// **'Added to your circle!'**
+  /// **'Contact saved'**
   String get qr_added_to_circle;
 
   /// No description provided for @btn_ok.
@@ -5423,7 +5435,7 @@ abstract class AppLocalizations {
   /// No description provided for @qr_already_in_circle.
   ///
   /// In en, this message translates to:
-  /// **'Already in your circle!'**
+  /// **'Contact already saved'**
   String get qr_already_in_circle;
 
   /// No description provided for @qr_contact_added_previously.
@@ -6199,6 +6211,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Private media needs one photo or video with no caption.'**
   String get private_media_invalid_shape;
+
+  /// No description provided for @private_media_caption_blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the caption to keep this private.'**
+  String get private_media_caption_blocked;
 
   /// No description provided for @private_media_notification_body.
   ///
@@ -8270,6 +8288,42 @@ abstract class AppLocalizations {
   /// **'Download over mobile data'**
   String get translator_settings_mobile_data;
 
+  /// Chat translation button tooltip and accessible label
+  ///
+  /// In en, this message translates to:
+  /// **'Translation'**
+  String get translate_header_tooltip;
+
+  /// Settings row, chat panel row and language list title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate to'**
+  String get translate_to_title;
+
+  /// Settings row subtitle under Translate to.
+  ///
+  /// In en, this message translates to:
+  /// **'The language you read translations in.'**
+  String get translate_to_subtitle;
+
+  /// Language list entry and Settings value that follow the app language.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as the app'**
+  String get translate_to_same_as_app;
+
+  /// Language list section label.
+  ///
+  /// In en, this message translates to:
+  /// **'All languages'**
+  String get translate_to_all_languages;
+
+  /// Chat panel switch that shows translations under received messages.
+  ///
+  /// In en, this message translates to:
+  /// **'Show translation'**
+  String get translate_show_translation;
+
   /// Remove dialog title.
   ///
   /// In en, this message translates to:
@@ -8528,6 +8582,126 @@ abstract class AppLocalizations {
   /// **'Nujoom'**
   String get sticker_pack_nujoom;
 
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'My stickers'**
+  String get stickers_mine;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get stickers_create;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get stickers_delete;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to reorder'**
+  String get stickers_drag_to_reorder;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move earlier'**
+  String get stickers_move_earlier;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move later'**
+  String get stickers_move_later;
+
+  /// Custom stickers copy, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Sticker {position} of {count}'**
+  String stickers_mine_semantics(int position, int count);
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Record clip'**
+  String get stickers_record_clip;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'My stickers is full. Delete one to add another.'**
+  String get stickers_library_full;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save this sticker. Try again.'**
+  String get stickers_save_failed;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11
+  ///
+  /// In en, this message translates to:
+  /// **'No clear subject. Crop it instead.'**
+  String get stickers_no_subject;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'New sticker'**
+  String get stickers_new;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Take photo'**
+  String get stickers_take_photo;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Gallery'**
+  String get stickers_gallery;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Crop'**
+  String get stickers_crop;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Square'**
+  String get stickers_square;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Circle'**
+  String get stickers_circle;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to My stickers'**
+  String get stickers_saved;
+
+  /// Custom stickers copy, Kayan-approved 2026-11-11 (m-2b345433)
+  ///
+  /// In en, this message translates to:
+  /// **'Use as sticker'**
+  String get stickers_use_as_sticker;
+
+  /// Custom stickers copy, approved mockup wording (SPEC-UI)
+  ///
+  /// In en, this message translates to:
+  /// **'Save to My stickers'**
+  String get stickers_save_to_mine;
+
   /// No description provided for @settings_app_updates.
   ///
   /// In en, this message translates to:
@@ -8551,6 +8725,300 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Checking for updates'**
   String get settings_updates_checking;
+
+  /// You page seen list, owner-approved 2026-11-10
+  ///
+  /// In en, this message translates to:
+  /// **'See all {count}'**
+  String you_seen_all(int count);
+
+  /// No description provided for @you_thought_replaced.
+  ///
+  /// In en, this message translates to:
+  /// **'replaced by a newer Thought'**
+  String get you_thought_replaced;
+
+  /// No description provided for @sticker_editor_text.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get sticker_editor_text;
+
+  /// No description provided for @sticker_editor_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save sticker'**
+  String get sticker_editor_save;
+
+  /// No description provided for @sticker_editor_colour.
+  ///
+  /// In en, this message translates to:
+  /// **'Colour'**
+  String get sticker_editor_colour;
+
+  /// No description provided for @sticker_editor_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get sticker_editor_delete;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get sticker_editor_undo;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Font'**
+  String get sticker_editor_font;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move up'**
+  String get sticker_editor_move_up;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move down'**
+  String get sticker_editor_move_down;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move left'**
+  String get sticker_editor_move_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Move right'**
+  String get sticker_editor_move_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Bigger'**
+  String get sticker_editor_bigger;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Smaller'**
+  String get sticker_editor_smaller;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate left'**
+  String get sticker_editor_rotate_left;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate right'**
+  String get sticker_editor_rotate_right;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'White'**
+  String get sticker_colour_white;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Black'**
+  String get sticker_colour_black;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Yellow'**
+  String get sticker_colour_yellow;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Red'**
+  String get sticker_colour_red;
+
+  /// Custom sticker text editor, draft pending Kayan approval
+  ///
+  /// In en, this message translates to:
+  /// **'Blue'**
+  String get sticker_colour_blue;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video requested'**
+  String get call_video_status_video_requested;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio only'**
+  String get call_video_status_audio_only;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video call'**
+  String get call_video_status_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'They want to turn on video'**
+  String get call_video_status_incoming_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for them to accept'**
+  String get call_video_status_outgoing_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching to video'**
+  String get call_video_status_switching_to_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching to audio'**
+  String get call_video_status_switching_to_audio;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting'**
+  String get call_video_status_reconnecting;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is on'**
+  String get call_video_local_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is off'**
+  String get call_video_local_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera is paused'**
+  String get call_video_local_camera_paused;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is on'**
+  String get call_video_remote_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is off'**
+  String get call_video_remote_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Their camera is paused'**
+  String get call_video_remote_camera_paused;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Request video'**
+  String get call_video_action_request_video;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept video'**
+  String get call_video_action_accept_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep audio'**
+  String get call_video_action_decline_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get call_video_action_cancel_upgrade;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn camera on'**
+  String get call_video_action_turn_camera_on;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn camera off'**
+  String get call_video_action_turn_camera_off;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch camera'**
+  String get call_video_action_switch_camera;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Use audio only'**
+  String get call_video_action_use_audio_only;
+
+  /// U6 call video presentation label. User action wording does not grant camera permission or remote consent.
+  ///
+  /// In en, this message translates to:
+  /// **'Video controls'**
+  String get call_video_controls_label;
+
+  /// No description provided for @contact_retry_stopped_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Still waiting. Ask them to scan your code again.'**
+  String get contact_retry_stopped_hint;
+
+  /// No description provided for @call_video_entry_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming video call'**
+  String get call_video_entry_incoming;
+
+  /// No description provided for @call_video_entry_starting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting video call'**
+  String get call_video_entry_starting;
+
+  /// No description provided for @call_video_entry_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Video calling is unavailable right now.'**
+  String get call_video_entry_unavailable;
+
+  /// No description provided for @call_video_entry_start_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start the video call. Please try again.'**
+  String get call_video_entry_start_failed;
 }
 
 class _AppLocalizationsDelegate

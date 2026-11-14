@@ -14,7 +14,7 @@ import 'orbit_screen_pump_harness.dart';
 /// Persistent mode seats BOTH bottom-right search affordances ON the nav
 /// line: the all-chats search trigger and the Inner-Circle collapsed find
 /// pill (re-seated as nav-band chrome) share one slot — right inset 16,
-/// vertically centered on the Feed/Orbit bar, 52px circle.
+/// vertically centered on the Feed/Orbit bar, 44px circle.
 
 OrbitItem _friend(int i) => OrbitFriendItem(OrbitFriend(
       contact: ContactModel(
@@ -95,7 +95,7 @@ void main() {
           reason: 'the trigger keeps the physical right edge (inset 16)');
       expect(rect.center.dy, closeTo(navRect.center.dy, 1.0),
           reason: 'the trigger rides the nav bar\'s vertical level');
-      expect(rect.height, 52, reason: '212 visual upgrade: 44 → 52');
+      expect(rect.height, 44, reason: 'the shared 44px control circle');
       expect(rect.left, greaterThan(navRect.right),
           reason: 'the trigger sits beside the centered bar, not over it');
     });
@@ -125,7 +125,7 @@ void main() {
       await settle(tester);
       final triggerRect = tester.getRect(find.byType(OrbitSearchTrigger));
       expect(tester.getSize(find.byType(OrbitSearchTrigger)),
-          const Size(52, 52));
+          const Size(44, 44));
 
       await tester.pumpWidget(persistentPump(
         viewMode: OrbitViewMode.innerCircle,
@@ -139,7 +139,7 @@ void main() {
       final pillF = find.byKey(const ValueKey('orbit-find-pill'));
       final pillRect = tester.getRect(pillF);
       final navRect = tester.getRect(find.byType(FeedNavigationBar));
-      expect(tester.getSize(pillF), const Size(52, 52));
+      expect(tester.getSize(pillF), const Size(44, 44));
       expect(pillRect, triggerRect,
           reason: 'one seat on both surfaces — same rect, on the nav line');
       expect(pillRect.center.dy, closeTo(navRect.center.dy, 1.0),
@@ -214,7 +214,7 @@ void main() {
           reason: 'physical-right stance survives RTL (no Directional swap)');
       expect(rect.center.dy, closeTo(navRect.center.dy, 1.0),
           reason: 'the nav-line seat survives RTL too');
-      expect(rect.height, 52);
+      expect(rect.height, 44);
     });
 
     testWidgets(
@@ -242,7 +242,7 @@ void main() {
       // nav); the nav-band collapsed pill is hidden, so ONE key remains.
       expect(pillF, findsOneWidget);
       expect(find.byType(TextField), findsOneWidget);
-      expect(tester.getRect(pillF).width, greaterThan(52),
+      expect(tester.getRect(pillF).width, greaterThan(44),
           reason: 'the key now belongs to the expanded in-surface bar');
 
       // Toggle away while open (unmounts the find session), then back:
@@ -253,7 +253,7 @@ void main() {
       await settle(tester);
 
       expect(pillF, findsOneWidget);
-      expect(tester.getSize(pillF), const Size(52, 52),
+      expect(tester.getSize(pillF), const Size(44, 44),
           reason: 'the collapsed nav-band pill returned with the rings');
     });
 
@@ -273,7 +273,7 @@ void main() {
       expect(rect.bottom, screen.height - 88,
           reason: 'standalone keeps its pre-212 bottom:88');
       expect(rect.right, screen.width - 16);
-      expect(rect.height, 52, reason: 'the 212 visual upgrade is shared');
+      expect(rect.height, 44, reason: 'the 44px control circle is shared');
 
       final closeRect = tester.getRect(find.byType(OrbitCloseButton));
       expect(closeRect.top - rect.bottom, 8,

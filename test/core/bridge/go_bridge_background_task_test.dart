@@ -71,9 +71,9 @@ void main() {
       final passedPayload =
           jsonDecode(lastCall!.arguments as String) as Map<String, dynamic>;
       expect(passedPayload['taskId'], equals('12345'));
-      // Null native response → NULL_RESPONSE error JSON
+      // bgEnd returns void after releasing the task.
       final decoded = jsonDecode(response) as Map<String, dynamic>;
-      expect(decoded['errorCode'], equals('NULL_RESPONSE'));
+      expect(decoded, equals({'ok': true}));
     });
 
     test('bg:begin with empty-string response signals OS refused', () async {

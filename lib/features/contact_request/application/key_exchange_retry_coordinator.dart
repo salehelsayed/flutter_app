@@ -1,6 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 typedef PerformKeyExchangeRetry = Future<int> Function();
+
+/// Per-run event authority carried through existing zero-argument callbacks.
+/// Async descendants inherit this context; unrelated periodic runs do not.
+final class KeyExchangeRetryContext {
+  const KeyExchangeRetryContext({
+    required this.trigger,
+    required this.requireFresh,
+  });
+  final String trigger;
+  final bool requireFresh;
+  static final Object _zoneKey = Object();
+  static KeyExchangeRetryContext? get current =>
+      Zone.current[_zoneKey] as KeyExchangeRetryContext?;
+}
 
 /// Coalesces key-exchange repair retries triggered by multiple recovery paths.
 ///
@@ -21,6 +37,7 @@ class KeyExchangeRetryCoordinator {
   final DateTime Function() _now;
 
   Future<int>? _inFlight;
+  bool _inFlightRequiresFresh = false;
   Future<int>? _freshAfterInFlight;
   DateTime? _lastNonZeroRetryAt;
   int _lastNonZeroRetryCount = 0;
@@ -65,42 +82,56 @@ class KeyExchangeRetryCoordinator {
   /// caller has just durably created new repair work.
   Future<int> _retryFresh(String trigger) {
     final inFlight = _inFlight;
-    if (inFlight == null) return _startRun(trigger);
+    if (inFlight == null) return _startRun(trigger, requireFresh: true);
 
     final queued = _freshAfterInFlight;
     if (queued != null) return queued;
 
     late final Future<int> followUp;
     followUp = () async {
-      try {
-        await inFlight;
-      } catch (_) {
-        // A fresh repair still owns a post-failure attempt.
+      var waiting = inFlight;
+      while (true) {
+        try {
+          await waiting;
+        } catch (_) {
+          // A fresh repair still owns a post-failure attempt.
+        }
+        final newerInFlight = _inFlight;
+        if (newerInFlight == null || identical(newerInFlight, waiting)) break;
+        if (_inFlightRequiresFresh) {
+          if (identical(_freshAfterInFlight, followUp)) {
+            _freshAfterInFlight = null;
+          }
+          return newerInFlight;
+        }
+        // Another periodic run may have started in an earlier completion
+        // callback. It cannot consume this event's fresh authority. Keep one
+        // coalesced follow-up waiting behind that run as well.
+        waiting = newerInFlight;
       }
       if (identical(_freshAfterInFlight, followUp)) {
         _freshAfterInFlight = null;
       }
-
-      final newerInFlight = _inFlight;
-      if (newerInFlight != null && !identical(newerInFlight, inFlight)) {
-        return newerInFlight;
-      }
-      return _startRun(trigger);
+      return _startRun(trigger, requireFresh: true);
     }();
     _freshAfterInFlight = followUp;
     return followUp;
   }
 
-  Future<int> _startRun(String trigger) {
+  Future<int> _startRun(String trigger, {bool requireFresh = false}) {
     late final Future<int> future;
-    future = _run(trigger).whenComplete(() {
-      if (identical(_inFlight, future)) _inFlight = null;
+    future = _run(trigger, requireFresh: requireFresh).whenComplete(() {
+      if (identical(_inFlight, future)) {
+        _inFlight = null;
+        _inFlightRequiresFresh = false;
+      }
     });
     _inFlight = future;
+    _inFlightRequiresFresh = requireFresh;
     return future;
   }
 
-  Future<int> _run(String trigger) async {
+  Future<int> _run(String trigger, {required bool requireFresh}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'KEY_EXCHANGE_RETRY_COORDINATOR_START',
@@ -108,7 +139,15 @@ class KeyExchangeRetryCoordinator {
     );
 
     try {
-      final count = await _performRetry();
+      final count = await runZoned(
+        _performRetry,
+        zoneValues: {
+          KeyExchangeRetryContext._zoneKey: KeyExchangeRetryContext(
+            trigger: trigger,
+            requireFresh: requireFresh,
+          ),
+        },
+      );
       if (count > 0) {
         _lastNonZeroRetryAt = _now();
         _lastNonZeroRetryCount = count;

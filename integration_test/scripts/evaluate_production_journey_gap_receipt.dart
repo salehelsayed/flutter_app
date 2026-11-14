@@ -211,40 +211,59 @@ Future<void> main(List<String> arguments) async {
           }
         }
         for (final recipient in journeyGapRows(item['recipients'])) {
-          final full = await fingerprintMediaFile(
-            localFile(recipient['fullFile']),
-          );
-          final decoded = await _decodeFullExport(
-            localFile(recipient['fullFile']),
-            '${item['mediaType'] ?? 'image'}',
-          );
-          final native = journeyGapMap(recipient['nativeOpen']);
-          if (decoded.isNotEmpty &&
-              !((decoded['width'] == native['decodedWidth'] &&
-                      decoded['height'] == native['decodedHeight']) ||
-                  (decoded['width'] == native['decodedHeight'] &&
-                      decoded['height'] == native['decodedWidth']))) {
-            failures.add(
-              'full export dimensions do not match the recorded native frame',
-            );
-          }
-          final equal = binding?.source.plaintext.sameBytes(full);
-          if (equal == false) {
-            failures.add(
-              'received full file differs from the processed send input',
-            );
-          }
-          mediaFiles.add({
+          final identity = <String, Object?>{
             'messageId': item['messageId'],
+            'attachmentId': item['attachmentId'],
             'role': recipient['role'],
-            'fullFile': full.toJson(),
-            'hostFullDecode': 'PASS',
-            'processedSendByteEquality': equal == null
-                ? 'NOT RUN'
-                : equal
-                ? 'PASS'
-                : 'FAIL',
-          });
+          };
+          final label =
+              '${item['messageId']}/${item['attachmentId']}/${recipient['role']}';
+          try {
+            final full = await fingerprintMediaFile(
+              localFile(recipient['fullFile']),
+            );
+            final decoded = await _decodeFullExport(
+              localFile(recipient['fullFile']),
+              '${item['mediaType'] ?? 'image'}',
+            );
+            final native = journeyGapMap(recipient['nativeOpen']);
+            if (decoded.isNotEmpty &&
+                !((decoded['width'] == native['decodedWidth'] &&
+                        decoded['height'] == native['decodedHeight']) ||
+                    (decoded['width'] == native['decodedHeight'] &&
+                        decoded['height'] == native['decodedWidth']))) {
+              failures.add(
+                '$label: full export dimensions do not match the recorded native frame',
+              );
+            }
+            final equal = binding?.source.plaintext.sameBytes(full);
+            if (equal == false) {
+              failures.add(
+                '$label: received full file differs from the processed send input',
+              );
+            }
+            mediaFiles.add({
+              ...identity,
+              'fullFile': full.toJson(),
+              'hostFullDecode': 'PASS',
+              'processedSendByteEquality': equal == null
+                  ? 'NOT RUN'
+                  : equal
+                  ? 'PASS'
+                  : 'FAIL',
+            });
+          } on Object catch (error) {
+            final failure = error is MediaOracleFailure
+                ? error.code
+                : 'full export unreadable or malformed';
+            failures.add('$label: $failure');
+            mediaFiles.add({
+              ...identity,
+              'hostFullDecode': 'FAIL',
+              'processedSendByteEquality': 'NOT RUN',
+              'failure': failure,
+            });
+          }
         }
       }
       if (failures.isEmpty) {

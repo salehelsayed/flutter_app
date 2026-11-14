@@ -12,6 +12,7 @@ import '../domain/call_audio_output_device.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_audio_route_adapter.dart';
@@ -101,6 +102,13 @@ abstract interface class NativeCallLifecycleAdapter
   Future<void> close();
 }
 
+/// Optional native video metadata and Android camera-lease port.
+/// A successful lease is not user consent and never starts camera capture.
+abstract interface class NativeCallVideoLifecycleAdapter {
+  Future<bool> setCallMedia(CallId callId, CallMediaKind media);
+  Future<bool> setLocalCameraActive(CallId callId, bool active);
+}
+
 /// The persisted native capability is authorized only when the same complete
 /// gate set can construct the canonical Dart call graph.
 bool isAndroidNativeCallCapabilityAuthorized(Map<String, bool> featureFlags) =>
@@ -182,6 +190,7 @@ final class AndroidCallLifecycleAdapter
     implements
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
+        NativeCallVideoLifecycleAdapter,
         AndroidCallAdmissionSettlementPort,
         IncomingCallPresenter,
         CallForegroundAudioSession,
@@ -194,6 +203,7 @@ final class AndroidCallLifecycleAdapter
     required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
     DateTime Function()? clock,
     this.maxEventsPerBatch = 32,
+    this.videoEnabled = false,
     NativeCallStateProjector? projectState,
     this.projectTerminalBeforeEnd = false,
     this.requireAdoptionForAudio = false,
@@ -234,6 +244,7 @@ final class AndroidCallLifecycleAdapter
   final AuthenticatedCallHandleResolver _resolveAuthenticatedHandle;
   final DateTime Function() _clock;
   final int maxEventsPerBatch;
+  final bool videoEnabled;
   final NativeCallStateProjector _projectState;
   final bool projectTerminalBeforeEnd;
   final bool requireAdoptionForAudio;
@@ -274,6 +285,8 @@ final class AndroidCallLifecycleAdapter
   StreamSubscription<CallSessionSnapshot>? _snapshotSubscription;
   Future<void> _tail = Future<void>.value();
   Future<void> _audioCommandTail = Future<void>.value();
+  Future<void> _videoCommandTail = Future<void>.value();
+  int _videoRevocationGeneration = 0;
   Future<void>? _startFuture;
   Future<void>? _closeFuture;
   Future<void>? _invalidationFuture;
@@ -391,6 +404,83 @@ final class AndroidCallLifecycleAdapter
   bool isBoundTo(CallId callId) =>
       !_closed && !_invalid && _boundCallId == callId && _boundHandle != null;
 
+  @override
+  Future<bool> setCallMedia(CallId callId, CallMediaKind media) {
+    if (!videoEnabled || !isBoundTo(callId)) return Future.value(false);
+    if (media == CallMediaKind.audio) _videoRevocationGeneration++;
+    return _scheduleVideoCommand(callId, 'setCallMedia', 'media', media.name);
+  }
+
+  @override
+  Future<bool> setLocalCameraActive(CallId callId, bool active) {
+    if (!videoEnabled || !isBoundTo(callId)) return Future.value(false);
+    // Revoke synchronously, before waiting behind an in-flight acquisition.
+    if (!active) _videoRevocationGeneration++;
+    return _scheduleVideoCommand(
+      callId,
+      'setLocalCameraActive',
+      'active',
+      active,
+      acquiringCamera: active,
+    );
+  }
+
+  Future<bool> _scheduleVideoCommand(
+    CallId callId,
+    String method,
+    String key,
+    Object value, {
+    bool acquiringCamera = false,
+  }) {
+    final handle = _boundHandle!;
+    final binding = _bindingGeneration;
+    final revocation = _videoRevocationGeneration;
+    final releasing = key == 'active' && value == false;
+    bool current() =>
+        isBoundTo(callId) &&
+        _boundHandle == handle &&
+        _bindingGeneration == binding &&
+        (releasing ||
+            (_videoRevocationGeneration == revocation &&
+                _pendingTerminal == null &&
+                !_endedHandles.contains(handle) &&
+                _coordinator.activeSession?.callId == callId &&
+                _coordinator.activeSession?.isTerminal == false));
+    final completer = Completer<bool>();
+    // Separate from journal reconciliation: its coordinator effects can call
+    // this port, just as they call the existing exact-handle audio lane.
+    _videoCommandTail = _videoCommandTail.then<void>((_) async {
+      if (!current()) {
+        completer.complete(false);
+        return;
+      }
+      try {
+        final result = await _invokeMethod(method, <String, Object?>{
+          'version': protocolVersion,
+          'callHandle': handle,
+          key: value,
+        });
+        if (!current()) {
+          if (acquiringCamera && result == true) {
+            // Release only the lease this invocation could have acquired,
+            // never a replacement call's current handle.
+            await _invokeBoolean('setLocalCameraActive', <String, Object?>{
+              'version': protocolVersion,
+              'callHandle': handle,
+              'active': false,
+            });
+          }
+          completer.complete(false);
+          return;
+        }
+        completer.complete(result == true);
+      } catch (_) {
+        completer.complete(false);
+      }
+    });
+    return completer.future;
+  }
+
   /// Debug observation only; never resolves or adopts a missing native owner.
   String? debugBoundNativeHandle(CallId callId) =>
       kDebugMode && isBoundTo(callId) ? _boundHandle : null;
@@ -418,6 +508,7 @@ final class AndroidCallLifecycleAdapter
         await _invokeBoolean('setCapabilityEnabled', <String, Object?>{
           'version': protocolVersion,
           'enabled': true,
+          if (videoEnabled) 'video': true,
           'diagnostics': ?CallDiagnostics.instance.contextForWire(),
         });
     if (_closed) return;
@@ -1198,6 +1289,7 @@ final class AndroidCallLifecycleAdapter
   }
 
   Future<void> deactivateAudio() async {
+    if (videoEnabled) _videoRevocationGeneration++;
     await start();
     if (_releaseRetainedTerminalAudio()) return;
     if (_releaseCanonicalTerminalAudio()) return;
@@ -1572,6 +1664,11 @@ final class AndroidCallLifecycleAdapter
 
   void _onSnapshot(CallSessionSnapshot snapshot) {
     if (_closed) return;
+    if (videoEnabled &&
+        snapshot.callId == _boundCallId &&
+        snapshot.isTerminal) {
+      _videoRevocationGeneration++;
+    }
     unawaited(
       _schedule<void>(() async {
         final callId = snapshot.callId;
@@ -2083,6 +2180,12 @@ final class AndroidCallLifecycleAdapter
       _observedEvents[event.sequence] = event;
       _eventIds[event.eventId] = event.sequence;
       _events[event.sequence] = event;
+      if (videoEnabled &&
+          event.callHandle == _boundHandle &&
+          (event.type == _NativeEventType.audioDeactivated ||
+              event.type.isTerminal)) {
+        _videoRevocationGeneration++;
+      }
     }
     if (batch.highestSequence != _highestObservedSequence &&
         !delayedAdoptionReplay) {
@@ -2448,7 +2551,11 @@ final class AndroidCallLifecycleAdapter
       subscriptions.add(snapshotSubscription.cancel());
     }
     await Future.wait(subscriptions);
-    await Future.wait<void>(<Future<void>>[_tail, _audioCommandTail]);
+    await Future.wait<void>(<Future<void>>[
+      _tail,
+      _audioCommandTail,
+      _videoCommandTail,
+    ]);
     // Literal true is the only successful detach acknowledgement, but close
     // remains best-effort and terminal on the Dart side either way.
     await _invokeBoolean('detach', _versionArguments());
