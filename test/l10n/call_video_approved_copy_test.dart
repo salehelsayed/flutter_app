@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // Approved copy: research/bl16-video-ui-mockup-gap-v2.md and Kayan m-01fa358f.
@@ -105,8 +107,58 @@ Map<String, dynamic> _bundle(String locale) =>
     jsonDecode(File('lib/l10n/app_$locale.arb').readAsStringSync())
         as Map<String, dynamic>;
 
+Map<String, String> _generatedCopy(AppLocalizations copy, String name) => {
+  'call_video_ringing': copy.call_video_ringing,
+  'call_video_waiting_for_acceptance': copy.call_video_waiting_for_acceptance(
+    name,
+  ),
+  'call_video_action_cancel_upgrade': copy.call_video_action_cancel_upgrade,
+  'call_video_switching': copy.call_video_switching,
+  'call_video_camera_starting': copy.call_video_camera_starting,
+  'call_video_waiting_for_remote': copy.call_video_waiting_for_remote(name),
+  'call_video_request_declined': copy.call_video_request_declined,
+  'call_video_request_expired': copy.call_video_request_expired,
+  'call_video_request_cancelled': copy.call_video_request_cancelled,
+  'call_video_camera_permission_title': copy.call_video_camera_permission_title,
+  'call_video_camera_permission_body': copy.call_video_camera_permission_body(
+    name,
+  ),
+  'call_video_open_settings': copy.call_video_open_settings,
+  'call_video_camera_unavailable': copy.call_video_camera_unavailable,
+  'call_video_return_caption': copy.call_video_return_caption,
+  'call_row_no_answer': copy.call_row_no_answer,
+  'call_video_peer_busy': copy.call_video_peer_busy(name),
+  'call_video_connection_lost': copy.call_video_connection_lost,
+  'call_video_call_again': copy.call_video_call_again,
+  'call_video_close': copy.call_video_close,
+  'call_video_camera_permission_body_without_audio':
+      copy.call_video_camera_permission_body_without_audio,
+  'call_video_action_accept_upgrade': copy.call_video_action_accept_upgrade,
+  'call_video_flip_caption': copy.call_video_flip_caption,
+  'call_video_camera_caption': copy.call_video_camera_caption,
+  'call_video_camera_off_caption': copy.call_video_camera_off_caption,
+  'mic_perm_not_now': copy.mic_perm_not_now,
+  'call_status_connected': copy.call_status_connected,
+  'call_video_status_reconnecting': copy.call_video_status_reconnecting,
+};
+
 void main() {
   for (final locale in approvedVideoCopy.keys) {
+    test(
+      'VUI8 $locale generated API returns approved copy and interpolates name',
+      () {
+        final copy = lookupAppLocalizations(Locale(locale));
+        // Quotes, RTL and punctuation must stay data, not become ICU syntax.
+        const name = "ليلى / Ada's {camera}";
+        expect(
+          _generatedCopy(copy, name),
+          approvedVideoCopy[locale]!.map(
+            (key, value) => MapEntry(key, value.replaceAll('{name}', name)),
+          ),
+        );
+      },
+    );
+
     test('VUI8 $locale has every exact approved video string', () {
       final bundle = _bundle(locale);
       final expected = approvedVideoCopy[locale]!;
