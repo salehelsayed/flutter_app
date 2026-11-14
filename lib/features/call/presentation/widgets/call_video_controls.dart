@@ -160,7 +160,7 @@ class CallVideoControls extends StatelessWidget {
       container: true,
       button: true,
       enabled: enabled,
-      toggled: camera ? !off : null,
+      toggled: camera ? presentation.localCamera == CallCameraState.on : null,
       label: camera
           ? '$label. ${localCameraLabel(presentation.localCamera)}'
           : label,
