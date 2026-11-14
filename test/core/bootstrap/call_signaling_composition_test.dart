@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/features/call/application/call_picture_in_picture.dart';
+
 import '../../features/call/support/fake_call_picture_in_picture_bridge.dart';
 
 import 'package:flutter/services.dart';
@@ -56,6 +57,7 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/domain/call_media_switch.dart';
 import 'package:flutter_app/features/call/domain/call_video_quality_environment.dart';
 import 'package:flutter_app/features/call/domain/call_video_quality_policy.dart';
 import 'package:flutter_app/features/call/infrastructure/platform_call_video_quality_environment_source.dart';
@@ -3946,6 +3948,256 @@ void main() {
   });
 
   setUpAll(sqfliteFfiInit);
+
+  test(
+    'BL16-UPGRADE no consent times out both graphs after direct and mailbox duplicate',
+    () async {
+      final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+      final callerGraph = caller.graphs.single;
+      final id = callerGraph.coordinator.activeSession!.callId!;
+      final (callee, calleeEngine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+        callId: id,
+      );
+      final calleeGraph = callee.graphs.single;
+      final changes = <CallVideoPresentation>[];
+      final sub = calleeGraph.changes.listen((p) {
+        if (p?.video != null) changes.add(p!.video!.presentation);
+      });
+      addTearDown(sub.cancel);
+      expect(
+        await (caller.composition as ForegroundCallVideoCapability)
+            .applyVideoIntent(
+              id,
+              generation: callerGraph.current!.video!.generation,
+              intent: const CallVideoIntent(CallVideoAction.requestVideo),
+            ),
+        ForegroundCallActionResult.applied,
+      );
+      await _untilGraphVideo(
+        () => _upgradeSignals(caller, 'media_request').isNotEmpty,
+      );
+      final request = _upgradeSignals(caller, 'media_request').single;
+      // Initial invite/offer consumed sequence1/2 in the receiving fixture.
+      expect(request['sender_sequence'], greaterThan(2));
+      final callerMachine = callerGraph.videoOwners![id]!.mediaSwitch!.machine;
+      final originalDeadline = callerMachine.stageDeadlineMs;
+      expect(
+        originalDeadline! - callerMachine.currentRequest!.createdAtMs,
+        15000,
+      );
+      expect(
+        callerMachine.currentRequest!.deadlineMs -
+            callerMachine.currentRequest!.createdAtMs,
+        30000,
+      );
+      await _deliverUpgradeSignal(callee, request);
+      await _untilGraphVideo(
+        () =>
+            calleeGraph.current!.video!.presentation.incomingUpgradeId != null,
+      );
+      final calleeMachine = calleeGraph.videoOwners![id]!.mediaSwitch!.machine;
+      final incomingDeadline = calleeMachine.stageDeadlineMs;
+      await _deliverUpgradeSignal(callee, request, mailbox: true);
+      expect(calleeMachine.stageDeadlineMs, incomingDeadline);
+      expect(callerMachine.stageDeadlineMs, originalDeadline);
+      expect(calleeMachine.phase, MediaSwitchPhase.decision);
+      expect(_upgradeSignals(callee, 'media_response'), isEmpty);
+      expect(callerEngine.video!.cameraStarts, 0);
+      expect(calleeEngine.video!.cameraStarts, 0);
+      // Exercise the production Stopwatch and scheduled15s decision deadline;
+      // no fake clock, shortened budget, direct tick, or automatic response.
+      await Future<void>.delayed(const Duration(seconds: 16));
+      expect(callerMachine.phase, MediaSwitchPhase.declined);
+      expect(calleeMachine.phase, MediaSwitchPhase.declined);
+      for (final graph in [callerGraph, calleeGraph]) {
+        final machine = graph.videoOwners![id]!.mediaSwitch!.machine;
+        final presentation = graph.current!.video!.presentation;
+        expect(
+          machine.currentRequest,
+          isNotNull,
+          reason: 'retain replay history',
+        );
+        expect(machine.stageDeadlineMs, isNull);
+        expect(machine.settledRevision, 0);
+        expect(presentation.agreedMedia, CallMediaKind.audio);
+        expect(presentation.incomingUpgradeId, isNull);
+        expect(presentation.outgoingUpgradeId, isNull);
+        expect(presentation.switchingTo, isNull);
+        expect(presentation.status, CallVideoStatus.audioOnly);
+        expect(presentation.localCamera, CallCameraState.off);
+        expect(presentation.remoteCamera, CallCameraState.off);
+        expect(graph.coordinator.activeSession!.state, CallState.connected);
+      }
+      expect(
+        changes.where((p) => p.status == CallVideoStatus.switchingToVideo),
+        isEmpty,
+      );
+      expect(callerEngine.video!.cameraStarts, 0);
+      expect(calleeEngine.video!.cameraStarts, 0);
+    },
+    timeout: const Timeout(Duration(seconds: 45)),
+  );
+
+  test(
+    'BL16-UPGRADE user cancel clears the retained outgoing request',
+    () async {
+      final (fixture, engine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+      );
+      final graph = fixture.graphs.single;
+      final video = fixture.composition as ForegroundCallVideoCapability;
+      expect(
+        await video.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.requestVideo),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      await _untilGraphVideo(
+        () => graph.current!.video!.presentation.outgoingUpgradeId != null,
+      );
+      final requestId = graph.current!.video!.presentation.outgoingUpgradeId!;
+      expect(
+        await video.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: CallVideoIntent(
+            CallVideoAction.cancelUpgrade,
+            upgradeId: requestId,
+          ),
+        ),
+        ForegroundCallActionResult.applied,
+      );
+      final p = graph.current!.video!.presentation;
+      expect(p.status, CallVideoStatus.audioOnly);
+      expect(p.switchingTo, isNull);
+      expect(p.outgoingUpgradeId, isNull);
+      expect(
+        graph.videoOwners![_callA]!.mediaSwitch!.machine.currentRequest!.id,
+        requestId,
+      );
+      expect(engine.video!.cameraStarts, 0);
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+    },
+  );
+
+  for (final phase in [
+    MediaSwitchPhase.declined,
+    MediaSwitchPhase.aborted,
+    MediaSwitchPhase.negotiating,
+    MediaSwitchPhase.commit,
+    MediaSwitchPhase.acknowledgement,
+    MediaSwitchPhase.committed,
+  ]) {
+    test(
+      'BL16-UPGRADE graph projects $phase from retained transaction',
+      () async {
+        final (fixture, engine) = phase == MediaSwitchPhase.acknowledgement
+            ? await _connectedOutgoingGraphAudio()
+            : await _connectedGraphVideo(acceptedMedia: CallMediaKind.audio);
+        final graph = fixture.graphs.single;
+        final id = graph.coordinator.activeSession!.callId!;
+        final owner = graph.videoOwners![id]!.mediaSwitch!;
+        final machine = owner.machine;
+        final now = owner.nowMs();
+        const switchId = '77777777-7777-4777-8777-777777777778';
+        expect(
+          machine
+              .request(
+                MediaSwitchRequest(
+                  id: switchId,
+                  baseRevision: 0,
+                  target: CallMediaKind.video,
+                  requesterIsCaller: true,
+                  createdAtMs: now,
+                  deadlineMs: now + 30000,
+                ),
+                freshUpgradeAdmitted: true,
+              )
+              .accepted,
+          isTrue,
+        );
+        expect(
+          machine
+              .respond(
+                id: switchId,
+                baseRevision: 0,
+                fromCaller: false,
+                response: phase == MediaSwitchPhase.declined
+                    ? MediaSwitchResponse.decline
+                    : MediaSwitchResponse.accept,
+              )
+              .accepted,
+          isTrue,
+        );
+        if (phase == MediaSwitchPhase.commit ||
+            phase == MediaSwitchPhase.acknowledgement ||
+            phase == MediaSwitchPhase.committed) {
+          for (final description in MediaSwitchDescription.values) {
+            expect(
+              machine
+                  .descriptionApplied(
+                    id: switchId,
+                    revision: 1,
+                    media: CallMediaKind.video,
+                    description: description,
+                    local: description == MediaSwitchDescription.offer
+                        ? machine.localIsCaller
+                        : !machine.localIsCaller,
+                  )
+                  .accepted,
+              isTrue,
+            );
+          }
+        }
+        if (phase == MediaSwitchPhase.committed) {
+          expect(
+            machine
+                .receiveCommit(
+                  id: switchId,
+                  revision: 1,
+                  media: CallMediaKind.video,
+                )
+                .accepted,
+            isTrue,
+          );
+        } else if (phase == MediaSwitchPhase.aborted) {
+          expect(
+            machine
+                .abort(
+                  id: switchId,
+                  baseRevision: 0,
+                  revision: 1,
+                  reason: MediaSwitchAbortReason.cancelled,
+                )
+                .accepted,
+            isTrue,
+          );
+        }
+        expect(machine.phase, phase);
+        await graph.onResume();
+        final p = graph.current!.video!.presentation;
+        final active =
+            phase == MediaSwitchPhase.negotiating ||
+            phase == MediaSwitchPhase.commit ||
+            phase == MediaSwitchPhase.acknowledgement;
+        expect(p.switchingTo, active ? CallMediaKind.video : null);
+        expect(
+          p.agreedMedia,
+          phase == MediaSwitchPhase.committed
+              ? CallMediaKind.video
+              : CallMediaKind.audio,
+        );
+        expect(p.incomingUpgradeId, isNull);
+        expect(p.outgoingUpgradeId, isNull);
+        expect(p.localCamera, CallCameraState.off);
+        expect(engine.video!.cameraStarts, 0);
+        expect(machine.currentRequest!.id, switchId);
+      },
+    );
+  }
 
   for (final enabled in [false, true]) {
     test(
@@ -9067,14 +9319,17 @@ Future<void> _untilGraphVideo(bool Function() predicate) async {
   );
 }
 
-Future<void> _deliverGraphVideoInvite(_ProductionIosFixture fixture) async {
+Future<void> _deliverGraphVideoInvite(
+  _ProductionIosFixture fixture, {
+  CallId? callId,
+}) async {
   final graph = fixture.graphs.single;
   final device = (await graph.trustedRosterProvider.loadForContact(
     'video-contact',
   )).devices.single;
   final signal = CallSignalV2.fromMap({
     'schema': CallSignalV2.schema,
-    'call_id': _callA.value,
+    'call_id': (callId ?? _callA).value,
     'message_id': '00000000-0000-4000-8000-000000000023',
     'event': 'invite',
     'sender_account_peer_id': 'video-contact',
@@ -9122,6 +9377,8 @@ Future<void> _deliverGraphVideoInvite(_ProductionIosFixture fixture) async {
 
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   CallEndpointPlatform platform = CallEndpointPlatform.ios,
+  CallMediaKind acceptedMedia = CallMediaKind.video,
+  CallId? callId,
   Future<bool> Function()? permission,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
   CallScheduledTimerObserver? timerObserver,
@@ -9129,6 +9386,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
   Future<bool> Function()? checkCameraPermission,
 }) async {
+  final connectedCallId = callId ?? _callA;
   final events = StreamController<Object?>.broadcast(sync: true);
   addTearDown(events.close);
   var audioActive = false;
@@ -9179,16 +9437,16 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
   fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
       credentials;
-  await _deliverGraphVideoInvite(fixture);
+  await _deliverGraphVideoInvite(fixture, callId: connectedCallId);
   final graph = fixture.graphs.single;
   expect(graph.current!.video, isNotNull);
   final Object capability = fixture.composition;
   expect(capability, isA<ForegroundCallMediaAnswerCapability>());
   expect(
     await (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
-      _callA,
+      connectedCallId,
       generation: graph.current!.video!.generation,
-      acceptedMedia: CallMediaKind.video,
+      acceptedMedia: acceptedMedia,
     ),
     ForegroundCallActionResult.applied,
   );
@@ -9236,7 +9494,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   )).devices.single;
   final offer = CallSignalV2.fromMap({
     'schema': CallSignalV2.schema,
-    'call_id': _callA.value,
+    'call_id': connectedCallId.value,
     'message_id': '00000000-0000-4000-8000-000000000024',
     'event': 'offer',
     'sender_account_peer_id': 'video-contact',
@@ -9252,7 +9510,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
       'purpose': 'initial',
       'switch_id': null,
       'media_revision': 0,
-      'media': 'video',
+      'media': acceptedMedia.name,
       'description': 'fixture-sdp',
       'fingerprint': 'fixture-fingerprint',
     },
@@ -9287,11 +9545,237 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
       type: CallEventType.mediaConnected,
       eventId: 'graph-video-media-connected',
       occurredAt: graph.coordinator.clock(),
-      callId: _callA,
+      callId: connectedCallId,
     ),
   );
   expect(graph.coordinator.activeSession!.state, CallState.connected);
-  expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.video);
+  expect(graph.current!.video!.presentation.agreedMedia, acceptedMedia);
+  return (fixture, engine);
+}
+
+// Each production fixture has its own local-account/video-contact namespace.
+// Keep call, message and switch identities and timestamps when crossing that
+// boundary; only map peer addresses to the receiving fixture's trusted roster.
+Future<void> _deliverUpgradeSignal(
+  _ProductionIosFixture fixture,
+  Map<String, dynamic> wire, {
+  bool mailbox = false,
+}) async {
+  final graph = fixture.graphs.single;
+  final callId = graph.coordinator.activeSession!.callId!;
+  final context = graph.videoContexts!.read(callId)!;
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    'video-contact',
+  )).devices.single;
+  final signal = CallSignalV2.fromMap({
+    ...wire,
+    'sender_account_peer_id': 'video-contact',
+    'sender_device_peer_id': device.devicePeerId,
+    'recipient_account_peer_id': 'local-account',
+    'recipient_device_peer_id': 'local-account',
+  }, videoEnabled: true);
+  final envelope = jsonEncode({
+    'type': 'call_signal',
+    'version': '1',
+    'message_id': signal.messageId,
+    'call_handle': context.callHandle,
+    'expires_at_ms': signal.expiresAtMs,
+    'kem': base64Encode([1]),
+    'ciphertext': base64Encode([2]),
+    'nonce': base64Encode([3]),
+    'signature': base64Encode([4]),
+  });
+  fixture.bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(signal.toMap()),
+  };
+  if (mailbox) {
+    fixture.bridge.responses['call_retrieve_v1'] = {
+      'ok': true,
+      'events': [
+        {
+          'callHandle': context.callHandle,
+          'messageId': signal.messageId,
+          'senderPeerId': device.devicePeerId,
+          'recipientDevicePeerId': 'local-account',
+          'envelope': envelope,
+          'receiptAtMs': signal.createdAtMs,
+          'expiresAtMs': signal.expiresAtMs,
+        },
+      ],
+      'receiptAtMs': signal.createdAtMs,
+      'expiresAtMs': signal.expiresAtMs,
+      'hasMore': false,
+    };
+    fixture.bridge.responses['call_ack_v1'] = {'ok': true, 'acked': 1};
+    final beforeDrain = fixture.bridge.requests.length;
+    await fixture.composition.onCallWake();
+    final drainRequests = fixture.bridge.requests.skip(beforeDrain).toList();
+    expect(
+      drainRequests.where((r) => r['cmd'] == 'call_retrieve_v1'),
+      isNotEmpty,
+    );
+    expect(
+      drainRequests
+          .where((r) => r['cmd'] == 'call_ack_v1')
+          .expand((r) => (r['payload'] as Map)['messageIds'] as List),
+      contains(signal.messageId),
+    );
+    fixture.bridge.responses['call_retrieve_v1'] = {
+      'ok': true,
+      'events': [],
+      'receiptAtMs': signal.createdAtMs,
+      'expiresAtMs': signal.expiresAtMs,
+      'hasMore': false,
+    };
+  } else {
+    fixture.p2p.messages.add(
+      ChatMessage(
+        from: device.devicePeerId,
+        to: 'local-account',
+        content: envelope,
+        timestamp: _callNow.toIso8601String(),
+        isIncoming: true,
+        transport: 'direct',
+      ),
+    );
+  }
+}
+
+List<Map<String, dynamic>> _upgradeSignals(
+  _ProductionIosFixture fixture,
+  String event,
+) => fixture.bridge.requests
+    .where((r) => r['cmd'] == 'message.encrypt')
+    .map(
+      (r) =>
+          jsonDecode((r['payload'] as Map)['plaintext'] as String)
+              as Map<String, dynamic>,
+    )
+    .where((r) => r['event'] == event)
+    .toList();
+
+Future<(_ProductionIosFixture, _InitialVideoGraphEngine)>
+_connectedOutgoingGraphAudio() async {
+  String? handle;
+  int? expires;
+  final engine = _InitialVideoGraphEngine();
+  late final _ProductionIosFixture fixture;
+  fixture = await _createProductionIosFixture(
+    microphonePermission: const _GrantedCallMicrophonePermission(),
+    outgoingContactAccountPeerId: 'video-contact',
+    privacyFlags: const {'video_call_v2_enabled': true},
+    callEngineFactory: (_) => engine,
+    ensureOutgoingCallWakeAuthority: (peer) async {
+      final issued = await fixture.issuedCallWakeHandleStore.readForContact(
+        peer,
+      );
+      return issued != null &&
+          await fixture.graphs.single.markCallWakeHandleDistributed(
+            peer,
+            issued.grant,
+          );
+    },
+    lifecycleOverride: (method, arguments) async {
+      if (method == 'registerOutgoingAuthenticated') {
+        handle = arguments['callHandle']! as String;
+        expires = arguments['expiresAtMs']! as int;
+        return true;
+      }
+      if (method == 'readAudioState') {
+        return {
+          'version': 1,
+          'active': true,
+          'muted': false,
+          'route': 'system_default',
+          'availableRoutes': ['system_default'],
+        };
+      }
+      if (method == 'attach' && handle != null) {
+        return {
+          'version': 1,
+          'descriptor': {
+            'callHandle': handle,
+            'expiresAtMs': expires,
+            'presented': true,
+            'phase': 'preStart',
+            'direction': 'outgoing',
+          },
+          'nativeCallId': handle,
+          'highestSequence': 1,
+          'events': [
+            {
+              'callHandle': handle,
+              'sequence': 1,
+              'eventId': '00000000-0000-4000-8000-000000000001',
+              'type': 'presented',
+              'occurredAtMs': 2000000,
+            },
+          ],
+        };
+      }
+      return null;
+    },
+  );
+  await fixture.composition.start();
+  await _configureCancellationEndpoint(fixture, 'video-contact', video: true);
+  final wall = DateTime.now().millisecondsSinceEpoch;
+  final credentials = {
+    'ok': true,
+    'schema': 'turn_credentials',
+    'version': 1,
+    'urls': ['turn:relay.invalid:3478?transport=udp'],
+    'username': 'fixture-user',
+    'password': 'fixture-secret',
+    'ttlSeconds': 600,
+    'serverTimeMs': wall,
+    'expiresAtMs': wall + 600000,
+  };
+  fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+  fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+      credentials;
+  expect(
+    await (fixture.composition as OutgoingVideoCallCapability)
+        .startOutgoingVideoCall('video-contact'),
+    OutgoingCallStartResult.started,
+  );
+  final graph = fixture.graphs.single;
+  final id = graph.coordinator.activeSession!.callId!;
+  Map<String, dynamic> remote(
+    String event,
+    int sequence,
+    Map<String, Object?> payload,
+  ) => {
+    'schema': CallSignalV2.schema,
+    'call_id': id.value,
+    'message_id': '00000000-0000-4000-8000-00000000003$sequence',
+    'event': event,
+    'sender_sequence': sequence,
+    'ice_generation': 0,
+    'created_at_ms': 2000000,
+    'expires_at_ms': 2040000,
+    'payload': payload,
+  };
+  await _deliverUpgradeSignal(
+    fixture,
+    remote('accept', 1, {'media': 'audio', 'camera': 'off'}),
+  );
+  await _untilGraphVideo(() => _upgradeSignals(fixture, 'offer').isNotEmpty);
+  final offer = _upgradeSignals(fixture, 'offer').single;
+  await _deliverUpgradeSignal(
+    fixture,
+    remote('answer', 2, Map<String, Object?>.from(offer['payload'] as Map)),
+  );
+  await _untilGraphVideo(() => engine.video?.commits == 1);
+  await graph.coordinator.dispatch(
+    CallEvent(
+      type: CallEventType.mediaConnected,
+      eventId: 'upgrade-caller-connected',
+      occurredAt: graph.coordinator.clock(),
+      callId: id,
+    ),
+  );
+  expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.audio);
   return (fixture, engine);
 }
 

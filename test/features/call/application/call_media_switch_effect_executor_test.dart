@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
 import 'package:flutter_app/features/call/application/call_media_switch_effect_executor.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -22,6 +24,55 @@ const _answer = CallSessionDescription(
 final _call = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
 void main() {
+  test(
+    'BL16-UPGRADE transition diagnostics are redacted and deduplicated',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'CALL_MEDIA_SWITCH_STATE') events.add(event);
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
+      final r = _Rig();
+      final request = r.request(id: 'private-switch-identity');
+      expect(r.owner.request(request, localGrant: r.grant), isTrue);
+      await r.owner.workSettled;
+      expect(events, hasLength(1));
+      expect(events.single['details'], {
+        'phase': 'decision',
+        'revision': 0,
+        'target': 'video',
+        'settled_media': 'audio',
+        'reason': 'none',
+      });
+      r.owner.request(request, localGrant: r.grant);
+      r.owner.tick();
+      for (var i = 0; i < 5; i++) {
+        expect(r.owner.machine.currentRequest, same(request));
+        expect(r.owner.machine.phase, MediaSwitchPhase.decision);
+      }
+      await r.owner.workSettled;
+      expect(events, hasLength(1));
+      r.host.now = request.createdAtMs + 15000;
+      r.owner.tick();
+      await r.owner.workSettled;
+      expect(events, hasLength(2));
+      expect(events.last['details'], {
+        'phase': 'declined',
+        'revision': 0,
+        'target': 'video',
+        'settled_media': 'audio',
+        'reason': 'timeout',
+      });
+      r.owner.tick();
+      r.owner.request(request, localGrant: r.grant);
+      await r.owner.workSettled;
+      expect(events, hasLength(2));
+      expect(events.toString(), isNot(contains('private-switch-identity')));
+      expect(events.toString(), isNot(contains(_call.value)));
+      expect(r.video.captureCalls, 0);
+    },
+  );
+
   test(
     'U3j-T unselected cancellation preserves the established revision',
     () async {
