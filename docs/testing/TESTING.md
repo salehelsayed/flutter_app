@@ -12289,6 +12289,35 @@ visible and cannot become an ordinary first-attempt PASS.
   retry classification must not recreate that identity. Such failures can wait
   only until the original deadline. This is not a full network-handover fix:
   device survival and the broader seven selected checks remain separate/unrun.
+  **Initial video transceiver identity on iOS (defect 4 fix):** the pinned
+  iOS plugin identifies a transceiver by `mid ?? ''`, and the Dart wrapper
+  keeps the id it had when created. In an initial video call the engine
+  prepares audio first, so before the first SDP the new video transceiver and
+  audio both had id `''`; set/getDirection on video resolved to audio (a
+  reassuring SendRecv readback), video stayed Inactive, and build 267 offered
+  inactive plus recvonly video sections. `_prepare` now creates the video
+  transceiver with its intended direction in `addTransceiver` and makes no
+  direction call on it. A wrapper with an empty transceiverId is unbound until
+  a description assigns MIDs; it is then reacquired from this connection's
+  `getTransceivers` by its stable senderId (exactly one match, token rechecked
+  after the await, never by position) and its direction is read back through
+  the real id. A later direction change on a still-unbound wrapper rejects.
+  Android ids are never empty, so its flow only gains the init direction.
+  The host fixture gains an opt-in iOS mode (creation-time ids, first-match
+  set/get, description-assigned MIDs, fresh wrappers, the legacy
+  OfferToReceiveVideo recvonly auto-add, which models native behaviour by
+  inference and is not measured). RED `8bb048517` had 10 passes, 4 assertion
+  failures (two sections instead of one, audio direction changed by the
+  empty-id call, and two rebind fail-closed cases that completed) and 2
+  errors: a StateError `No element` (the downgrade's stale empty id matched no
+  transceiver) and a widget reporter error with a correlated TestFailure (the
+  CAM-DIAG prepare line still read `readback=SendRecv` instead of
+  `readback=created`); the callee and Android stable-id guards passed. GREEN
+  `bf57c7b0f` passed 118/118 over six host files with the same test tree as
+  RED, three clean identity checkpoints and 30 pin checks, offline locked
+  setup exit 0. Host evidence only: one active sendrecv video section and
+  bidirectional decoded RTP in an initial video call, in both caller roles and
+  after an upgrade, need the build 268 device run.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
