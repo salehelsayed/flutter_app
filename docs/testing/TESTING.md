@@ -12118,6 +12118,35 @@ visible and cannot become an ordinary first-attempt PASS.
   certify composed host, live device/RTP, camera continuation in PiP, signed
   candidates or activation. Camera FGS `afa0e7970` remains excluded. Evidence:
   `/Users/I560101/.codex/investigations/batch7-native-corrections-review-20261114-m90aa47a7/final-native-scoped-verdict.json`.
+  **Settled video-upgrade projection and cancellation:** the graph must display
+  switching only during negotiating/commit/acknowledgement. The media-switch
+  machine retains terminal requests for replay history; request presence is not
+  evidence of an active switch. Canceling an unselected request must pass its
+  transaction revision (`base + 1`) to the unchanged domain, which retires it
+  without consuming the settled revision or emitting abort wire. Debug-only
+  state diagnostics use fixed fields and deduplicate at the executor transition
+  seam; projection reads and duplicate requests must not create new state logs.
+  RED `8485e82876527b8fb32b78571880f4f54de1bf1c` passed three active-phase
+  controls and failed six assertions: four stale terminal projections, one
+  separate cancel-action revision mismatch, and one absent diagnostic event.
+  There were no loader failures, errors or skips. GREEN
+  `0412ea628cd2cfb64c52c939ae6cf27f45da8cfc` preserves the entire RED test tree.
+  Claude-UI's two exact commands passed 285 cases (composition 247, switch
+  executor 38) and 260 preservation cases (domain 32, v2 executor 108,
+  presentation 16, foreground binding 104), with no failures/errors/skips,
+  successful reporter completion and child exits 0. The causal timeout fixture
+  uses separate caller/callee production graphs, a video-origin/audio-answer
+  call, direct request plus acknowledged identical mailbox replay, and the real
+  15-second decision timer with no acceptance or camera capture. Its fixture
+  transport maps peer addresses to separate trusted rosters; this is not live
+  cryptographic transport or device proof. Six clean GREEN identity checkpoints
+  verified all 102 file pins; three RED checkpoints verified 39 pins. Both locked
+  offline setups exited 0. Original failures remain retained. Source/static
+  review passed; the 17-check selection preview was not a broader runtime run.
+  Flutter owns device reproof; no signed-candidate or device pass is implied.
+  Packets and independently checked raw hashes/exits are indexed by
+  `/Users/I560101/.codex/investigations/bl16-upgrade-projection-20261114/green-runtime-verified.json`
+  and `red-runtime-verified.json` in that directory.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
