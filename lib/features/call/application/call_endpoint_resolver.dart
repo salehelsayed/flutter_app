@@ -25,8 +25,7 @@ final class CallEndpointResolutionException implements Exception {
 /// No currently usable recovery route; the original reconnect timer remains
 /// authoritative. This must never enter an adapter's legacy pin fallback.
 final class CallEndpointRecoveryUnavailable implements Exception {
-  const CallEndpointRecoveryUnavailable({this.transient = false});
-  final bool transient;
+  const CallEndpointRecoveryUnavailable();
 }
 
 /// Contact authority frozen at the trusted lookup used for admission.

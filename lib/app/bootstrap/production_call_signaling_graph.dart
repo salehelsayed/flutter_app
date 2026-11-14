@@ -74,6 +74,7 @@ import '../../features/call/infrastructure/bridge_call_media_protection_lease.da
 import '../../features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/call_audio_route_adapter.dart';
 import '../../features/call/infrastructure/call_authority_client.dart';
+import '../../features/call/infrastructure/call_endpoint_recovery.dart';
 import '../../features/call/infrastructure/call_foreground_audio_session_adapter.dart';
 import '../../features/call/infrastructure/call_mailbox_client.dart';
 import '../../features/call/infrastructure/android_call_admission_settlement.dart';
@@ -2903,15 +2904,6 @@ CallSignalingComposition createProductionCallSignalingComposition({
               trustedDeviceSigningPublicKey: trustedSigningPublicKey,
             ),
       );
-      Future<ResolvedCallEndpoint> resolveCurrentEndpoint(
-        String contactAccountPeerId,
-      ) => resolveProductionCallEndpoint(
-        contactAccountPeerId: contactAccountPeerId,
-        resolver: resolver,
-        rosterProvider: roster,
-        authorityClient: authority,
-        receivedCallWakeHandleStore: receivedCallWakeHandleStore,
-      );
       Future<String> loadSenderSigningPrivateKey() async {
         final current = await loadIdentity();
         if (current == null ||
@@ -2949,6 +2941,61 @@ CallSignalingComposition createProductionCallSignalingComposition({
       CallId? policyCallId;
       Future<CallTransportPolicy>? pendingTransportPolicy;
       late final CallCoordinator coordinator;
+      CallEndpointRecovery? endpointRecovery;
+      Future<ResolvedCallEndpoint> resolveCurrentEndpoint(
+        String contactAccountPeerId,
+      ) {
+        final snapshot = coordinator.activeSession;
+        CallEndpointRecovery? recovery;
+        if (snapshot?.state == CallState.reconnecting &&
+            snapshot?.contactPeerId == contactAccountPeerId) {
+          final callId = snapshot!.callId!;
+          final context = signalingContextStore.read(callId);
+          final budget = coordinator.recoveryBudgetFor(callId);
+          final admitted = context?.wireVersion == CallWireVersion.v2
+              ? signalingContextStore.admittedV2Endpoint(callId)
+              : signalingContextStore.pinnedEndpoint(callId);
+          if (context == null ||
+              budget == null ||
+              admitted == null ||
+              context.remoteAccountPeerId != contactAccountPeerId) {
+            throw const CallEndpointRecoveryUnavailable();
+          }
+          if (!identical(endpointRecovery?.budget, budget)) {
+            endpointRecovery = CallEndpointRecovery(
+              budget: budget,
+              admitted: admitted,
+              bindingCurrent: () {
+                final current = signalingContextStore.read(callId);
+                return diagnosticGraph?._shuttingDown != true &&
+                    current != null &&
+                    current.callHandle == context.callHandle &&
+                    current.direction == context.direction &&
+                    current.localAccountPeerId == context.localAccountPeerId &&
+                    current.localDevicePeerId == context.localDevicePeerId &&
+                    current.remoteAccountPeerId ==
+                        context.remoteAccountPeerId &&
+                    current.remoteDevicePeerId == context.remoteDevicePeerId &&
+                    current.admissionAuthority == context.admissionAuthority &&
+                    current.wireVersion == context.wireVersion &&
+                    current.requestedMedia == context.requestedMedia;
+              },
+            );
+          }
+          recovery = endpointRecovery;
+        } else if (snapshot?.state != CallState.reconnecting) {
+          endpointRecovery = null;
+        }
+        return resolveProductionCallEndpoint(
+          contactAccountPeerId: contactAccountPeerId,
+          resolver: resolver,
+          rosterProvider: roster,
+          authorityClient: authority,
+          receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+          recovery: recovery,
+        );
+      }
+
       AndroidCallLifecycleAdapter? retainedTerminalOwner;
       // A media close that finishes after its cleanup was reported blocked
       // (the microphone prompt resolved) frees the ended call at once.
@@ -2970,6 +3017,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
               );
             }, requiredForTerminalAck: true),
             CallCleanupStep('call_signaling_context', (snapshot) async {
+              endpointRecovery = null;
               await controlExecutor.retireOutgoingPreconnectInvite(snapshot);
               signalingContextStore.purge(snapshot.callId!);
             }, requiredForTerminalAck: true),
@@ -3455,6 +3503,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
               await coordinator.dispatch(event);
             },
             readActiveSnapshot: () => coordinator.activeSession,
+            readRecoveryBudget: coordinator.recoveryBudgetFor,
             readStagedIceServers: iceServerProvider.read,
             clock: callClock,
           );
