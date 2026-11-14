@@ -140,24 +140,88 @@ class Receiver implements rtc.RTCRtpReceiver {
 }
 
 class Transceiver implements rtc.RTCRtpTransceiver {
-  Transceiver(String kind) : receiver = Receiver(Track(kind));
+  Transceiver(String kind)
+    : receiver = Receiver(Track(kind)),
+      sender = Sender(),
+      _native = null;
+
+  /// A fresh Dart wrapper over the same native transceiver (getTransceivers).
+  Transceiver._view(Transceiver native, this.id)
+    : receiver = native.receiver,
+      sender = native.sender,
+      _native = native,
+      peer = native.peer;
+  final Transceiver? _native;
+  Transceiver get native => _native ?? this;
+  Peer? peer;
+
+  /// The id this Dart wrapper captured when it was created. The pinned iOS
+  /// plugin serializes `mid ?? ''`, so a pre-SDP wrapper keeps '' forever.
+  String id = '';
+
+  /// Native MID, assigned when a description is applied.
+  String? nativeMid;
   @override
-  final Sender sender = Sender();
+  String get mid => nativeMid ?? '';
+  @override
+  String get transceiverId => id;
+  @override
+  final Sender sender;
   @override
   final Receiver receiver;
-  rtc.TransceiverDirection direction = rtc.TransceiverDirection.Inactive;
-  @override
-  Future<void> setDirection(rtc.TransceiverDirection value) async {
-    direction = value;
+  rtc.TransceiverDirection _direction = rtc.TransceiverDirection.Inactive;
+  rtc.TransceiverDirection get direction => native._direction;
+  set direction(rtc.TransceiverDirection value) => native._direction = value;
+  int directionCalls = 0;
+
+  // iOS: set/getDirection resolve the FIRST native transceiver whose
+  // `mid ?? ''` equals this wrapper's id (FlutterWebRTCPlugin.m:2456-2463).
+  Transceiver get _resolved {
+    final owner = peer;
+    if (owner == null || !owner.iosEmptyIds) return native;
+    return owner.nativeTransceivers.firstWhere(
+      (t) => (t.nativeMid ?? '') == id,
+    );
   }
 
   @override
-  Future<rtc.TransceiverDirection> getDirection() async => direction;
+  Future<void> setDirection(rtc.TransceiverDirection value) async {
+    native.directionCalls++;
+    _resolved.direction = value;
+  }
+
+  @override
+  Future<rtc.TransceiverDirection> getDirection() async {
+    native.directionCalls++;
+    return _resolved.direction;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class Peer implements rtc.RTCPeerConnection {
+  /// Models the pinned iOS plugin: transceiver ids are `mid ?? ''`, MIDs are
+  /// assigned only by descriptions, and createOffer's legacy
+  /// OfferToReceiveVideo adds a recvonly video section when no video
+  /// transceiver can receive.
+  bool iosEmptyIds = false;
+  int _transceivers = 0;
+  Transceiver adopt(Transceiver t) {
+    t.peer = this;
+    t.id = iosEmptyIds ? (t.nativeMid ?? '') : 'tx-${++_transceivers}';
+    nativeTransceivers.add(t);
+    return t;
+  }
+
+  void _assignMids() {
+    var next = 0;
+    for (final t in nativeTransceivers) {
+      t.nativeMid ??= '$next';
+      next++;
+    }
+  }
+
   final audio = Sender(Track('audio'));
   final nativeTransceivers = <Transceiver>[];
   final offers = <Map<String, dynamic>>[];
@@ -200,14 +264,27 @@ class Peer implements rtc.RTCPeerConnection {
       kind == rtc.RTCRtpMediaType.RTCRtpMediaTypeVideo ? 'video' : 'audio',
     );
     t.direction = init?.direction ?? rtc.TransceiverDirection.Inactive;
-    nativeTransceivers.add(t);
-    return t;
+    return adopt(t);
   }
+
+  static String _dir(rtc.TransceiverDirection d) => switch (d) {
+    rtc.TransceiverDirection.SendRecv => 'sendrecv',
+    rtc.TransceiverDirection.SendOnly => 'sendonly',
+    rtc.TransceiverDirection.RecvOnly => 'recvonly',
+    _ => 'inactive',
+  };
 
   String nativeSdp() {
     final videos = nativeTransceivers.where(
       (t) => t.receiver.track.kind == 'video',
     );
+    if (iosEmptyIds) {
+      final sections = [
+        for (final v in videos)
+          'm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=${_dir(v.direction)}\r\n',
+      ].join();
+      return '${sdp()}$sections';
+    }
     return sdp(
       video: videos.isEmpty
           ? null
@@ -223,6 +300,21 @@ class Peer implements rtc.RTCPeerConnection {
   ]) async {
     offers.add(constraints!);
     await offerGate?.future;
+    final mandatory = constraints['mandatory'];
+    final wantsVideo =
+        mandatory is Map && mandatory['OfferToReceiveVideo'] == true;
+    if (iosEmptyIds &&
+        wantsVideo &&
+        !nativeTransceivers.any(
+          (t) =>
+              t.receiver.track.kind == 'video' &&
+              (t.direction == rtc.TransceiverDirection.SendRecv ||
+                  t.direction == rtc.TransceiverDirection.RecvOnly),
+        )) {
+      adopt(
+        Transceiver('video')..direction = rtc.TransceiverDirection.RecvOnly,
+      );
+    }
     return rtc.RTCSessionDescription(nativeSdp(), 'offer');
   }
 
@@ -234,6 +326,7 @@ class Peer implements rtc.RTCPeerConnection {
   Future<void> setLocalDescription(rtc.RTCSessionDescription d) async {
     await beforeApply?.call(d, true);
     if (d.type == 'rollback' && failRollback) throw StateError('rollback');
+    if (d.type != 'rollback') _assignMids();
     local.add(d);
     signalingState = d.type == 'offer'
         ? rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer
@@ -248,16 +341,28 @@ class Peer implements rtc.RTCPeerConnection {
     if (d.type == 'offer' &&
         d.sdp!.contains('m=video') &&
         !nativeTransceivers.any((t) => t.receiver.track.kind == 'video')) {
-      nativeTransceivers.add(Transceiver('video'));
+      adopt(Transceiver('video'));
     }
+    if (d.type != 'rollback') _assignMids();
     signalingState = d.type == 'offer'
         ? rtc.RTCSignalingState.RTCSignalingStateHaveRemoteOffer
         : rtc.RTCSignalingState.RTCSignalingStateStable;
   }
 
+  Future<void> Function()? beforeTransceivers;
+  List<rtc.RTCRtpTransceiver> Function()? transceiversOverride;
   @override
-  Future<List<rtc.RTCRtpTransceiver>> getTransceivers() async =>
-      nativeTransceivers;
+  Future<List<rtc.RTCRtpTransceiver>> getTransceivers() async {
+    await beforeTransceivers?.call();
+    return transceiversOverride?.call() ?? await _transceiverViews();
+  }
+
+  Future<List<rtc.RTCRtpTransceiver>> _transceiverViews() async => iosEmptyIds
+      ? [
+          for (final t in nativeTransceivers)
+            Transceiver._view(t, t.nativeMid ?? ''),
+        ]
+      : nativeTransceivers;
 
   // Fresh native sender views (defect 3 refresh path).
   int senderReads = 0;
