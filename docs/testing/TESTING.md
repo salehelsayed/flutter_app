@@ -7404,9 +7404,28 @@ visible and cannot become an ordinary first-attempt PASS.
   The earlier disposable relay's 45-minute Go deadline killed the relay during
   a 47-minute manual campaign, causing later connection failures and unrun rows.
   Its temporary fixed 120-minute runner limit is superseded by the fixture's
-  bounded `PLAN399_FIXTURE_GO_TIMEOUT` override: automatic runs keep the
-  45-minute default; a manual fixture may explicitly request 45–240 minutes.
-  Individual scenario deadlines and assertions stay unchanged. The
+  bounded `PLAN399_FIXTURE_GO_TIMEOUT` override. The earlier automatic
+  45-minute default is superseded for multi-row Sims cohorts: one fixture spans
+  build preparation and all selected rows, so the wrapper now allocates 45
+  minutes per selected non-build row, capped at 240 minutes. Explicit nonempty
+  overrides remain authoritative within 45–240 minutes; a standalone fixture
+  or single-row run keeps 45 minutes. This is a bounded lease budget, not a
+  guarantee that arbitrary cohorts finish before the cap. Individual scenario
+  deadlines, assertions, the single lease and finally-stop ownership stay
+  unchanged. RED `9b7b5898368cf12783491eca27f71d72023fe309` passed single-row
+  and explicit-override controls and failed both multi-row cases: simulated
+  10-minute build plus 40-minute execution exceeded the old 45-minute lease.
+  The fake runner's 17 is a failure exit code, not an overrun duration.
+  GREEN `0c39f9e9de3b4a87ba0bf575c8c1dc70da73c09f` preserves the entire
+  RED test tree and passed 81 host cases, including all four lifetime cases;
+  the opt-in real Opus fixture remained deliberately skipped. Reporter success
+  and child exit 0 were verified. RED had three clean identity boundaries/18
+  file pins; GREEN had three/24, with locked offline setup exit 0 for both.
+  Source review passed. Raw hashes and receipts are indexed under
+  `/Users/I560101/.codex/investigations/audio-fixture-lifetime-20261114/`
+  in `red-runtime-verified.json` and `green-runtime-verified.json`.
+  These host results do not establish a real-fixture/device pass or the broader
+  19 selected checks. The
   [runner evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/audio-runner-summary.md)
   retains the first failure and subsequent passing fixture-affected rows.
   The shared-host diagnosis in Kayan m-408cbc28 identified wildcard `netsimd`

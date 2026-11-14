@@ -26,8 +26,8 @@ const String _coturnDigest =
 const String _coturnVersion = '4.17.2-r0';
 const String _pionVersion = 'v4.2.19';
 
-/// Sims keeps the 45 minute fixture budget. A hand-driven campaign that holds
-/// the fixture for manual legs may raise it, bounded to four hours.
+/// Standalone fixtures default to 45 minutes. Sims sizes this override for
+/// its selected cohort; manual campaigns may also raise it, up to four hours.
 String productionAudioCallFixtureGoTimeoutFlag(
   Map<String, String> environment,
 ) {

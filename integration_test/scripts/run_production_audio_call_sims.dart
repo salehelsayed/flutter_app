@@ -240,12 +240,24 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
           ...excludedCohortIds,
         ].expand((id) => ['--exclude', id]).toList()
       : ['--only', androidProductionAudioCallScenarioId];
+  // One lease covers build preparation and every selected row. Reuse the
+  // single-row 45m allowance for each row, with the existing four-hour ceiling.
+  final selectedRowCount = includeRegressions
+      ? productionAudioCallCohort(environment, mode)
+            .difference(excludedCohortIds.toSet())
+            .where((id) => !id.startsWith('build.'))
+            .length
+      : 1;
+  final fixtureMinutes = (45 * selectedRowCount).clamp(45, 240);
   final devices = _explicitAndroidPair(environment);
   final hostIp = await dependencies.resolveFixtureHostIp(environment);
   final goEnvironment =
       <String, String>{
           ...environment,
           'GOTOOLCHAIN': androidProductionAudioCallGoToolchain,
+          if (environment['PLAN399_FIXTURE_GO_TIMEOUT']?.trim().isNotEmpty !=
+              true)
+            'PLAN399_FIXTURE_GO_TIMEOUT': '${fixtureMinutes}m',
         }
         ..remove('TURN_CREDENTIALS_ENABLED')
         ..remove(_turnUrlsEnvironment)
