@@ -169,44 +169,48 @@ class CallVideoControls extends StatelessWidget {
       child: _observeDisabledCameraTap(
         action,
         enabled,
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: label,
-              onPressed: enabled ? emit : null,
-              icon: Icon(
-                camera
-                    ? (off
-                          ? Icons.videocam_off_outlined
-                          : Icons.videocam_outlined)
-                    : Icons.cameraswitch_outlined,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? emit : null,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: label,
+                onPressed: enabled ? emit : null,
+                icon: Icon(
+                  camera
+                      ? (off
+                            ? Icons.videocam_off_outlined
+                            : Icons.videocam_outlined)
+                      : Icons.cameraswitch_outlined,
+                ),
+                iconSize: 28,
+                style: IconButton.styleFrom(
+                  fixedSize: const Size.square(56),
+                  backgroundColor: off ? Colors.white : colors.surfaceRaised,
+                  foregroundColor: off
+                      ? const Color(0xFF10141E)
+                      : colors.iconPrimary,
+                  disabledBackgroundColor: colors.disabledSurface,
+                  disabledForegroundColor: colors.disabledForeground,
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                ),
               ),
-              iconSize: 28,
-              style: IconButton.styleFrom(
-                fixedSize: const Size.square(56),
-                backgroundColor: off ? Colors.white : colors.surfaceRaised,
-                foregroundColor: off
-                    ? const Color(0xFF10141E)
-                    : colors.iconPrimary,
-                disabledBackgroundColor: colors.disabledSurface,
-                disabledForegroundColor: colors.disabledForeground,
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+              const SizedBox(height: 8),
+              Text(
+                caption,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: enabled
+                      ? colors.textSecondary
+                      : colors.disabledForeground,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              caption,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: enabled
-                    ? colors.textSecondary
-                    : colors.disabledForeground,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

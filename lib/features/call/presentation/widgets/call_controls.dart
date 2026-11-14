@@ -278,40 +278,44 @@ class _Control extends StatelessWidget {
       label: semanticsEnabled ? label : '$label. $tooltip',
       onTap: semanticsEnabled ? onPressed : null,
       excludeSemantics: true,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            tooltip: tooltip,
-            onPressed: onPressed,
-            icon: Icon(icon),
-            color: foregroundColor,
-            iconSize: 28,
-            style: IconButton.styleFrom(
-              backgroundColor: backgroundColor,
-              fixedSize: Size.square(videoStyle ? 56 : 64),
-              side: videoStyle
-                  ? BorderSide(color: Colors.white.withValues(alpha: 0.2))
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: videoStyle ? onPressed : null,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: tooltip,
+              onPressed: onPressed,
+              icon: Icon(icon),
+              color: foregroundColor,
+              iconSize: 28,
+              style: IconButton.styleFrom(
+                backgroundColor: backgroundColor,
+                fixedSize: Size.square(videoStyle ? 56 : 64),
+                side: videoStyle
+                    ? BorderSide(color: Colors.white.withValues(alpha: 0.2))
+                    : null,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              maxLines: videoStyle ? null : (constrainLabel ? 2 : null),
+              overflow: constrainLabel && !videoStyle
+                  ? TextOverflow.ellipsis
                   : null,
+              textAlign: constrainLabel ? TextAlign.center : null,
+              style: TextStyle(
+                color: semanticsEnabled
+                    ? context.backgroundReadableColors.textSecondary
+                    : context.backgroundReadableColors.disabledForeground,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            maxLines: videoStyle ? null : (constrainLabel ? 2 : null),
-            overflow: constrainLabel && !videoStyle
-                ? TextOverflow.ellipsis
-                : null,
-            textAlign: constrainLabel ? TextAlign.center : null,
-            style: TextStyle(
-              color: semanticsEnabled
-                  ? context.backgroundReadableColors.textSecondary
-                  : context.backgroundReadableColors.disabledForeground,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
