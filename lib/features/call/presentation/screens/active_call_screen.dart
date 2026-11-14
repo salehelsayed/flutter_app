@@ -192,9 +192,25 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   }
 
   Widget _buildVideoStage(CallVideoPresentation video, String? duration) {
+    final reconnecting =
+        widget.state == CallState.reconnecting || video.isReconnecting;
+    if (reconnecting) video = _reconnectingPresentation(video);
     final l10n = AppLocalizations.of(context)!;
     final labels = CallVideoLocalizations(l10n);
     final onVideoIntent = widget.onVideoIntent;
+    final controls = CallVideoControls(
+      peerDisplayName: widget.contactUsername,
+      presentation: video,
+      audioControls: widget.controls,
+      onIntent: (intent) {
+        if (mounted) onVideoIntent?.call(intent);
+      },
+      controlsLabel: labels.controlsLabel,
+      statusLabel: labels.statusLabel,
+      localCameraLabel: labels.localCameraLabel,
+      remoteCameraLabel: labels.remoteCameraLabel,
+      actionLabel: labels.actionLabel,
+    );
     // The owner supplies video pixels. This composition never starts a camera
     // and the static backdrop does not compete with a call for animation time.
     return Theme(
@@ -208,98 +224,191 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       ),
       child: CosmicBackground(
         paused: true,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (video.remoteCamera != CallCameraState.on)
-              Align(
-                alignment: const Alignment(0, -0.18),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      UserAvatar(peerId: widget.contactPeerId, size: 132),
-                      const SizedBox(height: 24),
+        child: reconnecting
+            ? _buildReconnectingVideo(duration, controls)
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (video.remoteCamera != CallCameraState.on)
+                    Align(
+                      alignment: const Alignment(0, -0.18),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            UserAvatar(peerId: widget.contactPeerId, size: 132),
+                            const SizedBox(height: 24),
+                            Text(
+                              labels.remoteCameraLabel(video.remoteCamera),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFFC7CCD6),
+                                fontSize: 17,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (widget.videoViews != null) widget.videoViews!,
+                  // Only the controls/identity consume safe-area padding. The
+                  // background and current remote video occupy the entire call.
+                  Positioned(
+                    top: 0,
+                    left: 72,
+                    right: 72,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.contactUsername,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (duration != null) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                duration,
+                                semanticsLabel: l10n.call_duration(duration),
+                                style: const TextStyle(
+                                  color: Color(0xFFE4E6EB),
+                                  fontSize: 16,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    top: widget.cameraFeedback == null ? null : 0,
+                    bottom: 16,
+                    child: SafeArea(
+                      top: widget.cameraFeedback != null,
+                      child: _withCameraFeedback(controls),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  // A session reconnect can arrive before its video flags. Apply the existing
+  // presentation gates conservatively without changing camera or media truth.
+  CallVideoPresentation _reconnectingPresentation(
+    CallVideoPresentation video,
+  ) => CallVideoPresentation.project(
+    videoEnabled: video.videoEnabled,
+    wireVersion: video.wireVersion,
+    requestedMedia: video.requestedMedia,
+    acceptedMedia: video.acceptedMedia,
+    agreedMedia: video.agreedMedia,
+    localCamera: video.localCamera,
+    remoteCamera: video.remoteCamera,
+    isConnected: false,
+    isReconnecting: true,
+    switchingTo: video.switchingTo,
+    videoActionPending: video.videoActionPending,
+    incomingUpgradeId: video.incomingUpgradeId,
+    outgoingUpgradeId: video.outgoingUpgradeId,
+    mayRequestVideo: video.mayRequestVideo,
+    mayTurnCameraOn: video.mayTurnCameraOn,
+    maySwitchCamera: video.maySwitchCamera,
+  );
+
+  Widget _buildReconnectingVideo(String? duration, Widget controls) {
+    final l10n = AppLocalizations.of(context)!;
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(
+              child: Padding(
+                // The root-owned minimize button occupies the top corner.
+                padding: const EdgeInsets.fromLTRB(16, 56, 16, 16),
+                child: Column(
+                  children: [
+                    Text(
+                      widget.contactUsername,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (duration != null) ...[
+                      const SizedBox(height: 3),
                       Text(
-                        labels.remoteCameraLabel(video.remoteCamera),
-                        textAlign: TextAlign.center,
+                        duration,
+                        semanticsLabel: l10n.call_duration(duration),
                         style: const TextStyle(
-                          color: Color(0xFFC7CCD6),
-                          fontSize: 17,
+                          color: Color(0xFFE4E6EB),
+                          fontSize: 16,
+                          fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
-                  ),
-                ),
-              ),
-            if (widget.videoViews != null) widget.videoViews!,
-            // Only the controls/identity consume safe-area padding. The
-            // background and current remote video occupy the entire call.
-            Positioned(
-              top: 0,
-              left: 72,
-              right: 72,
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.contactUsername,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
+                    const Spacer(),
+                    const SizedBox(height: 24),
+                    UserAvatar(peerId: widget.contactPeerId, size: 132),
+                    const SizedBox(height: 16),
+                    // Controls retain the single live-region announcement.
+                    ExcludeSemantics(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF171A22),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: const Color(0xFF414651)),
                         ),
-                      ),
-                      if (duration != null) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          duration,
-                          semanticsLabel: l10n.call_duration(duration),
-                          style: const TextStyle(
-                            color: Color(0xFFE4E6EB),
-                            fontSize: 16,
-                            fontFeatures: [FontFeature.tabularFigures()],
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          child: Text(
+                            l10n.call_video_status_reconnecting,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                      ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Spacer(),
+                    if (widget.cameraFeedback != null) ...[
+                      widget.cameraFeedback!,
+                      const SizedBox(height: 12),
                     ],
-                  ),
+                    controls,
+                  ],
                 ),
               ),
             ),
-            Positioned(
-              left: 16,
-              right: 16,
-              top: widget.cameraFeedback == null ? null : 0,
-              bottom: 16,
-              child: SafeArea(
-                top: widget.cameraFeedback != null,
-                child: _withCameraFeedback(
-                  CallVideoControls(
-                    peerDisplayName: widget.contactUsername,
-                    presentation: video,
-                    audioControls: widget.controls,
-                    onIntent: (intent) {
-                      if (mounted) onVideoIntent?.call(intent);
-                    },
-                    controlsLabel: labels.controlsLabel,
-                    statusLabel: labels.statusLabel,
-                    localCameraLabel: labels.localCameraLabel,
-                    remoteCameraLabel: labels.remoteCameraLabel,
-                    actionLabel: labels.actionLabel,
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
