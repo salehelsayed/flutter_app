@@ -1095,7 +1095,12 @@ final class ProductionCallSignalingGraph
         videoActionPending: _cameraActionPending,
         isConnected: snapshot.state == CallState.connected,
         isReconnecting: snapshot.state == CallState.reconnecting,
-        switchingTo: request != null && !decision ? request.target : null,
+        switchingTo: switch (machine?.phase) {
+          MediaSwitchPhase.negotiating ||
+          MediaSwitchPhase.commit ||
+          MediaSwitchPhase.acknowledgement => request?.target,
+          _ => null,
+        },
         incomingUpgradeId: incoming ? request.id : null,
         outgoingUpgradeId: outgoing ? request!.id : null,
         mayRequestVideo:

@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import '../../../core/utils/flow_event_emitter.dart';
+
 import 'call_coordinator.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_media.dart';
@@ -80,6 +83,14 @@ final class CallMediaSwitchEffectExecutor {
   CallTimerHandle? _timer;
   int? _timerDeadline;
   bool _closed = false;
+  ({
+    String? switchId,
+    MediaSwitchPhase? phase,
+    int revision,
+    CallMediaKind? target,
+    CallMediaKind settledMedia,
+  })?
+  _lastDiagnosticState;
   int? _recoveryGeneration;
   int? _recoveryDeadlineMs;
   bool Function()? _recoveryCanApply;
@@ -441,13 +452,13 @@ final class CallMediaSwitchEffectExecutor {
       remote: remote,
       reason: reason,
     );
-    _apply(decision);
+    _apply(decision, reason: reason);
     return decision.accepted;
   }
 
   void tick() {
     if (_closed) return;
-    _apply(machine.tick());
+    _apply(machine.tick(), reason: MediaSwitchAbortReason.timeout);
     final selected = _selected;
     if (selected != null &&
         !selected.repairComplete &&
@@ -504,7 +515,9 @@ final class CallMediaSwitchEffectExecutor {
     _track(host.closeVideo());
   }
 
-  void _apply(MediaSwitchDecision decision) {
+  void _apply(MediaSwitchDecision decision, {MediaSwitchAbortReason? reason}) {
+    if (kDebugMode) _reportStateChange(decision, reason);
+
     for (final effect in decision.effects) {
       final work = _transactions[effect.switchId];
       if (work == null) continue;
@@ -580,6 +593,59 @@ final class CallMediaSwitchEffectExecutor {
       onChanged?.call();
     } catch (_) {
       /* An observer has no media authority. */
+    }
+  }
+
+  void _reportStateChange(
+    MediaSwitchDecision decision,
+    MediaSwitchAbortReason? reason,
+  ) {
+    final request = machine.currentRequest;
+    final state = (
+      switchId: request?.id,
+      phase: machine.phase,
+      revision: request != null && machine.selectedSwitchId == request.id
+          ? request.baseRevision + 1
+          : machine.settledRevision,
+      target: request?.target,
+      settledMedia: machine.settledMedia,
+    );
+    if (state == _lastDiagnosticState) return;
+    _lastDiagnosticState = state;
+    String cause = reason?.name ?? 'none';
+    for (final effect in decision.effects) {
+      if (effect.abortReason != null) {
+        cause = effect.abortReason!.name;
+        break;
+      }
+      if (cause == 'none' &&
+          effect.response != null &&
+          effect.response != MediaSwitchResponse.accept) {
+        cause = effect.response!.name;
+      }
+    }
+    if (state.phase == MediaSwitchPhase.declined &&
+        request != null &&
+        (nowMs() >= request.deadlineMs ||
+            nowMs() >= request.createdAtMs + 15000)) {
+      cause = 'timeout';
+    } else if (cause == 'none' && state.phase == MediaSwitchPhase.declined) {
+      cause = 'declined';
+    }
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_MEDIA_SWITCH_STATE',
+        details: {
+          'phase': state.phase?.name ?? 'none',
+          'revision': state.revision,
+          'target': state.target?.name ?? 'none',
+          'settled_media': state.settledMedia.name,
+          'reason': cause,
+        },
+      );
+    } catch (_) {
+      // Diagnostic observers cannot interrupt media effects or consent checks.
     }
   }
 
