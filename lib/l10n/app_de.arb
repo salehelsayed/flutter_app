@@ -2357,6 +2357,14 @@
   "call_video_camera_caption": "Kamera",
   "call_video_camera_off_caption": "Kamera aus",
   "call_video_ringing": "Klingelt …",
+  "call_video_incoming_upgrade_from": "{name} möchte das Video einschalten",
+  "@call_video_incoming_upgrade_from": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "call_video_waiting_for_acceptance": "Warte auf Annahme durch {name} …",
   "@call_video_waiting_for_acceptance": {
     "placeholders": {

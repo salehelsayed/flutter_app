@@ -22,9 +22,11 @@ class CallVideoControls extends StatelessWidget {
     required this.remoteCameraLabel,
     required this.actionLabel,
     this.preAnswer = false,
+    this.peerDisplayName,
   });
 
   final bool preAnswer;
+  final String? peerDisplayName;
   final CallVideoPresentation presentation;
   final Widget audioControls;
   final ValueChanged<CallVideoIntent> onIntent;
@@ -45,6 +47,22 @@ class CallVideoControls extends StatelessWidget {
     }
     final colors = context.backgroundReadableColors;
     final audio = audioControls;
+    final l10n = AppLocalizations.of(context);
+    final cardHeading = l10n == null ? null : _cardHeading(l10n);
+    final cardActions = cardHeading == null
+        ? const <CallVideoAction>[]
+        : switch (presentation.status) {
+            CallVideoStatus.incomingUpgrade
+                when presentation.agreedMedia == CallMediaKind.audio =>
+              const [
+                CallVideoAction.declineUpgrade,
+                CallVideoAction.acceptUpgrade,
+              ],
+            CallVideoStatus.outgoingUpgrade
+                when presentation.agreedMedia == CallMediaKind.audio =>
+              const [CallVideoAction.cancelUpgrade],
+            _ => const <CallVideoAction>[],
+          };
     if (presentation.acceptedMedia != null &&
         presentation.agreedMedia == CallMediaKind.video &&
         audio is CallControls) {
@@ -60,6 +78,16 @@ class CallVideoControls extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (cardHeading != null) ...[
+              _card(
+                cardHeading,
+                cardActions,
+                l10n!,
+                colors,
+                statusIdentifier: 'call_video_upgrade_status',
+              ),
+              const SizedBox(height: 16),
+            ],
             Semantics(
               identifier: 'call_video_status',
               container: true,
@@ -108,12 +136,15 @@ class CallVideoControls extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _state(
-                  'call_video_status',
-                  statusLabel(presentation.status),
-                  colors.textPrimary,
-                  primary: true,
-                ),
+                if (cardHeading != null)
+                  _card(cardHeading, cardActions, l10n!, colors)
+                else
+                  _state(
+                    'call_video_status',
+                    statusLabel(presentation.status),
+                    colors.textPrimary,
+                    primary: true,
+                  ),
                 const SizedBox(height: 6),
                 _state(
                   'call_video_local_camera',
@@ -133,7 +164,8 @@ class CallVideoControls extends StatelessWidget {
                     runSpacing: 8,
                     children: [
                       for (final action in presentation.actions)
-                        _button(action, constraints.maxWidth, colors),
+                        if (!cardActions.contains(action))
+                          _button(action, constraints.maxWidth, colors),
                     ],
                   ),
                 ],
@@ -147,6 +179,96 @@ class CallVideoControls extends StatelessWidget {
       ],
     );
   }
+
+  String? _cardHeading(AppLocalizations l10n) {
+    if (presentation.acceptedMedia == null) return null;
+    final name = peerDisplayName?.trim();
+    final hasName = name != null && name.isNotEmpty;
+    switch (presentation.status) {
+      case CallVideoStatus.incomingUpgrade
+          when presentation.agreedMedia == CallMediaKind.audio:
+        return hasName
+            ? l10n.call_video_incoming_upgrade_from(name)
+            : statusLabel(presentation.status);
+      case CallVideoStatus.outgoingUpgrade
+          when presentation.agreedMedia == CallMediaKind.audio:
+        return hasName
+            ? l10n.call_video_waiting_for_acceptance(name)
+            : statusLabel(presentation.status);
+      case CallVideoStatus.switchingToVideo:
+        return l10n.call_video_switching;
+      default:
+        break;
+    }
+    // Pending includes permission, lease and PiP restoration work; it is not
+    // sensor readiness, nor does agreement authorize starting the camera.
+    if (presentation.isConnected &&
+        !presentation.isReconnecting &&
+        presentation.agreedMedia == CallMediaKind.video &&
+        presentation.switchingTo == null &&
+        presentation.videoActionPending &&
+        presentation.localCamera != CallCameraState.on) {
+      return l10n.call_video_camera_starting;
+    }
+    return null;
+  }
+
+  Widget _card(
+    String heading,
+    List<CallVideoAction> actions,
+    AppLocalizations l10n,
+    BackgroundReadableColors colors, {
+    String statusIdentifier = 'call_video_status',
+  }) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: colors.surfaceRaised,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: colors.surfaceBorder),
+    ),
+    child: LayoutBuilder(
+      builder: (context, constraints) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            key: ValueKey(statusIdentifier),
+            identifier: statusIdentifier,
+            liveRegion: true,
+            child: Text(
+              heading,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final action in actions)
+                  _button(
+                    action,
+                    constraints.maxWidth,
+                    colors,
+                    caption: action == CallVideoAction.declineUpgrade
+                        ? l10n.mic_perm_not_now
+                        : null,
+                    wrapCaption: true,
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 
   Widget _buildEntryControls(
     BuildContext context,
@@ -322,10 +444,12 @@ class CallVideoControls extends StatelessWidget {
   Widget _button(
     CallVideoAction action,
     double maxWidth,
-    BackgroundReadableColors colors,
-  ) {
+    BackgroundReadableColors colors, {
+    String? caption,
+    bool wrapCaption = false,
+  }) {
     final enabled = presentation.isAvailable(action);
-    final label = actionLabel(action);
+    final label = caption ?? actionLabel(action);
     final cameraAction =
         action == CallVideoAction.turnCameraOn ||
         action == CallVideoAction.turnCameraOff;
@@ -376,8 +500,10 @@ class CallVideoControls extends StatelessWidget {
                 Flexible(
                   child: Text(
                     label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    maxLines: wrapCaption ? null : 2,
+                    overflow: wrapCaption
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
                     style: TextStyle(
                       color: enabled
                           ? colors.textPrimary

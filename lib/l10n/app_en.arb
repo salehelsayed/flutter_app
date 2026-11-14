@@ -2793,6 +2793,14 @@
   "call_video_camera_caption": "Camera",
   "call_video_camera_off_caption": "Camera off",
   "call_video_ringing": "Ringing…",
+  "call_video_incoming_upgrade_from": "{name} wants to turn on video",
+  "@call_video_incoming_upgrade_from": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "call_video_waiting_for_acceptance": "Waiting for {name} to accept…",
   "@call_video_waiting_for_acceptance": {
     "placeholders": {

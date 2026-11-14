@@ -5409,6 +5409,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_video_ringing => 'Ringing…';
 
   @override
+  String call_video_incoming_upgrade_from(String name) {
+    return '$name wants to turn on video';
+  }
+
+  @override
   String call_video_waiting_for_acceptance(String name) {
     return 'Waiting for $name to accept…';
   }

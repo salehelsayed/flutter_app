@@ -18,6 +18,7 @@ class CallVideoScreenLayout extends StatelessWidget {
     this.showVideoControls = true,
     this.videoViews,
     this.preAnswer = false,
+    this.peerDisplayName,
   });
 
   final Widget profile;
@@ -28,6 +29,7 @@ class CallVideoScreenLayout extends StatelessWidget {
   final bool showVideoControls;
   final Widget? videoViews;
   final bool preAnswer;
+  final String? peerDisplayName;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +53,7 @@ class CallVideoScreenLayout extends StatelessWidget {
               audioControls
             else
               CallVideoControls(
+                peerDisplayName: peerDisplayName,
                 presentation: presentation,
                 audioControls: audioControls,
                 onIntent: (intent) {

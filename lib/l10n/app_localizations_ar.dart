@@ -5480,6 +5480,11 @@ class AppLocalizationsAr extends AppLocalizations {
   String get call_video_ringing => 'يرن…';
 
   @override
+  String call_video_incoming_upgrade_from(String name) {
+    return 'طلب تشغيل الفيديو من $name';
+  }
+
+  @override
   String call_video_waiting_for_acceptance(String name) {
     return 'بانتظار قبول $name…';
   }

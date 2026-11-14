@@ -5532,6 +5532,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_video_ringing => 'Klingelt …';
 
   @override
+  String call_video_incoming_upgrade_from(String name) {
+    return '$name möchte das Video einschalten';
+  }
+
+  @override
   String call_video_waiting_for_acceptance(String name) {
     return 'Warte auf Annahme durch $name …';
   }

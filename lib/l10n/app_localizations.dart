@@ -9044,6 +9044,12 @@ abstract class AppLocalizations {
   /// **'Ringing…'**
   String get call_video_ringing;
 
+  /// No description provided for @call_video_incoming_upgrade_from.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to turn on video'**
+  String call_video_incoming_upgrade_from(String name);
+
   /// No description provided for @call_video_waiting_for_acceptance.
   ///
   /// In en, this message translates to:

@@ -2357,6 +2357,14 @@
   "call_video_camera_caption": "الكاميرا",
   "call_video_camera_off_caption": "الكاميرا متوقفة",
   "call_video_ringing": "يرن…",
+  "call_video_incoming_upgrade_from": "طلب تشغيل الفيديو من {name}",
+  "@call_video_incoming_upgrade_from": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "call_video_waiting_for_acceptance": "بانتظار قبول {name}…",
   "@call_video_waiting_for_acceptance": {
     "placeholders": {
