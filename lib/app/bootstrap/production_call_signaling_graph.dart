@@ -175,7 +175,7 @@ final class ProductionCallSignalingGraph
     this.androidCallTokenCoordinator,
     this.ringback,
     this.videoEnabled = false,
-    this.onOutgoingVideoAdmitted,
+    this.onOutgoingV2Admitted,
     this.closeVideoSignaling,
     this.videoContexts,
     this.videoOwners,
@@ -403,7 +403,12 @@ final class ProductionCallSignalingGraph
   /// Intersects current local trust with the independently verified relay
   /// capability before the coordinator is permitted to create a session.
   final bool videoEnabled;
-  final void Function(CallId callId)? onOutgoingVideoAdmitted;
+  final void Function(
+    CallId callId,
+    CallMediaKind media,
+    ResolvedCallEndpoint endpoint,
+  )?
+  onOutgoingV2Admitted;
   final void Function()? closeVideoSignaling;
 
   final CallSignalingContextStore? videoContexts;
@@ -1488,9 +1493,15 @@ final class ProductionCallSignalingGraph
             canPlace: () => request?.isCanceled != true && !_shuttingDown,
             onApplied: (reduction) {
               if (reduction.decision == CallEventDecision.applied) {
-                if (video) {
-                  onOutgoingVideoAdmitted?.call(
+                if (videoEnabled &&
+                    endpoint.capabilities.contains(
+                      CallEndpointResolver.voiceCapability,
+                    ) &&
+                    endpoint.capabilities.contains('video_call_v2')) {
+                  onOutgoingV2Admitted?.call(
                     coordinator.activeSession!.callId!,
+                    video ? CallMediaKind.video : CallMediaKind.audio,
+                    endpoint,
                   );
                 }
                 request?.admit();
@@ -2920,7 +2931,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
       final videoOwners = videoEnabled
           ? <CallId, CallV2NegotiationEffectExecutor>{}
           : null;
-      CallId? outgoingVideoCallId;
+      ({CallId callId, CallMediaKind media, ResolvedCallEndpoint endpoint})?
+      outgoingV2Admission;
       final historyCheckpoint = ActiveCallHistoryCheckpoint(
         database: database,
         secureKeyStore: secureKeyStore,
@@ -3171,10 +3183,36 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 legacyPort: controlAdapter,
                 contextStore: signalingContextStore,
                 signalingAdapter: videoSignaling,
-                resolveCurrentEndpoint: resolveCurrentEndpoint,
+                resolveCurrentEndpoint: (accountPeerId) async {
+                  final admitted = outgoingV2Admission;
+                  if (admitted == null ||
+                      admitted.callId != coordinator.activeSession?.callId ||
+                      admitted.endpoint.accountPeerId != accountPeerId ||
+                      admitted.endpoint.expiresAtMs <= clock()) {
+                    throw const CallControlSignalingPortException(
+                      CallControlSignalingPortErrorCode.endpointMismatch,
+                    );
+                  }
+                  final fresh = await resolveCurrentEndpoint(accountPeerId);
+                  final current = outgoingV2Admission;
+                  // Preflight selects this exact authority and protocol. A
+                  // later lookup cannot retarget or downgrade the invitation.
+                  if (current?.callId != admitted.callId ||
+                      current?.media != admitted.media ||
+                      !identical(current?.endpoint, admitted.endpoint) ||
+                      coordinator.activeSession?.callId != admitted.callId ||
+                      diagnosticGraph?._shuttingDown == true ||
+                      admitted.endpoint.expiresAtMs <= clock() ||
+                      !_sameOutgoingV2Authority(admitted.endpoint, fresh)) {
+                    throw const CallControlSignalingPortException(
+                      CallControlSignalingPortErrorCode.endpointMismatch,
+                    );
+                  }
+                  return fresh;
+                },
                 outgoingMediaFor: (snapshot) =>
-                    snapshot.callId == outgoingVideoCallId
-                    ? CallMediaKind.video
+                    snapshot.callId == outgoingV2Admission?.callId
+                    ? outgoingV2Admission?.media
                     : null,
                 isOutgoingPreparationCurrent: (callId) =>
                     diagnosticGraph?._shuttingDown != true &&
@@ -3647,8 +3685,14 @@ CallSignalingComposition createProductionCallSignalingComposition({
             () async => (await permissions.Permission.camera.status).isGranted,
         qualityEnvironmentSource: qualitySource,
         videoEnabled: videoEnabled,
-        onOutgoingVideoAdmitted: videoEnabled
-            ? (callId) => outgoingVideoCallId = callId
+        onOutgoingV2Admitted: videoEnabled
+            ? (callId, media, endpoint) {
+                outgoingV2Admission = (
+                  callId: callId,
+                  media: media,
+                  endpoint: ResolvedCallEndpoint.frozen(endpoint),
+                );
+              }
             : null,
         closeVideoSignaling: videoSignaling?.close,
         videoContexts: videoEnabled ? signalingContextStore : null,
@@ -4120,6 +4164,23 @@ void _emitMediaCloseFailureStage(String stage) {
     // Diagnostics never change cleanup authority.
   }
 }
+
+// Match the preflight authority, allowing only a fresh validity timestamp.
+// The control adapter separately requires current voice/video capabilities.
+bool _sameOutgoingV2Authority(
+  ResolvedCallEndpoint first,
+  ResolvedCallEndpoint next,
+) =>
+    first.accountPeerId == next.accountPeerId &&
+    first.devicePeerId == next.devicePeerId &&
+    first.signingPublicKey == next.signingPublicKey &&
+    first.mlKemPublicKey == next.mlKemPublicKey &&
+    first.deviceKeyEpoch == next.deviceKeyEpoch &&
+    first.preferenceEpoch == next.preferenceEpoch &&
+    first.admissionAuthority == next.admissionAuthority &&
+    first.platform == next.platform &&
+    first.routingHandle == next.routingHandle &&
+    first.wakeHandle == next.wakeHandle;
 
 CallId _newCallId() => CallId.parse(const Uuid().v4());
 
