@@ -31,6 +31,7 @@ Widget buildOrbitScreenHarness({
   bool hideShellNav = false,
   VoidCallback? onOpenCalls,
   VoidCallback? onOpenSettings,
+  Listenable? innerCircleResetListenable,
 }) {
   final headerVN = ValueNotifier<OrbitHeaderProjection>(header);
   final listVN = ValueNotifier<OrbitViewProjection>(list);
@@ -77,6 +78,7 @@ Widget buildOrbitScreenHarness({
       hideShellNav: hideShellNav,
       onOpenCalls: onOpenCalls,
       onOpenSettings: onOpenSettings,
+      innerCircleResetListenable: innerCircleResetListenable,
     ),
   );
 }

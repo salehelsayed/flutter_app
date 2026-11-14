@@ -64,6 +64,10 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// Bubbles the edit-session active flag to the host-swipe yield gate.
   final ValueChanged<bool>? onEditSessionActiveChanged;
 
+  /// BL-27: reports when the overflow arcs open or close, so the host can let
+  /// the expanded orbit scroll instead of feeding vertical drags to 3D.
+  final ValueChanged<bool>? onOverflowExpandedChanged;
+
   /// Host pokes this on the Feed→Orbit rising edge to reset the transient state.
   final Listenable? resetSignal;
 
@@ -107,6 +111,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.onThoughtsSpread,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
+    this.onOverflowExpandedChanged,
     this.resetSignal,
     this.findOpenSignal,
     this.onFindSessionActiveChanged,
@@ -155,6 +160,7 @@ class _InnerCircleInteractiveSurfaceState
   OrbitGeometryPrefs _persisted = OrbitGeometryPrefs.defaults;
 
   bool _overflowExpanded = false;
+  bool _reportedOverflowExpanded = false;
   bool _labelsVisible = false;
   bool _editing = false;
   OrbitKnob? _armed;
@@ -265,6 +271,7 @@ class _InnerCircleInteractiveSurfaceState
         if (_editing) _setEditing(false);
       }
     });
+    _reportOverflowExpanded();
     if (_thoughtMotionEnabled) {
       _thoughtReveal.animateTo(visible ? 1 : 0, curve: Curves.easeInOutCubic);
     } else {
@@ -398,7 +405,14 @@ class _InnerCircleInteractiveSurfaceState
       if (_editing) _setEditing(false);
       _armed = null;
     });
+    _reportOverflowExpanded();
     _restoreThoughtsAfterArcs();
+  }
+
+  void _reportOverflowExpanded() {
+    if (_reportedOverflowExpanded == _overflowExpanded) return;
+    _reportedOverflowExpanded = _overflowExpanded;
+    widget.onOverflowExpandedChanged?.call(_overflowExpanded);
   }
 
   void _restoreThoughtsAfterArcs() {
@@ -640,6 +654,7 @@ class _InnerCircleInteractiveSurfaceState
         }
       }
     });
+    _reportOverflowExpanded();
     _restoreThoughtsAfterArcs();
   }
 
