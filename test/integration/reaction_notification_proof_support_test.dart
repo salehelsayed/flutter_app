@@ -2731,6 +2731,38 @@ Ranking Config:
       expect(cards.single.id, 42);
       expect(cards.single.isGroupSummary, isFalse);
     });
+
+    test(
+      'polling form reads a rejected dump as not-yet, a clean one as cards',
+      () {
+        final conflicting = completeDump([
+          keyedRecord(),
+          keyedRecord(body: 'Changed message'),
+        ]);
+        expect(
+          () => extractActiveContentNotificationCards(
+            conflicting,
+            packageName: fixturePackage,
+          ),
+          throwsFormatException,
+        );
+        expect(
+          tryExtractActiveContentNotificationCards(
+            conflicting,
+            packageName: fixturePackage,
+          ),
+          isNull,
+        );
+
+        final clean = tryExtractActiveContentNotificationCards(
+          completeDump([keyedRecord()]),
+          packageName: fixturePackage,
+        );
+        expect(clean, isNotNull);
+        expect(clean!.single.body, 'Exact fixture message');
+        expect(clean.single.id, 77);
+      },
+    );
   });
 
   group('extractOrbitUnreadCount', () {
