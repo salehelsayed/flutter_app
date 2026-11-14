@@ -166,6 +166,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Widget _buildVideoStage(CallVideoPresentation video, String? duration) {
     final l10n = AppLocalizations.of(context)!;
     final labels = CallVideoLocalizations(l10n);
+    final onVideoIntent = widget.onVideoIntent;
     // The owner supplies video pixels. This composition never starts a camera
     // and the static backdrop does not compete with a call for animation time.
     return Theme(
@@ -256,7 +257,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                   presentation: video,
                   audioControls: widget.controls,
                   onIntent: (intent) {
-                    if (mounted) widget.onVideoIntent?.call(intent);
+                    if (mounted) onVideoIntent?.call(intent);
                   },
                   controlsLabel: labels.controlsLabel,
                   statusLabel: labels.statusLabel,
