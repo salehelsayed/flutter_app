@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+
+import '../../../core/utils/flow_event_emitter.dart';
 
 import '../application/call_endpoint_resolver.dart';
 import '../application/call_signaling_context_store.dart';
@@ -36,6 +39,7 @@ final class ProductionCallV2SignalingAdapter {
   final int Function() _nowMs;
   final bool _videoEnabled;
   final Map<String, _PreparedV2Entry> _entries = {};
+  final Map<CallId, int> _closedCalls = {};
   bool _closed = false;
 
   // Keep failed/retired identities through the existing replay window. No
@@ -70,6 +74,7 @@ final class ProductionCallV2SignalingAdapter {
       entry.retire();
       return true;
     });
+    final reclamationAvailable = _compactEndedCalls(now);
     final endpoint = _snapshotEndpoint(admittedEndpoint);
     final identity = _digest(
       jsonEncode({
@@ -91,7 +96,16 @@ final class ProductionCallV2SignalingAdapter {
         signal.event == CallSignalV2Type.terminate;
     final limit =
         _maximumIdentities - (terminal ? 0 : _reservedTerminalIdentities);
+    if (_closedCalls.containsKey(signal.callId)) {
+      _recordRefusal('closed_call', terminal, limit, now);
+      return _refused(CallSignalingErrorCode.endpointMismatch);
+    }
+    if (!reclamationAvailable && !terminal) {
+      _recordRefusal('closed_call_limit', terminal, limit, now);
+      return _refused(CallSignalingErrorCode.transportUnavailable);
+    }
     if (_entries.length >= limit) {
+      _recordRefusal('adapter_identity_limit', terminal, limit, now);
       return _refused(CallSignalingErrorCode.transportUnavailable);
     }
     final context = _contexts.read(signal.callId);
@@ -137,6 +151,84 @@ final class ProductionCallV2SignalingAdapter {
       ),
     );
     return entry.result.future;
+  }
+
+  bool _compactEndedCalls(int now) {
+    _closedCalls.removeWhere(
+      (callId, expiry) => now >= expiry && _contexts.read(callId) == null,
+    );
+    final ended = <CallId, List<MapEntry<String, _PreparedV2Entry>>>{};
+    for (final item in _entries.entries) {
+      final callId = item.value.context.callId;
+      if (_contexts.read(callId) == null) {
+        (ended[callId] ??= []).add(item);
+      }
+    }
+    var available = true;
+    for (final group in ended.entries) {
+      // A terminal already reserved before purge may still be preparing its
+      // service custody. Do not revoke that in-flight handoff.
+      if (group.value.any(
+        (item) =>
+            item.value.terminal &&
+            !item.value.retired &&
+            item.value.transmission == null,
+      )) {
+        continue;
+      }
+      if ((!_closedCalls.containsKey(group.key) &&
+              _closedCalls.length >= _maximumIdentities) ||
+          !_service.retireV2Call(group.key)) {
+        available = false;
+        continue;
+      }
+      var expiry = _closedCalls[group.key] ?? 0;
+      for (final item in group.value) {
+        final entry = item.value;
+        if (entry.retainUntilMs > expiry) expiry = entry.retainUntilMs;
+        if (entry.terminal && _isCurrent(entry)) continue;
+        entry.retire();
+        _entries.remove(item.key);
+      }
+      _closedCalls[group.key] = expiry;
+    }
+    return available;
+  }
+
+  void _recordRefusal(String stage, bool terminal, int limit, int now) {
+    if (!kDebugMode) return;
+    var nextPrunableInMs = 0;
+    for (final entry in _entries.values) {
+      if (_contexts.read(entry.context.callId) != null) continue;
+      final remaining = entry.retainUntilMs - now;
+      if (remaining > 0 &&
+          (nextPrunableInMs == 0 || remaining < nextPrunableInMs)) {
+        nextPrunableInMs = remaining;
+      }
+    }
+    for (final expiry in _closedCalls.values) {
+      final remaining = expiry - now;
+      if (remaining > 0 &&
+          (nextPrunableInMs == 0 || remaining < nextPrunableInMs)) {
+        nextPrunableInMs = remaining;
+      }
+    }
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_V2_PREPARE_REFUSED',
+        details: {
+          'stage': stage,
+          'retainedCount': _entries.length,
+          'closedCallCount': _closedCalls.length,
+          'limit': limit,
+          'terminal': terminal,
+          'nextPrunableInMs': nextPrunableInMs,
+        },
+      );
+    } catch (_) {
+      // Diagnostics cannot change replay refusal or terminal custody.
+    }
   }
 
   Future<PreparedCallV2Signal> _prepare(
@@ -250,6 +342,7 @@ final class ProductionCallV2SignalingAdapter {
       entry.retire();
     }
     _entries.clear();
+    _closedCalls.clear();
   }
 
   @override

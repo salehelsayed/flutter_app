@@ -7,6 +7,8 @@ import 'package:flutter_app/features/call/infrastructure/production_call_v2_cont
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
@@ -469,6 +471,107 @@ void main() {
     expect((await r.send(successor)).delivered, isTrue);
     expect(r.crypto.encryptions, 2);
   });
+
+  test(
+    'BL28 terminal sealing handoff survives successor reclamation',
+    () async {
+      r.contexts.purge(CallId.parse(_call));
+      _bl28Open(r, 1);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      r.crypto.wait = () {
+        entered.complete();
+        return release.future;
+      };
+      final pending = _bl28Prepare(r, 1, 2, terminal: true);
+      await entered.future;
+      r.contexts.purge(CallId.parse(_bl28Call(1)));
+      r.crypto.wait = null;
+      _bl28Open(r, 2);
+      final successor = await _bl28Prepare(r, 2, 2);
+      release.complete();
+      final terminal = await pending;
+      expect((await r.send(terminal)).delivered, isTrue);
+      expect((await r.send(successor)).delivered, isTrue);
+      expect(r.crypto.encryptions, 2);
+    },
+  );
+
+  test('BL28 compacted service identity cannot acquire new bytes', () async {
+    r.contexts.purge(CallId.parse(_call));
+    _bl28Open(r, 1);
+    await _bl28Prepare(r, 1, 2);
+    r.contexts.purge(CallId.parse(_bl28Call(1)));
+    _bl28Open(r, 2);
+    await _bl28Prepare(r, 2, 2);
+    final encrypted = r.crypto.encryptions;
+    await expectLater(
+      r.service.prepareV2(
+        signal: _bl28Signal(r, 1, 2),
+        callHandle: _handle,
+        endpoint: r.endpoint,
+        senderSigningPrivateKey: r.signingKey,
+        authorize: () async => true,
+        canApply: () => true,
+        videoEnabled: true,
+      ),
+      rejected,
+    );
+    expect(r.crypto.encryptions, encrypted);
+  });
+
+  test(
+    'BL28 closed-call refusal is bounded and expires without eviction',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      final logging = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = true;
+      debugSetFlowEventSink(events.add);
+      try {
+        r.contexts.purge(CallId.parse(_call));
+        for (var call = 1; call <= 129; call++) {
+          _bl28Open(r, call);
+          await _bl28Prepare(r, call, 2);
+          r.contexts.purge(CallId.parse(_bl28Call(call)));
+        }
+        _bl28Open(r, 130);
+        await expectLater(_bl28Prepare(r, 130, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        final refusal = events.lastWhere(
+          (event) => event['event'] == 'CALL_V2_PREPARE_REFUSED',
+        );
+        final details = refusal['details'] as Map<String, dynamic>;
+        expect(details['stage'], 'closed_call_limit');
+        expect(details['closedCallCount'], 128);
+        expect(details.keys.toSet(), {
+          'stage',
+          'retainedCount',
+          'closedCallCount',
+          'limit',
+          'terminal',
+          'nextPrunableInMs',
+        });
+        expect(jsonEncode(details), isNot(contains(_bl28Call(1))));
+        _bl28Open(r, 1);
+        await expectLater(_bl28Prepare(r, 1, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        r.contexts.purge(CallId.parse(_bl28Call(1)));
+        debugSetFlowEventSink((_) => throw StateError('sink unavailable'));
+        await expectLater(_bl28Prepare(r, 130, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        debugSetFlowEventSink(events.add);
+        r.now += 10 * 60 * 1000 + 1;
+        r.contexts.purge(CallId.parse(_bl28Call(130)));
+        _bl28Open(r, 130);
+        final fresh = await _bl28Prepare(r, 130, 2);
+        expect((await r.send(fresh)).delivered, isTrue);
+        expect(r.crypto.encryptions, 130);
+      } finally {
+        debugSetFlowEventSink(null);
+        flowEventLoggingEnabled = logging;
+      }
+    },
+  );
 
   for (final media in CallMediaKind.values) {
     test(
