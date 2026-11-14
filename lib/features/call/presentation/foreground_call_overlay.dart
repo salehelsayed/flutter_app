@@ -759,18 +759,22 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                           );
                         });
                       },
-                      child: _CallPictureInPictureTile(
-                        ownerIdentity: (
-                          callId.value,
-                          capabilityGeneration,
-                          video.generation,
+                      // This tile sits above the app Navigator, so its
+                      // tooltips need their own bounded overlay.
+                      child: Overlay.wrap(
+                        child: _CallPictureInPictureTile(
+                          ownerIdentity: (
+                            callId.value,
+                            capabilityGeneration,
+                            video.generation,
+                          ),
+                          video: video,
+                          onReturn: restore,
+                          onEnd: () => _runAction(() {
+                            if (!isCurrent()) return null;
+                            return capability.end(callId);
+                          }),
                         ),
-                        video: video,
-                        onReturn: restore,
-                        onEnd: () => _runAction(() {
-                          if (!isCurrent()) return null;
-                          return capability.end(callId);
-                        }),
                       ),
                     ),
                   ),
