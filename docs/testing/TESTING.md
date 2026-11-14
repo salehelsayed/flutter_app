@@ -12415,6 +12415,41 @@ visible and cannot become an ordinary first-attempt PASS.
   stale upgrade ID. Covered, minimized and disposed surfaces cannot dispatch
   retained video actions. Existing Answer remains audio-only, including the
   locked projection; presenting a video request does not grant camera consent.
+  **Camera readiness and tap diagnostics:** initial media commit must notify
+  the presentation graph after the owner's committed flag changes. A renderer
+  event emitted synchronously during commit can otherwise leave the controls
+  showing an earlier disabled projection. An admitted camera action publishes
+  the existing pending state before awaiting permission. Controls remain
+  disabled until the existing readiness gates allow the action; there is no
+  queued intent, timer or automatic capture. Consent, current-owner, foreground,
+  native lease and capture fences remain in force. Debug-only `CALL_CAMERA_TAP`
+  diagnostics use fixed accepted/pending/refused outcomes and reason values,
+  including disabled physical taps and stale callbacks rejected by the public
+  composition guard. Disabled controls retain their existing distinct colors
+  and disabled semantics. Diagnostic failures cannot affect camera consent;
+  release/profile behavior does not emit these diagnostics.
+  Frozen RED `19df3d96ad57165d040024accf55d1f17b19d54e` retained 10 passing
+  preservation cases, seven failing assertions and six widget-test errors.
+  First GREEN `376026a763c59b4d47d1f089da76f6c387e4bef4` retained 22 passes
+  and one failure: the public stale-generation guard refused the action safely
+  but omitted its diagnostic. Correction
+  `b230de6e75eaf8b546f44719c43a79c655d1bc09` changed that diagnostic path
+  without changing the guard or any test. All 23 focused cases then passed;
+  the four complete changed files passed 124, 267, 114 and 23 cases respectively
+  (executor, composition, foreground binding and controls). These are observed
+  raw counts at that source, not estimated counts for later revisions.
+  Claude-UI's single original corrected run passed all 22 frozen host commands:
+  14,748 overlapping Flutter case executions, 335 Python cases in 210.384 seconds
+  within the unchanged 360-second limit, ten-path analysis and metadata
+  validation. All 46 identity checkpoints were clean, with all 40 pins matching
+  at each checkpoint. The first RED and first GREEN failure reports remain
+  unchanged. Complete per-case outcomes, original raw reports, source identities
+  and command/deadline adoption are retained in
+  `.codex-test-logs/codex-ui-bl16-camera-ready-20261114/correction-v2/host-final/all-outcomes-inspected.json`
+  (SHA-256 `079644de8211f3e44db1aa3cd0f735582e817774a59214e86793d72126f59cc3`).
+  Required `android-call-native` was not run in this host packet. These results
+  do not establish live camera capture, resolution of the iPhone tester scenario,
+  signed-candidate equivalence or an overall candidate pass.
   Host widget evidence covers control/status semantics, EN/DE/AR at 320 and
   360 logical pixels with 2x text, and the compact 600x320 layout. It does not
   prove live video frames, camera capture, native effects or device behavior.
