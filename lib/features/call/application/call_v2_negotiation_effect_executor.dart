@@ -2,6 +2,10 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
+import '../../../core/utils/flow_event_emitter.dart';
+
 import '../domain/call_engine.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -15,6 +19,7 @@ import 'call_media_switch_effect_executor.dart';
 import 'call_endpoint_resolver.dart';
 import 'call_negotiation_effect_executor.dart';
 import 'call_signaling_context_store.dart';
+import 'call_signaling_service.dart';
 import 'handle_incoming_call_signal.dart';
 
 /// The production binding uses ProductionCallV2SignalingAdapter.prepare and
@@ -1250,8 +1255,11 @@ final class CallV2NegotiationEffectExecutor
         }
       } on _V2WorkRetired {
         // Canonical End, timeout or successor episode owns retirement.
-      } catch (_) {
-        if (_recoveryCurrent(recovery)) return _failure(recovery.snapshot);
+      } catch (error) {
+        if (_recoveryCurrent(recovery)) {
+          if (kDebugMode) _reportRecoveryFailure(recovery, error);
+          return _failure(recovery.snapshot);
+        }
       } finally {
         recovery.scheduled = false;
       }
@@ -1265,9 +1273,38 @@ final class CallV2NegotiationEffectExecutor
     );
   }
 
+  void _reportRecoveryFailure(_V2Recovery recovery, Object error) {
+    // Closed vocabulary only: exception messages may contain SDP or addresses.
+    const types = {
+      'CallSignalingException',
+      'CallNegotiationPortException',
+      'CallEngineException',
+      'WebRtcAdapterException',
+      'PlatformException',
+      'StateError',
+      'ArgumentError',
+      'FormatException',
+      'TimeoutException',
+    };
+    try {
+      final type = error.runtimeType.toString();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_V2_RECOVERY_FAILED',
+        details: {
+          'stage': recovery.stage.name,
+          'errorType': types.contains(type) ? type : 'other',
+        },
+      );
+    } catch (_) {
+      // Debug diagnostics cannot alter canonical failure handling.
+    }
+  }
+
   Future<void> _prepareRecovery(_V2Recovery recovery) async {
     if (recovery.prepared) return;
     _checkRecovery(recovery);
+    recovery.stage = _V2RecoveryStage.retireVideo;
     if (!await recovery.retirement!) {
       recovery.blocked = true;
       return;
@@ -1278,6 +1315,7 @@ final class CallV2NegotiationEffectExecutor
       recovery.blocked = true;
       return;
     }
+    recovery.stage = _V2RecoveryStage.reconcileSdp;
     final proof = await (session as CallVideoSdpReconciler).reconcilePending(
       recovery.oldToken,
       canApply: () => _recoveryCurrent(recovery),
@@ -1287,10 +1325,13 @@ final class CallV2NegotiationEffectExecutor
       recovery.blocked = true;
       return;
     }
+    recovery.stage = _V2RecoveryStage.resolveEndpoint;
     await _freshAuthority();
     _checkRecovery(recovery);
+    recovery.stage = _V2RecoveryStage.readIceServers;
     final staged = await legacy.readStagedIceServers(callId);
     _checkRecovery(recovery);
+    recovery.stage = _V2RecoveryStage.validateIceServers;
     final now = legacy.clock().toUtc();
     final servers = [
       ...legacy.configuration.iceServers,
@@ -1302,6 +1343,7 @@ final class CallV2NegotiationEffectExecutor
         CallNegotiationPortErrorCode.iceServersUnavailable,
       );
     }
+    recovery.stage = _V2RecoveryStage.restartIce;
     final generation = await legacy.engine.restartIce(iceServers: servers);
     _checkRecovery(recovery);
     if (generation != recovery.oldGeneration + 1) throw const _V2WorkRetired();
@@ -1310,6 +1352,7 @@ final class CallV2NegotiationEffectExecutor
     // bounded identity ledger so later recovery episodes can admit fresh ICE.
     _seenIncoming.clear();
     recovery.negotiationId ??= idSource();
+    recovery.stage = _V2RecoveryStage.beginNegotiation;
     _token = session.beginNegotiation(
       negotiationId: recovery.negotiationId!,
       mediaRevision: recovery.revision,
@@ -1376,9 +1419,11 @@ final class CallV2NegotiationEffectExecutor
         recovery.announcementDelivered = true;
       }
       if (recovery.localDescription == null) {
+        recovery.stage = _V2RecoveryStage.createDescription;
         final offer = await _session!.createOffer(token);
         _checkRecovery(recovery);
         _validateDescription(offer, CallSessionDescriptionType.offer);
+        recovery.stage = _V2RecoveryStage.applyLocalDescription;
         await _session!.applyLocal(token, offer);
         _checkRecovery(recovery);
         recovery.localDescription = offer;
@@ -1388,6 +1433,7 @@ final class CallV2NegotiationEffectExecutor
       if (work == null) return;
       if (!recovery.remoteApplied) {
         _checkRecovery(recovery, work);
+        recovery.stage = _V2RecoveryStage.applyRemoteDescription;
         await _session!.applyRemote(token, _description(work.signal));
         _checkRecovery(recovery, work);
         recovery.remoteApplied = true;
@@ -1400,6 +1446,7 @@ final class CallV2NegotiationEffectExecutor
       if (work == null) return;
       _checkRecovery(recovery, work);
       if (!recovery.remoteApplied) {
+        recovery.stage = _V2RecoveryStage.applyRemoteDescription;
         await _session!.applyRemote(token, _description(work.signal));
         _checkRecovery(recovery, work);
         recovery.remoteApplied = true;
@@ -1408,15 +1455,18 @@ final class CallV2NegotiationEffectExecutor
         _checkRecovery(recovery, work);
       }
       if (recovery.localDescription == null) {
+        recovery.stage = _V2RecoveryStage.createDescription;
         final answer = await _session!.createAnswer(token);
         _checkRecovery(recovery, work);
         _validateDescription(answer, CallSessionDescriptionType.answer);
+        recovery.stage = _V2RecoveryStage.applyLocalDescription;
         await _session!.applyLocal(token, answer);
         _checkRecovery(recovery, work);
         recovery.localDescription = answer;
       }
       if (!await _publishRecoveryDescription(recovery)) return;
     }
+    recovery.stage = _V2RecoveryStage.commit;
     await _session!.commit(token);
     _checkRecovery(recovery, recovery.remoteWork);
     recovery.completed = true;
@@ -1470,6 +1520,7 @@ final class CallV2NegotiationEffectExecutor
       now + recovery.deadlineMs - _monotonicMs,
     );
     if (expires <= now) throw const _V2WorkRetired();
+    recovery.stage = _V2RecoveryStage.prepareSignal;
     final metadata = contexts.reserveNextMetadata(
       callId,
       iceGeneration: generation ?? legacy.engine.iceGeneration,
@@ -1503,6 +1554,7 @@ final class CallV2NegotiationEffectExecutor
         signal.iceGeneration == legacy.engine.iceGeneration;
     var delivered = false;
     try {
+      recovery.stage = _V2RecoveryStage.sendSignal;
       delivered = await sendSignal(
         signal: signal,
         callHandle: _context!.callHandle,
@@ -1511,6 +1563,10 @@ final class CallV2NegotiationEffectExecutor
       );
     } on CallNegotiationPortException catch (error) {
       if (error.code != CallNegotiationPortErrorCode.transportUnavailable) {
+        rethrow;
+      }
+    } on CallSignalingException catch (error) {
+      if (error.code != CallSignalingErrorCode.transportUnavailable) {
         rethrow;
       }
     }
@@ -2157,6 +2213,23 @@ final class CallV2NegotiationEffectExecutor
   String toString() => 'CallV2NegotiationEffectExecutor';
 }
 
+enum _V2RecoveryStage {
+  drive,
+  retireVideo,
+  reconcileSdp,
+  resolveEndpoint,
+  readIceServers,
+  validateIceServers,
+  restartIce,
+  beginNegotiation,
+  createDescription,
+  applyLocalDescription,
+  applyRemoteDescription,
+  commit,
+  prepareSignal,
+  sendSignal,
+}
+
 final class _V2Recovery {
   _V2Recovery({
     required this.snapshot,
@@ -2183,6 +2256,7 @@ final class _V2Recovery {
   bool scheduled = false;
   bool needsDrive = false;
   bool prepared = false;
+  _V2RecoveryStage stage = _V2RecoveryStage.drive;
   bool requestDelivered = false;
   bool announcementDelivered = false;
   bool remoteApplied = false;
