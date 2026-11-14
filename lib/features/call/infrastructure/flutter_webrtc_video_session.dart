@@ -1039,6 +1039,9 @@ final class FlutterWebRtcVideoSession
           video.sender,
           capture.tracks.single,
           tier,
+          stillCurrent: () =>
+              _qualityAtTier(quality, tier) &&
+              _owner.captureFor(intent) != null,
         )) {
           return false;
         }
@@ -1087,17 +1090,58 @@ final class FlutterWebRtcVideoSession
       ? '${step}_capture_replaced'
       : '${step}_${_tierStage(quality, tier)}';
 
+  /// Fresh native parameters of exactly this sender (same senderId on this
+  /// session's connection); null on a miss, an ambiguous match or an error.
+  Future<webrtc.RTCRtpParameters?> _freshSenderParameters(
+    webrtc.RTCRtpSender sender,
+  ) async {
+    try {
+      final id = sender.senderId;
+      final matches = [
+        for (final candidate in await _connection().getSenders())
+          if (candidate.senderId == id) candidate,
+      ];
+      return matches.length == 1 ? matches.single.parameters : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<bool> _setQualityParameters(
     webrtc.RTCRtpSender sender,
     webrtc.MediaStreamTrack track,
-    CallVideoQualityTier tier,
-  ) async {
-    final previous = sender.parameters;
-    final encodings = previous.encodings;
+    CallVideoQualityTier tier, {
+    required bool Function() stillCurrent,
+  }) async {
+    var previous = sender.parameters;
+    var encodings = previous.encodings;
     // This owner negotiates one camera encoding, never simulcast. An unknown
     // layout cannot silently multiply or bypass the per-sender ceiling.
-    if (encodings == null || encodings.length != 1) {
-      if (_diag) _cameraStop('encodings', encodings: encodings?.length ?? -1);
+    if (encodings == null || encodings.isEmpty) {
+      // Defect 3: the pinned SDK caches parameters when the transceiver is
+      // created (before SDP); Android reports 0 there and its native merge
+      // never creates an encoding. Re-read the SAME sender and cap only a
+      // fresh single encoding.
+      final cached = encodings?.length ?? -1;
+      final fresh = await _freshSenderParameters(sender);
+      final freshCount = fresh?.encodings?.length ?? -1;
+      if (_diag) {
+        debugPrint(
+          '[CAMERA] encodings_refresh cached=$cached fresh=$freshCount',
+        );
+      }
+      if (!stillCurrent()) {
+        if (_diag) _cameraStop('refresh_not_current');
+        return false;
+      }
+      if (fresh == null || freshCount != 1) {
+        if (_diag) _cameraStop('encodings_fresh', encodings: freshCount);
+        return false;
+      }
+      previous = fresh;
+      encodings = fresh.encodings!;
+    } else if (encodings.length != 1) {
+      if (_diag) _cameraStop('encodings', encodings: encodings.length);
       return false;
     }
     final settings = track.getSettings();
