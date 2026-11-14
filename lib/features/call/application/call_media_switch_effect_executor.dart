@@ -63,6 +63,7 @@ final class CallMediaSwitchEffectExecutor {
          settledMedia: initialMedia,
          settledRevision: settledRevision,
          nowMs: nowMs,
+         maximumTransactions: maximumTransactions,
        ) {
     if (maximumTransactions < 1 || maximumTransactions > 128) {
       throw ArgumentError.value(maximumTransactions, 'maximumTransactions');
@@ -259,7 +260,11 @@ final class CallMediaSwitchEffectExecutor {
   }) {
     if (!_current || !_allowed(canApply)) return false;
     final work = _transactions[id];
-    if (work == null || !work.admitted || work.retired) return false;
+    if (work == null ||
+        !work.admitted ||
+        (work.retired && !machine.cancellationPending(id))) {
+      return false;
+    }
     final local = fromCaller == localIsCaller;
     if ((!local && localGrant != null) ||
         (local && camera == CallCameraState.on && !_grantCurrent(localGrant))) {
@@ -280,6 +285,7 @@ final class CallMediaSwitchEffectExecutor {
     }
     if (decision.accepted &&
         response == MediaSwitchResponse.accept &&
+        !machine.cancellationSelected(id) &&
         !localIsCaller) {
       host.expectRemoteOffer();
     }
@@ -442,6 +448,8 @@ final class CallMediaSwitchEffectExecutor {
     required int baseRevision,
     required int revision,
     bool remote = false,
+    bool? fromCaller,
+    int? deadlineMs,
     MediaSwitchAbortReason reason = MediaSwitchAbortReason.cancelled,
   }) {
     if (!_current && !_recoveryCurrent) return false;
@@ -450,6 +458,8 @@ final class CallMediaSwitchEffectExecutor {
       baseRevision: baseRevision,
       revision: revision,
       remote: remote,
+      fromCaller: fromCaller,
+      deadlineMs: deadlineMs,
       reason: reason,
     );
     _apply(decision, reason: reason);
@@ -774,7 +784,8 @@ final class CallMediaSwitchEffectExecutor {
     }
     if (!_controlCurrent(work, effect)) return false;
     final kind = effect.replayOf ?? effect.kind;
-    if (kind == MediaSwitchEffectKind.sendAbort ||
+    if ((kind == MediaSwitchEffectKind.sendAbort &&
+            !machine.cancellationPending(work.request.id)) ||
         (machine.requiresReconciliation &&
             (kind == MediaSwitchEffectKind.sendAck ||
                 kind == MediaSwitchEffectKind.sendCommit))) {
@@ -784,7 +795,9 @@ final class CallMediaSwitchEffectExecutor {
           delivered: delivered,
         ),
       );
-    } else if (!delivered && machine.currentSwitchId == work.request.id) {
+    } else if (!delivered &&
+        !machine.cancellationPending(work.request.id) &&
+        machine.currentSwitchId == work.request.id) {
       abort(
         id: work.request.id,
         baseRevision: work.request.baseRevision,
@@ -805,6 +818,14 @@ final class CallMediaSwitchEffectExecutor {
       MediaSwitchEffectKind.sendCommit,
       MediaSwitchEffectKind.sendAck,
     }.contains(kind);
+    if (kind == MediaSwitchEffectKind.sendResponse &&
+        machine.originalCancellationResponse(effect)) {
+      return true;
+    }
+    if (kind == MediaSwitchEffectKind.sendAbort &&
+        machine.cancellationPending(work.request.id)) {
+      return work.aborted && machine.cancellationResultCurrent(work.request.id);
+    }
     if ((!_current || work.retired) && !terminal) return false;
     if (kind == MediaSwitchEffectKind.sendResponse &&
         effect.response != MediaSwitchResponse.accept) {
@@ -828,7 +849,10 @@ final class CallMediaSwitchEffectExecutor {
     if (!localIsCaller) host.expectRemoteOffer();
     _queue(work, () async {
       final session = host.session;
-      var result = CallVideoSdpReconciliationOutcome.unreconciled;
+      var result =
+          token == null && machine.cancellationSelected(work.request.id)
+          ? CallVideoSdpReconciliationOutcome.alreadyStable
+          : CallVideoSdpReconciliationOutcome.unreconciled;
       if (token != null && session is CallVideoSdpReconciler) {
         result = await (session as CallVideoSdpReconciler).reconcilePending(
           token,
