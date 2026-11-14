@@ -232,29 +232,38 @@ Widget _app(
   Locale locale = const Locale('en'),
   double scale = 1,
   Widget? retainedChild,
-}) => MaterialApp(
-  locale: locale,
-  localizationsDelegates: AppLocalizations.localizationsDelegates,
-  supportedLocales: AppLocalizations.supportedLocales,
-  theme: ThemeData(
-    brightness: Brightness.dark,
-    extensions: const <ThemeExtension<dynamic>>[BackgroundReadableColors.dark],
-  ),
-  builder: (context, child) => MediaQuery(
-    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-    child: child!,
-  ),
-  home: ForegroundCallOverlay(
+  bool rootBuilder = false,
+}) {
+  final retained =
+      retainedChild ??
+      const Scaffold(body: Center(child: Text('retained route')));
+  Widget overlay(Widget child) => ForegroundCallOverlay(
     capability: capability,
     loadContactDisplayName: (_) async => locale.languageCode == 'ar'
         ? 'اسم صديق تجريبي طويل للغاية'
         : 'Alexandria Very Long Synthetic Contact Name',
     now: () => _now,
-    child:
-        retainedChild ??
-        const Scaffold(body: Center(child: Text('retained route'))),
-  ),
-);
+    child: child,
+  );
+  return MaterialApp(
+    locale: locale,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(
+      brightness: Brightness.dark,
+      extensions: const <ThemeExtension<dynamic>>[
+        BackgroundReadableColors.dark,
+      ],
+    ),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(scale)),
+      child: rootBuilder ? overlay(child!) : child!,
+    ),
+    home: rootBuilder ? retained : overlay(retained),
+  );
+}
 
 Future<void> _withOverlay(
   WidgetTester tester,
@@ -263,6 +272,7 @@ Future<void> _withOverlay(
   Locale locale = const Locale('en'),
   double scale = 1,
   Widget? retainedChild,
+  bool rootBuilder = false,
 }) async {
   final semantics = tester.ensureSemantics();
   try {
@@ -272,6 +282,7 @@ Future<void> _withOverlay(
         locale: locale,
         scale: scale,
         retainedChild: retainedChild,
+        rootBuilder: rootBuilder,
       ),
     );
     await tester.pumpAndSettle();
@@ -994,6 +1005,144 @@ void main() {
   );
 
   group('PIP-IN', () {
+    // Physical-pixel semantics bounds do not establish a tile's logical size.
+    // Keep the reference phone viewport separate from a synthetic 116dp tile;
+    // neither fixture claims to measure the installed device's density.
+    for (final language in ['en', 'de', 'ar']) {
+      for (final compact in [false, true]) {
+        testWidgets(
+          'PIP-END $language ${compact ? '116dp compact keyboard' : 'reference phone geometry'} has a named reachable End',
+          (tester) async {
+            _viewport(tester, 400, 800);
+            addTearDown(tester.view.resetViewInsets);
+            final initial = _pipProjection();
+            final cap = _VideoCapability(initial);
+            await _withOverlay(
+              tester,
+              cap,
+              (l10n) async {
+                await _minimizePip(tester);
+                // Resize only after minimizing: the compact fixture concerns
+                // the tile, not full-screen call controls in a 140dp window.
+                tester.view.devicePixelRatio = compact ? 1 : 2.625;
+                tester.view.physicalSize = compact
+                    ? const Size(140, 200)
+                    : const Size(1080, 2400);
+                tester.view.viewInsets = FakeViewPadding(
+                  bottom: compact ? 24 : 0,
+                );
+                await tester.pump();
+                final tile = find.byKey(const ValueKey('call-pip-tile'));
+                final end = find.byKey(const ValueKey('call-pip-end'));
+                final screen =
+                    Offset.zero &
+                    (tester.view.physicalSize / tester.view.devicePixelRatio);
+                final keyboardTop =
+                    screen.bottom -
+                    tester.view.viewInsets.bottom /
+                        tester.view.devicePixelRatio;
+                void expectFooterInBounds() {
+                  final tileRect = tester.getRect(tile);
+                  final endRect = tester.getRect(end);
+                  if (compact) expect(tileRect.width, closeTo(116, 0.001));
+                  expect(endRect.width, greaterThanOrEqualTo(48));
+                  expect(endRect.height, greaterThanOrEqualTo(48));
+                  expect(endRect.left, greaterThanOrEqualTo(tileRect.left));
+                  expect(endRect.right, lessThanOrEqualTo(tileRect.right));
+                  expect(endRect.top, greaterThanOrEqualTo(tileRect.top));
+                  expect(endRect.bottom, lessThanOrEqualTo(tileRect.bottom));
+                  expect(tileRect.left, greaterThanOrEqualTo(screen.left));
+                  expect(tileRect.right, lessThanOrEqualTo(screen.right));
+                  expect(tileRect.top, greaterThanOrEqualTo(56));
+                  expect(tileRect.bottom, lessThanOrEqualTo(keyboardTop));
+                  expect(end.hitTestable(), findsOneWidget);
+                }
+
+                expectFooterInBounds();
+                await tester.drag(
+                  find.byKey(const ValueKey('call-pip-view')),
+                  const Offset(-500, -500),
+                );
+                await tester.pump();
+                expectFooterInBounds();
+                final namedEnd = find.semantics.byLabel(l10n.call_end);
+                // A tooltip-only node must fail this contract.
+                expect(namedEnd, findsOneWidget);
+                final endNode = tester.getSemantics(
+                  find.bySemanticsIdentifier('call_pip_end'),
+                );
+                expect(endNode.label, l10n.call_end);
+                expect(endNode.getSemanticsData().identifier, 'call_pip_end');
+                var semanticRect = endNode.rect;
+                for (
+                  SemanticsNode? node = endNode;
+                  node != null;
+                  node = node.parent
+                ) {
+                  final transform = node.transform;
+                  if (transform != null) {
+                    semanticRect = MatrixUtils.transformRect(
+                      transform,
+                      semanticRect,
+                    );
+                  }
+                }
+                final endRect = tester.getRect(end);
+                expect(semanticRect.left, closeTo(endRect.left, 0.001));
+                expect(semanticRect.top, closeTo(endRect.top, 0.001));
+                expect(semanticRect.right, closeTo(endRect.right, 0.001));
+                expect(semanticRect.bottom, closeTo(endRect.bottom, 0.001));
+                expect(
+                  Directionality.of(tester.element(end)),
+                  language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+                );
+                tester.semantics.tap(namedEnd);
+                await tester.pump();
+                expect(cap.audioCalls, [('end', _callA)]);
+                expect(cap.videoCalls, isEmpty);
+                expect(cap.current, same(initial));
+                expect(tile, findsOneWidget);
+                cap.emit(_pipProjection(state: CallState.ended));
+                await tester.pump();
+                expect(tile, findsNothing);
+                expect(find.semantics.byLabel(l10n.call_end), findsNothing);
+                expect(tester.takeException(), isNull);
+              },
+              locale: Locale(language),
+              scale: 2,
+              rootBuilder: true,
+            );
+          },
+        );
+      }
+    }
+
+    for (final replacement in ['call', 'generation']) {
+      testWidgets(
+        'PIP-END stale $replacement semantics cannot end a successor',
+        (tester) async {
+          final cap = _VideoCapability(_pipProjection());
+          await _withOverlay(tester, cap, (l10n) async {
+            await _minimizePip(tester);
+            final namedEnd = find.semantics.byLabel(l10n.call_end);
+            expect(namedEnd, findsOneWidget);
+            // The old semantic action is still painted. The capability has
+            // advanced without a stream/frame, so dispatch must re-read it.
+            cap.emit(
+              replacement == 'call'
+                  ? _pipProjection(callId: _callB)
+                  : _pipProjection(generation: 8),
+              notify: false,
+            );
+            tester.semantics.tap(namedEnd);
+            await tester.pump();
+            expect(cap.audioCalls, isEmpty);
+            expect(cap.videoCalls, isEmpty);
+            expect(tester.takeException(), isNull);
+          }, rootBuilder: true);
+        },
+      );
+    }
     testWidgets(
       'minimize shows only the owner remote view and restores full call',
       (tester) async {
