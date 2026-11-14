@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
@@ -296,4 +297,352 @@ void main() {
       expect(capability.audio, ['end']);
     });
   });
+  _vui5aTests();
+}
+
+class _VUI5aCapability extends _Capability {
+  _VUI5aCapability(ForegroundCallProjection initial)
+    : _latest = initial,
+      super(initial);
+
+  ForegroundCallProjection _latest;
+  @override
+  ForegroundCallProjection get current => _latest;
+
+  void emit(ForegroundCallProjection projection) {
+    _latest = projection;
+    events.add(projection);
+  }
+}
+
+ForegroundCallProjection _vui5aProjection({
+  CallState state = CallState.connected,
+  bool reconnecting = false,
+  CallCameraState remote = CallCameraState.on,
+  bool retainViews = true,
+  int generation = 7,
+  int localTexture = 11,
+  int remoteTexture = 22,
+}) {
+  final base = _projection();
+  return ForegroundCallProjection(
+    session: base.session.copyWith(state: state),
+    audio: base.audio,
+    video: ForegroundCallVideoProjection(
+      generation: generation,
+      localView: retainViews
+          ? CallVideoView(textureId: localTexture, width: 640, height: 480)
+          : null,
+      remoteView: retainViews
+          ? CallVideoView(textureId: remoteTexture, width: 1280, height: 720)
+          : null,
+      presentation: CallVideoPresentation.project(
+        videoEnabled: true,
+        wireVersion: CallWireVersion.v2,
+        requestedMedia: CallMediaKind.video,
+        acceptedMedia: CallMediaKind.video,
+        agreedMedia: CallMediaKind.video,
+        localCamera: CallCameraState.on,
+        remoteCamera: remote,
+        isConnected: !reconnecting,
+        isReconnecting: reconnecting,
+        mayTurnCameraOn: true,
+        maySwitchCamera: true,
+      ),
+    ),
+  );
+}
+
+Future<void> _vui5aWithCall(
+  WidgetTester tester,
+  _VUI5aCapability capability,
+  Future<void> Function() body, {
+  String language = 'en',
+  Size size = const Size(390, 844),
+  double scale = 1,
+  DateTime Function()? now,
+}) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = size;
+  try {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: Locale(language),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          extensions: const [BackgroundReadableColors.dark],
+        ),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(scale)),
+          child: child!,
+        ),
+        home: ForegroundCallOverlay(
+          capability: capability,
+          loadContactDisplayName: (_) async => 'Layla',
+          now: now ?? () => _now,
+          child: const Scaffold(body: Text('Chat')),
+        ),
+      ),
+    );
+    await tester.pump();
+    await body();
+    expect(tester.takeException(), isNull);
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(
+      () => capability.events.close().timeout(const Duration(seconds: 5)),
+    );
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  }
+}
+
+Finder _vui5aExpectFallback(WidgetTester tester) {
+  final avatar = find.byType(UserAvatar);
+  // Positive presentation assertions precede safety checks that already pass.
+  expect(avatar, findsOneWidget);
+  final l10n = AppLocalizations.of(tester.element(avatar))!;
+  final pill = find.text(l10n.call_video_status_reconnecting);
+  expect(pill, findsOneWidget);
+  expect(
+    find.ancestor(
+      of: pill,
+      matching: find.byWidgetPredicate(
+        (widget) => switch (widget) {
+          DecoratedBox(decoration: BoxDecoration(:final borderRadius)) =>
+            borderRadius != null && borderRadius != BorderRadius.zero,
+          Material(:final borderRadius, :final shape) =>
+            (borderRadius != null && borderRadius != BorderRadius.zero) ||
+                shape is RoundedRectangleBorder ||
+                shape is StadiumBorder,
+          ClipRRect(:final borderRadius) => borderRadius != BorderRadius.zero,
+          _ => false,
+        },
+      ),
+    ),
+    findsWidgets,
+  );
+  expect(find.byKey(const ValueKey('call-video-views')), findsNothing);
+  expect(_view('remote'), findsNothing);
+  expect(_view('local'), findsNothing);
+  expect(find.byKey(const ValueKey('call-video-preview-flip')), findsNothing);
+  expect(find.byType(Texture), findsNothing);
+  expect(find.text(l10n.call_video_remote_camera_on), findsNothing);
+  expect(find.text(l10n.call_video_waiting_for_remote('Layla')), findsNothing);
+  expect(find.text('Layla'), findsOneWidget);
+  final bounds =
+      Offset.zero & (tester.view.physicalSize / tester.view.devicePixelRatio);
+  final avatarRect = tester.getRect(avatar);
+  final pillRect = tester.getRect(pill);
+  final nameRect = tester.getRect(find.text('Layla'));
+  expect(find.text('01:05'), findsOneWidget);
+  final durationRect = tester.getRect(find.text('01:05'));
+  for (final rect in [avatarRect, pillRect, nameRect, durationRect]) {
+    expect(rect.left, greaterThanOrEqualTo(bounds.left));
+    expect(rect.right, lessThanOrEqualTo(bounds.right));
+    expect(rect.top, greaterThanOrEqualTo(bounds.top));
+    expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
+  }
+  expect(avatarRect.overlaps(pillRect), isFalse);
+  expect(avatarRect.overlaps(nameRect), isFalse);
+  expect(pillRect.overlaps(nameRect), isFalse);
+  expect(durationRect.overlaps(avatarRect), isFalse);
+  expect(durationRect.overlaps(pillRect), isFalse);
+  for (final action in ['mute', 'speaker', 'end']) {
+    final control = _control('call_$action');
+    expect(control, findsOneWidget);
+    final rect = tester.getRect(control);
+    expect(rect.width, greaterThanOrEqualTo(48));
+    expect(rect.height, greaterThanOrEqualTo(48));
+    expect(rect.left, greaterThanOrEqualTo(bounds.left));
+    expect(rect.right, lessThanOrEqualTo(bounds.right));
+    expect(rect.top, greaterThanOrEqualTo(bounds.top));
+    expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
+    expect(rect.overlaps(avatarRect), isFalse);
+    expect(rect.overlaps(pillRect), isFalse);
+    expect(control.hitTestable(), findsOneWidget);
+  }
+  final reconnect = l10n.call_video_status_reconnecting;
+  expect(
+    find.semantics.byPredicate(
+      (node) => node.getSemanticsData().label.contains(reconnect),
+    ),
+    findsOneWidget,
+  );
+  final status = tester
+      .getSemantics(_control('call_video_status'))
+      .getSemanticsData();
+  expect(status.label, reconnect);
+  expect(status.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
+  expect(status.hasFlag(SemanticsFlag.isButton), isFalse);
+  expect(status.hasAction(SemanticsAction.tap), isFalse);
+  return pill;
+}
+
+void _vui5aTests() {
+  for (final (label, state, reconnecting, remote, retainViews) in [
+    (
+      'retained on metadata',
+      CallState.reconnecting,
+      true,
+      CallCameraState.on,
+      true,
+    ),
+    ('null metadata', CallState.reconnecting, true, CallCameraState.on, false),
+    ('remote off', CallState.reconnecting, true, CallCameraState.off, true),
+    (
+      'remote paused',
+      CallState.reconnecting,
+      true,
+      CallCameraState.paused,
+      true,
+    ),
+    (
+      'session-only reconnect',
+      CallState.reconnecting,
+      false,
+      CallCameraState.on,
+      true,
+    ),
+    (
+      'presentation-only reconnect',
+      CallState.connected,
+      true,
+      CallCameraState.on,
+      true,
+    ),
+  ]) {
+    testWidgets('VUI5a $label shows an unobscured passive fallback', (
+      tester,
+    ) async {
+      final capability = _VUI5aCapability(_vui5aProjection());
+      await _vui5aWithCall(tester, capability, () async {
+        expect(
+          tester
+              .widgetList<Texture>(find.byType(Texture))
+              .map((texture) => texture.textureId),
+          unorderedEquals([11, 22]),
+        );
+        capability.emit(
+          _vui5aProjection(
+            state: state,
+            reconnecting: reconnecting,
+            remote: remote,
+            retainViews: retainViews,
+          ),
+        );
+        await tester.pump();
+        final pill = _vui5aExpectFallback(tester);
+        expect(find.text('01:05'), findsOneWidget);
+        expect(
+          tester
+              .getRect(find.text('01:05'))
+              .overlaps(tester.getRect(find.byType(UserAvatar))),
+          isFalse,
+        );
+        await tester.tap(pill);
+        await tester.pump();
+        expect(capability.video, isEmpty);
+        expect(capability.audio, isEmpty);
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  testWidgets(
+    'VUI5a recovery renders only new views and retains call duration',
+    (tester) async {
+      var now = _now;
+      final capability = _VUI5aCapability(_vui5aProjection());
+      await _vui5aWithCall(tester, capability, () async {
+        capability.emit(
+          _vui5aProjection(state: CallState.reconnecting, reconnecting: true),
+        );
+        await tester.pump();
+        _vui5aExpectFallback(tester);
+        now = now.add(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+        expect(find.text('01:07'), findsOneWidget);
+        capability.emit(
+          _vui5aProjection(generation: 8, localTexture: 33, remoteTexture: 44),
+        );
+        await tester.pump();
+        expect(find.byType(UserAvatar), findsNothing);
+        final l10n = AppLocalizations.of(tester.element(_control('call_end')))!;
+        expect(find.text(l10n.call_video_status_reconnecting), findsNothing);
+        expect(
+          tester
+              .widgetList<Texture>(find.byType(Texture))
+              .map((texture) => texture.textureId),
+          unorderedEquals([33, 44]),
+        );
+        expect(find.text('01:07'), findsOneWidget);
+        now = now.add(const Duration(seconds: 3));
+        await tester.pump(const Duration(seconds: 3));
+        expect(find.text('01:10'), findsOneWidget);
+        expect(capability.video, isEmpty);
+        expect(capability.audio, isEmpty);
+      }, now: () => now);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets(
+      'VUI5a $language 320px2x reconnect preserves text and actions',
+      (tester) async {
+        final capability = _VUI5aCapability(_vui5aProjection());
+        await _vui5aWithCall(
+          tester,
+          capability,
+          () async {
+            capability.emit(
+              _vui5aProjection(
+                state: CallState.reconnecting,
+                reconnecting: true,
+              ),
+            );
+            await tester.pump();
+            final pill = _vui5aExpectFallback(tester);
+            final paragraph = tester.renderObject<RenderParagraph>(pill);
+            expect(paragraph.didExceedMaxLines, isFalse);
+            expect(
+              paragraph.textDirection,
+              language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+            );
+            expect(find.text('01:05'), findsOneWidget);
+            final duration = tester.getRect(find.text('01:05'));
+            expect(duration.overlaps(tester.getRect(pill)), isFalse);
+            expect(
+              duration.overlaps(tester.getRect(find.byType(UserAvatar))),
+              isFalse,
+            );
+            await tester.tap(pill);
+            await tester.pump();
+            expect(capability.audio, isEmpty);
+            expect(capability.video, isEmpty);
+            for (final action in ['mute', 'speaker', 'end']) {
+              final control = _control('call_$action');
+              tester.semantics.tap(
+                find.semantics.byPredicate(
+                  (node) =>
+                      node.getSemanticsData().identifier == 'call_$action',
+                ),
+              );
+              await tester.pump();
+              expect(control, findsOneWidget);
+            }
+            expect(capability.audio, ['mute', 'speaker', 'end']);
+            expect(capability.video, isEmpty);
+          },
+          language: language,
+          size: const Size(320, 844),
+          scale: 2,
+        );
+      },
+      timeout: const Timeout.factor(1),
+    );
+  }
 }
