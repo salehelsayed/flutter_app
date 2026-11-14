@@ -197,9 +197,12 @@ final class ProductionCallSignalingGraph
        _nowMs = nowMs,
        _isVideoForeground = isForeground ?? (() => true),
        _checkCameraPermission = checkCameraPermission ?? (() async => false),
-       _requestCameraPermission = requestCameraPermissionStatus == null
-           ? requestCameraPermission ?? (() async => false)
-           : (() async => (await requestCameraPermissionStatus()).isGranted) {
+       _requestCameraPermission =
+           requestCameraPermissionStatus ??
+           (() async =>
+               await (requestCameraPermission?.call() ?? Future.value(false))
+               ? permissions.PermissionStatus.granted
+               : permissions.PermissionStatus.denied) {
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
         videoEnabled: true,
@@ -425,7 +428,8 @@ final class ProductionCallSignalingGraph
   CallVideoSession? _qualityAppliedSession;
   CallVideoQualityEnvironment? _qualityAppliedEnvironment;
   final bool Function() _isVideoForeground;
-  final Future<bool> Function() _requestCameraPermission;
+  final Future<permissions.PermissionStatus> Function()
+  _requestCameraPermission;
   final Future<bool> Function() _checkCameraPermission;
   CallPictureInPictureController? _pip;
   StreamSubscription<void>? _pipSourceSubscription;
@@ -615,34 +619,46 @@ final class ProductionCallSignalingGraph
             _applyQualityEnvironment();
             // Switching an already-granted camera needs no new permission prompt.
             final permission = intent.action == CallVideoAction.switchCamera
-                ? identical(_localCameraToken, token)
+                ? (identical(_localCameraToken, token)
+                      ? permissions.PermissionStatus.granted
+                      : permissions.PermissionStatus.denied)
                 : await _requestCameraPermission();
-            if (!permission) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.permissionDenied,
-              );
-            }
             if (!cameraCurrent()) {
               return report(
                 ForegroundCallActionResult.unavailable,
                 CallCameraTapReason.ownerChanged,
               );
             }
+            if (!permission.isGranted) {
+              return report(
+                ForegroundCallActionResult(
+                  ForegroundCallActionStatus.unavailable,
+                  cameraFailure: intent.action == CallVideoAction.switchCamera
+                      ? ForegroundCallCameraFailure.unavailable
+                      : permission.isRestricted
+                      ? ForegroundCallCameraFailure.permissionRestricted
+                      : ForegroundCallCameraFailure.permissionDenied,
+                ),
+                CallCameraTapReason.permissionDenied,
+              );
+            }
             if (androidCallLifecycleAdapter != null &&
                 intent.action == CallVideoAction.turnCameraOn) {
               acquiredLease = await androidCallLifecycleAdapter!
                   .setLocalCameraActive(callId, true);
-              if (!acquiredLease) {
-                return report(
-                  ForegroundCallActionResult.unavailable,
-                  CallCameraTapReason.nativeLeaseRefused,
-                );
-              }
               if (!cameraCurrent()) {
                 return report(
                   ForegroundCallActionResult.unavailable,
                   CallCameraTapReason.ownerChanged,
+                );
+              }
+              if (!acquiredLease) {
+                return report(
+                  const ForegroundCallActionResult(
+                    ForegroundCallActionStatus.unavailable,
+                    cameraFailure: ForegroundCallCameraFailure.unavailable,
+                  ),
+                  CallCameraTapReason.nativeLeaseRefused,
                 );
               }
             }
@@ -659,16 +675,19 @@ final class ProductionCallSignalingGraph
                         grant,
                       )
                 : await session.setLocalCamera(token, grant);
-            if (!applied) {
-              return report(
-                ForegroundCallActionResult.unavailable,
-                CallCameraTapReason.captureRejected,
-              );
-            }
             if (!cameraCurrent()) {
               return report(
                 ForegroundCallActionResult.unavailable,
                 CallCameraTapReason.ownerChanged,
+              );
+            }
+            if (!applied) {
+              return report(
+                const ForegroundCallActionResult(
+                  ForegroundCallActionStatus.unavailable,
+                  cameraFailure: ForegroundCallCameraFailure.unavailable,
+                ),
+                CallCameraTapReason.captureRejected,
               );
             }
             cameraStarted = true;
@@ -680,6 +699,16 @@ final class ProductionCallSignalingGraph
                 CallCameraState.on,
                 canApply: cameraCurrent,
               ),
+            );
+          } catch (_) {
+            return report(
+              cameraCurrent()
+                  ? const ForegroundCallActionResult(
+                      ForegroundCallActionStatus.failed,
+                      cameraFailure: ForegroundCallCameraFailure.unavailable,
+                    )
+                  : ForegroundCallActionResult.unavailable,
+              CallCameraTapReason.failed,
             );
           } finally {
             if (acquiredLease) {
@@ -3754,10 +3783,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
             () =>
                 WidgetsBinding.instance.lifecycleState ==
                 AppLifecycleState.resumed,
-        requestCameraPermission:
-            requestCameraPermission ??
-            () async =>
-                (await permissions.Permission.camera.request()).isGranted,
+        requestCameraPermission: requestCameraPermission,
+        requestCameraPermissionStatus: requestCameraPermission == null
+            ? () => permissions.Permission.camera.request()
+            : null,
         runtime: runtime,
         coordinator: coordinator,
         signalingService: signalingService,

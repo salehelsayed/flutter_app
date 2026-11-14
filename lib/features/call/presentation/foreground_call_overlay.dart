@@ -22,9 +22,18 @@ import 'screens/active_call_screen.dart';
 import 'screens/incoming_call_screen.dart';
 import 'screens/outgoing_call_screen.dart';
 import 'widgets/call_controls.dart';
+import 'widgets/call_camera_result_card.dart';
 import 'widgets/call_audio_output_picker.dart';
 import 'widgets/call_return_bar.dart';
 import 'widgets/call_video_view_surface.dart';
+
+typedef _CameraActionOwner = ({
+  ForegroundCallCapability capability,
+  int capabilityGeneration,
+  CallId callId,
+  int videoGeneration,
+  int serial,
+});
 
 typedef ContactDisplayNameLoader =
     Future<String?> Function(String contactPeerId);
@@ -81,6 +90,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   int _capabilityGeneration = 0;
   (CallId, int, int)? _mediaAnswerPending;
   int _nameGeneration = 0;
+  int _cameraActionSerial = 0;
+  _CameraActionOwner? _cameraActionOwner;
+  ForegroundCallCameraFailure? _cameraFailure;
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
@@ -225,6 +237,12 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
     void update() {
       _projection = projection;
+      final cameraOwner = _cameraActionOwner;
+      if (cameraOwner != null &&
+          !_cameraOwnerMatches(cameraOwner, projection)) {
+        _cameraActionOwner = null;
+        _cameraFailure = null;
+      }
       final session = projection?.session;
       final pending = _mediaAnswerPending;
       if (pending != null &&
@@ -497,6 +515,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
             constrainLabels: video != null,
           ),
           videoViews: videoViews,
+          cameraFeedback: _buildCameraFeedback(projection),
           videoPresentation: video?.presentation,
           onVideoIntent: onVideoIntent,
         ),
@@ -967,58 +986,185 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     required int generation,
     required CallVideoIntent intent,
   }) {
-    _runAction(() {
-      if (!mounted ||
-          !identical(capability, widget.capability) ||
-          capabilityGeneration != _capabilityGeneration ||
-          _minimizedCallId == callId ||
-          _pickerCallId == callId ||
-          capability is! ForegroundCallVideoCapability) {
-        reportCallCameraTap(
-          intent.action,
-          CallCameraTapOutcome.refused,
-          CallCameraTapReason.staleOwner,
+    unawaited(
+      _handleVideoIntent(() {
+        if (!mounted ||
+            !identical(capability, widget.capability) ||
+            capabilityGeneration != _capabilityGeneration ||
+            _minimizedCallId == callId ||
+            _pickerCallId == callId ||
+            capability is! ForegroundCallVideoCapability) {
+          reportCallCameraTap(
+            intent.action,
+            CallCameraTapOutcome.refused,
+            CallCameraTapReason.staleOwner,
+          );
+          return null;
+        }
+        // Re-read the owner immediately before dispatch, including updates that
+        // have not reached the presentation stream yet. The root revalidates
+        // these tokens atomically before performing any media effect.
+        final current = capability.current;
+        if (current == null || current.session.callId != callId) {
+          reportCallCameraTap(
+            intent.action,
+            CallCameraTapOutcome.refused,
+            CallCameraTapReason.staleOwner,
+          );
+          return null;
+        }
+        final video = _visibleVideo(current, capability);
+        if (video == null || video.generation != generation) {
+          reportCallCameraTap(
+            intent.action,
+            CallCameraTapOutcome.refused,
+            CallCameraTapReason.staleOwner,
+          );
+          return null;
+        }
+        final available = video.presentation.intentFor(intent.action);
+        if (available == null || available.upgradeId != intent.upgradeId) {
+          reportCallCameraTap(
+            intent.action,
+            CallCameraTapOutcome.refused,
+            video.presentation.videoActionPending
+                ? CallCameraTapReason.actionPending
+                : CallCameraTapReason.notReady,
+          );
+          return null;
+        }
+        final owner = (
+          capability: capability,
+          capabilityGeneration: capabilityGeneration,
+          callId: callId,
+          videoGeneration: generation,
+          serial: ++_cameraActionSerial,
         );
-        return null;
-      }
-      // Re-read the owner immediately before dispatch, including updates that
-      // have not reached the presentation stream yet. The root revalidates
-      // these tokens atomically before performing any media effect.
-      final current = capability.current;
-      if (current == null || current.session.callId != callId) {
-        reportCallCameraTap(
-          intent.action,
-          CallCameraTapOutcome.refused,
-          CallCameraTapReason.staleOwner,
+        setState(() {
+          _cameraActionOwner = owner;
+          _cameraFailure = null;
+        });
+        return (
+          owner: owner,
+          result: (capability as ForegroundCallVideoCapability)
+              .applyVideoIntent(callId, generation: generation, intent: intent),
         );
-        return null;
-      }
-      final video = _visibleVideo(current, capability);
-      if (video == null || video.generation != generation) {
-        reportCallCameraTap(
-          intent.action,
-          CallCameraTapOutcome.refused,
-          CallCameraTapReason.staleOwner,
-        );
-        return null;
-      }
-      final available = video.presentation.intentFor(intent.action);
-      if (available == null || available.upgradeId != intent.upgradeId) {
-        reportCallCameraTap(
-          intent.action,
-          CallCameraTapOutcome.refused,
-          video.presentation.videoActionPending
-              ? CallCameraTapReason.actionPending
-              : CallCameraTapReason.notReady,
-        );
-        return null;
-      }
-      return (capability as ForegroundCallVideoCapability).applyVideoIntent(
-        callId,
-        generation: generation,
-        intent: intent,
-      );
-    });
+      }),
+    );
+  }
+
+  bool _cameraOwnerMatches(
+    _CameraActionOwner owner,
+    ForegroundCallProjection? projection,
+  ) =>
+      identical(owner.capability, widget.capability) &&
+      owner.capabilityGeneration == _capabilityGeneration &&
+      projection != null &&
+      projection.session.callId == owner.callId &&
+      (projection.session.state == CallState.connected ||
+          projection.session.state == CallState.reconnecting) &&
+      projection.video?.generation == owner.videoGeneration &&
+      projection.video?.presentation.agreedMedia == CallMediaKind.video &&
+      projection.video?.presentation.isVisible == true;
+
+  bool _cameraActionCurrent(_CameraActionOwner owner) {
+    if (!mounted ||
+        _cameraActionOwner != owner ||
+        _minimizedCallId == owner.callId ||
+        _pickerCallId == owner.callId) {
+      return false;
+    }
+    try {
+      return _cameraOwnerMatches(owner, owner.capability.current);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleVideoIntent(
+    ({_CameraActionOwner owner, Future<ForegroundCallActionResult> result})?
+    Function()
+    operation,
+  ) async {
+    try {
+      final dispatched = operation();
+      if (dispatched == null) return;
+      final result = await dispatched.result;
+      if (!_cameraActionCurrent(dispatched.owner)) return;
+      setState(() {
+        _cameraFailure = result.status == ForegroundCallActionStatus.applied
+            ? null
+            : result.cameraFailure;
+      });
+    } catch (_) {
+      // Untyped failures do not establish a current camera refusal.
+    }
+  }
+
+  Widget? _buildCameraFeedback(ForegroundCallProjection projection) {
+    final owner = _cameraActionOwner;
+    final failure = _cameraFailure;
+    if (owner == null ||
+        failure == null ||
+        !_cameraOwnerMatches(owner, projection) ||
+        !_cameraActionCurrent(owner)) {
+      return null;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final name = _contactDisplayName == _unknownContactName
+        ? l10n.call_unknown_contact
+        : _contactDisplayName;
+    final audible =
+        projection.session.state == CallState.connected &&
+        projection.audio.active &&
+        !projection.audio.muted &&
+        projection.audio.failure == CallAudioFailure.none;
+    final denied = failure == ForegroundCallCameraFailure.permissionDenied;
+    final gateway = widget.micPermission;
+    return CallCameraResultCard(
+      kind: switch (failure) {
+        ForegroundCallCameraFailure.permissionDenied =>
+          CallCameraResultCardKind.permissionDenied,
+        ForegroundCallCameraFailure.permissionRestricted =>
+          CallCameraResultCardKind.permissionRestricted,
+        ForegroundCallCameraFailure.unavailable =>
+          CallCameraResultCardKind.unavailable,
+      },
+      title: denied
+          ? l10n.call_video_camera_permission_title
+          : l10n.call_video_camera_unavailable,
+      permissionExplanation: denied
+          ? audible
+                ? l10n.call_video_camera_permission_body(name)
+                : l10n.call_video_camera_permission_body_without_audio
+          : null,
+      dismissLabel: l10n.mic_perm_not_now,
+      onDismiss: () {
+        if (!_cameraActionCurrent(owner)) return;
+        setState(() {
+          _cameraFailure = null;
+          _cameraActionOwner = null;
+        });
+      },
+      settingsLabel: l10n.call_video_open_settings,
+      onOpenSettings: denied && gateway != null
+          ? () {
+              if (!_cameraActionCurrent(owner) ||
+                  !identical(gateway, widget.micPermission)) {
+                return;
+              }
+              unawaited(_openCameraSettings(gateway));
+            }
+          : null,
+    );
+  }
+
+  Future<void> _openCameraSettings(MicPermissionGateway gateway) async {
+    try {
+      await gateway.openAppSettings();
+    } catch (_) {
+      // Settings availability never implies permission or camera consent.
+    }
   }
 
   void _runAction(

@@ -5071,14 +5071,13 @@ void main() {
     final graph = fixture.graphs.single;
     final video =
         (fixture.composition as Object) as ForegroundCallVideoCapability;
-    expect(
-      await video.applyVideoIntent(
-        _callA,
-        generation: graph.current!.video!.generation,
-        intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
-      ),
-      ForegroundCallActionResult.unavailable,
+    final result = await video.applyVideoIntent(
+      _callA,
+      generation: graph.current!.video!.generation,
+      intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
     );
+    expect(result.status, ForegroundCallActionStatus.unavailable);
+    expect(result.cameraFailure, ForegroundCallCameraFailure.unavailable);
     expect(engine.video!.cameraStarts, 0);
     expect(graph.coordinator.activeSession!.state, CallState.connected);
   });
