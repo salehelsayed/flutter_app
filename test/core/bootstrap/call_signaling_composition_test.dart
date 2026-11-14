@@ -11160,7 +11160,10 @@ final class _GraphVideoSession
   Future<CallVideoSdpReconciliationOutcome> reconcilePending(
     CallVideoNegotiation token, {
     required bool Function() canApply,
-  }) async => !closed && identical(this.token, token) && canApply()
+  }) async =>
+      !closed &&
+          (identical(this.token, token) || identical(retiredToken, token)) &&
+          canApply()
       ? recoveryReconciliation
       : CallVideoSdpReconciliationOutcome.unreconciled;
   int pipEpoch = 0;
@@ -11201,6 +11204,7 @@ final class _GraphVideoSession
   final views = <CallVideoRendererSlot, CallVideoView>{};
   final attachments = <CallVideoRendererSlot>[];
   CallVideoNegotiation? token;
+  CallVideoNegotiation? retiredToken;
   int commits = 0;
   int cameraStarts = 0;
   CallLocalCameraGrant? lastCameraGrant;
@@ -11342,6 +11346,7 @@ final class _GraphVideoSession
   Future<bool> retireVideo() async {
     cameraOn = false;
     remoteTrack = false;
+    retiredToken = token ?? retiredToken;
     token = null;
     views.clear();
     for (final slot in CallVideoRendererSlot.values) {
