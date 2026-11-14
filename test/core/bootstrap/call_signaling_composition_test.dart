@@ -382,6 +382,8 @@ final class _P2P implements P2PService {
           state ?? const NodeState(peerId: 'local-account', isStarted: true);
 
   NodeState state;
+  final List<String> sentMessages = [];
+  bool acceptMessages = false;
   final StreamController<ChatMessage> messages =
       StreamController<ChatMessage>.broadcast();
   final StreamController<NodeState> states =
@@ -406,7 +408,10 @@ final class _P2P implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async => const SendMessageResult(sent: false, acked: false);
+  }) async {
+    sentMessages.add(message);
+    return SendMessageResult(sent: acceptMessages, acked: acceptMessages);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -3948,6 +3953,172 @@ void main() {
   });
 
   setUpAll(sqfliteFfiInit);
+
+  for (final callerEnds in [true, false]) {
+    for (final boundary in [
+      'endpoint',
+      'signing',
+      'shutdown drain',
+      'shutdown terminal',
+    ]) {
+      test(
+        'BL16-TERMINAL ${callerEnds ? "caller" : "callee"} retains delivery after cleanup at $boundary',
+        () async {
+          final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+          final id = caller.graphs.single.coordinator.activeSession!.callId!;
+          final (callee, calleeEngine) = await _connectedGraphVideo(
+            acceptedMedia: CallMediaKind.audio,
+            callId: id,
+          );
+          final sender = callerEnds ? caller : callee;
+          final peer = callerEnds ? callee : caller;
+          final engine = callerEnds ? callerEngine : calleeEngine;
+          final graph = sender.graphs.single;
+          final held = _holdTerminalAuthorization(
+            sender,
+            engine,
+            boundary.startsWith('shutdown') ? 'endpoint' : boundary,
+          );
+          sender.p2p.acceptMessages = true;
+          final ending = boundary == 'shutdown terminal'
+              ? graph.shutdown()
+              : graph.end(id).then<void>((result) {
+                  expect(result, ForegroundCallActionResult.applied);
+                });
+          final authorized = await held.entered.future
+              .then((_) => true)
+              .timeout(const Duration(seconds: 2), onTimeout: () => false);
+          if (!authorized) {
+            held.entered.complete();
+            held.release.complete();
+            await ending;
+          }
+          expect(
+            authorized,
+            isTrue,
+            reason:
+                'owned terminal must enter authorization before shutdown closes signaling',
+          );
+          await _untilGraphVideo(() => graph.coordinator.activeSession == null);
+          expect(graph.videoContexts!.read(id), isNull);
+          expect(engine.closed, isTrue);
+          expect(engine.video!.cameraOn, isFalse);
+          expect(held.release.isCompleted, isFalse);
+          expect(_terminalTransportIds(sender), isEmpty);
+          final shutdown = boundary == 'shutdown drain'
+              ? graph.shutdown()
+              : null;
+          held.release.complete();
+          await ending;
+          await _untilGraphVideo(
+            () => _terminalTransportIds(sender).isNotEmpty,
+          );
+          await shutdown;
+          final wire = _upgradeSignals(sender, 'terminate').single;
+          final messageId = wire['message_id'];
+          expect(_terminalTransportIds(sender), contains(messageId));
+          expect(
+            sender.p2p.sentMessages.map(
+              (raw) => (jsonDecode(raw) as Map)['message_id'],
+            ),
+            contains(messageId),
+          );
+          await _deliverUpgradeSignal(peer, wire, mailbox: !callerEnds);
+          await _untilGraphVideo(
+            () => peer.graphs.single.coordinator.activeSession == null,
+          );
+          expect(
+            peer.graphs.single.coordinator.lastSnapshot!.endReason,
+            CallEndReason.remoteHangup,
+          );
+        },
+      );
+    }
+  }
+
+  for (final invalidation in [
+    'revoked',
+    'replaced',
+    'successor',
+    'successor cleared',
+    'closed',
+    'expired',
+  ]) {
+    test('BL16-TERMINAL retained send is fenced by $invalidation', () async {
+      var now = 2000000;
+      final (fixture, engine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+        clockMs: () => now,
+      );
+      final graph = fixture.graphs.single;
+      final held = _holdTerminalAuthorization(fixture, engine, 'endpoint');
+      final ending = graph.end(_callA);
+      await held.entered.future.timeout(const Duration(seconds: 2));
+      await _untilGraphVideo(() => graph.coordinator.activeSession == null);
+      expect(graph.videoContexts!.read(_callA), isNull);
+      expect(engine.closed, isTrue);
+      if (invalidation == 'revoked') {
+        fixture.bridge.responses['call_endpoint_get_v1'] = {
+          'ok': true,
+          'found': false,
+        };
+      } else if (invalidation == 'replaced') {
+        final response = fixture.bridge.responses['call_endpoint_get_v1']!;
+        final endpoint = Map<String, Object?>.from(
+          response['endpoint']! as Map,
+        );
+        endpoint['preferenceEpoch'] = 2;
+        final canonical =
+            jsonDecode(
+                  utf8.decode(
+                    base64Decode(response['canonicalRecord']! as String),
+                  ),
+                )
+                as Map<String, dynamic>;
+        canonical['preferenceEpoch'] = 2;
+        fixture.bridge.responses['call_endpoint_get_v1'] = {
+          ...response,
+          'endpoint': endpoint,
+          'canonicalRecord': base64Encode(utf8.encode(jsonEncode(canonical))),
+        };
+      } else if (invalidation.startsWith('successor')) {
+        await ending;
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteInvite,
+            eventId: 'terminal-successor-admitted',
+            contactPeerId: 'video-contact',
+            remoteAccountPeerId: 'video-contact',
+            remoteDeviceId: 'video-contact',
+            occurredAt: graph.coordinator.clock(),
+            callId: _callB,
+          ),
+        );
+        expect(graph.coordinator.lastSnapshot!.callId, _callB);
+        if (invalidation == 'successor cleared') {
+          await graph.coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.remoteTerminate,
+              eventId: 'terminal-successor-cleared',
+              occurredAt: graph.coordinator.clock(),
+              callId: _callB,
+            ),
+          );
+          expect(graph.coordinator.activeSession, isNull);
+        }
+      } else if (invalidation == 'closed') {
+        await graph.shutdown();
+      } else {
+        now += 60001;
+      }
+      held.release.complete();
+      await ending;
+      // Shutdown drains tracked terminal continuations before transport closes.
+      await graph.shutdown();
+      expect(_terminalTransportIds(fixture), isEmpty);
+      expect(_upgradeSignals(fixture, 'terminate'), isEmpty);
+    });
+  }
 
   test(
     'BL16-UPGRADE no consent times out both graphs after direct and mailbox duplicate',
@@ -9307,6 +9478,46 @@ final class _GatedIssuedWakeStore implements IssuedCallWakeHandleStore {
   Future<void> clear() => delegate.clear();
 }
 
+({Completer<void> entered, Completer<void> release}) _holdTerminalAuthorization(
+  _ProductionIosFixture fixture,
+  _InitialVideoGraphEngine engine,
+  String boundary,
+) {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  // Hold media cleanup only until authorization has entered; after that it
+  // must finish while network authorization is still suspended.
+  engine.closeGate = entered.future;
+  addTearDown(() {
+    if (!entered.isCompleted) entered.complete();
+    if (!release.isCompleted) release.complete();
+  });
+  final command = boundary == 'endpoint'
+      ? 'call_endpoint_get_v1'
+      : 'payload.sign';
+  fixture.bridge.responseHandlers[command] = (request) async {
+    if (!entered.isCompleted) {
+      entered.complete();
+      await release.future;
+    }
+    return fixture.bridge.responses[command] ??
+        {'ok': true, 'signature': 'c2lnbmF0dXJl'};
+  };
+  return (entered: entered, release: release);
+}
+
+List<Object?> _terminalTransportIds(_ProductionIosFixture fixture) {
+  final ids = _upgradeSignals(
+    fixture,
+    'terminate',
+  ).map((s) => s['message_id']).toSet();
+  return fixture.bridge.requests
+      .where((r) => r['cmd'] == 'call_store_v1')
+      .map((r) => (r['payload'] as Map)['messageId'])
+      .where(ids.contains)
+      .toList();
+}
+
 Future<void> _untilGraphVideo(bool Function() predicate) async {
   final elapsed = Stopwatch()..start();
   while (!predicate() && elapsed.elapsed < const Duration(seconds: 5)) {
@@ -9378,6 +9589,7 @@ Future<void> _deliverGraphVideoInvite(
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   CallEndpointPlatform platform = CallEndpointPlatform.ios,
   CallMediaKind acceptedMedia = CallMediaKind.video,
+  int Function()? clockMs,
   CallId? callId,
   Future<bool> Function()? permission,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
@@ -9393,6 +9605,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   final engine = _InitialVideoGraphEngine();
   final fixture = await _createProductionIosFixture(
     nativePlatform: platform,
+    clockMs: clockMs,
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestCameraPermission: permission ?? () async => true,
     onCallTimerScheduled: timerObserver,
@@ -10407,6 +10620,7 @@ final class _InitialVideoGraphEngine extends _ProductionSpeakerRouteEngine
   final candidateController = StreamController<CallIceCandidate>.broadcast(
     sync: true,
   );
+  Future<void>? closeGate;
   int eventSubscriptions = 0;
   int candidateSubscriptions = 0;
   @override
@@ -10424,6 +10638,7 @@ final class _InitialVideoGraphEngine extends _ProductionSpeakerRouteEngine
   @override
   Future<void> close() async {
     if (closed) return;
+    await closeGate;
     await super.close();
     await eventController.close();
     await candidateController.close();

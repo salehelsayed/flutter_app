@@ -534,6 +534,59 @@ void main() {
     );
     expect((await r.send(terminal)).delivered, isTrue);
   });
+  for (final terminal in ['reject', 'terminate']) {
+    for (final preparedBeforeStop in [true, false]) {
+      test(
+        'BL16-TERMINAL $terminal gets one drain send prepared before stop=$preparedBeforeStop',
+        () async {
+          final before = preparedBeforeStop
+              ? await r.prepare(signal: _signal(terminal: terminal))
+              : null;
+          r.service.stopRetries();
+          final retry =
+              before ?? await r.prepare(signal: _signal(terminal: terminal));
+          expect((await r.send(retry)).delivered, isTrue);
+          expect(r.direct.envelopes, hasLength(1));
+          expect(r.mailbox.requests, hasLength(1));
+          expect(r.service.pendingTerminalRetryCount, 0);
+          await expectLater(
+            r.send(retry),
+            throwsA(isA<CallSignalingException>()),
+          );
+          expect(r.direct.envelopes, hasLength(1));
+          expect(r.mailbox.requests, hasLength(1));
+        },
+      );
+    }
+    test('BL16-TERMINAL close revokes retained $terminal after stop', () async {
+      final retry = await r.prepare(signal: _signal(terminal: terminal));
+      r.service.stopRetries();
+      r.service.close();
+      expect(retry.isAvailable, isFalse);
+      expect(r.service.pendingTransmissionRetryCount, 0);
+      await expectLater(r.send(retry), throwsA(isA<CallSignalingException>()));
+      await expectLater(
+        r.prepare(signal: _signal(id: 2, terminal: terminal)),
+        throwsA(isA<CallSignalingException>()),
+      );
+      r.expectNoWrites();
+    });
+  }
+  test(
+    'BL16-TERMINAL failed drain cannot arm autonomous or explicit retries',
+    () async {
+      final retry = await r.prepare(signal: _signal(terminal: 'terminate'));
+      r.direct.action = () async => _failed;
+      r.mailbox.action = (_) async => throw StateError('unavailable');
+      r.service.stopRetries();
+      expect((await r.send(retry)).delivered, isFalse);
+      expect(r.service.pendingTerminalRetryCount, 0);
+      await expectLater(r.send(retry), throwsA(isA<CallSignalingException>()));
+      expect(r.direct.envelopes, hasLength(1));
+      expect(r.mailbox.requests, hasLength(1));
+    },
+  );
+
   test('stop retries fences prepared and new transmissions', () async {
     final retry = await r.prepare();
     r.service.stopRetries();
