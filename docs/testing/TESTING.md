@@ -12147,6 +12147,41 @@ visible and cannot become an ordinary first-attempt PASS.
   Packets and independently checked raw hashes/exits are indexed by
   `/Users/I560101/.codex/investigations/bl16-upgrade-projection-20261114/green-runtime-verified.json`
   and `red-runtime-verified.json` in that directory.
+  **V2 terminal delivery through cleanup and shutdown:** a terminate/reject
+  admitted by the active terminal call captures its exact terminal snapshot
+  before asynchronous authorization. Its own context purge and active-session
+  clearing must not revoke delivery; a successor snapshot, endpoint/key or
+  relationship change, expiry, and service/adapter close still fence it.
+  Cleanup must finish while endpoint resolution or signing is held. Shutdown
+  stops optional and autonomous retry work while allowing one owned v2 terminal
+  transmission within the existing drain; a second explicit attempt is refused.
+  Build 265 exposed cleanup READY preceding endpoint READY and endpointMismatch
+  (Astra's `ios265/flutter_run.log:32392-32426` diagnosis); that error did not
+  establish that the remote endpoint actually changed. No wire change was made.
+  RED `f0d9e21247e58956dc31a9c6297b8a14c2b21a07` recorded 8 passing controls,
+  8 assertion failures and 5 service exceptions. Six held-authorization failures
+  reached cleanup READY, then authorization completion and endpointMismatch;
+  the exact downstream wait site is inferred with medium-high confidence from
+  diagnostics because asynchronous stacks omit its caller. Two shutdown sends
+  never entered authorization; five service cases independently exposed the
+  stopRetries fence. First GREEN `1115b02cd75feffc1887a2050d44d919a68d03e5`
+  passed 295/298; two new tests incorrectly expected remoteHangup instead of the
+  existing preserved appShutdown reason, and one expected a false delivery
+  result instead of the existing both-legs-failed transportUnavailable exception.
+  Its second command was unrun. The explicit test-only correction
+  `d8c26e4fdab133d97741074056409d7ee8ffa52c` leaves production unchanged;
+  it intentionally changes the original RED test tree, preserving all delivery,
+  cleanup, camera, authority and retry assertions. Claude-UI's corrected two
+  commands passed 298 (composition 261, service-v2 37) and 245 preservation
+  cases, including all 21 terminal cases, with no failures/errors/skips and
+  successful reporter completion/child exits 0. Five clean identity checkpoints
+  verified 85 file pins; locked offline setup exited 0. Original RED and first
+  GREEN failures remain retained. Source/correction review passed. The mapped
+  17-check preview is not broader runtime validation; Flutter's native/device
+  reproof and signed-candidate proof remain separate. Exact packets, raw hashes,
+  counts and identity audits are indexed under
+  `/Users/I560101/.codex/investigations/bl16-terminal-authority-20261114/`,
+  particularly `green-corrected-runtime-verified.json`.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
