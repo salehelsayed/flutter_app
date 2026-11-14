@@ -126,6 +126,60 @@ void main() {
       expect(rig.engine.video.cameraStarts, 0);
     },
   );
+  for (final throws in [false, true]) {
+    for (final endDuringRelease in [false, true]) {
+      test(
+        'VUI4 graph capture throws=$throws End=$endDuringRelease during native release',
+        () async {
+          final entered = Completer<void>();
+          final release = Completer<bool>();
+          addTearDown(() {
+            if (!release.isCompleted) release.complete(true);
+          });
+          final rig = await _CameraRig.create(
+            releaseCamera: () {
+              if (!entered.isCompleted) entered.complete();
+              return release.future;
+            },
+          );
+          rig.engine.video.cameraResult = () async {
+            if (throws) throw StateError('Fixture capture rejected');
+            return false;
+          };
+          var settled = false;
+          final operation = rig.turnOn().then((result) {
+            settled = true;
+            return result;
+          });
+          try {
+            await entered.future.timeout(const Duration(seconds: 5));
+            expect(rig.nativeCameraCommands, [true, false]);
+            expect(rig.engine.video.cameraStarts, 1);
+            expect(settled, isFalse);
+            if (endDuringRelease) await rig.end();
+            expect(settled, isFalse);
+            release.complete(true);
+            final result = await operation.timeout(const Duration(seconds: 5));
+            expect(
+              result.status,
+              !endDuringRelease && throws
+                  ? ForegroundCallActionStatus.failed
+                  : ForegroundCallActionStatus.unavailable,
+            );
+            expect(
+              result.cameraFailure,
+              endDuringRelease ? null : ForegroundCallCameraFailure.unavailable,
+            );
+            expect(rig.permissionCalls, 1);
+            expect(rig.engine.video.cameraStarts, 1);
+          } finally {
+            if (!release.isCompleted) release.complete(true);
+            await operation;
+          }
+        },
+      );
+    }
+  }
   test('VUI4 graph late capture refusal after End is stale', () async {
     final rig = await _CameraRig.create();
     final entered = Completer<void>();
@@ -156,17 +210,20 @@ final class _CameraRig {
   late final ProductionCallSignalingGraph graph;
   int permissionCalls = 0;
   int sequence = 0;
+  final nativeCameraCommands = <bool>[];
   static final now = DateTime.fromMillisecondsSinceEpoch(10000, isUtc: true);
 
   static Future<_CameraRig> create({
     Future<permissions.PermissionStatus> Function()? permission,
     bool nativeRefusal = false,
+    Future<bool> Function()? releaseCamera,
   }) async {
     final rig = _CameraRig();
     addTearDown(rig.engine.close);
     await rig._start(
       permission ?? () async => permissions.PermissionStatus.granted,
       nativeRefusal,
+      releaseCamera,
     );
     return rig;
   }
@@ -190,6 +247,7 @@ final class _CameraRig {
   Future<void> _start(
     Future<permissions.PermissionStatus> Function() permission,
     bool nativeRefusal,
+    Future<bool> Function()? releaseCamera,
   ) async {
     engine.mediaReady = true;
     coordinator = CallCoordinator(
@@ -294,16 +352,60 @@ final class _CameraRig {
     final received = ReceivedCallWakeHandleStoreImpl(
       secureKeyStore: secureStore,
     );
-    final native = nativeRefusal
+    final nativeEvents = StreamController<Object?>.broadcast();
+    addTearDown(nativeEvents.close);
+    final native = nativeRefusal || releaseCamera != null
         ? AndroidCallLifecycleAdapter(
             videoEnabled: true,
-            invokeMethod: (method, arguments) async => true,
-            nativeEvents: const Stream<Object?>.empty(),
+            invokeMethod: (method, arguments) async {
+              if (method == 'attach') {
+                return <String, Object?>{
+                  'version': 1,
+                  'descriptor': <String, Object?>{
+                    'callHandle': _handle,
+                    'expiresAtMs': 55000,
+                    'presented': true,
+                    'phase': 'preStart',
+                    'direction': 'outgoing',
+                  },
+                  'events': [
+                    <String, Object?>{
+                      'callHandle': _handle,
+                      'sequence': 1,
+                      'eventId': 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                      'type': 'presented',
+                      'occurredAtMs': 10000,
+                    },
+                  ],
+                  'nativeCallId': _handle,
+                  'highestSequence': 1,
+                };
+              }
+              if (method == 'setLocalCameraActive') {
+                final active = arguments['active']! as bool;
+                nativeCameraCommands.add(active);
+                if (!active && releaseCamera != null) return releaseCamera();
+              }
+              return true;
+            },
+            nativeEvents: nativeEvents.stream,
             coordinator: coordinator,
             resolveAuthenticatedHandle: (_) => _handle,
             clock: () => now,
           )
         : null;
+    if (native != null) addTearDown(native.close);
+    if (releaseCamera != null) {
+      await native!.start();
+      expect(
+        await native.registerOutgoing(
+          _call,
+          expiresAt: DateTime.fromMillisecondsSinceEpoch(55000, isUtc: true),
+        ),
+        isTrue,
+      );
+      expect(native.debugBoundNativeHandle(_call), _handle);
+    }
     graph = ProductionCallSignalingGraph(
       runtime: CallSignalingRuntime(
         directCallSignalStream: const Stream<ChatMessage>.empty(),
