@@ -384,6 +384,14 @@ final class FlutterWebRtcVideoSession
   late final CallVideoMediaOwner _owner;
   _Negotiation? _current;
   webrtc.RTCRtpTransceiver? _video;
+
+  /// Defect 4: the pinned iOS plugin identifies a transceiver by `mid ?? ''`,
+  /// and the Dart wrapper keeps the id it had when created. A video wrapper
+  /// created before the first SDP (empty id) would aim direction calls at the
+  /// first id-less transceiver, which is audio. Such a wrapper is "unbound"
+  /// until it is reacquired by its stable senderId after MIDs exist.
+  bool _videoUnbound = false;
+  webrtc.TransceiverDirection? _videoCreatedDirection;
   webrtc.MediaStreamTrack? _remoteTrack;
   webrtc.MediaStream? _remoteStream;
   int _pipEpoch = 0;
@@ -629,30 +637,51 @@ final class FlutterWebRtcVideoSession
   Future<void> _prepare(_Negotiation token) async {
     _check(token);
     var video = _video;
+    final direction = token.media == CallMediaKind.video
+        ? webrtc.TransceiverDirection.SendRecv
+        : webrtc.TransceiverDirection.Inactive;
     if (video == null && token.media == CallMediaKind.video) {
       _sendStream ??= await _videoStream();
       _check(token);
+      // Created with its intended direction: no direction call goes through a
+      // possibly pre-MID id (defect 4).
       video = await _connection().addTransceiver(
         kind: webrtc.RTCRtpMediaType.RTCRtpMediaTypeVideo,
         init: webrtc.RTCRtpTransceiverInit(
-          direction: webrtc.TransceiverDirection.Inactive,
+          direction: direction,
           streams: [_sendStream!],
         ),
       );
       _video =
           video; // Retained even if the await was retired; never loses ownership.
+      _videoUnbound = video.transceiverId.isEmpty;
+      _videoCreatedDirection = direction;
       _check(token);
+      if (_diag) {
+        _videoDiag(
+          'prepare media=${token.media.name} direction=${direction.name} '
+          'readback=created',
+        );
+      }
+      _startDebugStats();
+      return;
     }
     if (video == null) return;
+    if (_videoUnbound) {
+      await _rebindVideo(token);
+      video = _video!;
+      if (_videoUnbound) {
+        // Still no MID: only the creation direction is known to be true.
+        if (direction != _videoCreatedDirection) _reject();
+        return;
+      }
+    }
     if (token.media == CallMediaKind.video) {
       _sendStream ??= await _videoStream();
       _check(token);
       await video.sender.setStreams([_sendStream!]);
       _check(token);
     }
-    final direction = token.media == CallMediaKind.video
-        ? webrtc.TransceiverDirection.SendRecv
-        : webrtc.TransceiverDirection.Inactive;
     await video.setDirection(direction);
     _check(token);
     final actual = await video.getDirection();
@@ -668,6 +697,24 @@ final class FlutterWebRtcVideoSession
     direction == webrtc.TransceiverDirection.SendRecv
         ? _startDebugStats()
         : _stopDebugStats();
+  }
+
+  /// Replaces the owned video wrapper with the one from this connection's
+  /// getTransceivers that carries the SAME sender (stable senderId): exactly
+  /// one match, token rechecked after the await, never by position.
+  Future<void> _rebindVideo(_Negotiation token) async {
+    final owned = _video;
+    if (owned == null) return;
+    final senderId = owned.sender.senderId;
+    final transceivers = await _connection().getTransceivers();
+    _check(token);
+    final matches = [
+      for (final candidate in transceivers)
+        if (candidate.sender.senderId == senderId) candidate,
+    ];
+    if (matches.length != 1) _reject();
+    _video = matches.single;
+    _videoUnbound = matches.single.transceiverId.isEmpty;
   }
 
   Future<CallSessionDescription> _create(
@@ -759,6 +806,17 @@ final class FlutterWebRtcVideoSession
       token.remote = description;
     }
     _check(token);
+    if (_videoUnbound) {
+      // MIDs exist now: reacquire the exact owned transceiver and verify its
+      // direction through the real id.
+      await _rebindVideo(token);
+      final rebound = _video;
+      if (!_videoUnbound && rebound != null) {
+        final actual = await rebound.getDirection();
+        _check(token);
+        if (actual != _videoCreatedDirection) _reject();
+      }
+    }
     if (!local) {
       if (_video == null && token.media == CallMediaKind.video) {
         final transceivers = await _connection().getTransceivers();
@@ -766,6 +824,7 @@ final class FlutterWebRtcVideoSession
         for (final transceiver in transceivers) {
           if (transceiver.receiver.track?.kind == 'video') {
             _video = transceiver;
+            _videoUnbound = transceiver.transceiverId.isEmpty;
             transceiver.receiver.track?.enabled = false;
             break;
           }
