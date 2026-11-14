@@ -5636,107 +5636,203 @@ void main() {
     );
   }
 
-  for (final mode in ['legacy', 'enabled-audio', 'explicit-video']) {
-    test(
-      'U3j-G production invitation preserves explicit media choice mode=$mode',
-      () async {
-        String? registeredHandle;
-        int? registeredExpiresAt;
-        late final _ProductionIosFixture fixture;
-        fixture = await _createProductionIosFixture(
-          microphonePermission: const _GrantedCallMicrophonePermission(),
-          outgoingContactAccountPeerId: 'video-contact',
-          privacyFlags: {'video_call_v2_enabled': mode != 'legacy'},
-          // Preflight refresh rotates the short fixture grant. Model delivery
-          // of the current replacement instead of trusting the old receipt.
-          ensureOutgoingCallWakeAuthority: (peer) async {
-            final issued = await fixture.issuedCallWakeHandleStore
-                .readForContact(peer);
-            return issued != null &&
-                await fixture.graphs.single.markCallWakeHandleDistributed(
-                  peer,
-                  issued.grant,
-                );
-          },
-          lifecycleOverride: (method, arguments) async {
-            if (method == 'registerOutgoingAuthenticated') {
-              registeredHandle = arguments['callHandle']! as String;
-              registeredExpiresAt = arguments['expiresAtMs']! as int;
+  for (final mode in [
+    'legacy',
+    'enabled-legacy',
+    'enabled-audio',
+    'explicit-video',
+  ]) {
+    final mutations = mode == 'enabled-audio' || mode == 'explicit-video'
+        ? [
+            'none',
+            'preference',
+            'capability',
+            'expired',
+            'signature',
+            'cancelled',
+          ]
+        : ['none'];
+    for (final mutation in mutations) {
+      test(
+        mutation == 'none'
+            ? 'U3j-G production invitation preserves explicit media choice mode=$mode'
+            : 'B9-U1 admission refuses changed $mutation endpoint mode=$mode',
+        () async {
+          final request = OutgoingCallStartRequest();
+          var cameraPermissionRequests = 0;
+          var endpointLookups = 0;
+          String? registeredHandle;
+          int? registeredExpiresAt;
+          late final _ProductionIosFixture fixture;
+          fixture = await _createProductionIosFixture(
+            microphonePermission: const _GrantedCallMicrophonePermission(),
+            outgoingContactAccountPeerId: 'video-contact',
+            privacyFlags: {'video_call_v2_enabled': mode != 'legacy'},
+            requestCameraPermission: () async {
+              cameraPermissionRequests++;
               return true;
-            }
-            if (method == 'attach' && registeredHandle != null) {
-              return <String, Object?>{
-                'version': 1,
-                'descriptor': <String, Object?>{
-                  'callHandle': registeredHandle,
-                  'expiresAtMs': registeredExpiresAt,
-                  'presented': true,
-                  'phase': 'preStart',
-                  'direction': 'outgoing',
-                },
-                'nativeCallId': registeredHandle,
-                'highestSequence': 1,
-                'events': [
-                  <String, Object?>{
+            },
+            // Preflight refresh rotates the short fixture grant. Model delivery
+            // of the current replacement instead of trusting the old receipt.
+            ensureOutgoingCallWakeAuthority: (peer) async {
+              final issued = await fixture.issuedCallWakeHandleStore
+                  .readForContact(peer);
+              return issued != null &&
+                  await fixture.graphs.single.markCallWakeHandleDistributed(
+                    peer,
+                    issued.grant,
+                  );
+            },
+            lifecycleOverride: (method, arguments) async {
+              if (method == 'registerOutgoingAuthenticated') {
+                registeredHandle = arguments['callHandle']! as String;
+                registeredExpiresAt = arguments['expiresAtMs']! as int;
+                return true;
+              }
+              if (method == 'attach' && registeredHandle != null) {
+                return <String, Object?>{
+                  'version': 1,
+                  'descriptor': <String, Object?>{
                     'callHandle': registeredHandle,
-                    'sequence': 1,
-                    'eventId': '00000000-0000-4000-8000-000000000001',
-                    'type': 'presented',
-                    'occurredAtMs': 2_000_000,
+                    'expiresAtMs': registeredExpiresAt,
+                    'presented': true,
+                    'phase': 'preStart',
+                    'direction': 'outgoing',
                   },
-                ],
-              };
+                  'nativeCallId': registeredHandle,
+                  'highestSequence': 1,
+                  'events': [
+                    <String, Object?>{
+                      'callHandle': registeredHandle,
+                      'sequence': 1,
+                      'eventId': '00000000-0000-4000-8000-000000000001',
+                      'type': 'presented',
+                      'occurredAtMs': 2_000_000,
+                    },
+                  ],
+                };
+              }
+              return null;
+            },
+          );
+          await fixture.composition.start();
+          await _configureCancellationEndpoint(
+            fixture,
+            'video-contact',
+            video: mode != 'enabled-legacy',
+          );
+          if (mutation != 'none') {
+            final original = Map<String, Object?>.from(
+              fixture.bridge.responses['call_endpoint_get_v1']!,
+            );
+            fixture.bridge.responseHandlers['call_endpoint_get_v1'] =
+                (_) async {
+                  endpointLookups++;
+                  if (mutation == 'cancelled') request.cancel();
+                  if (endpointLookups == 1) return original;
+                  if (mutation == 'signature') {
+                    fixture.bridge.responses['payload.verify'] = {
+                      'ok': true,
+                      'valid': false,
+                    };
+                  }
+                  final record = Map<String, dynamic>.from(
+                    jsonDecode(
+                      utf8.decode(
+                        base64Decode(original['canonicalRecord']! as String),
+                      ),
+                    ) as Map,
+                  );
+                  if (mutation == 'preference') record['preferenceEpoch'] = 2;
+                  if (mutation == 'capability') {
+                    record['capabilities'] = ['voice_call_v1'];
+                  }
+                  if (mutation == 'expired') record['expiresAtMs'] = 2_000_000;
+                  return {
+                    ...original,
+                    'canonicalRecord': base64Encode(
+                      utf8.encode(jsonEncode(record)),
+                    ),
+                    'endpoint': {...record, 'signature': 'c2lnbmF0dXJl'},
+                  };
+                };
+          }
+          final Future<OutgoingCallStartResult> starting;
+          if (mode == 'explicit-video') {
+            final Object capability = fixture.composition;
+            expect(capability, isA<OutgoingVideoCallCapability>());
+            starting = (capability as OutgoingVideoCallCapability)
+                .startOutgoingVideoCall('video-contact', request: request);
+          } else {
+            starting = fixture.composition.startOutgoingCall(
+              'video-contact',
+              request: request,
+            );
+          }
+          final outcome = await starting;
+          if (mutation == 'none') {
+            expect(outcome, OutgoingCallStartResult.started);
+          }
+          final invitations = fixture.bridge.requests
+              .where((r) => r['cmd'] == 'message.encrypt')
+              .map(
+                (r) =>
+                    jsonDecode((r['payload'] as Map)['plaintext'] as String)
+                        as Map,
+              )
+              .where((r) => r['event'] == 'invite')
+              .toList();
+          expect(cameraPermissionRequests, 0);
+          expect(
+            fixture.lifecycleMethods.where((m) => m == 'setLocalCameraActive'),
+            isEmpty,
+          );
+          if (mutation != 'none') {
+            if (mutation == 'cancelled') {
+              expect(outcome, OutgoingCallStartResult.canceled);
+              expect(endpointLookups, 1);
+            } else {
+              expect(endpointLookups, greaterThanOrEqualTo(2));
             }
-            return null;
-          },
-        );
-        await fixture.composition.start();
-        await _configureCancellationEndpoint(
-          fixture,
-          'video-contact',
-          video: true,
-        );
-        final Future<OutgoingCallStartResult> starting;
-        if (mode == 'explicit-video') {
-          final Object capability = fixture.composition;
-          expect(capability, isA<OutgoingVideoCallCapability>());
-          starting = (capability as OutgoingVideoCallCapability)
-              .startOutgoingVideoCall('video-contact');
-        } else {
-          starting = fixture.composition.startOutgoingCall('video-contact');
-        }
-        expect(await starting, OutgoingCallStartResult.started);
-        final invitations = fixture.bridge.requests
-            .where((r) => r['cmd'] == 'message.encrypt')
-            .map(
-              (r) =>
-                  jsonDecode((r['payload'] as Map)['plaintext'] as String)
-                      as Map,
-            )
-            .where((r) => r['event'] == 'invite')
-            .toList();
-        expect(invitations, hasLength(1));
-        final invite = invitations.single;
-        expect(
-          invite['schema'],
-          mode == 'explicit-video'
-              ? 'mknoon.call_signal.v2'
-              : 'mknoon.call_signal.v1',
-        );
-        final payload = invite['payload'] as Map;
-        if (mode == 'explicit-video') {
-          expect(payload['media'], 'video');
-          expect(payload['camera'], 'off');
-        } else {
-          expect(payload.containsKey('media'), isFalse);
-          expect(payload.containsKey('camera'), isFalse);
-        }
-        expect(
-          fixture.lifecycleMethods.where((m) => m == 'setLocalCameraActive'),
-          isEmpty,
-        );
-      },
-    );
+            expect(invitations, isEmpty);
+            return;
+          }
+          expect(invitations, hasLength(1));
+          final invite = invitations.single;
+          expect(
+            invite['schema'],
+            mode == 'explicit-video' || mode == 'enabled-audio'
+                ? 'mknoon.call_signal.v2'
+                : 'mknoon.call_signal.v1',
+          );
+          final payload = invite['payload'] as Map;
+          if (mode == 'explicit-video' || mode == 'enabled-audio') {
+            expect(
+              payload['media'],
+              mode == 'explicit-video' ? 'video' : 'audio',
+            );
+            expect(payload['camera'], 'off');
+            final graph = fixture.graphs.single;
+            final context = graph.videoContexts!.read(
+              graph.coordinator.activeSession!.callId!,
+            )!;
+            expect(context.wireVersion, CallWireVersion.v2);
+            expect(
+              context.requestedMedia,
+              mode == 'explicit-video' ? CallMediaKind.video : CallMediaKind.audio,
+            );
+            expect(context.initialAcceptedMedia, isNull);
+          } else {
+            expect(payload.containsKey('media'), isFalse);
+            expect(payload.containsKey('camera'), isFalse);
+          }
+          expect(
+            fixture.lifecycleMethods.where((m) => m == 'setLocalCameraActive'),
+            isEmpty,
+          );
+        },
+      );
+    }
   }
 
   test(
