@@ -229,8 +229,10 @@ void main() {
       async.elapse(const Duration(milliseconds: 14500));
       Object? failure;
       var success = false;
-      rig.resolve().then(
-        (_) => success = true,
+      rig.resolve().then<void>(
+        (_) {
+          success = true;
+        },
         onError: (Object error) {
           failure = error;
         },

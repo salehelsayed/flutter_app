@@ -67,8 +67,10 @@ void main() {
         var completed = false;
         rig.adapter
             .sendIceRestart(callId: _callId, iceGeneration: 1)
-            .then(
-              (_) => completed = true,
+            .then<void>(
+              (_) {
+                completed = true;
+              },
               onError: (Object error) {
                 rejected = error;
                 completed = true;
