@@ -5404,4 +5404,67 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_video_camera_off_caption => 'Camera off';
+
+  @override
+  String get call_video_ringing => 'Ringing…';
+
+  @override
+  String call_video_waiting_for_acceptance(String name) {
+    return 'Waiting for $name to accept…';
+  }
+
+  @override
+  String get call_video_switching => 'Switching to video…';
+
+  @override
+  String get call_video_camera_starting => 'Starting camera…';
+
+  @override
+  String call_video_waiting_for_remote(String name) {
+    return 'Waiting for $name\'s video…';
+  }
+
+  @override
+  String get call_video_request_declined => 'Video request declined';
+
+  @override
+  String get call_video_request_expired => 'Video request expired';
+
+  @override
+  String get call_video_request_cancelled => 'Video request cancelled';
+
+  @override
+  String get call_video_camera_permission_title => 'Camera access is off';
+
+  @override
+  String call_video_camera_permission_body(String name) {
+    return 'Allow camera access in Settings to turn on your video. $name can still hear you.';
+  }
+
+  @override
+  String get call_video_open_settings => 'Open Settings';
+
+  @override
+  String get call_video_camera_unavailable => 'Camera unavailable';
+
+  @override
+  String get call_video_return_caption => 'Return';
+
+  @override
+  String call_video_peer_busy(String name) {
+    return '$name is on another call';
+  }
+
+  @override
+  String get call_video_connection_lost => 'Connection lost';
+
+  @override
+  String get call_video_call_again => 'Call again';
+
+  @override
+  String get call_video_close => 'Close';
+
+  @override
+  String get call_video_camera_permission_body_without_audio =>
+      'Allow camera access in Settings to turn on your video.';
 }

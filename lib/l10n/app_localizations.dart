@@ -9037,6 +9037,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Camera off'**
   String get call_video_camera_off_caption;
+
+  /// No description provided for @call_video_ringing.
+  ///
+  /// In en, this message translates to:
+  /// **'Ringing…'**
+  String get call_video_ringing;
+
+  /// No description provided for @call_video_waiting_for_acceptance.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for {name} to accept…'**
+  String call_video_waiting_for_acceptance(String name);
+
+  /// No description provided for @call_video_switching.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching to video…'**
+  String get call_video_switching;
+
+  /// No description provided for @call_video_camera_starting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting camera…'**
+  String get call_video_camera_starting;
+
+  /// No description provided for @call_video_waiting_for_remote.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for {name}\'s video…'**
+  String call_video_waiting_for_remote(String name);
+
+  /// No description provided for @call_video_request_declined.
+  ///
+  /// In en, this message translates to:
+  /// **'Video request declined'**
+  String get call_video_request_declined;
+
+  /// No description provided for @call_video_request_expired.
+  ///
+  /// In en, this message translates to:
+  /// **'Video request expired'**
+  String get call_video_request_expired;
+
+  /// No description provided for @call_video_request_cancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Video request cancelled'**
+  String get call_video_request_cancelled;
+
+  /// No description provided for @call_video_camera_permission_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera access is off'**
+  String get call_video_camera_permission_title;
+
+  /// No description provided for @call_video_camera_permission_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow camera access in Settings to turn on your video. {name} can still hear you.'**
+  String call_video_camera_permission_body(String name);
+
+  /// No description provided for @call_video_open_settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get call_video_open_settings;
+
+  /// No description provided for @call_video_camera_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera unavailable'**
+  String get call_video_camera_unavailable;
+
+  /// No description provided for @call_video_return_caption.
+  ///
+  /// In en, this message translates to:
+  /// **'Return'**
+  String get call_video_return_caption;
+
+  /// No description provided for @call_video_peer_busy.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is on another call'**
+  String call_video_peer_busy(String name);
+
+  /// No description provided for @call_video_connection_lost.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection lost'**
+  String get call_video_connection_lost;
+
+  /// No description provided for @call_video_call_again.
+  ///
+  /// In en, this message translates to:
+  /// **'Call again'**
+  String get call_video_call_again;
+
+  /// No description provided for @call_video_close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get call_video_close;
+
+  /// No description provided for @call_video_camera_permission_body_without_audio.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow camera access in Settings to turn on your video.'**
+  String get call_video_camera_permission_body_without_audio;
 }
 
 class _AppLocalizationsDelegate
