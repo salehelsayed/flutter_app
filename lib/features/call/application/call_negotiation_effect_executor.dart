@@ -11,6 +11,7 @@ import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_coordinator.dart';
+import 'call_recovery_budget.dart';
 import 'call_negotiation_material_store.dart';
 
 /// Expected failures reported by app-owned media and signaling adapters.
@@ -82,9 +83,8 @@ abstract interface class CallNegotiationFencedSignalingPort {
 
 typedef CallNegotiationEventDispatcher = Future<void> Function(CallEvent event);
 typedef CallNegotiationSnapshotReader = CallSessionSnapshot? Function();
-typedef CallStagedIceServerReader = Future<List<CallIceServer>> Function(
-  CallId callId,
-);
+typedef CallStagedIceServerReader =
+    Future<List<CallIceServer>> Function(CallId callId);
 
 /// Executes only reducer-approved media effects and bridges engine state back
 /// through the one process-owned call coordinator.
@@ -99,6 +99,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     required this.readActiveSnapshot,
     required this.readStagedIceServers,
     required this.clock,
+    this.readRecoveryBudget,
     this.maxPendingLocalCandidates = 64,
     this.maxPendingRemoteCandidates = 64,
     this.maxLocalCandidateBatchSize = 8,
@@ -143,9 +144,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   final CallNegotiationSnapshotReader readActiveSnapshot;
   final CallStagedIceServerReader readStagedIceServers;
   final DateTime Function() clock;
+  final CallRecoveryBudget? Function(CallId callId)? readRecoveryBudget;
   final int maxPendingLocalCandidates;
   final int maxPendingRemoteCandidates;
   final int maxLocalCandidateBatchSize;
+
   /// Optional typed protocol owner. True consumes the candidate exactly once;
   /// false preserves the existing v1 queue and sender.
   final bool Function(CallSessionSnapshot, CallIceCandidate)?
@@ -683,13 +686,27 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         onRetired?.call();
         rethrow;
       }
+      final budget = readRecoveryBudget?.call(snapshot.callId!);
+      if (readRecoveryBudget != null &&
+          (budget == null || budget.remaining <= Duration.zero)) {
+        retry.close();
+        onRetired?.call();
+        return false;
+      }
+      // Legacy standalone executors may have no coordinator; production always
+      // supplies the original canonical episode budget.
+      final standaloneDeadline = budget == null
+          ? clock().add(const Duration(seconds: 15))
+          : null;
       final work = _RecoverySignalWork(
         snapshot,
         generation,
         retry,
         onSent,
         onRetired,
-        clock().add(const Duration(seconds: 15)),
+        budget == null
+            ? () => standaloneDeadline!.difference(clock())
+            : () => budget.remaining,
       );
       _recoverySignals.add(work);
       _scheduleRecoverySignal(work);
@@ -699,7 +716,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 
   bool _isCurrentRecoverySignal(_RecoverySignalWork work) =>
       _recoverySignals.contains(work) &&
-      clock().isBefore(work.deadline) &&
+      work.remaining() > Duration.zero &&
       _canContinueSignal(work.snapshot, work.generation);
 
   void _retireRecoverySignal(_RecoverySignalWork work) {
@@ -722,7 +739,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       milliseconds: (baseMs * (0.8 + 0.4 * _retryJitter().clamp(0.0, 1.0)))
           .round(),
     );
-    if (!clock().add(delay).isBefore(work.deadline)) {
+    if (delay >= work.remaining()) {
       _retireRecoverySignal(work);
       return;
     }
@@ -1849,11 +1866,11 @@ final class _RecoverySignalWork {
     this.retry,
     this.onSent,
     this.onRetired,
-    this.deadline,
+    this.remaining,
   );
   final CallSessionSnapshot snapshot;
   final int generation;
-  final DateTime deadline;
+  final Duration Function() remaining;
   CallNegotiationSignalRetry? retry;
   Future<void> Function()? onSent;
   void Function()? onRetired;

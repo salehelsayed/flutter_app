@@ -173,6 +173,7 @@ CallCoordinator _coordinator({
   CallCleanupCoordinator? cleanup,
   int maxPendingEvents = 64,
   CallTimerScheduler? timerScheduler,
+  Duration Function()? monotonicNow,
   DateTime Function()? clock,
   Duration effectTimeout = const Duration(seconds: 15),
   Duration mediaPreparationTimeout = const Duration(seconds: 45),
@@ -196,6 +197,7 @@ CallCoordinator _coordinator({
   idSource: () => _callId,
   maxPendingEvents: maxPendingEvents,
   timerScheduler: timerScheduler,
+  monotonicNow: monotonicNow,
   mediaPreparationTimeout: mediaPreparationTimeout,
   effectTimeout: effectTimeout,
   terminalEffectTimeout: terminalEffectTimeout,
@@ -1335,6 +1337,62 @@ void main() {
         timers.scheduled.where((timer) => !timer.canceled).single.delay,
         const Duration(seconds: 30),
       );
+    },
+  );
+
+  test(
+    'BL26-HA canonical budget keeps timer origin across wall-clock and successor changes',
+    () async {
+      var monotonic = Duration.zero;
+      var wall = _now;
+      final timers = _FakeTimerScheduler();
+      final coordinator = _coordinator(
+        history: _MemoryHistoryRepository(),
+        timerScheduler: timers,
+        monotonicNow: () => monotonic,
+        clock: () => wall,
+      );
+      addTearDown(coordinator.dispose);
+      for (final type in [
+        CallEventType.place,
+        CallEventType.outgoingInviteReady,
+        CallEventType.remoteAccept,
+        CallEventType.negotiationReady,
+        CallEventType.mediaConnected,
+        CallEventType.mediaLost,
+      ]) {
+        await coordinator.dispatch(_event(type));
+      }
+      final first = coordinator.recoveryBudgetFor(_callId)!;
+      expect(first.remaining, const Duration(seconds: 15));
+      monotonic = const Duration(seconds: 14);
+      wall = _now.subtract(const Duration(days: 2));
+      expect(first.remaining, const Duration(seconds: 1));
+      wall = _now.add(const Duration(days: 2));
+      expect(first.remaining, const Duration(seconds: 1));
+      await coordinator.dispatch(_event(CallEventType.mediaRecovered));
+      expect(first.remaining, Duration.zero);
+      expect(coordinator.recoveryBudgetFor(_callId), isNull);
+      await coordinator.dispatch(
+        _event(CallEventType.mediaLost, eventId: 'new-budget-episode'),
+      );
+      final next = coordinator.recoveryBudgetFor(_callId)!;
+      expect(next, isNot(same(first)));
+      expect(next.remaining, const Duration(seconds: 15));
+      expect(first.remaining, Duration.zero);
+      monotonic = const Duration(seconds: 29);
+      expect(
+        next.remaining,
+        Duration.zero,
+        reason: 'Queued timer dispatch cannot extend authorization',
+      );
+      expect(
+        timers.scheduled.where((timer) => !timer.canceled).single.delay,
+        const Duration(seconds: 15),
+      );
+      await coordinator.dispatch(_event(CallEventType.end));
+      expect(coordinator.recoveryBudgetFor(_callId), isNull);
+      expect(next.remaining, Duration.zero);
     },
   );
 

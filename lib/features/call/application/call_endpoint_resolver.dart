@@ -22,6 +22,13 @@ final class CallEndpointResolutionException implements Exception {
   String toString() => 'Call endpoint unavailable: ${code.name}';
 }
 
+/// No currently usable recovery route; the original reconnect timer remains
+/// authoritative. This must never enter an adapter's legacy pin fallback.
+final class CallEndpointRecoveryUnavailable implements Exception {
+  const CallEndpointRecoveryUnavailable({this.transient = false});
+  final bool transient;
+}
+
 /// Contact authority frozen at the trusted lookup used for admission.
 typedef CallAdmissionAuthorityWitness = ({
   String fingerprint,
@@ -176,6 +183,108 @@ final class CallEndpointResolver {
 
   final int Function() _nowMs;
   final VerifyCallEndpointSignature _verifyEndpointSignature;
+
+  /// Rejects durable local denials before waiting on remote routing authority.
+  /// This verifies no relay record and cannot grant permission to send alone.
+  TrustedCallDeviceAuthority requireLocalAuthority({
+    required String contactAccountPeerId,
+    required bool contactAccepted,
+    required bool contactBlocked,
+    required List<TrustedCallDeviceAuthority> trustedDevices,
+    required CallWakeHandleGrant? wakeHandleGrant,
+  }) {
+    if (!contactAccepted) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.notAccepted,
+      );
+    }
+    if (contactBlocked) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.blocked,
+      );
+    }
+    final account = trustedDevices
+        .where((device) => device.accountPeerId == contactAccountPeerId)
+        .toList(growable: false);
+    if (account.isEmpty) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.unavailable,
+      );
+    }
+    final linked = account
+        .where((device) => device.linked)
+        .toList(growable: false);
+    if (linked.isEmpty) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.unlinked,
+      );
+    }
+    final grant = wakeHandleGrant;
+    if (grant == null) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.unavailable,
+      );
+    }
+    if (!grant.isValidAt(_nowMs())) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.stale,
+      );
+    }
+    final matches = linked
+        .where(
+          (device) =>
+              device.devicePeerId == grant.recipientDevicePeerId &&
+              device.deviceKeyEpoch == grant.deviceKeyEpoch &&
+              device.deviceKeyEpoch > 0 &&
+              device.signingPublicKey.trim().isNotEmpty &&
+              device.mlKemPublicKey.trim().isNotEmpty,
+        )
+        .toList(growable: false);
+    if (matches.isEmpty ||
+        grant.generation <= 0 ||
+        !_wakeHandleGrammar.hasMatch(grant.handle)) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.mismatched,
+      );
+    }
+    if (matches.length != 1) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.ambiguous,
+      );
+    }
+    return matches.single;
+  }
+
+  void requireCurrentPinnedAuthority({
+    required ResolvedCallEndpoint endpoint,
+    required bool contactAccepted,
+    required bool contactBlocked,
+    required List<TrustedCallDeviceAuthority> trustedDevices,
+    required CallWakeHandleGrant? wakeHandleGrant,
+  }) {
+    final device = requireLocalAuthority(
+      contactAccountPeerId: endpoint.accountPeerId,
+      contactAccepted: contactAccepted,
+      contactBlocked: contactBlocked,
+      trustedDevices: trustedDevices,
+      wakeHandleGrant: wakeHandleGrant,
+    );
+    if (endpoint.expiresAtMs <= _nowMs()) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.stale,
+      );
+    }
+    if (device.devicePeerId != endpoint.devicePeerId ||
+        device.deviceKeyEpoch != endpoint.deviceKeyEpoch ||
+        device.signingPublicKey != endpoint.signingPublicKey ||
+        device.mlKemPublicKey != endpoint.mlKemPublicKey ||
+        device.admissionAuthority != endpoint.admissionAuthority ||
+        wakeHandleGrant!.handle != endpoint.wakeHandle) {
+      throw const CallEndpointResolutionException(
+        CallEndpointResolutionCode.mismatched,
+      );
+    }
+  }
 
   Future<ResolvedCallEndpoint> resolve({
     required String contactAccountPeerId,

@@ -177,6 +177,10 @@ final class ProductionCallV2SignalingAdapter {
     late final ResolvedCallEndpoint fresh;
     try {
       fresh = _snapshotEndpoint(await _resolve(entry.endpoint.accountPeerId));
+    } on CallEndpointRecoveryUnavailable {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
     } on CallEndpointResolutionException catch (error) {
       if (error.code == CallEndpointResolutionCode.unavailable) {
         throw const CallSignalingException(
