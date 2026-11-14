@@ -221,6 +221,7 @@ void main() {
             expect(finder, findsNothing);
           }, locale: locale);
         },
+        timeout: const Timeout.factor(1),
       );
     }
   }
@@ -245,7 +246,7 @@ void main() {
       await tester.pump();
       expect(find.text(text), findsNothing);
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   testWidgets('VUI3b an outcome present at mount is consumed, not replayed', (
     tester,
@@ -267,7 +268,7 @@ void main() {
         _outcome(MediaSwitchOutcomeKind.cancelled, id: 'upgrade-2'),
       );
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   for (final withdrawal in ['null', 'no video', 'disabled']) {
     testWidgets(
@@ -293,6 +294,7 @@ void main() {
           expect(find.text(text), findsNothing);
         });
       },
+      timeout: const Timeout.factor(1),
     );
   }
 
@@ -326,7 +328,7 @@ void main() {
         _outcome(MediaSwitchOutcomeKind.cancelled, id: 'after-return'),
       );
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   for (final clear in [
     'incoming request',
@@ -357,7 +359,7 @@ void main() {
           findsNothing,
         );
       });
-    });
+    }, timeout: const Timeout.factor(1));
   }
 
   testWidgets('VUI3b capability replacement suppresses its retained outcome', (
@@ -391,7 +393,7 @@ void main() {
     } finally {
       await second.close();
     }
-  });
+  }, timeout: const Timeout.factor(1));
 
   testWidgets('VUI3b a later base revision has a distinct notice identity', (
     tester,
@@ -410,7 +412,7 @@ void main() {
         _outcome(MediaSwitchOutcomeKind.cancelled, revision: 1),
       );
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   testWidgets('VUI3b locale rebuild translates without extending the notice', (
     tester,
@@ -431,7 +433,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.text(text), findsNothing);
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   testWidgets('VUI3b an old expiry cannot clear a newer outcome', (
     tester,
@@ -460,7 +462,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
       expect(find.text(text), findsNothing);
     });
-  });
+  }, timeout: const Timeout.factor(1));
 
   testWidgets(
     'VUI3b Arabic 320px 2x notice preserves full text and audio actions',
@@ -508,5 +510,6 @@ void main() {
         scale: 2,
       );
     },
+    timeout: const Timeout.factor(1),
   );
 }

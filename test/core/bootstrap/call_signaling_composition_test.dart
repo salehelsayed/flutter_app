@@ -4478,7 +4478,9 @@ void main() {
     'VUI3b real graph cancellation drives the overlay notice lifetime',
     (tester) async {
       final connected = await tester.runAsync(
-        () => _connectedGraphVideo(acceptedMedia: CallMediaKind.audio),
+        () =>
+            _connectedGraphVideo(acceptedMedia: CallMediaKind.audio)
+                .timeout(const Duration(seconds: 5)),
       );
       expect(connected, isNotNull);
       final (fixture, engine) = connected!;
@@ -4503,11 +4505,13 @@ void main() {
         await _pumpCallLifecycle(tester);
         await tester.runAsync(() async {
           expect(
-            await actions.applyVideoIntent(
-              _callA,
-              generation: graph.current!.video!.generation,
-              intent: const CallVideoIntent(CallVideoAction.requestVideo),
-            ),
+            await actions
+                .applyVideoIntent(
+                  _callA,
+                  generation: graph.current!.video!.generation,
+                  intent: const CallVideoIntent(CallVideoAction.requestVideo),
+                )
+                .timeout(const Duration(seconds: 5)),
             ForegroundCallActionResult.applied,
           );
           await _untilGraphVideo(
@@ -4518,14 +4522,16 @@ void main() {
         final requestId = graph.current!.video!.presentation.outgoingUpgradeId!;
         await tester.runAsync(() async {
           expect(
-            await actions.applyVideoIntent(
-              _callA,
-              generation: graph.current!.video!.generation,
-              intent: CallVideoIntent(
-                CallVideoAction.cancelUpgrade,
-                upgradeId: requestId,
-              ),
-            ),
+            await actions
+                .applyVideoIntent(
+                  _callA,
+                  generation: graph.current!.video!.generation,
+                  intent: CallVideoIntent(
+                    CallVideoAction.cancelUpgrade,
+                    upgradeId: requestId,
+                  ),
+                )
+                .timeout(const Duration(seconds: 5)),
             ForegroundCallActionResult.applied,
           );
         });
@@ -4556,10 +4562,45 @@ void main() {
         expect(find.text(text), findsNothing);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
-        await tester.runAsync(fixture.composition.shutdown);
+        // Shutdown crosses real-zone streams and fake-zone subscriptions. Keep
+        // both queues moving instead of awaiting it inside runAsync, which
+        // prevents the binding from flushing its fake-zone microtasks.
+        var shutdownComplete = false;
+        Object? shutdownError;
+        StackTrace? shutdownStack;
+        unawaited(
+          fixture.composition.shutdown().then<void>(
+            (_) {
+              shutdownComplete = true;
+            },
+            onError: (Object error, StackTrace stack) {
+              shutdownError = error;
+              shutdownStack = stack;
+              shutdownComplete = true;
+            },
+          ),
+        );
+        final shutdownDeadline = Stopwatch()..start();
+        while (!shutdownComplete &&
+            shutdownDeadline.elapsed < const Duration(seconds: 5)) {
+          await tester.pump();
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+        }
+        await tester.pump();
+        expect(
+          shutdownComplete,
+          isTrue,
+          reason: 'VUI3b graph shutdown did not complete within 5 real seconds',
+        );
+        if (shutdownError != null) {
+          Error.throwWithStackTrace(shutdownError!, shutdownStack!);
+        }
         await _pumpCallLifecycle(tester);
       }
     },
+    timeout: const Timeout.factor(1),
   );
 
   test(
