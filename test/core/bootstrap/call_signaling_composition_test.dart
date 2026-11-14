@@ -2202,6 +2202,27 @@ void main() {
           );
           await fixture.composition.start();
           final graph = fixture.graphs.single;
+          if (direction == CallDirection.outgoing) {
+            final device = (await graph.trustedRosterProvider.loadForContact(
+              'remote-account',
+            )).devices.single;
+            final nowMs = graph.coordinator.clock().millisecondsSinceEpoch;
+            expect(
+              await fixture.receivedCallWakeHandleStore.storeIfStrictlyNewer(
+                issuerAccountPeerId: 'remote-account',
+                grant: CallWakeHandleGrant(
+                  handle: 'fedcba9876543210fedcba9876543210',
+                  recipientDevicePeerId: device.devicePeerId,
+                  deviceKeyEpoch: device.deviceKeyEpoch,
+                  generation: 1,
+                  issuedAtMs: nowMs - 1000,
+                  expiresAtMs: nowMs + 60000,
+                ),
+                nowMs: nowMs,
+              ),
+              isTrue,
+            );
+          }
           final endpointRead = Completer<void>();
           final endpointResult = Completer<Map<String, Object?>>();
           fixture.bridge.responseHandlers['call_endpoint_get_v1'] = (_) {
@@ -2226,26 +2247,35 @@ void main() {
               ),
             ),
           );
-          if (direction == CallDirection.incoming) {
-            await placement;
-            expect(
-              await graph.iosCallLifecycleAdapter!.present(
-                IncomingCallPresentation(
-                  callId: _callA,
-                  callerAccountPeerId: 'remote-account',
-                  expiresAt: graph.coordinator.clock().add(
-                    const Duration(seconds: 45),
+          try {
+            if (direction == CallDirection.incoming) {
+              await placement;
+              expect(
+                await graph.iosCallLifecycleAdapter!.present(
+                  IncomingCallPresentation(
+                    callId: _callA,
+                    callerAccountPeerId: 'remote-account',
+                    expiresAt: graph.coordinator.clock().add(
+                      const Duration(seconds: 45),
+                    ),
                   ),
                 ),
-              ),
-              true,
-            );
-          } else {
-            // Hold unrelated endpoint work while checking the same production
-            // bundle from the reducer's real outgoing session.
-            await endpointRead.future;
-          }
-          try {
+                true,
+              );
+            } else {
+              // Hold unrelated endpoint work while checking the same production
+              // bundle from the reducer's real outgoing session.
+              await Future.any<void>([
+                endpointRead.future,
+                placement.then<void>((_) {
+                  if (!endpointRead.isCompleted) {
+                    throw TestFailure(
+                      'Outgoing placement ended before the held endpoint lookup',
+                    );
+                  }
+                }),
+              ]).timeout(const Duration(seconds: 5));
+            }
             final bundles = <CallScopedMediaBundle>[];
             final sub = graph.mediaOwner.bundleChanges.listen((b) {
               if (b != null) bundles.add(b);
