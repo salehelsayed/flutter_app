@@ -4029,7 +4029,9 @@ void main() {
           );
           expect(
             peer.graphs.single.coordinator.lastSnapshot!.endReason,
-            CallEndReason.remoteHangup,
+            boundary == 'shutdown terminal'
+                ? CallEndReason.appShutdown
+                : CallEndReason.remoteHangup,
           );
         },
       );

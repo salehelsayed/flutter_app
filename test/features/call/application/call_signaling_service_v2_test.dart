@@ -579,7 +579,16 @@ void main() {
       r.direct.action = () async => _failed;
       r.mailbox.action = (_) async => throw StateError('unavailable');
       r.service.stopRetries();
-      expect((await r.send(retry)).delivered, isFalse);
+      await expectLater(
+        r.send(retry),
+        throwsA(
+          isA<CallSignalingException>().having(
+            (error) => error.code,
+            'code',
+            CallSignalingErrorCode.transportUnavailable,
+          ),
+        ),
+      );
       expect(r.service.pendingTerminalRetryCount, 0);
       await expectLater(r.send(retry), throwsA(isA<CallSignalingException>()));
       expect(r.direct.envelopes, hasLength(1));
