@@ -12122,8 +12122,9 @@ visible and cannot become an ordinary first-attempt PASS.
   switching only during negotiating/commit/acknowledgement. The media-switch
   machine retains terminal requests for replay history; request presence is not
   evidence of an active switch. Canceling an unselected request must pass its
-  transaction revision (`base + 1`) to the unchanged domain, which retires it
-  without consuming the settled revision or emitting abort wire. Debug-only
+  transaction revision (`base + 1`). At this earlier baseline, cancellation
+  retired locally without wire; peer-visible Unit C below supersedes that
+  cancellation behavior while preserving the projection fix. Debug-only
   state diagnostics use fixed fields and deduplicate at the executor transition
   seam; projection reads and duplicate requests must not create new state logs.
   RED `8485e82876527b8fb32b78571880f4f54de1bf1c` passed three active-phase
@@ -12147,6 +12148,39 @@ visible and cannot become an ordinary first-attempt PASS.
   Packets and independently checked raw hashes/exits are indexed by
   `/Users/I560101/.codex/investigations/bl16-upgrade-projection-20261114/green-runtime-verified.json`
   and `red-runtime-verified.json` in that directory.
+  **Peer-visible pending-video cancellation (Unit C):** requester withdrawal
+  uses the existing authenticated `media_abort` envelope at base+1/audio with
+  reason cancelled. Updated peers clear the prompt without consuming revision
+  for an unselected request. Bounded early-abort tombstones handle reordering.
+  The requester blocks new optional switches until an exact responder decline
+  proves unselected or its original accept proves selected. Abort custody is
+  not a selection witness. A crossing accept repairs cancelled audio at base+1
+  without normal video selection/capture; response replay keeps original
+  identity and expiry. The original request cutoff never renews; missing or
+  contradictory evidence disables optional switching, preserving audio/hangup.
+  Automatic ICE recovery is transport retirement, not user withdrawal:
+  `beginRecovery` must explicitly use reason transport for pending unselected
+  work. Otherwise cancellation quarantine blocks `recoveryReady` and the ICE
+  restart offer. Selected repair and existing recovery sentinels stay intact.
+  Original RED `ff317e75528139acbb575470ea7d25fd30a7e350` produced 1 pass,
+  15 assertion failures and 10 missing-effect errors (not production crashes).
+  Supplement `f2ba49c2295247d12d7059ed3e7dc34287a5ad4d` had 1 pass/1 failure;
+  that failure reaches early-abort admission, not later quarantine assertions.
+  First GREEN `e262176ecaa4c275e8f8bda3976c62fa7b5bd1b9` passed all 28 new
+  cases but failed two existing recovery sentinels (465 pass/2 assertion fail);
+  its second command was not run. The preceding preflight exit 4 ran no tests.
+  Corrected `8bb1154cae760b77ad6d485bd7568b30062c9087` changes only the
+  transport-retirement reason and preserves the entire test tree. Claude-UI
+  passed 467 core/composition and 265 preservation cases (732 total), including
+  all 28 additions and both recovery sentinels, with zero failures/errors/skips,
+  reporter success and child exits 0. Five clean identity boundaries verified
+  all 90 file pins; offline locked setup exited 0. Both RED receipts and the
+  first GREEN failure remain retained. Source and correction reviews passed.
+  Evidence and raw hashes are indexed in
+  `/Users/I560101/.codex/investigations/bl16-peer-cancel-20261114/green-corrected-runtime-verified.json`
+  and the RED/first-failure records alongside it. Old-peer tests model ignored
+  cancellation; they do not certify old-binary interoperability. Native/device,
+  signed-candidate and the broader 19 selected checks remain separate/unrun.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,
