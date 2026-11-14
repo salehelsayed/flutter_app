@@ -56,4 +56,18 @@ void main() {
     expect(summary, isNot(contains('IN IP4')));
     expect(callVideoSdpSummary(_offer), isNot(contains('video-track')));
   });
+
+  test('DEFECT4 a session-level direction is inherited unless overridden', () {
+    const sdp =
+        'v=0\r\n'
+        'a=recvonly\r\n'
+        'm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'
+        'm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
+        'm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=sendrecv\r\n';
+    expect(
+      callVideoSdpSummary(sdp),
+      'videoSections=2 rejectedVideo=0 directions=recvonly,sendrecv '
+      'hasVideoMsid=false hasVideoSsrc=false',
+    );
+  });
 }
