@@ -72,8 +72,18 @@ class StreamFake implements rtc.MediaStream {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+int _senderIds = 0;
+
 class Sender implements rtc.RTCRtpSender {
-  Sender([this.track]);
+  Sender([this.track]) : senderId = 'sender-${++_senderIds}';
+  Sender._snapshot(this.senderId, this.parameters, this.track);
+  @override
+  final String senderId;
+
+  /// Fresh native view returned by Peer.getSenders; null = same as cached.
+  rtc.RTCRtpParameters? nativeParameters;
+  Sender snapshot() =>
+      Sender._snapshot(senderId, nativeParameters ?? parameters, track);
   @override
   rtc.MediaStreamTrack? track;
   final replacements = <rtc.MediaStreamTrack?>[];
@@ -248,6 +258,24 @@ class Peer implements rtc.RTCPeerConnection {
   @override
   Future<List<rtc.RTCRtpTransceiver>> getTransceivers() async =>
       nativeTransceivers;
+
+  // Fresh native sender views (defect 3 refresh path).
+  int senderReads = 0;
+  bool failSenders = false;
+  Future<void> Function()? beforeSenders;
+  List<rtc.RTCRtpSender> Function()? sendersOverride;
+  @override
+  Future<List<rtc.RTCRtpSender>> getSenders() async {
+    senderReads++;
+    await beforeSenders?.call();
+    if (failSenders) throw StateError('senders');
+    return sendersOverride?.call() ??
+        [
+          audio.snapshot(),
+          for (final t in nativeTransceivers) t.sender.snapshot(),
+        ];
+  }
+
   @override
   Future<rtc.RTCRtpSender> addTrack(
     rtc.MediaStreamTrack track, [
