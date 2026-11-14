@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io' show Platform;
+
 import 'package:flutter/services.dart';
 
 /// BL-30: runs writes that must not be caught by iOS suspension.
@@ -30,11 +33,42 @@ final class IosBackgroundWriteWindow implements BackgroundWriteWindow {
   final MethodChannel channel;
 
   @override
-  Future<T> run<T>(String reason, Future<T> Function() body) => body();
+  Future<T> run<T>(String reason, Future<T> Function() body) async {
+    final taskId = await _begin();
+    try {
+      return await body();
+    } finally {
+      if (taskId != null) await _end(taskId);
+    }
+  }
+
+  // GoBridge.swift bgBegin: a task id string, or "" when iOS refuses.
+  Future<String?> _begin() async {
+    try {
+      final id = await channel.invokeMethod<String>('bgBegin');
+      return id == null || id.isEmpty ? null : id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // GoBridge.swift bgEnd: {"taskId": id}. An already-expired task is a no-op.
+  Future<void> _end(String taskId) async {
+    try {
+      await channel.invokeMethod<void>(
+        'bgEnd',
+        jsonEncode(<String, String>{'taskId': taskId}),
+      );
+    } catch (_) {
+      // The native expiration handler ends the task on its own.
+    }
+  }
 }
 
 BackgroundWriteWindow defaultBackgroundWriteWindow({bool? isIOS}) =>
-    const PassthroughBackgroundWriteWindow();
+    (isIOS ?? Platform.isIOS)
+    ? const IosBackgroundWriteWindow()
+    : const PassthroughBackgroundWriteWindow();
 
 /// The bootstrap's every-launch identity database open plus the writes that
 /// follow it, inside one [BackgroundWriteWindow].
