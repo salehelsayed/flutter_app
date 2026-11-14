@@ -523,9 +523,7 @@ final class ProductionCallSignalingGraph
           applied = switches.abort(
             id: request.id,
             baseRevision: request.baseRevision,
-            revision: switches.machine.selectedSwitchId == request.id
-                ? request.baseRevision + 1
-                : request.baseRevision,
+            revision: request.baseRevision + 1,
           );
         case CallVideoAction.turnCameraOff:
           await _revokeLocalCamera();
