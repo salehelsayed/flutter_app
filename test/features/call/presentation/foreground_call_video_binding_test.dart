@@ -798,6 +798,73 @@ void main() {
     );
   }
 
+  for (final change in ['call', 'generation', 'capability']) {
+    testWidgets(
+      'VUI1 retained accepted-video camera callback rejects rebuilt $change',
+      (tester) async {
+        _viewport(tester, 390, 844);
+        final first = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        );
+        await _withOverlay(tester, first, (_) async {
+          final oldState = tester.state(find.byType(ActiveCallScreen));
+          final oldControls = tester.widget<CallVideoControls>(
+            find.byType(CallVideoControls),
+          );
+          final intent = oldControls.presentation.intentFor(
+            CallVideoAction.turnCameraOn,
+          );
+          expect(intent, isNotNull);
+          var current = first;
+          if (change == 'capability') {
+            current = _VideoCapability(
+              _projection(media: _video(camera: CallCameraState.off)),
+            );
+            addTearDown(current.close);
+            await tester.pumpWidget(_app(current));
+          } else {
+            first.emit(
+              _projection(
+                callId: change == 'call' ? _callB : _callA,
+                generation: change == 'generation' ? 8 : 7,
+                media: _video(camera: CallCameraState.off),
+              ),
+            );
+          }
+          await tester.pumpAndSettle();
+          expect(tester.state(find.byType(ActiveCallScreen)), same(oldState));
+          oldControls.onIntent(intent!);
+          await tester.pump();
+          expect(first.videoCalls, isEmpty);
+          expect(current.videoCalls, isEmpty);
+          final newControls = tester.widget<CallVideoControls>(
+            find.byType(CallVideoControls),
+          );
+          final currentIntent = newControls.presentation.intentFor(
+            CallVideoAction.turnCameraOn,
+          );
+          expect(currentIntent, isNotNull);
+          newControls.onIntent(currentIntent!);
+          await tester.pump();
+          expect(current.videoCalls, hasLength(1));
+          expect(
+            current.videoCalls.single.callId,
+            change == 'call' ? _callB : _callA,
+          );
+          expect(
+            current.videoCalls.single.generation,
+            change == 'generation' ? 8 : 7,
+          );
+          expect(
+            current.videoCalls.single.intent.action,
+            CallVideoAction.turnCameraOn,
+          );
+          expect(tester.takeException(), isNull);
+        });
+      },
+    );
+  }
+
   for (final change in ['call', 'generation', 'ended', 'gone', 'gate']) {
     testWidgets('U6R stale $change refuses a retained video callback', (
       tester,
