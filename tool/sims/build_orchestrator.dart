@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -111,6 +112,20 @@ _IosDeviceBuildConfiguration? _iosDeviceBuildConfiguration(String profileId) =>
       _iosDeviceGroupMedia269ProfileId => _iosDeviceGroupMedia269Build,
       _ => null,
     };
+
+/// Where a sims iOS device profile builds when no override is set.
+String simsIosTestDerivedDataPath(
+  String profileId,
+  Map<String, String> environment,
+) => _iosDeviceBuildConfiguration(profileId)!.defaultDerivedDataPath;
+
+/// Readies [derivedData] for the next sims iOS device build. Returns whether
+/// it started empty.
+bool prepareSimsIosTestDerivedData(Directory derivedData, String toolchainKey) {
+  if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
+  derivedData.createSync(recursive: true);
+  return true;
+}
 
 /// Deterministically invalidates physical-iOS cache entries whenever the
 /// central product graph/signature contract changes.
@@ -564,7 +579,7 @@ final class SimsBuildOrchestrator {
             profileRoot.listSync().whereType<Directory>().isNotEmpty) {
           invalidations.add('${profile.id}:${verification.reason.name}');
         }
-        final build = await _build(profile);
+        final build = await _build(profile, toolchain);
         if (!build.ok) {
           failures[profile.id] = build.detail;
           failedProfileIds.add(profile.id);
@@ -924,10 +939,17 @@ final class SimsBuildOrchestrator {
     }
   }
 
-  Future<_BuildInvocation> _build(BuildProfileSpec profile) async {
+  Future<_BuildInvocation> _build(
+    BuildProfileSpec profile,
+    Map<String, String> toolchain,
+  ) async {
     final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
     if (iosDeviceConfiguration != null) {
-      return _buildIosDevice(profile, iosDeviceConfiguration);
+      return _buildIosDevice(
+        profile,
+        iosDeviceConfiguration,
+        jsonEncode(SplayTreeMap<String, String>.of(toolchain)),
+      );
     }
     final arguments = _buildArguments(profile);
     final command = <String>['flutter', ...arguments];
@@ -976,6 +998,7 @@ final class SimsBuildOrchestrator {
   Future<_BuildInvocation> _buildIosDevice(
     BuildProfileSpec profile,
     _IosDeviceBuildConfiguration configuration,
+    String toolchainKey,
   ) async {
     final encodedDefines = _effectiveCompileDefines(profile).entries
         .map(
@@ -986,10 +1009,9 @@ final class SimsBuildOrchestrator {
       environment[configuration.derivedDataEnvironment]?.trim().isNotEmpty ==
               true
           ? environment[configuration.derivedDataEnvironment]!.trim()
-          : configuration.defaultDerivedDataPath,
+          : simsIosTestDerivedDataPath(profile.id, environment),
     ).absolute;
-    if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
-    derivedData.createSync(recursive: true);
+    prepareSimsIosTestDerivedData(derivedData, toolchainKey);
     final xcodeArguments = <String>[
       'build-for-testing',
       '-workspace',
