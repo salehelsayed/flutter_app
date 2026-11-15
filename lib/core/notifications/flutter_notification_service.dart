@@ -66,6 +66,11 @@ class FlutterNotificationService
   int? _initialNotificationId;
   bool _initialPayloadConsumed = false;
 
+  /// BL-36: the tap that launched the app. On an Android cold launch the
+  /// plugin reports it through the tap callback AND the launch details. The
+  /// first source to deliver it wins; the other drops it, once.
+  ({int? id, String? payload})? _launchTap;
+
   FlutterNotificationService({
     Future<bool> Function()? loadThoughtNotificationsEnabled,
     bool requestApplePermissions = true,
@@ -146,6 +151,10 @@ class FlutterNotificationService
     _initialPayload = launchDetails?.notificationResponse?.payload;
     _initialNotificationId = launchDetails?.notificationResponse?.id;
     _initialActionId = launchDetails?.notificationResponse?.actionId;
+    final launchResponse = launchDetails?.notificationResponse;
+    _launchTap = launchResponse == null
+        ? null
+        : (id: launchResponse.id, payload: launchResponse.payload);
 
     emitFlowEvent(
       layer: 'FL',
@@ -155,6 +164,19 @@ class FlutterNotificationService
   }
 
   void _onNotificationResponse(NotificationResponse response) {
+    final launch = _launchTap;
+    if (launch != null &&
+        launch.id == response.id &&
+        launch.payload == response.payload) {
+      if (_initialPayloadConsumed) {
+        _launchTap = null;
+        return;
+      }
+      // With no listener yet, consumeInitialPayload delivers it instead.
+      if (onNotificationTap == null) return;
+      _launchTap = null;
+      _initialPayloadConsumed = true;
+    }
     final notificationId = response.id;
     final rawPayload = response.payload;
     if (response.actionId == missedCallBackActionId ||
