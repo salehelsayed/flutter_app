@@ -18,6 +18,7 @@ import 'call_coordinator.dart';
 import 'call_media_switch_effect_executor.dart';
 import 'call_endpoint_resolver.dart';
 import 'call_negotiation_effect_executor.dart';
+import 'call_recovery_budget.dart';
 import 'call_signaling_context_store.dart';
 import 'call_signaling_service.dart';
 import 'handle_incoming_call_signal.dart';
@@ -1128,6 +1129,7 @@ final class CallV2NegotiationEffectExecutor
     _pendingTakeoverBlocked = _pendingTakeoverBlocked || (pending && !takeover);
     existing?.timer?.cancel();
     final old = _token!;
+    final budget = legacy.readRecoveryBudget?.call(callId);
     final recovery = _V2Recovery(
       snapshot: snapshot,
       oldToken: old,
@@ -1135,8 +1137,11 @@ final class CallV2NegotiationEffectExecutor
       oldGeneration: legacy.engine.iceGeneration,
       media: machine?.settledMedia ?? old.media,
       revision: machine?.settledRevision ?? old.mediaRevision,
+      budget: budget,
       deadlineMs: min(
-        _monotonicMs + 15000,
+        _monotonicMs +
+            (budget?.remaining.inMilliseconds ??
+                (legacy.readRecoveryBudget == null ? 15000 : 0)),
         observed ? _observedReconnectDeadlineMs! : _monotonicMs + 15000,
       ),
       blocked: _pendingTakeoverBlocked,
@@ -1231,6 +1236,8 @@ final class CallV2NegotiationEffectExecutor
         snapshot?.state == CallState.reconnecting &&
         snapshot?.reconnectGeneration ==
             recovery.snapshot.reconnectGeneration &&
+        (recovery.budget == null ||
+            recovery.budget!.remaining > Duration.zero) &&
         _monotonicMs < recovery.deadlineMs;
   }
 
@@ -1271,6 +1278,8 @@ final class CallV2NegotiationEffectExecutor
         }
       } on _V2WorkRetired {
         // Canonical End, timeout or successor episode owns retirement.
+      } on CallEndpointRecoveryUnavailable {
+        if (_recoveryCurrent(recovery)) _armRecoveryRetry(recovery);
       } catch (error) {
         if (_recoveryCurrent(recovery)) {
           if (kDebugMode) _reportRecoveryFailure(recovery, error);
@@ -2338,6 +2347,7 @@ final class _V2Recovery {
     required this.media,
     required this.revision,
     required this.deadlineMs,
+    required this.budget,
     required this.blocked,
     required this.takeover,
     required this.transportRequested,
@@ -2349,6 +2359,7 @@ final class _V2Recovery {
   CallMediaKind media;
   int revision;
   final int deadlineMs;
+  final CallRecoveryBudget? budget;
   final bool takeover;
   bool transportRequested;
   bool blocked;

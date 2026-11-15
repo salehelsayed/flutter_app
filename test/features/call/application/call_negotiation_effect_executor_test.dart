@@ -6,6 +6,7 @@ import 'package:flutter_app/features/call/application/call_cleanup_coordinator.d
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
+import 'package:flutter_app/features/call/application/call_recovery_budget.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_material_store.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
@@ -425,6 +426,79 @@ void main() {
       expect(timers.active, isEmpty);
     });
   }
+
+  test(
+    'BL26-HA v1 slow preparation cannot renew the canonical retry budget',
+    () async {
+      var elapsed = Duration.zero;
+      final budget = CallRecoveryBudget(
+        duration: const Duration(seconds: 15),
+        monotonicNow: () => elapsed,
+        isCurrent: () => true,
+      );
+      elapsed = const Duration(milliseconds: 14700);
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry()..unavailable = true;
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+        readRecoveryBudget: (_) => budget,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      expect(
+        await harness.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          harness.snapshot,
+        ),
+        isNull,
+      );
+      expect(retry.closed, isTrue);
+      expect(retry.attempts, 0);
+      expect(timers.active, isEmpty);
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.dispatched, isEmpty);
+    },
+  );
+
+  test(
+    'BL26-HA v1 queued retry cannot write after canonical monotonic expiry',
+    () async {
+      var elapsed = Duration.zero;
+      final budget = CallRecoveryBudget(
+        duration: const Duration(seconds: 15),
+        monotonicNow: () => elapsed,
+        isCurrent: () => true,
+      );
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry()..unavailable = true;
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+        readRecoveryBudget: (_) => budget,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      expect(timers.active, hasLength(1));
+      elapsed = const Duration(seconds: 15);
+      await timers.fireNext();
+      expect(retry.closed, isTrue);
+      expect(retry.attempts, 0);
+      expect(timers.active, isEmpty);
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.dispatched, isEmpty);
+    },
+  );
 
   test(
     'permanent transport loss uses four bounded retries and leaves deadline authoritative',
@@ -3469,6 +3543,7 @@ final class _Harness {
     CallTimerScheduler? mediaReadinessTimerScheduler,
     Duration mediaReadinessPollInterval = const Duration(milliseconds: 100),
     int? maxMediaReadinessSamples,
+    CallRecoveryBudget? Function(CallId)? readRecoveryBudget,
   }) : stagedServers =
            stagedServers ??
            <CallIceServer>[
@@ -3494,6 +3569,7 @@ final class _Harness {
         dispatched.add(event);
       },
       readActiveSnapshot: () => snapshot,
+      readRecoveryBudget: readRecoveryBudget,
       readStagedIceServers: stagedReader ?? (_) async => this.stagedServers,
       clock: () => _now,
       maxPendingLocalCandidates: maxPendingLocalCandidates,

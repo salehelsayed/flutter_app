@@ -67,6 +67,56 @@ void main() {
     client = BridgeCallAuthorityClient(bridge: bridge);
   });
 
+  for (final response in [
+    'not-json',
+    'null',
+    '[]',
+    '{}',
+    '{"ok":false,"errorCode":"MALFORMED_RESPONSE"}',
+  ]) {
+    test(
+      'BL26-HA malformed endpoint response $response is not a transient bridge failure',
+      () async {
+        bridge.pendingResponse = Future<String>.value(response);
+        await expectLater(
+          client.getEndpoint('contact-account'),
+          throwsA(
+            isA<CallAuthorityException>().having(
+              (error) => error.code,
+              'malformed responses cannot authorize admitted-pin reuse',
+              CallAuthorityErrorCode.malformedResponse,
+            ),
+          ),
+        );
+        expect(bridge.requests, hasLength(1));
+      },
+    );
+  }
+
+  test(
+    'BL26-HA only typed bridge unavailability permits recovery fallback',
+    () async {
+      for (final entry in <(Object, bool)>[
+        (TimeoutException('fixture timeout'), true),
+        (const BridgeOperationUnavailableException(), true),
+        (StateError('unclassified bridge failure'), false),
+        (const FormatException('invalid native response'), false),
+      ]) {
+        bridge.pendingResponse = Future<String>.error(entry.$1);
+        await expectLater(
+          client.getEndpoint('contact-account'),
+          throwsA(
+            isA<CallAuthorityException>().having(
+              (error) => error.isTransient,
+              'explicit transient classification',
+              entry.$2,
+            ),
+          ),
+        );
+      }
+    },
+  );
+
   test('matches relay canonical endpoint JSON byte order exactly', () {
     final record = CallEndpointRecord(
       accountPeerId: 'contact-account',

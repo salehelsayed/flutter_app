@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../diagnostics/call_diagnostics.dart';
@@ -40,7 +41,11 @@ enum CallAuthorityErrorCode {
 }
 
 final class CallAuthorityException implements Exception {
-  const CallAuthorityException(this.code, {this.relayErrorCode});
+  const CallAuthorityException(
+    this.code, {
+    this.relayErrorCode,
+    this.isTransient = false,
+  });
 
   /// Relay error code the relay refused the request with (`CALL_STALE_EPOCH`
   /// etc.). Present only for a bridge failure that carried a safe,
@@ -49,6 +54,9 @@ final class CallAuthorityException implements Exception {
 
   final CallAuthorityErrorCode code;
   final String? relayErrorCode;
+
+  /// True only for a transport wait/failure before receiving a relay response.
+  final bool isTransient;
 
   /// The relay's refresh-epoch high-water rejected this registration epoch.
   bool get isStaleEpoch => relayErrorCode == staleEpochRelayCode;
@@ -539,26 +547,50 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
     );
     record('started');
     try {
-      final raw = await _bridge
-          .send(
-            jsonEncode(<String, Object?>{
-              'cmd': command,
-              'payload': wirePayload,
-            }),
-          )
-          .timeout(requestTimeout);
-      final response = jsonDecode(raw);
-      if (response is! Map<String, dynamic> || response['ok'] != true) {
-        final code = response is Map<String, dynamic>
-            ? _safeBridgeErrorCode(response['errorCode'])
-            : 'MALFORMED_RESPONSE';
-        record('rejected', _diagnosticRelayReason(code));
-        _emitBridgeFailure(operation: command, code: code);
+      final String raw;
+      try {
+        raw = await _bridge
+            .send(
+              jsonEncode(<String, Object?>{
+                'cmd': command,
+                'payload': wirePayload,
+              }),
+            )
+            .timeout(requestTimeout);
+      } catch (error) {
+        record('failed', 'bridge_unavailable');
         throw CallAuthorityException(
           CallAuthorityErrorCode.bridgeFailure,
-          relayErrorCode: code == 'UNKNOWN' || code == 'MALFORMED_RESPONSE'
-              ? null
-              : code,
+          isTransient:
+              error is TimeoutException ||
+              error is BridgeOperationUnavailableException,
+        );
+      }
+      final Object? response;
+      try {
+        response = jsonDecode(raw);
+      } on FormatException {
+        throw const CallAuthorityException(
+          CallAuthorityErrorCode.malformedResponse,
+        );
+      }
+      if (response is! Map<String, dynamic> || response['ok'] is! bool) {
+        throw const CallAuthorityException(
+          CallAuthorityErrorCode.malformedResponse,
+        );
+      }
+      if (response['ok'] != true) {
+        final code = _safeBridgeErrorCode(response['errorCode']);
+        record('rejected', _diagnosticRelayReason(code));
+        _emitBridgeFailure(operation: command, code: code);
+        if (code == 'UNKNOWN' || code == 'MALFORMED_RESPONSE') {
+          throw const CallAuthorityException(
+            CallAuthorityErrorCode.malformedResponse,
+          );
+        }
+        throw CallAuthorityException(
+          CallAuthorityErrorCode.bridgeFailure,
+          relayErrorCode: code,
         );
       }
       record('ok');

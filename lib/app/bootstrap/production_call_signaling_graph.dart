@@ -74,6 +74,7 @@ import '../../features/call/infrastructure/bridge_call_media_protection_lease.da
 import '../../features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/call_audio_route_adapter.dart';
 import '../../features/call/infrastructure/call_authority_client.dart';
+import '../../features/call/infrastructure/call_endpoint_recovery.dart';
 import '../../features/call/infrastructure/call_foreground_audio_session_adapter.dart';
 import '../../features/call/infrastructure/call_mailbox_client.dart';
 import '../../features/call/infrastructure/android_call_admission_settlement.dart';
@@ -175,7 +176,7 @@ final class ProductionCallSignalingGraph
     this.androidCallTokenCoordinator,
     this.ringback,
     this.videoEnabled = false,
-    this.onOutgoingVideoAdmitted,
+    this.onOutgoingV2Admitted,
     this.closeVideoSignaling,
     this.videoContexts,
     this.videoOwners,
@@ -403,7 +404,12 @@ final class ProductionCallSignalingGraph
   /// Intersects current local trust with the independently verified relay
   /// capability before the coordinator is permitted to create a session.
   final bool videoEnabled;
-  final void Function(CallId callId)? onOutgoingVideoAdmitted;
+  final void Function(
+    CallId callId,
+    CallMediaKind media,
+    ResolvedCallEndpoint endpoint,
+  )?
+  onOutgoingV2Admitted;
   final void Function()? closeVideoSignaling;
 
   final CallSignalingContextStore? videoContexts;
@@ -1488,9 +1494,15 @@ final class ProductionCallSignalingGraph
             canPlace: () => request?.isCanceled != true && !_shuttingDown,
             onApplied: (reduction) {
               if (reduction.decision == CallEventDecision.applied) {
-                if (video) {
-                  onOutgoingVideoAdmitted?.call(
+                if (videoEnabled &&
+                    endpoint.capabilities.contains(
+                      CallEndpointResolver.voiceCapability,
+                    ) &&
+                    endpoint.capabilities.contains('video_call_v2')) {
+                  onOutgoingV2Admitted?.call(
                     coordinator.activeSession!.callId!,
+                    video ? CallMediaKind.video : CallMediaKind.audio,
+                    endpoint,
                   );
                 }
                 request?.admit();
@@ -2892,15 +2904,6 @@ CallSignalingComposition createProductionCallSignalingComposition({
               trustedDeviceSigningPublicKey: trustedSigningPublicKey,
             ),
       );
-      Future<ResolvedCallEndpoint> resolveCurrentEndpoint(
-        String contactAccountPeerId,
-      ) => resolveProductionCallEndpoint(
-        contactAccountPeerId: contactAccountPeerId,
-        resolver: resolver,
-        rosterProvider: roster,
-        authorityClient: authority,
-        receivedCallWakeHandleStore: receivedCallWakeHandleStore,
-      );
       Future<String> loadSenderSigningPrivateKey() async {
         final current = await loadIdentity();
         if (current == null ||
@@ -2920,7 +2923,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
       final videoOwners = videoEnabled
           ? <CallId, CallV2NegotiationEffectExecutor>{}
           : null;
-      CallId? outgoingVideoCallId;
+      ({CallId callId, CallMediaKind media, ResolvedCallEndpoint endpoint})?
+      outgoingV2Admission;
       final historyCheckpoint = ActiveCallHistoryCheckpoint(
         database: database,
         secureKeyStore: secureKeyStore,
@@ -2937,6 +2941,61 @@ CallSignalingComposition createProductionCallSignalingComposition({
       CallId? policyCallId;
       Future<CallTransportPolicy>? pendingTransportPolicy;
       late final CallCoordinator coordinator;
+      CallEndpointRecovery? endpointRecovery;
+      Future<ResolvedCallEndpoint> resolveCurrentEndpoint(
+        String contactAccountPeerId,
+      ) {
+        final snapshot = coordinator.activeSession;
+        CallEndpointRecovery? recovery;
+        if (snapshot?.state == CallState.reconnecting &&
+            snapshot?.contactPeerId == contactAccountPeerId) {
+          final callId = snapshot!.callId!;
+          final context = signalingContextStore.read(callId);
+          final budget = coordinator.recoveryBudgetFor(callId);
+          final admitted = context?.wireVersion == CallWireVersion.v2
+              ? signalingContextStore.admittedV2Endpoint(callId)
+              : signalingContextStore.pinnedEndpoint(callId);
+          if (context == null ||
+              budget == null ||
+              admitted == null ||
+              context.remoteAccountPeerId != contactAccountPeerId) {
+            throw const CallEndpointRecoveryUnavailable();
+          }
+          if (!identical(endpointRecovery?.budget, budget)) {
+            endpointRecovery = CallEndpointRecovery(
+              budget: budget,
+              admitted: admitted,
+              bindingCurrent: () {
+                final current = signalingContextStore.read(callId);
+                return diagnosticGraph?._shuttingDown != true &&
+                    current != null &&
+                    current.callHandle == context.callHandle &&
+                    current.direction == context.direction &&
+                    current.localAccountPeerId == context.localAccountPeerId &&
+                    current.localDevicePeerId == context.localDevicePeerId &&
+                    current.remoteAccountPeerId ==
+                        context.remoteAccountPeerId &&
+                    current.remoteDevicePeerId == context.remoteDevicePeerId &&
+                    current.admissionAuthority == context.admissionAuthority &&
+                    current.wireVersion == context.wireVersion &&
+                    current.requestedMedia == context.requestedMedia;
+              },
+            );
+          }
+          recovery = endpointRecovery;
+        } else if (snapshot?.state != CallState.reconnecting) {
+          endpointRecovery = null;
+        }
+        return resolveProductionCallEndpoint(
+          contactAccountPeerId: contactAccountPeerId,
+          resolver: resolver,
+          rosterProvider: roster,
+          authorityClient: authority,
+          receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+          recovery: recovery,
+        );
+      }
+
       AndroidCallLifecycleAdapter? retainedTerminalOwner;
       // A media close that finishes after its cleanup was reported blocked
       // (the microphone prompt resolved) frees the ended call at once.
@@ -2958,6 +3017,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
               );
             }, requiredForTerminalAck: true),
             CallCleanupStep('call_signaling_context', (snapshot) async {
+              endpointRecovery = null;
               await controlExecutor.retireOutgoingPreconnectInvite(snapshot);
               signalingContextStore.purge(snapshot.callId!);
             }, requiredForTerminalAck: true),
@@ -3171,10 +3231,36 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 legacyPort: controlAdapter,
                 contextStore: signalingContextStore,
                 signalingAdapter: videoSignaling,
-                resolveCurrentEndpoint: resolveCurrentEndpoint,
+                resolveCurrentEndpoint: (accountPeerId) async {
+                  final admitted = outgoingV2Admission;
+                  if (admitted == null ||
+                      admitted.callId != coordinator.activeSession?.callId ||
+                      admitted.endpoint.accountPeerId != accountPeerId ||
+                      admitted.endpoint.expiresAtMs <= clock()) {
+                    throw const CallControlSignalingPortException(
+                      CallControlSignalingPortErrorCode.endpointMismatch,
+                    );
+                  }
+                  final fresh = await resolveCurrentEndpoint(accountPeerId);
+                  final current = outgoingV2Admission;
+                  // Preflight selects this exact authority and protocol. A
+                  // later lookup cannot retarget or downgrade the invitation.
+                  if (current?.callId != admitted.callId ||
+                      current?.media != admitted.media ||
+                      !identical(current?.endpoint, admitted.endpoint) ||
+                      coordinator.activeSession?.callId != admitted.callId ||
+                      diagnosticGraph?._shuttingDown == true ||
+                      admitted.endpoint.expiresAtMs <= clock() ||
+                      !_sameOutgoingV2Authority(admitted.endpoint, fresh)) {
+                    throw const CallControlSignalingPortException(
+                      CallControlSignalingPortErrorCode.endpointMismatch,
+                    );
+                  }
+                  return fresh;
+                },
                 outgoingMediaFor: (snapshot) =>
-                    snapshot.callId == outgoingVideoCallId
-                    ? CallMediaKind.video
+                    snapshot.callId == outgoingV2Admission?.callId
+                    ? outgoingV2Admission?.media
                     : null,
                 isOutgoingPreparationCurrent: (callId) =>
                     diagnosticGraph?._shuttingDown != true &&
@@ -3417,6 +3503,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
               await coordinator.dispatch(event);
             },
             readActiveSnapshot: () => coordinator.activeSession,
+            readRecoveryBudget: coordinator.recoveryBudgetFor,
             readStagedIceServers: iceServerProvider.read,
             clock: callClock,
           );
@@ -3647,8 +3734,14 @@ CallSignalingComposition createProductionCallSignalingComposition({
             () async => (await permissions.Permission.camera.status).isGranted,
         qualityEnvironmentSource: qualitySource,
         videoEnabled: videoEnabled,
-        onOutgoingVideoAdmitted: videoEnabled
-            ? (callId) => outgoingVideoCallId = callId
+        onOutgoingV2Admitted: videoEnabled
+            ? (callId, media, endpoint) {
+                outgoingV2Admission = (
+                  callId: callId,
+                  media: media,
+                  endpoint: ResolvedCallEndpoint.frozen(endpoint),
+                );
+              }
             : null,
         closeVideoSignaling: videoSignaling?.close,
         videoContexts: videoEnabled ? signalingContextStore : null,
@@ -4120,6 +4213,23 @@ void _emitMediaCloseFailureStage(String stage) {
     // Diagnostics never change cleanup authority.
   }
 }
+
+// Match the preflight authority, allowing only a fresh validity timestamp.
+// The control adapter separately requires current voice/video capabilities.
+bool _sameOutgoingV2Authority(
+  ResolvedCallEndpoint first,
+  ResolvedCallEndpoint next,
+) =>
+    first.accountPeerId == next.accountPeerId &&
+    first.devicePeerId == next.devicePeerId &&
+    first.signingPublicKey == next.signingPublicKey &&
+    first.mlKemPublicKey == next.mlKemPublicKey &&
+    first.deviceKeyEpoch == next.deviceKeyEpoch &&
+    first.preferenceEpoch == next.preferenceEpoch &&
+    first.admissionAuthority == next.admissionAuthority &&
+    first.platform == next.platform &&
+    first.routingHandle == next.routingHandle &&
+    first.wakeHandle == next.wakeHandle;
 
 CallId _newCallId() => CallId.parse(const Uuid().v4());
 

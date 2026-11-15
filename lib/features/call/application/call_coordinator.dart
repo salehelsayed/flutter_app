@@ -12,6 +12,7 @@ import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_cleanup_coordinator.dart';
 import 'call_history_projector.dart';
+import 'call_recovery_budget.dart';
 
 abstract interface class CallEffectExecutor {
   /// Runs one reducer effect. A completed effect may return one fixed-shape
@@ -115,6 +116,7 @@ final class CallCoordinator {
     required this.idSource,
     this.maxPendingEvents = 64,
     CallTimerScheduler? timerScheduler,
+    Duration Function()? monotonicNow,
     this.terminalTombstoneCapacity = 128,
     this.effectTimeout = const Duration(seconds: 15),
     this.mediaPreparationTimeout = const Duration(seconds: 45),
@@ -126,7 +128,8 @@ final class CallCoordinator {
     this.onTimerScheduled,
     this.persistActiveCall,
     this.clearActiveCall,
-  }) : _timerScheduler = timerScheduler ?? const DartCallTimerScheduler() {
+  }) : _timerScheduler = timerScheduler ?? const DartCallTimerScheduler(),
+       _monotonicNow = monotonicNow ?? _recoveryClock() {
     if (maxPendingEvents <= 0 ||
         terminalTombstoneCapacity <= 0 ||
         effectTimeout <= Duration.zero ||
@@ -178,6 +181,20 @@ final class CallCoordinator {
   final Future<void> Function(CallSessionSnapshot snapshot)? persistActiveCall;
   final Future<void> Function(CallId callId)? clearActiveCall;
   final CallTimerScheduler _timerScheduler;
+  final Duration Function() _monotonicNow;
+  CallRecoveryBudget? _recoveryBudget;
+
+  static Duration Function() _recoveryClock() {
+    final stopwatch = Stopwatch()..start();
+    return () => stopwatch.elapsed;
+  }
+
+  CallRecoveryBudget? recoveryBudgetFor(CallId callId) {
+    if (_active?.callId != callId || _active?.state != CallState.reconnecting) {
+      return null;
+    }
+    return _recoveryBudget;
+  }
 
   final StreamController<CallSessionSnapshot> _snapshots =
       StreamController<CallSessionSnapshot>.broadcast(sync: true);
@@ -794,6 +811,21 @@ final class CallCoordinator {
       remaining = untilDeadline.isNegative ? Duration.zero : untilDeadline;
     }
     _timers.remove(effect.type)?.cancel();
+    if (timeoutKind == CallTimeoutKind.reconnect) {
+      late final CallRecoveryBudget budget;
+      budget = CallRecoveryBudget(
+        duration: remaining,
+        monotonicNow: _monotonicNow,
+        isCurrent: () =>
+            !_disposed &&
+            identical(_recoveryBudget, budget) &&
+            _active?.callId == callId &&
+            _active?.state == CallState.reconnecting &&
+            _active?.reconnectGeneration == snapshot.reconnectGeneration &&
+            !_terminalIds.contains(callId),
+      );
+      _recoveryBudget = budget;
+    }
     var fired = false;
     late final CallTimerHandle timer;
     timer = _timerScheduler.schedule(remaining, () async {
@@ -965,6 +997,7 @@ final class CallCoordinator {
   }
 
   void _cancelTimers() {
+    _recoveryBudget = null;
     _cancelCheckpointRefresh();
     for (final timer in _timers.values) {
       timer.cancel();

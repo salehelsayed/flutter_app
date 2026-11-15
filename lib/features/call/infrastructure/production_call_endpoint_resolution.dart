@@ -6,6 +6,7 @@ import '../application/call_endpoint_resolver.dart';
 import '../application/outgoing_call_capability.dart';
 import '../domain/received_call_wake_handle_store.dart';
 import 'call_authority_client.dart';
+import 'call_endpoint_recovery.dart';
 import 'call_trusted_roster_provider.dart';
 
 /// Production call endpoint resolution shared by the foreground signaling
@@ -29,7 +30,18 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
   RepairCallEndpoint? repairMissingEndpoint,
   Future<void> Function()? beforeOperation,
+  CallEndpointRecovery? recovery,
 }) async {
+  if (recovery != null) {
+    return recovery.resolve(
+      accountPeerId: contactAccountPeerId,
+      resolver: resolver,
+      rosterProvider: rosterProvider,
+      wakeStore: receivedCallWakeHandleStore,
+      authorityClient: authorityClient,
+      beforeOperation: beforeOperation,
+    );
+  }
   final diagnostics = CallDiagnostics.instance;
   final traceId = diagnostics.currentTraceId;
   void recordRepair(String outcome, {String reason = 'none'}) {
@@ -60,6 +72,13 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     load: () => receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
   );
   await beforeOperation?.call();
+  resolver.requireLocalAuthority(
+    contactAccountPeerId: contactAccountPeerId,
+    contactAccepted: roster.contactAccepted,
+    contactBlocked: roster.contactBlocked,
+    trustedDevices: roster.devices,
+    wakeHandleGrant: wakeHandleGrant,
+  );
   var relayEndpoint = await loadCallEndpointDependency(
     stage: 'relay_endpoint_load',
     load: () => authorityClient.getEndpoint(contactAccountPeerId),

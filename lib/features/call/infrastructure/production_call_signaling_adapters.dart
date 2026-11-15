@@ -592,6 +592,10 @@ final class ProductionCallNegotiationSignalingAdapter
     late final ResolvedCallEndpoint endpoint;
     try {
       endpoint = await _resolveCurrentEndpoint(context.remoteAccountPeerId);
+    } on CallEndpointRecoveryUnavailable {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+      );
     } on CallEndpointResolutionException catch (error) {
       final pinned = _pinnedEndpointFallback(
         pinned: _contextStore.pinnedEndpoint(context.callId),
@@ -614,7 +618,10 @@ final class ProductionCallNegotiationSignalingAdapter
         event: event,
         accountPeerId: context.remoteAccountPeerId,
         devicePeerId: context.remoteDevicePeerId,
-        reason: error.code == CallAuthorityErrorCode.bridgeFailure
+        reason:
+            error.code == CallAuthorityErrorCode.bridgeFailure &&
+                (error.relayErrorCode == null ||
+                    error.relayErrorCode == 'CALL_CONTROL_UNAVAILABLE')
             ? _PinnedFallbackReason.bridgeFailure
             : null,
         nowMs: _clock().toUtc().millisecondsSinceEpoch,
@@ -744,6 +751,10 @@ Future<ResolvedCallEndpoint> _resolveRetryEndpoint(
 ) async {
   try {
     return await resolve(original.accountPeerId);
+  } on CallEndpointRecoveryUnavailable {
+    throw const CallSignalingException(
+      CallSignalingErrorCode.transportUnavailable,
+    );
   } on CallEndpointResolutionException catch (error) {
     if (error.code == CallEndpointResolutionCode.unavailable) {
       throw const CallSignalingException(

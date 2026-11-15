@@ -46,6 +46,51 @@ void main() {
     return failed! as CallNegotiationPortException;
   }
 
+  for (final relayCode in [
+    'CALL_UNAUTHORIZED',
+    'CALL_STALE_EPOCH',
+    'CALL_CONTROL_UNSUPPORTED',
+    'CALL_INVALID_REQUEST',
+    'MALFORMED_RESPONSE',
+  ]) {
+    test('BL26-HA restart explicit $relayCode cannot use admitted pin', () {
+      fakeAsync((async) {
+        final rig = _NegotiationRetryHarness(async);
+        rig.contexts.pinEndpoint(_callId, _endpoint());
+        rig.beforeEndpointLookup = () async {
+          throw CallAuthorityException(
+            CallAuthorityErrorCode.bridgeFailure,
+            relayErrorCode: relayCode,
+          );
+        };
+        Object? rejected;
+        var completed = false;
+        rig.adapter
+            .sendIceRestart(callId: _callId, iceGeneration: 1)
+            .then<void>(
+              (_) {
+                completed = true;
+              },
+              onError: (Object error) {
+                rejected = error;
+                completed = true;
+              },
+            );
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(
+          rig.mailbox.requests,
+          isEmpty,
+          reason:
+              'A bridge response denying authority is not a transient outage',
+        );
+        expect(rejected, isA<CallNegotiationPortException>());
+        expect(rig.service.pendingTransmissionRetryCount, 0);
+        rig.service.close();
+      });
+    });
+  }
+
   test(
     'fenced restart offer suppresses writes after End across every await',
     () {
