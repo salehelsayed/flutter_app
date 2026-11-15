@@ -23,7 +23,7 @@ RECEIVER="${SIMS_IOS_PHYSICAL_DEVICE_ID:-00008030-001A6D2801BB802E}"
 export SIMS_IOS_PHYSICAL_DEVICE_ID="$RECEIVER"
 export MKNOON_RELAY_ADDRESSES="${MKNOON_RELAY_ADDRESSES:-/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g}"
 
-DERIVED="${SIMS_IOS_BOOTSTRAP_DERIVED_DATA:-$REPO/build/sims/ios-device-production-bootstrap-derived}"
+DERIVED="${SIMS_IOS_BOOTSTRAP_DERIVED_DATA:-$HOME/dd-hetzner-test-ios.device.production-bootstrap}"
 OUT_DIR="${SIMS_IOS_BOOTSTRAP_OUT_DIR:-$HOME/.mknoon-sims}"
 HANDOFF="${SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH:-$OUT_DIR/ios-receiver-handoff.json}"
 mkdir -p "$OUT_DIR"
@@ -52,8 +52,18 @@ PY
 
 if [ "$skip_build" -eq 0 ]; then
   echo "=== building ios.device.production (bootstrap-enabled) ==="
-  rm -rf "$DERIVED"
-  mkdir -p "$DERIVED"
+  # Kept between builds while Xcode and Flutter stay the same. Another
+  # SIMS_IOS_BOOTSTRAP_DERIVED_DATA folder starts empty as before.
+  case "$(basename "$DERIVED")" in
+    dd-hetzner-test-*)
+      . "$REPO/docker-ws/test_derived_data.sh"
+      prepare_test_derived_data "$DERIVED"
+      ;;
+    *)
+      rm -rf "$DERIVED"
+      mkdir -p "$DERIVED"
+      ;;
+  esac
   xcodebuild build-for-testing \
     -workspace ios/Runner.xcworkspace \
     -scheme Runner \

@@ -4,8 +4,13 @@
 #   host-run docker-ws/with_native_lease.py <log> -- bash docker-ws/ios_device_build_internal.sh <tree under build/> <evidence dir under repo> <build-number> [extra --dart-define]
 set -uo pipefail
 REPO=/Volumes/CrucialX9/flutter_app; W="$REPO/build/${1:?tree}"; E="$REPO/${2:?evidence}"; BN="${3:?build-number}"; XD="${4:-}"; mkdir -p "$E"
-DD="${DD_OVERRIDE:-$HOME/tmp-dd-device}"
+DD="${DD_OVERRIDE:-$HOME/dd-hetzner-test-ios-device-release}"
 export PATH="$HOME/development/flutter-3.47.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" GOTOOLCHAIN=go1.27.1
+# Kept between builds while Xcode and Flutter stay the same (a warm build).
+# Another DD_OVERRIDE folder is used as given.
+case "$(basename "$DD")" in
+  dd-hetzner-test-*) . "$(dirname "$0")/test_derived_data.sh"; prepare_test_derived_data "$DD" || exit 2 ;;
+esac
 cd "$W" || exit 2
 PID=12D3KooWB2HGqKUNt9sXigsrM3oxHsHRbqsx5TCNaBghSiebiwXM
 H="--dart-define=MKNOON_UPDATE_CHECK=off --dart-define=MKNOON_RELAY_ADDRESSES=/dns4/2-29-62-121.sslip.io/tcp/4001/wss/p2p/$PID,/dns4/2-29-62-121.sslip.io/udp/4002/quic-v1/p2p/$PID"
