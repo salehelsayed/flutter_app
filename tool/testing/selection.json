@@ -1331,6 +1331,27 @@
       ],
       "inspected": true
     },
+    "voice-message-harness-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/debug/debug_voice_upload_lease_test.dart",
+        "test/core/debug/android_voice_message_e2e_test.dart",
+        "test/integration/android_voice_message_device_campaign_test.dart"
+      ],
+      "boundary": "Debug voice sends claim the shared upload lease, wait boundedly for a foreign owner, never resend a send that owner already completed, and keep the voice E2E endpoint and device campaign receipts exact",
+      "limitations": "Fake trackers and controlled callbacks reproduce the lease race; real recording, upload and delivery remain separate device assertions.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/debug/debug_voice_upload_lease.dart",
+        "lib/core/debug/android_voice_message_e2e.dart",
+        "integration_test/scripts/android_voice_message_device_campaign.dart"
+      ],
+      "inspected": true
+    },
     "direct-media-contact-handoff-contract": {
       "kind": "flutter",
       "paths": [
@@ -6186,13 +6207,29 @@
         "integration_test/scripts/android_direct_media_blob_custody_device_action.dart",
         "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart",
         "lib/debug/android_direct_media_blob_custody_e2e.dart",
-        "test/debug/android_direct_media_blob_custody_e2e_test.dart"
+        "test/debug/android_direct_media_blob_custody_e2e_test.dart",
+        "lib/core/debug/debug_voice_upload_lease.dart"
       ],
       "checks": [
         "direct-media-contact-handoff-contract",
         "device-media"
       ],
       "why": "Cold process handoffs and retained sender-recovery observations must remain valid before the device campaign can establish restart/media custody"
+    },
+    {
+      "id": "voice-message-harness",
+      "patterns": [
+        "lib/core/debug/debug_voice_upload_lease.dart",
+        "test/core/debug/debug_voice_upload_lease_test.dart",
+        "lib/core/debug/android_voice_message_e2e.dart",
+        "test/core/debug/android_voice_message_e2e_test.dart",
+        "integration_test/scripts/android_voice_message_device_campaign.dart",
+        "test/integration/android_voice_message_device_campaign_test.dart"
+      ],
+      "checks": [
+        "voice-message-harness-contract"
+      ],
+      "why": "Debug voice E2E sends must hold the shared upload lease so they never race a production retrier for the same attachment"
     },
     {
       "id": "group-harness-wiring",
