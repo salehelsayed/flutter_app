@@ -2758,29 +2758,52 @@ private final class OrderedHandoffStore: IosNotificationRecoveryHandoffStoring {
 
 // BL-37: build 131 was killed with 0xdead10cc while Runner held the recovery
 // flock in the App Group container (beginReconciliation reading or writing the
-// state JSON). Runner must hold a background lease for every moment it holds
-// that flock, give up when the lease is denied, and wait for the flock only
-// for a bounded time.
+// state JSON). Runner must hold a background lease for every moment it holds a
+// recovery or badge flock, give up when the lease is denied or expires, and
+// wait for a flock only for a bounded time.
 private final class RecordingRecoveryLockLease: IosNotificationRecoveryLockLease {
   private let grant: Bool
   private let lockURL: URL
-  private(set) var events: [String] = []
+  private let expiresAfter: TimeInterval?
+  private let lock = NSLock()
+  private var recordedEvents: [String] = []
   private(set) var lockFreeAtAcquire: [Bool] = []
   private(set) var lockFreeAtRelease: [Bool] = []
 
-  init(grant: Bool, lockURL: URL) {
+  init(grant: Bool, lockURL: URL, expiresAfter: TimeInterval? = nil) {
     self.grant = grant
     self.lockURL = lockURL
+    self.expiresAfter = expiresAfter
   }
 
-  func acquire() -> (() -> Void)? {
-    events.append("acquire")
+  var events: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return recordedEvents
+  }
+
+  private func record(_ event: String) {
+    lock.lock()
+    recordedEvents.append(event)
+    lock.unlock()
+  }
+
+  func acquire() -> IosNotificationRecoveryLockGrant? {
+    record("acquire")
     lockFreeAtAcquire.append(lockIsFree())
     guard grant else { return nil }
-    return { [self] in
-      events.append("release")
-      lockFreeAtRelease.append(lockIsFree())
-    }
+    let started = Date()
+    let expiresAfter = self.expiresAfter
+    return IosNotificationRecoveryLockGrant(
+      isExpired: {
+        guard let expiresAfter else { return false }
+        return Date().timeIntervalSince(started) >= expiresAfter
+      },
+      release: { [self] in
+        record("release")
+        lockFreeAtRelease.append(lockIsFree())
+      }
+    )
   }
 
   private func lockIsFree() -> Bool {
@@ -2793,9 +2816,42 @@ private final class RecordingRecoveryLockLease: IosNotificationRecoveryLockLease
   }
 }
 
+/// Holds the recovery flock from another open file description. The holder
+/// lets go by itself after `releaseAfter`, so a wait that is not bounded
+/// cannot hang the test, and `finish()` drains that release before the
+/// descriptor is closed.
+private final class RecoveryFlockHolder {
+  private let fd: Int32
+  private let queue = DispatchQueue(label: "bl37.flock-holder")
+  private let release: DispatchWorkItem
+
+  init?(lockURL: URL, releaseAfter: TimeInterval) {
+    let fd = open(lockURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+    guard fd >= 0 else { return nil }
+    guard flock(fd, LOCK_EX) == 0 else {
+      close(fd)
+      return nil
+    }
+    self.fd = fd
+    release = DispatchWorkItem { flock(fd, LOCK_UN) }
+    queue.asyncAfter(deadline: .now() + releaseAfter, execute: release)
+  }
+
+  func finish() {
+    release.cancel()
+    queue.sync {}
+    flock(fd, LOCK_UN)
+    close(fd)
+  }
+}
+
 extension IosNotificationRecoveryTests {
   private func bl37LockURL(_ directory: URL) -> URL {
     directory.appendingPathComponent(".ios_notification_recovery.lock")
+  }
+
+  private func bl37StateURL(_ directory: URL) -> URL {
+    directory.appendingPathComponent("ios_notification_recovery_v1.json")
   }
 
   func testBL37ReconciliationHoldsTheRecoveryLockOnlyInsideALease() throws {
@@ -2833,21 +2889,66 @@ extension IosNotificationRecoveryTests {
     XCTAssertNil(store.beginReconciliation(accountPeerId: "account-self"))
 
     XCTAssertEqual(lease.events, ["acquire"])
-    XCTAssertFalse(FileManager.default.fileExists(
-      atPath: directory.appendingPathComponent("ios_notification_recovery_v1.json").path
-    ), "no state is written without a lease")
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: bl37StateURL(directory).path),
+      "no state is written without a lease"
+    )
+  }
+
+  func testBL37DeniedLeaseConsumesNoMailboxAlertLease() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let binding = "v1:" + String(repeating: "c", count: 64)
+    let setup = IosNotificationRecoveryStore(
+      directory: directory,
+      currentOpaqueBinding: { binding }
+    )
+    _ = try XCTUnwrap(setup.prepareMailboxAlertLease(
+      requestIdentifier: "pending-wake",
+      accountPeerId: "account-self",
+      opaqueBinding: binding
+    ))
+    let begin = try XCTUnwrap(setup.beginReconciliation(accountPeerId: "account-self"))
+    let alertLease = try XCTUnwrap(begin.mailboxAlertLease)
+    let before = try Data(contentsOf: bl37StateURL(directory))
+    let denied = RecordingRecoveryLockLease(
+      grant: false,
+      lockURL: bl37LockURL(directory)
+    )
+    let deniedStore = IosNotificationRecoveryStore(
+      directory: directory,
+      currentOpaqueBinding: { binding },
+      lockLease: denied
+    )
+
+    XCTAssertFalse(deniedStore.consumeMailboxAlertLease(
+      accountPeerId: "account-self",
+      generation: alertLease.generation,
+      sequence: alertLease.sequence,
+      watermark: begin.watermark
+    ))
+
+    XCTAssertEqual(denied.events, ["acquire"], "the bounded consume path asks for the lease")
+    XCTAssertEqual(
+      try Data(contentsOf: bl37StateURL(directory)),
+      before,
+      "no byte of the state changes without a lease"
+    )
+    XCTAssertTrue(setup.consumeMailboxAlertLease(
+      accountPeerId: "account-self",
+      generation: alertLease.generation,
+      sequence: alertLease.sequence,
+      watermark: begin.watermark
+    ), "the same consume succeeds with access, so the denial was the only cause")
   }
 
   func testBL37ContendedRecoveryLockGivesUpWithinItsBound() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let holder = open(bl37LockURL(directory).path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
-    XCTAssertGreaterThanOrEqual(holder, 0)
-    guard holder >= 0 else { return }
-    defer { close(holder) }
-    XCTAssertEqual(flock(holder, LOCK_EX), 0)
-    // Release late so an unbounded wait finishes and the test cannot hang.
-    DispatchQueue.global().asyncAfter(deadline: .now() + 6) { flock(holder, LOCK_UN) }
+    let holder = try XCTUnwrap(RecoveryFlockHolder(
+      lockURL: bl37LockURL(directory),
+      releaseAfter: 6
+    ))
     let lease = RecordingRecoveryLockLease(
       grant: true,
       lockURL: bl37LockURL(directory)
@@ -2857,9 +2958,34 @@ extension IosNotificationRecoveryTests {
     let started = Date()
     let begin = store.beginReconciliation(accountPeerId: "account-self")
     let waited = Date().timeIntervalSince(started)
+    holder.finish()
 
     XCTAssertNil(begin, "a contended flock gives up instead of blocking Runner")
     XCTAssertLessThan(waited, 4, "the wait for the flock is bounded")
+    XCTAssertEqual(lease.events, ["acquire", "release"])
+  }
+
+  func testBL37ExpiringLeaseStopsAPendingLockWait() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let holder = try XCTUnwrap(RecoveryFlockHolder(
+      lockURL: bl37LockURL(directory),
+      releaseAfter: 6
+    ))
+    let lease = RecordingRecoveryLockLease(
+      grant: true,
+      lockURL: bl37LockURL(directory),
+      expiresAfter: 0.2
+    )
+    let store = IosNotificationRecoveryStore(directory: directory, lockLease: lease)
+
+    let started = Date()
+    let begin = store.beginReconciliation(accountPeerId: "account-self")
+    let waited = Date().timeIntervalSince(started)
+    holder.finish()
+
+    XCTAssertNil(begin)
+    XCTAssertLessThan(waited, 1, "an expiring lease ends the wait, not the 2 s bound")
     XCTAssertEqual(lease.events, ["acquire", "release"])
   }
 
@@ -2875,9 +3001,10 @@ extension IosNotificationRecoveryTests {
       lockURL: bl37LockURL(directory)
     )
     let store = IosNotificationRecoveryStore(directory: directory, lockLease: lease)
+    let badgeLock = directory.appendingPathComponent(".ios_notification_badge.lock")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: badgeLock.path))
     let noWrite = expectation(description: "no badge write without a lease")
     noWrite.isInverted = true
-    let leaseAsked = expectation(description: "the writer asked for a lease")
     let queue = DispatchQueue(label: "bl37.badge")
     let writer = IosNotificationSerializedBadgeWriter(
       store: store,
@@ -2889,8 +3016,13 @@ extension IosNotificationRecoveryTests {
     )
 
     writer.requestWrite()
-    queue.async { if !lease.events.isEmpty { leaseAsked.fulfill() } }
+    queue.sync {}
 
-    wait(for: [noWrite, leaseAsked], timeout: 1)
+    wait(for: [noWrite], timeout: 0.5)
+    XCTAssertFalse(lease.events.isEmpty, "the writer asked for a lease")
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: badgeLock.path),
+      "the badge flock file is never opened without a lease"
+    )
   }
 }

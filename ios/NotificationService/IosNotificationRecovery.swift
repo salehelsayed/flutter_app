@@ -878,9 +878,16 @@ private enum IosNotificationRecoveryLoad {
 /// file lock in the App Group container. RunningBoard kills a suspended app
 /// that holds such a lock (0xdead10cc, build 131, BL-37). The NSE has no
 /// lease and keeps its own bounded locks.
+/// One granted lease. `isExpired` turns true when the system is ending it;
+/// a lock wait in progress gives up then. `release` ends it, once.
+struct IosNotificationRecoveryLockGrant {
+  let isExpired: () -> Bool
+  let release: () -> Void
+}
+
 protocol IosNotificationRecoveryLockLease {
-  /// Starts the lease and returns its release, or nil when none is granted.
-  func acquire() -> (() -> Void)?
+  /// Starts a lease, or returns nil when none is granted.
+  func acquire() -> IosNotificationRecoveryLockGrant?
 }
 
 final class IosNotificationRecoveryStore {
