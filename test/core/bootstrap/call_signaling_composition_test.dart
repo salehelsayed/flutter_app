@@ -11453,6 +11453,12 @@ Future<void> _untilComposition(bool Function() predicate) async {
   for (var attempt = 0; attempt < 100 && !predicate(); attempt++) {
     await Future<void>.delayed(Duration.zero);
   }
+  // Zero-delay turns alone ran out under CPU load while real async work was
+  // still settling, so finish on a wall-clock bound instead.
+  final waited = Stopwatch()..start();
+  while (!predicate() && waited.elapsed < const Duration(seconds: 5)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
   expect(predicate(), isTrue);
 }
 
