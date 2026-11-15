@@ -313,6 +313,89 @@ void main() {
     },
   );
 
+  // BL-36: on an Android cold launch the plugin delivered the launching tap
+  // through the tap callback AND through the launch details. The app opened
+  // the conversation twice. One tap must reach the app exactly once.
+  group('BL-36 one cold-launch tap is delivered once', () {
+    test('tap callback first, then the initial payload', () async {
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+
+      await service.initialize();
+      await _sendNotificationResponse(
+        payload: launchPayload,
+        notificationId: launchNotificationId,
+      );
+
+      expect(tapped, <String>['peer-123']);
+      expect(
+        await service.consumeInitialPayload(),
+        isNull,
+        reason: 'the launching tap was already delivered by the callback',
+      );
+    });
+
+    test('initial payload first, then the tap callback', () async {
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+
+      await service.initialize();
+      expect(await service.consumeInitialPayload(), 'peer-123');
+      await _sendNotificationResponse(
+        payload: launchPayload,
+        notificationId: launchNotificationId,
+      );
+
+      expect(
+        tapped,
+        isEmpty,
+        reason:
+            'the launching tap was already delivered as the initial payload',
+      );
+    });
+
+    test(
+      'a fresh card under the launch id is tapped and still opens',
+      () async {
+        final service = buildService();
+        final tapped = <String>[];
+        service.onNotificationTap = tapped.add;
+
+        await service.initialize();
+        expect(await service.consumeInitialPayload(), 'peer-123');
+        await service.showNotification(
+          title: 'Again',
+          body: 'later',
+          payload: launchPayload,
+          androidNotificationId: launchNotificationId,
+        );
+        await _sendNotificationResponse(
+          payload: launchPayload,
+          notificationId: launchNotificationId,
+        );
+
+        expect(tapped, <String>['peer-123']);
+      },
+    );
+
+    test(
+      'a different notification tapped after the launch still opens',
+      () async {
+        final service = buildService();
+        final tapped = <String>[];
+        service.onNotificationTap = tapped.add;
+
+        await service.initialize();
+        expect(await service.consumeInitialPayload(), 'peer-123');
+        await _sendNotificationResponse(payload: 'peer-456', notificationId: 8);
+
+        expect(tapped, <String>['peer-456']);
+      },
+    );
+  });
+
   test(
     'onNotificationTap forwards payload without re-cancelling on Android',
     () async {

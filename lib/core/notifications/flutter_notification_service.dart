@@ -66,6 +66,11 @@ class FlutterNotificationService
   int? _initialNotificationId;
   bool _initialPayloadConsumed = false;
 
+  /// BL-36: the tap that launched the app. On an Android cold launch the
+  /// plugin reports it through the tap callback AND the launch details. The
+  /// first source to deliver it wins; the other drops it, once.
+  ({int? id, String? payload})? _launchTap;
+
   FlutterNotificationService({
     Future<bool> Function()? loadThoughtNotificationsEnabled,
     bool requestApplePermissions = true,
@@ -146,6 +151,10 @@ class FlutterNotificationService
     _initialPayload = launchDetails?.notificationResponse?.payload;
     _initialNotificationId = launchDetails?.notificationResponse?.id;
     _initialActionId = launchDetails?.notificationResponse?.actionId;
+    final launchResponse = launchDetails?.notificationResponse;
+    _launchTap = launchResponse == null
+        ? null
+        : (id: launchResponse.id, payload: launchResponse.payload);
 
     emitFlowEvent(
       layer: 'FL',
@@ -154,7 +163,26 @@ class FlutterNotificationService
     );
   }
 
+  /// A fresh card under the launch tap's id is a new tap target, never the
+  /// launch duplicate.
+  void _retireLaunchTap(int notificationId) {
+    if (_launchTap?.id == notificationId) _launchTap = null;
+  }
+
   void _onNotificationResponse(NotificationResponse response) {
+    final launch = _launchTap;
+    if (launch != null &&
+        launch.id == response.id &&
+        launch.payload == response.payload) {
+      if (_initialPayloadConsumed) {
+        _launchTap = null;
+        return;
+      }
+      // With no listener yet, consumeInitialPayload delivers it instead.
+      if (onNotificationTap == null) return;
+      _launchTap = null;
+      _initialPayloadConsumed = true;
+    }
     final notificationId = response.id;
     final rawPayload = response.payload;
     if (response.actionId == missedCallBackActionId ||
@@ -492,6 +520,7 @@ class FlutterNotificationService
             ),
           );
         }
+        _retireLaunchTap(notificationId);
         return _plugin.show(
           notificationId,
           senderUsername,
@@ -643,6 +672,7 @@ class FlutterNotificationService
           silent: false,
         ),
       );
+      _retireLaunchTap(notificationId);
       await _plugin.show(
         notificationId,
         title,
@@ -703,6 +733,7 @@ class FlutterNotificationService
       'call:${contactAccountPeerId.trim()}',
     );
     try {
+      _retireLaunchTap(notificationId);
       await _plugin.show(
         notificationId,
         title,
@@ -879,6 +910,7 @@ class FlutterNotificationService
                 notificationId: notificationId,
                 plugin: _plugin,
               );
+          _retireLaunchTap(notificationId);
           await _plugin.show(
             notificationId,
             replacement.senderUsername,
