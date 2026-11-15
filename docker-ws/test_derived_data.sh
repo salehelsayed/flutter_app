@@ -15,7 +15,18 @@ prepare_test_derived_data() {
       return 2
       ;;
   esac
-  key="$(xcodebuild -version 2>&1; flutter --version --machine 2>&1)"
+  local xcode flutter_version
+  # A failed probe must never look like a toolchain change and wipe the folder.
+  xcode="$(xcodebuild -version 2>&1)" || {
+    echo "prepare_test_derived_data: xcodebuild -version failed; $dir left as is" >&2
+    return 1
+  }
+  flutter_version="$(flutter --version --machine 2>&1)" || {
+    echo "prepare_test_derived_data: flutter --version failed; $dir left as is" >&2
+    return 1
+  }
+  key="$xcode
+$flutter_version"
   record="$dir/.mknoon-test-toolchain"
   if [ -f "$record" ] && [ "$(cat "$record")" = "$key" ]; then
     echo "test DerivedData kept: $dir"
@@ -23,6 +34,6 @@ prepare_test_derived_data() {
   fi
   rm -rf "$dir" || return 1
   mkdir -p "$dir" || return 1
-  printf '%s' "$key" >"$record"
+  printf '%s' "$key" >"$record" || return 1
   echo "test DerivedData started empty: $dir"
 }
