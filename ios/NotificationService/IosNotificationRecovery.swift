@@ -874,6 +874,15 @@ private enum IosNotificationRecoveryLoad {
 /// The cross-process source of truth shared by Runner and the notification
 /// service extension. The JSON inode is replaced atomically; the flock inode is
 /// deliberately separate and stable for the lifetime of the installation.
+/// Keeps the Runner process from being suspended while it holds a recovery
+/// file lock in the App Group container. RunningBoard kills a suspended app
+/// that holds such a lock (0xdead10cc, build 131, BL-37). The NSE has no
+/// lease and keeps its own bounded locks.
+protocol IosNotificationRecoveryLockLease {
+  /// Starts the lease and returns its release, or nil when none is granted.
+  func acquire() -> (() -> Void)?
+}
+
 final class IosNotificationRecoveryStore {
   private static let stateFileName = "ios_notification_recovery_v1.json"
   private static let stateLockFileName = ".ios_notification_recovery.lock"
@@ -888,6 +897,7 @@ final class IosNotificationRecoveryStore {
   private let maxRecentEvents: Int
   private let fileManager: FileManager
   private let currentOpaqueBinding: () -> String?
+  let lockLease: IosNotificationRecoveryLockLease?
 
   convenience init?(
     appGroupIdentifier: String = "group.com.mknoon.app.share",
@@ -896,7 +906,8 @@ final class IosNotificationRecoveryStore {
     maxRecentEvents: Int = 256,
     currentOpaqueBinding: @escaping () -> String? = {
       IosNotificationRecoveryStore.readCurrentOpaqueBinding()
-    }
+    },
+    lockLease: IosNotificationRecoveryLockLease? = nil
   ) {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupIdentifier
@@ -908,7 +919,8 @@ final class IosNotificationRecoveryStore {
       maxRows: maxRows,
       maxCanonicalEvents: maxCanonicalEvents,
       maxRecentEvents: maxRecentEvents,
-      currentOpaqueBinding: currentOpaqueBinding
+      currentOpaqueBinding: currentOpaqueBinding,
+      lockLease: lockLease
     )
   }
 
@@ -918,7 +930,8 @@ final class IosNotificationRecoveryStore {
     maxCanonicalEvents: Int = 4_096,
     maxRecentEvents: Int = 256,
     fileManager: FileManager = .default,
-    currentOpaqueBinding: @escaping () -> String? = { nil }
+    currentOpaqueBinding: @escaping () -> String? = { nil },
+    lockLease: IosNotificationRecoveryLockLease? = nil
   ) {
     self.directory = directory
     stateURL = directory.appendingPathComponent(Self.stateFileName)
@@ -929,6 +942,7 @@ final class IosNotificationRecoveryStore {
     self.maxRecentEvents = max(0, maxRecentEvents)
     self.fileManager = fileManager
     self.currentOpaqueBinding = currentOpaqueBinding
+    self.lockLease = lockLease
     try? fileManager.createDirectory(
       at: directory,
       withIntermediateDirectories: true
