@@ -893,8 +893,27 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               final width = (constraints.maxWidth - 24)
                   .clamp(0.0, 180.0)
                   .toDouble();
-              final footerHeight =
-                  84 + MediaQuery.textScalerOf(context).scale(14);
+              final captionStyle = Theme.of(context).textTheme.bodyMedium!
+                  .copyWith(
+                    inherit: false,
+                    color: context.backgroundReadableColors.textPrimary,
+                    fontSize: 14,
+                  );
+              // Measure the same caption/style at its actual remaining width:
+              // footer padding (16), End (48), and the action gap (8).
+              final caption = TextPainter(
+                text: TextSpan(
+                  text: AppLocalizations.of(context)!.call_video_return_caption,
+                  style: captionStyle,
+                ),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+                locale: Localizations.localeOf(context),
+              )..layout(
+                maxWidth: (width - 72).clamp(1.0, double.infinity).toDouble(),
+              );
+              final footerHeight = 16 + 48 + 4 + caption.height.ceilToDouble();
+              caption.dispose();
               final portraitHeight = width * 4 / 3 + footerHeight;
               final compact =
                   width < 160 || constraints.maxHeight - 24 < portraitHeight;
@@ -959,6 +978,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                           now: now,
                           compact: compact,
                           footerHeight: compact ? 48 : footerHeight,
+                          captionStyle: captionStyle,
                           onReturn: restore,
                           onEnd: () => _runAction(() {
                             if (!isCurrent()) return null;
@@ -1382,6 +1402,7 @@ class _CallPictureInPictureTile extends StatefulWidget {
     required this.now,
     required this.compact,
     required this.footerHeight,
+    required this.captionStyle,
     required this.onReturn,
     required this.onEnd,
   });
@@ -1393,6 +1414,7 @@ class _CallPictureInPictureTile extends StatefulWidget {
   final DateTime Function() now;
   final bool compact;
   final double footerHeight;
+  final TextStyle captionStyle;
   final VoidCallback onReturn;
   final VoidCallback onEnd;
 
@@ -1652,7 +1674,7 @@ class _CallPictureInPictureTileState extends State<_CallPictureInPictureTile> {
               child: Text(
                 l10n.call_video_return_caption,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                style: widget.captionStyle,
               ),
             ),
           ],
