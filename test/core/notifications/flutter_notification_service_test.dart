@@ -357,6 +357,30 @@ void main() {
     });
 
     test(
+      'a fresh card under the launch id is tapped and still opens',
+      () async {
+        final service = buildService();
+        final tapped = <String>[];
+        service.onNotificationTap = tapped.add;
+
+        await service.initialize();
+        expect(await service.consumeInitialPayload(), 'peer-123');
+        await service.showNotification(
+          title: 'Again',
+          body: 'later',
+          payload: launchPayload,
+          androidNotificationId: launchNotificationId,
+        );
+        await _sendNotificationResponse(
+          payload: launchPayload,
+          notificationId: launchNotificationId,
+        );
+
+        expect(tapped, <String>['peer-123']);
+      },
+    );
+
+    test(
       'a different notification tapped after the launch still opens',
       () async {
         final service = buildService();

@@ -163,6 +163,12 @@ class FlutterNotificationService
     );
   }
 
+  /// A fresh card under the launch tap's id is a new tap target, never the
+  /// launch duplicate.
+  void _retireLaunchTap(int notificationId) {
+    if (_launchTap?.id == notificationId) _launchTap = null;
+  }
+
   void _onNotificationResponse(NotificationResponse response) {
     final launch = _launchTap;
     if (launch != null &&
@@ -514,6 +520,7 @@ class FlutterNotificationService
             ),
           );
         }
+        _retireLaunchTap(notificationId);
         return _plugin.show(
           notificationId,
           senderUsername,
@@ -665,6 +672,7 @@ class FlutterNotificationService
           silent: false,
         ),
       );
+      _retireLaunchTap(notificationId);
       await _plugin.show(
         notificationId,
         title,
@@ -725,6 +733,7 @@ class FlutterNotificationService
       'call:${contactAccountPeerId.trim()}',
     );
     try {
+      _retireLaunchTap(notificationId);
       await _plugin.show(
         notificationId,
         title,
@@ -901,6 +910,7 @@ class FlutterNotificationService
                 notificationId: notificationId,
                 plugin: _plugin,
               );
+          _retireLaunchTap(notificationId);
           await _plugin.show(
             notificationId,
             replacement.senderUsername,
