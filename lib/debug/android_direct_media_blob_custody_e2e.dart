@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/debug/android_direct_media_blob_custody_e2e_protocol.dart';
+import 'package:flutter_app/core/debug/debug_voice_upload_lease.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
@@ -163,6 +164,8 @@ final class AndroidDirectMediaBlobCustodyE2ERequest {
     ...fields,
   };
 }
+
+const _committedOutgoingStatuses = {'inboxed', 'delivered', 'read'};
 
 /// Keeps the existing completion requirement while preserving the disposition
 /// when the process exits before its buffered flow events reach logcat.
@@ -797,26 +800,37 @@ Future<Map<String, Object?>> _resumeSender({
   if (!await File(sourcePath).exists()) {
     throw StateError('durable voice render source is absent after restart');
   }
-  final (result, sentMessage) = await sendVoiceMessage(
-    p2pService: p2pService,
-    messageRepo: messageRepo,
-    targetPeerId: contact.peerId,
-    senderPeerId: identity.peerId,
-    senderUsername: identity.username,
-    recording: AudioRecording(
-      filePath: sourcePath,
-      durationMs: attachment.durationMs!,
-      mime: attachment.mime,
-      sizeBytes: attachment.size,
+  final (result, sentMessage) = await sendDebugVoiceUnderUploadLease(
+    attachmentId: request.attachmentId,
+    completedByOtherOwner: () async {
+      final message = await messageRepo.getMessage(request.messageId);
+      return message != null &&
+              !message.isIncoming &&
+              _committedOutgoingStatuses.contains(message.status)
+          ? message
+          : null;
+    },
+    send: () => sendVoiceMessage(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: contact.peerId,
+      senderPeerId: identity.peerId,
+      senderUsername: identity.username,
+      recording: AudioRecording(
+        filePath: sourcePath,
+        durationMs: attachment.durationMs!,
+        mime: attachment.mime,
+        sizeBytes: attachment.size,
+      ),
+      bridge: bridge,
+      recipientMlKemPublicKey: contact.mlKemPublicKey,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+      messageId: request.messageId,
+      timestamp: parent.timestamp,
+      preassignedMessageIdIsFresh: true,
+      blobId: request.attachmentId,
     ),
-    bridge: bridge,
-    recipientMlKemPublicKey: contact.mlKemPublicKey,
-    mediaAttachmentRepo: mediaAttachmentRepo,
-    mediaFileManager: mediaFileManager,
-    messageId: request.messageId,
-    timestamp: parent.timestamp,
-    preassignedMessageIdIsFresh: true,
-    blobId: request.attachmentId,
   );
   requireAndroidDirectMediaVoiceSendCompletion(
     result: result,
