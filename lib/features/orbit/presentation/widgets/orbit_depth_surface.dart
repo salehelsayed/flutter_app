@@ -849,54 +849,60 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         onPointerMove: _move,
         onPointerUp: (event) => _up(event),
         onPointerCancel: (event) => _up(event, cancelled: true),
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragStart: _enabled ? (_) {} : null,
-          onHorizontalDragStart: _enabled && _depth ? (_) {} : null,
-          child: AnimatedBuilder(
-            animation: Listenable.merge([_vertical, _turn]),
-            builder: (context, _) => LayoutBuilder(
-              builder: (context, constraints) {
-                final stage = Size(
-                  constraints.maxWidth,
-                  constraints.maxHeight -
-                      widget.topClearance -
-                      widget.bottomClearance,
-                );
-                _scale = math.min(stage.width / 390, stage.height / 640);
-                final depth = _depth;
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    IgnorePointer(
-                      ignoring: depth,
-                      // The flat orbit's own clocks (note swim) rest under
-                      // the stage instead of ticking unseen.
-                      child: TickerMode(
-                        enabled: !depth,
-                        child: Opacity(
-                          opacity: 1 - _smooth(_vertical.value / 320 / .45),
-                          child: ScrollConfiguration(
-                            behavior: _enabled
-                                ? ScrollConfiguration.of(context).copyWith(
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                  )
-                                : ScrollConfiguration.of(context),
-                            child: widget.child,
+        // BL-33: a fixed node, so turning the 3D drags off (open arcs)
+        // changes only its actions. If the node went away, iOS would drop the
+        // moved children's parent and report the orbit at 1/dpr.
+        child: Semantics(
+          container: true,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragStart: _enabled ? (_) {} : null,
+            onHorizontalDragStart: _enabled && _depth ? (_) {} : null,
+            child: AnimatedBuilder(
+              animation: Listenable.merge([_vertical, _turn]),
+              builder: (context, _) => LayoutBuilder(
+                builder: (context, constraints) {
+                  final stage = Size(
+                    constraints.maxWidth,
+                    constraints.maxHeight -
+                        widget.topClearance -
+                        widget.bottomClearance,
+                  );
+                  _scale = math.min(stage.width / 390, stage.height / 640);
+                  final depth = _depth;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      IgnorePointer(
+                        ignoring: depth,
+                        // The flat orbit's own clocks (note swim) rest under
+                        // the stage instead of ticking unseen.
+                        child: TickerMode(
+                          enabled: !depth,
+                          child: Opacity(
+                            opacity: 1 - _smooth(_vertical.value / 320 / .45),
+                            child: ScrollConfiguration(
+                              behavior: _enabled
+                                  ? ScrollConfiguration.of(context).copyWith(
+                                      physics:
+                                          const NeverScrollableScrollPhysics(),
+                                    )
+                                  : ScrollConfiguration.of(context),
+                              child: widget.child,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    if (depth && _active)
-                      Positioned.fill(
-                        child: RepaintBoundary(
-                          child: _dial(constraints.biggest),
+                      if (depth && _active)
+                        Positioned.fill(
+                          child: RepaintBoundary(
+                            child: _dial(constraints.biggest),
+                          ),
                         ),
-                      ),
-                  ],
-                );
-              },
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         ),
