@@ -7,6 +7,8 @@ import 'package:flutter_app/features/call/infrastructure/production_call_v2_cont
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
@@ -332,6 +334,70 @@ CallSignalV2 _controlSignal({String event = 'ringing'}) =>
           : <String, Object?>{},
     }, videoEnabled: true);
 
+String _bl28Call(int index) =>
+    '88888888-8888-4888-8888-${index.toString().padLeft(12, '0')}';
+
+CallSignalV2 _bl28Signal(
+  _Rig r,
+  int call,
+  int message, {
+  bool terminal = false,
+}) => CallSignalV2.fromMap({
+  ..._signal(
+    id: message,
+    ice: !terminal,
+    terminal: terminal ? 'terminate' : null,
+  ).toMap(),
+  'call_id': _bl28Call(call),
+  'created_at_ms': r.now,
+  'expires_at_ms': r.now + 45000,
+}, videoEnabled: true);
+
+void _bl28Open(_Rig r, int call) {
+  r.endpoint = _endpoint(expires: r.now + 45000);
+  r.contexts.storeOutgoingV2(
+    invite: CallSignalV2.fromMap({
+      ..._signal(id: 1, invite: true).toMap(),
+      'call_id': _bl28Call(call),
+      'created_at_ms': r.now,
+      'expires_at_ms': r.now + 45000,
+    }, videoEnabled: true),
+    callHandle: _handle,
+    admittedEndpoint: r.endpoint,
+  );
+}
+
+Future<PreparedCallV2Signal> _bl28Prepare(
+  _Rig r,
+  int call,
+  int message, {
+  bool terminal = false,
+}) => r.adapter.prepare(
+  signal: _bl28Signal(r, call, message, terminal: terminal),
+  callHandle: _handle,
+  admittedEndpoint: r.endpoint,
+  canApply: () => r.current,
+);
+
+Future<void> _bl28EndedCallChurn(_Rig r, {required bool advanceClock}) async {
+  r.contexts.purge(CallId.parse(_call));
+  for (var call = 1; call <= 4; call++) {
+    _bl28Open(r, call);
+    for (var message = 2; message < 42; message++) {
+      final prepared = await _bl28Prepare(r, call, message);
+      final result = await r.send(prepared);
+      expect(result.delivered, isTrue);
+    }
+    r.contexts.purge(CallId.parse(_bl28Call(call)));
+    if (advanceClock) r.now += 60000;
+  }
+  _bl28Open(r, 5);
+  final successor = await _bl28Prepare(r, 5, 2);
+  expect((await r.send(successor)).delivered, isTrue);
+  expect(r.crypto.encryptions, 161);
+  expect(r.now - _start, lessThan(10 * 60 * 1000));
+}
+
 void main() {
   late _Rig r;
   setUp(() => r = _Rig());
@@ -339,6 +405,173 @@ void main() {
   final rejected = throwsA(isA<CallSignalingException>());
 
   final controlRejected = throwsA(isA<CallControlSignalingPortException>());
+
+  for (final advanceClock in [true, false]) {
+    test(
+      'BL28 ended calls release admission capacity ${advanceClock ? "paced" : "burst"}',
+      () async {
+        await expectLater(
+          _bl28EndedCallChurn(r, advanceClock: advanceClock),
+          completes,
+        );
+      },
+    );
+  }
+
+  test(
+    'BL28 ended identity cannot reseal after successor preparation',
+    () async {
+      r.contexts.purge(CallId.parse(_call));
+      _bl28Open(r, 1);
+      final old = await _bl28Prepare(r, 1, 2);
+      r.contexts.purge(CallId.parse(_bl28Call(1)));
+      _bl28Open(r, 2);
+      final successor = await _bl28Prepare(r, 2, 2);
+      final encrypted = r.crypto.encryptions;
+      // Even accidental recreation of the old context must not revive its ID.
+      _bl28Open(r, 1);
+      await expectLater(_bl28Prepare(r, 1, 2), rejected);
+      expect(r.crypto.encryptions, encrypted);
+      await expectLater(r.send(old), rejected);
+      expect((await r.send(successor)).delivered, isTrue);
+    },
+  );
+
+  test('BL28 late sealing cannot revive an ended call', () async {
+    r.contexts.purge(CallId.parse(_call));
+    _bl28Open(r, 1);
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    r.crypto.wait = () {
+      entered.complete();
+      return release.future;
+    };
+    final pending = _bl28Prepare(r, 1, 2);
+    final rejectedPending = expectLater(pending, rejected);
+    await entered.future;
+    r.contexts.purge(CallId.parse(_bl28Call(1)));
+    r.crypto.wait = null;
+    _bl28Open(r, 2);
+    final successor = await _bl28Prepare(r, 2, 2);
+    release.complete();
+    await rejectedPending;
+    expect((await r.send(successor)).delivered, isTrue);
+    expect(r.direct.envelopes, hasLength(1));
+    expect(r.mailbox.requests, hasLength(1));
+  });
+
+  test('BL28 already owned terminal survives ended-call reclamation', () async {
+    r.contexts.purge(CallId.parse(_call));
+    _bl28Open(r, 1);
+    final terminal = await _bl28Prepare(r, 1, 2, terminal: true);
+    r.contexts.purge(CallId.parse(_bl28Call(1)));
+    _bl28Open(r, 2);
+    final successor = await _bl28Prepare(r, 2, 2);
+    expect((await r.send(terminal)).delivered, isTrue);
+    expect((await r.send(successor)).delivered, isTrue);
+    expect(r.crypto.encryptions, 2);
+  });
+
+  test(
+    'BL28 terminal sealing handoff survives successor reclamation',
+    () async {
+      r.contexts.purge(CallId.parse(_call));
+      _bl28Open(r, 1);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      r.crypto.wait = () {
+        entered.complete();
+        return release.future;
+      };
+      final pending = _bl28Prepare(r, 1, 2, terminal: true);
+      await entered.future;
+      r.contexts.purge(CallId.parse(_bl28Call(1)));
+      r.crypto.wait = null;
+      _bl28Open(r, 2);
+      final successor = await _bl28Prepare(r, 2, 2);
+      release.complete();
+      final terminal = await pending;
+      expect((await r.send(terminal)).delivered, isTrue);
+      expect((await r.send(successor)).delivered, isTrue);
+      expect(r.crypto.encryptions, 2);
+    },
+  );
+
+  test('BL28 compacted service identity cannot acquire new bytes', () async {
+    r.contexts.purge(CallId.parse(_call));
+    _bl28Open(r, 1);
+    await _bl28Prepare(r, 1, 2);
+    r.contexts.purge(CallId.parse(_bl28Call(1)));
+    _bl28Open(r, 2);
+    await _bl28Prepare(r, 2, 2);
+    final encrypted = r.crypto.encryptions;
+    await expectLater(
+      r.service.prepareV2(
+        signal: _bl28Signal(r, 1, 2),
+        callHandle: _handle,
+        endpoint: r.endpoint,
+        senderSigningPrivateKey: r.signingKey,
+        authorize: () async => true,
+        canApply: () => true,
+        videoEnabled: true,
+      ),
+      rejected,
+    );
+    expect(r.crypto.encryptions, encrypted);
+  });
+
+  test(
+    'BL28 closed-call refusal is bounded and expires without eviction',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      final logging = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = true;
+      debugSetFlowEventSink(events.add);
+      try {
+        r.contexts.purge(CallId.parse(_call));
+        for (var call = 1; call <= 129; call++) {
+          _bl28Open(r, call);
+          await _bl28Prepare(r, call, 2);
+          r.contexts.purge(CallId.parse(_bl28Call(call)));
+        }
+        _bl28Open(r, 130);
+        await expectLater(_bl28Prepare(r, 130, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        final refusal = events.lastWhere(
+          (event) => event['event'] == 'CALL_V2_PREPARE_REFUSED',
+        );
+        final details = refusal['details'] as Map<String, dynamic>;
+        expect(details['stage'], 'closed_call_limit');
+        expect(details['closedCallCount'], 128);
+        expect(details.keys.toSet(), {
+          'stage',
+          'retainedCount',
+          'closedCallCount',
+          'limit',
+          'terminal',
+          'nextPrunableInMs',
+        });
+        expect(jsonEncode(details), isNot(contains(_bl28Call(1))));
+        _bl28Open(r, 1);
+        await expectLater(_bl28Prepare(r, 1, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        r.contexts.purge(CallId.parse(_bl28Call(1)));
+        debugSetFlowEventSink((_) => throw StateError('sink unavailable'));
+        await expectLater(_bl28Prepare(r, 130, 2), rejected);
+        expect(r.crypto.encryptions, 129);
+        debugSetFlowEventSink(events.add);
+        r.now += 10 * 60 * 1000 + 1;
+        r.contexts.purge(CallId.parse(_bl28Call(130)));
+        _bl28Open(r, 130);
+        final fresh = await _bl28Prepare(r, 130, 2);
+        expect((await r.send(fresh)).delivered, isTrue);
+        expect(r.crypto.encryptions, 130);
+      } finally {
+        debugSetFlowEventSink(null);
+        flowEventLoggingEnabled = logging;
+      }
+    },
+  );
 
   for (final media in CallMediaKind.values) {
     test(

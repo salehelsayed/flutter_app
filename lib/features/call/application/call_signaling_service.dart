@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../domain/call_event.dart';
+import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
 import '../domain/call_signal_v2.dart';
@@ -121,6 +122,7 @@ final class CallSignalingService {
   final Map<String, CallSignalTransmissionRetry> _v2Retries = {};
   // No bytes or owner callbacks: fail closed rather than forget a live identity.
   final Map<String, int> _v2Identities = {};
+  final Map<CallId, int> _retiredV2Calls = {};
   static const _maxV2Identities = 128;
   bool _closed = false;
   bool _terminalRetriesStopped = false;
@@ -167,7 +169,12 @@ final class CallSignalingService {
       );
     }
     final key = '${signal.callId.value}:${signal.messageId}';
-    _v2Identities.removeWhere((_, expiry) => _nowMs() >= expiry);
+    _pruneV2Identities();
+    if (_retiredV2Calls.containsKey(signal.callId)) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.endpointMismatch,
+      );
+    }
     // Optional churn cannot fill the last terminal identity slots either.
     final identityLimit =
         _maxV2Identities - (terminalPriority ? 0 : _maxPendingTerminalRetries);
@@ -227,6 +234,34 @@ final class CallSignalingService {
       );
     }
     return retry;
+  }
+
+  void _pruneV2Identities() {
+    final now = _nowMs();
+    _v2Identities.removeWhere((_, expiry) => now >= expiry);
+    _retiredV2Calls.removeWhere((_, expiry) => now >= expiry);
+  }
+
+  /// Called by the v2 adapter only after the exact call's context is purged.
+  /// Compact replay refusal, not transport custody: an already prepared terminal
+  /// keeps its immutable bytes, deadline and authority for its normal drain.
+  bool retireV2Call(CallId callId) {
+    _pruneV2Identities();
+    final prefix = '${callId.value}:';
+    final keys = _v2Identities.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    if (keys.isEmpty) return true;
+    if (!_retiredV2Calls.containsKey(callId) &&
+        _retiredV2Calls.length >= _maxV2Identities) {
+      return false;
+    }
+    var expiry = _retiredV2Calls[callId] ?? 0;
+    for (final key in keys) {
+      expiry = max(expiry, _v2Identities.remove(key)!);
+    }
+    _retiredV2Calls[callId] = expiry;
+    return true;
   }
 
   bool _validV2Endpoint(
