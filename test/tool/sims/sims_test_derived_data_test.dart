@@ -137,4 +137,40 @@ void main() {
     );
     expect(File('${derived.path}/warm.o').existsSync(), isFalse);
   });
+
+  test('the sims key equals the script record when a probe also writes '
+      'stderr', () {
+    final bin = Directory('${root.path}/bin')..createSync();
+    File('${bin.path}/xcodebuild').writeAsStringSync(
+      '#!/bin/bash\necho "Xcode 26.0"\necho "Build version 17A1"\n',
+    );
+    File('${bin.path}/flutter').writeAsStringSync(
+      '#!/bin/bash\n'
+      'echo "Waiting for another flutter command to release the startup lock..." >&2\n'
+      'sleep 0.2\n'
+      'echo \'{"frameworkVersion": "3.47.2"}\'\n',
+    );
+    Process.runSync('chmod', [
+      '+x',
+      '${bin.path}/xcodebuild',
+      '${bin.path}/flutter',
+    ]);
+    final environment = <String, String>{
+      ...Platform.environment,
+      'PATH': '${bin.path}:${Platform.environment['PATH']}',
+    };
+    final derived = '${root.path}/dd-hetzner-test-key';
+    final script = Process.runSync('bash', <String>[
+      '-c',
+      '. docker-ws/test_derived_data.sh && prepare_test_derived_data "\$1"',
+      'bash',
+      derived,
+    ], environment: environment);
+    expect(script.exitCode, 0, reason: '${script.stderr}');
+
+    expect(
+      simsTestScriptToolchainKey(environment),
+      File('$derived/.mknoon-test-toolchain').readAsStringSync(),
+    );
+  });
 }

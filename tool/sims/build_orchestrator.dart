@@ -164,28 +164,26 @@ bool prepareSimsIosTestDerivedData(
 }
 
 /// The key docker-ws/test_derived_data.sh would write now, or null when a
-/// probe fails (then nothing is adopted).
+/// probe fails (then nothing is adopted). Each probe runs as
+/// `bash -c '<command> 2>&1'`, so stdout and stderr interleave exactly as in
+/// the script's `$(<command> 2>&1)`.
 String? simsTestScriptToolchainKey(Map<String, String> environment) {
-  String? probe(String executable, List<String> arguments) {
+  String? probe(String command) {
     try {
-      final result = Process.runSync(
-        executable,
-        arguments,
-        environment: environment,
-      );
+      final result = Process.runSync('bash', <String>[
+        '-c',
+        '$command 2>&1',
+      ], environment: environment);
       if (result.exitCode != 0) return null;
-      return '${result.stdout}${result.stderr}'.replaceFirst(
-        RegExp(r'\n+$'),
-        '',
-      );
+      return '${result.stdout}'.replaceFirst(RegExp(r'\n+$'), '');
     } on ProcessException {
       return null;
     }
   }
 
-  final xcode = probe('xcodebuild', const <String>['-version']);
+  final xcode = probe('xcodebuild -version');
   if (xcode == null) return null;
-  final flutter = probe('flutter', const <String>['--version', '--machine']);
+  final flutter = probe('flutter --version --machine');
   if (flutter == null) return null;
   return '$xcode\n$flutter';
 }
