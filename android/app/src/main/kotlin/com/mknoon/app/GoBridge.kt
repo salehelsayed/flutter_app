@@ -266,6 +266,7 @@ class GoBridge internal constructor(
             "turnCredentialsWithDiagnosticsV1", "relayTurnCredentialsWithDiagnosticsV1" -> runOnBackground({ GoMknoon.turnCredentialsWithDiagnosticsV1(args ?: "") }, result)
             "callDiagnosticsV1" -> runOnBackground({ GoMknoon.callDiagnosticsV1(args ?: "") }, result)
             "appDiagnosticsV1" -> runOnBackground({ GoMknoon.appDiagnosticsV1(args ?: "") }, result)
+            "stickerUsageV1" -> runOnBackground({ GoMknoon.stickerUsageV1(args ?: "") }, result)
             // Presence (FDC-08/09) — Dart case names map to Go presenceGet/presenceSet bindings
             "relayPresenceGet" -> runOnBackground({ GoMknoon.presenceGet(args ?: "") }, result)
             "relayPresenceSet" -> runOnBackground({ GoMknoon.presenceSet(args ?: "") }, result)

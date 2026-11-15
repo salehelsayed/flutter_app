@@ -13417,6 +13417,49 @@ send-admission call-site placement, device behavior or signed-build delivery.
 The new optional vocabulary remains on uploads, so the updated relay must precede
 testers receiving the app, under the existing deployment order above.
 
+The separate anonymous sticker counter uses completed UTC dates, not the legacy
+diagnostic tally's local-midnight timestamps. `anonymous_sticker_counter_test.dart`
+proves bounded local batches, real-file restart with the same random retry nonce,
+opt-out/in-flight-reply fencing, and the production recorder's separate native
+payload. Its six cases plus the 21 legacy sticker diagnostics cases pass with
+`TZ=Europe/Berlin`. Parse persisted date-only keys explicitly as UTC: the first
+GREEN attempt lost restored batches when local midnight was converted to UTC.
+Keep that failure and the corrected run in `.codex-test-logs/sticker-counter/`.
+The local archive commits the failed-upload UTC retry deadline with pending
+batches. Restart cannot bypass the one-hour delay, and an old list-only archive
+still preserves its nonce/counts. The restart regression snapshots the state
+durable before graceful disposal, sends nothing through 59:59 after failure,
+then retries the same batch once at the hour. The behavioral RED and 27-case
+GREEN are in that evidence root's `retry-deadline/` directory. Clearing consent
+also clears the retry deadline; it never enters the uploaded payload.
+
+The legacy flush/join/clear clock cases in `app_diagnostics_test.dart` must pump
+real and fake microtasks together while awaiting the separate real-file counter.
+Draining startup alone does not suffice: a later flush still joins its serial
+file queue. `withFakeTime` pumps microtasks without advancing virtual timers,
+awaits completion before the original persistence assertions, and disposes the
+collector before stopping that pump. Explicit elapsed-time assertions preserve
+the zero-time flush/join and one-second clear boundaries. The four causal cases
+pass in `retry-deadline/flush-startup/clock-fix-result.json`; preserve the original
+diagnostics failure, the inconclusive standalone probe, and the failed
+startup-only attempt in the same evidence root. This fixture repair does not
+change production flush, counter, or consent behavior.
+
+`sticker_metrics_test.go` has eight focused cases covering exact Redis totals,
+72-hour nonce deduplication, relay-process restart, retention, closed IDs/caps,
+abuse admission, the authenticated stream/readout, and failure atomicity. A
+denied nonce `SET` originally left earlier Lua increments behind; the causal
+RED and passing GREEN are `red-acl.txt` and `green-acl.txt` in that evidence root.
+Write permission, type and numeric checks must precede every mutation. Missing
+Redis 7 ACL-preflight capability returns unsupported without changing totals.
+The host fake models the ACL predicate and actual command refusal together;
+these tests do not certify a deployed Redis ACL configuration. The native Go
+transport test separately covers supported and legacy-unsupported relay replies.
+The aggregate/metric contract is [sticker-metrics.md](../../go-relay-server/docs/sticker-metrics.md).
+This evidence is source/host coverage, not a full affected-selection, generated
+mobile-binding, signed-build or device PASS; retain the initial broad-run group
+failures and final identity-read timeout when later diagnostics are reported.
+
 Eight build128/129 incoming-domain CallKit code3 traces were OS Do Not Disturb filtering.
 The released report/completion path stays unchanged; duplicate UUID is code2.
 

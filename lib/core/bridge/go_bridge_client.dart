@@ -206,6 +206,11 @@ class GoBridgeClient extends Bridge {
       'appDiagnosticsV1',
       true,
     ),
+    'sticker_usage_v1': _CmdSpec(
+      _BridgeCommandFamily.diagnostics,
+      'stickerUsageV1',
+      true,
+    ),
     'turn_credentials_with_diagnostics_v1': _CmdSpec(
       _BridgeCommandFamily.callControl,
       'turnCredentialsWithDiagnosticsV1',
@@ -1255,7 +1260,11 @@ class GoBridgeClient extends Bridge {
       _BridgeRejectionKind kind = _BridgeRejectionKind.unknown,
     ]) {
       // A broken diagnostic transport must not report itself recursively.
-      if (cmd == 'app_diagnostics_v1' || cmd == 'call_diagnostics_v1') return;
+      if (cmd == 'app_diagnostics_v1' ||
+          cmd == 'call_diagnostics_v1' ||
+          cmd == 'sticker_usage_v1') {
+        return;
+      }
       final values = <String, Object?>{
         'operation': diagnosticOperation ?? 'other',
         'durationMs': bridgeStopwatch.elapsedMilliseconds,
