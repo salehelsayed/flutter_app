@@ -12782,7 +12782,7 @@ void _vui7LegacyAndBridgeTests() {
       },
       lifecycleOverride: (method, arguments) async {
         if (arguments['callHandle'] == priorHandle &&
-            ((method == 'project' && arguments['state'] == 'ended') ||
+            ((method == 'project' && arguments['state'] == 'declined') ||
                 method == 'end')) {
           terminalCommitted = true;
         }
@@ -12810,7 +12810,7 @@ void _vui7LegacyAndBridgeTests() {
                 'callHandle': priorHandle,
                 'sequence': 2,
                 'eventId': '66666666-6666-4666-8666-666666666691',
-                'type': 'end',
+                'type': 'decline',
                 'occurredAtMs': 2000001,
               },
             ],
@@ -12853,6 +12853,12 @@ void _vui7LegacyAndBridgeTests() {
     await _deliverGraphVideoInvite(fixture).timeout(_vui7Bound);
     final terminal = await _vui7EndProjection(fixture, event: CallEventType.decline);
     expect(terminal.terminalMedia, CallMediaKind.video);
+    final projectionWait = Stopwatch()..start();
+    while (!terminalCommitted && projectionWait.elapsed < _vui7Bound) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(terminalCommitted, isTrue,
+        reason: 'The native fixture must commit the actual project(declined) journal before waiting for its ACK.');
     await _untilGraphVideo(() => terminalAcknowledged &&
         !fixture.graphs.single.iosCallLifecycleAdapter!.isBoundTo(terminal.session.callId!));
     expect(terminalCommitted, isTrue);
