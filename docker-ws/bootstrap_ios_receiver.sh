@@ -23,7 +23,9 @@ RECEIVER="${SIMS_IOS_PHYSICAL_DEVICE_ID:-00008030-001A6D2801BB802E}"
 export SIMS_IOS_PHYSICAL_DEVICE_ID="$RECEIVER"
 export MKNOON_RELAY_ADDRESSES="${MKNOON_RELAY_ADDRESSES:-/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g}"
 
-DERIVED="${SIMS_IOS_BOOTSTRAP_DERIVED_DATA:-$HOME/dd-hetzner-test-ios.device.production-bootstrap}"
+# The same folder the sims build of ios.device.production uses, so sims
+# rebuilds incrementally after this bootstrap build (one cold build per head).
+DERIVED="${SIMS_IOS_BOOTSTRAP_DERIVED_DATA:-$HOME/dd-hetzner-test-ios.device.production}"
 OUT_DIR="${SIMS_IOS_BOOTSTRAP_OUT_DIR:-$HOME/.mknoon-sims}"
 HANDOFF="${SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH:-$OUT_DIR/ios-receiver-handoff.json}"
 mkdir -p "$OUT_DIR"
@@ -56,8 +58,14 @@ if [ "$skip_build" -eq 0 ]; then
   # SIMS_IOS_BOOTSTRAP_DERIVED_DATA folder starts empty as before.
   case "$(basename "$DERIVED")" in
     dd-hetzner-test-*)
-      . "$REPO/docker-ws/test_derived_data.sh"
-      prepare_test_derived_data "$DERIVED"
+      # sims owns the folder once it has built there: it wipes it on a
+      # toolchain change (tool/sims/build_orchestrator.dart).
+      if [ -f "$DERIVED/.mknoon-sims-toolchain" ]; then
+        echo "reusing the sims DerivedData at $DERIVED"
+      else
+        . "$REPO/docker-ws/test_derived_data.sh"
+        prepare_test_derived_data "$DERIVED"
+      fi
       ;;
     *)
       rm -rf "$DERIVED"

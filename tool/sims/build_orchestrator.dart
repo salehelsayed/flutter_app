@@ -1496,7 +1496,29 @@ void _replaceCachedArtifact(
   );
 }
 
+/// Copies the contents of [source] into the existing [destination] with the
+/// same bytes, permissions and links (the artifact digest).
+void simsCopyArtifactDirectory(Directory source, Directory destination) =>
+    _copyDirectory(source, destination);
+
 void _copyDirectory(Directory source, Directory destination) {
+  // On macOS one cp clones the whole tree (APFS) and keeps modes and links;
+  // copying file by file with a chmod process per file took minutes.
+  if (Platform.isMacOS && destination.listSync().isEmpty) {
+    final result = Process.runSync('cp', <String>[
+      '-cpR',
+      '${source.path}/.',
+      destination.path,
+    ]);
+    if (result.exitCode == 0) return;
+    for (final partial in destination.listSync(followLinks: false)) {
+      partial.deleteSync(recursive: true);
+    }
+  }
+  _copyEntries(source, destination);
+}
+
+void _copyEntries(Directory source, Directory destination) {
   for (final entity in source.listSync(followLinks: false)) {
     final name = entity.uri.pathSegments.where((part) => part.isNotEmpty).last;
     final targetPath = '${destination.path}/$name';
@@ -1508,7 +1530,7 @@ void _copyDirectory(Directory source, Directory destination) {
       case FileSystemEntityType.directory:
         final child = Directory(targetPath)..createSync();
         _preserveMode(entity, targetPath);
-        _copyDirectory(Directory(entity.path), child);
+        _copyEntries(Directory(entity.path), child);
       case FileSystemEntityType.link:
         Link(targetPath).createSync(Link(entity.path).targetSync());
       case FileSystemEntityType.notFound:
