@@ -245,6 +245,9 @@ func newControlPlaneStores(
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("MKNOON_RELAY_STICKER_METRICS_ENABLED")), "true") {
+			stores.Inbox.stickerMetrics = newStickerMetrics(client, cfg.RedisPrefix, time.Now)
+		}
 		return stores, nil
 	default:
 		return nil, fmt.Errorf("unsupported relay backend: %s", cfg.Kind)

@@ -2692,6 +2692,7 @@ func ensureInboxMessageID(entry inboxMessage) inboxMessage {
 
 // InboxStore wraps an InboxBackend and a PushService.
 type InboxStore struct {
+	stickerMetrics *stickerMetrics
 	appDiagnostics *appDiagnosticStore
 	backend        InboxBackend
 	push           *PushService
@@ -4708,6 +4709,13 @@ func HandleInboxStream(
 	var resp inboxResponse
 
 	switch req.Action {
+	case stickerUsageAction:
+		var metrics *stickerMetrics
+		if inbox != nil {
+			metrics = inbox.stickerMetrics
+		}
+		handleStickerUsageRequest(s, requestBytes, remotePeer, metrics)
+		return
 	case appDiagnosticsAction:
 		var diagnostics *appDiagnosticStore
 		if inbox != nil {
