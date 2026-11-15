@@ -58,6 +58,8 @@ RELAY_FIXTURE_RECEIPT_SCHEMA = (
 )
 RECEIVER_HANDOFF_SCHEMA = "mknoon.sims.ios-provider-receiver-handoff.v2"
 LIFECYCLE_SCHEMA = "mknoon.sims.ios-provider-lifecycle.v1"
+OWNER_DISPOSABLE_DEVICES_SCHEMA = "mknoon.sims.ios-owner-disposable-devices.v1"
+OWNER_DISPOSABLE_DEVICES_ENV = "SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE"
 APNS_HOSTS = {
     "development": "https://api.sandbox.push.apple.com",
 }
@@ -291,6 +293,52 @@ def _private_regular_file(raw_path: str, label: str) -> Path:
     if metadata.st_size <= 0:
         raise AdapterBlocked(f"{label} is empty")
     return path
+
+
+def require_owner_disposable_receiver(
+    receiver: str, environment: Mapping[str, str]
+) -> None:
+    """Refuse unless the owner's private file lists sha256(receiver).
+
+    The staging manifest is operator-minted and hand-editable, so it can never
+    by itself authorize uninstalling or resetting a physical iPhone.
+    """
+    raw_path = environment.get(OWNER_DISPOSABLE_DEVICES_ENV, "").strip()
+    if not raw_path:
+        raise AdapterBlocked(
+            "receiver is not owner-authorized as disposable: "
+            f"{OWNER_DISPOSABLE_DEVICES_ENV} is unset"
+        )
+    label = "owner disposable devices file"
+    owner, _ = _read_json_object(_private_regular_file(raw_path, label), label)
+    hashes = owner.get("receiverDeviceIdSha256")
+    if (
+        set(owner) != {"schema", "receiverDeviceIdSha256"}
+        or owner.get("schema") != OWNER_DISPOSABLE_DEVICES_SCHEMA
+        or not isinstance(hashes, list)
+        or any(not isinstance(item, str) or _SHA256.fullmatch(item) is None
+               for item in hashes)
+    ):
+        raise AdapterBlocked(f"{label} is malformed")
+    if _sha256_text(receiver) not in hashes:
+        raise AdapterBlocked(
+            "receiver is not owner-authorized as disposable: "
+            f"its sha256 is not listed in the {label}"
+        )
+
+
+def disposable_receiver_flags(
+    receiver: str, environment: Mapping[str, str]
+) -> dict[str, bool]:
+    try:
+        require_owner_disposable_receiver(receiver, environment)
+        authorized = True
+    except AdapterBlocked:
+        authorized = False
+    return {
+        "dedicatedDisposableReceiver": authorized,
+        "destructiveTestStateResetAuthorized": authorized,
+    }
 
 
 def _regular_file(raw_path: str, label: str) -> Path:
@@ -875,6 +923,7 @@ def _validate_common(args: argparse.Namespace) -> ProviderContext:
         raise AdapterBlocked("peerDeviceId must be the receiver transport identity")
     if args.receiver == args.peer_device:
         raise AdapterBlocked("receiver hardware and transport identities must differ")
+    require_owner_disposable_receiver(args.receiver, os.environ)
     for label, value in (("run id", args.run_id), ("nonce", args.nonce)):
         if _SAFE_TOKEN.fullmatch(value) is None:
             raise AdapterBlocked(f"{label} is invalid")
@@ -1368,8 +1417,7 @@ def _probe(args: argparse.Namespace) -> None:
         "bundleId": BUNDLE_ID,
         "relayActive": True,
         "relayInboxSeedDriverAvailable": True,
-        "dedicatedDisposableReceiver": True,
-        "destructiveTestStateResetAuthorized": True,
+        **disposable_receiver_flags(receiver, os.environ),
         "providerCleanupAvailable": True,
         "productionDeploymentPerformed": False,
         "candidateAppRevision": candidate_app_revision,

@@ -57,6 +57,21 @@ def _b64url_decode(value: str) -> dict[str, object]:
     return json.loads(base64.urlsafe_b64decode(value + padding))
 
 
+def _write_owner_file(path: Path, device_ids: list[str]) -> None:
+    _write_private(
+        path,
+        json.dumps(
+            {
+                "schema": "mknoon.sims.ios-owner-disposable-devices.v1",
+                "receiverDeviceIdSha256": [
+                    hashlib.sha256(device_id.encode()).hexdigest()
+                    for device_id in device_ids
+                ],
+            }
+        ),
+    )
+
+
 class _Fixture:
     def __init__(self, root: Path, adapter) -> None:
         self.root = root
@@ -159,6 +174,8 @@ class _Fixture:
         self.profile_path = root / "development.mobileprovision"
         self.security_actions = root / "security-actions.jsonl"
         self.sender_actions = root / "sender-actions.log"
+        self.owner_file = root / "owner-disposable-devices.json"
+        _write_owner_file(self.owner_file, [RECEIVER])
         self._persist_inputs()
         _write_private(self.relay_key, "relay-private-key\n")
         self.profile_path.write_bytes(EMBEDDED_PROFILE)
@@ -425,6 +442,7 @@ for option in ('--json-output','--log-output'):
             "SIMS_IOS_NOTIFICATION_CURL_EXECUTABLE": str(self.curl),
             "SIMS_IOS_NOTIFICATION_XCRUN_EXECUTABLE": str(self.xcrun),
             "SIMS_IOS_NOTIFICATION_FIXTURE_TIMEOUT_SECONDS": "3",
+            "SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE": str(self.owner_file),
         }
 
     def command(
@@ -623,6 +641,8 @@ class IosNotificationProviderAdapterTest(unittest.TestCase):
             )
             self.assertEqual(manifest["receiverDeviceId"], RECEIVER)
             self.assertEqual(manifest["peerDeviceId"], RECEIVER_PEER)
+            self.assertIs(manifest["dedicatedDisposableReceiver"], True)
+            self.assertIs(manifest["destructiveTestStateResetAuthorized"], True)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
             second = subprocess.run(
@@ -648,6 +668,93 @@ class IosNotificationProviderAdapterTest(unittest.TestCase):
             self.assertFalse(fixture.relay_actions.exists())
             self.assertFalse(fixture.curl_observation.exists())
             self.assertFalse(fixture.xcrun_actions.exists())
+
+    def test_probe_marks_receiver_disposable_only_with_owner_authorization(
+        self,
+    ) -> None:
+        adapter = _load_adapter()
+        with tempfile.TemporaryDirectory(prefix="ios-provider-owner-") as raw:
+            root = Path(raw)
+            listed = root / "listed.json"
+            _write_owner_file(listed, [RECEIVER])
+            other = root / "other.json"
+            _write_owner_file(other, ["00008150-0000000000000000"])
+            readable = root / "readable.json"
+            _write_owner_file(readable, [RECEIVER])
+            readable.chmod(0o644)
+            env_name = "SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE"
+            cases = [
+                ("no env", {}, False),
+                ("empty env", {env_name: ""}, False),
+                ("different hash", {env_name: str(other)}, False),
+                ("group/world readable", {env_name: str(readable)}, False),
+                ("missing file", {env_name: str(root / "absent.json")}, False),
+                ("0600 listing receiver", {env_name: str(listed)}, True),
+            ]
+            for label, environment, expected in cases:
+                with self.subTest(label):
+                    self.assertEqual(
+                        adapter.disposable_receiver_flags(RECEIVER, environment),
+                        {
+                            "dedicatedDisposableReceiver": expected,
+                            "destructiveTestStateResetAuthorized": expected,
+                        },
+                    )
+
+            (root / "probe").mkdir()
+            fixture = _Fixture(root / "probe", adapter)
+            environment = fixture.environment
+            environment.pop(env_name)
+            output = fixture.capture / "unauthorized-staging-manifest.json"
+            result = subprocess.run(
+                fixture.probe_command(output),
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads(output.read_bytes())
+            self.assertIs(manifest["dedicatedDisposableReceiver"], False)
+            self.assertIs(manifest["destructiveTestStateResetAuthorized"], False)
+
+    def test_destructive_actions_refuse_unauthorized_receiver_despite_manifest(
+        self,
+    ) -> None:
+        adapter = _load_adapter()
+        with tempfile.TemporaryDirectory(prefix="ios-provider-unauthorized-") as raw:
+            fixture = _Fixture(Path(raw), adapter)
+            self.assertIs(fixture.staging["dedicatedDisposableReceiver"], True)
+            self.assertIs(fixture.staging["destructiveTestStateResetAuthorized"], True)
+            unset = fixture.environment
+            unset.pop("SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE")
+            for action in ("setup", "retry", "cleanup", "rollback"):
+                with self.subTest(action=action):
+                    result = subprocess.run(
+                        fixture.command(action, fixture.capture / f"{action}.json"),
+                        cwd=ROOT,
+                        env=unset,
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 78)
+                    self.assertIn(
+                        "receiver is not owner-authorized as disposable: "
+                        "SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE is unset",
+                        result.stderr,
+                    )
+                    self.assertNotIn(RECEIVER, result.stderr)
+
+            _write_owner_file(fixture.owner_file, ["00008150-0000000000000000"])
+            result = fixture.run("setup", fixture.capture / "other-owner.json")
+            self.assertEqual(result.returncode, 78)
+            self.assertIn(
+                "its sha256 is not listed in the owner disposable devices file",
+                result.stderr,
+            )
+            self.assertFalse(fixture.relay_actions.exists())
+            self.assertFalse(fixture.xcrun_actions.exists())
+            self.assertFalse(fixture.curl_observation.exists())
 
     def test_duplicate_payload_and_plaintext_substrings_fail_closed(self) -> None:
         adapter = _load_adapter()

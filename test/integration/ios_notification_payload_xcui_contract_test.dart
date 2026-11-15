@@ -1407,6 +1407,40 @@ void main() {
     },
   );
 
+  test(
+    'preflight refuses a receiver the owner has not declared disposable',
+    () {
+      final driver = File(
+        'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+      ).readAsStringSync();
+      final preflight = _between(
+        driver,
+        'Future<void> _preflight() async {',
+        'File _receiverBootstrapDriver()',
+      );
+      final guard = preflight.indexOf(
+        'iosOwnerDisposableReceiverRefusal(\n      options.receiverDeviceId,\n'
+        '      Platform.environment,\n    );\n    if (ownerRefusal != null) {\n'
+        "      throw _DriverBlocked('deviceState', ownerRefusal);",
+      );
+      expect(guard, greaterThanOrEqualTo(0));
+      expect(guard, lessThan(preflight.indexOf("action: 'validate'")));
+      // All three phases run _preflight before any install or uninstall.
+      for (final phase in <String>[
+        'Future<_DriverResult> run() async {',
+        'Future<_DriverResult> _runRecoveryPhase() async {',
+        'Future<_DriverResult> _runRetryPhase() async {',
+      ]) {
+        final body = driver.substring(driver.indexOf(phase));
+        expect(
+          body.indexOf('await _preflight();'),
+          lessThan(body.indexOf('await _installExactApplication();')),
+          reason: phase,
+        );
+      }
+    },
+  );
+
   test('physical test bundles use the app development team', () {
     final project = File(
       'ios/Runner.xcodeproj/project.pbxproj',

@@ -19,6 +19,10 @@ import re
 import stat
 import tempfile
 
+from ios_notification_provider_adapter import (
+    AdapterBlocked,
+    require_owner_disposable_receiver,
+)
 from ios_receiver_bootstrap import (
     BUNDLE_ID,
     BootstrapBlocked,
@@ -76,6 +80,10 @@ def _read_json(path: Path) -> dict:
 
 def validate_fixture(staging_path: Path, *, receiver: str, peer: str) -> dict:
     """Validate every binding and byte before a device command is possible."""
+    try:
+        require_owner_disposable_receiver(receiver, os.environ)
+    except AdapterBlocked as error:
+        raise FixtureFailure("owner_disposable_unauthorized") from error
     staging_path = staging_path.absolute()
     staging = _read_json(staging_path)
     if (

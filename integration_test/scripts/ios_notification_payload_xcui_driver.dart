@@ -1583,6 +1583,13 @@ final class _IosPayloadDriver {
             'an arbitrary user app data/notification-permission state.',
       );
     }
+    final ownerRefusal = iosOwnerDisposableReceiverRefusal(
+      options.receiverDeviceId,
+      Platform.environment,
+    );
+    if (ownerRefusal != null) {
+      throw _DriverBlocked('deviceState', ownerRefusal);
+    }
     if (!RegExp(
           r'^[A-Za-z0-9._:-]{4,160}$',
         ).hasMatch(options.receiverDeviceId) ||

@@ -571,7 +571,9 @@ List<_PreflightIssue> _iosNotificationPreflightIssues(
         SimsBlockerKind.credentials,
         'The iOS staging attestation does not prove development-APNs '
         'credentials/signing, provider probe, relay custody, and '
-        'dedicated-device cleanup readiness.',
+        'dedicated-device cleanup readiness. The probe marks a receiver '
+        'disposable only when SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE lists '
+        'its sha256.',
       ),
     );
   }

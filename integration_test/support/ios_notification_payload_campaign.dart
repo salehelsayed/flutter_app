@@ -1418,6 +1418,52 @@ String sha256String(String value) {
   return sha256.convert(utf8.encode(value)).toString();
 }
 
+const String iosOwnerDisposableDevicesSchema =
+    'mknoon.sims.ios-owner-disposable-devices.v1';
+const String iosOwnerDisposableDevicesEnvironment =
+    'SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE';
+
+/// Returns null only when the owner's private file lists the receiver's
+/// sha256. The staging manifest is hand-editable, so it can never by itself
+/// authorize uninstalling or resetting a physical iPhone.
+String? iosOwnerDisposableReceiverRefusal(
+  String receiverDeviceId,
+  Map<String, String> environment,
+) {
+  final path = environment[iosOwnerDisposableDevicesEnvironment]?.trim() ?? '';
+  if (path.isEmpty) {
+    return 'Receiver is not owner-authorized as disposable: '
+        '$iosOwnerDisposableDevicesEnvironment is unset.';
+  }
+  if (FileSystemEntity.typeSync(path, followLinks: false) !=
+          FileSystemEntityType.file ||
+      (File(path).statSync().mode & 0x3f) != 0) {
+    return 'The owner disposable devices file must be an owner-only, '
+        'non-symlink regular file.';
+  }
+  Object? decoded;
+  try {
+    decoded = jsonDecode(File(path).readAsStringSync());
+  } on Object {
+    decoded = null;
+  }
+  final hashes = decoded is Map<String, Object?>
+      ? decoded['receiverDeviceIdSha256']
+      : null;
+  if (decoded is! Map<String, Object?> ||
+      decoded.length != 2 ||
+      decoded['schema'] != iosOwnerDisposableDevicesSchema ||
+      hashes is! List<Object?> ||
+      hashes.any((hash) => hash is! String || !_sha256Pattern.hasMatch(hash))) {
+    return 'The owner disposable devices file is malformed.';
+  }
+  if (!hashes.contains(sha256String(receiverDeviceId))) {
+    return 'Receiver is not owner-authorized as disposable: its sha256 is not '
+        'listed in the owner disposable devices file.';
+  }
+  return null;
+}
+
 String sha256FileSystemEntity(FileSystemEntity entity) {
   final type = FileSystemEntity.typeSync(entity.path, followLinks: false);
   if (type == FileSystemEntityType.file) {

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -439,6 +440,66 @@ void main() {
     );
     expect(retryValidation.ok, isTrue, reason: retryValidation.detail);
   });
+
+  test(
+    'receiver is disposable only by an owner-only file listing its hash',
+    () {
+      final directory = Directory.systemTemp.createTempSync(
+        'owner-disposable-',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      File ownerFile(
+        String name,
+        List<String> receivers, {
+        String mode = '600',
+      }) {
+        final file = File('${directory.path}/$name')
+          ..writeAsStringSync(
+            jsonEncode(<String, Object?>{
+              'schema': 'mknoon.sims.ios-owner-disposable-devices.v1',
+              'receiverDeviceIdSha256': receivers.map(sha256String).toList(),
+            }),
+          );
+        expect(Process.runSync('chmod', <String>[mode, file.path]).exitCode, 0);
+        return file;
+      }
+
+      const env = 'SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE';
+      final listed = ownerFile('listed.json', <String>[_receiver]);
+      final other = ownerFile('other.json', <String>[
+        '00008150-0000000000000000',
+      ]);
+      final readable = ownerFile('readable.json', <String>[
+        _receiver,
+      ], mode: '644');
+
+      expect(
+        iosOwnerDisposableReceiverRefusal(_receiver, const <String, String>{}),
+        'Receiver is not owner-authorized as disposable: '
+        'SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE is unset.',
+      );
+      expect(
+        iosOwnerDisposableReceiverRefusal(_receiver, <String, String>{
+          env: other.path,
+        }),
+        'Receiver is not owner-authorized as disposable: its sha256 is not '
+        'listed in the owner disposable devices file.',
+      );
+      expect(
+        iosOwnerDisposableReceiverRefusal(_receiver, <String, String>{
+          env: readable.path,
+        }),
+        'The owner disposable devices file must be an owner-only, '
+        'non-symlink regular file.',
+      );
+      expect(
+        iosOwnerDisposableReceiverRefusal(_receiver, <String, String>{
+          env: listed.path,
+        }),
+        isNull,
+      );
+    },
+  );
 
   test('provider title stays within the disposable contact username bound', () {
     final request = _request()..['expectedTitle'] = 'a' * 31;

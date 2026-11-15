@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,6 +97,41 @@ class DeviceTransfers:
 
 
 class IosNotificationIdentityFixtureTest(unittest.TestCase):
+    def setUp(self):
+        owner_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(owner_dir.cleanup)
+        self.owner_file = Path(owner_dir.name) / "owner-disposable.json"
+        private_json(self.owner_file, {
+            "schema": "mknoon.sims.ios-owner-disposable-devices.v1",
+            "receiverDeviceIdSha256": [digest(RECEIVER.encode())],
+        })
+        patcher = mock.patch.dict(
+            os.environ, {"SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE": str(self.owner_file)}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_receiver_without_owner_authorization_fails_before_device_write(self):
+        def unset(_):
+            os.environ.pop("SIMS_IOS_OWNER_DISPOSABLE_DEVICES_FILE")
+
+        def other_receiver(owner_file):
+            private_json(owner_file, {
+                "schema": "mknoon.sims.ios-owner-disposable-devices.v1",
+                "receiverDeviceIdSha256": [digest(b"another-phone")],
+            })
+
+        for mutate in (unset, other_receiver, lambda owner_file: owner_file.chmod(0o644)):
+            with self.subTest(mutation=mutate), tempfile.TemporaryDirectory() as raw:
+                prepared = PreparedFixture(Path(raw))
+                self.assertIs(prepared.staging["dedicatedDisposableReceiver"], True)
+                mutate(self.owner_file)
+                control = DeviceTransfers()
+                with self.assertRaises(fixture.FixtureFailure) as raised:
+                    prepared.restore(control)
+                self.assertEqual(str(raised.exception), "owner_disposable_unauthorized")
+                self.assertEqual(control.events, [])
+
     def test_fresh_install_restores_identity_before_any_receiver_launch(self):
         source = DRIVER.read_text()
         preflight = source.split("Future<void> _preflight() async {", 1)[1]
