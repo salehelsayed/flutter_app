@@ -527,6 +527,8 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  _vui7TerminalMediaTests();
+  _vui7LegacyAndBridgeTests();
   Future<void> flushPip() async {
     for (var i = 0; i < 12; i++) {
       await Future<void>.delayed(Duration.zero);
@@ -12395,4 +12397,380 @@ final class _GraphQualitySource implements CallVideoQualityEnvironmentSource {
     _current = CallVideoQualityEnvironment.unknown;
     await _events.close();
   }
+}
+
+const _vui7Bound = Duration(seconds: 5);
+
+Future<ForegroundCallProjection> _vui7EndProjection(
+  _ProductionIosFixture fixture, {
+  CallEventType? event,
+  CallEndReason? reason,
+}) async {
+  final graph = fixture.graphs.single;
+  final id = graph.coordinator.activeSession!.callId!;
+  final terminal = Completer<ForegroundCallProjection>();
+  final sub = (fixture.composition as ForegroundCallCapability).changes.listen((p) {
+    if (p != null && p.session.callId == id && p.session.isTerminal &&
+        !terminal.isCompleted) terminal.complete(p);
+  });
+  try {
+    if (event == null) {
+      expect(await fixture.composition.end(id).timeout(_vui7Bound),
+          ForegroundCallActionResult.applied);
+    } else {
+      await graph.coordinator.dispatch(CallEvent(
+        type: event,
+        eventId: 'vui7-terminal-${event.name}',
+        callId: id,
+        occurredAt: graph.coordinator.clock(),
+        endReason: reason,
+        timeoutKind: event == CallEventType.timeout ? CallTimeoutKind.noAnswer : null,
+      )).timeout(_vui7Bound);
+    }
+    return await terminal.future.timeout(_vui7Bound);
+  } finally {
+    await sub.cancel().timeout(_vui7Bound);
+  }
+}
+
+/// Drive the real machine's acknowledged settlement, using the existing graph
+/// phase fixture seam. onResume is the public projection refresh already used
+/// by BL16-UPGRADE above; no terminal projection is fabricated.
+Future<void> _vui7Settle(
+  ProductionCallSignalingGraph graph, CallMediaKind media,
+) async {
+  final id = graph.coordinator.activeSession!.callId!;
+  final owner = graph.videoOwners![id]!.mediaSwitch!;
+  final machine = owner.machine;
+  final revision = machine.settledRevision;
+  final now = owner.nowMs();
+  const switchId = '77777777-7777-4777-8777-777777777779';
+  expect(machine.request(MediaSwitchRequest(
+    id: switchId, baseRevision: revision, target: media,
+    requesterIsCaller: true, createdAtMs: now, deadlineMs: now + 30000,
+  ), freshUpgradeAdmitted: true).accepted, isTrue);
+  if (media == CallMediaKind.video) {
+    expect(machine.respond(id: switchId, baseRevision: revision,
+      fromCaller: false, response: MediaSwitchResponse.accept).accepted, isTrue);
+  }
+  for (final description in MediaSwitchDescription.values) {
+    expect(machine.descriptionApplied(id: switchId, revision: revision + 1,
+      media: media, description: description,
+      local: description == MediaSwitchDescription.offer
+          ? machine.localIsCaller : !machine.localIsCaller).accepted, isTrue);
+  }
+  expect(machine.receiveCommit(id: switchId, revision: revision + 1,
+    media: media).accepted, isTrue);
+  expect(machine.settledMedia, media);
+  await graph.onResume().timeout(_vui7Bound);
+  expect(graph.current!.video!.presentation.agreedMedia, media);
+}
+
+void _vui7TerminalMediaTests() {
+  for (final row in [
+    'video', 'audio answer', 'upgrade', 'downgrade', 'pending upgrade',
+    'camera off', 'reconnect after upgrade',
+  ]) {
+    test('VUI7 terminal media uses last agreement: $row', () async {
+      final initiallyAudio = ['audio answer', 'upgrade', 'pending upgrade',
+        'reconnect after upgrade'].contains(row);
+      final (fixture, engine) = await _connectedGraphVideo(
+        cleanupTimeout: _vui7Bound,
+        acceptedMedia: initiallyAudio ? CallMediaKind.audio : CallMediaKind.video,
+      ).timeout(_vui7Bound);
+      final graph = fixture.graphs.single;
+      var expected = initiallyAudio ? CallMediaKind.audio : CallMediaKind.video;
+      if (row == 'upgrade' || row == 'reconnect after upgrade') {
+        await _vui7Settle(graph, CallMediaKind.video);
+        expected = CallMediaKind.video;
+      } else if (row == 'downgrade') {
+        await _vui7Settle(graph, CallMediaKind.audio);
+        expected = CallMediaKind.audio;
+      } else if (row == 'pending upgrade') {
+        expect(await graph.applyVideoIntent(_callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.requestVideo),
+        ).timeout(_vui7Bound), ForegroundCallActionResult.applied);
+        expect(graph.current!.video!.presentation.outgoingUpgradeId, isNotNull);
+        expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.audio);
+      } else if (row == 'camera off') {
+        expect(await graph.applyVideoIntent(_callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOff),
+        ).timeout(_vui7Bound), ForegroundCallActionResult.applied);
+        expect(graph.current!.video!.presentation.localCamera, CallCameraState.off);
+      }
+      if (row == 'reconnect after upgrade') {
+        await graph.coordinator.dispatch(CallEvent(
+          type: CallEventType.mediaLost, eventId: 'vui7-media-lost',
+          callId: _callA, occurredAt: graph.coordinator.clock(),
+        )).timeout(_vui7Bound);
+        expect(graph.coordinator.activeSession!.state, CallState.reconnecting);
+        expect(graph.videoOwners![_callA]!.mediaSwitch, isNull,
+          reason: 'terminal classification must survive unavailable live media owner');
+      }
+      final terminal = await _vui7EndProjection(fixture);
+      expect(terminal.terminalMedia, expected);
+      expect(terminal.session.callId, _callA);
+      expect(terminal.video, isNull);
+      expect(graph.current, isNull);
+      expect(engine.video!.cameraStarts, 0);
+      expect(engine.configuration!.captureVideo, isFalse);
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final ending in ['unanswered', 'declined', 'busy']) {
+    test('VUI7 unanswered requested video retains type after $ending', () async {
+      final fixture = await _createProductionIosFixture(
+        cleanupTimeout: _vui7Bound,
+        outgoingContactAccountPeerId: 'video-contact',
+        privacyFlags: const {'video_call_v2_enabled': true},
+      ).timeout(_vui7Bound);
+      await fixture.composition.start().timeout(_vui7Bound);
+      await _configureCancellationEndpoint(fixture, 'video-contact', video: true)
+          .timeout(_vui7Bound);
+      await _deliverGraphVideoInvite(fixture).timeout(_vui7Bound);
+      expect(fixture.graphs.single.coordinator.activeSession!.state, CallState.ringing);
+      final terminal = await _vui7EndProjection(fixture,
+        event: ending == 'unanswered' ? CallEventType.timeout : CallEventType.remoteReject,
+        reason: ending == 'busy' ? CallEndReason.busy : null,
+      );
+      expect(terminal.terminalMedia, CallMediaKind.video);
+      expect(terminal.session.connectedAt, isNull);
+      expect(terminal.session.endReason, ending == 'busy' ? CallEndReason.busy
+          : ending == 'declined' ? CallEndReason.declined : CallEndReason.noAnswer);
+      expect(terminal.video, isNull);
+    }, timeout: const Timeout.factor(1));
+  }
+
+  test('VUI7 successor requested video cannot inherit predecessor settled audio', () async {
+    final (fixture, _) = await _connectedGraphVideo(cleanupTimeout: _vui7Bound)
+        .timeout(_vui7Bound);
+    final graph = fixture.graphs.single;
+    await _vui7Settle(graph, CallMediaKind.audio);
+    final previous = await _vui7EndProjection(fixture);
+    await _vui7DeliverSuccessor(fixture).timeout(_vui7Bound);
+    expect(graph.coordinator.activeSession!.callId, _callB);
+    final successor = await _vui7EndProjection(fixture, event: CallEventType.decline);
+    expect(successor.terminalMedia, CallMediaKind.video);
+    expect(previous.terminalMedia, CallMediaKind.audio);
+    expect(previous.session.callId, _callA);
+    expect(successor.session.callId, _callB);
+    expect(successor.video, isNull);
+  }, timeout: const Timeout.factor(1));
+}
+
+// A successor needs fresh replay and native presentation identities.
+Future<void> _vui7DeliverSuccessor(_ProductionIosFixture fixture) async {
+  final graph = fixture.graphs.single;
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    'video-contact',
+  )).devices.single;
+  final signal = CallSignalV2.fromMap({
+    'schema': CallSignalV2.schema,
+    'call_id': _callB.value,
+    'message_id': '00000000-0000-4000-8000-000000000093',
+    'event': 'invite',
+    'sender_account_peer_id': 'video-contact',
+    'sender_device_peer_id': device.devicePeerId,
+    'recipient_account_peer_id': 'local-account',
+    'recipient_device_peer_id': 'local-account',
+    'sender_sequence': 1,
+    'ice_generation': 0,
+    'created_at_ms': 2_000_000,
+    'expires_at_ms': 2_040_000,
+    'payload': {
+      'media': 'video',
+      'camera': 'off',
+      'capabilities': ['audio', 'video'],
+    },
+  }, videoEnabled: true);
+  fixture.bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(signal.toMap()),
+  };
+  fixture.p2p.messages.add(
+    ChatMessage(
+      from: device.devicePeerId,
+      to: 'local-account',
+      content: jsonEncode({
+        'type': 'call_signal',
+        'version': '1',
+        'message_id': signal.messageId,
+        'call_handle': '33333333-3333-4333-8333-333333333339',
+        'expires_at_ms': signal.expiresAtMs,
+        'kem': base64Encode([1]),
+        'ciphertext': base64Encode([2]),
+        'nonce': base64Encode([3]),
+        'signature': base64Encode([4]),
+      }),
+      timestamp: _callNow.toIso8601String(),
+      isIncoming: true,
+      transport: 'direct',
+    ),
+  );
+  await _untilComposition(
+    () => graph.coordinator.activeSession?.state == CallState.ringing,
+  );
+}
+
+void _vui7LegacyAndBridgeTests() {
+  test('VUI7 accepted audio before connection outranks requested video', () async {
+    final events = StreamController<Object?>.broadcast(sync: true);
+    addTearDown(() => events.close().timeout(_vui7Bound));
+    final fixture = await _createProductionIosFixture(
+      cleanupTimeout: _vui7Bound,
+      outgoingContactAccountPeerId: 'video-contact',
+      privacyFlags: const {'video_call_v2_enabled': true},
+      microphonePermission: const _GrantedCallMicrophonePermission(),
+      lifecycleEventStream: events.stream,
+      callEngineFactory: (_) => _InitialVideoGraphEngine(),
+      lifecycleOverride: (method, _) async => method == 'readAudioState'
+          ? {'version': 1, 'active': true, 'muted': false,
+             'route': 'system_default', 'availableRoutes': ['system_default']}
+          : null,
+    ).timeout(_vui7Bound);
+    await fixture.composition.start().timeout(_vui7Bound);
+    await _configureCancellationEndpoint(fixture, 'video-contact', video: true)
+        .timeout(_vui7Bound);
+    _vui7ConfigureTurn(fixture);
+    await _deliverGraphVideoInvite(fixture).timeout(_vui7Bound);
+    final graph = fixture.graphs.single;
+    expect(await graph.answerWithMedia(_callA,
+      generation: graph.current!.video!.generation,
+      acceptedMedia: CallMediaKind.audio).timeout(_vui7Bound),
+      ForegroundCallActionResult.applied);
+    const handle = '33333333-3333-4333-8333-333333333333';
+    events.add({
+      'version': 1,
+      'descriptor': {'callHandle': handle, 'expiresAtMs': 2040000,
+        'presented': true, 'phase': 'journal', 'direction': 'incoming'},
+      'nativeCallId': handle, 'highestSequence': 2,
+      'events': [
+        {'callHandle': handle, 'sequence': 1,
+          'eventId': '55555555-5555-4555-8555-555555555555',
+          'type': 'presented', 'occurredAtMs': 2000000},
+        {'callHandle': handle, 'sequence': 2,
+          'eventId': '66666666-6666-4666-8666-666666666666',
+          'type': 'answer', 'occurredAtMs': 2000001},
+      ],
+    });
+    await _untilGraphVideo(() =>
+      graph.videoContexts!.read(_callA)?.initialAcceptedMedia == CallMediaKind.audio &&
+      _upgradeSignals(fixture, 'accept').isNotEmpty);
+    expect(graph.videoContexts!.read(_callA)!.requestedMedia, CallMediaKind.video);
+    expect(graph.coordinator.activeSession!.connectedAt, isNull);
+    final terminal = await _vui7EndProjection(fixture);
+    expect(terminal.terminalMedia, CallMediaKind.audio);
+    expect(terminal.session.connectedAt, isNull);
+    expect(terminal.video, isNull);
+  }, timeout: const Timeout.factor(1));
+
+  test('VUI7 known legacy voice terminal retains audio type', () async {
+    final fixture = await _createProductionIosFixture(
+      cleanupTimeout: _vui7Bound,
+      outgoingContactAccountPeerId: 'remote-account',
+      privacyFlags: const {'video_call_v2_enabled': true},
+    ).timeout(_vui7Bound);
+    await fixture.composition.start().timeout(_vui7Bound);
+    await _configureCancellationEndpoint(fixture, 'remote-account')
+        .timeout(_vui7Bound);
+    final invite = _killedCallSignal(CallSignalType.invite);
+    fixture.bridge.responses['message.decrypt'] = {
+      'ok': true, 'plaintext': jsonEncode(invite.toMap()),
+    };
+    fixture.p2p.messages.add(ChatMessage(
+      from: 'remote-account', to: 'local-account',
+      content: _killedCallEnvelope(invite, _killedCallHandle),
+      timestamp: _callNow.toIso8601String(), isIncoming: true, transport: 'direct',
+    ));
+    await _untilGraphVideo(() =>
+      fixture.graphs.single.coordinator.activeSession?.incomingValidated == true);
+    final graph = fixture.graphs.single;
+    expect(graph.videoContexts!.read(invite.callId)!.wireVersion, CallWireVersion.v1);
+    final terminal = await _vui7EndProjection(fixture, event: CallEventType.decline);
+    expect(terminal.terminalMedia, CallMediaKind.audio);
+    expect(terminal.video, isNull);
+  }, timeout: const Timeout.factor(1));
+
+  test('VUI7 real terminal through redial creates fresh video invite with camera off', () async {
+    late final _ProductionIosFixture fixture;
+    final engine = _InitialVideoGraphEngine();
+    String? outgoingHandle;
+    int? outgoingExpiry;
+    var cameraPermissionRequests = 0;
+    fixture = await _createProductionIosFixture(
+      cleanupTimeout: _vui7Bound,
+      microphonePermission: const _GrantedCallMicrophonePermission(),
+      outgoingContactAccountPeerId: 'video-contact',
+      privacyFlags: const {'video_call_v2_enabled': true},
+      callEngineFactory: (_) => engine,
+      requestCameraPermission: () async {
+        cameraPermissionRequests++;
+        return true;
+      },
+      lifecycleOverride: (method, arguments) async {
+        if (method == 'registerOutgoingAuthenticated') {
+          outgoingHandle = arguments['callHandle']! as String;
+          outgoingExpiry = arguments['expiresAtMs']! as int;
+          return true;
+        }
+        if (method == 'attach' && outgoingHandle != null) {
+          return {
+            'version': 1,
+            'descriptor': {'callHandle': outgoingHandle, 'expiresAtMs': outgoingExpiry,
+              'presented': true, 'phase': 'preStart', 'direction': 'outgoing'},
+            'nativeCallId': outgoingHandle, 'highestSequence': 1,
+            'events': [{'callHandle': outgoingHandle, 'sequence': 1,
+              'eventId': '00000000-0000-4000-8000-000000000091',
+              'type': 'presented', 'occurredAtMs': 2000000}],
+          };
+        }
+        return null;
+      },
+      ensureOutgoingCallWakeAuthority: (peer) async {
+        final issued = await fixture.issuedCallWakeHandleStore.readForContact(peer);
+        return issued != null && await fixture.graphs.single
+            .markCallWakeHandleDistributed(peer, issued.grant);
+      },
+    ).timeout(_vui7Bound);
+    await fixture.composition.start().timeout(_vui7Bound);
+    await _configureCancellationEndpoint(fixture, 'video-contact', video: true)
+        .timeout(_vui7Bound);
+    _vui7ConfigureTurn(fixture);
+    await _deliverGraphVideoInvite(fixture).timeout(_vui7Bound);
+    final terminal = await _vui7EndProjection(fixture, event: CallEventType.decline);
+    expect(terminal.terminalMedia, CallMediaKind.video);
+    final controller = CallRedialController(
+      capability: () => fixture.composition,
+      contactAllowed: (peer) async => peer == 'video-contact',
+    );
+    expect(await controller.start('video-contact', media: terminal.terminalMedia!,
+      isCurrent: () => true).timeout(_vui7Bound), OutgoingCallStartResult.started);
+    final fresh = fixture.graphs.single.coordinator.activeSession!;
+    expect(fresh.callId, isNot(terminal.session.callId));
+    expect(fresh.contactPeerId, terminal.session.contactPeerId);
+    await _untilGraphVideo(() => _upgradeSignals(fixture, 'invite').isNotEmpty);
+    final invite = _upgradeSignals(fixture, 'invite').single;
+    expect(invite['call_id'], fresh.callId!.value);
+    expect((invite['payload'] as Map)['media'], 'video');
+    expect((invite['payload'] as Map)['camera'], 'off');
+    expect(cameraPermissionRequests, 0);
+    expect(engine.video?.cameraStarts ?? 0, 0);
+    expect(engine.configuration?.captureVideo ?? false, isFalse);
+    // No explicit Camera intent was supplied; this leg proves fresh invitation
+    // and no capture admission, not native permission behavior after agreement.
+  }, timeout: const Timeout.factor(1));
+}
+
+void _vui7ConfigureTurn(_ProductionIosFixture fixture) {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final credentials = <String, Object?>{
+    'ok': true, 'schema': 'turn_credentials', 'version': 1,
+    'urls': ['turn:relay.invalid:3478?transport=udp'],
+    'username': 'fixture-user', 'password': 'fixture-secret',
+    'ttlSeconds': 600, 'serverTimeMs': now, 'expiresAtMs': now + 600000,
+  };
+  fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+  fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] = credentials;
 }

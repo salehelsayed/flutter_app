@@ -42,11 +42,13 @@ final class ForegroundCallProjection {
     required this.session,
     required this.audio,
     this.video,
+    this.terminalMedia,
   });
 
   final CallSessionSnapshot session;
   final CallAudioControlState audio;
   final ForegroundCallVideoProjection? video;
+  final CallMediaKind? terminalMedia;
 }
 
 /// Detail-free outcome for every foreground call command.

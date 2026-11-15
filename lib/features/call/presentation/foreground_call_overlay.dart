@@ -9,6 +9,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../application/call_audio_controller.dart';
 import '../application/call_camera_tap_diagnostics.dart';
 import '../application/foreground_call_capability.dart';
+import '../application/outgoing_call_capability.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
@@ -48,6 +49,12 @@ typedef _UpgradeNoticeIdentity = ({
   int baseRevision,
 });
 
+typedef TerminalCallRetry = Future<OutgoingCallStartResult> Function(
+  String peerId, {
+  required CallMediaKind media,
+  required bool Function() isCurrent,
+});
+
 typedef ContactDisplayNameLoader =
     Future<String?> Function(String contactPeerId);
 
@@ -66,10 +73,12 @@ final class ForegroundCallOverlay extends StatefulWidget {
     this.onAttached,
     this.backGuard,
     this.micPermission,
+    this.onCallAgain,
   });
 
   final ForegroundCallCapability? capability;
   final ContactDisplayNameLoader loadContactDisplayName;
+  final TerminalCallRetry? onCallAgain;
   final Widget child;
   final DateTime Function()? now;
 

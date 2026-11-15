@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import '../data/call_history_repository.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import 'call_history_access.dart';
 import 'outgoing_call_capability.dart';
@@ -24,6 +25,7 @@ class CallRedialController {
   Future<OutgoingCallStartResult> start(
     String peerId, {
     bool Function()? isCurrent,
+    CallMediaKind media = CallMediaKind.audio,
     Future<bool> Function()? isEligible,
   }) async {
     if (_busy) return OutgoingCallStartResult.canceled;
@@ -43,7 +45,7 @@ class CallRedialController {
         },
       );
       pending = request;
-      return await _start(peerId, request, isEligible).timeout(
+      return await _start(peerId, request, isEligible, media).timeout(
         timeout,
         onTimeout: () {
           if (request.isAdmitted) return OutgoingCallStartResult.started;
@@ -72,6 +74,7 @@ class CallRedialController {
     String peerId,
     OutgoingCallStartRequest request,
     Future<bool> Function()? isEligible,
+    CallMediaKind media,
   ) async {
     request.checkPending();
     final owner = capability();

@@ -37,6 +37,9 @@ import 'package:flutter_app/features/call/application/foreground_call_capability
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -99,6 +102,7 @@ final _missedId = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _now = DateTime.utc(2026, 10, 19, 12);
 
 void main() {
+  _vui7RootTests();
   for (final surface in [
     for (final permissionLifecycle in <AppLifecycleState?>[
       null,
@@ -1030,3 +1034,282 @@ MyApp _callbackEntryApp({
     }
   },
 );
+
+class _Vui7RootContacts extends _Contacts {
+  bool deleted = false;
+  bool blocked = false;
+  Completer<void>? gate;
+  int reads = 0;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    reads++;
+    await gate?.future.timeout(const Duration(seconds: 5));
+    if (deleted) return null;
+    return (await super.getContact(peerId))!.copyWith(isBlocked: blocked);
+  }
+}
+
+class _Vui7RootCalls extends _CanonicalCallbackCalls
+    implements OutgoingVideoCallCapability {
+  _Vui7RootCalls(super.history);
+  final mediaStarts = <CallMediaKind>[];
+  final requests = <OutgoingCallStartRequest?>[];
+
+  @override
+  bool get isOutgoingVideoCallAvailable => true;
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(String peer) async => true;
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peerId, {
+    OutgoingCallStartRequest? request,
+  }) {
+    mediaStarts.add(CallMediaKind.audio);
+    requests.add(request);
+    return super.startOutgoingCall(peerId, request: request);
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String peerId, {
+    OutgoingCallStartRequest? request,
+  }) {
+    mediaStarts.add(CallMediaKind.video);
+    requests.add(request);
+    return super.startOutgoingCall(peerId, request: request);
+  }
+
+  void terminal() {
+    current = null;
+    _changes.add(
+      ForegroundCallProjection(
+        session: CallSessionSnapshot.active(
+          callId: _missedId,
+          contactPeerId: 'saved-contact',
+          direction: CallDirection.outgoing,
+          state: CallState.ended,
+          callerAccountPeerId: 'local',
+          callerDeviceId: 'device',
+          startedAt: _now.subtract(const Duration(minutes: 2)),
+          connectedAt: _now.subtract(const Duration(seconds: 30)),
+          endedAt: _now,
+          endReason: CallEndReason.localHangup,
+        ),
+        audio: CallAudioControlState.idle,
+        terminalMedia: CallMediaKind.video,
+      ),
+    );
+  }
+
+  void withdraw() {
+    current = null;
+    _changes.add(null);
+  }
+}
+
+Future<void> _vui7RootDraw(WidgetTester tester) async {
+  for (var i = 0; i < 8; i++) {
+    await tester.pump();
+  }
+}
+
+Future<void> _vui7RootWith(
+  WidgetTester tester,
+  Future<void> Function(_Vui7RootCalls, _Vui7RootContacts, Widget Function())
+  body,
+) async {
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  final history = _CallbackHistory();
+  final calls = _Vui7RootCalls(history);
+  final contacts = _Vui7RootContacts();
+  final updates = UpdateCheckController(service: FakeUpdateCheckService());
+  final notifications = _Notifications();
+  Widget app() => _callbackEntryApp(
+    calls: calls,
+    contacts: contacts,
+    notifications: notifications,
+    history: history,
+    updates: updates,
+    completed: [],
+  );
+  try {
+    await tester.pumpWidget(app());
+    await _vui7RootDraw(tester);
+    final overlay = tester.widget<ForegroundCallOverlay>(
+      find.byType(ForegroundCallOverlay),
+    );
+    expect(
+      overlay.onCallAgain,
+      isNotNull,
+      reason: 'VUI7 must bind the actual root-owned guarded redial controller.',
+    );
+    await body(calls, contacts, app);
+    expect(tester.takeException(), isNull);
+  } finally {
+    if (contacts.gate != null && !contacts.gate!.isCompleted)
+      contacts.gate!.complete();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _vui7RootDraw(tester);
+    await tester.runAsync(
+      () => calls.dispose().timeout(const Duration(seconds: 5)),
+    );
+    updates.dispose();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  }
+}
+
+TerminalCallRetry _vui7RootBinding(WidgetTester tester) {
+  final binding = tester
+      .widget<ForegroundCallOverlay>(find.byType(ForegroundCallOverlay))
+      .onCallAgain;
+  expect(binding, isNotNull);
+  return binding!;
+}
+
+void _vui7RootTests() {
+  for (final media in CallMediaKind.values) {
+    testWidgets(
+      'VUI7 production root binds ${media.name} to guarded fresh admission',
+      (tester) async {
+        await _vui7RootWith(tester, (calls, contacts, app) async {
+          OutgoingCallStartResult? result;
+          unawaited(
+            _vui7RootBinding(tester)(
+              'saved-contact',
+              media: media,
+              isCurrent: () => true,
+            ).then<void>((value) {
+              result = value;
+            }),
+          );
+          await _vui7RootDraw(tester);
+          expect(result, OutgoingCallStartResult.started);
+          expect(calls.mediaStarts, [media]);
+          expect(calls.requests.single, isNotNull);
+          expect(calls.requests.single!.isAdmitted, isTrue);
+          expect(calls.coordinator.activeSession!.callId, isNot(_missedId));
+          expect(
+            calls.coordinator.activeSession!.contactPeerId,
+            'saved-contact',
+          );
+          expect(contacts.reads, greaterThan(0));
+          expect(calls.actions, isEmpty);
+        });
+      },
+      timeout: const Timeout.factor(1),
+    );
+  }
+
+  for (final policy in ['deleted', 'blocked']) {
+    testWidgets('VUI7 production root refuses $policy contact before retry', (
+      tester,
+    ) async {
+      await _vui7RootWith(tester, (calls, contacts, app) async {
+        contacts.deleted = policy == 'deleted';
+        contacts.blocked = policy == 'blocked';
+        OutgoingCallStartResult? result;
+        unawaited(
+          _vui7RootBinding(tester)(
+            'saved-contact',
+            media: CallMediaKind.video,
+            isCurrent: () => true,
+          ).then<void>((value) {
+            result = value;
+          }),
+        );
+        await _vui7RootDraw(tester);
+        expect(result, OutgoingCallStartResult.unavailable);
+        expect(contacts.reads, greaterThan(0));
+        expect(calls.mediaStarts, isEmpty);
+        expect(calls.coordinator.activeSession, isNull);
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  testWidgets('VUI7 production root refuses retry while paused', (tester) async {
+    await _vui7RootWith(tester, (calls, contacts, app) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      OutgoingCallStartResult? result;
+      unawaited(
+        _vui7RootBinding(tester)(
+          'saved-contact',
+          media: CallMediaKind.video,
+          isCurrent: () => true,
+        ).then<void>((value) {
+          result = value;
+        }),
+      );
+      await _vui7RootDraw(tester);
+      expect(result, OutgoingCallStartResult.canceled);
+      expect(calls.mediaStarts, isEmpty);
+      expect(calls.coordinator.activeSession, isNull);
+    });
+  }, timeout: const Timeout.factor(1));
+
+  testWidgets('VUI7 root rebuild keeps one busy redial owner', (tester) async {
+    await _vui7RootWith(tester, (calls, contacts, app) async {
+      contacts.gate = Completer<void>();
+      final results = <OutgoingCallStartResult>[];
+      unawaited(
+        _vui7RootBinding(tester)(
+          'saved-contact',
+          media: CallMediaKind.video,
+          isCurrent: () => true,
+        ).then(results.add),
+      );
+      await _vui7RootDraw(tester);
+      expect(contacts.reads, 1);
+      await tester.pumpWidget(app());
+      await _vui7RootDraw(tester);
+      unawaited(
+        _vui7RootBinding(tester)(
+          'saved-contact',
+          media: CallMediaKind.video,
+          isCurrent: () => true,
+        ).then(results.add),
+      );
+      await _vui7RootDraw(tester);
+      expect(results, [OutgoingCallStartResult.canceled]);
+      contacts.gate!.complete();
+      await _vui7RootDraw(tester);
+      expect(results, [
+        OutgoingCallStartResult.canceled,
+        OutgoingCallStartResult.started,
+      ]);
+      expect(calls.mediaStarts, [CallMediaKind.video]);
+    });
+  }, timeout: const Timeout.factor(1));
+
+  testWidgets(
+    'VUI7 root lifecycle and withdrawal cancel held terminal retry permanently',
+    (tester) async {
+      await _vui7RootWith(tester, (calls, contacts, app) async {
+        calls.terminal();
+        await _vui7RootDraw(tester);
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(ForegroundCallOverlay)),
+        )!;
+        final again = find.text(l10n.call_video_call_again);
+        expect(again, findsOneWidget);
+        contacts.gate = Completer<void>();
+        await tester.ensureVisible(again);
+        await tester.tap(again);
+        await _vui7RootDraw(tester);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        calls.withdraw(); // Composition normally publishes this synchronously.
+        await _vui7RootDraw(tester);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        contacts.gate!.complete();
+        await _vui7RootDraw(tester);
+        expect(calls.mediaStarts, isEmpty);
+        expect(calls.coordinator.activeSession, isNull);
+        expect(calls.actions, isEmpty);
+        expect(find.text(l10n.call_video_call_again), findsNothing);
+      });
+    },
+    timeout: const Timeout.factor(1),
+  );
+}
