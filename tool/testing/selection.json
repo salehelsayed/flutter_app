@@ -1334,7 +1334,7 @@
     "voice-message-harness-contract": {
       "kind": "flutter",
       "paths": [
-        "test/core/debug/debug_voice_upload_lease_test.dart",
+        "test/debug/debug_voice_upload_lease_test.dart",
         "test/core/debug/android_voice_message_e2e_test.dart",
         "test/integration/android_voice_message_device_campaign_test.dart"
       ],
@@ -1346,7 +1346,7 @@
         "flutter"
       ],
       "investigate": [
-        "lib/core/debug/debug_voice_upload_lease.dart",
+        "lib/debug/debug_voice_upload_lease.dart",
         "lib/core/debug/android_voice_message_e2e.dart",
         "integration_test/scripts/android_voice_message_device_campaign.dart"
       ],
@@ -6208,7 +6208,7 @@
         "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart",
         "lib/debug/android_direct_media_blob_custody_e2e.dart",
         "test/debug/android_direct_media_blob_custody_e2e_test.dart",
-        "lib/core/debug/debug_voice_upload_lease.dart"
+        "lib/debug/debug_voice_upload_lease.dart"
       ],
       "checks": [
         "direct-media-contact-handoff-contract",
@@ -6219,17 +6219,18 @@
     {
       "id": "voice-message-harness",
       "patterns": [
-        "lib/core/debug/debug_voice_upload_lease.dart",
-        "test/core/debug/debug_voice_upload_lease_test.dart",
+        "lib/debug/debug_voice_upload_lease.dart",
+        "test/debug/debug_voice_upload_lease_test.dart",
         "lib/core/debug/android_voice_message_e2e.dart",
         "test/core/debug/android_voice_message_e2e_test.dart",
         "integration_test/scripts/android_voice_message_device_campaign.dart",
         "test/integration/android_voice_message_device_campaign_test.dart"
       ],
       "checks": [
-        "voice-message-harness-contract"
+        "voice-message-harness-contract",
+        "debug-composition-boundaries"
       ],
-      "why": "Debug voice E2E sends must hold the shared upload lease so they never race a production retrier for the same attachment"
+      "why": "Debug voice E2E sends must hold the shared upload lease so they never race a production retrier for the same attachment; lib/core/debug files must also keep the DTR-12 core-to-feature boundary"
     },
     {
       "id": "group-harness-wiring",

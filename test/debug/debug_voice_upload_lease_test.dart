@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_app/core/debug/debug_voice_upload_lease.dart';
+import 'package:flutter_app/debug/debug_voice_upload_lease.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';

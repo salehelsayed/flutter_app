@@ -19,7 +19,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:just_audio/just_audio.dart';
 
 import 'android_voice_message_e2e_protocol.dart';
-import 'debug_voice_upload_lease.dart';
+import 'package:flutter_app/debug/debug_voice_upload_lease.dart';
 
 export 'android_voice_message_e2e_protocol.dart';
 

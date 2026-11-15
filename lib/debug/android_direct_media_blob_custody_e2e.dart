@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/debug/android_direct_media_blob_custody_e2e_protocol.dart';
-import 'package:flutter_app/core/debug/debug_voice_upload_lease.dart';
+import 'package:flutter_app/debug/debug_voice_upload_lease.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
