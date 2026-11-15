@@ -126,18 +126,68 @@ String simsIosTestDerivedDataPath(
 
 const _simsToolchainRecordName = '.mknoon-sims-toolchain';
 
+/// The record docker-ws/test_derived_data.sh writes: `xcodebuild -version`
+/// output, a newline, then `flutter --version --machine` output.
+const _testScriptToolchainRecordName = '.mknoon-test-toolchain';
+
 /// Readies [derivedData] for the next sims iOS device build. It keeps the
 /// previous build state while [toolchainKey] is unchanged, and starts empty
-/// otherwise. Returns whether it started empty.
-bool prepareSimsIosTestDerivedData(Directory derivedData, String toolchainKey) {
+/// otherwise. A folder the bootstrap script just built (its record, no sims
+/// record yet) is adopted when [testScriptToolchainKey] returns the same
+/// Xcode and Flutter versions, so that build is reused. Returns whether it
+/// started empty.
+bool prepareSimsIosTestDerivedData(
+  Directory derivedData,
+  String toolchainKey, {
+  String? Function()? testScriptToolchainKey,
+}) {
   final record = File('${derivedData.path}/$_simsToolchainRecordName');
   if (record.existsSync() && record.readAsStringSync() == toolchainKey) {
     return false;
+  }
+  final scriptRecord = File(
+    '${derivedData.path}/$_testScriptToolchainRecordName',
+  );
+  if (!record.existsSync() &&
+      scriptRecord.existsSync() &&
+      testScriptToolchainKey != null) {
+    final expected = testScriptToolchainKey();
+    if (expected != null && scriptRecord.readAsStringSync() == expected) {
+      record.writeAsStringSync(toolchainKey, flush: true);
+      return false;
+    }
   }
   if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
   derivedData.createSync(recursive: true);
   record.writeAsStringSync(toolchainKey, flush: true);
   return true;
+}
+
+/// The key docker-ws/test_derived_data.sh would write now, or null when a
+/// probe fails (then nothing is adopted).
+String? simsTestScriptToolchainKey(Map<String, String> environment) {
+  String? probe(String executable, List<String> arguments) {
+    try {
+      final result = Process.runSync(
+        executable,
+        arguments,
+        environment: environment,
+      );
+      if (result.exitCode != 0) return null;
+      return '${result.stdout}${result.stderr}'.replaceFirst(
+        RegExp(r'\n+$'),
+        '',
+      );
+    } on ProcessException {
+      return null;
+    }
+  }
+
+  final xcode = probe('xcodebuild', const <String>['-version']);
+  if (xcode == null) return null;
+  final flutter = probe('flutter', const <String>['--version', '--machine']);
+  if (flutter == null) return null;
+  return '$xcode\n$flutter';
 }
 
 /// Deterministically invalidates physical-iOS cache entries whenever the
@@ -1024,7 +1074,11 @@ final class SimsBuildOrchestrator {
           ? environment[configuration.derivedDataEnvironment]!.trim()
           : simsIosTestDerivedDataPath(profile.id, environment),
     ).absolute;
-    prepareSimsIosTestDerivedData(derivedData, toolchainKey);
+    prepareSimsIosTestDerivedData(
+      derivedData,
+      toolchainKey,
+      testScriptToolchainKey: () => simsTestScriptToolchainKey(environment),
+    );
     final xcodeArguments = <String>[
       'build-for-testing',
       '-workspace',

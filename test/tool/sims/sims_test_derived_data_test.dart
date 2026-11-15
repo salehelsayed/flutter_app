@@ -71,4 +71,70 @@ void main() {
     expect(prepareSimsIosTestDerivedData(derived, 'xcode-a flutter-a'), isTrue);
     expect(File('${derived.path}/leftover').existsSync(), isFalse);
   });
+
+  test('a fresh bootstrap build in the folder is reused by the first sims '
+      'build', () {
+    final derived = Directory('${root.path}/dd')..createSync();
+    File(
+      '${derived.path}/.mknoon-test-toolchain',
+    ).writeAsStringSync('Xcode 26.0\n{"frameworkVersion": "3.47.2"}');
+    File('${derived.path}/Build/Intermediates.noindex/warm.o')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('compiled by bootstrap');
+
+    expect(
+      prepareSimsIosTestDerivedData(
+        derived,
+        'sims-key',
+        testScriptToolchainKey: () =>
+            'Xcode 26.0\n{"frameworkVersion": "3.47.2"}',
+      ),
+      isFalse,
+      reason: 'same Xcode and Flutter as the bootstrap build: reuse',
+    );
+    expect(
+      File('${derived.path}/Build/Intermediates.noindex/warm.o').existsSync(),
+      isTrue,
+    );
+    expect(
+      prepareSimsIosTestDerivedData(derived, 'sims-key'),
+      isFalse,
+      reason: 'the sims record is now written',
+    );
+  });
+
+  test('a bootstrap build with another toolchain is not reused', () {
+    final derived = Directory('${root.path}/dd')..createSync();
+    File(
+      '${derived.path}/.mknoon-test-toolchain',
+    ).writeAsStringSync('Xcode 26.0\n{"frameworkVersion": "3.47.2"}');
+    File('${derived.path}/warm.o').writeAsStringSync('old');
+
+    expect(
+      prepareSimsIosTestDerivedData(
+        derived,
+        'sims-key',
+        testScriptToolchainKey: () =>
+            'Xcode 26.1\n{"frameworkVersion": "3.47.2"}',
+      ),
+      isTrue,
+    );
+    expect(File('${derived.path}/warm.o').existsSync(), isFalse);
+  });
+
+  test('a failed toolchain probe adopts nothing', () {
+    final derived = Directory('${root.path}/dd')..createSync();
+    File('${derived.path}/.mknoon-test-toolchain').writeAsStringSync('x');
+    File('${derived.path}/warm.o').writeAsStringSync('old');
+
+    expect(
+      prepareSimsIosTestDerivedData(
+        derived,
+        'sims-key',
+        testScriptToolchainKey: () => null,
+      ),
+      isTrue,
+    );
+    expect(File('${derived.path}/warm.o').existsSync(), isFalse);
+  });
 }
