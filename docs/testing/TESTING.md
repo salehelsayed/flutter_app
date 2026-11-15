@@ -12214,6 +12214,23 @@ visible and cannot become an ordinary first-attempt PASS.
   Broad VUI4–8 and native/device evidence remain separate. Verified packet:
   `/Users/I560101/.codex/investigations/batch9-video-ui-20261114/codex-vui5a-final-focused-verdict-32306a020.json`
   (SHA-256 `f26bf39c2b5e8061ad8fbbd00da16ce68aa0cbcda35b3631375a80d5bf2af044`).
+  **In-app minimized video tile (VUI6):** tile-scoped name, elapsed time and
+  short Return caption must be asserted inside the tile; the independent return
+  bar cannot satisfy those positives. Elapsed time derives from connectedAt and
+  the current clock, including null/future/hour handling, and does not reset on
+  restore or video-generation replacement. Compact tiles omit duration semantics
+  when their ticker is stopped; the return bar owns compact elapsed time.
+  Caption footer height must measure localized text at the actual remaining
+  width, locale, direction and text scale, using the same explicit render style.
+  Fixed line-height estimates failed all EN/DE/AR 320px/2x cases: first GREEN
+  df1cfb051 retained six passes and three layout ERROR results (36px overflow).
+  Corrected 2fcbbe158 passed nine causal plus 265 preservation executions
+  (274 overlapping executions), clean analysis and 168 matching pin observations.
+  The adopted RED had nine missing tile-name TestFailures. The footer finding
+  is closed; original failures remain retained. Broad/native/device scope is
+  separate. Verified artifact:
+  `/Users/I560101/.codex/investigations/batch9-video-ui-20261114/codex-vui6-final-source-red-corrected-green-verdict-2fcbbe158.json`
+  (SHA-256 `2abce83d6e344b6aee4761d4b26e9b77b98d899651fac8547c6aa25ff5f7239d`).
   **V2 terminal delivery through cleanup and shutdown:** a terminate/reject
   admitted by the active terminal call captures its exact terminal snapshot
   before asynchronous authorization. Its own context purge and active-session
