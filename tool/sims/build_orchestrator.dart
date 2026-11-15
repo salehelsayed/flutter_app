@@ -40,7 +40,6 @@ const String simsIosDeviceProductValidatorSchema =
 final class _IosDeviceBuildConfiguration {
   const _IosDeviceBuildConfiguration({
     required this.derivedDataEnvironment,
-    required this.defaultDerivedDataPath,
     required this.bundlePathEnvironment,
     required this.defaultBundlePath,
     required this.bundleManifestSchema,
@@ -51,7 +50,6 @@ final class _IosDeviceBuildConfiguration {
   });
 
   final String derivedDataEnvironment;
-  final String defaultDerivedDataPath;
   final String bundlePathEnvironment;
   final String defaultBundlePath;
   final String bundleManifestSchema;
@@ -63,7 +61,6 @@ final class _IosDeviceBuildConfiguration {
 
 const _iosDeviceProductionBuild = _IosDeviceBuildConfiguration(
   derivedDataEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_DERIVED_DATA',
-  defaultDerivedDataPath: 'build/sims/ios-device-production-derived',
   bundlePathEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_BUNDLE_PATH',
   defaultBundlePath: 'build/sims/prepared/ios.device.production.bundle',
   bundleManifestSchema: 'mknoon.sims.ios-device-production-bundle.v1',
@@ -74,7 +71,6 @@ const _iosDeviceProductionBuild = _IosDeviceBuildConfiguration(
 
 const _iosDeviceGroupMedia269Build = _IosDeviceBuildConfiguration(
   derivedDataEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_DERIVED_DATA',
-  defaultDerivedDataPath: 'build/sims/ios-device-group-media-269-derived',
   bundlePathEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_BUNDLE_PATH',
   defaultBundlePath: 'build/sims/prepared/ios.device.group_media_269.bundle',
   bundleManifestSchema: 'mknoon.sims.ios-device-group-media-269-bundle.v1',
@@ -113,17 +109,34 @@ _IosDeviceBuildConfiguration? _iosDeviceBuildConfiguration(String profileId) =>
       _ => null,
     };
 
-/// Where a sims iOS device profile builds when no override is set.
+/// Where a sims iOS device profile builds when no override is set: one
+/// folder per profile on the internal disk (Xcode reads from the external disk
+/// fail since 10-26). The name is never used by store, upload or restore
+/// builds (10-31).
 String simsIosTestDerivedDataPath(
   String profileId,
   Map<String, String> environment,
-) => _iosDeviceBuildConfiguration(profileId)!.defaultDerivedDataPath;
+) {
+  final home = environment['HOME'] ?? Platform.environment['HOME'];
+  if (home == null || home.isEmpty) {
+    throw StateError('HOME is required for the sims iOS DerivedData folder.');
+  }
+  return '$home/dd-hetzner-test-$profileId';
+}
 
-/// Readies [derivedData] for the next sims iOS device build. Returns whether
-/// it started empty.
+const _simsToolchainRecordName = '.mknoon-sims-toolchain';
+
+/// Readies [derivedData] for the next sims iOS device build. It keeps the
+/// previous build state while [toolchainKey] is unchanged, and starts empty
+/// otherwise. Returns whether it started empty.
 bool prepareSimsIosTestDerivedData(Directory derivedData, String toolchainKey) {
+  final record = File('${derivedData.path}/$_simsToolchainRecordName');
+  if (record.existsSync() && record.readAsStringSync() == toolchainKey) {
+    return false;
+  }
   if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
   derivedData.createSync(recursive: true);
+  record.writeAsStringSync(toolchainKey, flush: true);
   return true;
 }
 
