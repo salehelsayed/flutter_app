@@ -12494,11 +12494,25 @@ void _vui7TerminalMediaTests() {
         expect(graph.current!.video!.presentation.outgoingUpgradeId, isNotNull);
         expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.audio);
       } else if (row == 'camera off') {
+        expect(engine.video!.cameraStarts, 0);
+        expect(engine.video!.cameraOn, isFalse);
+        // Off is an available intent only after a genuine explicit Camera tap.
+        // The normal fixture permission callback grants the current request;
+        // no consent token or media state is installed by the test.
+        expect(await graph.applyVideoIntent(_callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ).timeout(_vui7Bound), ForegroundCallActionResult.applied);
+        expect(engine.video!.cameraStarts, 1);
+        expect(engine.video!.cameraOn, isTrue);
+        expect(graph.current!.video!.presentation.localCamera, CallCameraState.on);
         expect(await graph.applyVideoIntent(_callA,
           generation: graph.current!.video!.generation,
           intent: const CallVideoIntent(CallVideoAction.turnCameraOff),
         ).timeout(_vui7Bound), ForegroundCallActionResult.applied);
         expect(graph.current!.video!.presentation.localCamera, CallCameraState.off);
+        expect(engine.video!.cameraOn, isFalse);
+        expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.video);
       }
       if (row == 'reconnect after upgrade') {
         await graph.coordinator.dispatch(CallEvent(
@@ -12514,7 +12528,7 @@ void _vui7TerminalMediaTests() {
       expect(terminal.session.callId, _callA);
       expect(terminal.video, isNull);
       expect(graph.current, isNull);
-      expect(engine.video!.cameraStarts, 0);
+      expect(engine.video!.cameraStarts, row == 'camera off' ? 1 : 0);
       expect(engine.configuration!.captureVideo, isFalse);
     }, timeout: const Timeout.factor(1));
   }
@@ -12544,11 +12558,59 @@ void _vui7TerminalMediaTests() {
   }
 
   test('VUI7 successor requested video cannot inherit predecessor settled audio', () async {
-    final (fixture, _) = await _connectedGraphVideo(cleanupTimeout: _vui7Bound)
-        .timeout(_vui7Bound);
+    const priorHandle = '33333333-3333-4333-8333-333333333333';
+    var terminalCommitted = false;
+    var terminalAcknowledged = false;
+    final (fixture, _) = await _connectedGraphVideo(
+      cleanupTimeout: _vui7Bound,
+      nativeOverride: (method, arguments) async {
+        if (arguments['callHandle'] == priorHandle &&
+            ((method == 'project' && arguments['state'] == 'ended') ||
+                method == 'end')) {
+          terminalCommitted = true;
+        }
+        // Native project/end commits its terminal journal before returning.
+        // Keep that exact receipt available until the adapter acknowledges it.
+        if (method == 'attach' && terminalCommitted && !terminalAcknowledged) {
+          return {
+            'version': 1,
+            'descriptor': {
+              'callHandle': priorHandle,
+              'expiresAtMs': 2040000,
+              'presented': true,
+              'phase': 'journal',
+              'direction': 'incoming',
+            },
+            'nativeCallId': priorHandle,
+            'highestSequence': 3,
+            'events': [
+              {
+                'callHandle': priorHandle,
+                'sequence': 3,
+                'eventId': '66666666-6666-4666-8666-666666666669',
+                'type': 'end',
+                'occurredAtMs': 2000002,
+              },
+            ],
+          };
+        }
+        if (method == 'acknowledge' &&
+            arguments['callHandle'] == priorHandle &&
+            arguments['disposition'] == 'TERMINAL' &&
+            arguments['throughSequence'] == 3) {
+          terminalAcknowledged = true;
+        }
+        return null;
+      },
+    ).timeout(_vui7Bound);
     final graph = fixture.graphs.single;
     await _vui7Settle(graph, CallMediaKind.audio);
     final previous = await _vui7EndProjection(fixture);
+    await _untilGraphVideo(() => terminalAcknowledged &&
+        !graph.iosCallLifecycleAdapter!.isBoundTo(_callA));
+    expect(terminalCommitted, isTrue);
+    expect(terminalAcknowledged, isTrue);
+    expect(graph.iosCallLifecycleAdapter!.isBoundTo(_callA), isFalse);
     await _vui7DeliverSuccessor(fixture).timeout(_vui7Bound);
     expect(graph.coordinator.activeSession!.callId, _callB);
     final successor = await _vui7EndProjection(fixture, event: CallEventType.decline);
