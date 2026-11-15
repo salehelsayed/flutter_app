@@ -1708,6 +1708,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   CallBackActionHandler? _callBackActionHandler;
 
+  late final CallRedialController _callRedialController = CallRedialController(
+    capability: () => mounted ? widget.outgoingCallCapability : null,
+    // A system permission dialog can return before Flutter regains focus.
+    // Hidden/paused/detached still cancel this unadmitted action.
+    isCurrent: () =>
+        mounted &&
+        switch (WidgetsBinding.instance.lifecycleState) {
+          AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+          _ => false,
+        },
+    contactAllowed: (peerId) async {
+      final contact = await widget.contactRepository.getContact(peerId);
+      return mounted && contact != null && !contact.isBlocked;
+    },
+  );
+
   Future<bool> _callBackReady() async {
     await _ensureRuntimeServicesReady();
     final barrier = widget.callBackReadinessBarrier;
@@ -1735,21 +1751,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ? widget.callTimelineSource as CallHistoryAccess
           : null,
       ready: _callBackReady,
-      redial: CallRedialController(
-        capability: () => mounted ? widget.outgoingCallCapability : null,
-        // A system permission dialog can return before Flutter regains focus.
-        // Hidden/paused/detached still cancel this unadmitted action.
-        isCurrent: () =>
-            mounted &&
-            switch (WidgetsBinding.instance.lifecycleState) {
-              AppLifecycleState.resumed || AppLifecycleState.inactive => true,
-              _ => false,
-            },
-        contactAllowed: (peerId) async {
-          final contact = await widget.contactRepository.getContact(peerId);
-          return mounted && contact != null && !contact.isBlocked;
-        },
-      ),
+      redial: _callRedialController,
       onResult: (result) {
         if (!mounted ||
             result == OutgoingCallStartResult.started ||
@@ -3604,6 +3606,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             onAttached: widget.onForegroundCallPresentationReady,
             backGuard: _foregroundCallBackGuard,
             micPermission: const PermissionHandlerMicGateway(),
+            onCallAgain: (peerId, {required media, required isCurrent}) =>
+                _callRedialController.start(
+                  peerId,
+                  media: media,
+                  isCurrent: isCurrent,
+                ),
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: updateGate,

@@ -116,6 +116,21 @@ class CallRedialController {
     if (!identical(owner, capability())) {
       return OutgoingCallStartResult.unavailable;
     }
+    OutgoingVideoCallCapability? videoOwner;
+    if (media == CallMediaKind.video) {
+      if (owner is! OutgoingVideoCallCapability ||
+          !owner.isOutgoingVideoCallAvailable) {
+        return OutgoingCallStartResult.unavailable;
+      }
+      videoOwner = owner;
+      final videoAvailable = await videoOwner.isOutgoingVideoCallAvailableFor(
+        peerId,
+      );
+      request.checkPending();
+      if (!videoAvailable || !videoOwner.isOutgoingVideoCallAvailable) {
+        return OutgoingCallStartResult.unavailable;
+      }
+    }
     // Notification eligibility is local history, not payload authority. Recheck
     // after contact/endpoint awaits; the synchronous request fence then follows
     // the existing outgoing owner through its preflight to canonical admission.
@@ -124,6 +139,12 @@ class CallRedialController {
     if (!eligible) return OutgoingCallStartResult.unavailable;
     if (!identical(owner, capability())) {
       return OutgoingCallStartResult.unavailable;
+    }
+    if (videoOwner != null) {
+      if (!videoOwner.isOutgoingVideoCallAvailable) {
+        return OutgoingCallStartResult.unavailable;
+      }
+      return videoOwner.startOutgoingVideoCall(peerId, request: request);
     }
     return owner.startOutgoingCall(peerId, request: request);
   }

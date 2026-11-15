@@ -99,8 +99,8 @@ final class ForegroundCallOverlay extends StatefulWidget {
   State<ForegroundCallOverlay> createState() => ForegroundCallOverlayState();
 }
 
-class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
-  static const Duration _terminalNoticeDuration = Duration(seconds: 6);
+class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
+    with WidgetsBindingObserver {
   static const String _unknownContactName = 'Unknown contact';
 
   StreamSubscription<ForegroundCallProjection?>? _subscription;
@@ -120,7 +120,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   ({_UpgradeNoticeIdentity identity, MediaSwitchOutcomeKind kind})?
   _upgradeNotice;
   Timer? _upgradeNoticeTimer;
-  Timer? _terminalNoticeTimer;
+  int _terminalEpoch = 0;
+  bool _terminalRetryPending = false;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
   CallId? _micBlockedCallId;
@@ -178,6 +179,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bindCapability(notify: false);
     scheduleMicrotask(() {
       if (mounted) widget.onAttached?.call();
@@ -209,7 +211,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     _capabilityGeneration += 1;
     _nameGeneration += 1;
     unawaited(_subscription?.cancel());
-    _terminalNoticeTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _invalidateTerminal();
     _clearUpgradeNotice();
     _lockedProjection.dispose();
     widget.backGuard?.surfaceOwnsBack = false;
@@ -218,6 +221,8 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
   void _bindCapability({required bool notify}) {
     final generation = ++_capabilityGeneration;
+    _invalidateTerminal();
+    _terminalNoticeCallId = null;
     unawaited(_subscription?.cancel());
     _subscription = null;
 
@@ -260,7 +265,6 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     CallId? lookupCallId;
     String? lookupPeerId;
     late int lookupGeneration;
-    CallId? terminalNoticeToSchedule;
     CallId? micCheckCallId;
 
     void update() {
@@ -296,11 +300,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           ? session?.callId
           : null;
       if (terminalCallId != _terminalNoticeCallId) {
-        _terminalNoticeTimer?.cancel();
-        _terminalNoticeTimer = null;
+        _invalidateTerminal();
         _terminalNoticeCallId = terminalCallId;
         _terminalNoticeVisible = terminalCallId != null && !wasMinimized;
-        terminalNoticeToSchedule = terminalCallId;
         _micBlockedCallId = null;
         if (terminalCallId != null &&
             session?.endReason == CallEndReason.permissionDenied) {
@@ -311,11 +313,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       // The end notice of the call that was just on screen keeps its name.
       if (surfaceKind == _ForegroundCallSurface.terminal &&
           _nameCallId != null &&
-          _nameCallId == session?.callId) {
+          _nameCallId == session?.callId &&
+          _namePeerId == session?.contactPeerId) {
         return;
       }
-      if (surfaceKind == _ForegroundCallSurface.hidden ||
-          surfaceKind == _ForegroundCallSurface.terminal) {
+      if (surfaceKind == _ForegroundCallSurface.hidden) {
         _nameGeneration += 1;
         _nameCallId = null;
         _namePeerId = null;
@@ -348,14 +350,6 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
     final micCallId = micCheckCallId;
     if (micCallId != null) unawaited(_checkMicBlocked(micCallId));
-
-    final terminalCallId = terminalNoticeToSchedule;
-    if (terminalCallId != null) {
-      _terminalNoticeTimer = Timer(
-        _terminalNoticeDuration,
-        () => _dismissTerminalNotice(callId: terminalCallId),
-      );
-    }
 
     final callId = lookupCallId;
     final peerId = lookupPeerId;
@@ -640,28 +634,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           videoPresentation: video?.presentation,
           onVideoIntent: onVideoIntent,
         ),
-        _ForegroundCallSurface.terminal =>
-          _terminalNoticeVisible
-              ? _TerminalCallNotice(
-                  message: _micBlockedCallId == session!.callId
-                      ? AppLocalizations.of(
-                          context,
-                        )!.call_end_permission_settings
-                      : _terminalMessage(
-                          session,
-                          AppLocalizations.of(context)!,
-                          _contactDisplayName == _unknownContactName
-                              ? AppLocalizations.of(
-                                  context,
-                                )!.call_unknown_contact
-                              : _contactDisplayName,
-                        ),
-                  onDismiss: _dismissTerminalNotice,
-                  onOpenSettings: _micBlockedCallId == session.callId
-                      ? _openMicSettings
-                      : null,
-                )
-              : null,
+        _ForegroundCallSurface.terminal => _terminalNoticeVisible
+            ? _buildTerminalNotice(projection)
+            : null,
         _ForegroundCallSurface.hidden => null,
       };
     }
@@ -1392,12 +1367,128 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     unawaited(gateway.openAppSettings().catchError((Object _) => false));
   }
 
-  void _dismissTerminalNotice({CallId? callId}) {
-    if (callId != null && callId != _terminalNoticeCallId) return;
-    _terminalNoticeTimer?.cancel();
-    _terminalNoticeTimer = null;
-    if (!mounted || !_terminalNoticeVisible) return;
-    setState(() => _terminalNoticeVisible = false);
+  void _invalidateTerminal() {
+    _terminalEpoch += 1;
+    _terminalRetryPending = false;
+    _terminalNoticeVisible = false;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      if (_terminalNoticeVisible) setState(_invalidateTerminal);
+    }
+  }
+
+  bool _terminalOwnerMatches(int epoch, ForegroundCallProjection terminal) {
+    final session = terminal.session;
+    if (!mounted ||
+        epoch != _terminalEpoch ||
+        !_terminalNoticeVisible ||
+        _projection?.session.callId != session.callId ||
+        _projection?.session.contactPeerId != session.contactPeerId ||
+        _projection?.session.isTerminal != true)
+      return false;
+    try {
+      final latest = widget.capability?.current?.session;
+      // Canonical terminal publication leaves current null. Only an observed
+      // incompatible owner invalidates this presentation, permanently.
+      if (latest == null ||
+          (latest.isTerminal &&
+              latest.callId == session.callId &&
+              latest.contactPeerId == session.contactPeerId))
+        return true;
+    } catch (_) {
+      // A failed current-owner read cannot authorize a fresh call.
+    }
+    setState(_invalidateTerminal);
+    return false;
+  }
+
+  Widget _buildTerminalNotice(ForegroundCallProjection terminal) {
+    final epoch = _terminalEpoch;
+    final session = terminal.session;
+    final l10n = AppLocalizations.of(context)!;
+    final name = _contactDisplayName == _unknownContactName
+        ? l10n.call_unknown_contact
+        : _contactDisplayName;
+    final media = terminal.terminalMedia;
+    final started = session.connectedAt;
+    final ended = session.endedAt;
+    String? duration;
+    if (started != null && ended != null) {
+      final elapsed = ended.difference(started);
+      final seconds = elapsed.isNegative ? 0 : elapsed.inSeconds;
+      final minutes = ((seconds ~/ 60) % 60).toString().padLeft(2, '0');
+      final remainder = (seconds % 60).toString().padLeft(2, '0');
+      duration = seconds >= 3600
+          ? '${seconds ~/ 3600}:$minutes:$remainder'
+          : '$minutes:$remainder';
+    }
+    return _TerminalCallNotice(
+      name: name,
+      media: media == null
+          ? null
+          : media == CallMediaKind.video
+          ? l10n.call_video_status_video
+          : l10n.call_row_voice_call,
+      duration: duration,
+      message: _micBlockedCallId == session.callId
+          ? l10n.call_end_permission_settings
+          : _terminalMessage(session, l10n, name),
+      onDismiss: () {
+        if (!_terminalOwnerMatches(epoch, terminal)) return;
+        setState(_invalidateTerminal);
+      },
+      onCallAgain:
+          media == null ||
+              session.contactPeerId == null ||
+              widget.onCallAgain == null ||
+              _terminalRetryPending
+          ? null
+          : () => unawaited(_retryTerminal(epoch, terminal)),
+      onOpenSettings: _micBlockedCallId == session.callId
+          ? () {
+              if (_terminalOwnerMatches(epoch, terminal)) _openMicSettings();
+            }
+          : null,
+    );
+  }
+
+  Future<void> _retryTerminal(
+    int epoch,
+    ForegroundCallProjection terminal,
+  ) async {
+    if (!_terminalOwnerMatches(epoch, terminal) || _terminalRetryPending)
+      return;
+    final retry = widget.onCallAgain;
+    final peer = terminal.session.contactPeerId;
+    final media = terminal.terminalMedia;
+    if (retry == null || peer == null || media == null) return;
+    setState(() => _terminalRetryPending = true);
+    OutgoingCallStartResult result;
+    try {
+      result = await retry(
+        peer,
+        media: media,
+        isCurrent: () => _terminalOwnerMatches(epoch, terminal),
+      );
+    } catch (_) {
+      result = OutgoingCallStartResult.failed;
+    }
+    if (!_terminalOwnerMatches(epoch, terminal)) return;
+    setState(() => _terminalRetryPending = false);
+    if (result == OutgoingCallStartResult.started ||
+        result == OutgoingCallStartResult.canceled)
+      return;
+    final l10n = AppLocalizations.of(context)!;
+    showFeedback(
+      result == OutgoingCallStartResult.microphoneDenied
+          ? l10n.call_end_permission
+          : l10n.call_end_unavailable,
+    );
   }
 }
 
@@ -1780,71 +1871,150 @@ String? _audioStatusMessage(CallAudioFailure failure, AppLocalizations l10n) =>
 
 class _TerminalCallNotice extends StatelessWidget {
   const _TerminalCallNotice({
+    required this.name,
     required this.message,
     required this.onDismiss,
+    this.media,
+    this.duration,
+    this.onCallAgain,
     this.onOpenSettings,
   });
 
+  final String name;
   final String message;
+  final String? media;
+  final String? duration;
   final VoidCallback onDismiss;
+  final VoidCallback? onCallAgain;
   final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final buttonStyle = FilledButton.styleFrom(
+      minimumSize: const Size(double.infinity, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
     return ColoredBox(
       key: const ValueKey('foreground-call-terminal-notice'),
       color: colors.surfaceBase,
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.call_end_rounded,
-                size: 64,
-                color: colors.iconSecondary,
-              ),
-              const SizedBox(height: 24),
-              Text(
-                l10n.call_ended,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 48)
+                      .clamp(0.0, double.infinity)
+                      .toDouble(),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: CircleAvatar(
+                        radius: 32,
+                        backgroundColor: colors.surfaceBase,
+                        child: Icon(
+                          Icons.person,
+                          size: 48,
+                          color: colors.iconSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      name,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.call_ended,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: colors.textPrimary, fontSize: 22),
+                    ),
+                    if (media != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        media!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                    if (duration != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        duration!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Semantics(
+                      liveRegion: true,
+                      label: message,
+                      excludeSemantics: true,
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    if (onOpenSettings != null) ...[
+                      FilledButton(
+                        key: const ValueKey('foreground-call-open-settings'),
+                        style: buttonStyle,
+                        onPressed: onOpenSettings,
+                        child: Text(
+                          l10n.compose_open_settings,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    FilledButton(
+                      style: buttonStyle,
+                      onPressed: onCallAgain,
+                      child: Text(
+                        l10n.call_video_call_again,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Tooltip(
+                      message: l10n.call_dismiss_status,
+                      child: FilledButton(
+                        style: buttonStyle,
+                        onPressed: onDismiss,
+                        child: Text(
+                          l10n.call_video_close,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Semantics(
-                liveRegion: true,
-                label: message,
-                excludeSemantics: true,
-                child: Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 16),
-                ),
-              ),
-              const SizedBox(height: 28),
-              if (onOpenSettings != null) ...[
-                FilledButton(
-                  key: const ValueKey('foreground-call-open-settings'),
-                  onPressed: onOpenSettings,
-                  child: Text(l10n.compose_open_settings),
-                ),
-                const SizedBox(height: 12),
-              ],
-              Tooltip(
-                message: l10n.call_dismiss_status,
-                child: FilledButton(
-                  onPressed: onDismiss,
-                  child: Text(l10n.pinned_dismiss),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

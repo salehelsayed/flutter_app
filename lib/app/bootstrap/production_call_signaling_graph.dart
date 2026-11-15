@@ -447,6 +447,8 @@ final class ProductionCallSignalingGraph
 
   bool _videoForegroundAllowed = true;
   CallId? _videoCallId;
+  // Agreement only: never retain a camera grant, renderer, or pending target.
+  ({CallId callId, CallMediaKind media})? _lastSettledMedia;
   int _videoGeneration = 0;
   int _cameraEpoch = 0;
   CallVideoNegotiation? _localCameraToken;
@@ -1177,6 +1179,13 @@ final class ProductionCallSignalingGraph
     }
     final owner = videoOwners?[callId];
     final machine = owner?.mediaSwitch?.machine;
+    if (!_shuttingDown &&
+        snapshot.state == CallState.connected &&
+        coordinator.activeSession?.callId == callId &&
+        owner?.current == true &&
+        machine != null) {
+      _lastSettledMedia = (callId: callId!, media: machine.settledMedia);
+    }
     final request = machine?.currentRequest;
     final decision = machine?.phase == MediaSwitchPhase.decision;
     final localIsCaller = snapshot.direction == CallDirection.outgoing;
@@ -1994,7 +2003,30 @@ final class ProductionCallSignalingGraph
     return mediaOwner.currentAudioController(callId);
   }
 
+  CallMediaKind? _terminalMediaFor(CallSessionSnapshot session) {
+    final callId = session.callId;
+    if (callId == null) return null;
+    final settled = _lastSettledMedia;
+    if (settled?.callId == callId) return settled!.media;
+    final context = videoContexts?.read(callId);
+    if (context?.wireVersion == CallWireVersion.v2) {
+      return context!.initialAcceptedMedia ?? context.requestedMedia;
+    }
+    if (context?.wireVersion == CallWireVersion.v1 || !videoEnabled) {
+      return CallMediaKind.audio;
+    }
+    // A missing V2 context is not evidence that the ended call was audio.
+    return null;
+  }
+
   void _onSessionSnapshot(CallSessionSnapshot session) {
+    // Coordinator snapshots are synchronous and precede terminal effects and
+    // context cleanup. The current machine is already unavailable at terminal;
+    // preserve its last observed settlement across reconnect until this point.
+    final terminalMedia = session.isTerminal ? _terminalMediaFor(session) : null;
+    if (session.isTerminal || _lastSettledMedia?.callId != session.callId) {
+      _lastSettledMedia = null;
+    }
     _recordDiagnosticSession(session);
     _ringback?.onSession(session);
     if (videoEnabled) {
@@ -2015,7 +2047,7 @@ final class ProductionCallSignalingGraph
           session.isTerminal &&
           session.callId != null &&
           _foregroundCurrent?.session.callId == session.callId) {
-        _publishTerminalForeground(session);
+        _publishTerminalForeground(session, terminalMedia);
       } else {
         _publishForeground(null);
       }
@@ -2331,13 +2363,17 @@ final class ProductionCallSignalingGraph
   /// published once so the surface can show the end notice ("Call declined",
   /// "No answer"); `current` then holds null so a later resume republishes
   /// nothing.
-  void _publishTerminalForeground(CallSessionSnapshot session) {
+  void _publishTerminalForeground(
+    CallSessionSnapshot session,
+    CallMediaKind? terminalMedia,
+  ) {
     _foregroundCurrent = null;
     if (!_foregroundChanges.isClosed) {
       _foregroundChanges.add(
         ForegroundCallProjection(
           session: session,
           audio: CallAudioControlState.idle,
+          terminalMedia: terminalMedia,
         ),
       );
     }
@@ -2546,6 +2582,7 @@ final class ProductionCallSignalingGraph
   Future<void> shutdown() async {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    _lastSettledMedia = null;
     unawaited(_pip?.close());
     unawaited(_revokeLocalCamera());
     _bindVideoSource(null);
