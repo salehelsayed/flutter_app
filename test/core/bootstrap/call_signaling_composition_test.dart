@@ -12494,6 +12494,9 @@ void _vui7TerminalMediaTests() {
           generation: graph.current!.video!.generation,
           intent: const CallVideoIntent(CallVideoAction.requestVideo),
         ).timeout(_vui7Bound), ForegroundCallActionResult.applied);
+        await _untilGraphVideo(
+          () => graph.current!.video!.presentation.outgoingUpgradeId != null,
+        );
         expect(graph.current!.video!.presentation.outgoingUpgradeId, isNotNull);
         expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.audio);
       } else if (row == 'camera off') {
@@ -12759,6 +12762,9 @@ void _vui7LegacyAndBridgeTests() {
   }, timeout: const Timeout.factor(1));
 
   test('VUI7 real terminal through redial creates fresh video invite with camera off', () async {
+    const priorHandle = '33333333-3333-4333-8333-333333333333';
+    var terminalCommitted = false;
+    var terminalAcknowledged = false;
     late final _ProductionIosFixture fixture;
     final engine = _InitialVideoGraphEngine();
     String? outgoingHandle;
@@ -12775,6 +12781,47 @@ void _vui7LegacyAndBridgeTests() {
         return true;
       },
       lifecycleOverride: (method, arguments) async {
+        if (arguments['callHandle'] == priorHandle &&
+            ((method == 'project' && arguments['state'] == 'ended') ||
+                method == 'end')) {
+          terminalCommitted = true;
+        }
+        if (method == 'attach' && terminalCommitted && !terminalAcknowledged) {
+          return {
+            'version': 1,
+            'descriptor': {
+              'callHandle': priorHandle,
+              'expiresAtMs': 2040000,
+              'presented': true,
+              'phase': 'journal',
+              'direction': 'incoming',
+            },
+            'nativeCallId': priorHandle,
+            'highestSequence': 2,
+            'events': [
+              {
+                'callHandle': priorHandle,
+                'sequence': 1,
+                'eventId': '55555555-5555-4555-8555-555555555591',
+                'type': 'presented',
+                'occurredAtMs': 2000000,
+              },
+              {
+                'callHandle': priorHandle,
+                'sequence': 2,
+                'eventId': '66666666-6666-4666-8666-666666666691',
+                'type': 'end',
+                'occurredAtMs': 2000001,
+              },
+            ],
+          };
+        }
+        if (method == 'acknowledge' &&
+            arguments['callHandle'] == priorHandle &&
+            arguments['disposition'] == 'TERMINAL' &&
+            arguments['throughSequence'] == 2) {
+          terminalAcknowledged = true;
+        }
         if (method == 'registerOutgoingAuthenticated') {
           outgoingHandle = arguments['callHandle']! as String;
           outgoingExpiry = arguments['expiresAtMs']! as int;
@@ -12806,6 +12853,11 @@ void _vui7LegacyAndBridgeTests() {
     await _deliverGraphVideoInvite(fixture).timeout(_vui7Bound);
     final terminal = await _vui7EndProjection(fixture, event: CallEventType.decline);
     expect(terminal.terminalMedia, CallMediaKind.video);
+    await _untilGraphVideo(() => terminalAcknowledged &&
+        !fixture.graphs.single.iosCallLifecycleAdapter!.isBoundTo(terminal.session.callId!));
+    expect(terminalCommitted, isTrue);
+    expect(terminalAcknowledged, isTrue);
+    expect(fixture.graphs.single.iosCallLifecycleAdapter!.isBoundTo(terminal.session.callId!), isFalse);
     final controller = CallRedialController(
       capability: () => fixture.composition,
       contactAllowed: (peer) async => peer == 'video-contact',
