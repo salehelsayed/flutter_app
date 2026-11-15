@@ -870,7 +870,7 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 self.assertEqual(rows['device']['checkpoint'], 'host_prerequisite_failed')
                 self.assertFalse(any(command[0] == 'dart' for command in launched))
 
-    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False, verification_failure=False, host_dependency=False):
+    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False, verification_failure=False, host_dependency=False, verification_timeout=False):
         self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.device'}]}))
         self.rules['checks']['device'] = {'kind': 'sims', 'capability': 'fixture.device',
                                           'boundary': 'fake device scheduler boundary', 'timeout_seconds': 10,
@@ -913,6 +913,9 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 Path(env['SIMS_REPORT_PATH']).write_text(json.dumps({'verdicts': [verdict], 'validationErrors': []}))
             elif verification_failure:
                 return '', 1, False, .001
+            elif verification_timeout:
+                self.assertEqual(timeout, 600)
+                return '', None, True, 600.0
             return '', 0, False, .001
         with contextlib.redirect_stdout(io.StringIO()), \
                 mock.patch.object(checks, 'launch', side_effect=launch), \
@@ -952,6 +955,19 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 self.assertTrue(row['attempts'][0]['report_verification_failed'])
                 self.assertFalse(row['attempts'][0].get('report_verification_observed'))
                 self.assertEqual(len(launched), 2)
+
+    def test_report_verification_timeout_is_named_in_the_receipt_and_log(self):
+        _, report, launched = self.execute_device_subset(verification_timeout=True)
+        row = next(r for r in report['results'] if r['id'] == 'device')
+        attempt = row['attempts'][0]
+        self.assertEqual(row['status'], 'BLOCKED')
+        self.assertEqual(attempt['checkpoint'], 'sims_report_verification_failed')
+        self.assertTrue(attempt['report_verification_failed'])
+        self.assertTrue(attempt['report_verification_timed_out'])
+        self.assertEqual(len(launched), 2)
+        logs = list(Path(self.root).rglob('device-1.verify.raw.log'))
+        self.assertEqual(len(logs), 1)
+        self.assertIn('VERIFY_TIMEOUT: verify-report exceeded 600 s', logs[0].read_text())
 
     def test_source_modified_during_passing_execution_invalidates_evidence(self):
         self.write('fixture_test.py', 'import unittest\nfrom pathlib import Path\nclass Fixture(unittest.TestCase):\n    def test_mutates_candidate(self):\n        Path("lib/shared.dart").write_text("changed during run")\n        self.assertTrue(True)\n')

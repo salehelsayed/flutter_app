@@ -39,6 +39,8 @@ _LAUNCH_CONTEXT = threading.local()
 # The largest affected Flutter lanes print about 12-14 MiB of --machine output.
 CAPTURE_STREAM_BYTES = 64 * 1024 * 1024
 CAPTURE_RUN_BYTES = 256 * 1024 * 1024
+# verify-report re-hashes the whole source tree; 120 s was exceeded under device-run load (240 s measured 2026-11-15).
+SIMS_REPORT_VERIFY_TIMEOUT_SECONDS = 600
 
 
 class CaptureBudget:
@@ -1384,8 +1386,14 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 if report_path.is_file():
                                     verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
                                     verify_raw = directory / (c['id'] + '-' + str(attempt + 1) + '.verify.raw.log')
-                                    verify_out, verify_code, verify_timeout, verify_seconds = launch_to_log(verify_command, root, 120, env, verify_raw)
+                                    verify_out, verify_code, verify_timeout, verify_seconds = launch_to_log(
+                                        verify_command, root, SIMS_REPORT_VERIFY_TIMEOUT_SECONDS, env, verify_raw)
                                     seconds += verify_seconds
+                                    if verify_timeout:
+                                        a['report_verification_timed_out'] = True
+                                        with verify_raw.open('ab') as output:
+                                            output.write(('\nVERIFY_TIMEOUT: verify-report exceeded %d s and was stopped before it printed a result\n'
+                                                % SIMS_REPORT_VERIFY_TIMEOUT_SECONDS).encode('utf-8'))
                                     if verify_code or verify_timeout:
                                         a['report_verification_failed'] = True
                                         if a['status'] in ('PASS', 'N/A'):
