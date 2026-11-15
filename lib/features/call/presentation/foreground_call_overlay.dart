@@ -741,6 +741,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
             capabilityGeneration: _capabilityGeneration,
             callId: callId,
             video: pictureInPictureVideo,
+            name: _contactDisplayName == _unknownContactName
+                ? AppLocalizations.of(context)!.call_unknown_contact
+                : _contactDisplayName,
+            connectedAt: session!.connectedAt,
+            now: widget.now ?? DateTime.now,
             keyboardInset: keyboardInset,
           ),
         if (modal)
@@ -862,6 +867,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     required int capabilityGeneration,
     required CallId callId,
     required ForegroundCallVideoProjection video,
+    required String name,
+    required DateTime? connectedAt,
+    required DateTime Function() now,
     required double keyboardInset,
   }) {
     bool isCurrent() => _ownsPictureInPicture(
@@ -885,8 +893,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               final width = (constraints.maxWidth - 24)
                   .clamp(0.0, 180.0)
                   .toDouble();
+              final footerHeight =
+                  84 + MediaQuery.textScalerOf(context).scale(14);
+              final portraitHeight = width * 4 / 3 + footerHeight;
+              final compact =
+                  width < 160 || constraints.maxHeight - 24 < portraitHeight;
               final height = (constraints.maxHeight - 24)
-                  .clamp(0.0, width * 9 / 16 + 48)
+                  .clamp(0.0, compact ? width * 9 / 16 + 48 : portraitHeight)
                   .toDouble();
               if (width < 96 || height < 48) return const SizedBox.shrink();
               final maxX = constraints.maxWidth - width;
@@ -941,6 +954,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                             video.generation,
                           ),
                           video: video,
+                          name: name,
+                          connectedAt: connectedAt,
+                          now: now,
+                          compact: compact,
+                          footerHeight: compact ? 48 : footerHeight,
                           onReturn: restore,
                           onEnd: () => _runAction(() {
                             if (!isCurrent()) return null;
@@ -1355,25 +1373,83 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 }
 
 /// Displays owner-issued metadata in the minimized call surface.
-class _CallPictureInPictureTile extends StatelessWidget {
+class _CallPictureInPictureTile extends StatefulWidget {
   const _CallPictureInPictureTile({
     required this.ownerIdentity,
     required this.video,
+    required this.name,
+    required this.connectedAt,
+    required this.now,
+    required this.compact,
+    required this.footerHeight,
     required this.onReturn,
     required this.onEnd,
   });
 
   final Object ownerIdentity;
   final ForegroundCallVideoProjection video;
+  final String name;
+  final DateTime? connectedAt;
+  final DateTime Function() now;
+  final bool compact;
+  final double footerHeight;
   final VoidCallback onReturn;
   final VoidCallback onEnd;
+
+  @override
+  State<_CallPictureInPictureTile> createState() =>
+      _CallPictureInPictureTileState();
+}
+
+class _CallPictureInPictureTileState extends State<_CallPictureInPictureTile> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CallPictureInPictureTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    if (widget.connectedAt == null || widget.compact) {
+      _ticker?.cancel();
+      _ticker = null;
+    } else {
+      _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  String? get _duration {
+    final connectedAt = widget.connectedAt;
+    if (connectedAt == null) return null;
+    final elapsed = widget.now().toUtc().difference(connectedAt.toUtc());
+    final seconds = elapsed.isNegative ? 0 : elapsed.inSeconds;
+    return '${seconds >= 3600 ? '${seconds ~/ 3600}:' : ''}'
+        '${((seconds ~/ 60) % 60).toString().padLeft(2, '0')}:'
+        '${(seconds % 60).toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colors = context.backgroundReadableColors;
-    final presentation = video.presentation;
-    final view = video.remoteView;
+    final presentation = widget.video.presentation;
+    final view = widget.video.remoteView;
+    final duration = _duration;
     final label = presentation.isReconnecting
         ? l10n.call_video_status_reconnecting
         : switch (presentation.remoteCamera) {
@@ -1395,13 +1471,14 @@ class _CallPictureInPictureTile extends StatelessWidget {
         view.width > 0 &&
         view.height > 0) {
       frame = FittedBox(
-        fit: BoxFit.contain,
+        fit: widget.compact ? BoxFit.contain : BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
         child: SizedBox(
           width: view.width.toDouble(),
           height: view.height.toDouble(),
           child: Texture(
             key: ValueKey((
-              ownerIdentity,
+              widget.ownerIdentity,
               view.textureId,
               view.width,
               view.height,
@@ -1423,59 +1500,163 @@ class _CallPictureInPictureTile extends StatelessWidget {
               key: const ValueKey('call-pip-view'),
               container: true,
               button: true,
-              label: '${l10n.call_return}, $label',
-              onTap: onReturn,
+              label: [
+                l10n.call_return,
+                widget.name,
+                label,
+                if (!widget.compact && duration != null)
+                  l10n.call_duration(duration),
+              ].join(', '),
+              onTap: widget.onReturn,
               excludeSemantics: true,
               child: InkWell(
-                onTap: onReturn,
+                onTap: widget.onReturn,
                 child: SizedBox.expand(
-                  child: ColoredBox(color: Colors.black, child: frame),
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        frame,
+                        if (!widget.compact)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: DecoratedBox(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [Colors.transparent, Color(0xE6000000)],
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(8, 20, 8, 8),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      widget.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (duration != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        duration,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
           SizedBox(
-            height: 48,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(
-                  key: const ValueKey('call-pip-restore'),
-                  tooltip: l10n.call_return,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: onReturn,
-                  icon: Icon(Icons.open_in_full, color: colors.textPrimary),
-                ),
-                Semantics(
-                  container: true,
-                  identifier: 'call_pip_end',
-                  button: true,
-                  label: l10n.call_end,
-                  onTap: onEnd,
-                  excludeSemantics: true,
-                  child: IconButton(
-                    key: const ValueKey('call-pip-end'),
-                    tooltip: l10n.call_end,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 48,
-                      height: 48,
+            height: widget.footerHeight,
+            child: Padding(
+              padding: widget.compact
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.all(8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  if (widget.compact)
+                    _restoreButton(l10n, colors)
+                  else
+                    Expanded(child: _restoreButton(l10n, colors)),
+                  if (!widget.compact) const SizedBox(width: 8),
+                  Semantics(
+                    container: true,
+                    identifier: 'call_pip_end',
+                    button: true,
+                    label: l10n.call_end,
+                    onTap: widget.onEnd,
+                    excludeSemantics: true,
+                    child: IconButton(
+                      key: const ValueKey('call-pip-end'),
+                      tooltip: l10n.call_end,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 48,
+                        height: 48,
+                      ),
+                      padding: EdgeInsets.zero,
+                      onPressed: widget.onEnd,
+                      style: widget.compact
+                          ? null
+                          : IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFE5484D),
+                            ),
+                      icon: Icon(
+                        Icons.call_end_rounded,
+                        color: widget.compact
+                            ? Theme.of(context).colorScheme.error
+                            : Colors.white,
+                      ),
                     ),
-                    padding: EdgeInsets.zero,
-                    onPressed: onEnd,
-                    icon: Icon(
-                      Icons.call_end_rounded,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _restoreButton(
+    AppLocalizations l10n,
+    BackgroundReadableColors colors,
+  ) {
+    final button = IconButton(
+      key: const ValueKey('call-pip-restore'),
+      tooltip: l10n.call_return,
+      constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+      padding: EdgeInsets.zero,
+      onPressed: widget.onReturn,
+      icon: Icon(Icons.open_in_full, color: colors.textPrimary),
+    );
+    if (widget.compact) return button;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.inputBorder),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: InkWell(
+        onTap: widget.onReturn,
+        excludeFromSemantics: true,
+        borderRadius: BorderRadius.circular(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            button,
+            const SizedBox(height: 4),
+            ExcludeSemantics(
+              child: Text(
+                l10n.call_video_return_caption,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textPrimary, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
