@@ -2162,6 +2162,105 @@ void main() {
     },
   );
 
+  // BL-30: build 131 was killed with 0xdead10cc after a background launch.
+  // The overlay lock file lives in the App Group; on iOS it must sit inside
+  // the scoped background lease like every other shared notification lock.
+  test('iOS overlay lock is held only inside a background lease', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+    final lock = File(
+      '${directory.path}${Platform.pathSeparator}'
+      '${PendingConversationNotificationOverlayStore.lockFileName}',
+    );
+    final order = <String>[];
+    var leaseActive = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+          order.add(call.method);
+          switch (call.method) {
+            case 'notificationLockBegin':
+              leaseActive = true;
+              return 51;
+            case 'notificationLockIsActive':
+              expect(_canAcquireNativeFlock(lock), isFalse);
+              return leaseActive;
+            case 'notificationLockEnd':
+              expect(_canAcquireNativeFlock(lock), isTrue);
+              leaseActive = false;
+              return null;
+            default:
+              throw MissingPluginException(call.method);
+          }
+        });
+    final store = PendingConversationNotificationOverlayStore(
+      directory: directory,
+      resolveBinding: () async => 'v1:ios-overlay',
+      secureStore: _MemorySecureKeyStore(),
+    );
+
+    final projection = await store.project(
+      conversationKey: 'peer-ios-overlay',
+      canonicalSnapshot: null,
+      currentMessage: const PendingConversationNotificationMessage(
+        eventId: 'event-ios-overlay',
+        line: 'ios overlay',
+        occurredAtMicros: 1,
+      ),
+    );
+
+    expect(projection?.totalUnreadMessageCount, 1);
+    expect(order, <String>[
+      'notificationLockBegin',
+      'notificationLockIsActive',
+      'notificationLockEnd',
+    ]);
+    expect(leaseActive, isFalse);
+  });
+
+  test('iOS overlay never takes its lock without a lease', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+    final methods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+          methods.add(call.method);
+          return switch (call.method) {
+            'notificationLockBegin' => null,
+            _ => throw MissingPluginException(call.method),
+          };
+        });
+    final secureStore = _MemorySecureKeyStore();
+    final store = PendingConversationNotificationOverlayStore(
+      directory: directory,
+      resolveBinding: () async => 'v1:ios-overlay-denied',
+      secureStore: secureStore,
+    );
+
+    Object? error;
+    try {
+      await store.project(
+        conversationKey: 'peer-ios-overlay',
+        canonicalSnapshot: null,
+        currentMessage: const PendingConversationNotificationMessage(
+          eventId: 'event-ios-denied',
+          line: 'denied',
+          occurredAtMicros: 1,
+        ),
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error, isA<BoundedPosixFlockUnavailableException>());
+    expect(methods, <String>['notificationLockBegin']);
+    expect(
+      secureStore.values[PendingConversationNotificationOverlayStore
+          .secureStorageKey],
+      isNull,
+      reason: 'no overlay write without a background lease',
+    );
+  });
+
   test('android overlay same-process coordination is lossless', () async {
     final secureStore = _InterleavingSecureKeyStore();
     PendingConversationNotificationOverlayStore buildStore() =>
@@ -2514,12 +2613,13 @@ void main() {
     expect(foregroundShowSource, contains('reservation.publishAndCommit('));
     expect(idSource, contains('bounded_posix_flock.dart'));
     expect(overlaySource, contains('bounded_posix_flock.dart'));
+    // BL-30: the overlay's App Group lock no longer keeps a Dart record-lock
+    // branch for iOS; every platform goes through the shared flock.
+    expect(overlaySource, isNot(contains('FileLock.')));
     expect(
       overlaySource,
-      contains('lock(FileLock.exclusive)'),
-      reason: 'the non-Android overlay record-lock branch remains unchanged',
+      contains('return BoundedPosixFlock.withExclusive(_lockFile, action);'),
     );
-    expect(overlaySource, isNot(contains('FileLock.blockingExclusive')));
   });
 }
 

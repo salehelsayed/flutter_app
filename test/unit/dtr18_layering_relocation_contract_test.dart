@@ -491,7 +491,10 @@ const _productionBootstrapNormalizedSha256 =
     // message retry wiring at this bootstrap owner (3 lines); no owner moves.
     // BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
     // add callbacks at this same bootstrap owner; no owner moves.
-    '11ea685d312c2f75f4ed4abe3394d9afd47cb0e368669bc96a3625be834a9490';
+    // BL-30 R2: the every-launch identity.db open and its post-open writes
+    // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
+    // background assertion); same calls, same order, no owner moves.
+    'b1f841f22bc8280930de452522b13f16e2cf93a37fdf1b6b24859ea305d40fa9';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -537,8 +540,9 @@ const _productionBootstrapNormalizedSha256 =
 // The same BL-24C retry-marker wiring leaves the historical callback exact.
 // BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
 // leave the historical callback exact; no owner relocates.
+// The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'e5381f388d60aa6bdc985bdb942c0cbe95b99716ec8798d673c2636fa658cc59';
+    '4a705035ca21a80990ca3c19291770152b0bf555dd2494642cf95b5116f981a8';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

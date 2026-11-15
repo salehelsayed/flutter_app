@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -442,19 +441,12 @@ final class PendingConversationNotificationOverlayStore
     }
   }
 
+  // BL-30: the lock file lives in the App Group. On iOS a lock held across
+  // suspension gets the app killed (0xdead10cc), so every platform takes it
+  // through the shared flock, which encloses it in a background lease on iOS.
   Future<T> _withLock<T>(Future<T> Function() action) async {
     await directory.create(recursive: true);
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return BoundedPosixFlock.withExclusive(_lockFile, action);
-    }
-    final lock = await _lockFile.open(mode: FileMode.append);
-    await lock.lock(FileLock.exclusive);
-    try {
-      return await action();
-    } finally {
-      await lock.unlock();
-      await lock.close();
-    }
+    return BoundedPosixFlock.withExclusive(_lockFile, action);
   }
 
   File get _lockFile =>
