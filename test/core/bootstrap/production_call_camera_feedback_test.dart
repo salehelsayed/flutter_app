@@ -261,7 +261,9 @@ void main() {
         if (!entered.isCompleted) entered.complete();
         return commit.future.timeout(_redDeadline);
       };
-      final recovery = rig.recover().timeout(_redDeadline);
+      final recovery = rig
+          .recover(mayEnd: boundary == 'end')
+          .timeout(_redDeadline);
       // Observe errors immediately while the test exercises the held boundary.
       final completed = recovery.then<Object?>(
         (_) => null,
@@ -285,6 +287,9 @@ void main() {
       expect(rig.engine.video.cameraStarts, 1);
       expect(rig.permissionCalls, 1);
       final projection = rig.graph.current?.video;
+      if (boundary == 'end') {
+        expect(rig.coordinator.activeSession, isNull);
+      }
       if (projection != null) {
         expect(projection.presentation.localCamera, isNot(CallCameraState.on));
       }
@@ -615,7 +620,7 @@ final class _CameraRig {
     _driveRecoveryEffects = recovery;
   }
 
-  Future<void> recover() async {
+  Future<void> recover({bool mayEnd = false}) async {
     engine.mediaReady = false;
     engine.video.onCommit = () => engine.mediaReady = true;
     await _event(CallEventType.mediaLost).timeout(_redDeadline);
@@ -637,8 +642,11 @@ final class _CameraRig {
     );
     await owner.workSettled.timeout(_redDeadline);
     await _redTurn().timeout(_redDeadline);
-    if (coordinator.activeSession?.isTerminal != true) {
-      expect(coordinator.activeSession?.state, CallState.connected);
+    final session = coordinator.activeSession;
+    if (session == null || session.isTerminal) {
+      expect(mayEnd, isTrue);
+    } else {
+      expect(session.state, CallState.connected);
     }
   }
 
