@@ -168,35 +168,40 @@ final class _ProductionCallBackRegression {
         await Future<void>.delayed(const Duration(milliseconds: 250));
         continue;
       }
-      final target = findAndroidNotificationActionTapTarget(
+      final step = androidCallBackNotificationStep(
         xml,
         title: title,
-        body: 'Missed call',
-        action: 'Call back',
         allowedPackages: allowed,
       );
-      final expand =
-          target?.expandCenter ??
-          (target == null
-              ? findAndroidCollapsedNotificationExpandCenter(xml, title: title)
-              : null);
-      if (expand != null) {
-        await driver._adbShell(peer.device, [
-          'input',
-          'tap',
-          '${expand.$1}',
-          '${expand.$2}',
-        ]);
-      } else if (target?.actionCenter case final center?) {
-        if (!prepareOnly) {
+      switch (step) {
+        case (kind: AndroidCallBackNotificationStepKind.expand, :final center?):
           await driver._adbShell(peer.device, [
             'input',
             'tap',
             '${center.$1}',
             '${center.$2}',
           ]);
-        }
-        return;
+        case (
+          kind: AndroidCallBackNotificationStepKind.tapAction,
+          :final center?,
+        ):
+          if (!prepareOnly) {
+            await driver._adbShell(peer.device, [
+              'input',
+              'tap',
+              '${center.$1}',
+              '${center.$2}',
+            ]);
+          }
+          return;
+        case (kind: AndroidCallBackNotificationStepKind.reopenShade, center: _):
+          await driver._adbShell(peer.device, [
+            'cmd',
+            'statusbar',
+            'expand-notifications',
+          ]);
+        default:
+          break;
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
@@ -533,14 +538,13 @@ final class _ProductionCallBackRegression {
     await _nativeAction(title, prepareOnly: true);
     final String receipt;
     try {
-      receipt = await ProductionJourneyFlowRunner(output, driver._runner)
-          .run(
-            peer.device,
-            'production_call_microphone_denial',
-            'microphone-denied',
-            {'CALLBACK_TITLE': RegExp.escape(title)},
-            packageName: driver.packageName,
-          );
+      receipt = await ProductionJourneyFlowRunner(output, driver._runner).run(
+        peer.device,
+        'production_call_microphone_denial',
+        'microphone-denied',
+        {'CALLBACK_TITLE': RegExp.escape(title)},
+        packageName: driver.packageName,
+      );
     } catch (_) {
       // Records the typed callback outcome and lifecycle the denial produced,
       // so a silent "canceled" can be told apart from a UI/automation miss.
@@ -628,3 +632,54 @@ final class _ProductionCallBackRegression {
     );
   }
 }
+
+enum AndroidCallBackNotificationStepKind {
+  reopenShade,
+  expand,
+  tapAction,
+  wait,
+}
+
+/// What the missed-call "Call back" loop does with one UI dump: reopen the
+/// shade when the dump has no SystemUI content (the app took focus and closed
+/// it, kx0007), tap the unique row's Expand button, tap its "Call back"
+/// action, or wait.
+AndroidCallBackNotificationStep androidCallBackNotificationStep(
+  String xml, {
+  required String title,
+  required Set<String> allowedPackages,
+}) {
+  if (!xml.contains('package="com.android.systemui"')) {
+    return (
+      kind: AndroidCallBackNotificationStepKind.reopenShade,
+      center: null,
+    );
+  }
+  final target = findAndroidNotificationActionTapTarget(
+    xml,
+    title: title,
+    body: 'Missed call',
+    action: 'Call back',
+    allowedPackages: allowedPackages,
+  );
+  final expand =
+      target?.expandCenter ??
+      (target == null
+          ? findAndroidCollapsedNotificationExpandCenter(xml, title: title)
+          : null);
+  if (expand != null) {
+    return (kind: AndroidCallBackNotificationStepKind.expand, center: expand);
+  }
+  if (target?.actionCenter case final center?) {
+    return (
+      kind: AndroidCallBackNotificationStepKind.tapAction,
+      center: center,
+    );
+  }
+  return (kind: AndroidCallBackNotificationStepKind.wait, center: null);
+}
+
+typedef AndroidCallBackNotificationStep = ({
+  AndroidCallBackNotificationStepKind kind,
+  (int, int)? center,
+});
