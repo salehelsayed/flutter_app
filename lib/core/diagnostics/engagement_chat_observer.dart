@@ -79,6 +79,7 @@ final class EngagementChatObserver {
   bool _inFlight = false;
   bool _initialize = false;
   bool _clear = false;
+  int? _clearBlockedAtGeneration;
   bool _disposed = false;
   bool _attemptedRetention = false;
   bool _storageFailed = false;
@@ -124,7 +125,8 @@ final class EngagementChatObserver {
     _intents.clear();
     _tuples.clear();
     _initialize = false;
-    _clear = false;
+    // An OFF removal request survives immediate rearming. The worker must
+    // finish it before restoring or writing any successor's checkpoint.
   }
 
   bool _current(EngagementChatObserverCapture capture) =>
@@ -245,13 +247,15 @@ final class EngagementChatObserver {
       _attemptedRetention = false;
       _storageFailed = false;
       _calendarFailed = null;
+      _clearBlockedAtGeneration = null;
       try {
         await _drain();
       } catch (_) {
         // A failed optional observer operation never escapes into communication.
       } finally {
         _worker = null;
-        if (_clear || _initialize || _facts.isNotEmpty) {
+        if (_clearBlockedAtGeneration != _generation &&
+            (_clear || _initialize || _facts.isNotEmpty)) {
           _start();
         }
       }
@@ -261,12 +265,22 @@ final class EngagementChatObserver {
   Future<void> _drain() async {
     while (!_disposed) {
       if (_clear) {
-        _clear = false;
         final generation = _generation;
-        await _storeCall(
+        final cleared = await _storeCall(
           (guard) => store.clear(isCurrent: guard),
-          () => !_disposed && _generation == generation && _capture == null,
+          () => !_disposed && _generation == generation,
         );
+        if (_generation != generation) {
+          // The obsolete clear cannot acknowledge the surviving OFF request.
+          continue;
+        }
+        if (!cleared) {
+          // Keep the request ahead of initialization, without spinning on a
+          // failed filesystem. A later callback/flush retries optional work.
+          _clearBlockedAtGeneration = generation;
+          return;
+        }
+        _clear = false;
         continue;
       }
       if (_initialize) {
