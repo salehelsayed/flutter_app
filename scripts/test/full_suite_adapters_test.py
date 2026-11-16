@@ -757,3 +757,23 @@ class SimulatorDerivedDataTest(unittest.TestCase):
             else:
                 self.assertNotIn('{sim_derived}',text,check['id'])
         self.assertTrue(any(c['device_roles']==['ios_simulator'] for c in built))
+
+    def test_a_hung_toolchain_probe_stops_within_its_bound_and_keeps_the_folder(self):
+        import time
+        tree=self.worktree('bl35')
+        derived=Path(self.bind(tree,'red')[0]['command'][-1])
+        (derived/'warm.o').write_text('compiled')
+        (derived/'.mknoon-test-toolchain').write_text('older toolchain')
+        pidfile=self.tmp/'probe.pid'
+        flutter=Path(os.environ['PATH'].split(os.pathsep)[0])/'flutter'
+        flutter.write_text('#!/bin/bash\necho $$ > "%s"\nsleep 60\n' % pidfile)
+        self.m.SIM_DERIVED_PREPARE_TIMEOUT_SECONDS=1
+        self.addCleanup(setattr,self.m,'SIM_DERIVED_PREPARE_TIMEOUT_SECONDS',120)
+        started=time.monotonic()
+        with self.assertRaisesRegex(ValueError,'timed out'):
+            self.bind(tree,'green')
+        self.assertLess(time.monotonic()-started,15)
+        self.assertTrue((derived/'warm.o').exists(),'a timeout keeps the existing cache')
+        pid=int(pidfile.read_text())
+        time.sleep(0.2)
+        with self.assertRaises(ProcessLookupError):os.kill(pid,0)
