@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -100,14 +101,27 @@ def sim_derived_path(root):
     return Path(home)/('dd-hetzner-test-sim-'+tree.name+'-'+digest)
 
 
+SIM_DERIVED_PREPARE_TIMEOUT_SECONDS=120
+
+
 def _prepare_sim_derived(root):
     path=sim_derived_path(root)
     if os.environ.get('MKNOON_SIM_DERIVED_CLEAN')=='1': shutil.rmtree(path,ignore_errors=True)
     # A failed Xcode/Flutter probe leaves the folder as it is; xcodebuild then
-    # builds into it as usual.
-    subprocess.run(['bash','-c','. "$1" && prepare_test_derived_data "$2"','bash',
-                    str(Path(root)/'docker-ws/test_derived_data.sh'),str(path)],
-                   capture_output=True,text=True)
+    # builds into it as usual. This runs before the check's own deadline, so it
+    # is bounded here; on timeout the whole probe group is killed before the
+    # script reaches its delete, and the folder is kept.
+    probe=subprocess.Popen(['bash','-c','. "$1" && prepare_test_derived_data "$2"','bash',
+                            str(Path(root)/'docker-ws/test_derived_data.sh'),str(path)],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    try:
+        probe.wait(timeout=SIM_DERIVED_PREPARE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(probe.pid,signal.SIGKILL)
+        except ProcessLookupError: pass
+        probe.wait()
+        raise ValueError('simulator DerivedData preparation timed out after %d s; %s kept as is'
+                         % (SIM_DERIVED_PREPARE_TIMEOUT_SECONDS,path))
     return path
 
 
