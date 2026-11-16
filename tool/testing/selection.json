@@ -2285,6 +2285,32 @@
       "provider_android_profile": "android.production_fcm.journey",
       "provider_delivery_required": true
     },
+    "test-derived-data-contract": {
+      "kind": "command",
+      "command": [
+        "bash",
+        "docker-ws/test_derived_data_test.sh"
+      ],
+      "paths": [
+        "docker-ws/test_derived_data_test.sh"
+      ],
+      "success_marker": "TEST_DERIVED_DATA_CONTRACT_PASS",
+      "boundary": "Hetzner test iOS builds keep a dd-hetzner-test-* DerivedData while Xcode and Flutter stay the same, start it empty after a change, and refuse any other folder",
+      "limitations": "Fake xcodebuild and flutter; real warm-build timing is measured by flutter on the next device build",
+      "timeout_seconds": 120,
+      "requirements": [
+        "bash"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "docker-ws/test_derived_data.sh",
+        "docker-ws/test_derived_data_test.sh",
+        "docker-ws/ios_device_build_internal.sh",
+        "docker-ws/bootstrap_ios_receiver.sh"
+      ]
+    },
     "go-send-wrapper": {
       "kind": "command",
       "command": [
@@ -7099,6 +7125,18 @@
         "production-catalog-group-local-delete"
       ],
       "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
+    },
+    {
+      "id": "test-derived-data",
+      "patterns": [
+        "docker-ws/test_derived_data.sh",
+        "docker-ws/test_derived_data_test.sh",
+        "docker-ws/bootstrap_ios_receiver.sh"
+      ],
+      "checks": [
+        "test-derived-data-contract"
+      ],
+      "why": "Persistent DerivedData for Hetzner test iOS builds (owner 11-15 build-time work)"
     },
     {
       "id": "retained-go-send-wrapper",

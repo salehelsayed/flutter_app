@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -39,7 +40,6 @@ const String simsIosDeviceProductValidatorSchema =
 final class _IosDeviceBuildConfiguration {
   const _IosDeviceBuildConfiguration({
     required this.derivedDataEnvironment,
-    required this.defaultDerivedDataPath,
     required this.bundlePathEnvironment,
     required this.defaultBundlePath,
     required this.bundleManifestSchema,
@@ -50,7 +50,6 @@ final class _IosDeviceBuildConfiguration {
   });
 
   final String derivedDataEnvironment;
-  final String defaultDerivedDataPath;
   final String bundlePathEnvironment;
   final String defaultBundlePath;
   final String bundleManifestSchema;
@@ -62,7 +61,6 @@ final class _IosDeviceBuildConfiguration {
 
 const _iosDeviceProductionBuild = _IosDeviceBuildConfiguration(
   derivedDataEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_DERIVED_DATA',
-  defaultDerivedDataPath: 'build/sims/ios-device-production-derived',
   bundlePathEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_BUNDLE_PATH',
   defaultBundlePath: 'build/sims/prepared/ios.device.production.bundle',
   bundleManifestSchema: 'mknoon.sims.ios-device-production-bundle.v1',
@@ -73,7 +71,6 @@ const _iosDeviceProductionBuild = _IosDeviceBuildConfiguration(
 
 const _iosDeviceGroupMedia269Build = _IosDeviceBuildConfiguration(
   derivedDataEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_DERIVED_DATA',
-  defaultDerivedDataPath: 'build/sims/ios-device-group-media-269-derived',
   bundlePathEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_BUNDLE_PATH',
   defaultBundlePath: 'build/sims/prepared/ios.device.group_media_269.bundle',
   bundleManifestSchema: 'mknoon.sims.ios-device-group-media-269-bundle.v1',
@@ -111,6 +108,85 @@ _IosDeviceBuildConfiguration? _iosDeviceBuildConfiguration(String profileId) =>
       _iosDeviceGroupMedia269ProfileId => _iosDeviceGroupMedia269Build,
       _ => null,
     };
+
+/// Where a sims iOS device profile builds when no override is set: one
+/// folder per profile on the internal disk (Xcode reads from the external disk
+/// fail since 10-26). The name is never used by store, upload or restore
+/// builds (10-31).
+String simsIosTestDerivedDataPath(
+  String profileId,
+  Map<String, String> environment,
+) {
+  final home = environment['HOME'] ?? Platform.environment['HOME'];
+  if (home == null || home.isEmpty) {
+    throw StateError('HOME is required for the sims iOS DerivedData folder.');
+  }
+  return '$home/dd-hetzner-test-$profileId';
+}
+
+const _simsToolchainRecordName = '.mknoon-sims-toolchain';
+
+/// The record docker-ws/test_derived_data.sh writes: `xcodebuild -version`
+/// output, a newline, then `flutter --version --machine` output.
+const _testScriptToolchainRecordName = '.mknoon-test-toolchain';
+
+/// Readies [derivedData] for the next sims iOS device build. It keeps the
+/// previous build state while [toolchainKey] is unchanged, and starts empty
+/// otherwise. A folder the bootstrap script just built (its record, no sims
+/// record yet) is adopted when [testScriptToolchainKey] returns the same
+/// Xcode and Flutter versions, so that build is reused. Returns whether it
+/// started empty.
+bool prepareSimsIosTestDerivedData(
+  Directory derivedData,
+  String toolchainKey, {
+  String? Function()? testScriptToolchainKey,
+}) {
+  final record = File('${derivedData.path}/$_simsToolchainRecordName');
+  if (record.existsSync() && record.readAsStringSync() == toolchainKey) {
+    return false;
+  }
+  final scriptRecord = File(
+    '${derivedData.path}/$_testScriptToolchainRecordName',
+  );
+  if (!record.existsSync() &&
+      scriptRecord.existsSync() &&
+      testScriptToolchainKey != null) {
+    final expected = testScriptToolchainKey();
+    if (expected != null && scriptRecord.readAsStringSync() == expected) {
+      record.writeAsStringSync(toolchainKey, flush: true);
+      return false;
+    }
+  }
+  if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
+  derivedData.createSync(recursive: true);
+  record.writeAsStringSync(toolchainKey, flush: true);
+  return true;
+}
+
+/// The key docker-ws/test_derived_data.sh would write now, or null when a
+/// probe fails (then nothing is adopted). Each probe runs as
+/// `bash -c '<command> 2>&1'`, so stdout and stderr interleave exactly as in
+/// the script's `$(<command> 2>&1)`.
+String? simsTestScriptToolchainKey(Map<String, String> environment) {
+  String? probe(String command) {
+    try {
+      final result = Process.runSync('bash', <String>[
+        '-c',
+        '$command 2>&1',
+      ], environment: environment);
+      if (result.exitCode != 0) return null;
+      return '${result.stdout}'.replaceFirst(RegExp(r'\n+$'), '');
+    } on ProcessException {
+      return null;
+    }
+  }
+
+  final xcode = probe('xcodebuild -version');
+  if (xcode == null) return null;
+  final flutter = probe('flutter --version --machine');
+  if (flutter == null) return null;
+  return '$xcode\n$flutter';
+}
 
 /// Deterministically invalidates physical-iOS cache entries whenever the
 /// central product graph/signature contract changes.
@@ -564,7 +640,7 @@ final class SimsBuildOrchestrator {
             profileRoot.listSync().whereType<Directory>().isNotEmpty) {
           invalidations.add('${profile.id}:${verification.reason.name}');
         }
-        final build = await _build(profile);
+        final build = await _build(profile, toolchain);
         if (!build.ok) {
           failures[profile.id] = build.detail;
           failedProfileIds.add(profile.id);
@@ -924,10 +1000,17 @@ final class SimsBuildOrchestrator {
     }
   }
 
-  Future<_BuildInvocation> _build(BuildProfileSpec profile) async {
+  Future<_BuildInvocation> _build(
+    BuildProfileSpec profile,
+    Map<String, String> toolchain,
+  ) async {
     final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
     if (iosDeviceConfiguration != null) {
-      return _buildIosDevice(profile, iosDeviceConfiguration);
+      return _buildIosDevice(
+        profile,
+        iosDeviceConfiguration,
+        jsonEncode(SplayTreeMap<String, String>.of(toolchain)),
+      );
     }
     final arguments = _buildArguments(profile);
     final command = <String>['flutter', ...arguments];
@@ -976,6 +1059,7 @@ final class SimsBuildOrchestrator {
   Future<_BuildInvocation> _buildIosDevice(
     BuildProfileSpec profile,
     _IosDeviceBuildConfiguration configuration,
+    String toolchainKey,
   ) async {
     final encodedDefines = _effectiveCompileDefines(profile).entries
         .map(
@@ -986,10 +1070,13 @@ final class SimsBuildOrchestrator {
       environment[configuration.derivedDataEnvironment]?.trim().isNotEmpty ==
               true
           ? environment[configuration.derivedDataEnvironment]!.trim()
-          : configuration.defaultDerivedDataPath,
+          : simsIosTestDerivedDataPath(profile.id, environment),
     ).absolute;
-    if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
-    derivedData.createSync(recursive: true);
+    prepareSimsIosTestDerivedData(
+      derivedData,
+      toolchainKey,
+      testScriptToolchainKey: () => simsTestScriptToolchainKey(environment),
+    );
     final xcodeArguments = <String>[
       'build-for-testing',
       '-workspace',
@@ -1461,7 +1548,29 @@ void _replaceCachedArtifact(
   );
 }
 
+/// Copies the contents of [source] into the existing [destination] with the
+/// same bytes, permissions and links (the artifact digest).
+void simsCopyArtifactDirectory(Directory source, Directory destination) =>
+    _copyDirectory(source, destination);
+
 void _copyDirectory(Directory source, Directory destination) {
+  // On macOS one cp clones the whole tree (APFS) and keeps modes and links;
+  // copying file by file with a chmod process per file took minutes.
+  if (Platform.isMacOS && destination.listSync().isEmpty) {
+    final result = Process.runSync('cp', <String>[
+      '-cpR',
+      '${source.path}/.',
+      destination.path,
+    ]);
+    if (result.exitCode == 0) return;
+    for (final partial in destination.listSync(followLinks: false)) {
+      partial.deleteSync(recursive: true);
+    }
+  }
+  _copyEntries(source, destination);
+}
+
+void _copyEntries(Directory source, Directory destination) {
   for (final entity in source.listSync(followLinks: false)) {
     final name = entity.uri.pathSegments.where((part) => part.isNotEmpty).last;
     final targetPath = '${destination.path}/$name';
@@ -1473,7 +1582,7 @@ void _copyDirectory(Directory source, Directory destination) {
       case FileSystemEntityType.directory:
         final child = Directory(targetPath)..createSync();
         _preserveMode(entity, targetPath);
-        _copyDirectory(Directory(entity.path), child);
+        _copyEntries(Directory(entity.path), child);
       case FileSystemEntityType.link:
         Link(targetPath).createSync(Link(entity.path).targetSync());
       case FileSystemEntityType.notFound:
