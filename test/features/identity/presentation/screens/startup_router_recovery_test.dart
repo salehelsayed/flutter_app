@@ -10,6 +10,12 @@ import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
+import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_coordinator.dart';
+import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -153,6 +159,30 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
   }
 }
 
+class _ColdStartRecoveryBridge extends Fake
+    implements IosNotificationRecoveryBridge {
+  int beginCount = 0;
+  final List<bool> completeness = <bool>[];
+
+  @override
+  Future<IosNotificationReconciliationToken> beginReconciliation(
+    String accountPeerId,
+  ) async => IosNotificationReconciliationToken(
+    token: 'cold-token-${++beginCount}',
+    watermark: beginCount,
+  );
+
+  @override
+  Future<void> commitReconciliation({
+    required IosNotificationReconciliationToken begin,
+    required String accountPeerId,
+    required CanonicalNotificationBadgeState canonicalState,
+    required bool canonicalStateComplete,
+  }) async {
+    completeness.add(canonicalStateComplete);
+  }
+}
+
 class _EraseFileDatabase extends Fake implements Database {
   _EraseFileDatabase(this.path);
 
@@ -286,6 +316,10 @@ void main() {
     Future<void> Function()? eraseLocalAccountDatabase,
     Future<RemoteMessage?> Function()? getInitialRemoteMessage,
     bool Function()? shouldHandleInitialPushOpen,
+    NotificationOpenRouteContext Function(NotificationRouteTarget target)?
+    createNotificationRouteContext,
+    Future<void> Function(NotificationOpenRouteContext context)?
+    onNotificationRouteContext,
     Future<IosApnsInitialNotificationOpenDisposition> Function()?
     consumeInitialIosApnsNotificationOpen,
     Future<void> Function()? recoverDroppedPushes,
@@ -344,6 +378,8 @@ void main() {
         sharedSecureKeyStore: sharedSecureKeyStore,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
+        createNotificationRouteContext: createNotificationRouteContext,
+        onNotificationRouteContext: onNotificationRouteContext,
         consumeInitialIosApnsNotificationOpen:
             consumeInitialIosApnsNotificationOpen,
         recoverDroppedPushes: recoverDroppedPushes,
@@ -1803,6 +1839,191 @@ void main() {
       expect(settlements, <bool>[true]);
     },
   );
+
+  testWidgets(
+    'BL38 hung initial lookup closes cold scope and permits later exhaustive resume',
+    (tester) async {
+      await seedActiveReturningAccount('12D3KooWBl38Scope')
+          .timeout(const Duration(seconds: 2));
+      final lookup = Completer<RemoteMessage?>();
+      final native = _ColdStartRecoveryBridge();
+      final recovery = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: native,
+        loadActiveAccountPeerId: () async => '12D3KooWBl38Scope',
+        loadCanonicalState: () async => CanonicalNotificationBadgeState(
+          unreadCount: 0,
+          identities: const <CanonicalNotificationIdentity>[],
+        ),
+      );
+      final settlements = <bool>[];
+      IosNotificationRecoveryMutationScope? liveOwner;
+      try {
+        await tester.pumpWidget(
+          buildRouterApp(
+            shouldHandleInitialPushOpen: () => true,
+            getInitialRemoteMessage: () => lookup.future,
+            consumeInitialIosApnsNotificationOpen: () async =>
+                IosApnsInitialNotificationOpenDisposition.empty,
+            onIosNotificationColdStartRecoveryStarted: () =>
+                recovery.beginCanonicalMutation(globallyExhaustive: true),
+            onIosNotificationColdStartRecoverySettled:
+                ({
+                  required recoveryHandle,
+                  required canonicalStateComplete,
+                }) async {
+                  await recovery
+                      .endCanonicalMutation(
+                        recoveryHandle as IosNotificationRecoveryMutationScope,
+                        canonicalStateComplete: canonicalStateComplete,
+                      )
+                      .timeout(const Duration(seconds: 2));
+                  settlements.add(canonicalStateComplete);
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        expect(native.beginCount, 1);
+        expect(native.completeness, isEmpty);
+        liveOwner = await recovery.beginCanonicalMutation().timeout(
+          const Duration(seconds: 2),
+        );
+        await tester.pump(const Duration(seconds: 2));
+        await pumpFrames(tester, count: 6);
+
+        expect(settlements, <bool>[
+          false,
+        ], reason: 'an unanswered fallback lookup must release cold ownership');
+        expect(
+          native.completeness,
+          isEmpty,
+          reason: 'a distinct live owner still forbids destructive commit',
+        );
+        final overlappingResume = await recovery
+            .beginCanonicalMutation(globallyExhaustive: true)
+            .timeout(const Duration(seconds: 2));
+        await recovery
+            .endCanonicalMutation(
+              overlappingResume,
+              canonicalStateComplete: true,
+            )
+            .timeout(const Duration(seconds: 2));
+        expect(native.completeness, isEmpty);
+        await recovery
+            .endCanonicalMutation(liveOwner, canonicalStateComplete: true)
+            .timeout(const Duration(seconds: 2));
+        liveOwner = null;
+        expect(native.completeness, <bool>[false]);
+
+        final laterResume = await recovery
+            .beginCanonicalMutation(globallyExhaustive: true)
+            .timeout(const Duration(seconds: 2));
+        await recovery
+            .endCanonicalMutation(laterResume, canonicalStateComplete: true)
+            .timeout(const Duration(seconds: 2));
+        expect(native.beginCount, 2);
+        expect(native.completeness, <bool>[false, true]);
+      } finally {
+        if (!lookup.isCompleted) lookup.complete(null);
+        await pumpFrames(tester, count: 4);
+        if (liveOwner != null) {
+          await recovery
+              .endCanonicalMutation(liveOwner, canonicalStateComplete: false)
+              .timeout(const Duration(seconds: 2));
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+  );
+
+  for (final lateResult in ['message', 'null', 'navigation', 'tab']) {
+    testWidgets('BL38 late initial lookup respects $lateResult routing', (
+      tester,
+    ) async {
+      await seedActiveReturningAccount('12D3KooWBl38Late')
+          .timeout(const Duration(seconds: 2));
+      final lookup = Completer<RemoteMessage?>();
+      final routes = <NotificationRouteTarget>[];
+      final settlements = <bool>[];
+      final routeCoordinator = NotificationOpenRouteCoordinator();
+      var lookupCount = 0;
+      try {
+        await tester.pumpWidget(
+          buildRouterApp(
+            navigatorObservers: [directPrivateMediaRouteObserver],
+            shouldHandleInitialPushOpen: () => true,
+            getInitialRemoteMessage: () {
+              lookupCount += 1;
+              return lookup.future;
+            },
+            consumeInitialIosApnsNotificationOpen: () async =>
+                IosApnsInitialNotificationOpenDisposition.empty,
+            createNotificationRouteContext: (target) => routeCoordinator
+                .createContext(routeTarget: target, tappedAt: DateTime.now()),
+            onNotificationRouteContext: (context) async {
+              routes.add(context.routeTarget);
+            },
+            onIosNotificationColdStartRecoveryStarted: () async => Object(),
+            onIosNotificationColdStartRecoverySettled:
+                ({
+                  required recoveryHandle,
+                  required canonicalStateComplete,
+                }) async {
+                  settlements.add(canonicalStateComplete);
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        expect(lookupCount, 1);
+        await tester.pump(const Duration(seconds: 2));
+        await pumpFrames(tester, count: 6);
+        expect(settlements, <bool>[false]);
+        if (lateResult == 'navigation') {
+          final navigator = tester.state<NavigatorState>(
+            find.byType(Navigator).first,
+          );
+          unawaited(
+            navigator.push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(body: Text('Other route')),
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 6);
+        } else if (lateResult == 'tab') {
+          appShellController.switchTo('feed');
+        }
+        lookup.complete(
+          lateResult == 'null'
+              ? null
+              : const RemoteMessage(
+                  messageId: 'bl38-late',
+                  data: {
+                    'type': 'new_message',
+                    'sender_id': '12D3KooWLateSender',
+                  },
+                ),
+        );
+        await pumpFrames(tester, count: 15);
+        expect(lookupCount, 1);
+        expect(routes.length, lateResult == 'message' ? 1 : 0);
+        if (routes.isNotEmpty) {
+          expect(routes.single.peerId, '12D3KooWLateSender');
+        }
+        await pumpFrames(tester, count: 6);
+        expect(
+          routes.length,
+          lateResult == 'message' ? 1 : 0,
+          reason: 'late completion must never route twice',
+        );
+        expect(settlements, <bool>[false]);
+      } finally {
+        if (!lookup.isCompleted) lookup.complete(null);
+        await pumpFrames(tester, count: 4);
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    });
+  }
 
   testWidgets(
     'initial push opens after cold begin and completes before exact drains settle',
