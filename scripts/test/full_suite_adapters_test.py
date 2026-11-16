@@ -671,3 +671,89 @@ class SelectorArgumentContracts(unittest.TestCase):
         result=self.selection([])
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(len(result.stdout.splitlines()),12)
+
+
+class SimulatorDerivedDataTest(unittest.TestCase):
+    """Unit 4: simulator build-for-testing reuses one DerivedData per worktree."""
+
+    CHECK = {'id':'sim','device_roles':['ios_simulator'],
+             'steps':[{'command':['xcodebuild','build-for-testing','-destination','id={device:ios_simulator}',
+                                  '-derivedDataPath','{sim_derived}'],
+                       'format':'marker','marker':'** TEST BUILD SUCCEEDED **'},
+                      {'command':['xcodebuild','test-without-building','-xctestrun','{output}/active.xctestrun'],
+                       'format':'xctest','selectors':['A/testB'],
+                       'xctestrun_directory':'{sim_derived}/Build/Products',
+                       'xctestrun_output':'{output}/active.xctestrun','target_id':'{device:ios_simulator}'}]}
+
+    def setUp(self):
+        import sys
+        from unittest import mock
+        sys.path.insert(0,str(ROOT/'scripts'))
+        import full_suite_adapters
+        self.m=full_suite_adapters
+        self.tmp=Path(tempfile.mkdtemp());self.addCleanup(shutil.rmtree,self.tmp)
+        tools=self.tmp/'bin';tools.mkdir()
+        (tools/'xcodebuild').write_text('#!/bin/bash\necho "Xcode 26.0"\n')
+        (tools/'flutter').write_text('#!/bin/bash\necho \'{"frameworkVersion": "3.47.2"}\'\n')
+        for tool in tools.iterdir(): tool.chmod(0o755)
+        self.home=self.tmp/'home';self.home.mkdir()
+        patcher=mock.patch.dict(os.environ,{'HOME':str(self.home),'PATH':str(tools)+os.pathsep+os.environ['PATH']})
+        patcher.start();self.addCleanup(patcher.stop)
+        os.environ.pop('MKNOON_SIM_DERIVED_CLEAN',None)
+        self.config={'devices':{'ios_simulator':'SIM-1'}}
+
+    def bind(self,root,output):
+        steps,_=self.m.bind(self.CHECK,self.config,root,self.tmp/output)
+        return steps
+
+    def worktree(self,name):
+        tree=self.tmp/'trees'/name;(tree/'docker-ws').mkdir(parents=True)
+        shutil.copy(ROOT/'docker-ws/test_derived_data.sh',tree/'docker-ws/test_derived_data.sh')
+        return tree
+
+    def test_two_runs_of_one_worktree_reuse_one_internal_disk_folder(self):
+        tree=self.worktree('bl35')
+        first=self.bind(tree,'red')
+        derived=Path(first[0]['command'][first[0]['command'].index('-derivedDataPath')+1])
+        self.assertEqual(derived.parent,self.home)
+        self.assertTrue(derived.name.startswith('dd-hetzner-test-sim-bl35-'))
+        self.assertEqual(first[1]['xctestrun_directory'],str(derived/'Build/Products'))
+        warm=derived/'Build/Intermediates.noindex/warm.o';warm.parent.mkdir(parents=True);warm.write_text('compiled')
+        second=self.bind(tree,'green')
+        self.assertIn(str(derived),second[0]['command'])
+        self.assertTrue(warm.exists(),'the second run keeps the first build')
+
+    def test_each_worktree_gets_its_own_folder(self):
+        a=self.bind(self.worktree('one'),'a')[0]['command'][-1]
+        b=self.bind(self.worktree('two'),'b')[0]['command'][-1]
+        self.assertNotEqual(a,b)
+
+    def test_clean_switch_starts_the_folder_empty(self):
+        tree=self.worktree('bl35')
+        derived=Path(self.bind(tree,'red')[0]['command'][-1])
+        (derived/'warm.o').write_text('compiled')
+        os.environ['MKNOON_SIM_DERIVED_CLEAN']='1'
+        self.bind(tree,'green')
+        self.assertFalse((derived/'warm.o').exists())
+
+    def test_helper_prints_the_same_folder_for_ad_hoc_runners(self):
+        tree=self.worktree('bl35')
+        shutil.copy(ROOT/'docker-ws/sim_test_derived_data.sh',tree/'docker-ws/sim_test_derived_data.sh')
+        expected=self.bind(tree,'red')[0]['command'][-1]
+        out=subprocess.run(['bash',str(tree/'docker-ws/sim_test_derived_data.sh'),str(tree)],
+                           capture_output=True,text=True,env=os.environ)
+        self.assertEqual(out.returncode,0,out.stderr)
+        self.assertEqual(out.stdout.strip().splitlines()[-1],expected)
+
+    def test_simulator_adapter_uses_the_shared_folder_and_physical_ones_do_not(self):
+        checks=[c for c in json.loads((ROOT/'tool/testing/selection.json').read_text())['full_commands']
+                if c.get('id','').startswith('full.xctest.')]
+        built=[c for c in checks if any('build-for-testing' in s['command'] for s in c['steps'])]
+        for check in built:
+            text=json.dumps(check['steps'])
+            if check['device_roles']==['ios_simulator']:
+                self.assertIn('{sim_derived}',text,check['id'])
+                self.assertNotIn('{output}/derived',text,check['id'])
+            else:
+                self.assertNotIn('{sim_derived}',text,check['id'])
+        self.assertTrue(any(c['device_roles']==['ios_simulator'] for c in built))
