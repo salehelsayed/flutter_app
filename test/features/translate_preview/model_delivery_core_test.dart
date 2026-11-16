@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 final _manifest = ModelDeliveryManifest.fromJson({
   'model': 'gemma-4-E2B-it',
@@ -1603,6 +1605,196 @@ void main() {
       });
     }
   });
+
+  group('BL15 debug fixture hook', () {
+    const fixtureName = 'bl15_dinner_low_noise.wav';
+    const configuredName = String.fromEnvironment('BL15_REPLAY_WAV');
+
+    Future<
+      ({
+        GemmaPreviewService service,
+        Directory documents,
+        File recording,
+        _Bl15Documents paths,
+        List<String> decodedPaths,
+        List<Uint8List> modelInputs,
+      })
+    >
+    prepare({bool installFixture = true, bool modelFails = false}) async {
+      final documents = Directory.systemTemp.createTempSync('bl15-hook-');
+      final previous = PathProviderPlatform.instance;
+      final paths = _Bl15Documents(documents.path);
+      PathProviderPlatform.instance = paths;
+      addTearDown(() {
+        PathProviderPlatform.instance = previous;
+        documents.deleteSync(recursive: true);
+      });
+      final fixture = File('test/features/translate_preview/$fixtureName')
+          .readAsBytesSync();
+      if (installFixture) {
+        final target = File('${documents.path}/bl15/$fixtureName');
+        target.parent.createSync(recursive: true);
+        target.writeAsBytesSync(fixture);
+      }
+      final recording = File('${documents.path}/recording.aac')
+        ..writeAsBytesSync([1, 2, 3]);
+      final h = await _Harness.create(record: _verifiedRecord())
+          .timeout(const Duration(seconds: 3));
+      addTearDown(() => h.dispose().timeout(const Duration(seconds: 3)));
+      final decodedPaths = <String>[];
+      final modelInputs = <Uint8List>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel('mknoon/gemma_preview');
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'decodePcm') {
+          decodedPaths.add((call.arguments as Map)['path'] as String);
+          return {
+            'pcm': Uint8List.sublistView(fixture, 44),
+            'sampleRate': 16000,
+            'channels': 1,
+          };
+        }
+        expect(call.method, 'memory');
+        return <String, Object?>{};
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final service = GemmaPreviewService.forTesting(
+        controller: h.controller,
+        loadModel: () async => _AudioInputModel(
+          (message) => modelInputs.add(Uint8List.fromList(message.audioBytes!)),
+          () async {
+            if (modelFails) throw StateError('fixture model failure');
+            return '  Our group dinner moves to Friday evening.  ';
+          },
+        ),
+      );
+      return (
+        service: service,
+        documents: documents,
+        recording: recording,
+        paths: paths,
+        decodedPaths: decodedPaths,
+        modelInputs: modelInputs,
+      );
+    }
+
+    if (configuredName.isEmpty) {
+      test(
+        'without a define preserves the original input and writes no receipt',
+        () async {
+          final h = await prepare().timeout(const Duration(seconds: 3));
+          final text = await h.service
+              .transcribe(h.recording.path)
+              .timeout(const Duration(seconds: 3));
+          expect(text, 'Our group dinner moves to Friday evening.');
+          expect(h.decodedPaths, [h.recording.path]);
+          expect(h.paths.requests, 0);
+          expect(
+            Directory('${h.documents.path}/bl15/receipts').existsSync(),
+            isFalse,
+          );
+          expect(h.recording.readAsBytesSync(), [1, 2, 3]);
+        },
+      );
+    } else {
+      test('uses the configured local WAV and records exact model input and raw text', () async {
+        expect(configuredName, fixtureName);
+        final h = await prepare().timeout(const Duration(seconds: 3));
+        final text = await h.service
+            .transcribe(h.recording.path)
+            .timeout(const Duration(seconds: 3));
+        expect(text, 'Our group dinner moves to Friday evening.');
+        expect(h.modelInputs, hasLength(1));
+        expect(h.decodedPaths, ['${h.documents.path}/bl15/$fixtureName']);
+        final runs = Directory('${h.documents.path}/bl15/receipts')
+            .listSync()
+            .whereType<Directory>()
+            .toList();
+        expect(runs, hasLength(1));
+        final receipt = jsonDecode(
+          File('${runs.single.path}/receipt.json').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        expect(
+          receipt['fixtureSha256'],
+          'a4034826b2f26d27b82e54885cba38ede382962633966283c902dc5d7628adf9',
+        );
+        expect(receipt['normalizedFrames'], 90389);
+        expect(receipt['modelInputFrames'], inInclusiveRange(42389, 47188));
+        expect(receipt['modelInputBytes'], h.modelInputs.single.length);
+        expect(receipt['retainedPcmIsPrefix'], isTrue);
+        expect(
+          receipt['rawText'],
+          '  Our group dinner moves to Friday evening.  ',
+        );
+        expect(receipt['phase'], 'response');
+        expect(
+          File('${runs.single.path}/model-input.wav').readAsBytesSync(),
+          orderedEquals(h.modelInputs.single),
+        );
+        final original = File('${runs.single.path}/normalized.wav')
+            .readAsBytesSync();
+        expect(
+          h.modelInputs.single.sublist(44),
+          orderedEquals(original.sublist(44, h.modelInputs.single.length)),
+        );
+        expect(h.recording.readAsBytesSync(), [1, 2, 3]);
+      });
+
+      test(
+        'a missing fixture fails before decoding or model queries',
+        () async {
+          final h = await prepare(installFixture: false)
+              .timeout(const Duration(seconds: 3));
+          await expectLater(
+            h.service
+                .transcribe(h.recording.path)
+                .timeout(const Duration(seconds: 3)),
+            throwsA(isA<FileSystemException>()),
+          );
+          expect(h.decodedPaths, isEmpty);
+          expect(h.modelInputs, isEmpty);
+          expect(h.recording.readAsBytesSync(), [1, 2, 3]);
+        },
+      );
+
+      test('model failure retains a prepared receipt without a successful response', () async {
+        final h = await prepare(modelFails: true)
+            .timeout(const Duration(seconds: 3));
+        await expectLater(
+          h.service
+              .transcribe(h.recording.path)
+              .timeout(const Duration(seconds: 3)),
+          throwsA(isA<StateError>()),
+        );
+        expect(h.modelInputs, hasLength(1));
+        final receipts = Directory('${h.documents.path}/bl15/receipts');
+        expect(receipts.existsSync(), isTrue);
+        final run = receipts.listSync().whereType<Directory>().single;
+        final receipt = jsonDecode(
+          File('${run.path}/receipt.json').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        expect(receipt['phase'], 'prepared');
+        expect(receipt.containsKey('rawText'), isFalse);
+        expect(
+          File('${run.path}/model-input.wav').readAsBytesSync(),
+          orderedEquals(h.modelInputs.single),
+        );
+      });
+    }
+  });
+}
+
+class _Bl15Documents extends PathProviderPlatform {
+  _Bl15Documents(this.path);
+  final String path;
+  var requests = 0;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async {
+    requests++;
+    return path;
+  }
 }
 
 Future<T> _nextState<T extends ModelDeliveryState>(
