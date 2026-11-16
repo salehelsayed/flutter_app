@@ -94,7 +94,9 @@ final class EngagementChatWitness {
   }
 
   void admitted(EngagementChatIntent intent) {
-    if (!_acceptsFact(intent.owner)) return;
+    if (!_acceptsFact(intent.owner)) {
+      return;
+    }
     final contact = _contacts[intent.contactAccount];
     final key = (
       messageId: intent.messageId,
@@ -118,7 +120,9 @@ final class EngagementChatWitness {
   }
 
   void cancel(EngagementChatIntent intent) {
-    if (!_acceptsFact(intent.owner)) return;
+    if (!_acceptsFact(intent.owner)) {
+      return;
+    }
     final contact = _contacts[intent.contactAccount];
     final key = (
       messageId: intent.messageId,
@@ -150,7 +154,9 @@ final class EngagementChatWitness {
     final contact = _contacts[contactAccount];
     final key = (messageId: messageId, generationId: generationId);
     final pending = contact?.references[key];
-    if (pending == null || pending.delivered) return;
+    if (pending == null || pending.delivered) {
+      return;
+    }
     final next = _ContactWitness.copy(contact);
     if (pending.admitted) {
       next.deliveredOutgoingSeen = true;
@@ -165,9 +171,13 @@ final class EngagementChatWitness {
     EngagementChatCapture capture, {
     required String contactAccount,
   }) {
-    if (!_acceptsFact(capture) || !_validIdentifier(contactAccount)) return;
+    if (!_acceptsFact(capture) || !_validIdentifier(contactAccount)) {
+      return;
+    }
     final contact = _contacts[contactAccount];
-    if (contact?.incomingSeen == true) return;
+    if (contact?.incomingSeen == true) {
+      return;
+    }
     final next = _ContactWitness.copy(contact)..incomingSeen = true;
     _replaceContact(contactAccount, next);
   }
@@ -321,7 +331,9 @@ final class EngagementChatWitness {
           return false;
         }
         referenceCount += outgoing.length;
-        if (referenceCount > _maxReferences) return false;
+        if (referenceCount > _maxReferences) {
+          return false;
+        }
         final contact = _ContactWitness.copy(null)
           ..incomingSeen = incoming
           ..deliveredOutgoingSeen = delivered;
@@ -339,7 +351,9 @@ final class EngagementChatWitness {
             return false;
           }
           final key = (messageId: message, generationId: generation);
-          if (contact.references.containsKey(key)) return false;
+          if (contact.references.containsKey(key)) {
+            return false;
+          }
           contact.references[key] = _PendingReference(
             EngagementChatIntent._(
               owner: capture,
@@ -350,10 +364,14 @@ final class EngagementChatWitness {
             admitted: true,
           );
         }
-        if (!incoming && !delivered && outgoing.isEmpty) return false;
+        if (!incoming && !delivered && outgoing.isEmpty) {
+          return false;
+        }
         contacts[account] = contact;
       }
-      if (_encode(phase, contacts).length > _maxSnapshotBytes) return false;
+      if (_encode(phase, contacts).length > _maxSnapshotBytes) {
+        return false;
+      }
       // Install only the fully accepted candidate; failed restore changes nothing.
       _contacts = contacts;
       _phase = phase;
@@ -386,7 +404,9 @@ final class EngagementChatWitness {
       value.length == keys.length && keys.every(value.containsKey);
 
   static bool _validIdentifier(String value) {
-    if (value.isEmpty || value.length > _maxIdentifierBytes) return false;
+    if (value.isEmpty || value.length > _maxIdentifierBytes) {
+      return false;
+    }
     final bytes = utf8.encode(value);
     return bytes.length <= _maxIdentifierBytes && utf8.decode(bytes) == value;
   }
