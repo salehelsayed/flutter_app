@@ -4,6 +4,30 @@ import 'dart:convert';
 import '../bridge/bridge.dart';
 import 'app_diagnostics.dart';
 
+/// Opaque logical ownership captured before a producer's first await.
+final class ActiveIdentityReporterCapture {
+  ActiveIdentityReporterCapture._({
+    required ActiveIdentityReporter reporter,
+    required Bridge bridge,
+    required int generation,
+    required String account,
+    required String binding,
+    required int epoch,
+  }) : _reporter = reporter,
+       _bridge = bridge,
+       _generation = generation,
+       _account = account,
+       _binding = binding,
+       _epoch = epoch;
+
+  final ActiveIdentityReporter _reporter;
+  final Bridge _bridge;
+  final int _generation;
+  final String _account;
+  final String _binding;
+  final int _epoch;
+}
+
 /// Coordinates the current local owner; Go owns daily state and relay work.
 final class ActiveIdentityReporter {
   ActiveIdentityReporter({required String statePath}) : _statePath = statePath;
@@ -152,6 +176,48 @@ final class ActiveIdentityReporter {
     } catch (_) {
       // Local reporting never owns communication or logs private native text.
       return null;
+    }
+  }
+
+  /// Captures logical ownership even while its native configuration is pending.
+  /// Capturing alone never marks activity and retains no root secret.
+  ActiveIdentityReporterCapture? captureOwner({
+    required String expectedAccountPeerId,
+  }) {
+    final bridge = _bridge;
+    final identity = _identity;
+    final consent = _consent;
+    if (_disposed || _retired || bridge == null || !bridge.isInitialized ||
+        identity == null || consent == null || !consent.enabled ||
+        identity.account != expectedAccountPeerId) {
+      return null;
+    }
+    return ActiveIdentityReporterCapture._(
+      reporter: this,
+      bridge: bridge,
+      generation: _generation,
+      account: identity.account,
+      binding: identity.binding,
+      epoch: consent.consentEpoch,
+    );
+  }
+
+  bool _captureCurrent(ActiveIdentityReporterCapture capture) {
+    final identity = _identity;
+    final consent = _consent;
+    return !_disposed && !_retired &&
+        identical(capture._reporter, this) &&
+        identical(capture._bridge, _bridge) &&
+        capture._bridge.isInitialized && capture._generation == _generation &&
+        identity != null && identity.account == capture._account &&
+        identity.binding == capture._binding && consent != null &&
+        consent.enabled && consent.consentEpoch == capture._epoch;
+  }
+
+  /// RED scaffold: captured emission and deferred native binding are absent.
+  void markCaptured(ActiveIdentityReporterCapture capture) {
+    if (!_captureCurrent(capture)) {
+      return;
     }
   }
 
