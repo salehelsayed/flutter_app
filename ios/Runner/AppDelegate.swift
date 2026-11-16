@@ -985,6 +985,23 @@ final class IosSetupReadinessEntryCoordinator {
     return didFinish
   }
 
+  // BL-35: UIKit cannot read its restoration files during a locked
+  // background launch and then ends the app at unlock. Nothing is restored
+  // through UIKit, so neither save nor restore that state.
+  override func application(
+    _ application: UIApplication,
+    shouldSaveSecureApplicationState coder: NSCoder
+  ) -> Bool {
+    false
+  }
+
+  override func application(
+    _ application: UIApplication,
+    shouldRestoreSecureApplicationState coder: NSCoder
+  ) -> Bool {
+    false
+  }
+
   override func application(
     _ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
