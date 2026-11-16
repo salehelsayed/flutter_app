@@ -393,6 +393,8 @@ class Peer implements rtc.RTCPeerConnection {
   @override
   Future<void> addCandidate(rtc.RTCIceCandidate c) async {}
   @override
+  Future<void> setConfiguration(Map<String, dynamic> configuration) async {}
+  @override
   Future<void> close() async {
     closes++;
   }
