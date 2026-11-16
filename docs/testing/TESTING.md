@@ -13500,6 +13500,13 @@ testers. There is no capability negotiation. An older receiver can reject a
 labeled event if that order is violated; old-shape records remain valid on the
 updated receiver. Host schema tests do not establish deployment or device proof.
 
+On pinned Dart 3.13.2, a context-typed async throw can return `Future<Never>`.
+A bool-valued `timeout` fallback can then fail before subscribing and leak the
+original error. Without a fallback, the existing catch contains errors and
+timeouts; `Future<bool>.sync` can return the same narrow future, not normalize it.
+`test/core/diagnostics/engagement_chat_observer_test.dart` E2O-011 retains the throwing fixture; verified contrasts are retained under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-observer-green/first-failure-investigation/probe-run1/`.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation

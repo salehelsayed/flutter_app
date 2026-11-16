@@ -137,7 +137,7 @@ void main() {
     expect(await _within(foreign.readAsBytes()), orderedEquals([97]));
     expect(await _within(File(temporaryPath!).exists()), isFalse);
     final paths = await _within(
-      directory.list().map((entry) => entry.path).toList(),
+      directory.list().asyncMap((entry) => entry.resolveSymbolicLinks()).toList(),
     );
     expect(paths, unorderedEquals([checkpoint.path, foreign.path]));
   });
@@ -205,7 +205,7 @@ void main() {
     expect(renameCalls, 1);
     expect(await _within(checkpoint.readAsBytes()), orderedEquals([51]));
     final paths = await _within(
-      directory.list().map((entry) => entry.path).toList(),
+      directory.list().asyncMap((entry) => entry.resolveSymbolicLinks()).toList(),
     );
     expect(paths, [checkpoint.path]);
   });

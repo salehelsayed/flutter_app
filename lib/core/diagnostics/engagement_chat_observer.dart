@@ -448,7 +448,7 @@ final class EngagementChatObserver {
     bool retained;
     try {
       retained = await retainChat(capture, _week!.week)
-          .timeout(_deadline, onTimeout: () => false);
+          .timeout(_deadline);
     } catch (_) {
       retained = false;
     }
