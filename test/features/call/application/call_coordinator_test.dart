@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
@@ -668,6 +669,177 @@ void main() {
       },
     );
   }
+
+  test('outgoing admission survives its own published successor after persistence', () async {
+    const bound = Duration(seconds: 5);
+    final persistEntered = Completer<void>();
+    final releasePersist = Completer<void>();
+    final releaseEffect = Completer<void>();
+    final published = Completer<void>();
+    final executor = _RecordingExecutor(gate: releaseEffect);
+    var persisted = false;
+    CallId? visibleCall;
+    final request = OutgoingCallStartRequest(
+      isCurrent: () => visibleCall == null,
+    );
+    final coordinator = _coordinator(
+      history: _MemoryHistoryRepository(),
+      executor: executor,
+      persistActiveCall: (snapshot) async {
+        if (snapshot.state != CallState.preparing) return;
+        persistEntered.complete();
+        await releasePersist.future.timeout(bound);
+        persisted = true;
+      },
+    );
+    bool? admittedAtPublication;
+    bool? persistedAtPublication;
+    List<CallEffectType>? effectsAtPublication;
+    final subscription = coordinator.snapshots.listen((snapshot) {
+      if (snapshot.state != CallState.preparing) return;
+      visibleCall = snapshot.callId;
+      admittedAtPublication = request.isAdmitted;
+      persistedAtPublication = persisted;
+      effectsAtPublication = List.of(executor.effects);
+      published.complete();
+    });
+    Future<CallReduction>? placement;
+    try {
+      placement = coordinator.placeCall(
+        contactPeerId: 'contact-a',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+        canPlace: () => !request.isCanceled,
+        onApplied: (_) => request.admit(),
+      );
+      await persistEntered.future.timeout(bound);
+      expect(request.isAdmitted, isFalse);
+      expect(published.isCompleted, isFalse);
+      expect(executor.effects, isEmpty);
+      releasePersist.complete();
+      await published.future.timeout(bound);
+      expect(persistedAtPublication, isTrue);
+      expect(admittedAtPublication, isTrue);
+      expect(effectsAtPublication, isEmpty);
+      expect(visibleCall, _callId);
+      expect(coordinator.activeSession!.callId, _callId);
+      expect(request.isCanceled, isFalse);
+      // After transfer, UI cancellation cannot revoke the call.
+      request.cancel();
+      expect(request.isCanceled, isFalse);
+      releaseEffect.complete();
+      expect(
+        (await placement.timeout(bound)).decision,
+        CallEventDecision.applied,
+      );
+      expect(executor.effects, contains(CallEffectType.prepareOutgoingInvite));
+    } finally {
+      if (!releasePersist.isCompleted) releasePersist.complete();
+      if (!releaseEffect.isCompleted) releaseEffect.complete();
+      try {
+        if (placement != null) await placement.timeout(bound);
+      } finally {
+        try {
+          await subscription.cancel().timeout(bound);
+        } finally {
+          await coordinator.dispose().timeout(bound);
+        }
+      }
+    }
+  }, timeout: const Timeout.factor(1));
+
+  test('native Answer publication observes durable admission before media preparation', () async {
+    const bound = Duration(seconds: 5);
+    final persistEntered = Completer<void>();
+    final releasePersist = Completer<void>();
+    final releaseEffect = Completer<void>();
+    final published = Completer<void>();
+    final admission = Completer<CallReduction>();
+    final executor = _RecordingExecutor(
+      gate: releaseEffect,
+      blockedEffect: CallEffectType.prepareAcceptedMedia,
+    );
+    var persisted = false;
+    final coordinator = _coordinator(
+      history: _MemoryHistoryRepository(),
+      executor: executor,
+      persistActiveCall: (snapshot) async {
+        if (snapshot.state != CallState.accepted) return;
+        persistEntered.complete();
+        await releasePersist.future.timeout(bound);
+        persisted = true;
+      },
+    );
+    bool? admittedAtPublication;
+    bool? persistedAtPublication;
+    List<CallEffectType>? effectsAtPublication;
+    final subscription = coordinator.snapshots.listen((snapshot) {
+      if (snapshot.state != CallState.accepted) return;
+      admittedAtPublication = admission.isCompleted;
+      persistedAtPublication = persisted;
+      effectsAtPublication = List.of(executor.effects);
+      published.complete();
+    });
+    Future<CallReduction>? answer;
+    try {
+      await coordinator
+          .dispatch(
+            _event(
+              CallEventType.remoteInvite,
+              expiresAt: _now.add(const Duration(seconds: 45)),
+            ),
+          )
+          .timeout(bound);
+      await coordinator
+          .dispatch(_event(CallEventType.incomingValidated))
+          .timeout(bound);
+      await coordinator
+          .dispatch(_event(CallEventType.systemUiPresented))
+          .timeout(bound);
+      executor.effects.clear();
+      answer = coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.nativeAction,
+          eventId: 'native-answer-admission',
+          occurredAt: _now,
+          callId: _callId,
+          contactPeerId: 'contact-a',
+          nativeAction: CallNativeAction.answer,
+        ),
+        onApplied: admission.complete,
+      );
+      await persistEntered.future.timeout(bound);
+      expect(admission.isCompleted, isFalse);
+      expect(published.isCompleted, isFalse);
+      expect(executor.effects, isEmpty);
+      releasePersist.complete();
+      await published.future.timeout(bound);
+      expect(persistedAtPublication, isTrue);
+      expect(admittedAtPublication, isTrue);
+      expect(effectsAtPublication, isEmpty);
+      expect(
+        (await admission.future.timeout(bound)).snapshot.state,
+        CallState.accepted,
+      );
+      expect(coordinator.activeSession!.state, CallState.accepted);
+      releaseEffect.complete();
+      expect((await answer.timeout(bound)).decision, CallEventDecision.applied);
+      expect(executor.effects, contains(CallEffectType.prepareAcceptedMedia));
+    } finally {
+      if (!releasePersist.isCompleted) releasePersist.complete();
+      if (!releaseEffect.isCompleted) releaseEffect.complete();
+      try {
+        if (answer != null) await answer.timeout(bound);
+      } finally {
+        try {
+          await subscription.cancel().timeout(bound);
+        } finally {
+          await coordinator.dispose().timeout(bound);
+        }
+      }
+    }
+  }, timeout: const Timeout.factor(1));
+
   test(
     'canceling a queued preflight prevents admission and preserves retry',
     () async {

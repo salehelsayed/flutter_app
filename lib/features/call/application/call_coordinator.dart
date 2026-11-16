@@ -505,12 +505,14 @@ final class CallCoordinator {
     } catch (_) {
       // Identifier-free diagnostics cannot change reducer application.
     }
-    _snapshots.add(snapshot);
+    // Transfer admitted request ownership before its own projection can be
+    // observed as a successor by the presentation's preflight fence.
     try {
       onApplied?.call(reduction);
     } catch (_) {
       // An admission observer cannot change canonical call handling.
     }
+    _snapshots.add(snapshot);
 
     Object? firstEffectError;
     StackTrace? firstEffectStack;

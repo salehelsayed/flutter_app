@@ -14,10 +14,16 @@ class CallVideoViewSurface extends StatelessWidget {
     super.key,
     required this.projection,
     required this.slot,
+    this.fill = false,
+    this.portrait = false,
+    this.emptyRemote = false,
   });
 
   final ForegroundCallProjection projection;
   final CallVideoRendererSlot slot;
+  final bool fill;
+  final bool portrait;
+  final bool emptyRemote;
 
   @override
   Widget build(BuildContext context) {
@@ -68,35 +74,116 @@ class CallVideoViewSurface extends StatelessWidget {
       label: label,
       image: showTexture,
       excludeSemantics: true,
-      child: AspectRatio(
-        aspectRatio: 16 / 9,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: ColoredBox(
-            color: colors.surfaceRaised,
-            child: showTexture
-                ? FittedBox(
-                    fit: BoxFit.contain,
-                    child: SizedBox(
-                      width: view.width.toDouble(),
-                      height: view.height.toDouble(),
-                      child: Texture(textureId: view.textureId),
-                    ),
-                  )
-                : Center(
-                    child: Icon(
-                      camera == CallCameraState.paused
-                          ? Icons.pause_circle_outline
-                          : camera == CallCameraState.off
-                          ? Icons.videocam_off_outlined
-                          : Icons.hourglass_empty,
-                      size: 32,
-                      color: colors.iconMuted,
-                    ),
-                  ),
-          ),
-        ),
+      child: _frame(
+        showTexture: showTexture,
+        view: view,
+        camera: camera,
+        local: local,
+        labels: labels,
+        colors: colors,
       ),
     );
+  }
+
+  Widget _frame({
+    required bool showTexture,
+    required CallVideoView? view,
+    required CallCameraState camera,
+    required bool local,
+    required CallVideoLocalizations labels,
+    required BackgroundReadableColors colors,
+  }) {
+    Widget content = showTexture
+        ? FittedBox(
+            fit: fill || portrait ? BoxFit.cover : BoxFit.contain,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: view!.width.toDouble(),
+              height: view.height.toDouble(),
+              child: Texture(textureId: view.textureId),
+            ),
+          )
+        : emptyRemote && !local && camera != CallCameraState.on
+        ? const SizedBox.expand()
+        : ColoredBox(
+            color: colors.surfaceRaised,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    camera == CallCameraState.paused
+                        ? Icons.pause_circle_outline
+                        : camera == CallCameraState.off
+                        ? Icons.videocam_off_outlined
+                        : Icons.hourglass_empty,
+                    size: 28,
+                    color: colors.iconMuted,
+                  ),
+                  if (portrait) ...[
+                    const SizedBox(height: 8),
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(
+                          camera == CallCameraState.off
+                              ? labels.cameraOffCaption
+                              : labels.localCameraLabel(camera),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+    if (fill && showTexture) {
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          content,
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x44000000),
+                    Colors.transparent,
+                    Color(0x99000000),
+                  ],
+                  stops: [0, 0.45, 1],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (!fill) {
+      content = Container(
+        foregroundDecoration: portrait
+            ? BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+              )
+            : null,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(portrait ? 18 : 12),
+          child: content,
+        ),
+      );
+    }
+    return fill || portrait
+        ? SizedBox.expand(child: content)
+        : AspectRatio(aspectRatio: 16 / 9, child: content);
   }
 }

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
@@ -185,6 +187,7 @@ class _VideoCapability extends _AudioCapability
   final videoCalls =
       <({CallId callId, int generation, CallVideoIntent intent})>[];
   VoidCallback? afterVideo;
+  Future<ForegroundCallActionResult> Function()? videoResult;
 
   @override
   Future<ForegroundCallActionResult> applyVideoIntent(
@@ -194,7 +197,7 @@ class _VideoCapability extends _AudioCapability
   }) async {
     videoCalls.add((callId: callId, generation: generation, intent: intent));
     afterVideo?.call();
-    return ForegroundCallActionResult.applied;
+    return videoResult?.call() ?? ForegroundCallActionResult.applied;
   }
 }
 
@@ -234,16 +237,19 @@ Widget _app(
   double scale = 1,
   Widget? retainedChild,
   bool rootBuilder = false,
+  MicPermissionGateway? micPermission,
+  DateTime Function()? now,
 }) {
   final retained =
       retainedChild ??
       const Scaffold(body: Center(child: Text('retained route')));
   Widget overlay(Widget child) => ForegroundCallOverlay(
     capability: capability,
+    micPermission: micPermission,
     loadContactDisplayName: (_) async => locale.languageCode == 'ar'
         ? 'اسم صديق تجريبي طويل للغاية'
         : 'Alexandria Very Long Synthetic Contact Name',
-    now: () => _now,
+    now: now ?? () => _now,
     child: child,
   );
   return MaterialApp(
@@ -274,6 +280,7 @@ Future<void> _withOverlay(
   double scale = 1,
   Widget? retainedChild,
   bool rootBuilder = false,
+  MicPermissionGateway? micPermission,
 }) async {
   final semantics = tester.ensureSemantics();
   try {
@@ -284,6 +291,7 @@ Future<void> _withOverlay(
         scale: scale,
         retainedChild: retainedChild,
         rootBuilder: rootBuilder,
+        micPermission: micPermission,
       ),
     );
     await tester.pumpAndSettle();
@@ -448,8 +456,458 @@ Map<String, Object?> _viewAudioSignature(WidgetTester tester) {
   };
 }
 
+const _cameraDenied = ForegroundCallActionResult(
+  ForegroundCallActionStatus.unavailable,
+  cameraFailure: ForegroundCallCameraFailure.permissionDenied,
+);
+
+Future<void> _feedbackTap(WidgetTester tester, _VideoCapability cap) async {
+  final before = cap.videoCalls.length;
+  final controls = tester.widget<CallVideoControls>(
+    find.byType(CallVideoControls),
+  );
+  final intent = controls.presentation.intentFor(CallVideoAction.turnCameraOn);
+  expect(intent, isNotNull);
+  controls.onIntent(intent!);
+  await tester.pump();
+  expect(cap.videoCalls, hasLength(before + 1));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('VUI4 typed camera feedback binding', () {
+    for (final replacement in [
+      'successor',
+      'generation',
+      'end',
+      'capability',
+    ]) {
+      testWidgets(
+        'retained Settings rejects $replacement without another intent',
+        (tester) async {
+          final gateway = FakeMicPermissionGateway();
+          final cap = _VideoCapability(
+            _projection(media: _video(camera: CallCameraState.off)),
+          )..videoResult = () async => _cameraDenied;
+          _VideoCapability? successor;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            final oldSettings = tester
+                .widget<FilledButton>(
+                  find.byKey(const ValueKey('camera-result-settings')),
+                )
+                .onPressed!;
+            // The separate current-owner Settings test proves this action opens.
+            // No intent or Settings action may invalidate this closure before
+            // the owner replacement under test.
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(1));
+            if (replacement == 'capability') {
+              successor = _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              );
+              await tester.pumpWidget(_app(successor!, micPermission: gateway));
+            } else {
+              cap.emit(
+                _projection(
+                  callId: replacement == 'successor' ? _callB : _callA,
+                  generation: replacement == 'generation' ? 8 : 7,
+                  state: replacement == 'end'
+                      ? CallState.ended
+                      : CallState.connected,
+                  media: _video(camera: CallCameraState.off),
+                ),
+                notify: false,
+              );
+            }
+            // Current owner can change before its presentation stream emits.
+            oldSettings();
+            await tester.pump();
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(1));
+            expect(successor?.videoCalls ?? [], isEmpty);
+            if (successor == null) cap.emit(cap.current);
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsNothing,
+            );
+          }, micPermission: gateway);
+          await successor?.close();
+        },
+      );
+    }
+
+    for (final (active, failure) in [
+      (false, CallAudioFailure.none),
+      (true, CallAudioFailure.engineFailed),
+    ]) {
+      testWidgets(
+        'audio active=$active failure=$failure never claims hearing',
+        (tester) async {
+          final initial = _projection(
+            media: _video(camera: CallCameraState.off),
+          );
+          final cap = _VideoCapability(initial)
+            ..videoResult = () async => _cameraDenied;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                l10n.call_video_camera_permission_body(
+                  'Alexandria Very Long Synthetic Contact Name',
+                ),
+              ),
+              findsOneWidget,
+            );
+            cap.emit(
+              ForegroundCallProjection(
+                session: initial.session,
+                video: initial.video,
+                audio: CallAudioControlState(
+                  muted: false,
+                  selectedRoute: initial.audio.selectedRoute,
+                  supportedRoutes: initial.audio.supportedRoutes,
+                  active: active,
+                  failure: failure,
+                ),
+              ),
+            );
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_body_without_audio),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                l10n.call_video_camera_permission_body(
+                  'Alexandria Very Long Synthetic Contact Name',
+                ),
+              ),
+              findsNothing,
+            );
+          });
+        },
+      );
+    }
+
+    for (final size in [const Size(360, 640), const Size(600, 320)]) {
+      testWidgets('Arabic 2x card at $size keeps End reachable', (
+        tester,
+      ) async {
+        _viewport(tester, size.width, size.height);
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(
+          tester,
+          cap,
+          (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            expect(tester.takeException(), isNull);
+            final end = find.bySemanticsIdentifier('call_end');
+            expect(end, findsOneWidget);
+            await tester.ensureVisible(end);
+            await tester.tap(end);
+            await tester.pump();
+            expect(cap.audioCalls, contains(('end', _callA)));
+            expect(tester.takeException(), isNull);
+          },
+          locale: const Locale('ar'),
+          scale: 2,
+          micPermission: FakeMicPermissionGateway(),
+        );
+      });
+    }
+
+    testWidgets('disposed overlay ignores late camera feedback', (
+      tester,
+    ) async {
+      final cap = _VideoCapability(
+        _projection(media: _video(camera: CallCameraState.off)),
+      )..videoResult = () async => _cameraDenied;
+      await _withOverlay(tester, cap, (l10n) async {
+        await _feedbackTap(tester, cap);
+        expect(
+          find.text(l10n.call_video_camera_permission_title),
+          findsOneWidget,
+        );
+        final pending = Completer<ForegroundCallActionResult>();
+        cap.videoResult = () => pending.future;
+        await _feedbackTap(tester, cap);
+        await tester.pumpWidget(const SizedBox.shrink());
+        pending.complete(_cameraDenied);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(
+          find.text(l10n.call_video_camera_permission_title),
+          findsNothing,
+        );
+      });
+    });
+
+    testWidgets(
+      'permission card opens Settings only explicitly and never retries capture',
+      (tester) async {
+        final gateway = FakeMicPermissionGateway();
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final settings = find.byKey(const ValueKey('camera-result-settings'));
+          expect(settings, findsOneWidget);
+          expect(gateway.openAppSettingsCallCount, 0);
+          await tester.tap(settings);
+          await tester.pump();
+          expect(gateway.openAppSettingsCallCount, 1);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pump();
+          expect(cap.videoCalls, hasLength(1));
+          expect(gateway.requestCallCount, 0);
+          await tester.tap(find.byKey(const ValueKey('camera-result-dismiss')));
+          await tester.pump();
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+        }, micPermission: gateway);
+      },
+    );
+
+    for (final failure in [
+      ForegroundCallCameraFailure.permissionRestricted,
+      ForegroundCallCameraFailure.unavailable,
+    ]) {
+      testWidgets('$failure has no Settings or hearing claim', (tester) async {
+        final cap =
+            _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              )
+              ..videoResult = () async => ForegroundCallActionResult(
+                ForegroundCallActionStatus.unavailable,
+                cameraFailure: failure,
+              );
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('camera-result-settings')),
+            findsNothing,
+          );
+          expect(
+            find.text(l10n.call_video_camera_permission_body_without_audio),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('camera-result-dismiss')),
+            findsOneWidget,
+          );
+        }, micPermission: FakeMicPermissionGateway());
+      });
+    }
+
+    testWidgets(
+      'hearing sentence follows current audio truth while card remains visible',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final audible = l10n.call_video_camera_permission_body(
+            'Alexandria Very Long Synthetic Contact Name',
+          );
+          expect(find.text(audible), findsOneWidget);
+          for (final muted in [true, false]) {
+            cap.emit(
+              _projection(
+                media: _video(camera: CallCameraState.off),
+                muted: muted,
+              ),
+            );
+            await tester.pump();
+            expect(
+              find.text(
+                muted
+                    ? l10n.call_video_camera_permission_body_without_audio
+                    : audible,
+              ),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                muted
+                    ? audible
+                    : l10n.call_video_camera_permission_body_without_audio,
+              ),
+              findsNothing,
+            );
+          }
+          cap.emit(
+            _projection(
+              media: _video(camera: CallCameraState.off, reconnecting: true),
+              state: CallState.reconnecting,
+            ),
+          );
+          await tester.pump();
+          expect(find.text(audible), findsNothing);
+        });
+      },
+    );
+
+    for (final replacement in [
+      'successor',
+      'generation',
+      'end',
+      'capability',
+    ]) {
+      testWidgets(
+        'late denial cannot cross $replacement or retain old Settings action',
+        (tester) async {
+          final gateway = FakeMicPermissionGateway();
+          final cap = _VideoCapability(
+            _projection(media: _video(camera: CallCameraState.off)),
+          )..videoResult = () async => _cameraDenied;
+          _VideoCapability? successor;
+          await _withOverlay(tester, cap, (l10n) async {
+            await _feedbackTap(tester, cap);
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsOneWidget,
+            );
+            final oldSettings = tester
+                .widget<FilledButton>(
+                  find.byKey(const ValueKey('camera-result-settings')),
+                )
+                .onPressed!;
+            final pending = Completer<ForegroundCallActionResult>();
+            cap.videoResult = () => pending.future;
+            await _feedbackTap(tester, cap);
+            if (replacement == 'capability') {
+              successor = _VideoCapability(
+                _projection(media: _video(camera: CallCameraState.off)),
+              );
+              await tester.pumpWidget(_app(successor!, micPermission: gateway));
+            } else {
+              cap.emit(
+                _projection(
+                  callId: replacement == 'successor' ? _callB : _callA,
+                  generation: replacement == 'generation' ? 8 : 7,
+                  state: replacement == 'end'
+                      ? CallState.ended
+                      : CallState.connected,
+                  media: _video(camera: CallCameraState.off),
+                ),
+              );
+              await tester.pump();
+            }
+            oldSettings();
+            pending.complete(_cameraDenied);
+            await tester.pump();
+            expect(
+              find.text(l10n.call_video_camera_permission_title),
+              findsNothing,
+            );
+            expect(gateway.openAppSettingsCallCount, 0);
+            expect(cap.videoCalls, hasLength(2));
+            expect(successor?.videoCalls ?? [], isEmpty);
+          }, micPermission: gateway);
+          await successor?.close();
+        },
+      );
+    }
+
+    testWidgets(
+      'new intent supersedes older feedback in the same call generation',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          final pending = Completer<ForegroundCallActionResult>();
+          cap.videoResult = () => pending.future;
+          await _feedbackTap(tester, cap);
+          cap.videoResult = () async => const ForegroundCallActionResult(
+            ForegroundCallActionStatus.unavailable,
+            cameraFailure: ForegroundCallCameraFailure.unavailable,
+          );
+          await _feedbackTap(tester, cap);
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          pending.complete(_cameraDenied);
+          await tester.pump();
+          expect(find.text(l10n.call_video_camera_unavailable), findsOneWidget);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+        });
+      },
+    );
+
+    testWidgets(
+      'generic stale result and a missing settings route remain safe',
+      (tester) async {
+        final cap = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        )..videoResult = () async => _cameraDenied;
+        await _withOverlay(tester, cap, (l10n) async {
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('camera-result-settings')),
+            findsNothing,
+          );
+          cap.videoResult = () async => ForegroundCallActionResult.unavailable;
+          await _feedbackTap(tester, cap);
+          expect(
+            find.text(l10n.call_video_camera_permission_title),
+            findsNothing,
+          );
+          expect(find.text(l10n.call_video_camera_unavailable), findsNothing);
+        });
+      },
+    );
+  });
 
   for (final media in [CallMediaKind.video, CallMediaKind.audio]) {
     testWidgets('U6-entry initial $media answer reaches exact owner once', (
@@ -556,8 +1014,8 @@ void main() {
           cap,
           (l10n) async {
             for (final text in [
-              l10n.call_video_action_accept_upgrade,
-              l10n.call_video_action_use_audio_only,
+              l10n.call_answer,
+              l10n.call_video_status_audio_only,
             ]) {
               final finder = find.text(text);
               expect(finder, findsOneWidget);
@@ -575,6 +1033,18 @@ void main() {
             expect(
               find.bySemanticsIdentifier('call_accept_audio'),
               findsOneWidget,
+            );
+            expect(
+              tester
+                  .getSemantics(find.bySemanticsIdentifier('call_accept_video'))
+                  .tooltip,
+              l10n.call_video_action_accept_upgrade,
+            );
+            expect(
+              tester
+                  .getSemantics(find.bySemanticsIdentifier('call_accept_audio'))
+                  .tooltip,
+              l10n.call_video_action_use_audio_only,
             );
             expect(tester.takeException(), isNull);
           },
@@ -699,12 +1169,20 @@ void main() {
                   language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
                 );
                 final text = phase == _Phase.active
-                    ? l10n.call_video_action_turn_camera_off
+                    ? l10n.call_video_camera_caption
                     : l10n.call_video_action_use_audio_only;
+                if (phase == _Phase.active) {
+                  expect(
+                    tester.getSemantics(button).label,
+                    contains(l10n.call_video_action_turn_camera_off),
+                  );
+                }
                 final paragraph = tester.renderObject<RenderParagraph>(
                   find.text(text),
                 );
-                if (paragraph.didExceedMaxLines) {
+                if (phase == _Phase.active) {
+                  expect(paragraph.didExceedMaxLines, isFalse);
+                } else if (paragraph.didExceedMaxLines) {
                   expect(paragraph.overflow, TextOverflow.ellipsis);
                 }
                 await tester.tap(button);
@@ -793,6 +1271,73 @@ void main() {
             'outcome': 'refused',
             'reason': 'staleOwner',
           });
+        });
+      },
+    );
+  }
+
+  for (final change in ['call', 'generation', 'capability']) {
+    testWidgets(
+      'VUI1 retained accepted-video camera callback rejects rebuilt $change',
+      (tester) async {
+        _viewport(tester, 390, 844);
+        final first = _VideoCapability(
+          _projection(media: _video(camera: CallCameraState.off)),
+        );
+        await _withOverlay(tester, first, (_) async {
+          final oldState = tester.state(find.byType(ActiveCallScreen));
+          final oldControls = tester.widget<CallVideoControls>(
+            find.byType(CallVideoControls),
+          );
+          final intent = oldControls.presentation.intentFor(
+            CallVideoAction.turnCameraOn,
+          );
+          expect(intent, isNotNull);
+          var current = first;
+          if (change == 'capability') {
+            current = _VideoCapability(
+              _projection(media: _video(camera: CallCameraState.off)),
+            );
+            addTearDown(current.close);
+            await tester.pumpWidget(_app(current));
+          } else {
+            first.emit(
+              _projection(
+                callId: change == 'call' ? _callB : _callA,
+                generation: change == 'generation' ? 8 : 7,
+                media: _video(camera: CallCameraState.off),
+              ),
+            );
+          }
+          await tester.pumpAndSettle();
+          expect(tester.state(find.byType(ActiveCallScreen)), same(oldState));
+          oldControls.onIntent(intent!);
+          await tester.pump();
+          expect(first.videoCalls, isEmpty);
+          expect(current.videoCalls, isEmpty);
+          final newControls = tester.widget<CallVideoControls>(
+            find.byType(CallVideoControls),
+          );
+          final currentIntent = newControls.presentation.intentFor(
+            CallVideoAction.turnCameraOn,
+          );
+          expect(currentIntent, isNotNull);
+          newControls.onIntent(currentIntent!);
+          await tester.pump();
+          expect(current.videoCalls, hasLength(1));
+          expect(
+            current.videoCalls.single.callId,
+            change == 'call' ? _callB : _callA,
+          );
+          expect(
+            current.videoCalls.single.generation,
+            change == 'generation' ? 8 : 7,
+          );
+          expect(
+            current.videoCalls.single.intent.action,
+            CallVideoAction.turnCameraOn,
+          );
+          expect(tester.takeException(), isNull);
         });
       },
     );
@@ -893,10 +1438,20 @@ void main() {
             .presentation,
         same(initial.video!.presentation),
       );
-      expect(find.text(l10n.call_video_local_camera_off), findsOneWidget);
+      expect(
+        tester
+            .getSemantics(find.bySemanticsIdentifier('call_video_view_local'))
+            .label,
+        l10n.call_video_local_camera_off,
+      );
       cap.emit(_projection());
       await tester.pump();
-      expect(find.text(l10n.call_video_local_camera_on), findsOneWidget);
+      expect(
+        tester
+            .getSemantics(find.bySemanticsIdentifier('call_video_view_local'))
+            .label,
+        l10n.call_video_local_camera_on,
+      );
     });
   });
 
@@ -944,9 +1499,9 @@ void main() {
         );
         final flip = find.descendant(
           of: find.byKey(const ValueKey('call_video_switch_camera')),
-          matching: find.byType(OutlinedButton),
+          matching: find.byType(IconButton),
         );
-        expect(tester.widget<OutlinedButton>(flip).onPressed, isNull);
+        expect(tester.widget<IconButton>(flip).onPressed, isNull);
         await _audioTap(tester, _Phase.active);
         expect(cap.audioCalls, [('end', _callA)]);
       });
@@ -1908,8 +2463,8 @@ void main() {
             final local = find.bySemanticsIdentifier('call_video_view_local');
             final remoteRect = tester.getRect(remote);
             final localRect = tester.getRect(local);
-            expect(remoteRect.left, greaterThanOrEqualTo(16));
-            expect(remoteRect.right, lessThanOrEqualTo(304));
+            expect(remoteRect.left, closeTo(0, 1));
+            expect(remoteRect.right, closeTo(320, 1));
             expect(remoteRect.top, greaterThanOrEqualTo(0));
             expect(remoteRect.bottom, lessThanOrEqualTo(640));
             expect(remoteRect.contains(localRect.topLeft), isTrue);
@@ -2027,4 +2582,337 @@ void main() {
       },
     );
   });
+  _vui6Tests();
+}
+
+ForegroundCallProjection _vui6Projection({
+  required DateTime? connectedAt,
+  int generation = 7,
+  int textureId = 41,
+}) {
+  final base = _pipProjection(
+    generation: generation,
+    view: CallVideoView(textureId: textureId, width: 1280, height: 720),
+  );
+  return ForegroundCallProjection(
+    session: base.session.copyWith(connectedAt: connectedAt),
+    audio: base.audio,
+    video: base.video,
+  );
+}
+
+Future<void> _vui6WithOverlay(
+  WidgetTester tester,
+  _VideoCapability capability,
+  Future<void> Function(AppLocalizations, String) body, {
+  String language = 'en',
+  double scale = 1,
+  Size size = const Size(390, 844),
+  DateTime Function()? now,
+}) async {
+  _viewport(tester, size.width, size.height);
+  addTearDown(tester.view.resetViewInsets);
+  final locale = Locale(language);
+  try {
+    await tester.pumpWidget(
+      _app(capability, locale: locale, scale: scale, now: now),
+    );
+    await tester.pump();
+    await tester.pump();
+    final screen = tester.widget<ActiveCallScreen>(
+      find.byType(ActiveCallScreen),
+    );
+    expect(
+      screen.videoPresentation,
+      same(capability.current!.video!.presentation),
+    );
+    await body(lookupAppLocalizations(locale), screen.contactUsername);
+    expect(tester.takeException(), isNull);
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(
+      () => capability.close().timeout(const Duration(seconds: 5)),
+    );
+  }
+}
+
+Finder _vui6TileText(String text) => find.descendant(
+  of: find.byKey(const ValueKey('call-pip-tile')),
+  matching: find.text(text),
+);
+
+void _vui6ExpectMetadata(
+  WidgetTester tester,
+  AppLocalizations l10n,
+  String name, {
+  String? duration,
+}) {
+  final tile = find.byKey(const ValueKey('call-pip-tile'));
+  expect(tile, findsOneWidget);
+  // The existing return bar already has these values; only the tile is new.
+  final tileName = _vui6TileText(name);
+  expect(tileName, findsOneWidget);
+  if (duration != null) expect(_vui6TileText(duration), findsOneWidget);
+  final caption = _vui6TileText(l10n.call_video_return_caption);
+  expect(caption, findsOneWidget);
+  expect(tester.getSemantics(tileName).label, contains(name));
+  expect(find.byType(CallReturnBar), findsOneWidget);
+  final tileRect = tester.getRect(tile);
+  final frame = tester.getRect(find.byKey(const ValueKey('call-pip-view')));
+  expect(frame.height, greaterThan(frame.width));
+  for (final finder in [
+    tileName,
+    caption,
+    if (duration != null) _vui6TileText(duration),
+  ]) {
+    final bounds = tester.getRect(finder);
+    expect(bounds.left, greaterThanOrEqualTo(tileRect.left));
+    expect(bounds.right, lessThanOrEqualTo(tileRect.right));
+    expect(bounds.top, greaterThanOrEqualTo(tileRect.top));
+    expect(bounds.bottom, lessThanOrEqualTo(tileRect.bottom));
+  }
+  for (final (key, label) in [
+    ('call-pip-restore', l10n.call_return),
+    ('call-pip-end', l10n.call_end),
+  ]) {
+    final action = find.byKey(ValueKey(key));
+    final bounds = tester.getRect(action);
+    expect(bounds.width, greaterThanOrEqualTo(48));
+    expect(bounds.height, greaterThanOrEqualTo(48));
+    expect(bounds.left, greaterThanOrEqualTo(tileRect.left));
+    expect(bounds.right, lessThanOrEqualTo(tileRect.right));
+    expect(bounds.top, greaterThanOrEqualTo(tileRect.top));
+    expect(bounds.bottom, lessThanOrEqualTo(tileRect.bottom));
+    expect(action.hitTestable(), findsOneWidget);
+    final node = tester.getSemantics(action);
+    expect(
+      node.tooltip.isNotEmpty ? node.tooltip : node.label,
+      contains(label),
+    );
+  }
+  final endNode = tester.getSemantics(
+    find.bySemanticsIdentifier('call_pip_end'),
+  );
+  expect(endNode.label, l10n.call_end);
+}
+
+void _vui6ExpectViewport(WidgetTester tester) {
+  final bounds = tester.getRect(find.byKey(const ValueKey('call-pip-tile')));
+  final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final keyboard = tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
+  expect(bounds.left, greaterThanOrEqualTo(0));
+  expect(bounds.right, lessThanOrEqualTo(size.width));
+  expect(bounds.top, greaterThanOrEqualTo(56));
+  expect(bounds.bottom, lessThanOrEqualTo(size.height - keyboard));
+}
+
+Future<void> _vui6DrawProjection(
+  WidgetTester tester,
+  _VideoCapability capability,
+) async {
+  await tester.pump();
+  await tester.pump();
+  final current = capability.current!;
+  final bar = tester.widget<CallReturnBar>(find.byType(CallReturnBar));
+  expect(bar.connectedAt, current.session.connectedAt);
+  // This is existing public renderer behavior and confirms the emitted frame.
+  expect(_viewTextureIds(tester), [current.video!.remoteView!.textureId]);
+}
+
+void _vui6Tests() {
+  testWidgets(
+    'VUI6 minimized tile owns portrait name duration and Return caption',
+    (tester) async {
+      final initial = _vui6Projection(
+        connectedAt: _now.subtract(const Duration(seconds: 65)),
+      );
+      final capability = _VideoCapability(initial);
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+        _vui6ExpectViewport(tester);
+        expect(_viewTextureIds(tester), [41]);
+        expect(capability.current, same(initial));
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+      });
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  testWidgets(
+    'VUI6 clock advances without projection and survives generation and restore',
+    (tester) async {
+      var now = _now;
+      final origin = now.subtract(const Duration(seconds: 65));
+      final initial = _vui6Projection(connectedAt: origin);
+      final capability = _VideoCapability(initial);
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+        now = now.add(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+        expect(_vui6TileText('01:07'), findsOneWidget);
+        expect(capability.current, same(initial));
+        expect(
+          find.descendant(
+            of: find.byType(CallReturnBar),
+            matching: find.textContaining('01:07'),
+          ),
+          findsOneWidget,
+        );
+        final next = _vui6Projection(
+          connectedAt: origin,
+          generation: 8,
+          textureId: 53,
+        );
+        capability.emit(next);
+        await _vui6DrawProjection(tester, capability);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:07');
+        now = now.add(const Duration(seconds: 3));
+        await tester.pump(const Duration(seconds: 3));
+        expect(_vui6TileText('01:10'), findsOneWidget);
+        await tester.tap(_vui6TileText(l10n.call_video_return_caption));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(ActiveCallScreen), findsOneWidget);
+        now = now.add(const Duration(seconds: 4));
+        await tester.pump(const Duration(seconds: 4));
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: '01:14');
+        expect(capability.current, same(next));
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 3));
+        expect(tester.takeException(), isNull);
+      }, now: () => now);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  for (final (label, connectedAt, expected) in <(String, DateTime?, String?)>[
+    ('no connected timestamp', null, null),
+    (
+      'future connected timestamp',
+      _now.add(const Duration(seconds: 30)),
+      '00:00',
+    ),
+    (
+      'more than one hour',
+      _now.subtract(const Duration(seconds: 3661)),
+      '1:01:01',
+    ),
+  ]) {
+    testWidgets('VUI6 $label has truthful elapsed text', (tester) async {
+      final capability = _VideoCapability(
+        _vui6Projection(connectedAt: connectedAt),
+      );
+      await _vui6WithOverlay(tester, capability, (l10n, name) async {
+        await _minimizePip(tester);
+        _vui6ExpectMetadata(tester, l10n, name, duration: expected);
+        if (expected == null) {
+          final texts = tester.widgetList<Text>(
+            find.descendant(
+              of: find.byKey(const ValueKey('call-pip-tile')),
+              matching: find.byType(Text),
+            ),
+          );
+          expect(
+            texts
+                .map((text) => text.data ?? '')
+                .where(
+                  (text) => RegExp(r'^\d+:\d{2}(?::\d{2})?$').hasMatch(text),
+                ),
+            isEmpty,
+          );
+        }
+        expect(capability.videoCalls, isEmpty);
+        expect(capability.audioCalls, isEmpty);
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets('VUI6 $language 320px2x caption and metadata stay readable', (
+      tester,
+    ) async {
+      final capability = _VideoCapability(
+        _vui6Projection(
+          connectedAt: _now.subtract(const Duration(seconds: 65)),
+        ),
+      );
+      await _vui6WithOverlay(
+        tester,
+        capability,
+        (l10n, name) async {
+          await _minimizePip(tester);
+          _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+          _vui6ExpectViewport(tester);
+          for (final finder in [
+            _vui6TileText(l10n.call_video_return_caption),
+            _vui6TileText('01:05'),
+          ]) {
+            final paragraph = tester.renderObject<RenderParagraph>(finder);
+            expect(paragraph.didExceedMaxLines, isFalse);
+            expect(
+              paragraph.textDirection,
+              language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+            );
+          }
+          final caption = _vui6TileText(l10n.call_video_return_caption);
+          expect(caption.hitTestable(), findsOneWidget);
+          await tester.tap(caption);
+          await tester.pump();
+          await tester.pump();
+          expect(find.byType(ActiveCallScreen), findsOneWidget);
+          expect(find.byKey(const ValueKey('call-pip-tile')), findsNothing);
+          expect(capability.videoCalls, isEmpty);
+          expect(capability.audioCalls, isEmpty);
+        },
+        language: language,
+        scale: 2,
+        size: const Size(320, 640),
+      );
+    }, timeout: const Timeout.factor(1));
+  }
+
+  testWidgets('VUI6 portrait drag reclamps after resize and keyboard', (
+    tester,
+  ) async {
+    final capability = _VideoCapability(
+      _vui6Projection(connectedAt: _now.subtract(const Duration(seconds: 65))),
+    );
+    await _vui6WithOverlay(tester, capability, (l10n, name) async {
+      await _minimizePip(tester);
+      _vui6ExpectMetadata(tester, l10n, name, duration: '01:05');
+      final tile = find.byKey(const ValueKey('call-pip-tile'));
+      final frame = find.byKey(const ValueKey('call-pip-view'));
+      await tester.drag(frame, const Offset(1000, 1000));
+      await tester.pump();
+      _vui6ExpectViewport(tester);
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 120);
+      await tester.pump();
+      await tester.pump();
+      _vui6ExpectViewport(tester);
+      final gesture = await tester.startGesture(tester.getCenter(frame));
+      // Admit the drag before measuring its next delta; touch slop is not UI motion.
+      await gesture.moveBy(const Offset(-30, -30));
+      await tester.pump();
+      final clamped = tester.getRect(tile);
+      await gesture.moveBy(const Offset(-20, -20));
+      await tester.pump();
+      final moved = tester.getRect(tile);
+      await gesture.up();
+      expect(moved.left, closeTo((clamped.left - 20).clamp(0, 320), 1));
+      expect(moved.top, closeTo((clamped.top - 20).clamp(56, 520), 1));
+      _vui6ExpectViewport(tester);
+      for (final key in ['call-pip-restore', 'call-pip-end']) {
+        expect(find.byKey(ValueKey(key)).hitTestable(), findsOneWidget);
+      }
+      expect(capability.videoCalls, isEmpty);
+      expect(capability.audioCalls, isEmpty);
+    });
+  }, timeout: const Timeout.factor(1));
 }

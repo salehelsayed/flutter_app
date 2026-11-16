@@ -5,6 +5,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
@@ -27,6 +29,7 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 
 void main() {
+  _vui7Tests();
   const fallbackName = 'Unknown contact';
   final now = DateTime.utc(2026, 8, 30, 12);
 
@@ -1171,7 +1174,8 @@ void main() {
     expect(find.text('Call audio could not start.'), findsNothing);
   });
 
-  testWidgets('terminal notice expires without changing retained navigation', (
+  // VUI7 owner-approved persistence supersedes the six-second expiry only.
+  testWidgets('terminal notice persists without changing retained navigation', (
     tester,
   ) async {
     final capability = _FakeForegroundCallCapability();
@@ -1210,7 +1214,7 @@ void main() {
 
     expect(
       find.byKey(const ValueKey('foreground-call-terminal-notice')),
-      findsNothing,
+      findsOneWidget,
     );
     expect(find.text('Retained route'), findsOneWidget);
   });
@@ -2097,4 +2101,392 @@ Rect _globalSemanticsRect(WidgetTester tester, SemanticsNode node) {
     rect.right / ratio,
     rect.bottom / ratio,
   );
+}
+
+final _vui7Now = DateTime.utc(2026, 11, 15, 12);
+
+ForegroundCallProjection _vui7Terminal({
+  CallMediaKind? media = CallMediaKind.video,
+  CallId? id,
+  bool connected = true,
+  CallEndReason reason = CallEndReason.remoteHangup,
+}) => ForegroundCallProjection(
+  session: CallSessionSnapshot.active(
+    callId: id ?? _activeId,
+    contactPeerId: 'vui7-peer',
+    direction: CallDirection.outgoing,
+    state: CallState.ended,
+    callerAccountPeerId: 'local',
+    callerDeviceId: 'device',
+    startedAt: _vui7Now.subtract(const Duration(minutes: 3)),
+    ringingAt: _vui7Now.subtract(const Duration(minutes: 2)),
+    connectedAt: connected
+        ? _vui7Now.subtract(const Duration(seconds: 65))
+        : null,
+    endedAt: _vui7Now,
+    endReason: reason,
+  ),
+  audio: CallAudioControlState.idle,
+  terminalMedia: media,
+);
+
+class _Vui7Foreground extends _FakeForegroundCallCapability {
+  // Production emits terminal once while current is already null.
+  void terminal(ForegroundCallProjection value) {
+    _current = null;
+    _changes.add(value);
+  }
+
+  void setWithoutStream(ForegroundCallProjection? value) => _current = value;
+}
+
+class _Vui7Retry {
+  final calls = <(String, CallMediaKind)>[];
+  final fences = <bool Function()>[];
+  Completer<OutgoingCallStartResult>? held;
+  OutgoingCallStartResult result = OutgoingCallStartResult.unavailable;
+
+  Future<OutgoingCallStartResult> call(
+    String peerId, {
+    required CallMediaKind media,
+    required bool Function() isCurrent,
+  }) {
+    // Record every dispatch: this fake does not hide absent UI ownership guards.
+    calls.add((peerId, media));
+    fences.add(isCurrent);
+    return held?.future.timeout(const Duration(seconds: 5)) ??
+        Future.value(result);
+  }
+}
+
+Widget _vui7App(
+  _Vui7Foreground capability,
+  _Vui7Retry retry, {
+  String language = 'en',
+  double scale = 1,
+}) => MaterialApp(
+  locale: Locale(language),
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  theme: ThemeData(extensions: const [BackgroundReadableColors.dark]),
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+    child: child!,
+  ),
+  home: ForegroundCallOverlay(
+    capability: capability,
+    onCallAgain: retry.call,
+    loadContactDisplayName: (_) async => 'Layla',
+    now: () => _vui7Now,
+    child: const Scaffold(body: Text('VUI7 retained route')),
+  ),
+);
+
+Future<void> _vui7Draw(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
+  await tester.pump();
+}
+
+Future<void> _vui7With(
+  WidgetTester tester,
+  Future<void> Function(_Vui7Foreground, _Vui7Retry, AppLocalizations) body, {
+  String language = 'en',
+  double scale = 1,
+}) async {
+  final cap = _Vui7Foreground();
+  final retry = _Vui7Retry();
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(320, 844);
+  try {
+    await tester.pumpWidget(
+      _vui7App(cap, retry, language: language, scale: scale),
+    );
+    await _vui7Draw(tester);
+    await body(cap, retry, lookupAppLocalizations(Locale(language)));
+    expect(tester.takeException(), isNull);
+  } finally {
+    if (retry.held != null && !retry.held!.isCompleted) {
+      retry.held!.complete(OutgoingCallStartResult.canceled);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(
+      () => cap.dispose().timeout(const Duration(seconds: 5)),
+    );
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  }
+}
+
+ButtonStyleButton _vui7Button(WidgetTester tester, String label) {
+  final text = find.text(label);
+  expect(text, findsOneWidget); // Semantic RED, before button lookup.
+  // ButtonStyleButton is abstract; match its concrete subclasses by predicate.
+  final concrete = find.ancestor(
+    of: text,
+    matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+  );
+  expect(concrete, findsOneWidget);
+  return tester.widget<ButtonStyleButton>(concrete);
+}
+
+void _vui7Tests() {
+  for (final media in CallMediaKind.values) {
+    testWidgets(
+      'VUI7 persistent ${media.name} terminal has fixed identity and fresh retry input',
+      (tester) async {
+        await _vui7With(tester, (cap, retry, l10n) async {
+          cap.terminal(_vui7Terminal(media: media));
+          await _vui7Draw(tester);
+          final again = _vui7Button(tester, l10n.call_video_call_again);
+          expect(again.onPressed, isNotNull);
+          expect(cap.current, isNull);
+          expect(find.text('Layla'), findsOneWidget);
+          expect(find.text('01:05'), findsOneWidget);
+          expect(
+            find.text(
+              media == CallMediaKind.video
+                  ? l10n.call_video_status_video
+                  : l10n.call_row_voice_call,
+            ),
+            findsOneWidget,
+          );
+          expect(find.byType(Texture), findsNothing);
+          await tester.pump(const Duration(seconds: 61));
+          expect(find.text('01:05'), findsOneWidget);
+          expect(find.text(l10n.call_video_call_again), findsOneWidget);
+          again.onPressed!();
+          await _vui7Draw(tester);
+          expect(retry.calls, [('vui7-peer', media)]);
+          expect(cap.actions, isEmpty);
+          expect(find.text(l10n.call_end_ended), findsOneWidget);
+          _vui7Button(tester, l10n.call_video_close).onPressed!();
+          await _vui7Draw(tester);
+          expect(
+            find.byKey(const ValueKey('foreground-call-terminal-notice')),
+            findsNothing,
+          );
+          expect(
+            find.text('VUI7 retained route').hitTestable(),
+            findsOneWidget,
+          );
+        });
+      },
+      timeout: const Timeout.factor(1),
+    );
+  }
+
+  testWidgets(
+    'VUI7 never connected omits duration and unknown media cannot retry',
+    (tester) async {
+      await _vui7With(tester, (cap, retry, l10n) async {
+        cap.terminal(
+          _vui7Terminal(
+            connected: false,
+            media: null,
+            reason: CallEndReason.noAnswer,
+          ),
+        );
+        await _vui7Draw(tester);
+        _vui7Button(tester, l10n.call_video_close);
+        expect(find.text(l10n.call_end_no_answer), findsOneWidget);
+        expect(find.text('00:00'), findsNothing);
+        expect(find.text('01:05'), findsNothing);
+        final again = find.text(l10n.call_video_call_again);
+        if (again.evaluate().isNotEmpty) {
+          expect(
+            _vui7Button(tester, l10n.call_video_call_again).onPressed,
+            isNull,
+          );
+        }
+        expect(retry.calls, isEmpty);
+      });
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  for (final invalidation in [
+    'successor before stream',
+    'successor then null',
+    'withdrawal',
+    'replacement',
+    'dispose',
+  ]) {
+    testWidgets('VUI7 retained terminal actions reject $invalidation', (
+      tester,
+    ) async {
+      await _vui7With(tester, (cap, retry, l10n) async {
+        cap.terminal(_vui7Terminal());
+        await _vui7Draw(tester);
+        final again = _vui7Button(
+          tester,
+          l10n.call_video_call_again,
+        ).onPressed!;
+        final close = _vui7Button(tester, l10n.call_video_close).onPressed!;
+        final successor = _vui7Terminal(id: _incomingId);
+        _Vui7Foreground? replacement;
+        try {
+          switch (invalidation) {
+            case 'successor before stream':
+            case 'successor then null':
+              cap.setWithoutStream(_projection(
+                now: _vui7Now,
+                callId: _incomingId,
+                peerId: 'successor-peer',
+                direction: CallDirection.incoming,
+                state: CallState.connected,
+              ));
+              again(); // Detect the latest owner before stream delivery.
+              expect(retry.calls, isEmpty);
+              if (invalidation == 'successor then null')
+                cap.setWithoutStream(null);
+            case 'withdrawal':
+              cap.emit(null);
+              await _vui7Draw(tester);
+            case 'replacement':
+              replacement = _Vui7Foreground();
+              await tester.pumpWidget(_vui7App(replacement, retry));
+              replacement.terminal(successor);
+              await _vui7Draw(tester);
+            case 'dispose':
+              await tester.pumpWidget(const SizedBox.shrink());
+          }
+          again();
+          close();
+          await _vui7Draw(tester);
+          expect(retry.calls, isEmpty);
+          expect(cap.actions, isEmpty);
+          if (replacement != null) {
+            expect(find.text(l10n.call_video_call_again), findsOneWidget);
+          }
+        } finally {
+          if (replacement != null) {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.runAsync(
+              () => replacement!.dispose().timeout(const Duration(seconds: 5)),
+            );
+          }
+        }
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final invalidation in ['Close', 'successor', 'background withdrawal']) {
+    testWidgets('VUI7 duplicate and held retry fence survives $invalidation', (
+      tester,
+    ) async {
+      await _vui7With(tester, (cap, retry, l10n) async {
+        retry.held = Completer<OutgoingCallStartResult>();
+        cap.terminal(_vui7Terminal());
+        await _vui7Draw(tester);
+        final again = _vui7Button(
+          tester,
+          l10n.call_video_call_again,
+        ).onPressed!;
+        again();
+        again();
+        await _vui7Draw(tester);
+        expect(retry.calls, [('vui7-peer', CallMediaKind.video)]);
+        expect(retry.fences.single(), isTrue);
+        expect(
+          _vui7Button(tester, l10n.call_video_call_again).onPressed,
+          isNull,
+        );
+        if (invalidation == 'Close') {
+          _vui7Button(tester, l10n.call_video_close).onPressed!();
+        } else if (invalidation == 'successor') {
+          cap.emit(_vui7Terminal(id: _incomingId));
+        } else {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.paused,
+          );
+          cap.emit(null); // Canonical composition withdrawal on background.
+        }
+        await _vui7Draw(tester);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        expect(retry.fences.single(), isFalse);
+        retry.held!.complete(OutgoingCallStartResult.started);
+        await _vui7Draw(tester);
+        expect(
+          cap.actions,
+          isEmpty,
+        ); // Old completion never ends the successor.
+        if (invalidation == 'successor') {
+          expect(find.text(l10n.call_video_call_again), findsOneWidget);
+        } else {
+          expect(
+            find.byKey(const ValueKey('foreground-call-terminal-notice')),
+            findsNothing,
+          );
+        }
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets('VUI7 $language 320px2x reason and actions remain reachable', (
+      tester,
+    ) async {
+      await _vui7With(
+        tester,
+        (cap, retry, l10n) async {
+          cap.terminal(_vui7Terminal(reason: CallEndReason.mediaFailed));
+          await _vui7Draw(tester);
+          _vui7Button(tester, l10n.call_video_call_again);
+          for (final text in [
+            l10n.call_end_audio_interrupted,
+            l10n.call_video_status_video,
+            '01:05',
+            l10n.call_video_close,
+            l10n.call_video_call_again,
+          ]) {
+            final finder = find.text(text);
+            expect(finder, findsOneWidget);
+            await tester.ensureVisible(finder);
+            await _vui7Draw(tester);
+            final paragraph = tester.renderObject<RenderParagraph>(finder);
+            expect(paragraph.didExceedMaxLines, isFalse);
+            expect(
+              paragraph.textDirection,
+              language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+            );
+            final rect = tester.getRect(finder);
+            expect(rect.left, greaterThanOrEqualTo(0));
+            expect(rect.right, lessThanOrEqualTo(320));
+            expect(rect.top, greaterThanOrEqualTo(0));
+            expect(rect.bottom, lessThanOrEqualTo(844));
+          }
+          for (final label in [
+            l10n.call_video_close,
+            l10n.call_video_call_again,
+          ]) {
+            final finder = find.ancestor(
+              of: find.text(label),
+              matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+            );
+            await tester.ensureVisible(finder);
+            await _vui7Draw(tester);
+            final rect = tester.getRect(finder);
+            expect(rect.width, greaterThanOrEqualTo(48));
+            expect(rect.height, greaterThanOrEqualTo(48));
+            expect(finder.hitTestable(), findsOneWidget);
+          }
+          final reasonNodes = find.semantics.byPredicate(
+            (node) => node.label == l10n.call_end_audio_interrupted,
+          );
+          expect(reasonNodes, findsOneWidget);
+          final reasonData = tester
+              .getSemantics(find.text(l10n.call_end_audio_interrupted))
+              .getSemanticsData();
+          expect(reasonData.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
+          expect(find.byType(Texture), findsNothing);
+        },
+        language: language,
+        scale: 2,
+      );
+    }, timeout: const Timeout.factor(1));
+  }
 }

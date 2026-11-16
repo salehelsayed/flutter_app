@@ -1,5 +1,77 @@
 part of 'android_production_audio_call_campaign.dart';
 
+/// Returns to the chat before the post-hangup privacy journey continues.
+Future<void> awaitProductionCallChatAfterHangup(
+  SystemAndroidProductionAudioCallCampaignDriver driver,
+  String device,
+) async {
+  final allowed = await driver._allowedSemanticPackages(
+    device,
+    'Start voice call',
+  );
+  final deadline = DateTime.now().add(const Duration(seconds: 45));
+  var hierarchyRead = false;
+  var closeTapped = false;
+  while (DateTime.now().isBefore(deadline)) {
+    final String xml;
+    try {
+      xml = await driver._uiDump(device);
+    } on _UiHierarchyUnavailable {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      continue;
+    }
+    hierarchyRead = true;
+    List<AndroidProductionAudioCallSemanticNode> nodes(
+      String label, {
+      bool clickable = false,
+    }) => _exactSemanticNodes(
+      xml,
+      label: label,
+      requireClickable: clickable,
+      allowedPackages: allowed,
+    );
+    int markers(String label) => _exactSemanticMarkerCount(
+      xml,
+      label: label,
+      allowedPackages: allowed,
+    );
+
+    if (markers('Call controls') == 0) {
+      final chat = nodes('Start voice call');
+      if (chat.length > 1) {
+        throw AndroidProductionAudioCallSelectorException(
+          'Expected exactly one enabled semantic node "Start voice call"; '
+          'found ${chat.length}.',
+        );
+      }
+      if (chat.length == 1) return;
+      if (!closeTapped &&
+          markers('Call ended') == 1 &&
+          markers('Call again') == 1) {
+        final close = nodes('Close', clickable: true);
+        if (close.length == 1) {
+          final target = close.single;
+          await driver._adbShell(device, [
+            'input',
+            'tap',
+            '${target.centerX}',
+            '${target.centerY}',
+          ]);
+          closeTapped = true;
+        }
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  if (!hierarchyRead) {
+    throw TimeoutException(
+      'UI hierarchy unavailable on $device while waiting for "Start voice call"; '
+      'close any other UiAutomation client on the device.',
+    );
+  }
+  throw TimeoutException('Semantic node "Start voice call" did not appear.');
+}
+
 final class _ProductionCallSurfaceRegression {
   _ProductionCallSurfaceRegression(this.driver, this.id);
   final SystemAndroidProductionAudioCallCampaignDriver driver;
@@ -553,7 +625,7 @@ final class _ProductionCallSurfaceRegression {
   Future<void> _privacy() async {
     proof['scope'] =
         'Saved audio-relay preference and truthful signaling-address copy only; forced-relay build, no network-route claim';
-    await driver.waitForSemantic(subject.device, 'Start voice call');
+    await awaitProductionCallChatAfterHangup(driver, subject.device);
     // The contact now exists, so a data-preserving relaunch starts on Feed with
     // the Orbit tab; the chat was opened over the earlier first-circle root.
     await _relaunchSubject();

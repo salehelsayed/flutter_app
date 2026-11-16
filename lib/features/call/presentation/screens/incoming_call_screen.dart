@@ -41,11 +41,13 @@ class IncomingCallScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final video = videoPresentation;
     final onVideo = onVideoIntent;
     final hasVideo = video != null && video.isVisible && onVideo != null;
+    final colors = hasVideo
+        ? BackgroundReadableColors.dark
+        : context.backgroundReadableColors;
     final initialVideoChoice =
         hasVideo &&
         video.requestedMedia == CallMediaKind.video &&
@@ -93,74 +95,78 @@ class IncomingCallScreen extends StatelessWidget {
         ),
       ),
     ];
-    final audioControls = Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        fitAction(
-          _IncomingAction(
-            identifier: 'call_decline',
-            tooltip: _canRespond
-                ? l10n.contact_request_decline
-                : l10n.call_decline_unavailable,
-            label: l10n.contact_request_decline,
-            icon: Icons.call_end_rounded,
-            backgroundColor: const Color(0xFFE5484D),
-            enabled: _canRespond,
-            onPressed: onDecline,
-            constrainLabel: hasVideo,
-            wrapLabel: initialVideoChoice,
-          ),
-        ),
-        if (initialVideoChoice) ...[
+    final audioControls = IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
           fitAction(
             _IncomingAction(
-              identifier: 'call_accept_video',
-              tooltip: _canRespond && !mediaChoiceInFlight
-                  ? l10n.call_video_action_accept_upgrade
-                  : l10n.call_answer_unavailable,
-              label: l10n.call_video_action_accept_upgrade,
-              icon: Icons.videocam_outlined,
-              backgroundColor: colors.accent,
-              enabled: _canRespond && !mediaChoiceInFlight,
-              onPressed: onAcceptVideo!,
-              constrainLabel: true,
-              wrapLabel: true,
-            ),
-          ),
-          fitAction(
-            _IncomingAction(
-              identifier: 'call_accept_audio',
-              tooltip: _canRespond && !mediaChoiceInFlight
-                  ? l10n.call_video_action_use_audio_only
-                  : l10n.call_answer_unavailable,
-              label: l10n.call_video_action_use_audio_only,
-              icon: Icons.call_rounded,
-              backgroundColor: colors.accent,
-              enabled: _canRespond && !mediaChoiceInFlight,
-              onPressed: onUseAudioOnly!,
-              constrainLabel: true,
-              wrapLabel: true,
-            ),
-          ),
-        ] else
-          fitAction(
-            _IncomingAction(
-              identifier: 'call_answer',
+              identifier: 'call_decline',
               tooltip: _canRespond
-                  ? l10n.call_answer
-                  : l10n.call_answer_unavailable,
-              label: l10n.call_answer,
-              icon: Icons.call_rounded,
-              backgroundColor: colors.accent,
+                  ? l10n.contact_request_decline
+                  : l10n.call_decline_unavailable,
+              label: l10n.contact_request_decline,
+              icon: Icons.call_end_rounded,
+              backgroundColor: const Color(0xFFE5484D),
               enabled: _canRespond,
-              onPressed: onAnswer,
+              onPressed: onDecline,
               constrainLabel: hasVideo,
+              wrapLabel: initialVideoChoice,
             ),
           ),
-      ],
+          if (initialVideoChoice) ...[
+            fitAction(
+              _IncomingAction(
+                identifier: 'call_accept_audio',
+                tooltip: _canRespond && !mediaChoiceInFlight
+                    ? l10n.call_video_action_use_audio_only
+                    : l10n.call_answer_unavailable,
+                label: l10n.call_video_status_audio_only,
+                icon: Icons.call_rounded,
+                backgroundColor: colors.accent,
+                enabled: _canRespond && !mediaChoiceInFlight,
+                onPressed: onUseAudioOnly!,
+                constrainLabel: true,
+                wrapLabel: true,
+              ),
+            ),
+            fitAction(
+              _IncomingAction(
+                identifier: 'call_accept_video',
+                tooltip: _canRespond && !mediaChoiceInFlight
+                    ? l10n.call_video_action_accept_upgrade
+                    : l10n.call_answer_unavailable,
+                label: l10n.call_answer,
+                icon: Icons.videocam_outlined,
+                backgroundColor: colors.accent,
+                enabled: _canRespond && !mediaChoiceInFlight,
+                onPressed: onAcceptVideo!,
+                constrainLabel: true,
+                wrapLabel: true,
+              ),
+            ),
+          ] else
+            fitAction(
+              _IncomingAction(
+                identifier: 'call_answer',
+                tooltip: _canRespond
+                    ? l10n.call_answer
+                    : l10n.call_answer_unavailable,
+                label: l10n.call_answer,
+                icon: Icons.call_rounded,
+                backgroundColor: colors.accent,
+                enabled: _canRespond,
+                onPressed: onAnswer,
+                constrainLabel: hasVideo,
+              ),
+            ),
+        ],
+      ),
     );
     final videoLayout = hasVideo
         ? CallVideoScreenLayout(
+            preAnswer: true,
             profile: Semantics(
               container: true,
               explicitChildNodes: true,
@@ -237,38 +243,44 @@ class _IncomingAction extends StatelessWidget {
       tooltip: tooltip,
       onTap: enabled ? onPressed : null,
       excludeSemantics: true,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            tooltip: tooltip,
-            onPressed: enabled ? onPressed : null,
-            icon: Icon(icon),
-            color: Colors.white,
-            disabledColor: colors.disabledForeground,
-            iconSize: 30,
-            style: IconButton.styleFrom(
-              backgroundColor: enabled
-                  ? backgroundColor
-                  : colors.disabledSurface,
-              fixedSize: const Size.square(68),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled ? onPressed : null,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: tooltip,
+              onPressed: enabled ? onPressed : null,
+              icon: Icon(icon),
+              color: Colors.white,
+              disabledColor: colors.disabledForeground,
+              iconSize: 30,
+              style: IconButton.styleFrom(
+                backgroundColor: enabled
+                    ? backgroundColor
+                    : colors.disabledSurface,
+                fixedSize: const Size.square(68),
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            label,
-            maxLines: constrainLabel && !wrapLabel ? 2 : null,
-            overflow: constrainLabel && !wrapLabel
-                ? TextOverflow.ellipsis
-                : null,
-            textAlign: constrainLabel ? TextAlign.center : null,
-            style: TextStyle(
-              color: enabled ? colors.textSecondary : colors.disabledForeground,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+            const SizedBox(height: 10),
+            Text(
+              label,
+              maxLines: constrainLabel && !wrapLabel ? 2 : null,
+              overflow: constrainLabel && !wrapLabel
+                  ? TextOverflow.ellipsis
+                  : null,
+              textAlign: constrainLabel ? TextAlign.center : null,
+              style: TextStyle(
+                color: enabled
+                    ? colors.textSecondary
+                    : colors.disabledForeground,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

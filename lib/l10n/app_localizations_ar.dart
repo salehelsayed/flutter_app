@@ -5466,4 +5466,82 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get call_video_entry_start_failed =>
       'تعذر بدء مكالمة الفيديو. يمكن المحاولة مجددًا.';
+
+  @override
+  String get call_video_flip_caption => 'تبديل';
+
+  @override
+  String get call_video_camera_caption => 'الكاميرا';
+
+  @override
+  String get call_video_camera_off_caption => 'الكاميرا متوقفة';
+
+  @override
+  String get call_video_ringing => 'يرن…';
+
+  @override
+  String call_video_incoming_upgrade_from(String name) {
+    return 'طلب تشغيل الفيديو من $name';
+  }
+
+  @override
+  String call_video_waiting_for_acceptance(String name) {
+    return 'بانتظار قبول $name…';
+  }
+
+  @override
+  String get call_video_switching => 'جارٍ التحويل إلى الفيديو…';
+
+  @override
+  String get call_video_camera_starting => 'جارٍ تشغيل الكاميرا…';
+
+  @override
+  String call_video_waiting_for_remote(String name) {
+    return 'بانتظار فيديو $name…';
+  }
+
+  @override
+  String get call_video_request_declined => 'تم رفض طلب الفيديو';
+
+  @override
+  String get call_video_request_expired => 'انتهت مهلة طلب الفيديو';
+
+  @override
+  String get call_video_request_cancelled => 'تم إلغاء طلب الفيديو';
+
+  @override
+  String get call_video_camera_permission_title =>
+      'الوصول إلى الكاميرا غير مسموح';
+
+  @override
+  String call_video_camera_permission_body(String name) {
+    return 'اسمح بالوصول إلى الكاميرا من الإعدادات لتشغيل الفيديو. صوتك ما زال مسموعًا لدى $name.';
+  }
+
+  @override
+  String get call_video_open_settings => 'فتح الإعدادات';
+
+  @override
+  String get call_video_camera_unavailable => 'الكاميرا غير متاحة';
+
+  @override
+  String get call_video_return_caption => 'عودة';
+
+  @override
+  String call_video_peer_busy(String name) {
+    return '$name في مكالمة أخرى';
+  }
+
+  @override
+  String get call_video_connection_lost => 'انقطع الاتصال';
+
+  @override
+  String get call_video_call_again => 'إعادة الاتصال';
+
+  @override
+  String get call_video_close => 'إغلاق';
+
+  @override
+  String get call_video_camera_permission_body_without_audio =>
+      'اسمح بالوصول إلى الكاميرا من الإعدادات لتشغيل الفيديو.';
 }

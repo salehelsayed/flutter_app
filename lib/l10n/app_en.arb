@@ -2788,5 +2788,62 @@
   "call_video_entry_incoming": "Incoming video call",
   "call_video_entry_starting": "Starting video call",
   "call_video_entry_unavailable": "Video calling is unavailable right now.",
-  "call_video_entry_start_failed": "Couldn't start the video call. Please try again."
+  "call_video_entry_start_failed": "Couldn't start the video call. Please try again.",
+  "call_video_flip_caption": "Flip",
+  "call_video_camera_caption": "Camera",
+  "call_video_camera_off_caption": "Camera off",
+  "call_video_ringing": "Ringing…",
+  "call_video_incoming_upgrade_from": "{name} wants to turn on video",
+  "@call_video_incoming_upgrade_from": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_waiting_for_acceptance": "Waiting for {name} to accept…",
+  "@call_video_waiting_for_acceptance": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_switching": "Switching to video…",
+  "call_video_camera_starting": "Starting camera…",
+  "call_video_waiting_for_remote": "Waiting for {name}'s video…",
+  "@call_video_waiting_for_remote": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_request_declined": "Video request declined",
+  "call_video_request_expired": "Video request expired",
+  "call_video_request_cancelled": "Video request cancelled",
+  "call_video_camera_permission_title": "Camera access is off",
+  "call_video_camera_permission_body": "Allow camera access in Settings to turn on your video. {name} can still hear you.",
+  "@call_video_camera_permission_body": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_open_settings": "Open Settings",
+  "call_video_camera_unavailable": "Camera unavailable",
+  "call_video_return_caption": "Return",
+  "call_video_peer_busy": "{name} is on another call",
+  "@call_video_peer_busy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_connection_lost": "Connection lost",
+  "call_video_call_again": "Call again",
+  "call_video_close": "Close",
+  "call_video_camera_permission_body_without_audio": "Allow camera access in Settings to turn on your video."
 }

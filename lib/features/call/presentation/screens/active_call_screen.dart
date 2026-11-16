@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/presentation/call_video_localizations.dart';
+import 'package:flutter_app/features/call/presentation/widgets/call_video_controls.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_video_screen_layout.dart';
@@ -25,6 +29,8 @@ class ActiveCallScreen extends StatefulWidget {
     this.videoPresentation,
     this.onVideoIntent,
     this.videoViews,
+    this.cameraFeedback,
+    this.upgradeNotice,
   });
 
   final String contactPeerId;
@@ -36,6 +42,8 @@ class ActiveCallScreen extends StatefulWidget {
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
   final Widget? videoViews;
+  final Widget? cameraFeedback;
+  final Widget? upgradeNotice;
 
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
@@ -82,11 +90,30 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.backgroundReadableColors;
     final formattedDuration = _showsDuration ? _formattedDuration : null;
+    final video = widget.videoPresentation;
+    if (video != null &&
+        video.isVisible &&
+        video.acceptedMedia != null &&
+        video.agreedMedia == CallMediaKind.video &&
+        widget.onVideoIntent != null) {
+      return _buildVideoStage(video, formattedDuration);
+    }
 
-    return ColoredBox(
-      color: colors.surfaceBase,
+    final showUpgradeStage =
+        video != null &&
+        video.isVisible &&
+        video.acceptedMedia != null &&
+        video.agreedMedia == CallMediaKind.audio &&
+        widget.onVideoIntent != null &&
+        (video.status == CallVideoStatus.incomingUpgrade ||
+            video.status == CallVideoStatus.outgoingUpgrade ||
+            video.status == CallVideoStatus.switchingToVideo);
+    final colors = showUpgradeStage
+        ? BackgroundReadableColors.dark
+        : context.backgroundReadableColors;
+    final surface = ColoredBox(
+      color: showUpgradeStage ? Colors.transparent : colors.surfaceBase,
       child: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -98,6 +125,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             final onVideoIntent = widget.onVideoIntent;
             if (video != null && video.isVisible && onVideoIntent != null) {
               return CallVideoScreenLayout(
+                peerDisplayName: widget.contactUsername,
                 profile: _buildProfile(
                   colors,
                   formattedDuration,
@@ -147,6 +175,289 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             );
           },
         ),
+      ),
+    );
+    if (!showUpgradeStage) return surface;
+    return Theme(
+      data: Theme.of(context).copyWith(
+        brightness: Brightness.dark,
+        extensions: [
+          ...Theme.of(context).extensions.values
+              .where((extension) => extension is! BackgroundReadableColors),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: CosmicBackground(paused: true, child: surface),
+    );
+  }
+
+  Widget _buildVideoStage(CallVideoPresentation video, String? duration) {
+    final reconnecting =
+        widget.state == CallState.reconnecting || video.isReconnecting;
+    if (reconnecting) video = _reconnectingPresentation(video);
+    final l10n = AppLocalizations.of(context)!;
+    final labels = CallVideoLocalizations(l10n);
+    final onVideoIntent = widget.onVideoIntent;
+    final controls = CallVideoControls(
+      peerDisplayName: widget.contactUsername,
+      presentation: video,
+      audioControls: widget.controls,
+      onIntent: (intent) {
+        if (mounted) onVideoIntent?.call(intent);
+      },
+      controlsLabel: labels.controlsLabel,
+      statusLabel: labels.statusLabel,
+      localCameraLabel: labels.localCameraLabel,
+      remoteCameraLabel: labels.remoteCameraLabel,
+      actionLabel: labels.actionLabel,
+    );
+    // The owner supplies video pixels. This composition never starts a camera
+    // and the static backdrop does not compete with a call for animation time.
+    return Theme(
+      data: Theme.of(context).copyWith(
+        brightness: Brightness.dark,
+        extensions: [
+          ...Theme.of(context).extensions.values
+              .where((extension) => extension is! BackgroundReadableColors),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: CosmicBackground(
+        paused: true,
+        child: reconnecting
+            ? _buildReconnectingVideo(duration, controls)
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (video.remoteCamera != CallCameraState.on)
+                    Align(
+                      alignment: const Alignment(0, -0.18),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            UserAvatar(peerId: widget.contactPeerId, size: 132),
+                            const SizedBox(height: 24),
+                            Text(
+                              labels.remoteCameraLabel(video.remoteCamera),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFFC7CCD6),
+                                fontSize: 17,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (widget.videoViews != null) widget.videoViews!,
+                  // Only the controls/identity consume safe-area padding. The
+                  // background and current remote video occupy the entire call.
+                  Positioned(
+                    top: 0,
+                    left: 72,
+                    right: 72,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.contactUsername,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (duration != null) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                duration,
+                                semanticsLabel: l10n.call_duration(duration),
+                                style: const TextStyle(
+                                  color: Color(0xFFE4E6EB),
+                                  fontSize: 16,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    top: widget.cameraFeedback == null ? null : 0,
+                    bottom: 16,
+                    child: SafeArea(
+                      top: widget.cameraFeedback != null,
+                      child: _withCameraFeedback(controls),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  // A session reconnect can arrive before its video flags. Apply the existing
+  // presentation gates conservatively without changing camera or media truth.
+  CallVideoPresentation _reconnectingPresentation(
+    CallVideoPresentation video,
+  ) => CallVideoPresentation.project(
+    videoEnabled: video.videoEnabled,
+    wireVersion: video.wireVersion,
+    requestedMedia: video.requestedMedia,
+    acceptedMedia: video.acceptedMedia,
+    agreedMedia: video.agreedMedia,
+    localCamera: video.localCamera,
+    remoteCamera: video.remoteCamera,
+    isConnected: false,
+    isReconnecting: true,
+    switchingTo: video.switchingTo,
+    videoActionPending: video.videoActionPending,
+    incomingUpgradeId: video.incomingUpgradeId,
+    outgoingUpgradeId: video.outgoingUpgradeId,
+    mayRequestVideo: video.mayRequestVideo,
+    mayTurnCameraOn: video.mayTurnCameraOn,
+    maySwitchCamera: video.maySwitchCamera,
+  );
+
+  Widget _buildReconnectingVideo(String? duration, Widget controls) {
+    final l10n = AppLocalizations.of(context)!;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // Full-size control captions determine the remaining space.
+                  // Compact only the call identity/fallback, never the actions.
+                  final compact = constraints.maxHeight < 400;
+                  final name = Text(
+                    widget.contactUsername,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: compact ? 16 : 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                  final elapsed = duration == null
+                      ? null
+                      : Text(
+                          duration,
+                          semanticsLabel: l10n.call_duration(duration),
+                          style: TextStyle(
+                            color: const Color(0xFFE4E6EB),
+                            fontSize: compact ? 14 : 16,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        );
+                  return SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // Leave the root-owned minimize button unobstructed.
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 56),
+                            child: compact
+                                ? Row(
+                                    children: [
+                                      Expanded(child: name),
+                                      if (elapsed != null) ...[
+                                        const SizedBox(width: 8),
+                                        elapsed,
+                                      ],
+                                    ],
+                                  )
+                                : Column(
+                                    children: [
+                                      name,
+                                      if (elapsed != null) ...[
+                                        const SizedBox(height: 3),
+                                        elapsed,
+                                      ],
+                                    ],
+                                  ),
+                          ),
+                          SizedBox(height: compact ? 8 : 24),
+                          UserAvatar(
+                            peerId: widget.contactPeerId,
+                            size: compact ? 64 : 132,
+                          ),
+                          SizedBox(height: compact ? 8 : 16),
+                          // Controls retain the single live-region announcement.
+                          ExcludeSemantics(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF171A22),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: const Color(0xFF414651),
+                                ),
+                              ),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: compact ? 6 : 10,
+                                ),
+                                child: Text(
+                                  l10n.call_video_status_reconnecting,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: compact ? 14 : 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (widget.cameraFeedback != null) ...[
+                            const SizedBox(height: 12),
+                            widget.cameraFeedback!,
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            controls,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _withCameraFeedback(Widget controls) {
+    final feedback = widget.cameraFeedback;
+    if (feedback == null) return controls;
+    return SingleChildScrollView(
+      reverse: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [feedback, const SizedBox(height: 12), controls],
       ),
     );
   }
@@ -214,6 +525,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 ),
               ),
             ),
+          ],
+          if (widget.upgradeNotice != null) ...[
+            const SizedBox(height: 16),
+            widget.upgradeNotice!,
           ],
         ],
       ),

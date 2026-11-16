@@ -9,6 +9,21 @@ enum MediaSwitchResponse {
   unsupported,
 }
 
+/// A presentation fact for one validated current video request.
+enum MediaSwitchOutcomeKind { declined, expired, cancelled }
+
+final class MediaSwitchOutcome {
+  const MediaSwitchOutcome({
+    required this.switchId,
+    required this.baseRevision,
+    required this.kind,
+  });
+
+  final String switchId;
+  final int baseRevision;
+  final MediaSwitchOutcomeKind kind;
+}
+
 enum MediaSwitchDescription { offer, answer }
 
 enum MediaSwitchAbortReason {
@@ -165,6 +180,7 @@ final class CallMediaSwitchMachine {
   _earlyCancellations = {};
   _Transaction? _current;
   _Transaction? _latestSelected;
+  MediaSwitchOutcome? _lastOutcome;
   CallMediaKind _settledMedia;
   int _settledRevision;
   bool _videoGatesOpen;
@@ -215,6 +231,8 @@ final class CallMediaSwitchMachine {
       _current?.cancellation != null &&
       _nowMs() < _current!.deadline;
   String? get currentSwitchId => _current?.request.id;
+
+  MediaSwitchOutcome? get lastOutcome => _lastOutcome;
 
   /// The existing immutable request; reading it does not advance the machine.
   MediaSwitchRequest? get currentRequest => _current?.request;
@@ -346,7 +364,24 @@ final class CallMediaSwitchMachine {
     out.add(_effect(t, MediaSwitchEffectKind.discardCapture));
   }
 
+  void _recordOutcome(_Transaction t, MediaSwitchOutcomeKind kind) {
+    // Observe the original current request before retirement or repair can
+    // change its phase/ownership. Replays and witnesses retain the first fact.
+    if (_lastOutcome != null ||
+        !identical(t, _current) ||
+        !t.open ||
+        t.request.target != CallMediaKind.video) {
+      return;
+    }
+    _lastOutcome = MediaSwitchOutcome(
+      switchId: t.request.id,
+      baseRevision: t.request.baseRevision,
+      kind: kind,
+    );
+  }
+
   void _select(_Transaction t, List<MediaSwitchEffect> out) {
+    _lastOutcome = null;
     t.selected = true;
     t.phase = MediaSwitchPhase.negotiating;
     t.stageDeadline = _min(t.deadline, _nowMs() + 10000);
@@ -378,6 +413,7 @@ final class CallMediaSwitchMachine {
         pending != null &&
         pending.open &&
         pending.request.target == CallMediaKind.video) {
+      _recordOutcome(pending, MediaSwitchOutcomeKind.cancelled);
       if (pending.selected) {
         _abort(pending, out, MediaSwitchAbortReason.cancelled);
       } else {
@@ -478,6 +514,7 @@ final class CallMediaSwitchMachine {
     }
     _transactions[request.id] = t;
     _current = t;
+    _lastOutcome = null;
     if (!local && request.target == CallMediaKind.audio) _close(t, out);
     if (local) {
       _send(t, MediaSwitchEffectKind.sendRequest, out);
@@ -554,6 +591,9 @@ final class CallMediaSwitchMachine {
       _send(t, MediaSwitchEffectKind.sendResponse, out, response: response);
     }
     if (response != MediaSwitchResponse.accept) {
+      if (response == MediaSwitchResponse.decline) {
+        _recordOutcome(t, MediaSwitchOutcomeKind.declined);
+      }
       _retire(t, MediaSwitchPhase.declined, out);
     } else {
       _select(t, out);
@@ -659,6 +699,7 @@ final class CallMediaSwitchMachine {
   }
 
   void _settle(_Transaction t, List<MediaSwitchEffect> out) {
+    _lastOutcome = null;
     t.phase = MediaSwitchPhase.committed;
     _settledRevision = t.revision;
     _settledMedia = t.request.target;
@@ -831,6 +872,7 @@ final class CallMediaSwitchMachine {
         return MediaSwitchDecision(false, out);
       }
       if (!t.open) return MediaSwitchDecision(false, out);
+      _recordOutcome(t, MediaSwitchOutcomeKind.cancelled);
       _retire(t, MediaSwitchPhase.declined, out);
       if (remote) {
         t.cancellation = _Cancellation.declined;
@@ -860,6 +902,10 @@ final class CallMediaSwitchMachine {
     if (t.phase == MediaSwitchPhase.aborted) {
       if (cancelledByRequester) _replay(t, out);
       return MediaSwitchDecision(false, out);
+    }
+    if (reason == MediaSwitchAbortReason.cancelled &&
+        senderIsCaller == t.request.requesterIsCaller) {
+      _recordOutcome(t, MediaSwitchOutcomeKind.cancelled);
     }
     _abort(t, out, reason, forceRepair: cancelledByRequester);
     return MediaSwitchDecision(true, out);
@@ -891,6 +937,7 @@ final class CallMediaSwitchMachine {
       if (t.selected) {
         _abort(t, out, MediaSwitchAbortReason.timeout);
       } else {
+        _recordOutcome(t, MediaSwitchOutcomeKind.expired);
         _retire(t, MediaSwitchPhase.declined, out);
       }
     }
@@ -1006,6 +1053,7 @@ final class CallMediaSwitchMachine {
     final out = <MediaSwitchEffect>[];
     if (_terminal) return MediaSwitchDecision(false, out);
     _terminal = true;
+    _lastOutcome = null;
     _videoGatesOpen = false;
     _repairId = null;
     _repairDeadline = null;

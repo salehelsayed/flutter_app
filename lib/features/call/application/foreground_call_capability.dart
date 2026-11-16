@@ -4,6 +4,7 @@ import '../domain/call_id.dart';
 import '../domain/call_audio_output_device.dart';
 import '../domain/call_engine.dart' show CallVideoView;
 import '../domain/call_media.dart' show CallMediaKind;
+import '../domain/call_media_switch.dart' show MediaSwitchOutcome;
 import '../domain/call_session_snapshot.dart';
 import 'call_video_presentation.dart';
 import 'call_audio_controller.dart';
@@ -18,10 +19,12 @@ final class ForegroundCallVideoProjection {
     required this.presentation,
     this.localView,
     this.remoteView,
+    this.upgradeOutcome,
   });
 
   final int generation;
   final CallVideoPresentation presentation;
+  final MediaSwitchOutcome? upgradeOutcome;
 
   /// Current opaque texture metadata, published by the canonical media owner.
   /// Null means no current view; presentation never owns a native renderer.
@@ -39,19 +42,28 @@ final class ForegroundCallProjection {
     required this.session,
     required this.audio,
     this.video,
+    this.terminalMedia,
   });
 
   final CallSessionSnapshot session;
   final CallAudioControlState audio;
   final ForegroundCallVideoProjection? video;
+  final CallMediaKind? terminalMedia;
 }
 
 /// Detail-free outcome for every foreground call command.
 enum ForegroundCallActionStatus { applied, unavailable, failed }
 
+/// Camera-specific feedback, without native errors or signaling identities.
+enum ForegroundCallCameraFailure {
+  permissionDenied,
+  permissionRestricted,
+  unavailable,
+}
+
 /// Fixed-shape, redacted command result exposed to presentation.
 final class ForegroundCallActionResult {
-  const ForegroundCallActionResult(this.status);
+  const ForegroundCallActionResult(this.status, {this.cameraFailure});
 
   static const applied = ForegroundCallActionResult(
     ForegroundCallActionStatus.applied,
@@ -64,6 +76,7 @@ final class ForegroundCallActionResult {
   );
 
   final ForegroundCallActionStatus status;
+  final ForegroundCallCameraFailure? cameraFailure;
 
   @override
   String toString() => 'ForegroundCallActionResult(status: ${status.name})';

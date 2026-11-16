@@ -9,6 +9,10 @@ final class CallVideoLocalizations {
 
   final AppLocalizations _localizations;
 
+  String get flipCaption => _localizations.call_video_flip_caption;
+  String get cameraCaption => _localizations.call_video_camera_caption;
+  String get cameraOffCaption => _localizations.call_video_camera_off_caption;
+
   String get controlsLabel => _localizations.call_video_controls_label;
 
   String statusLabel(CallVideoStatus status) => switch (status) {

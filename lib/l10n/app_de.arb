@@ -2352,5 +2352,62 @@
   "call_video_entry_incoming": "Eingehender Videoanruf",
   "call_video_entry_starting": "Videoanruf wird gestartet",
   "call_video_entry_unavailable": "Videoanrufe sind gerade nicht verfügbar.",
-  "call_video_entry_start_failed": "Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut."
+  "call_video_entry_start_failed": "Der Videoanruf konnte nicht gestartet werden. Bitte versuche es erneut.",
+  "call_video_flip_caption": "Wechseln",
+  "call_video_camera_caption": "Kamera",
+  "call_video_camera_off_caption": "Kamera aus",
+  "call_video_ringing": "Klingelt …",
+  "call_video_incoming_upgrade_from": "{name} möchte das Video einschalten",
+  "@call_video_incoming_upgrade_from": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_waiting_for_acceptance": "Warte auf Annahme durch {name} …",
+  "@call_video_waiting_for_acceptance": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_switching": "Wechsel zu Video …",
+  "call_video_camera_starting": "Kamera wird gestartet …",
+  "call_video_waiting_for_remote": "Warte auf das Video von {name} …",
+  "@call_video_waiting_for_remote": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_request_declined": "Videoanfrage abgelehnt",
+  "call_video_request_expired": "Videoanfrage abgelaufen",
+  "call_video_request_cancelled": "Videoanfrage abgebrochen",
+  "call_video_camera_permission_title": "Kamerazugriff ist aus",
+  "call_video_camera_permission_body": "Erlaube den Kamerazugriff in den Einstellungen, um dein Video einzuschalten. {name} kann dich weiterhin hören.",
+  "@call_video_camera_permission_body": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_open_settings": "Einstellungen öffnen",
+  "call_video_camera_unavailable": "Kamera nicht verfügbar",
+  "call_video_return_caption": "Zurück",
+  "call_video_peer_busy": "{name} ist in einem anderen Anruf",
+  "@call_video_peer_busy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "call_video_connection_lost": "Verbindung verloren",
+  "call_video_call_again": "Erneut anrufen",
+  "call_video_close": "Schließen",
+  "call_video_camera_permission_body_without_audio": "Erlaube den Kamerazugriff in den Einstellungen, um dein Video einzuschalten."
 }

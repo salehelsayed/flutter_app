@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/application/outgoing_call_capability.d
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 
@@ -184,6 +185,7 @@ class _Barrier {
 }
 
 void main() {
+  _vui7RedialTests();
   late _Capability owner;
   late _History history;
   late CallRedialController redial;
@@ -648,5 +650,196 @@ void main() {
         time.flushMicrotasks();
       });
     });
+  }
+}
+
+/// Same canonical admission fixture as audio; only the entry API and video
+/// availability boundary are recorded. Permission/admission remains fenced by
+/// the real OutgoingCallStartRequest and CallCoordinator.
+class _Vui7VideoCapability extends _CanonicalCapability
+    implements OutgoingVideoCallCapability {
+  bool videoAvailable = true;
+  bool videoContactAvailable = true;
+  int audioEntries = 0;
+  int videoEntries = 0;
+  int videoLookups = 0;
+  Completer<void>? holdVideoLookup;
+  final videoRequests = <OutgoingCallStartRequest>[];
+
+  @override
+  bool get isOutgoingVideoCallAvailable => videoAvailable;
+
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(String peer) async {
+    videoLookups++;
+    await holdVideoLookup?.future;
+    return videoContactAvailable;
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peer, {OutgoingCallStartRequest? request}
+  ) {
+    audioEntries++;
+    return super.startOutgoingCall(peer, request: request);
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String peer, {OutgoingCallStartRequest? request}
+  ) {
+    videoEntries++;
+    if (request != null) videoRequests.add(request);
+    return super.startOutgoingCall(peer, request: request);
+  }
+}
+
+void _vui7RedialTests() {
+  for (final media in [null, CallMediaKind.audio, CallMediaKind.video]) {
+    test('VUI7 redial ${media?.name ?? 'default'} uses fresh canonical entry', () {
+      fakeAsync((time) {
+        final owner = _Vui7VideoCapability();
+        final controller = CallRedialController(
+          capability: () => owner, contactAllowed: (_) async => true,
+        );
+        OutgoingCallStartResult? result;
+        final future = media == null
+            ? controller.start('synthetic-contact')
+            : controller.start('synthetic-contact', media: media);
+        unawaited(future.then((value) => result = value));
+        time.flushMicrotasks();
+        try {
+          expect(owner.videoEntries, media == CallMediaKind.video ? 1 : 0);
+          expect(owner.audioEntries, media == CallMediaKind.video ? 0 : 1);
+          expect(owner.videoLookups, media == CallMediaKind.video ? 1 : 0);
+          expect(result, OutgoingCallStartResult.started);
+          expect(owner.starts, ['synthetic-contact']);
+          expect(owner.requests.single.isAdmitted, isTrue);
+          expect(owner.coordinator.activeSession!.callId, isNot(_id));
+        } finally {
+          unawaited(owner.coordinator.dispose());
+          time.flushMicrotasks();
+        }
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final unavailable in ['no capability', 'process', 'contact', 'policy']) {
+    test('VUI7 video redial $unavailable unavailable never falls back to audio', () {
+      fakeAsync((time) {
+        final video = _Vui7VideoCapability()
+          ..videoAvailable = unavailable != 'process'
+          ..videoContactAvailable = unavailable != 'contact';
+        final audio = _Capability();
+        final controller = CallRedialController(
+          capability: () => unavailable == 'no capability' ? audio : video,
+          contactAllowed: (_) async => unavailable != 'policy',
+        );
+        OutgoingCallStartResult? result;
+        unawaited(controller.start('synthetic-contact', media: CallMediaKind.video)
+            .then((value) => result = value));
+        time.flushMicrotasks();
+        try {
+          expect(result, OutgoingCallStartResult.unavailable);
+          expect(video.audioEntries, 0);
+          expect(video.videoEntries, 0);
+          expect(audio.starts, isEmpty);
+          expect(video.starts, isEmpty);
+        } finally {
+          unawaited(video.coordinator.dispose());
+          time.flushMicrotasks();
+        }
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final boundary in ['owner replaced', 'terminal closed', 'contact revoked',
+    'duplicate', 'timeout']) {
+    test('VUI7 video availability await fences $boundary', () {
+      fakeAsync((time) {
+        final release = Completer<void>();
+        final owner = _Vui7VideoCapability()..holdVideoLookup = release;
+        OutgoingCallCapability current = owner;
+        var visible = true;
+        final controller = CallRedialController(
+          capability: () => current, contactAllowed: (_) async => true,
+        );
+        final results = <OutgoingCallStartResult>[];
+        unawaited(controller.start('synthetic-contact', media: CallMediaKind.video,
+          isCurrent: () => visible).then(results.add));
+        time.flushMicrotasks();
+        try {
+          expect(owner.videoLookups, 1, reason: 'hold the actual video admission lookup');
+          expect(owner.starts, isEmpty);
+          if (boundary == 'owner replaced') current = _Capability();
+          if (boundary == 'terminal closed') visible = false;
+          if (boundary == 'contact revoked') owner.videoContactAvailable = false;
+          if (boundary == 'duplicate') {
+            unawaited(controller.start('synthetic-contact', media: CallMediaKind.video)
+                .then(results.add));
+            time.flushMicrotasks();
+            expect(results, [OutgoingCallStartResult.canceled]);
+          }
+          if (boundary == 'timeout') {
+            time.elapse(const Duration(seconds: 12));
+            time.flushMicrotasks();
+            expect(results, [OutgoingCallStartResult.failed]);
+          }
+          release.complete();
+          time.flushMicrotasks();
+          expect(owner.audioEntries, 0);
+          expect(owner.starts, boundary == 'duplicate' ? ['synthetic-contact'] : isEmpty);
+          expect(results.last, switch (boundary) {
+            'duplicate' => OutgoingCallStartResult.started,
+            'contact revoked' => OutgoingCallStartResult.unavailable,
+            'timeout' => OutgoingCallStartResult.failed,
+            _ => OutgoingCallStartResult.canceled,
+          });
+        } finally {
+          if (!release.isCompleted) release.complete();
+          unawaited(owner.coordinator.dispose());
+          time.flushMicrotasks();
+        }
+      });
+    }, timeout: const Timeout.factor(1));
+  }
+
+  for (final admitted in [false, true]) {
+    test('VUI7 video preflight timeout admitted=$admitted preserves request transfer', () {
+      fakeAsync((time) {
+        final release = Completer<void>();
+        final owner = _Vui7VideoCapability();
+        if (admitted) {
+          owner.afterAdmission = release;
+        } else {
+          owner.beforeAdmission = (_) => release.future;
+        }
+        var visible = true;
+        final controller = CallRedialController(
+          capability: () => owner, contactAllowed: (_) async => true,
+        );
+        OutgoingCallStartResult? result;
+        unawaited(controller.start('synthetic-contact', media: CallMediaKind.video,
+          isCurrent: () => visible).then((value) => result = value));
+        time.flushMicrotasks();
+        try {
+          expect(owner.videoEntries, 1);
+          expect(owner.audioEntries, 0);
+          expect(owner.videoRequests.single.isAdmitted, admitted);
+          visible = false;
+          time.elapse(const Duration(seconds: 12));
+          time.flushMicrotasks();
+          expect(result, admitted ? OutgoingCallStartResult.started : OutgoingCallStartResult.canceled);
+          release.complete();
+          time.flushMicrotasks();
+          expect(owner.starts, admitted ? ['synthetic-contact'] : isEmpty);
+          expect(owner.coordinator.activeSession != null, admitted);
+        } finally {
+          if (!release.isCompleted) release.complete();
+          unawaited(owner.coordinator.dispose());
+          time.flushMicrotasks();
+        }
+      });
+    }, timeout: const Timeout.factor(1));
   }
 }

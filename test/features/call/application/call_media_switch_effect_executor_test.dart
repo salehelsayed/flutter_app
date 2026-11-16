@@ -24,6 +24,66 @@ const _answer = CallSessionDescription(
 final _call = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
 void main() {
+  test(
+    'VUI3b late accept publishes expiry through existing onChanged',
+    () async {
+      final host = _Host();
+      final observed = <MediaSwitchOutcome?>[];
+      late final CallMediaSwitchEffectExecutor owner;
+      owner = CallMediaSwitchEffectExecutor(
+        host: host,
+        localIsCaller: true,
+        initialMedia: _audio,
+        nowMs: () => host.now,
+        idSource: () => 'vui3b-negotiation',
+        videoEnabled: true,
+        onChanged: () => observed.add(owner.machine.lastOutcome),
+      );
+      addTearDown(owner.terminate);
+      expect(
+        owner.request(
+          MediaSwitchRequest(
+            id: 'late-accept',
+            baseRevision: 0,
+            target: _video,
+            requesterIsCaller: true,
+            createdAtMs: host.now,
+            deadlineMs: host.now + 30000,
+          ),
+        ),
+        isTrue,
+      );
+      await owner.workSettled;
+      expect(owner.machine.phase, MediaSwitchPhase.decision);
+      observed.clear();
+      host.now = owner.machine.stageDeadlineMs!;
+      // No tick or manual refresh: respond itself runs _advance and _apply.
+      expect(
+        owner.respond(
+          id: 'late-accept',
+          baseRevision: 0,
+          fromCaller: false,
+          response: MediaSwitchResponse.accept,
+        ),
+        isFalse,
+      );
+      expect(observed, isNotEmpty);
+      expect(
+        observed.last,
+        isNotNull,
+        reason:
+            'Rejected late acceptance still publishes the expiry transition.',
+      );
+      final outcome = observed.last!;
+      expect(outcome.switchId, 'late-accept');
+      expect(outcome.baseRevision, 0);
+      expect(outcome.kind, MediaSwitchOutcomeKind.expired);
+      expect(host.video.captureCalls, 0);
+      expect(owner.machine.videoGatesOpen, isFalse);
+      await owner.workSettled;
+    },
+  );
+
   for (final caller in [true, false]) {
     test(
       'BL16-CANCEL executor late consent never captures video caller=$caller',
