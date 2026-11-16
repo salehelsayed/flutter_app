@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -758,6 +759,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  // RED seam: producer capture and admission marking are not implemented.
+  ActiveIdentityReporter? activityReporter,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,

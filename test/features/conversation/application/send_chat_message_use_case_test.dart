@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -1910,6 +1911,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  ActiveIdentityReporter? activityReporter,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -2040,6 +2042,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     text: text,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
+    activityReporter: activityReporter,
     action: action,
     editedAt: editedAt,
     messageId: messageId,
@@ -2102,6 +2105,86 @@ Map<String, dynamic> decodeWirePayload(String wireJson) {
   }
   final encrypted = envelope['encrypted'] as Map<String, dynamic>;
   return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+}
+
+const _dailyBinding = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _dailyOtherBinding = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _dailyDate = '2026-11-17T00:00:00.000Z';
+const _dailyBudget = Duration(seconds: 2);
+
+Future<T> _dailyBound<T>(Future<T> future) => future.timeout(_dailyBudget);
+
+Future<void> _dailyArrival(Completer<void> signal) async {
+  final arrived = await signal.future.then<bool>((_) => true)
+      .timeout(const Duration(seconds: 1), onTimeout: () => false);
+  expect(arrived, isTrue, reason: 'the expected producer boundary must be observed');
+}
+
+class _DailyProducerBridge extends PassthroughCryptoBridge {
+  final activityRequests = <Map<String, dynamic>>[];
+  final markStarted = Completer<void>();
+  Future<String> Function(Map<String, dynamic>, int)? activityAnswer;
+  void Function()? onMark;
+  int _revision = 0;
+
+  @override
+  bool get isInitialized => true;
+
+  List<Map<String, dynamic>> get marks => activityRequests
+      .where((request) => request['op'] == 'mark').toList();
+
+  static String reply(Map<String, dynamic> request, int revision) => jsonEncode({
+    'ok': true,
+    'data': {
+      'revision': revision,
+      'consentEpoch': request['consentEpoch'],
+      if (request['op'] == 'configure')
+        'configured': request['enabled'] == true && request['profileBinding'] != '',
+      if (request['op'] == 'mark') 'accepted': true,
+      if (request['op'] == 'flush') 'queued': true,
+    },
+  });
+
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] != 'active_identity_reporter_v1') {
+      return super.send(message);
+    }
+    final request = Map<String, dynamic>.from(envelope['payload'] as Map);
+    activityRequests.add(request);
+    final revision = request['op'] == 'configure'
+        ? ++_revision : request['revision'] as int;
+    if (request['op'] == 'mark') {
+      onMark?.call();
+      if (!markStarted.isCompleted) {
+        markStarted.complete();
+      }
+    }
+    final answer = activityAnswer;
+    if (answer != null) {
+      return answer(request, revision);
+    }
+    return reply(request, revision);
+  }
+}
+
+class _DailyFirstReadRepository extends FakeMessageRepository {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  bool _first = true;
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyOwnerForMessageId({
+    required String messageId,
+  }) async {
+    if (_first) {
+      _first = false;
+      entered.complete();
+      await _dailyBound(release.future);
+    }
+    return super.loadDirectInboxCustodyOwnerForMessageId(messageId: messageId);
+  }
 }
 
 void main() {
@@ -13211,6 +13294,255 @@ void main() {
         );
       },
     );
+  });
+
+  group('BL29 daily producer', () {
+    late _DailyProducerBridge dailyBridge;
+    late ActiveIdentityReporter dailyReporter;
+    late FakeMessageRepository dailyMessages;
+    late FakeP2PService dailyService;
+
+    setUp(() async {
+      dailyBridge = _DailyProducerBridge();
+      dailyReporter = ActiveIdentityReporter(statePath: '/unused/daily-producer.json');
+      dailyMessages = FakeMessageRepository();
+      dailyService = FakeP2PService(sendMessageTransport: 'direct')
+        ..isConnectedToPeerResult = true;
+      await _dailyBound(AppDiagnostics.installForTesting(useNative: false, enabled: true));
+      dailyReporter.attachBridge(dailyBridge);
+      dailyReporter.observeIdentity(
+        accountPeerId: 'my-peer',
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: _dailyBinding,
+      );
+      await _dailyBound(dailyReporter.observeConsent((enabled: true, consentEpoch: 7)));
+      expect(dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'), isNotNull);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    tearDown(() async {
+      await _dailyBound(dailyReporter.dispose());
+      await _dailyBound(AppDiagnostics.instance.dispose());
+    });
+
+    Future<(SendChatMessageResult, ConversationMessage?)> submit({
+      String id = 'daily-private-message',
+      FakeMessageRepository? messages,
+      FakeP2PService? service,
+      String? quote,
+      bool forwarded = false,
+      bool fresh = true,
+      bool observe = true,
+      String action = MessagePayload.actionSend,
+      List<MediaAttachment>? media,
+      MediaAttachmentRepository? mediaRepository,
+    }) => _dailyBound(sendChatMessage(
+      p2pService: service ?? dailyService,
+      messageRepo: messages ?? dailyMessages,
+      targetPeerId: 'target-peer',
+      text: action == MessagePayload.actionEdit ? 'daily-private-content-edited' : 'daily-private-content',
+      senderPeerId: 'my-peer',
+      senderUsername: 'Me',
+      activityReporter: observe ? dailyReporter : null,
+      messageId: id,
+      preassignedMessageIdIsFresh: fresh,
+      timestamp: _dailyDate,
+      createdAt: _dailyDate,
+      editedAt: action == MessagePayload.actionEdit ? '2026-11-17T00:00:01.000Z' : null,
+      action: action,
+      bridge: dailyBridge,
+      quotedMessageId: quote,
+      isForwarded: forwarded,
+      mediaAttachments: media,
+      mediaAttachmentRepo: mediaRepository,
+      storeInAckCustodyInboxDetailed: (
+        String peer,
+        String envelope, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async => const InboxStoreOutcome(
+        status: InboxStoreStatus.error,
+        errorCode: 'TEST_OFFLINE',
+      ),
+    ));
+
+    test('E2P-001 fresh applied text marks once after commit before transport', () async {
+      final order = <String>[];
+      dailyMessages.afterDirectCustodyStage = () => order.add('commit');
+      dailyBridge.onMark = () => order.add('mark');
+      dailyService.onSendMessage = () => order.add('transport');
+      final result = await submit();
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyService.sendCallCount, greaterThan(0));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, [
+        {'version': 1, 'revision': 1, 'consentEpoch': 7,
+          'profileBinding': _dailyBinding, 'accountPeerId': 'my-peer', 'op': 'mark'},
+      ]);
+      expect(order.indexOf('commit'), lessThan(order.indexOf('mark')));
+      expect(order.indexOf('mark'), lessThan(order.indexOf('transport')));
+    });
+
+    test('E2P-002 fresh quoted admission qualifies for daily activity', () async {
+      dailyMessages.forceCurrent(ConversationMessage(
+        id: 'daily-quote-parent', contactPeerId: 'target-peer',
+        senderPeerId: 'target-peer', text: 'quoted', timestamp: _dailyDate,
+        status: 'delivered', isIncoming: true, createdAt: _dailyDate,
+      ));
+      final result = await submit(quote: 'daily-quote-parent');
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.quotedMessageId, 'daily-quote-parent');
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-003 fresh deliberate forwarded text qualifies for daily activity', () async {
+      final result = await submit(forwarded: true);
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.isForwarded, isTrue);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-004 committed admission still qualifies when transport cannot start', () async {
+      final stopped = FakeP2PService(currentState: const NodeState(isStarted: false));
+      final result = await submit(service: stopped);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(result.$2?.status, 'failed');
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyMessages.directCustodyRows, hasLength(1));
+      expect(stopped.sendCallCount, 0);
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-005 first repository await cannot acquire a successor same-account scope', () async {
+      for (final change in ['runtime', 'profile', 'epoch']) {
+        final held = _DailyFirstReadRepository();
+        Future<(SendChatMessageResult, ConversationMessage?)>? pending;
+        try {
+          pending = submit(id: 'daily-race-$change', messages: held);
+          await _dailyArrival(held.entered);
+          expect(held.directCustodyStageCalls, isEmpty);
+          expect(dailyBridge.marks, isEmpty);
+          if (change == 'profile') {
+            dailyReporter.observeIdentity(
+              accountPeerId: 'my-peer',
+              rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+              profileBinding: _dailyOtherBinding,
+            );
+          }
+          await _dailyBound(dailyReporter.observeConsent((
+            enabled: true, consentEpoch: change == 'epoch' ? 8 : 7,
+          )));
+          held.release.complete();
+          final result = await _dailyBound(pending);
+          expect(result.$1, SendChatMessageResult.success);
+          expect(held.directCustodyStageCalls, hasLength(1));
+          await _dailyBound(Future<void>(() {}));
+          expect(dailyBridge.marks, isEmpty, reason: change);
+        } finally {
+          if (!held.release.isCompleted) {
+            held.release.complete();
+          }
+          if (pending != null) {
+            await _dailyBound(pending);
+          }
+        }
+      }
+    });
+
+    test('E2P-006 refusal idempotent admission and existing retry add no activity', () async {
+      final refused = FakeMessageRepository()
+        ..forcedStageOutcome = OutgoingOrdinaryMutationOutcome.refused;
+      expect((await submit(id: 'daily-refused', messages: refused)).$1,
+          SendChatMessageResult.sendFailed);
+      expect(refused.directCustodyStageCalls, hasLength(1));
+      final idempotent = FakeMessageRepository()
+        ..forcedStageOutcome = OutgoingOrdinaryMutationOutcome.idempotent;
+      // Model a concurrent winner already owning the exact staged row when
+      // the transaction returns idempotent: it authorizes transport, not new activity.
+      idempotent.onOrdinaryStage = () {
+        idempotent.forceCurrent(idempotent.directCustodyStageCalls.single.staged);
+      };
+      final stopped = FakeP2PService(currentState: const NodeState(isStarted: false));
+      final existing = await submit(id: 'daily-idempotent', messages: idempotent, service: stopped);
+      expect(existing.$1, SendChatMessageResult.nodeNotRunning,
+          reason: 'Idempotent with a durable row passed the transport authority gate');
+      expect(idempotent.directCustodyStageCalls, hasLength(1));
+      final seeded = await submit(id: 'daily-existing', observe: false, service: stopped);
+      expect(seeded.$1, SendChatMessageResult.nodeNotRunning);
+      expect(dailyMessages.directCustodyRows, hasLength(1));
+      final before = dailyMessages.directCustodyStageCalls.length;
+      final retry = await submit(id: 'daily-existing', fresh: false);
+      expect(retry.$1, SendChatMessageResult.sendFailed);
+      expect(dailyMessages.directCustodyStageCalls.length, before);
+      await _dailyBound(Future<void>(() {}));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2P-007 applied edits and media remain outside this text-only hook', () async {
+      expect((await submit(id: 'daily-edit', observe: false)).$1, SendChatMessageResult.success);
+      final edited = await submit(id: 'daily-edit', fresh: false, action: MessagePayload.actionEdit);
+      expect(edited.$1, SendChatMessageResult.success);
+      expect(edited.$2?.text, 'daily-private-content-edited');
+      expect(dailyMessages.ordinaryStageCalls.last.kind, OutgoingOrdinaryAttemptKind.edit);
+      final mediaMessages = FakeMessageRepository();
+      final media = FakeMediaAttachmentRepository();
+      const attachment = MediaAttachment(
+        id: 'daily-file', messageId: '', mime: 'application/pdf', size: 24,
+        mediaType: 'file', localPath: 'media/peer/daily-file.pdf', downloadStatus: 'done',
+        createdAt: _dailyDate,
+        contentHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        encryptionKeyBase64: 'key', encryptionNonce: 'nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final mediaResult = await submit(id: 'daily-media', messages: mediaMessages,
+        service: FakeP2PService(currentState: const NodeState(isStarted: false)),
+        media: const [attachment], mediaRepository: media);
+      expect(mediaResult.$1, SendChatMessageResult.nodeNotRunning);
+      expect(mediaMessages.ordinaryStageCalls.single.kind, OutgoingOrdinaryAttemptKind.fresh);
+      expect(mediaMessages.ordinaryStageCalls.single.staged.media, hasLength(1));
+      await _dailyBound(Future<void>(() {}));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2P-008 held throwing native mark never joins admitted communication', () async {
+      final release = Completer<void>();
+      final finished = Completer<void>();
+      dailyBridge.activityAnswer = (request, revision) async {
+        if (request['op'] == 'mark') {
+          try {
+            await _dailyBound(release.future);
+            throw StateError('controlled daily producer mark failure');
+          } finally {
+            finished.complete();
+          }
+        }
+        return _DailyProducerBridge.reply(request, revision);
+      };
+      try {
+        final result = await submit();
+        expect(result.$1, SendChatMessageResult.success);
+        expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+        await _dailyArrival(dailyBridge.markStarted);
+        expect(finished.isCompleted, isFalse);
+        expect(dailyBridge.marks, hasLength(1));
+        release.complete();
+        await _dailyBound(finished.future);
+        await _dailyBound(Future<void>(() {}));
+      } finally {
+        if (!release.isCompleted) {
+          release.complete();
+        }
+        if (dailyBridge.markStarted.isCompleted) {
+          await _dailyBound(finished.future);
+        }
+      }
+    });
   });
 }
 
