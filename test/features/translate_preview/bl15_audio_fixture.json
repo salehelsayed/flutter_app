@@ -1,0 +1,26 @@
+{
+  "phrase": "Our group dinner moves to Friday evening.",
+  "voice": "Daniel",
+  "rate_wpm": 150,
+  "source": "Previously authored BL15 probe-v3 dinner.wav; copied PCM, not regenerated or played",
+  "source_wav_sha256": "3fe50b11400a71eda11d402b6c399f62938f82e82488da167c9f63ce3b982c65",
+  "source_pcm_sha256": "87c36e734a2401ef169368a2b288be2fa35a730716efeaeffbb98db7088b83a0",
+  "source_frames": 42389,
+  "added_frames": 48000,
+  "added_seconds": 3,
+  "tail": "Deterministic modeled low noise, NOT an iPhone microphone calibration",
+  "noise_recipe": {
+    "seed": 15,
+    "lcg_multiplier": 1103515245,
+    "lcg_increment": 12345,
+    "mask": 2147483647,
+    "sample": "state % 113 - 56, replace0with1"
+  },
+  "tail_rms_dbfs": -60.05017112623769,
+  "wav_sha256": "a4034826b2f26d27b82e54885cba38ede382962633966283c902dc5d7628adf9",
+  "sample_rate": 16000,
+  "channels": 1,
+  "bits": 16,
+  "frames": 90389,
+  "authoring": "Pure fixture byte construction only. No speech synthesis, playback, model/test/device execution."
+}

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +8,7 @@ import 'package:flutter_app/features/translate_preview/gemma_preview_service.dar
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
+import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1433,6 +1436,174 @@ void main() {
       );
     }
   });
+
+  group('BL15 transcription tail', () {
+    Uint8List samples(List<int> values) {
+      final data = ByteData(values.length * 2);
+      for (var i = 0; i < values.length; i++) {
+        data.setInt16(i * 2, values[i], Endian.little);
+      }
+      return data.buffer.asUint8List();
+    }
+
+    List<int> tone(int frames, int amplitude) =>
+        List<int>.generate(frames, (i) => i.isEven ? amplitude : -amplitude);
+
+    Future<({String text, Uint8List wav})> transcribe(
+      Uint8List pcm, {
+      int rate = 16000,
+      int channels = 1,
+      bool simulateTailHallucination = false,
+    }) async {
+      final h = await _Harness.create(record: _verifiedRecord())
+          .timeout(const Duration(seconds: 3));
+      addTearDown(() => h.dispose().timeout(const Duration(seconds: 3)));
+      const channel = MethodChannel('mknoon/gemma_preview');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'decodePcm') {
+          return {'pcm': pcm, 'sampleRate': rate, 'channels': channels};
+        }
+        expect(call.method, 'memory');
+        return <String, Object?>{};
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      Uint8List? captured;
+      var queries = 0;
+      final service = GemmaPreviewService.forTesting(
+        controller: h.controller,
+        loadModel: () async => _AudioInputModel(
+          (message) {
+            queries++;
+            captured = Uint8List.fromList(message.audioBytes!);
+          },
+          () async {
+            final data = ByteData.sublistView(captured!);
+            var quietSamples = 0;
+            // The fake recognizer models the reported suffix failure from
+            // a long low-noise tail; it does not implement the RMS trimmer.
+            for (var offset = captured!.length - 2; offset >= 44; offset -= 2) {
+              if (data.getInt16(offset, Endian.little).abs() > 64) break;
+              quietSamples++;
+            }
+            const phrase = 'Our group dinner moves to Friday evening.';
+            return simulateTailHallucination && quietSamples >= 16000
+                ? '$phrase Thank you for watching.'
+                : phrase;
+          },
+        ),
+      );
+      final text = await service
+          .transcribe('/fixture.wav')
+          .timeout(const Duration(seconds: 3));
+      expect(queries, 1);
+      expect(h.storage.safety!.inferenceInProgress, isFalse);
+      expect(h.controller.state.value, isA<ModelReady>());
+      return (text: text, wav: captured!);
+    }
+
+    test('recorded speech plus nonzero low noise reaches the model without an invented suffix', () async {
+      final fixture = File(
+        'test/features/translate_preview/bl15_dinner_low_noise.wav',
+      ).readAsBytesSync();
+      final pcm = Uint8List.sublistView(fixture, 44);
+      final result = await transcribe(pcm, simulateTailHallucination: true);
+      expect(result.text, 'Our group dinner moves to Friday evening.');
+      const originalSpeechBytes = 42389 * 2;
+      expect(
+        result.wav.sublist(44, 44 + originalSpeechBytes),
+        orderedEquals(pcm.sublist(0, originalSpeechBytes)),
+      );
+      expect(result.wav.length, lessThan(44 + (42389 + 4800) * 2));
+      final header = ByteData.sublistView(result.wav);
+      expect(header.getUint32(4, Endian.little), result.wav.length - 8);
+      expect(header.getUint32(40, Endian.little), result.wav.length - 44);
+      expect(fixture.length, 44 + (42389 + 48000) * 2);
+    });
+
+    test('keeps leading quiet, internal pauses and a soft final word above the floor', () async {
+      final prefix = <int>[
+        ...tone(6400, 32),
+        ...tone(6400, 3000),
+        ...tone(19200, 32),
+        ...tone(6400, 200),
+      ];
+      final pcm = samples([...prefix, ...tone(48000, 32)]);
+      final result = await transcribe(pcm);
+      expect(
+        result.wav.sublist(44, 44 + prefix.length * 2),
+        orderedEquals(pcm.sublist(0, prefix.length * 2)),
+      );
+      expect(result.wav.length, lessThan(44 + (prefix.length + 4800) * 2));
+    });
+
+    test(
+      'trims a sustained low-noise tail after 48k stereo normalization',
+      () async {
+        final source = <int>[...tone(48000, 3000), ...tone(144000, 32)];
+        final pcm = samples([
+          for (final sample in source) ...[sample, sample],
+        ]);
+        final result = await transcribe(pcm, rate: 48000, channels: 2);
+        final normalized = wav16kMono(pcm, sampleRate: 48000, channels: 2);
+        final header = ByteData.sublistView(result.wav);
+        expect(header.getUint32(24, Endian.little), 16000);
+        expect(header.getUint16(22, Endian.little), 1);
+        expect(header.getUint16(34, Endian.little), 16);
+        expect(
+          result.wav.sublist(44, 44 + 16000 * 2),
+          orderedEquals(normalized.sublist(44, 44 + 16000 * 2)),
+        );
+        expect(result.wav.length, lessThan(44 + 20800 * 2));
+      },
+    );
+
+    test('preserves a short quiet tail below the minimum run', () async {
+      final pcm = samples([...tone(16000, 3000), ...tone(6400, 32)]);
+      final result = await transcribe(pcm);
+      expect(
+        result.wav,
+        orderedEquals(wav16kMono(pcm, sampleRate: 16000, channels: 1)),
+      );
+    });
+
+    test('requires the full600ms quiet run before trimming', () async {
+      final before = samples([...tone(16000, 3000), ...tone(9599, 32)]);
+      final unchanged = await transcribe(before);
+      expect(unchanged.wav, orderedEquals(
+          wav16kMono(before, sampleRate: 16000, channels: 1)));
+      final atBoundary = samples([...tone(16000, 3000), ...tone(9600, 32)]);
+      final trimmed = await transcribe(atBoundary);
+      expect(trimmed.wav.length, lessThan(44 + atBoundary.length));
+      expect(trimmed.wav.sublist(44, 44 + 16000 * 2),
+          orderedEquals(atBoundary.sublist(0, 16000 * 2)));
+    });
+
+    test('preserves a tail above the quiet floor', () async {
+      final pcm = samples([...tone(16000, 3000), ...tone(48000, 200)]);
+      final result = await transcribe(pcm);
+      expect(
+        result.wav,
+        orderedEquals(wav16kMono(pcm, sampleRate: 16000, channels: 1)),
+      );
+    });
+
+    for (final input in ['low-noise', 'digital-silence', 'one-sample']) {
+      test('preserves $input without a confident active window', () async {
+        final pcm = samples(
+          input == 'low-noise'
+              ? tone(48000, 32)
+              : List<int>.filled(input == 'one-sample' ? 1 : 48000, 0),
+        );
+        final result = await transcribe(pcm);
+        expect(
+          result.wav,
+          orderedEquals(wav16kMono(pcm, sampleRate: 16000, channels: 1)),
+        );
+      });
+    }
+  });
 }
 
 Future<T> _nextState<T extends ModelDeliveryState>(
@@ -1731,4 +1902,27 @@ class _Transport implements ModelDeliveryTransport {
 
   @override
   Future<void> dispose() => eventsController.close();
+}
+
+class _AudioInputModel extends _MemoryModel {
+  _AudioInputModel(this.capture, super.reply);
+  final void Function(Message) capture;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #createSession) {
+      return Future<InferenceModelSession>.value(
+        _AudioInputSession(reply, capture),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _AudioInputSession extends _MemorySession {
+  _AudioInputSession(super.reply, this.capture);
+  final void Function(Message) capture;
+
+  @override
+  Future<void> addQueryChunk(Message message) async => capture(message);
 }
