@@ -1,5 +1,11 @@
 part of 'android_production_audio_call_campaign.dart';
 
+/// Returns to the chat before the post-hangup privacy journey continues.
+Future<void> awaitProductionCallChatAfterHangup(
+  SystemAndroidProductionAudioCallCampaignDriver driver,
+  String device,
+) => driver.waitForSemantic(device, 'Start voice call');
+
 final class _ProductionCallSurfaceRegression {
   _ProductionCallSurfaceRegression(this.driver, this.id);
   final SystemAndroidProductionAudioCallCampaignDriver driver;
@@ -553,7 +559,7 @@ final class _ProductionCallSurfaceRegression {
   Future<void> _privacy() async {
     proof['scope'] =
         'Saved audio-relay preference and truthful signaling-address copy only; forced-relay build, no network-route claim';
-    await driver.waitForSemantic(subject.device, 'Start voice call');
+    await awaitProductionCallChatAfterHangup(driver, subject.device);
     // The contact now exists, so a data-preserving relaunch starts on Feed with
     // the Orbit tab; the chat was opened over the earlier first-circle root.
     await _relaunchSubject();

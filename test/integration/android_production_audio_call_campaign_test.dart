@@ -617,6 +617,105 @@ void main() {
   );
 
   test(
+    'post-hangup chat transition explicitly closes the persistent ended page',
+    () async {
+      final runner = _PostHangupChatRunner(
+        initialUi: _persistentEndedCallUi,
+        closeRevealsChat: true,
+      );
+
+      await awaitProductionCallChatAfterHangup(
+        _driverForPostHangupChat(runner),
+        'emulator-5554',
+      ).timeout(const Duration(seconds: 3));
+
+      expect(runner.closeTaps, 1);
+      expect(runner.chatWasObserved, isTrue);
+      expect(runner.navigatedOutsideClose, isFalse);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  test(
+    'post-hangup chat transition waits for the delayed ended page then closes it',
+    () async {
+      final runner = _PostHangupChatRunner(
+        initialUi: _persistentEndedCallUi,
+        beforeEndedUi: '''
+<hierarchy>
+  <node content-desc="Call controls" enabled="true" visible-to-user="true"
+      package="com.mknoon.sims.productionaudio" bounds="[0,0][200,80]" />
+</hierarchy>
+''',
+        closeRevealsChat: true,
+      );
+
+      await awaitProductionCallChatAfterHangup(
+        _driverForPostHangupChat(runner),
+        'emulator-5554',
+      ).timeout(const Duration(seconds: 3));
+
+      expect(runner.closeTaps, 1);
+      expect(runner.chatWasObserved, isTrue);
+      expect(runner.navigatedOutsideClose, isFalse);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  test(
+    'post-hangup chat transition preserves an already visible chat',
+    () async {
+      final runner = _PostHangupChatRunner(initialUi: _startVoiceCallUi);
+
+      await awaitProductionCallChatAfterHangup(
+        _driverForPostHangupChat(runner),
+        'emulator-5554',
+      ).timeout(const Duration(seconds: 3));
+
+      expect(runner.closeTaps, 0);
+      expect(runner.chatWasObserved, isTrue);
+      expect(runner.navigatedOutsideClose, isFalse);
+    },
+    timeout: const Timeout.factor(1),
+  );
+
+  for (final entry in <String, String>{
+    'an active successor covering an old ended page': _persistentEndedCallUi
+        .replaceFirst(
+          '</hierarchy>',
+          '<node content-desc="Call controls" enabled="true" '
+              'package="$androidProductionAudioCallAppPackage" '
+              'bounds="[0,0][200,80]" /></hierarchy>',
+        ),
+    'a different dialog with a Close button': _otherCloseDialogUi,
+    'an ended page with ambiguous Close actions': _persistentEndedCallUi
+        .replaceFirst(
+          '</hierarchy>',
+          '<node content-desc="Close" clickable="true" enabled="true" '
+              'package="$androidProductionAudioCallAppPackage" '
+              'bounds="[120,100][220,140]" /></hierarchy>',
+        ),
+    'an ended page owned by a different package': _persistentEndedCallUi
+        .replaceAll(androidProductionAudioCallAppPackage, 'com.example.other'),
+  }.entries) {
+    test('post-hangup chat transition does not dismiss ${entry.key}', () async {
+      final runner = _PostHangupChatRunner(initialUi: entry.value);
+
+      await expectLater(
+        awaitProductionCallChatAfterHangup(
+          _driverForPostHangupChat(runner),
+          'emulator-5554',
+        ).timeout(const Duration(seconds: 3)),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(runner.closeTaps, 0);
+      expect(runner.chatWasObserved, isFalse);
+      expect(runner.navigatedOutsideClose, isFalse);
+    }, timeout: const Timeout.factor(1));
+  }
+
+  test(
     'opening a conversation foregrounds the app-side navigated conversation without a UI tap or force-stop',
     () async {
       final runner = _ConversationForegroundRunner();
@@ -2349,6 +2448,111 @@ const _startVoiceCallUi = '''
       bounds="[100,200][300,400]" />
 </hierarchy>
 ''';
+
+const _persistentEndedCallUi = '''
+<hierarchy>
+  <node content-desc="Call ended" enabled="true" visible-to-user="true"
+      package="com.mknoon.sims.productionaudio" bounds="[0,0][200,40]" />
+  <node content-desc="Call again" clickable="true" enabled="true"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
+      bounds="[10,50][110,90]" />
+  <node content-desc="Close" clickable="true" enabled="true"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
+      bounds="[10,100][110,140]" />
+</hierarchy>
+''';
+
+const _otherCloseDialogUi = '''
+<hierarchy>
+  <node content-desc="Connection problem" enabled="true"
+      package="com.mknoon.sims.productionaudio" bounds="[0,0][200,40]" />
+  <node content-desc="Close" clickable="true" enabled="true"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
+      bounds="[10,100][110,140]" />
+</hierarchy>
+''';
+
+SystemAndroidProductionAudioCallCampaignDriver _driverForPostHangupChat(
+  AndroidHostProcessRunner runner,
+) => SystemAndroidProductionAudioCallCampaignDriver(
+  physicalDeviceId: 'pixel',
+  emulatorDeviceId: 'emulator-5554',
+  artifact: File('${Directory.systemTemp.path}/plan399-unused.apk'),
+  artifactSha256: _apkSha,
+  packageName: androidProductionAudioCallAppPackage,
+  relayHost: '192.168.0.60',
+  relayPort: 44001,
+  proofDirectory: Directory.systemTemp,
+  runner: runner,
+);
+
+final class _PostHangupChatRunner implements AndroidHostProcessRunner {
+  _PostHangupChatRunner({
+    required this.initialUi,
+    this.beforeEndedUi,
+    this.closeRevealsChat = false,
+  });
+
+  final String initialUi;
+  final String? beforeEndedUi;
+  final bool closeRevealsChat;
+  var closeTaps = 0;
+  var chatWasObserved = false;
+  var navigatedOutsideClose = false;
+  var _blockedReads = 0;
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) async {
+    if (executable != 'adb' ||
+        arguments.length < 3 ||
+        arguments[0] != '-s' ||
+        arguments[1] != 'emulator-5554') {
+      throw StateError('Post-hangup fixture received an unexpected target.');
+    }
+    if (arguments.length == 6 &&
+        arguments[2] == 'shell' &&
+        arguments[3] == 'uiautomator' &&
+        arguments[4] == 'dump') {
+      return ProcessResult(1, 0, 'UI hierchary dumped to file\n', '');
+    }
+    if (arguments.length == 5 &&
+        arguments[2] == 'exec-out' &&
+        arguments[3] == 'cat') {
+      final xml = closeTaps == 1
+          ? _startVoiceCallUi
+          : _blockedReads == 0 && beforeEndedUi != null
+          ? beforeEndedUi!
+          : initialUi;
+      if (xml == _startVoiceCallUi) {
+        chatWasObserved = true;
+      } else if (++_blockedReads > 4) {
+        // Keep the real driver's missing-node poll bounded in this fixture;
+        // the ended page itself never disappears through elapsed time.
+        throw StateError('Chat remains hidden until the owned Close action.');
+      }
+      return ProcessResult(1, 0, xml, '');
+    }
+    if (arguments.length >= 5 &&
+        arguments[2] == 'shell' &&
+        arguments[3] == 'rm') {
+      return ProcessResult(1, 0, '', '');
+    }
+    if (arguments.length == 7 &&
+        arguments[2] == 'shell' &&
+        arguments[3] == 'input' &&
+        arguments[4] == 'tap' &&
+        arguments[5] == '60' &&
+        arguments[6] == '120') {
+      closeTaps += 1;
+      if (!closeRevealsChat || closeTaps != 1) {
+        throw StateError('This surface must not receive a Close tap.');
+      }
+      return ProcessResult(1, 0, '', '');
+    }
+    navigatedOutsideClose = true;
+    throw StateError('Post-hangup fixture received unexpected navigation.');
+  }
+}
 
 const _startingVoiceCallUi = '''
 <hierarchy>
