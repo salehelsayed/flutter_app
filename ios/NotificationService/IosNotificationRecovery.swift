@@ -1681,7 +1681,35 @@ final class IosNotificationRecoveryStore {
     }
   }
 
+  /// Runner waits at most this long for the shared recovery flock.
+  private static let leasedLockTimeoutMs: UInt64 = 2_000
+
+  /// With a lease (Runner), every recovery flock is taken only inside a
+  /// granted lease and released before it ends; a denied lease returns the
+  /// default. Without one (the NSE), `body` runs as before.
+  private func leased<T>(defaultValue: T, _ body: (_ isExpired: () -> Bool) -> T) -> T {
+    guard let lockLease else { return body { false } }
+    guard let grant = lockLease.acquire() else { return defaultValue }
+    defer { grant.release() }
+    return body(grant.isExpired)
+  }
+
+  /// Runner: a bounded wait inside a lease. NSE: the original blocking lock.
   private func withLock<T>(defaultValue: T, _ body: () -> T) -> T {
+    guard lockLease != nil else {
+      return withUnleasedLock(defaultValue: defaultValue, body)
+    }
+    return leased(defaultValue: defaultValue) { isExpired in
+      boundedFlock(
+        defaultValue: defaultValue,
+        timeoutMs: Self.leasedLockTimeoutMs,
+        isExpired: isExpired,
+        body
+      )
+    }
+  }
+
+  private func withUnleasedLock<T>(defaultValue: T, _ body: () -> T) -> T {
     try? fileManager.createDirectory(
       at: directory,
       withIntermediateDirectories: true
@@ -1698,9 +1726,28 @@ final class IosNotificationRecoveryStore {
 
   /// NSE-only lease operations must lose quickly to Runner/rich recovery
   /// contention. They never schedule late mutation after this function exits.
+  /// A Runner store (consumeMailboxAlertLease) takes them inside its lease.
   private func withBoundedLock<T>(
     defaultValue: T,
     timeoutMs: UInt64 = 150,
+    _ body: () -> T
+  ) -> T {
+    leased(defaultValue: defaultValue) { isExpired in
+      boundedFlock(
+        defaultValue: defaultValue,
+        timeoutMs: timeoutMs,
+        isExpired: isExpired,
+        body
+      )
+    }
+  }
+
+  /// Waits at most `timeoutMs` for the flock, and stops waiting, or skips
+  /// `body`, once `isExpired` is true.
+  private func boundedFlock<T>(
+    defaultValue: T,
+    timeoutMs: UInt64,
+    isExpired: () -> Bool,
     _ body: () -> T
   ) -> T {
     try? fileManager.createDirectory(
@@ -1717,11 +1764,13 @@ final class IosNotificationRecoveryStore {
     let timeoutNs = timeoutMs * 1_000_000
     while flock(fd, LOCK_EX | LOCK_NB) != 0 {
       guard errno == EWOULDBLOCK || errno == EAGAIN,
+            !isExpired(),
             DispatchTime.now().uptimeNanoseconds - started < timeoutNs else {
         return defaultValue
       }
       usleep(2_000)
     }
+    guard !isExpired() else { return defaultValue }
     return body()
   }
 
@@ -2034,14 +2083,24 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
     queue.async { self.beginLockedWrite() }
   }
 
+  private static let leasedBadgeLockTimeoutMs: UInt64 = 2_000
+
   private func beginLockedWrite(retryingRevision: UInt64? = nil) {
+    // BL-37: in Runner the badge flock is held only inside a lease, waited
+    // for a bounded time, and given up when the lease expires.
+    var grant: IosNotificationRecoveryLockGrant?
+    if let lease = store.lockLease {
+      guard let granted = lease.acquire() else { return }
+      grant = granted
+    }
+    defer { grant?.release() }
     let fd = open(
       store.badgeLockURL.path,
       O_RDWR | O_CREAT,
       S_IRUSR | S_IWUSR
     )
     guard fd >= 0 else { return }
-    guard flock(fd, LOCK_EX) == 0 else {
+    guard acquireBadgeFlock(fd, grant: grant) else {
       close(fd)
       return
     }
@@ -2085,6 +2144,28 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
         }
       }
     }
+  }
+
+  private func acquireBadgeFlock(
+    _ fd: Int32,
+    grant: IosNotificationRecoveryLockGrant?
+  ) -> Bool {
+    guard let grant else { return flock(fd, LOCK_EX) == 0 }
+    let started = DispatchTime.now().uptimeNanoseconds
+    let timeoutNs = Self.leasedBadgeLockTimeoutMs * 1_000_000
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+      guard errno == EWOULDBLOCK || errno == EAGAIN,
+            !grant.isExpired(),
+            DispatchTime.now().uptimeNanoseconds - started < timeoutNs else {
+        return false
+      }
+      usleep(2_000)
+    }
+    guard !grant.isExpired() else {
+      flock(fd, LOCK_UN)
+      return false
+    }
+    return true
   }
 
   private func finish(fd: Int32) {

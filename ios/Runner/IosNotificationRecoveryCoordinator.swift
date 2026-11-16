@@ -538,7 +538,9 @@ final class IosNotificationRecoveryCoordinator {
   private var sessions: [String: Session] = [:]
 
   convenience init?() {
-    guard let store = IosNotificationRecoveryStore() else { return nil }
+    guard let store = IosNotificationRecoveryStore(
+      lockLease: UIKitRecoveryLockLease()
+    ) else { return nil }
     let badgeWriter: IosNotificationBadgeWriting
     if #available(iOS 16.0, *) {
       badgeWriter = IosNotificationSerializedBadgeWriter(
@@ -905,5 +907,60 @@ final class IosNotificationRecoveryCoordinator {
     return !value.unicodeScalars.contains { scalar in
       scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f)
     }
+  }
+}
+
+/// BL-37: a UIKit background task for each moment Runner holds a recovery or
+/// badge flock, so the app is never suspended while holding one (0xdead10cc).
+/// On expiry the grant turns expired (a lock wait stops), then waits at most
+/// `holderDrainSeconds` for the holder's bounded scope to release before the
+/// task ends. The task ends exactly once.
+final class UIKitRecoveryLockLease: IosNotificationRecoveryLockLease {
+  /// Longer than the 2 s bounded lock wait plus a short locked body.
+  static let holderDrainSeconds: TimeInterval = 2.5
+
+  private final class State {
+    let lock = NSLock()
+    let released = DispatchSemaphore(value: 0)
+    var identifier = UIBackgroundTaskIdentifier.invalid
+    var expired = false
+    var ended = false
+  }
+
+  func acquire() -> IosNotificationRecoveryLockGrant? {
+    let application = UIApplication.shared
+    let state = State()
+    let end = {
+      state.lock.lock()
+      let identifier = state.identifier
+      let shouldEnd = !state.ended && identifier != .invalid
+      if shouldEnd { state.ended = true }
+      state.lock.unlock()
+      if shouldEnd { application.endBackgroundTask(identifier) }
+    }
+    let identifier = application.beginBackgroundTask(
+      withName: "mknoon.notificationRecoveryLock"
+    ) {
+      state.lock.lock()
+      state.expired = true
+      state.lock.unlock()
+      _ = state.released.wait(timeout: .now() + Self.holderDrainSeconds)
+      end()
+    }
+    guard identifier != .invalid else { return nil }
+    state.lock.lock()
+    state.identifier = identifier
+    state.lock.unlock()
+    return IosNotificationRecoveryLockGrant(
+      isExpired: {
+        state.lock.lock()
+        defer { state.lock.unlock() }
+        return state.expired
+      },
+      release: {
+        state.released.signal()
+        end()
+      }
+    )
   }
 }
