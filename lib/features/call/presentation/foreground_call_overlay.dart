@@ -1389,8 +1389,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
         !_terminalNoticeVisible ||
         _projection?.session.callId != session.callId ||
         _projection?.session.contactPeerId != session.contactPeerId ||
-        _projection?.session.isTerminal != true)
+        _projection?.session.isTerminal != true) {
       return false;
+    }
     try {
       final latest = widget.capability?.current?.session;
       // Canonical terminal publication leaves current null. Only an observed
@@ -1398,8 +1399,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
       if (latest == null ||
           (latest.isTerminal &&
               latest.callId == session.callId &&
-              latest.contactPeerId == session.contactPeerId))
+              latest.contactPeerId == session.contactPeerId)) {
         return true;
+      }
     } catch (_) {
       // A failed current-owner read cannot authorize a fresh call.
     }
@@ -1461,8 +1463,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
     int epoch,
     ForegroundCallProjection terminal,
   ) async {
-    if (!_terminalOwnerMatches(epoch, terminal) || _terminalRetryPending)
+    if (!_terminalOwnerMatches(epoch, terminal) || _terminalRetryPending) {
       return;
+    }
     final retry = widget.onCallAgain;
     final peer = terminal.session.contactPeerId;
     final media = terminal.terminalMedia;
@@ -1478,11 +1481,12 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
     } catch (_) {
       result = OutgoingCallStartResult.failed;
     }
-    if (!_terminalOwnerMatches(epoch, terminal)) return;
+    if (!mounted || !_terminalOwnerMatches(epoch, terminal)) return;
     setState(() => _terminalRetryPending = false);
     if (result == OutgoingCallStartResult.started ||
-        result == OutgoingCallStartResult.canceled)
+        result == OutgoingCallStartResult.canceled) {
       return;
+    }
     final l10n = AppLocalizations.of(context)!;
     showFeedback(
       result == OutgoingCallStartResult.microphoneDenied
