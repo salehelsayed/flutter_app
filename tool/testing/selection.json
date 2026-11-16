@@ -6576,6 +6576,16 @@
       "why": "Stalled recovery and diagnostic backpressure require host ownership/deadline, archive persistence and communication isolation checks. The referenced standalone Android emulator/iOS simulator comparisons run separately on explicit live target IDs; existing broader fixture and native mappings remain."
     },
     {
+      "id": "android-go-bridge",
+      "patterns": [
+        "android/app/src/main/kotlin/com/mknoon/app/GoBridge.kt"
+      ],
+      "checks": [
+        "android-call-native"
+      ],
+      "why": "GoBridge.kt hosts the Go method channel and network path events that the native call suite exercises (call wake bridge, headless recovery, network path monitor, previous network loss)"
+    },
+    {
       "id": "android-call-presentation",
       "patterns": [
         "android/app/src/main/kotlin/com/mknoon/app/call/*",
