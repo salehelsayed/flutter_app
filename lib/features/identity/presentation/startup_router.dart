@@ -12,6 +12,8 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -1631,58 +1633,130 @@ class _StartupRouterState extends State<StartupRouter> {
       if (Firebase.apps.isEmpty) return true;
     }
 
-    try {
-      await handleInitialRemoteMessage(
-        getInitialMessage:
-            widget.getInitialRemoteMessage ??
-            FirebaseMessaging.instance.getInitialMessage,
-        onMessageOpened: (message) async {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PUSH_INITIAL_MESSAGE_OPENED',
-            details: {
-              'messageId': message.messageId,
-              'dataKeys': message.data.keys.toList(),
-            },
-          );
-          final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
-            message.data,
-          );
-          NotificationOpenRouteContext? preparedContext;
-          await _withContactRequestPresentationSuppressed(
-            routeTarget: routeTarget,
-            action: () => routeRemoteNotificationOpen(
-              data: message.data,
-              onBeforeRouteTarget: (resolvedRouteTarget) async {
-                final createContext = widget.createNotificationRouteContext;
-                if (createContext == null) {
-                  throw StateError(
-                    'Initial notification route context factory is missing.',
+    final boundedLookup =
+        widget.onIosNotificationColdStartRecoverySettled != null;
+    var lookupTimedOut = false;
+    var navigationSuperseded = false;
+    VoidCallback? stopObservingNavigation;
+    late final VoidCallback onShellChanged;
+
+    void releaseNavigationGuard() {
+      stopObservingNavigation?.call();
+      stopObservingNavigation = null;
+      widget.appShellController.removeListener(onShellChanged);
+    }
+
+    void supersedeLateOpen() {
+      navigationSuperseded = true;
+      releaseNavigationGuard();
+    }
+
+    onShellChanged = () {
+      if (widget.appShellController.lastChangeKind == AppShellChangeKind.tab) {
+        supersedeLateOpen();
+      }
+    };
+    if (boundedLookup) {
+      stopObservingNavigation =
+          (directPrivateMediaRouteObserver as AppVisibilityRouteObserver)
+              .observeNavigation((operation, route) {
+                // Removing the old startup route after its fade is not a new
+                // navigation choice. Push/pop/replace and tab changes are.
+                if (operation != 'remove') supersedeLateOpen();
+              });
+      widget.appShellController.addListener(onShellChanged);
+    }
+
+    Future<void> routeInitialMessage(RemoteMessage message) async {
+      if (lookupTimedOut && navigationSuperseded) return;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_INITIAL_MESSAGE_OPENED',
+        details: {
+          'messageId': message.messageId,
+          'dataKeys': message.data.keys.toList(),
+        },
+      );
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+        message.data,
+      );
+      NotificationOpenRouteContext? preparedContext;
+      await _withContactRequestPresentationSuppressed(
+        routeTarget: routeTarget,
+        action: () => routeRemoteNotificationOpen(
+          data: message.data,
+          onBeforeRouteTarget: (resolvedRouteTarget) async {
+            final createContext = widget.createNotificationRouteContext;
+            if (createContext == null) {
+              throw StateError(
+                'Initial notification route context factory is missing.',
+              );
+            }
+            // The shared app-root coordinator assigns the ordinal here,
+            // before route preparation can yield. Android dismisses the
+            // selected remote card; unrelated cards must remain delivered.
+            preparedContext = createContext(resolvedRouteTarget);
+            await _prepareNotificationRouteTarget(resolvedRouteTarget);
+          },
+          onRouteTarget: (resolvedRouteTarget) async {
+            if (lookupTimedOut && navigationSuperseded) return;
+            final context = preparedContext;
+            if (context == null ||
+                !identical(context.routeTarget, resolvedRouteTarget)) {
+              throw StateError(
+                'Initial notification route context was not prepared.',
+              );
+            }
+            if (widget.onNotificationRouteContext == null) {
+              return;
+            }
+            await widget.onNotificationRouteContext!(context);
+          },
+          onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+        ),
+      );
+    }
+
+    Future<RemoteMessage?> readInitialMessage() {
+      final lookup =
+          (widget.getInitialRemoteMessage ??
+          FirebaseMessaging.instance.getInitialMessage)();
+      if (!boundedLookup) return lookup;
+      // Bound only discovery. Route preparation keeps its existing ownership
+      // and ordering; a late discovery may route independently after settlement.
+      return lookup.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          lookupTimedOut = true;
+          unawaited(
+            lookup
+                .then<void>((message) async {
+                  if (message == null || navigationSuperseded) return;
+                  await handleInitialRemoteMessage(
+                    getInitialMessage: () async => message,
+                    onMessageOpened: routeInitialMessage,
                   );
-                }
-                // The shared app-root coordinator assigns the ordinal here,
-                // before route preparation can yield. Android dismisses the
-                // selected remote card; unrelated cards must remain delivered.
-                preparedContext = createContext(resolvedRouteTarget);
-                await _prepareNotificationRouteTarget(resolvedRouteTarget);
-              },
-              onRouteTarget: (resolvedRouteTarget) async {
-                final context = preparedContext;
-                if (context == null ||
-                    !identical(context.routeTarget, resolvedRouteTarget)) {
-                  throw StateError(
-                    'Initial notification route context was not prepared.',
+                })
+                .catchError((Object error) {
+                  emitFlowEvent(
+                    layer: 'FL',
+                    event: 'PUSH_INITIAL_MESSAGE_ERROR',
+                    details: {'error': error.toString()},
                   );
-                }
-                if (widget.onNotificationRouteContext == null) {
-                  return;
-                }
-                await widget.onNotificationRouteContext!(context);
-              },
-              onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
-            ),
+                })
+                .whenComplete(releaseNavigationGuard),
+          );
+          throw TimeoutException(
+            'Initial notification lookup did not complete',
           );
         },
+      );
+    }
+
+    try {
+      await handleInitialRemoteMessage(
+        getInitialMessage: readInitialMessage,
+        onMessageOpened: routeInitialMessage,
       );
       return true;
     } catch (e) {
@@ -1692,6 +1766,8 @@ class _StartupRouterState extends State<StartupRouter> {
         details: {'error': e.toString()},
       );
       return false;
+    } finally {
+      if (!lookupTimedOut) releaseNavigationGuard();
     }
   }
 
