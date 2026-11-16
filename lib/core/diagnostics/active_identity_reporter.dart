@@ -214,11 +214,28 @@ final class ActiveIdentityReporter {
         consent.enabled && consent.consentEpoch == capture._epoch;
   }
 
-  /// RED scaffold: captured emission and deferred native binding are absent.
+  /// Marks only the logical configuration captured before producer awaits.
   void markCaptured(ActiveIdentityReporterCapture capture) {
     if (!_captureCurrent(capture)) {
       return;
     }
+    final owner = _owner;
+    if (owner == null) {
+      // This future belongs to the capture's still-current generation. Never
+      // mint a new capture or spend a successor's native revision on completion.
+      final configuring = _configuration;
+      if (configuring != null) {
+        unawaited(
+          configuring.then((_) {
+            if (_captureCurrent(capture) && _owner != null) {
+              markCaptured(capture);
+            }
+          }),
+        );
+      }
+      return;
+    }
+    unawaited(_send(capture._bridge, {...owner, 'op': 'mark'}));
   }
 
   /// Called only after a qualifying communication, never by configuration.
