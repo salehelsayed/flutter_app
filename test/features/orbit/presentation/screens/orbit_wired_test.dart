@@ -1164,6 +1164,88 @@ void main() {
       );
     }
 
+    // The 3D path must never filter by audience: a picked-people Thought is
+    // seated exactly like an all-friends one, for its author and for a
+    // picked inner-circle recipient.
+    testWidgets('your own picked-people Thought is the first 3D seat', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(thought('friend-post'));
+      await posts.savePost(
+        thought('mine-picked', text: 'For Alice only').copyWith(
+          authorPeerId: testIdentity.peerId,
+          senderPeerId: testIdentity.peerId,
+          isIncoming: false,
+          audience: PostAudience.pickPeople([testContact.peerId]),
+        ),
+      );
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.timedDrag(
+        find.byType(OrbitDepthSurface),
+        const Offset(0, -260),
+        const Duration(seconds: 1),
+      );
+      await pumpOrbitFrames(tester, count: 30);
+
+      expect(
+        find.byKey(const ValueKey('orbit-depth-card-mine-picked')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('orbit-depth-card-friend-post')),
+        findsNothing,
+        reason: 'the own Thought is the first seat, before any friend',
+      );
+      await finishThoughtCase(tester);
+    });
+
+    testWidgets(
+      'an incoming picked-people Thought from an inner-circle friend is '
+      'seated in 3D',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(
+          thought(
+            'picked-for-me',
+            text: 'Just for you',
+          ).copyWith(audience: PostAudience.pickPeople([testIdentity.peerId])),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.timedDrag(
+          find.byType(OrbitDepthSurface),
+          const Offset(0, -260),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-picked-for-me')),
+          findsOneWidget,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
     testWidgets(
       'full-screen friend reactions retain 3D selection and update it on return',
       (tester) async {
