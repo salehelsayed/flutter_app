@@ -514,6 +514,7 @@ final class _CameraRig {
       idSource: () =>
           'aaaaaaaa-aaaa-4aaa-8aaa-${(++sequence).toRadixString(16).padLeft(12, '0')}',
       videoEnabled: true,
+      onMediaChanged: engine.video.notifyPresentationChanged,
     );
     addTearDown(owner.close);
     final ready = await owner.execute(
@@ -922,7 +923,28 @@ final class _RetainedVideo implements CallVideoIceRetention {
 }
 
 final class _Video
-    implements CallVideoSession, CallVideoSdpReconciler, CallVideoIceRecovery {
+    implements CallVideoSession, CallVideoSdpReconciler, CallVideoIceRecovery,
+        CallVideoPresentationSource {
+  final _presentation =
+      StreamController<CallVideoPresentationState>.broadcast(sync: true);
+  @override
+  Stream<CallVideoPresentationState> get presentationChanges =>
+      _presentation.stream;
+  @override
+  CallVideoPresentationState presentationFor(CallVideoRendererSlot slot) =>
+      CallVideoPresentationState(
+        callId: callId,
+        negotiation: null,
+        slot: slot,
+        hasTrack: false,
+        view: null,
+      );
+  void notifyPresentationChanged() {
+    if (!_presentation.isClosed) {
+      _presentation.add(presentationFor(CallVideoRendererSlot.remote));
+    }
+  }
+
   int cameraStarts = 0;
   int cameraStops = 0;
   bool retentionAllowed = true;
@@ -1028,7 +1050,10 @@ final class _Video
     return true;
   }
   @override
-  Future<bool> close() async => true;
+  Future<bool> close() async {
+    await _presentation.close().timeout(_redDeadline);
+    return true;
+  }
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('Unexpected video operation ${invocation.memberName}');
