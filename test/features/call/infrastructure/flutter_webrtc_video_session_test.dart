@@ -733,6 +733,181 @@ void main() {
         f.preserved();
       },
     );
+    test('BL26 ICE continuation retains exact capture and renderer resources', () async {
+      const bound = Duration(seconds: 2);
+      final f = Fixture();
+      await f.start().timeout(bound);
+      var tokenEpoch = 0;
+      var token = f.session.beginNegotiation(
+        negotiationId: 'initial',
+        mediaRevision: 1,
+        media: CallMediaKind.video,
+        canApply: () => tokenEpoch == 0,
+      );
+      await f.session.applyLocal(
+        token,
+        await f.session.createOffer(token).timeout(bound),
+      ).timeout(bound);
+      await f.session.applyRemote(
+        token,
+        description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+      ).timeout(bound);
+      await f.session.commit(token).timeout(bound);
+      final incoming = remote(f);
+      await f.session.attachRenderer(token, CallVideoRendererSlot.remote).timeout(bound);
+      final local = Renderer()..texture = 44;
+      f.renderers.add(local);
+      expect(await f.session.setLocalCamera(token, f.grant()).timeout(bound), isTrue);
+      await f.session.attachRenderer(token, CallVideoRendererSlot.local).timeout(bound);
+      final p = source(f);
+      final recovery = f.session as CallVideoIceRecovery;
+      for (var episode = 1; episode <= 2; episode++) {
+        tokenEpoch = episode;
+        var recovering = true;
+        final held = await recovery.retainForIceRecovery(
+          token,
+          canApply: () => recovering,
+        ).timeout(bound);
+        expect(held, isNotNull);
+        expect(held!.isCurrent, isTrue);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
+        await expectLater(
+          f.session.createOffer(token),
+          throwsA(isA<CallEngineException>()),
+        ).timeout(bound);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        await f.engine.restartIce().timeout(bound);
+        final generation = episode;
+        final next = await recovery.continueIceRecovery(
+          held,
+          negotiationId: 'recovery-$episode',
+          canApply: () => tokenEpoch == generation,
+        ).timeout(bound);
+        expect(await f.session.setLocalCamera(next, f.grant()).timeout(bound), isFalse);
+        expect(f.track.enabled, isTrue);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).negotiation, same(token));
+        await f.session.applyLocal(
+          next,
+          await f.session.createOffer(next).timeout(bound),
+        ).timeout(bound);
+        await f.session.applyRemote(
+          next,
+          description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+        ).timeout(bound);
+        await f.session.commit(next).timeout(bound);
+        recovering = false;
+        token = next;
+        expect(p.presentationFor(CallVideoRendererSlot.remote).negotiation, same(token));
+        expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
+        f.renderer.width = 700 + episode;
+        f.renderer.onResize!();
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.width, 700 + episode);
+        expect(f.peer.video.sender.track, same(f.track));
+        expect(f.track.enabled, isTrue);
+        expect(incoming.enabled, isTrue);
+        expect(f.track.stops, 0);
+        expect(incoming.stops, 0);
+        expect(f.renderer.disposals, 0);
+        expect(local.disposals, 0);
+      }
+      expect(f.captures, 1);
+      expect(f.renderer.binds, 1);
+      expect(local.binds, 1);
+      expect(f.peer.restarts, 2);
+      expect(f.engine.iceGeneration, 2);
+      expect(f.peer.audio.track!.enabled, isTrue);
+      expect((f.peer.audio.track! as Track).stops, 0);
+      expect(f.peer.closes, 0);
+    });
+
+    for (final boundary in ['off', 'permission']) {
+      test('BL26 $boundary during ICE retention preserves remote recovery without local resurrection', () async {
+        const bound = Duration(seconds: 2);
+        final f = Fixture();
+        await f.start().timeout(bound);
+        final token = await f.committed().timeout(bound);
+        final incoming = remote(f);
+        await f.session.attachRenderer(token, CallVideoRendererSlot.remote).timeout(bound);
+        var permission = true;
+        expect(await f.session.setLocalCamera(
+          token,
+          f.grant(fresh: () => permission),
+        ).timeout(bound), isTrue);
+        final entered = Completer<void>();
+        final stable = Completer<rtc.RTCSignalingState?>();
+        final detached = Completer<void>();
+        addTearDown(() {
+          if (!stable.isCompleted) stable.complete(rtc.RTCSignalingState.RTCSignalingStateStable);
+          if (!detached.isCompleted) detached.complete();
+        });
+        f.peer.probe = () {
+          if (!entered.isCompleted) entered.complete();
+          return stable.future.timeout(bound);
+        };
+        var recovering = true;
+        final capability = f.session as CallVideoIceRecovery;
+        final retaining = capability.retainForIceRecovery(
+          token,
+          canApply: () => recovering,
+        ).timeout(bound);
+        await entered.future.timeout(bound);
+        Future<bool>? stopped;
+        if (boundary == 'off') {
+          f.peer.video.sender.gate = detached;
+          stopped = f.session.stopLocalCamera();
+          expect(f.track.enabled, isFalse);
+        } else {
+          permission = false;
+        }
+        stable.complete(rtc.RTCSignalingState.RTCSignalingStateStable);
+        final held = await retaining.timeout(bound);
+        expect(held, isNotNull);
+        expect(held!.isCurrent, isTrue);
+        expect(f.track.enabled, isFalse);
+        await f.engine.restartIce().timeout(bound);
+        var continued = false;
+        final continuing = capability.continueIceRecovery(
+          held,
+          negotiationId: 'after-$boundary',
+          canApply: () => f.current,
+        ).timeout(bound).then<Object>(
+          (token) { continued = true; return token; },
+          onError: (Object error, StackTrace _) { continued = true; return error; },
+        );
+        if (boundary == 'off') {
+          await flush().timeout(bound);
+          expect(continued, isFalse);
+          expect(source(f).presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+          detached.complete();
+        }
+        final result = await continuing.timeout(bound);
+        expect(result, isA<CallVideoNegotiation>());
+        final next = result as CallVideoNegotiation;
+        if (stopped != null) expect(await stopped.timeout(bound), isTrue);
+        await f.session.applyLocal(
+          next,
+          await f.session.createOffer(next).timeout(bound),
+        ).timeout(bound);
+        await f.session.applyRemote(
+          next,
+          description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+        ).timeout(bound);
+        await f.session.commit(next).timeout(bound);
+        recovering = false;
+        final p = source(f);
+        expect(p.presentationFor(CallVideoRendererSlot.local).hasTrack, isFalse);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).negotiation, same(next));
+        expect(incoming.enabled, isTrue);
+        expect(f.peer.video.sender.track, isNull);
+        expect(f.track.stops, 1);
+        expect(f.captures, 1);
+        expect(f.peer.audio.track!.enabled, isTrue);
+        expect((f.peer.audio.track! as Track).stops, 0);
+        expect(f.peer.closes, 0);
+      });
+    }
     test(
       'retirement invalidates view even when renderer disposal fails',
       () async {

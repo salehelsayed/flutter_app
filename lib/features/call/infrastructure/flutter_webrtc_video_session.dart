@@ -57,6 +57,24 @@ final class _QualityIntent {
   bool started = false;
 }
 
+final class _IceRetention implements CallVideoIceRetention {
+  _IceRetention(this.owner, this.previous, this.canApply);
+  final FlutterWebRtcVideoSession owner;
+  final _Negotiation previous;
+  final bool Function() canApply;
+  _Negotiation? successor;
+  _QualityIntent? quality;
+  CallVideoCaptureIntent? captureIntent;
+  _Capture? capture;
+  CallVideoQualityTier? tier;
+
+  @override
+  bool get isCurrent => owner._retentionCurrent(this);
+  @override
+  CallVideoNegotiation get negotiation =>
+      successor?.committed == true ? successor! : previous;
+}
+
 /// Concrete optional resources on an existing audio peer. No method owns the
 /// microphone, audio route, ICE generation, or the peer connection lifetime.
 final class FlutterWebRtcVideoSession
@@ -66,6 +84,7 @@ final class FlutterWebRtcVideoSession
         CallVideoPictureInPictureSource,
         CallVideoCameraSwitch,
         CallVideoSdpReconciler,
+        CallVideoIceRecovery,
         CallVideoQualityEnvironmentConsumer {
   FlutterWebRtcVideoSession({
     required this.callId,
@@ -383,6 +402,7 @@ final class FlutterWebRtcVideoSession
   Future<void>? _streamDisposal;
   late final CallVideoMediaOwner _owner;
   _Negotiation? _current;
+  _IceRetention? _iceRetention;
   webrtc.RTCRtpTransceiver? _video;
 
   /// Defect 4: the pinned iOS plugin identifies a transceiver by `mid ?? ''`,
@@ -400,13 +420,13 @@ final class FlutterWebRtcVideoSession
   Stream<void> get pictureInPictureSourceChanges => _pipChanges.stream;
   @override
   CallPipSource? get pictureInPictureSource {
-    final token = _current;
+    final token = _presentationToken;
     final track = _remoteTrack;
     final epoch = _pipEpoch;
     bool current() =>
         !_closed &&
         token != null &&
-        _currentToken(token) &&
+        _presentationCurrent(token) &&
         token.committed &&
         token.media == CallMediaKind.video &&
         _receiveOpen &&
@@ -455,10 +475,10 @@ final class FlutterWebRtcVideoSession
 
   @override
   CallVideoPresentationState presentationFor(CallVideoRendererSlot slot) {
-    final token = _current;
+    final token = _presentationToken;
     final active =
         token != null &&
-        _currentToken(token) &&
+        _presentationCurrent(token) &&
         token.committed &&
         token.media == CallMediaKind.video;
     final capture = _captureIntent == null
@@ -475,7 +495,7 @@ final class FlutterWebRtcVideoSession
     final id = native?.textureId;
     return CallVideoPresentationState(
       callId: callId,
-      negotiation: token != null && _currentToken(token) ? token : null,
+      negotiation: token != null && _presentationCurrent(token) ? token : null,
       slot: slot,
       hasTrack: hasTrack,
       view: id == null
@@ -546,12 +566,40 @@ final class FlutterWebRtcVideoSession
     }
   }
 
+  bool _retentionCurrent(_IceRetention retention) {
+    if (_closed || !identical(_iceRetention, retention)) return false;
+    final next = retention.successor;
+    if ((next ?? retention.previous).retired) return false;
+    return identical(_current, next ?? retention.previous) &&
+        (_currentGrant(retention.canApply) ||
+            (next?.committed == true && _currentGrant(next!.canApply)));
+  }
+
+  _Negotiation? get _presentationToken {
+    final retention = _iceRetention;
+    return retention != null && _retentionCurrent(retention)
+        ? retention.negotiation as _Negotiation
+        : _current;
+  }
+
+  bool _presentationCurrent(_Negotiation token) =>
+      _currentToken(token) ||
+      (_iceRetention != null &&
+          _retentionCurrent(_iceRetention!) &&
+          identical(_iceRetention!.negotiation, token));
+
   Never _reject() =>
       throw const CallEngineException(CallEngineErrorCode.notReady);
 
   _Negotiation _check(CallVideoNegotiation token) {
     if (token is! _Negotiation || !_currentToken(token)) {
-      if (identical(_current, token)) unawaited(retireVideo());
+      final retention = _iceRetention;
+      if (identical(_current, token) &&
+          !(retention != null &&
+              _retentionCurrent(retention) &&
+              identical(retention.previous, token))) {
+        unawaited(retireVideo());
+      }
       _reject();
     }
     return token;
@@ -585,6 +633,90 @@ final class FlutterWebRtcVideoSession
       _owner.hasPendingCleanup || _streamDisposeFailed;
 
   @override
+  Future<CallVideoIceRetention?> retainForIceRecovery(
+    CallVideoNegotiation previous, {
+    required bool Function() canApply,
+  }) async {
+    if (previous is! _Negotiation ||
+        _closed ||
+        !identical(_current, previous) ||
+        previous.retired ||
+        !previous.committed ||
+        previous.media != CallMediaKind.video ||
+        !_currentGrant(canApply) ||
+        hasPendingCleanup) {
+      return null;
+    }
+    final retention = _IceRetention(this, previous, canApply);
+    retention.quality = _qualityIntent;
+    retention.captureIntent = _captureIntent;
+    retention.capture = _captureIntent == null
+        ? null
+        : _owner.captureFor(_captureIntent!)?.resource as _Capture?;
+    retention.tier = _captureTier;
+    final qualityWork = _qualityWork;
+    _iceRetention = retention;
+    _retireQuality();
+    if (qualityWork != null) {
+      await Future.any<void>([qualityWork, _closeSignal.future]);
+    }
+    if (!_retentionCurrent(retention)) return null;
+    return _serial(() async {
+      try {
+        final state = await _readSignalingState(_connection());
+        final quality = retention.quality;
+        if (quality != null && !_currentGrant(quality.grant.isCurrent)) {
+          unawaited(stopLocalCamera());
+        }
+        final capture = retention.capture;
+        final captureCurrent = retention.quality == null ||
+            (capture != null &&
+                identical(_captureIntent, retention.captureIntent) &&
+                identical(_owner.captureFor(_captureIntent!)?.resource, capture) &&
+                capture.tracks.singleOrNull?.enabled == true);
+        if (!_retentionCurrent(retention) ||
+            state != webrtc.RTCSignalingState.RTCSignalingStateStable ||
+            (hasPendingCleanup && retention.quality != null) ||
+            !captureCurrent) {
+          unawaited(retireVideo());
+          return null;
+        }
+        return retention;
+      } catch (_) {
+        unawaited(retireVideo());
+        return null;
+      }
+    });
+  }
+
+  @override
+  Future<CallVideoNegotiation> continueIceRecovery(
+    CallVideoIceRetention raw, {
+    required String negotiationId,
+    required bool Function() canApply,
+  }) => _serial(() async {
+    if (raw is! _IceRetention ||
+        !identical(raw.owner, this) ||
+        !_retentionCurrent(raw) ||
+        raw.successor != null ||
+        negotiationId.isEmpty ||
+        negotiationId == raw.previous.negotiationId ||
+        !_currentGrant(canApply)) {
+      _reject();
+    }
+    final token = _Negotiation(
+      callId,
+      negotiationId,
+      raw.previous.mediaRevision,
+      raw.previous.media,
+      canApply,
+    );
+    raw.previous.retired = true;
+    raw.successor = token;
+    return _current = token;
+  });
+
+  @override
   CallVideoNegotiation beginNegotiation({
     required String negotiationId,
     required int mediaRevision,
@@ -615,6 +747,7 @@ final class FlutterWebRtcVideoSession
       canApply,
     );
     if (!_currentGrant(canApply)) _reject();
+    _iceRetention = null;
     previous?.retired = true;
     _retireQuality();
     _captureIntent = null;
@@ -856,6 +989,27 @@ final class FlutterWebRtcVideoSession
     token.committed = true;
     _receiveOpen = token.media == CallMediaKind.video;
     _remoteTrack?.enabled = _receiveOpen;
+    final retention = _iceRetention;
+    final quality = retention?.quality;
+    if (quality != null && !_currentGrant(quality.grant.isCurrent)) {
+      unawaited(stopLocalCamera());
+    }
+    if (retention != null &&
+        identical(retention.successor, token) &&
+        _retentionCurrent(retention) &&
+        quality != null &&
+        identical(_captureIntent, retention.captureIntent) &&
+        identical(_senderCapture, retention.capture) &&
+        _currentGrant(quality.grant.isCurrent)) {
+      _captureTier = retention.tier;
+      _qualityIntent = _QualityIntent(token, quality.grant)
+        ..started = quality.started;
+      _qualityTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollQuality(),
+      );
+    }
+    _publish(CallVideoRendererSlot.local);
     _publish(CallVideoRendererSlot.remote);
   });
 
@@ -973,6 +1127,8 @@ final class FlutterWebRtcVideoSession
     CallVideoNegotiation raw,
     CallLocalCameraGrant grant,
   ) async {
+    if (_iceRetention != null &&
+        _currentGrant(_iceRetention!.canApply)) return false;
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) {
       if (identical(_current, raw)) await stopLocalCamera();
       return false;
@@ -1266,6 +1422,8 @@ final class FlutterWebRtcVideoSession
     CallVideoNegotiation raw,
     CallLocalCameraGrant grant,
   ) async {
+    if (_iceRetention != null &&
+        _currentGrant(_iceRetention!.canApply)) return false;
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) return false;
     final intent = _captureIntent;
     if (intent == null) return false;
@@ -1310,6 +1468,7 @@ final class FlutterWebRtcVideoSession
 
   @override
   Future<bool> stopLocalCamera() {
+    _iceRetention?.quality = null;
     _retireQuality();
     return _stopCaptureForQuality();
   }
@@ -1409,7 +1568,10 @@ final class FlutterWebRtcVideoSession
             _check(raw);
             _views[slot] = renderer;
             void changed() {
-              if (_currentToken(raw) && identical(_views[slot], renderer)) {
+              final token = _presentationToken;
+              if (token != null &&
+                  _presentationCurrent(token) &&
+                  identical(_views[slot], renderer)) {
                 _publish(slot);
               }
             }
@@ -1455,6 +1617,7 @@ final class FlutterWebRtcVideoSession
 
   @override
   Future<bool> retireVideo() {
+    _iceRetention = null;
     _stopDebugStats();
     _retireQuality();
     _current?.retired = true;

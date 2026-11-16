@@ -452,6 +452,8 @@ final class ProductionCallSignalingGraph
   int _videoGeneration = 0;
   int _cameraEpoch = 0;
   CallVideoNegotiation? _localCameraToken;
+  ({CallId callId, int epoch, CallCameraState state,
+    CallV2NegotiationEffectExecutor owner})? _pendingCameraRevocation;
   CallVideoSession? _observedVideoSession;
   StreamSubscription<CallVideoPresentationState>? _videoSubscription;
   CallVideoNegotiation? _rendererToken;
@@ -492,7 +494,7 @@ final class ProductionCallSignalingGraph
     final snapshot = coordinator.activeSession!;
     final presentation = _projectVideo(snapshot)?.presentation;
     if (intent.action == CallVideoAction.turnCameraOff &&
-        _pipCameraIntent != null) {
+        (_pipCameraIntent != null || _localCameraToken?.callId == callId)) {
       await _revokeLocalCamera();
       _refreshVideo();
       return report(
@@ -589,13 +591,18 @@ final class ProductionCallSignalingGraph
           final epoch = intent.action == CallVideoAction.switchCamera
               ? _cameraEpoch
               : ++_cameraEpoch;
+          if (intent.action == CallVideoAction.turnCameraOn) {
+            _pendingCameraRevocation = null;
+          }
           var cameraStarted = false;
           bool cameraCurrent() =>
-              (current() ||
-                  cameraStarted &&
-                      _pipCameraExecutionCurrent(callId, generation, owner)) &&
+              (cameraStarted
+                  ? (_videoActionCurrent(callId, generation) ||
+                        _pipCameraExecutionCurrent(callId, generation, owner)) &&
+                      owner.cameraIntentBinding(_localCameraToken ?? token!) != null
+                  : current() && identical(owner.negotiation, token)) &&
               epoch == _cameraEpoch &&
-              identical(owner.negotiation, token) &&
+              identical(videoOwners?[callId], owner) &&
               identical(owner.videoSession, session) &&
               token?.media == CallMediaKind.video &&
               switches.machine.videoGatesOpen &&
@@ -1191,7 +1198,7 @@ final class ProductionCallSignalingGraph
     final localIsCaller = snapshot.direction == CallDirection.outgoing;
     final outgoing = decision && request?.requesterIsCaller == localIsCaller;
     final incoming = decision && request != null && !outgoing;
-    final token = owner?.negotiation;
+    final token = owner?.presentationNegotiation ?? owner?.negotiation;
     final ready = owner?.current == true && _videoForeground;
     final outcome = machine?.lastOutcome;
     final upgradeOutcome =
@@ -1206,13 +1213,14 @@ final class ProductionCallSignalingGraph
             request?.baseRevision == outcome.baseRevision
         ? outcome
         : null;
-    final cameraOn =
-        token != null && identical(_localCameraToken, token) && ready;
+    final cameraIntent = _localCameraToken;
+    final cameraOn = _videoForeground &&
+        cameraIntent != null && owner?.cameraIntentBinding(cameraIntent) != null;
     final source = owner?.videoSession;
     CallVideoView? view(CallVideoRendererSlot slot) {
       if (source is! CallVideoPresentationSource ||
           token == null ||
-          owner?.current != true) {
+          !identical(owner?.presentationNegotiation, token)) {
         return null;
       }
       final state = (source as CallVideoPresentationSource).presentationFor(
@@ -1298,15 +1306,19 @@ final class ProductionCallSignalingGraph
         snapshot == null ||
         snapshot.isTerminal) {
       _pip?.invalidate('inactive');
+      _pendingCameraRevocation = null;
       return;
     }
+    _publishPendingCameraRevocation();
     final owner = videoOwners?[snapshot.callId];
     final activeCamera = _localCameraToken;
-    if (activeCamera != null &&
-        (owner?.current != true ||
-            !identical(owner?.negotiation, activeCamera) ||
-            owner?.mediaSwitch?.machine.videoGatesOpen != true)) {
-      unawaited(_revokeLocalCamera());
+    if (activeCamera != null) {
+      final binding = owner?.cameraIntentBinding(activeCamera);
+      if (binding == null) {
+        unawaited(_revokeLocalCamera());
+      } else {
+        _localCameraToken = binding;
+      }
     }
     final session = owner?.videoSession;
     _bindVideoSource(session);
@@ -1323,7 +1335,7 @@ final class ProductionCallSignalingGraph
     final retained = _pipCameraIntent;
     if (retained != null && !_pipIntentCurrent()) _pipCameraIntent = null;
     _applyQualityEnvironment();
-    final token = owner?.negotiation;
+    final token = owner?.presentationNegotiation ?? owner?.negotiation;
     if (!identical(_rendererToken, token)) {
       _rendererToken = token;
       _rendererRequests.clear();
@@ -1396,6 +1408,7 @@ final class ProductionCallSignalingGraph
   }) {
     if (!preservePipIntent) _pipCameraIntent = null;
     _cameraEpoch++;
+    _pendingCameraRevocation = null;
     final token = _localCameraToken;
     _localCameraToken = null;
     final callId = token?.callId ?? _videoCallId;
@@ -1403,6 +1416,14 @@ final class ProductionCallSignalingGraph
     final stopped = session
         ?.stopLocalCamera(); // Gate closes before the first await.
     final epoch = _cameraEpoch;
+    final owner = callId == null ? null : videoOwners?[callId];
+    final snapshot = coordinator.activeSession;
+    if (token != null && owner != null &&
+        snapshot?.callId == callId && snapshot?.isTerminal == false) {
+      _pendingCameraRevocation = (
+        callId: token.callId, epoch: epoch, state: state, owner: owner,
+      );
+    }
     final previous = _cameraRelease;
     // Lease release must not wait for a native track/renderer disposal.
     // The existing media owner retains and drains that cleanup on close.
@@ -1417,25 +1438,36 @@ final class ProductionCallSignalingGraph
           );
         } catch (_) {}
       }
-      final owner = callId == null ? null : videoOwners?[callId];
-      if (token != null && owner != null) {
-        unawaited(
-          owner.publishLocalCameraState(
-            state,
-            canApply: () =>
-                !_shuttingDown &&
-                epoch == _cameraEpoch &&
-                identical(videoOwners?[callId], owner) &&
-                identical(owner.negotiation, token),
-          ),
-        );
-      }
+      _publishPendingCameraRevocation();
     }();
     _cameraRelease = release;
     return () async {
       await release;
       await cleanup;
     }();
+  }
+
+  void _publishPendingCameraRevocation() {
+    final pending = _pendingCameraRevocation;
+    if (pending == null) return;
+    final snapshot = coordinator.activeSession;
+    if (_shuttingDown || pending.epoch != _cameraEpoch ||
+        snapshot?.callId != pending.callId || snapshot?.isTerminal != false ||
+        !identical(videoOwners?[pending.callId], pending.owner)) {
+      _pendingCameraRevocation = null;
+      return;
+    }
+    if (!pending.owner.current) return;
+    final token = pending.owner.negotiation;
+    _pendingCameraRevocation = null;
+    unawaited(pending.owner.publishLocalCameraState(
+      pending.state,
+      canApply: () => !_shuttingDown && pending.epoch == _cameraEpoch &&
+          coordinator.activeSession?.callId == pending.callId &&
+          coordinator.activeSession?.isTerminal == false &&
+          identical(videoOwners?[pending.callId], pending.owner) &&
+          identical(pending.owner.negotiation, token),
+    ));
   }
 
   @override
@@ -2037,7 +2069,12 @@ final class ProductionCallSignalingGraph
         _videoGeneration++;
         _bindVideoSource(null);
       } else if (session.state == CallState.reconnecting) {
-        unawaited(_revokeLocalCamera());
+        final token = _localCameraToken;
+        if (token == null
+            ? _cameraActionPending || _pipCameraIntent != null
+            : videoOwners?[session.callId]?.cameraIntentBinding(token) == null) {
+          unawaited(_revokeLocalCamera());
+        }
       }
     }
     if (_shuttingDown || session.callId == null || session.isTerminal) {
