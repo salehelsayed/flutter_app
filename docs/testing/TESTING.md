@@ -5260,6 +5260,17 @@ production build/device ownership rules remain in force.
 
 XCTest adapters build into fresh private DerivedData and run each exact method,
 checking named passing test cases rather than accepting `TEST SUCCEEDED` alone.
+Exception since Batch 11 (unit 4): the simulator `build-for-testing` adapter builds into one shared
+per-worktree folder, `$HOME/dd-hetzner-test-sim-<tree>-<sha8>`, printed by
+`docker-ws/sim_test_derived_data.sh <tree>` (`MKNOON_SIM_DERIVED_CLEAN=1` empties it). Physical-device
+adapters keep fresh private DerivedData. Measured on main bb8f6103a (2026-11-16, iPhone 17 simulator,
+Debug, native lease held, evidence `.codex-test-logs/u4-measure/`): cold build 354 s into the emptied
+folder, warm rebuild 47 s into the same folder, both with `** TEST BUILD SUCCEEDED **`. Untimed setup in
+the fresh worktree first: `flutter pub get`, `scripts/ensure_go_ios_bindings.sh` (206 s) and
+`flutter build ios --simulator --debug --config-only` (216 s, it runs `pod install`). Without that last
+step a fresh worktree fails with `scheme named "Pods-Runner"` missing (first cold attempt, 150 s). These
+are observed timings only: the earlier 641 s and 794 s cold figures were measured differently, so no
+speedup percentage is claimed.
 `ios_ui_fixtures` is a private JSON object keyed by `Class/testMethod`; each entry
 contains `target_id` and an `environment` object with the method's `MKNOON_`
 variables. Its prepared application, notification, call and provider state must
