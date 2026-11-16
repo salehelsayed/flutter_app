@@ -1103,8 +1103,11 @@ final class CallV2NegotiationEffectExecutor
   _V2Recovery? _adoptRecovery(CallSessionSnapshot snapshot) {
     if (!_ready || _session == null || _token == null) return null;
     final existing = _recovery;
-    if (existing?.snapshot.reconnectGeneration ==
-        snapshot.reconnectGeneration) {
+    if (existing != null &&
+        existing.snapshot.reconnectGeneration == snapshot.reconnectGeneration) {
+      if (snapshot.transportRecoveryRequired && !existing.completed) {
+        legacy.rearmMediaRecoveryObservation(snapshot, waitForCommit: true);
+      }
       return existing;
     }
     final machine = _switch?.machine;
@@ -1156,7 +1159,10 @@ final class CallV2NegotiationEffectExecutor
     _remoteApplied = false;
     _localCandidates.clear();
     _remoteCandidates.clear();
-    legacy.rearmMediaRecoveryObservation(snapshot);
+    legacy.rearmMediaRecoveryObservation(
+      snapshot,
+      waitForCommit: snapshot.transportRecoveryRequired,
+    );
     recovery.retirement = _session!.retireVideo().then(
       (closed) => closed,
       onError: (Object _, StackTrace _) => false,
@@ -1197,6 +1203,9 @@ final class CallV2NegotiationEffectExecutor
     final work = incoming.isEmpty ? null : incoming.first;
     if (effect.type != CallEffectType.resumeRecoverySignals || work != null) {
       recovery.transportRequested = true;
+    }
+    if (recovery.transportRequested && !recovery.completed) {
+      legacy.rearmMediaRecoveryObservation(snapshot, waitForCommit: true);
     }
     if (effect.type == CallEffectType.resumeRecoverySignals &&
         recovery.takeover &&
