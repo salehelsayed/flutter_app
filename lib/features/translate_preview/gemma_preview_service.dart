@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/features/translate_preview/bl15_debug_wav_replay.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
@@ -31,6 +32,7 @@ final class GemmaPreviewService implements OnDeviceAi {
   static const _channel = MethodChannel('mknoon/gemma_preview');
   static const _diagnosticsEnabled =
       kDebugMode && bool.fromEnvironment('TRANSLATE_PREVIEW_DIAG');
+  static const _bl15ReplayWavName = String.fromEnvironment('BL15_REPLAY_WAV');
 
   Future<InferenceModel>? _model;
   bool _engineRegistered = false;
@@ -89,15 +91,19 @@ final class GemmaPreviewService implements OnDeviceAi {
   @override
   Future<String> transcribe(String audioPath) => _inference((model) async {
     return _measure('audio', () async {
+      final replay = kDebugMode && _bl15ReplayWavName.isNotEmpty
+          ? await Bl15DebugWavReplay.open(_bl15ReplayWavName)
+          : null;
+      final inputPath = replay?.fixture.path ?? audioPath;
       final decoded = await _channel.invokeMapMethod<String, Object?>(
         'decodePcm',
-        {'path': audioPath},
+        {'path': inputPath},
       );
       final pcm = decoded!['pcm']! as Uint8List;
       final sampleRate = decoded['sampleRate']! as int;
       final channels = decoded['channels']! as int;
       if (_diagnosticsEnabled) {
-        final input = File(audioPath);
+        final input = File(inputPath);
         final inputBytes = await input.length();
         final header = await input
             .openRead(0, inputBytes < 16 ? inputBytes : 16)
@@ -109,9 +115,20 @@ final class GemmaPreviewService implements OnDeviceAi {
           'TRANSLATE_PREVIEW_DIAG ${jsonEncode({'event': 'decoded_audio', 'operation': 'transcribe', 'inputBasename': input.uri.pathSegments.last, 'inputBytes': inputBytes, 'inputSha256': digest.toString(), 'inputHeaderHex': header.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(), 'sourceContainer': decoded['sourceContainer'], 'sourceCodec': decoded['sourceCodec'], 'pcmBytes': pcm.lengthInBytes, 'sampleRate': sampleRate, 'channels': channels, 'sampleCount': sampleCount, 'frameCount': frameCount, 'durationMs': frameCount != null && sampleRate > 0 ? frameCount * 1000 / sampleRate : null})}',
         );
       }
-      final wav = trimTrailingQuietWav16kMono(
-        wav16kMono(pcm, sampleRate: sampleRate, channels: channels),
+      final normalizedWav = wav16kMono(
+        pcm,
+        sampleRate: sampleRate,
+        channels: channels,
       );
+      final wav = trimTrailingQuietWav16kMono(normalizedWav);
+      if (replay != null) {
+        await replay.prepare(
+          normalizedWav,
+          wav,
+          sampleRate: sampleRate,
+          channels: channels,
+        );
+      }
       if (_diagnosticsEnabled) {
         final wavHeader = ByteData.sublistView(wav);
         final wavSampleRate = wavHeader.getUint32(24, Endian.little);
@@ -133,7 +150,9 @@ final class GemmaPreviewService implements OnDeviceAi {
         await session.addQueryChunk(
           Message.withAudio(text: '', audioBytes: wav, isUser: true),
         );
-        return _reply(await session.getResponse(), operation: 'transcribe');
+        final raw = await session.getResponse();
+        if (replay != null) await replay.recordResponse(raw);
+        return _reply(raw, operation: 'transcribe');
       } finally {
         await session.close();
       }
