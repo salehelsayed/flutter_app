@@ -6,8 +6,12 @@ wrapper's build/device leases, cancellation, raw-log and cleanup barriers.
 """
 import copy
 from collections import Counter
+import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -83,16 +87,43 @@ def prerequisites(check, config, matrix):
     return errors
 
 
+def sim_derived_path(root):
+    """One simulator XCTest DerivedData per worktree, on the internal disk.
+
+    The dd-hetzner-test- prefix keeps it inside test_derived_data.sh's guard,
+    so store, upload and restore folders can never match.
+    """
+    home=os.environ.get('HOME')
+    if not home: raise ValueError('HOME is required for the simulator DerivedData folder')
+    tree=Path(root).resolve()
+    digest=hashlib.sha256(str(tree).encode()).hexdigest()[:8]
+    return Path(home)/('dd-hetzner-test-sim-'+tree.name+'-'+digest)
+
+
+def _prepare_sim_derived(root):
+    path=sim_derived_path(root)
+    if os.environ.get('MKNOON_SIM_DERIVED_CLEAN')=='1': shutil.rmtree(path,ignore_errors=True)
+    # A failed Xcode/Flutter probe leaves the folder as it is; xcodebuild then
+    # builds into it as usual.
+    subprocess.run(['bash','-c','. "$1" && prepare_test_derived_data "$2"','bash',
+                    str(Path(root)/'docker-ws/test_derived_data.sh'),str(path)],
+                   capture_output=True,text=True)
+    return path
+
+
 def bind(check, config, root, output):
     configured=settings(check,config)
+    sim_derived=(_prepare_sim_derived(root)
+                 if '{sim_derived}' in json.dumps(check.get('steps',[])) else None)
     def value(text):
         def replace(match):
             key=match[1]
             if key=='root': return str(root)
             if key=='output': return str(output)
+            if key=='sim_derived': return str(sim_derived)
             category,name=key.split(':',1)
             return str(config['devices'][name] if category=='device' else configured[name])
-        return re.sub(r'\{(root|output|(?:device|config):[A-Za-z0-9_.-]+)\}',replace,text)
+        return re.sub(r'\{(root|output|sim_derived|(?:device|config):[A-Za-z0-9_.-]+)\}',replace,text)
     steps=copy.deepcopy(check['steps'])
     for step in steps:
         step['command']=[value(v) for v in step['command']]
@@ -225,7 +256,8 @@ def prepare_step(step):
     """Populate a fresh, this-invocation XCTest product with explicit fixture data.
 
     No installed/prebuilt app is accepted as a cache hit. xcodebuild's preceding
-    build-for-testing step owns the products in a fresh private DerivedData path.
+    build-for-testing step rewrites the products in its DerivedData (fresh per
+    run, or the worktree's simulator folder) before this step runs.
     UI fixture values are private and never copied into the shared result ledger.
     """
     if not step.get('xctest_fixture'): return

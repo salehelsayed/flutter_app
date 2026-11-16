@@ -5832,6 +5832,7 @@
         "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/full_suite_adapters.py",
+        "docker-ws/sim_test_derived_data.sh",
         "scripts/test/full_suite_adapters_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
         "scripts/test/mknoon_full_composition_test.py",
@@ -9693,7 +9694,7 @@
         "-destination",
         "id={device:ios_simulator}",
         "-derivedDataPath",
-        "{output}/derived",
+        "{sim_derived}",
         "-only-testing:RunnerUITests/NotificationTapUITests/testAirplaneToggleStateDecoderContract"
       ],
       "steps": [
@@ -9712,7 +9713,7 @@
             "-destination",
             "id={device:ios_simulator}",
             "-derivedDataPath",
-            "{output}/derived",
+            "{sim_derived}",
             "-only-testing:RunnerUITests/NotificationTapUITests/testAirplaneToggleStateDecoderContract"
           ],
           "format": "marker",
@@ -9737,7 +9738,7 @@
             "NotificationTapUITests/testAirplaneToggleStateDecoderContract"
           ],
           "xctest_fixture": "{config:ios_ui_fixtures}",
-          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_directory": "{sim_derived}/Build/Products",
           "xctestrun_output": "{output}/active.xctestrun",
           "target_id": "{device:ios_simulator}"
         }
