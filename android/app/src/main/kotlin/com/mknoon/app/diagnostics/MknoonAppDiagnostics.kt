@@ -32,6 +32,99 @@ internal interface MknoonAppDiagnosticBackend {
     fun replace(bytes: ByteArray)
 }
 
+internal data class MknoonActiveIdentityReporterFence(
+    val revision: Long,
+    val consentEpoch: Long,
+    val profileBinding: String,
+    val accountPeerID: String,
+)
+
+/** Serializes receipt with memory-only Go publication; no keys, paths or IO. */
+internal class MknoonActiveIdentityReporterAdmission(
+    private val publishDesired: (MknoonActiveIdentityReporterFence, Boolean, Boolean) -> Boolean,
+) {
+    private data class Desired(
+        val fence: MknoonActiveIdentityReporterFence,
+        val enabled: Boolean,
+        val hasRootKey: Boolean,
+        val preserve: Boolean,
+    )
+    private val lock = Any()
+    private var desired: Desired? = null
+    private var published = false
+    private var revision = 0L
+    private var lastError = "ACTIVE_IDENTITY_UNAVAILABLE"
+    val errorCode: String get() = synchronized(lock) { lastError }
+    fun admitConfiguration(
+        consentEpoch: Long,
+        enabled: Boolean,
+        profileBinding: String,
+        accountPeerID: String,
+        hasRootKey: Boolean,
+        preservePendingOnUnarm: Boolean = false,
+    ): MknoonActiveIdentityReporterFence? = synchronized(lock) {
+        admitLocked(consentEpoch, enabled, profileBinding, accountPeerID, hasRootKey, preservePendingOnUnarm)
+    }
+
+    fun observeConsent(consentEpoch: Long, enabled: Boolean): Boolean = synchronized(lock) {
+        val current = desired
+        if (current != null && current.fence.consentEpoch == consentEpoch && current.enabled == enabled) {
+            lastError = if (published) "" else "ACTIVE_IDENTITY_UNAVAILABLE"
+            return@synchronized published
+        }
+        admitLocked(consentEpoch, enabled, "", "", false, false) != null
+    }
+
+    fun unarmPreservingPending(): Boolean = synchronized(lock) {
+        val current = desired ?: return@synchronized true
+        admitLocked(current.fence.consentEpoch, current.enabled, "", "", false, current.enabled) != null
+    }
+
+    fun isCurrent(fence: MknoonActiveIdentityReporterFence): Boolean = synchronized(lock) {
+        published && desired?.fence == fence
+    }
+
+    fun admitMark(fence: MknoonActiveIdentityReporterFence): Boolean = synchronized(lock) {
+        val current = desired
+        published && current != null && current.fence == fence && current.enabled &&
+            current.hasRootKey && !current.preserve && fence.accountPeerID.isNotEmpty()
+    }
+
+    private fun admitLocked(
+        consentEpoch: Long, enabled: Boolean, profile: String, account: String, root: Boolean, preserve: Boolean,
+    ): MknoonActiveIdentityReporterFence? {
+        val empty = profile.isEmpty() && account.isEmpty()
+        val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+        val validScope = empty || (Regex("^v1:[0-9a-f]{64}$").matches(profile) &&
+            account.isNotEmpty() && account.length <= 128 && account.all { it in alphabet })
+        if (consentEpoch <= 0 || consentEpoch > 9_007_199_254_740_991L || !validScope ||
+            (if (empty) root else root != enabled) || (preserve && (!enabled || !empty || root))) {
+            lastError = "ACTIVE_IDENTITY_INVALID_REQUEST"; return null
+        }
+        val current = desired
+        if (current != null) {
+            if (consentEpoch < current.fence.consentEpoch) {
+                lastError = "ACTIVE_IDENTITY_REPORTER_STALE"; return null
+            }
+            if (consentEpoch == current.fence.consentEpoch && enabled && !current.enabled) {
+                lastError = "ACTIVE_IDENTITY_INVALID_REQUEST"; return null
+            }
+            if (current.fence.consentEpoch == consentEpoch && current.fence.profileBinding == profile &&
+                current.fence.accountPeerID == account && current.enabled == enabled &&
+                current.hasRootKey == root && current.preserve == preserve && published) {
+                lastError = ""; return current.fence
+            }
+        }
+        if (revision >= 9_007_199_254_740_991L) { lastError = "ACTIVE_IDENTITY_UNAVAILABLE"; return null }
+        val fence = MknoonActiveIdentityReporterFence(++revision, consentEpoch, profile, account)
+        desired = Desired(fence, enabled, root, preserve)
+        published = false
+        published = try { publishDesired(fence, enabled, preserve) } catch (_: Throwable) { false }
+        lastError = if (published) "" else "ACTIVE_IDENTITY_UNAVAILABLE"
+        return fence.takeIf { published }
+    }
+}
+
 /** Bounds pending observations even when the optional archive is slow. */
 internal class MknoonAppDiagnosticAdmission(private val limit: Int = 64) {
     private val pending = AtomicInteger()
@@ -276,6 +369,30 @@ internal class MknoonAppDiagnostics private constructor(private val context: Con
         fun get(context: Context): MknoonAppDiagnostics = shared ?: synchronized(this) { shared ?: MknoonAppDiagnostics(context.applicationContext).also { shared = it } }
     }
     private val writer = Executors.newSingleThreadExecutor { work -> Thread(work, "mknoon-app-diagnostics").apply { isDaemon = true } }
+    private val activityOwnerLock = Any()
+    private var activityOwner: Any? = null
+    private var activityConsent: ((Long, Boolean) -> Boolean)? = null
+    fun installActivityOwner(owner: Any, observer: (Long, Boolean) -> Boolean) = synchronized(activityOwnerLock) {
+        activityOwner = owner
+        activityConsent = observer
+    }
+    fun retireActivityOwner(owner: Any) = synchronized(activityOwnerLock) {
+        if (activityOwner == owner) { activityOwner = null; activityConsent = null }
+    }
+    private fun observeActivityConsent(method: String, raw: Any?, owner: Any?) {
+        if (method != "configure" || owner == null) return
+        val args = raw as? Map<*, *> ?: return
+        if (args["version"] != 1) return
+        val epoch = when (val value = args["consentEpoch"]) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> return
+        }
+        val enabled = args["enabled"] as? Boolean ?: return
+        if (epoch <= 0 || epoch > 9_007_199_254_740_991L) return
+        val observer = synchronized(activityOwnerLock) { activityConsent.takeIf { activityOwner == owner } }
+        try { observer?.invoke(epoch, enabled) } catch (_: Throwable) { /* Existing diagnostics stay independent. */ }
+    }
     private val admission = MknoonAppDiagnosticAdmission()
     private val backend = AndroidAppDiagnosticBackend(context)
     private var spool: MknoonAppDiagnosticSpool? = null
@@ -309,8 +426,9 @@ internal class MknoonAppDiagnostics private constructor(private val context: Con
                 }
         }
     }
-    fun bridge(messenger: BinaryMessenger) = MethodChannel(messenger, "mknoon/app_diagnostics").also { channel ->
+    fun bridge(messenger: BinaryMessenger, activityOwner: Any? = null) = MethodChannel(messenger, "mknoon/app_diagnostics").also { channel ->
         channel.setMethodCallHandler { call, result ->
+            observeActivityConsent(call.method, call.arguments, activityOwner)
             writer.execute {
                 val value: Any = runCatching {
                     val args = call.arguments as? Map<*, *> ?: return@runCatching false

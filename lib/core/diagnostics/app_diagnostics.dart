@@ -23,6 +23,10 @@ typedef AppDiagnosticUpload =
 typedef AppDiagnosticPersist =
     Future<void> Function(String path, Map<String, Object?> state);
 
+typedef LocalDiagnosticConsent = ({bool enabled, int consentEpoch});
+typedef LocalConsentObserver =
+    Future<void> Function(LocalDiagnosticConsent? consent);
+
 Future<String> _encodeDiagnosticPreview(Map<String, Object?> state) =>
     Isolate.run(() => const JsonEncoder.withIndent('  ').convert(state));
 
@@ -151,6 +155,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
   bool _native = false;
   bool _observing = false;
   bool _ready = false;
+  LocalConsentObserver? _localConsentObserver;
+  bool _consentObserverDisposed = false;
   bool _disposed = false;
   bool _storageHealthy = true;
   bool _nativeHealthy = true;
@@ -188,6 +194,24 @@ final class AppDiagnostics with WidgetsBindingObserver {
 
   bool get enabled => _enabled.value && !_disposed;
   ValueListenable<bool> get enabledListenable => _enabled;
+
+  Future<void> setLocalConsentObserver(LocalConsentObserver? observer) async {
+    _localConsentObserver = observer;
+    if (_ready && !_disposed && !_consentObserverDisposed && _epoch > 0) {
+      await _notifyLocalConsent((enabled: enabled, consentEpoch: _epoch));
+    }
+  }
+
+  Future<void> _notifyLocalConsent(LocalDiagnosticConsent? consent) async {
+    final observer = _localConsentObserver;
+    if (observer == null) return;
+    try {
+      await observer(consent).timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // An optional local owner cannot break collection or echo private errors.
+    }
+  }
+
   String? get supportCode => enabled && _ready ? _runId : null;
   int get _nowMs => _now().millisecondsSinceEpoch;
   File get _file => File('${_directory!.path}/state.json');
@@ -383,6 +407,13 @@ final class AppDiagnostics with WidgetsBindingObserver {
       _clearMemory();
     }
     await _syncNative();
+    if (_ready &&
+        _storageHealthy &&
+        !_disposed &&
+        !_consentObserverDisposed &&
+        _epoch > 0) {
+      await _notifyLocalConsent((enabled: enabled, consentEpoch: _epoch));
+    }
     if (useNative) {
       _notificationLockLifecycle = WidgetsBinding.instance.lifecycleState;
       _notificationLockInactive =
@@ -417,6 +448,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     Bridge? bridge,
     Future<bool> Function()? networkAllowed,
     Future<dynamic> Function(String, Map<String, Object?>)? native,
+    LocalConsentObserver? consentObserver,
   }) async {
     await _instance.dispose();
     final instance = AppDiagnostics._();
@@ -425,6 +457,9 @@ final class AppDiagnostics with WidgetsBindingObserver {
     instance._testUpload = upload;
     instance._testPersist = persist;
     instance._testNative = native;
+    if (consentObserver != null) {
+      await instance.setLocalConsentObserver(consentObserver);
+    }
     await instance.initialize(
       directory:
           directory ??
@@ -784,11 +819,16 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _enabled.value = value;
     _consentPending = true;
     _nativeConsentPending = true;
+    final observed = _notifyLocalConsent((
+      enabled: value,
+      consentEpoch: _epoch,
+    ));
     if (!value) {
       _nativeClearPending = true;
       _clearMemory();
-      await _anonymousStickers?.clear();
     }
+    await observed;
+    if (!value) await _anonymousStickers?.clear();
     _retryAt = 0;
     await _persist(force: true);
     await _syncNative();
@@ -799,11 +839,16 @@ final class AppDiagnostics with WidgetsBindingObserver {
   Future<void> clear() async {
     if (!_ready || _disposed) return;
     _epoch = max(_epoch + 1, _nowMs);
+    final observed = _notifyLocalConsent((
+      enabled: enabled,
+      consentEpoch: _epoch,
+    ));
     _clearPending = true;
     _nativeClearPending = true;
     _consentPending = true;
     _nativeConsentPending = true;
     _clearMemory();
+    await observed;
     await _anonymousStickers?.clear();
     _retryAt = 0;
     await _persist(force: true);
@@ -1441,6 +1486,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           _stickerUsage.clear();
           _lastError = 'sink_unavailable';
           _nativeConsentPending = true;
+          await _notifyLocalConsent((enabled: false, consentEpoch: _epoch));
         }
       }
       _writing = null;
@@ -1544,7 +1590,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
   }
 
   Future<void> dispose() async {
-    if (_disposed) return;
+    if (_disposed || _consentObserverDisposed) return;
+    _consentObserverDisposed = true;
+    final unarmed = _ready ? _notifyLocalConsent(null) : Future<void>.value();
+    _localConsentObserver = null;
     _timer?.cancel();
     _persistTimer?.cancel();
     _notificationLockSnapshotTimer?.cancel();
@@ -1559,6 +1608,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     }
     _notificationLocks.clear();
     if (_observing) WidgetsBinding.instance.removeObserver(this);
+    await unarmed;
     await _flushFuture;
     await _anonymousStickers?.dispose();
     await _persist();

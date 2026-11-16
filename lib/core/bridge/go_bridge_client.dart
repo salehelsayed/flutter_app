@@ -1210,6 +1210,49 @@ class GoBridgeClient extends Bridge {
     // stuck Orbit skeleton state.
     assertNotInsideDbWriteTransaction(commandPreview: cmd);
 
+    if (cmd == 'active_identity_reporter_v1') {
+      // Local consent/owner fences must bypass network telemetry, including
+      // exception text and recursive diagnostics about their own failures.
+      const unavailable =
+          '{"ok":false,"errorCode":"ACTIVE_IDENTITY_REPORTER_UNAVAILABLE","errorMessage":"Activity reporter unavailable"}';
+      if (_disposed || !_initialized || payload == null) return unavailable;
+      try {
+        final result = await _methodChannel.invokeMethod<String>(
+          'activeIdentityReporterV1',
+          jsonEncode(payload),
+        );
+        if (_disposed || !_initialized || result == null) return unavailable;
+        final decoded = jsonDecode(result);
+        if (decoded is! Map || decoded['ok'] != true || decoded['data'] is! Map)
+          return unavailable;
+        final data = decoded['data'] as Map;
+        final op = payload['op'];
+        final valueKey = switch (op) {
+          'configure' => 'configured',
+          'mark' => 'accepted',
+          'flush' => 'queued',
+          _ => null,
+        };
+        if (valueKey == null ||
+            decoded.length != 2 ||
+            data.length != 3 ||
+            data[valueKey] is! bool ||
+            data['revision'] is! int ||
+            data['consentEpoch'] is! int)
+          return unavailable;
+        return jsonEncode({
+          'ok': true,
+          'data': {
+            valueKey: data[valueKey],
+            'revision': data['revision'],
+            'consentEpoch': data['consentEpoch'],
+          },
+        });
+      } catch (_) {
+        return unavailable;
+      }
+    }
+
     final spec = _cmdMap[cmd];
     if (spec == null) {
       try {

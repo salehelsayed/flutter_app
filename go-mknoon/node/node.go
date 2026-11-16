@@ -40,6 +40,7 @@ type EventCallback interface {
 
 // Node wraps a go-libp2p host with mknoon protocol handlers.
 type Node struct {
+	activeIdentityReporter     *activeIdentityReporter
 	callDiagnosticsEnabled     bool
 	callDiagnosticConsentEpoch int64
 	callDiagnosticRelays       map[peer.ID]time.Time
@@ -361,6 +362,9 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	}()
 
 	cfgCopy := cfg
+	if cfg.RelayAddresses != nil {
+		cfgCopy.RelayAddresses = append([]string{}, cfg.RelayAddresses...)
+	}
 	cfgCopy.PersonalRendezvousRefreshInterval = cfgCopy.PersonalRendezvousRefreshEvery()
 	flags := cfg.EffectiveFlags()
 

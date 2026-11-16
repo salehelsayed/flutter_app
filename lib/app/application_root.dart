@@ -622,6 +622,7 @@ class MyApp extends StatefulWidget {
   /// next cold start doesn't stall on the splash screen behind a stale
   /// socket/relay reservation or DB lock.
   final Future<void> Function()? onAppDetached;
+  final Future<void> Function()? disposeActiveIdentityReporter;
 
   /// Call-only lifecycle seams. They own only the dedicated call subscription,
   /// coordinator, and ephemeral mailbox drain; shared app transports remain
@@ -784,6 +785,7 @@ class MyApp extends StatefulWidget {
     this.firebaseReadiness,
     this.mayArmPushListeners,
     this.onAppDetached,
+    this.disposeActiveIdentityReporter,
     this.resumeCallSignaling,
     this.pauseCallSignaling,
     this.shutdownCallSignaling,
@@ -2451,6 +2453,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    final activityReporterUnarmed = Future<void>.sync(
+      () => widget.disposeActiveIdentityReporter?.call(),
+    ).timeout(const Duration(seconds: 2)).catchError((Object _) {});
     _appVisibilityAuthority.invalidateSynchronously();
     _appVisibilityRouteRegistry.dispose();
     _appVisibilityAuthority.dispose();
@@ -2498,7 +2503,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postRepository.dispose();
     unawaited(
       shutdownCallSignalingBeforeSharedOwners(
-        shutdownCallSignaling: widget.shutdownCallSignaling,
+        shutdownCallSignaling: () async {
+          await activityReporterUnarmed;
+          await widget.shutdownCallSignaling?.call();
+        },
         disposeMessageRouter: () => widget.messageRouter.dispose(),
         disposeP2PService: () => widget.p2pService.dispose(),
         disposeBridge: () => widget.bridge.dispose(),

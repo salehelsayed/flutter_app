@@ -283,6 +283,178 @@ final class MknoonAppDiagnosticSpoolTests: XCTestCase {
     XCTAssertLessThanOrEqual(size, MknoonNseAppDiagnosticInbox.maxBytes)
     XCTAssertEqual(MknoonNseAppDiagnosticInbox.maxBytes + MknoonAppDiagnosticSpool.maxBytes, 1_048_576)
   }
+  private let activityProfileA = "v1:" + String(repeating: "a", count: 64)
+  private let activityProfileB = "v1:" + String(repeating: "b", count: 64)
+  private let activityAccountA = "12D3KooWJsEmQWn5WGGn9AZX79emq3RkGNx2ihFwWzZAqbiUQGMF"
+  private let activityAccountB = "12D3KooWJsEmQWn5WGGn9AZX79emq3RkGNx2ihFwWzZAqbiUQGMG"
+
+  func testActiveIdentityPublishesBeforeHeldConfiguration() throws {
+    var order: [String] = [], publications: [(MknoonActiveIdentityReporterFence, Bool, Bool)] = []
+    var queued: [() -> Void] = [], configured = 0
+    let admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+      order.append("publish"); publications.append((fence, enabled, preserve)); return true
+    }
+    let fence = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(order, ["publish"], "Memory-only Go publication must finish before admission returns")
+    XCTAssertEqual(publications.count, 1); XCTAssertGreaterThan(fence.revision, 0)
+    XCTAssertEqual(fence.consentEpoch, 10); XCTAssertEqual(fence.profileBinding, activityProfileA)
+    XCTAssertEqual(fence.accountPeerID, activityAccountA)
+    XCTAssertTrue(publications[0].1); XCTAssertFalse(publications[0].2)
+    order.append("queued")
+    queued.append { if admission.isCurrent(fence) { configured += 1 } }
+    XCTAssertEqual(configured, 0)
+    queued.removeFirst()()
+    XCTAssertEqual(order, ["publish", "queued"]); XCTAssertEqual(configured, 1)
+    XCTAssertTrue(admission.admitMark(fence))
+  }
+
+  func testActiveIdentityOffReceiptFencesHeldConfigurationAndMark() throws {
+    var publications: [(MknoonActiveIdentityReporterFence, Bool, Bool)] = []
+    var queued: [() -> Void] = [], configured = 0, marked = 0
+    let admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+      publications.append((fence, enabled, preserve)); return true
+    }
+    let old = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(publications.count, 1, "Positive publisher control")
+    queued.append {
+      if admission.isCurrent(old) { configured += 1 }
+      if admission.admitMark(old) { marked += 1 }
+    }
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 11, enabled: false))
+    XCTAssertEqual(publications.count, 2, "OFF must reach Go while the background job is still held")
+    let off = publications[1].0
+    XCTAssertFalse(publications[1].1); XCTAssertEqual(off.consentEpoch, 11)
+    XCTAssertGreaterThan(off.revision, old.revision)
+    XCTAssertTrue(admission.isCurrent(off), "The current disabled job must still be allowed to clear durably")
+    XCTAssertFalse(admission.admitMark(off)); XCTAssertFalse(admission.isCurrent(old))
+    queued.removeFirst()()
+    XCTAssertEqual(configured, 0); XCTAssertEqual(marked, 0)
+  }
+
+  func testActiveIdentityNewProfileRequiresExactCapturedTuple() throws {
+    var published: [MknoonActiveIdentityReporterFence] = []
+    let admission = MknoonActiveIdentityReporterAdmission { fence, _, _ in published.append(fence); return true }
+    let old = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    let current = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileB, accountPeerID: activityAccountB, hasRootKey: true))
+    XCTAssertEqual(published.count, 2); XCTAssertGreaterThan(current.revision, old.revision)
+    XCTAssertFalse(admission.isCurrent(old)); XCTAssertFalse(admission.admitMark(old))
+    XCTAssertTrue(admission.isCurrent(current)); XCTAssertTrue(admission.admitMark(current))
+    let mutations = [
+      MknoonActiveIdentityReporterFence(revision: current.revision + 1, consentEpoch: current.consentEpoch,
+        profileBinding: current.profileBinding, accountPeerID: current.accountPeerID),
+      MknoonActiveIdentityReporterFence(revision: current.revision, consentEpoch: current.consentEpoch + 1,
+        profileBinding: current.profileBinding, accountPeerID: current.accountPeerID),
+      MknoonActiveIdentityReporterFence(revision: current.revision, consentEpoch: current.consentEpoch,
+        profileBinding: activityProfileA, accountPeerID: current.accountPeerID),
+      MknoonActiveIdentityReporterFence(revision: current.revision, consentEpoch: current.consentEpoch,
+        profileBinding: current.profileBinding, accountPeerID: activityAccountA),
+    ]
+    for changed in mutations {
+      XCTAssertFalse(admission.isCurrent(changed)); XCTAssertFalse(admission.admitMark(changed))
+    }
+  }
+
+  func testActiveIdentityConsentMirrorCannotRestoreProfileAuthority() throws {
+    var publications: [(MknoonActiveIdentityReporterFence, Bool, Bool)] = []
+    let admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+      publications.append((fence, enabled, preserve)); return true
+    }
+    let initial = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 10, enabled: true))
+    XCTAssertEqual(publications.count, 1); XCTAssertTrue(admission.admitMark(initial))
+    XCTAssertFalse(admission.observeConsent(consentEpoch: 9, enabled: false))
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 10, enabled: false))
+    XCTAssertFalse(admission.admitMark(initial)); XCTAssertEqual(publications.count, 2)
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 11, enabled: false))
+    XCTAssertFalse(admission.observeConsent(consentEpoch: 10, enabled: true))
+    XCTAssertFalse(admission.observeConsent(consentEpoch: 11, enabled: true))
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 12, enabled: true))
+    let mirrorOn = try XCTUnwrap(publications.last?.0)
+    XCTAssertEqual(mirrorOn.consentEpoch, 12); XCTAssertTrue(admission.isCurrent(mirrorOn))
+    XCTAssertFalse(admission.admitMark(mirrorOn), "ON without a new root configuration never arms")
+    XCTAssertFalse(admission.admitMark(initial))
+    let borrowed = MknoonActiveIdentityReporterFence(revision: mirrorOn.revision, consentEpoch: 12,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA)
+    XCTAssertFalse(admission.admitMark(borrowed))
+  }
+
+  func testActiveIdentitySameScopeRefreshReusesNativeRevision() throws {
+    var published: [MknoonActiveIdentityReporterFence] = []
+    let admission = MknoonActiveIdentityReporterAdmission { fence, _, _ in published.append(fence); return true }
+    let first = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    // A restarted Dart coordinator supplies no counter or wall-clock revision.
+    let refreshed = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(first, refreshed); XCTAssertEqual(published.count, 1)
+    XCTAssertTrue(admission.observeConsent(consentEpoch: 10, enabled: true))
+    XCTAssertEqual(published.count, 1); XCTAssertTrue(admission.admitMark(first))
+    let replacement = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileB, accountPeerID: activityAccountB, hasRootKey: true))
+    XCTAssertGreaterThan(replacement.revision, first.revision)
+    XCTAssertEqual(published.count, 2)
+  }
+
+  func testActiveIdentityUnarmPolicyAndMalformedRequestsHaveFixedPrivateErrors() throws {
+    let privateError = "b294-native-private-account-signature-error"
+    var failPublisher = false
+    var publications: [(MknoonActiveIdentityReporterFence, Bool, Bool)] = []
+    let admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+      publications.append((fence, enabled, preserve))
+      if failPublisher { throw NSError(domain: privateError, code: 7, userInfo: [NSLocalizedDescriptionKey: privateError]) }
+      return true
+    }
+    let original = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    let retired = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: "", accountPeerID: "", hasRootKey: false))
+    XCTAssertFalse(try XCTUnwrap(publications.last).2,
+      "Explicit retirement must publish its discard policy before any background clear")
+    XCTAssertTrue(admission.isCurrent(retired)); XCTAssertFalse(admission.admitMark(retired))
+    XCTAssertFalse(admission.isCurrent(original))
+    let rebound = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertGreaterThan(rebound.revision, retired.revision)
+    let disposed = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: "", accountPeerID: "", hasRootKey: false, preservePendingOnUnarm: true))
+    XCTAssertTrue(try XCTUnwrap(publications.last).2)
+    XCTAssertTrue(admission.isCurrent(disposed)); XCTAssertFalse(admission.admitMark(disposed))
+    typealias Bad = (epoch: Int64, profile: String, account: String, root: Bool, preserve: Bool)
+    let malformed: [Bad] = [
+      (0, activityProfileA, activityAccountA, true, false),
+      (-1, activityProfileA, activityAccountA, true, false),
+      (10, "", activityAccountA, true, false), (10, activityProfileA, "", true, false),
+      (10, "not-a-binding", activityAccountA, true, false),
+      (10, activityProfileA + "a", activityAccountA, true, false),
+      (10, activityProfileA, " " + activityAccountA, true, false),
+      (10, activityProfileA, String(repeating: "x", count: 129), true, false),
+      (10, activityProfileA, activityAccountA, false, false),
+      (10, "", "", true, false), (10, activityProfileA, activityAccountA, true, true),
+      (10, privateError, privateError, true, false),
+    ]
+    let beforeInvalid = publications.count
+    for bad in malformed {
+      XCTAssertNil(admission.admitConfiguration(consentEpoch: bad.epoch, enabled: true,
+        profileBinding: bad.profile, accountPeerID: bad.account, hasRootKey: bad.root,
+        preservePendingOnUnarm: bad.preserve))
+      XCTAssertEqual(admission.errorCode, "ACTIVE_IDENTITY_INVALID_REQUEST")
+      XCTAssertTrue(admission.isCurrent(disposed))
+    }
+    XCTAssertEqual(publications.count, beforeInvalid)
+    failPublisher = true
+    XCTAssertNil(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileB, accountPeerID: activityAccountB, hasRootKey: true))
+    XCTAssertEqual(admission.errorCode, "ACTIVE_IDENTITY_UNAVAILABLE")
+    XCTAssertFalse(admission.errorCode.contains(privateError))
+    XCTAssertFalse(admission.errorCode.contains(activityAccountB))
+    XCTAssertFalse(admission.admitMark(try XCTUnwrap(publications.last?.0)))
+  }
+
   func testVocabularyMatchesCanonicalSchema() throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let data = try Data(contentsOf: root.appendingPathComponent("tool/app_diagnostics/schema_v1.json"))
@@ -296,4 +468,42 @@ final class MknoonAppDiagnosticSpoolTests: XCTestCase {
     XCTAssertEqual(Set(enums.keys), Set(MknoonAppDiagnosticSchema.enumValues.keys))
     for (key, copy) in MknoonAppDiagnosticSchema.enumValues { XCTAssertEqual(copy, Set(enums[key]!)) }
   }
+  func testActiveIdentitySameEpochAutomaticOffRevokesHeldOwner() throws {
+    var publications: [(MknoonActiveIdentityReporterFence, Bool, Bool)] = []
+    let admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+      publications.append((fence, enabled, preserve)); return true
+    }
+    let armed = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(publications.count, 1)
+    XCTAssertTrue(admission.isCurrent(armed)); XCTAssertTrue(admission.admitMark(armed))
+    var heldMarkAccepted = false
+    let heldMark = {
+      if admission.isCurrent(armed) && admission.admitMark(armed) { heldMarkAccepted = true }
+    }
+    // AppDiagnostics archive failure disables locally without advancing its epoch.
+    guard admission.observeConsent(consentEpoch: 10, enabled: false) else {
+      XCTFail("Same-epoch automatic OFF must publish before returning"); return
+    }
+    XCTAssertEqual(publications.count, 2)
+    let off = try XCTUnwrap(publications.last).0
+    XCTAssertEqual(off.consentEpoch, armed.consentEpoch)
+    XCTAssertGreaterThan(off.revision, armed.revision)
+    XCTAssertFalse(try XCTUnwrap(publications.last).1)
+    XCTAssertFalse(try XCTUnwrap(publications.last).2)
+    XCTAssertTrue(admission.isCurrent(off)); XCTAssertFalse(admission.admitMark(off))
+    XCTAssertFalse(admission.isCurrent(armed)); XCTAssertFalse(admission.admitMark(armed))
+    heldMark()
+    XCTAssertFalse(heldMarkAccepted)
+    XCTAssertFalse(admission.observeConsent(consentEpoch: 10, enabled: true))
+    XCTAssertNil(admission.admitConfiguration(consentEpoch: 10, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(publications.count, 2); XCTAssertTrue(admission.isCurrent(off))
+    let rearmed = try XCTUnwrap(admission.admitConfiguration(consentEpoch: 11, enabled: true,
+      profileBinding: activityProfileA, accountPeerID: activityAccountA, hasRootKey: true))
+    XCTAssertEqual(publications.count, 3); XCTAssertGreaterThan(rearmed.revision, off.revision)
+    XCTAssertTrue(admission.isCurrent(rearmed)); XCTAssertTrue(admission.admitMark(rearmed))
+    XCTAssertFalse(admission.isCurrent(off)); XCTAssertFalse(admission.admitMark(armed))
+  }
+
 }

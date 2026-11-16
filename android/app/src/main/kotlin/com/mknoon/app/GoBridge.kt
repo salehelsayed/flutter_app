@@ -5,6 +5,12 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import bridge.Bridge as GoMknoon
+import android.util.JsonReader
+import android.util.JsonToken
+import com.mknoon.app.diagnostics.MknoonActiveIdentityReporterAdmission
+import com.mknoon.app.diagnostics.MknoonActiveIdentityReporterFence
+import java.io.StringReader
+import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -21,8 +27,86 @@ class GoBridge internal constructor(
     private val runtimeHost: GoRuntimeHost = ProcessGoRuntimeHost.instance,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
+    companion object {
+        private val activityAdmission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            val desired = activityFenceFields(fence).put("enabled", enabled)
+                .put("preservePendingOnUnarm", preserve)
+            val answer = JSONObject(GoMknoon.publishActiveIdentityReporterDesired(desired.toString()))
+            val data = answer.optJSONObject("data")
+            answer.opt("ok") == true && answer.keys().asSequence().toSet() == setOf("ok", "data") &&
+                data != null && data.keys().asSequence().toSet() == setOf("revision", "consentEpoch") &&
+                activityInteger(data.opt("revision")) == fence.revision &&
+                activityInteger(data.opt("consentEpoch")) == fence.consentEpoch
+        }
+
+        private fun activityFenceFields(fence: MknoonActiveIdentityReporterFence) = JSONObject()
+            .put("version", 1).put("revision", fence.revision).put("consentEpoch", fence.consentEpoch)
+            .put("profileBinding", fence.profileBinding).put("accountPeerId", fence.accountPeerID)
+
+        private fun activityInteger(value: Any?): Long? = when (value) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> null
+        }
+
+        private fun activityError(code: String): String {
+            val fixed = when (code) {
+                "INVALID_INPUT", "ACTIVE_IDENTITY_INVALID_REQUEST" -> "INVALID_INPUT"
+                "ACTIVE_IDENTITY_REPORTER_STALE" -> "ACTIVE_IDENTITY_REPORTER_STALE"
+                else -> "ACTIVE_IDENTITY_REPORTER_UNAVAILABLE"
+            }
+            return JSONObject().put("ok", false).put("errorCode", fixed).toString()
+        }
+
+        private fun activityFields(raw: String?): MutableMap<String, Any>? {
+            if (raw == null || raw.toByteArray(Charsets.UTF_8).size > 16_384) return null
+            return try {
+                JsonReader(StringReader(raw)).use { reader ->
+                    reader.isLenient = false
+                    val fields = mutableMapOf<String, Any>()
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        val key = reader.nextName()
+                        if (fields.containsKey(key)) return null
+                        val value: Any = when (reader.peek()) {
+                            JsonToken.STRING -> reader.nextString()
+                            JsonToken.BOOLEAN -> reader.nextBoolean()
+                            JsonToken.NUMBER -> {
+                                val number = reader.nextString()
+                                if (!Regex("0|[1-9][0-9]*").matches(number)) return null
+                                number.toLongOrNull() ?: return null
+                            }
+                            else -> return null
+                        }
+                        fields[key] = value
+                    }
+                    reader.endObject()
+                    if (reader.peek() != JsonToken.END_DOCUMENT) return null
+                    fields
+                }
+            } catch (_: Throwable) { null }
+        }
+
+        private fun activityAnswer(raw: String?, fence: MknoonActiveIdentityReporterFence, op: String): String {
+            return try {
+                if (raw == null || raw.toByteArray(Charsets.UTF_8).size > 16_384) return activityError("")
+                val answer = JSONObject(raw)
+                if (answer.opt("ok") != true) return activityError(answer.optString("errorCode"))
+                val field = when (op) { "configure" -> "configured"; "mark" -> "accepted"; else -> "queued" }
+                val data = answer.optJSONObject("data") ?: return activityError("")
+                if (answer.keys().asSequence().toSet() != setOf("ok", "data") ||
+                    data.keys().asSequence().toSet() != setOf(field, "revision", "consentEpoch") ||
+                    activityInteger(data.opt("revision")) != fence.revision ||
+                    activityInteger(data.opt("consentEpoch")) != fence.consentEpoch || data.opt(field) !is Boolean) {
+                    return activityError("")
+                }
+                JSONObject().put("ok", true).put("data", JSONObject().put(field, data.getBoolean(field))
+                    .put("revision", fence.revision).put("consentEpoch", fence.consentEpoch)).toString()
+            } catch (_: Throwable) { activityError("") }
+        }
+    }
+
     private val appDiagnostics = com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(context)
-    private val appDiagnosticChannel = appDiagnostics.bridge(flutterEngine.dartExecutor.binaryMessenger)
 
     // FDC-S5 (M1): only emit bridge dispatch queue-wait timing on debuggable
     // builds, so the deferred two-device M1 run can read it while release builds
@@ -49,6 +133,7 @@ class GoBridge internal constructor(
         ownerId = "flutter-engine-${System.identityHashCode(flutterEngine)}",
         eventReceiver = ::acceptEvent,
     )
+    private val appDiagnosticChannel = appDiagnostics.bridge(flutterEngine.dartExecutor.binaryMessenger, ownerToken)
 
     // SE-42 D27: a default-network change (Wi-Fi to LTE with no "none" between)
     // reaches the owned node as one epoch, so it replaces a stalled relay
@@ -74,6 +159,11 @@ class GoBridge internal constructor(
     )
 
     init {
+        appDiagnostics.installActivityOwner(ownerToken) { epoch, enabled ->
+            if (disposed.get()) false else runtimeHost.publishWhileActive(ownerToken) {
+                activityAdmission.observeConsent(epoch, enabled)
+            } ?: false
+        }
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
         appDiagnostics.record("startup", "bridge", "ok", "bootstrap", mapOf("phase" to "bridge_initialized"))
@@ -161,6 +251,73 @@ class GoBridge internal constructor(
         )
     }
 
+    private fun activeActivityOwner(): Boolean {
+        val snapshot = runtimeHost.snapshot()
+        return !disposed.get() && snapshot.state == GoRuntimeHost.State.ACTIVE &&
+            snapshot.generation == ownerToken.generation && snapshot.ownerId == ownerToken.ownerId
+    }
+
+    private fun handleActivityReporter(raw: String?, result: MethodChannel.Result) {
+        if (!activeActivityOwner()) { result.success(activityError("")); return }
+        val fields = activityFields(raw)
+        val op = fields?.get("op") as? String
+        val epoch = fields?.get("consentEpoch") as? Long
+        val profile = fields?.get("profileBinding") as? String
+        val account = fields?.get("accountPeerId") as? String
+        if (fields == null || fields["version"] != 1L || epoch == null || epoch <= 0 ||
+            epoch > 9_007_199_254_740_991L || profile == null || account == null) {
+            result.success(activityError("INVALID_INPUT")); return
+        }
+        val fence: MknoonActiveIdentityReporterFence
+        if (op == "configure") {
+            val keys = setOf("version", "op", "enabled", "consentEpoch", "profileBinding", "accountPeerId",
+                "rootPrivateKeyBase64", "statePath", "preservePendingOnUnarm")
+            val enabled = fields["enabled"] as? Boolean
+            val root = fields["rootPrivateKeyBase64"] as? String
+            val preserve = fields["preservePendingOnUnarm"] as? Boolean
+            if ((fields.keys != keys && fields.keys != keys + "revision") || enabled == null || root == null ||
+                fields["statePath"] !is String || preserve == null ||
+                (fields.containsKey("revision") && (fields["revision"] !is Long ||
+                    (fields["revision"] as Long) !in 1L..9_007_199_254_740_991L))) {
+                result.success(activityError("INVALID_INPUT")); return
+            }
+            var entered = false
+            val admitted = runtimeHost.publishWhileActive(ownerToken) {
+                entered = true
+                activityAdmission.admitConfiguration(epoch, enabled, profile, account, root.isNotEmpty(), preserve)
+            }
+            if (admitted == null) {
+                result.success(activityError(if (entered) activityAdmission.errorCode else "")); return
+            }
+            fence = admitted
+            fields["revision"] = fence.revision
+        } else if (op == "mark" || op == "flush") {
+            val revision = fields["revision"] as? Long
+            if (fields.keys != setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId") ||
+                revision == null || revision <= 0 || revision > 9_007_199_254_740_991L) {
+                result.success(activityError("INVALID_INPUT")); return
+            }
+            fence = MknoonActiveIdentityReporterFence(revision, epoch, profile, account)
+            if (!activityAdmission.admitMark(fence)) { result.success(activityError("ACTIVE_IDENTITY_REPORTER_STALE")); return }
+        } else { result.success(activityError("INVALID_INPUT")); return }
+        val request = JSONObject(fields).toString()
+        val operation = op!!
+        val queued = runtimeHost.execute(ownerToken, work = {
+            if (!activeActivityOwner() || !activityAdmission.isCurrent(fence) ||
+                (operation != "configure" && !activityAdmission.admitMark(fence))) {
+                activityError("ACTIVE_IDENTITY_REPORTER_STALE")
+            } else {
+                activityAnswer(GoMknoon.activeIdentityReporterV1(request), fence, operation)
+            }
+        }, onSuccess = { answer ->
+            if (!disposed.get()) {
+                result.success(if (activeActivityOwner() && activityAdmission.isCurrent(fence)) answer
+                    else activityError("ACTIVE_IDENTITY_REPORTER_STALE"))
+            }
+        }, onError = { _ -> if (!disposed.get()) result.success(activityError("")) })
+        if (!queued && !disposed.get()) result.success(activityError(""))
+    }
+
     private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result, method: String = "") {
         // FDC-S5 (M1): stamp when the call was handed to the cached thread pool so
         // the worker can report how long it waited for a thread — the thread-pool
@@ -221,6 +378,10 @@ class GoBridge internal constructor(
     }
 
     override fun onMethodCall(call: MethodCall, rawResult: MethodChannel.Result) {
+        if (call.method == "activeIdentityReporterV1") {
+            handleActivityReporter(call.arguments as? String, rawResult)
+            return
+        }
         val result = com.mknoon.app.diagnostics.MknoonAppDiagnosticBridgeResult.wrap(call.method, call.arguments, rawResult,
             { outcome, reason, values, trace -> appDiagnostics.record("runtime", "bridge", outcome, reason, values, trace) })
         if (disposed.get()) {
@@ -405,7 +566,10 @@ class GoBridge internal constructor(
     }
 
     /** Starts the host-owned drain; new JNI calls/events are rejected at once. */
-    internal fun requestRuntimeDrain(): Boolean = runtimeHost.requestDrain(ownerToken)
+    internal fun requestRuntimeDrain(): Boolean {
+        runtimeHost.publishWhileActive(ownerToken) { activityAdmission.unarmPreservingPending() }
+        return runtimeHost.requestDrain(ownerToken)
+    }
 
     internal fun isRuntimeReleased(): Boolean =
         runtimeHost.snapshot().state == GoRuntimeHost.State.RELEASED
@@ -442,6 +606,8 @@ class GoBridge internal constructor(
     /** Detaches channels/sink and fences every queued result or callback. */
     fun dispose(): Boolean {
         if (!disposed.compareAndSet(false, true)) return false
+        appDiagnostics.retireActivityOwner(ownerToken)
+        runtimeHost.publishWhileActive(ownerToken) { activityAdmission.unarmPreservingPending() }
         methodChannel.setMethodCallHandler(null)
         appDiagnosticChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)

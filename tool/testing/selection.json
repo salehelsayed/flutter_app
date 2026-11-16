@@ -1113,6 +1113,22 @@
       ],
       "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed. Development/sandbox and production APNs are separate artifact-bound legs. Attribute the exact system courier connection from complete private native evidence, or explicitly retain unresolved attribution; DNS or another system connection cannot supply its family. Host lifecycle fixes do not prove OS push delivery."
     },
+    "go-activity-calendar": {
+      "kind": "go",
+      "packages": ["./..."],
+      "cwd": "go-mknoon/activitycalendar",
+      "boundary": "Shared Berlin daily and ISO-week calendar module tests",
+      "timeout_seconds": 900,
+      "requirements": ["go"],
+      "environment": {
+        "GOTOOLCHAIN": "go1.27.1",
+        "GOMAXPROCS": "4",
+        "GOFLAGS": "-p=4"
+      },
+      "references": ["go-mknoon/activitycalendar/go.mod"],
+      "investigate": ["go-mknoon/activitycalendar"],
+      "limitations": "Host calendar assertions only; no relay admission, storage, device or signed-build proof."
+    },
     "go-core": {
       "kind": "go",
       "packages": [
@@ -5894,6 +5910,12 @@
       "why": "Shared fixtures/config may hide failures across consuming features"
     },
     {
+      "id": "activity-calendar",
+      "patterns": ["go-mknoon/activitycalendar/*"],
+      "checks": ["go-activity-calendar"],
+      "why": "Go root ./... excludes this nested module; keep its tests explicit alongside existing communication checks"
+    },
+    {
       "id": "core-go",
       "patterns": [
         "go-mknoon/*"
@@ -7472,6 +7494,7 @@
     "affected-surfaces",
     "affected-feed",
     "go-core",
+    "go-activity-calendar",
     "go-relay",
     "workflow",
     "provider-schema",
@@ -10640,7 +10663,8 @@
           "go-mknoon/*_test.go"
         ],
         "untagged_only": true,
-        "reason": "Unfiltered Go module runner; build-tag variants stay separate",
+        "reason": "Unfiltered root Go module runner; nested modules and build-tag variants stay separate",
+        "module": "go-mknoon",
         "capability": "go.node.all"
       },
       {

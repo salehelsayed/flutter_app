@@ -273,7 +273,8 @@ const _applicationRootNormalizedSha256 =
     // around the existing route child only; no owner or resume dispatch moves.
     // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
     // this same app owner (3 lines); no owner or resume dispatch moves.
-    'bdac809da5b9afb5373f8c5149b53c34fa989e8d0604d071795da64f90f5b16e';
+    // BL29 B4 disposal is composed with bb8 main's existing app owner.
+    '160680519972def3dc1df47b9262d650976e2c5cdca9da7cf0e2f2e4d367edf4';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -494,7 +495,7 @@ const _productionBootstrapNormalizedSha256 =
     // BL-30 R2: the every-launch identity.db open and its post-open writes
     // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
     // background assertion); same calls, same order, no owner moves.
-    'b1f841f22bc8280930de452522b13f16e2cf93a37fdf1b6b24859ea305d40fa9';
+    '7bd3f158db8c9fe3b6e8cde87720ae0df7c9c5168023677fb83430596bbf04f9';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -542,7 +543,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '4a705035ca21a80990ca3c19291770152b0bf555dd2494642cf95b5116f981a8';
+    '302b80dd4c1ed125320945a5df639d4a946a9f58ce311418889aa9dbfca64bcc';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

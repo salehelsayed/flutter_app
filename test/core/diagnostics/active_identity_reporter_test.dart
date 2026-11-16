@@ -1,0 +1,489 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+
+const _limit = Duration(seconds: 2);
+const _profileA = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _profileB = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _epoch = 91;
+const _privateError = 'b294-private-native-error-account-signature-sentinel';
+
+Future<T> _bounded<T>(Future<T> future) => future.timeout(_limit);
+
+Future<void> _until(bool Function() condition) async {
+  final watch = Stopwatch()..start();
+  while (!condition()) {
+    if (watch.elapsed >= _limit) fail('Expected local reporter operation');
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
+IdentityModel _identity(String suffix, {String username = 'name'}) => IdentityModel(
+  // These are opaque Dart seam fixtures. Cryptographic validation belongs to
+  // the separately frozen Go protocol/engine contracts, not this mock bridge.
+  peerId: '12D3KooWB294LogicalRootAccount$suffix',
+  publicKey: base64Encode(List<int>.filled(32, suffix == 'A' ? 41 : 43)),
+  privateKey: base64Encode(List<int>.filled(64, suffix == 'A' ? 41 : 43)),
+  mnemonic12: 'b294 root mnemonic remains in memory',
+  username: username,
+  createdAt: '2026-11-15T12:00:00Z',
+  updatedAt: '2026-11-15T12:00:00Z',
+);
+
+final class _LocalBridge implements Bridge {
+  bool online = true;
+  final requests = <Map<String, dynamic>>[];
+  Future<String> Function(Map<String, dynamic>, int)? answer;
+  int _revision = 0;
+
+  List<Map<String, dynamic>> operations(String op) => requests
+      .where((request) => request['op'] == op)
+      .toList(growable: false);
+
+  @override
+  bool get isInitialized => online;
+
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] != 'active_identity_reporter_v1') {
+      throw StateError('Unexpected nonlocal reporter command');
+    }
+    final payload = Map<String, dynamic>.from(envelope['payload'] as Map);
+    requests.add(payload);
+    final revision = payload['op'] == 'configure'
+        ? ++_revision
+        : payload['revision'] as int;
+    final responder = answer;
+    if (responder != null) return responder(payload, revision);
+    return reply(payload, revision);
+  }
+
+  static String reply(Map<String, dynamic> request, int revision) => jsonEncode({
+    'ok': true,
+    'data': {
+      'revision': revision,
+      'consentEpoch': request['consentEpoch'],
+      if (request['op'] == 'configure')
+        'configured': request['enabled'] == true &&
+            (request['profileBinding'] as String? ?? '').isNotEmpty &&
+            (request['accountPeerId'] as String? ?? '').isNotEmpty,
+      if (request['op'] == 'mark') 'accepted': true,
+      if (request['op'] == 'flush') 'queued': true,
+    },
+  });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory directory;
+  late _LocalBridge bridge;
+  late ActiveIdentityReporter reporter;
+
+  setUp(() async {
+    directory = await _bounded(Directory.systemTemp.createTemp('b294-dart-'));
+    bridge = _LocalBridge();
+    reporter = ActiveIdentityReporter(statePath: '${directory.path}/owner.json');
+  });
+
+  tearDown(() async {
+    await _bounded(reporter.dispose());
+    await _bounded(AppDiagnostics.instance.dispose());
+    await _bounded(directory.delete(recursive: true));
+  });
+
+  Future<void> arm({IdentityModel? identity, String binding = _profileA}) async {
+    reporter.attachBridge(bridge);
+    final loadedIdentity = identity ?? _identity('A');
+    reporter.observeIdentity(
+      accountPeerId: loadedIdentity.peerId,
+      rootPrivateKeyBase64: loadedIdentity.privateKey,
+      profileBinding: binding,
+    );
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+    await _until(() => bridge.operations('configure').isNotEmpty);
+  }
+
+  test('configuration uses loaded logical root and never creates activity', () async {
+    final root = _identity('A');
+    final transportKey = base64Encode(List<int>.filled(64, 42));
+    await arm(identity: root);
+    final config = bridge.operations('configure').last;
+    expect(config['version'], 1);
+    expect(config['enabled'], isTrue);
+    expect(config['consentEpoch'], _epoch);
+    expect(config['profileBinding'], _profileA);
+    expect(config['accountPeerId'], root.peerId);
+    expect(config['rootPrivateKeyBase64'], root.privateKey);
+    expect(jsonEncode(config), isNot(contains(transportKey)));
+    expect(config['statePath'], '${directory.path}/owner.json');
+    expect(config.containsKey('revision'), isFalse,
+        reason: 'Only native receipt may issue an admission revision');
+    expect(bridge.operations('mark'), isEmpty);
+    expect(await _bounded(directory.list().toList()), isEmpty,
+        reason: 'The Dart coordinator owns no archive or event queue');
+  });
+
+  test('mark requires configured owner and carries its full captured fence', () async {
+    reporter.attachBridge(bridge);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    reporter.mark();
+    await _bounded(reporter.flush());
+    expect(bridge.requests, isEmpty);
+    await arm();
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    final mark = bridge.operations('mark').single;
+    expect(mark, {
+      'version': 1,
+      'op': 'mark',
+      'revision': 1,
+      'consentEpoch': _epoch,
+      'profileBinding': _profileA,
+      'accountPeerId': _identity('A').peerId,
+    });
+    await _bounded(reporter.flush());
+    final flush = bridge.operations('flush').single;
+    expect(flush, {...mark, 'op': 'flush'});
+    expect(jsonEncode([mark, flush]), isNot(contains(_identity('A').privateKey)));
+  });
+
+  test('late bridge attachment replays latest snapshots without marking', () async {
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+    expect(bridge.requests, isEmpty);
+    reporter.attachBridge(bridge);
+    await _until(() => bridge.operations('configure').isNotEmpty);
+    expect(bridge.operations('configure').last['accountPeerId'], _identity('A').peerId);
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('unresolved binding stays unarmed until a matching committed snapshot', () async {
+    reporter.attachBridge(bridge);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+    );
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+    expect(bridge.requests, isEmpty,
+        reason: 'Unknown startup must not tombstone inert disk recovery');
+    reporter.mark();
+    expect(bridge.operations('mark'), isEmpty);
+    expect(bridge.operations('configure').where((r) =>
+        (r['rootPrivateKeyBase64'] as String? ?? '').isNotEmpty), isEmpty);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    await _until(() => bridge.operations('configure').any((r) => r['profileBinding'] == _profileA));
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+  });
+
+  test('late A configuration completion cannot replace B owner token', () async {
+    final releaseA = Completer<void>();
+    Future<void>? first;
+    bridge.answer = (request, revision) async {
+      if (request['op'] == 'configure' && request['profileBinding'] == _profileA) {
+        await _bounded(releaseA.future);
+      }
+      return _LocalBridge.reply(request, revision);
+    };
+    try {
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(
+        accountPeerId: _identity('A').peerId,
+        rootPrivateKeyBase64: _identity('A').privateKey,
+        profileBinding: _profileA,
+      );
+      first = reporter.observeConsent((enabled: true, consentEpoch: _epoch));
+      await _until(() => bridge.operations('configure').isNotEmpty);
+      reporter.observeIdentity(
+        accountPeerId: _identity('B').peerId,
+        rootPrivateKeyBase64: _identity('B').privateKey,
+        profileBinding: _profileB,
+      );
+      await _until(() => bridge.operations('configure').any((r) => r['profileBinding'] == _profileB));
+      await Future<void>.delayed(Duration.zero);
+      releaseA.complete();
+      await _bounded(first);
+      reporter.mark();
+      await _until(() => bridge.operations('mark').isNotEmpty);
+      final mark = bridge.operations('mark').last;
+      expect(mark['revision'], 2);
+      expect(mark['profileBinding'], _profileB);
+      expect(mark['accountPeerId'], _identity('B').peerId);
+    } finally {
+      if (!releaseA.isCompleted) releaseA.complete();
+      if (first != null) await _bounded(first);
+    }
+  });
+
+  test('OFF invalidates mark immediately while disable response is held', () async {
+    await arm();
+    final release = Completer<void>();
+    Future<void>? disable;
+    bridge.answer = (request, revision) async {
+      if (request['op'] == 'configure' && request['enabled'] == false) {
+        await _bounded(release.future);
+      }
+      return _LocalBridge.reply(request, revision);
+    };
+    try {
+      var completed = false;
+      disable = reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1))
+          .whenComplete(() => completed = true);
+      reporter.mark();
+      await _until(() => bridge.operations('configure').any((r) => r['enabled'] == false));
+      expect(completed, isFalse);
+      expect(bridge.operations('mark'), isEmpty);
+      release.complete();
+      await _bounded(disable);
+      expect(completed, isTrue);
+    } finally {
+      if (!release.isCompleted) release.complete();
+      if (disable != null) await _bounded(disable);
+    }
+  });
+
+  test('clear epoch needs a new configured token before any new mark', () async {
+    await arm();
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch + 1)));
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    expect(bridge.operations('mark').last['consentEpoch'], _epoch + 1);
+    expect(bridge.operations('mark').last['revision'], 2);
+    expect(bridge.operations('configure').last['consentEpoch'], _epoch + 1);
+  });
+
+  test('explicit retirement clears while disposal preserves inert restart state', () async {
+    await arm();
+    await _bounded(reporter.retire());
+    final retired = bridge.operations('configure').last;
+    expect(retired['profileBinding'], '');
+    expect(retired['accountPeerId'], '');
+    expect(retired['rootPrivateKeyBase64'], anyOf(isNull, ''));
+    expect(retired['preservePendingOnUnarm'], isFalse);
+    reporter.mark();
+    expect(bridge.operations('mark'), isEmpty);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    await _until(() => bridge.operations('configure').last['profileBinding'] == _profileA);
+    await _bounded(reporter.dispose());
+    final disposed = bridge.operations('configure').last;
+    expect(disposed['profileBinding'], '');
+    expect(disposed['accountPeerId'], '');
+    expect(disposed['preservePendingOnUnarm'], isTrue);
+    expect(disposed['consentEpoch'], _epoch);
+    final count = bridge.requests.length;
+    reporter.observeIdentity(
+      accountPeerId: _identity('B').peerId,
+      rootPrivateKeyBase64: _identity('B').privateKey,
+      profileBinding: _profileB,
+    );
+    reporter.mark();
+    await _bounded(reporter.flush());
+    expect(bridge.requests.length, count);
+  });
+
+  test('null identity retires synchronously before any replacement is loaded', () async {
+    await arm();
+    reporter.observeIdentity(
+      accountPeerId: null,
+      rootPrivateKeyBase64: null,
+    );
+    reporter.mark();
+    await _until(() => bridge.operations('configure').last['profileBinding'] == '');
+    expect(bridge.operations('mark'), isEmpty);
+    expect(bridge.operations('configure').last['preservePendingOnUnarm'], isFalse);
+    reporter.observeIdentity(
+      accountPeerId: _identity('B').peerId,
+      rootPrivateKeyBase64: _identity('B').privateKey,
+      profileBinding: _profileB,
+    );
+    await _until(() => bridge.operations('configure').last['profileBinding'] == _profileB);
+    await Future<void>.delayed(Duration.zero);
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    expect(bridge.operations('mark').last['accountPeerId'], _identity('B').peerId);
+  });
+
+  test('null consent unarms and preserves without inventing an OFF epoch', () async {
+    await arm();
+    await _bounded(reporter.observeConsent(null));
+    final unarmed = bridge.operations('configure').last;
+    expect(unarmed['profileBinding'], '');
+    expect(unarmed['accountPeerId'], '');
+    expect(unarmed['preservePendingOnUnarm'], isTrue);
+    expect(unarmed['consentEpoch'], _epoch);
+    reporter.mark();
+    expect(bridge.operations('mark'), isEmpty);
+    final count = bridge.requests.length;
+    reporter.observeIdentity(
+      accountPeerId: _identity('B').peerId,
+      rootPrivateKeyBase64: _identity('B').privateKey,
+      profileBinding: _profileB,
+    );
+    await _bounded(reporter.flush());
+    expect(bridge.requests.length, count,
+        reason: 'Identity discovery alone cannot restore disposed consent');
+  });
+
+  test('same-root metadata refresh does not generate a mark or retire pending', () async {
+    await arm();
+    final count = bridge.requests.length;
+    reporter.observeIdentity(
+      accountPeerId: _identity('A', username: 'renamed').peerId,
+      rootPrivateKeyBase64: _identity('A', username: 'renamed').privateKey,
+      profileBinding: _profileA,
+    );
+    await _bounded(reporter.flush());
+    expect(bridge.operations('mark'), isEmpty);
+    expect(bridge.requests.skip(count).where((r) =>
+        r['op'] == 'configure' && r['profileBinding'] == ''), isEmpty);
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    expect(bridge.operations('mark').last['accountPeerId'], _identity('A').peerId);
+  });
+
+  test('wrong-epoch and malformed configure replies cannot arm', () async {
+    await arm();
+    reporter.mark();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    final originalMarks = bridge.operations('mark').length;
+    final replies = <String Function(int)>[
+      (_) => '{"ok":true,"data":{"configured":true,"revision":2,"consentEpoch":999}}',
+      (epoch) => jsonEncode({'ok': true, 'data': {'configured': true, 'revision': null, 'consentEpoch': epoch}}),
+      (epoch) => jsonEncode({'ok': true, 'data': {'configured': null, 'revision': 2, 'consentEpoch': epoch}}),
+      (epoch) => jsonEncode({'ok': true, 'data': {'configured': false, 'revision': 2, 'consentEpoch': epoch}}),
+      (_) => '{malformed $_privateError',
+    ];
+    for (var index = 0; index < replies.length; index++) {
+      final epoch = _epoch + index + 1;
+      final reply = replies[index](epoch);
+      bridge.answer = (_, _) async => reply;
+      final configs = bridge.operations('configure').length;
+      await _bounded(reporter.observeConsent((enabled: true, consentEpoch: epoch)));
+      expect(bridge.operations('configure').length, greaterThan(configs),
+          reason: 'Every negative response needs a fresh attempted configuration');
+      reporter.mark();
+      await Future<void>.delayed(Duration.zero);
+      expect(bridge.operations('mark').length, originalMarks);
+    }
+  });
+
+  test('configure timeout and throwing bridge do not own communication', () async {
+    await arm();
+    final release = Completer<void>();
+    Future<void>? update;
+    bridge.answer = (request, revision) => release.future.then((_) =>
+        _LocalBridge.reply(request, revision));
+    try {
+      fakeAsync((clock) {
+        try {
+          var complete = false;
+          var communicationCompleted = false;
+          update = reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1))
+              .whenComplete(() => complete = true);
+          Future<void>.value().then((_) => communicationCompleted = true);
+          clock.flushMicrotasks();
+          expect(bridge.operations('configure').last['enabled'], isFalse);
+          expect(communicationCompleted, isTrue);
+          expect(complete, isFalse);
+          clock.elapse(_limit);
+          clock.flushMicrotasks();
+          expect(complete, isTrue);
+        } finally {
+          if (!release.isCompleted) release.complete();
+          clock.flushMicrotasks();
+        }
+      });
+      if (update != null) await _bounded(update!);
+      reporter.mark();
+      expect(bridge.operations('mark'), isEmpty);
+    } finally {
+      if (!release.isCompleted) release.complete();
+      if (update != null) await _bounded(update!);
+    }
+    bridge.answer = (_, _) async => throw PlatformException(code: 'LOCAL_FAILURE', message: _privateError);
+    await _bounded(reporter.observeConsent((enabled: false, consentEpoch: _epoch + 2)));
+    expect(await _bounded(Future<String>.value('second communication completed')), 'second communication completed');
+  });
+
+  test('native transport failure emits no private text or recursive telemetry', () async {
+    final diagnostics = await _bounded(AppDiagnostics.installForTesting(
+      directory: Directory('${directory.path}/diagnostics'),
+      useNative: false,
+      enabled: true,
+    ));
+    final events = <Map<String, dynamic>>[];
+    final lease = installScopedE2EFlowEventSink(events.add);
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const methodChannel = MethodChannel('com.mknoon/go_bridge');
+    const eventChannel = MethodChannel('com.mknoon/go_bridge_events');
+    var nativeCalls = 0;
+    var failNative = false;
+    final client = GoBridgeClient();
+    messenger.setMockMethodCallHandler(eventChannel, (_) async => null);
+    messenger.setMockMethodCallHandler(methodChannel, (call) async {
+      expect(call.method, 'activeIdentityReporterV1');
+      nativeCalls++;
+      if (failNative) throw PlatformException(code: 'LOCAL_FAILURE', message: _privateError);
+      final request = jsonDecode(call.arguments as String) as Map<String, dynamic>;
+      return _LocalBridge.reply(request, nativeCalls);
+    });
+    try {
+      await _bounded(client.initialize());
+      reporter.attachBridge(client);
+      reporter.observeIdentity(
+        accountPeerId: _identity('A').peerId,
+        rootPrivateKeyBase64: _identity('A').privateKey,
+        profileBinding: _profileA,
+      );
+      await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+      expect(nativeCalls, greaterThan(0), reason: 'Privacy requires a real positive native-call control');
+      final before = (await _bounded(diagnostics.status()))['retainedEvents'];
+      failNative = true;
+      await _bounded(reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)));
+      final preview = await _bounded(diagnostics.exportPreview());
+      final captured = jsonEncode(events);
+      for (final secret in [_privateError, _identity('A').privateKey, _identity('A').peerId, _profileA]) {
+        expect('$captured$preview', isNot(contains(secret)));
+      }
+      expect((await _bounded(diagnostics.status()))['retainedEvents'], before,
+          reason: 'Reporter bridge failure must not report itself recursively');
+    } finally {
+      await _bounded(reporter.dispose());
+      client.dispose();
+      await Future<void>.delayed(Duration.zero);
+      messenger.setMockMethodCallHandler(methodChannel, null);
+      messenger.setMockMethodCallHandler(eventChannel, null);
+      lease.release();
+    }
+  });
+}

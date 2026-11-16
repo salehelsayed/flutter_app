@@ -2,6 +2,11 @@ module github.com/mknoon/go-mknoon
 
 go 1.27.1
 
+// The relay uses this same stdlib-only calendar without importing this module.
+replace github.com/mknoon/go-mknoon/activitycalendar => ./activitycalendar
+
+require github.com/mknoon/go-mknoon/activitycalendar v0.0.0
+
 // BUILD TOOLCHAIN: pin to go1.27.1 via GOTOOLCHAIN=go1.27.1 (set in the Makefile
 // and scripts/ensure_go_*_bindings.sh), NOT a go.mod `toolchain` directive — that
 // directive can only switch UP from the local default, so it can't force an exact

@@ -2,6 +2,9 @@ module github.com/mknoon/relay-server
 
 go 1.27.1
 
+// Share only the stdlib Berlin calendar, without the mobile networking graph.
+replace github.com/mknoon/go-mknoon/activitycalendar => ../go-mknoon/activitycalendar
+
 require (
 	firebase.google.com/go/v4 v4.15.1
 	github.com/alicebob/miniredis/v2 v2.35.0
@@ -9,6 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/libp2p/go-libp2p v0.50.0
 	github.com/libp2p/go-msgio v0.3.0
+	github.com/mknoon/go-mknoon/activitycalendar v0.0.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2

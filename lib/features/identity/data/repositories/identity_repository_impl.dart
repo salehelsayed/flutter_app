@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_app/core/notifications/canonical_recovery_authority_storage_keys.dart';
@@ -76,6 +77,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final Future<void> Function()? _retireIosNseInboxTransport;
   final Future<void> Function(IdentityModel identity)?
   _refreshIosNseInboxTransport;
+  final FutureOr<void> Function(IdentityModel?)? _observeLoadedIdentity;
   IdentityModel? _cachedIdentity;
   bool _hasCachedIdentity = false;
 
@@ -91,6 +93,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     Future<void> Function()? retireCanonicalAccountBinding,
     Future<void> Function()? retireIosNseInboxTransport,
     Future<void> Function(IdentityModel identity)? refreshIosNseInboxTransport,
+    FutureOr<void> Function(IdentityModel? identity)? observeLoadedIdentity,
   }) : _dbLoadIdentityRow = dbLoadIdentityRow,
        _dbUpsertIdentityRow = dbUpsertIdentityRow,
        _secureKeyStore = secureKeyStore,
@@ -100,11 +103,23 @@ class IdentityRepositoryImpl implements IdentityRepository {
        _publishCanonicalAccountBinding = publishCanonicalAccountBinding,
        _retireCanonicalAccountBinding = retireCanonicalAccountBinding,
        _retireIosNseInboxTransport = retireIosNseInboxTransport,
-       _refreshIosNseInboxTransport = refreshIosNseInboxTransport;
+       _refreshIosNseInboxTransport = refreshIosNseInboxTransport,
+       _observeLoadedIdentity = observeLoadedIdentity;
 
   void invalidateCache() {
     _cachedIdentity = null;
     _hasCachedIdentity = false;
+    unawaited(_notifyLoadedIdentity(null));
+  }
+
+  Future<void> _notifyLoadedIdentity(IdentityModel? identity) {
+    final observer = _observeLoadedIdentity;
+    if (observer == null) return Future<void>.value();
+    return Future<void>.sync(() => observer(identity))
+        .timeout(const Duration(seconds: 2))
+        .catchError((Object _) {
+          // Observers never replace committed identity work or leak errors.
+        });
   }
 
   @override
@@ -138,6 +153,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     final row = await _dbLoadIdentityRow();
 
     if (row == null) {
+      await _notifyLoadedIdentity(null);
       await _groupReactionProjection?.clearForLogout();
       await _directReactionProjection?.clearForLogout();
       await _retireCanonicalAccountBinding?.call();
@@ -200,6 +216,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     await _refreshIosNseInboxTransport?.call(identity);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
+    await _notifyLoadedIdentity(identity);
 
     emitFlowEvent(
       layer: 'FL',
@@ -217,6 +234,13 @@ class IdentityRepositoryImpl implements IdentityRepository {
       event: 'ID_REPO_SAVE_IDENTITY_CALL',
       details: {'peerId': identity.peerId},
     );
+
+    final previous = _cachedIdentity;
+    if (previous == null ||
+        previous.peerId != identity.peerId ||
+        previous.privateKey != identity.privateKey) {
+      await _notifyLoadedIdentity(null);
+    }
 
     // Identity/account-key replacement is also a physical inbox-authority
     // boundary. A failed retirement aborts before secrets or SQL change.
@@ -287,6 +311,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     await _refreshIosNseInboxTransport?.call(identity);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
+    await _notifyLoadedIdentity(identity);
 
     emitFlowEvent(
       layer: 'FL',

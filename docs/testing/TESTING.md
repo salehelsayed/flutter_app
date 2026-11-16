@@ -1608,6 +1608,17 @@ scenario mappings remain visible gaps, not successful wrapper registrations.
 The static reliability classification listing does not start Dart or execute
 scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
 
+Go `./...` does not traverse a nested module. A root-module mapping previously
+claimed `activitycalendar/week_test.go` because `fnmatch` allowed its `*` to cross
+directory separators. The optional mapping `module` qualifier now checks the
+existing nearest-module discovery, leaving nested tests with their actual module
+owner. The calendar change check is registered separately; the earlier node
+calendar contract already belonged to `go-core`. The causal mapping tests failed
+twice with one passing control, then the focused tooling selection passed all
+12 cases at `59982d5cd486538720488828f92e37908709dc13`. These are inventory and
+selection results, not Go runtime evidence. The reviewed receipt is retained in
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/calendar-tooling-final-scoped-verdict.json`.
+
 The direct gate classifier recognizes update-check background/tool tests as the
 existing `feature-host-all` sweep. The pure SE42 D12 fixture contract is curated
 in `1to1`; its device seed/snapshot stays manual support, so completeness never
@@ -13488,6 +13499,102 @@ update goes to Hetzner, then AWS, before an app carrying the labels reaches
 testers. There is no capability negotiation. An older receiver can reject a
 labeled event if that order is violated; old-shape records remain valid on the
 updated receiver. Host schema tests do not establish deployment or device proof.
+
+The BL29 active-identity snapshot requires a private `0700` parent directory as
+well as a `0600` file. The shared atomic writer owns file permissions, not the
+parent directory; the store must ensure and verify the parent on both creation
+and reuse, failing closed on errors. The first B29-2 normal run retained
+59 passing cases and one directory-permission failure, with race unrun. At
+`7cc457f1737c4ec869259adddf7f263502a7b3ce`, the unchanged focused tests passed
+all 60 named cases in each of normal and race modes. They cover durable
+generation acknowledgements, mutation during writes, strict snapshot restore,
+31 raw days and seven frozen finished-day count triples, partial-day omission,
+failed-write visibility and private aggregate storage. Empty finalized history
+may serialize as `null`. The first failure and final reviewed receipts remain
+separate under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/b29-2-green/` and
+`b29-2-dir0700/`. This establishes the internal host store contract; relay
+authentication, phone wiring, metrics, devices and deployment are separate units.
+
+The optional weekly engagement block shares that atomic snapshot, key and
+persistence generation. Four dense sketches per Berlin ISO week (current plus
+seven previous weeks) produce five coherent counts, with reciprocal derived by
+union of chat and call and included in active. Disabling engagement preserves
+its known block and the daily contract. At `65e684365013c6e07e8dc143dd3ca0aa1e4373a4`,
+96 named cases passed in each focused normal and race run; these include
+aggregate parents/subtests and overlap the daily store controls. Original causal
+RED, strict restore/rank and forced-interleaving fixture corrections, and final
+reviewed receipts remain under the BL29 implementation evidence's `e1-store/`.
+This proves the host storage model, not weekly wire or phone witnesses.
+
+The daily `active_identity_v1` proof binds the logical root account to the
+stream's authenticated transport peer, including a linked secondary. At
+`5e72cda357e97dafa60bc50942ebe1ad925a87a4`, all 21 original named RED failure
+records passed in GREEN: relay normal 75 named PASS, node normal 73, and relay
+race 75, with no skips or race warnings. These counts include parents/subtests
+and overlap across runs. Strict bounded decoding, typed unsupported/retry,
+durable ACKs and the existing authenticated diagnostics inbox sentinel passed.
+Mocknet proves dispatch using the supplied connection identity, not a real
+secure-network handshake. Its stream deadlines are no-ops, so the fixture owns
+bounded context/reset cancellation and cleanup joins. Raw first failures and
+final verdicts remain under `b29-3-red/` and `b29-3-green/` in the same evidence.
+
+Before raw native commands, record each generated dependency, its build mode
+and when the SDK generated it. At the B4 native candidate
+`07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
+Debug-generated Java plugin registrant containing `integration_test`, which is
+excluded from the Release plugin classpath. Installed Flutter 3.47.2 supports
+`flutter build apk --release --config-only --pub --target=lib/main.dart` to
+regenerate Release platform tooling before the unchanged Kotlin/Java compile.
+Use matching `--debug` generation before the call-native JVM lane. In this SDK,
+`--no-pub` also skips registrant generation; earlier Debug/pub setup therefore
+cannot supply Release provenance. Config-only returns before APK assembly and
+signing, but normal implicit pub may resolve packages. Keep each setup within
+120 seconds inside the packet's existing 1800-second stage, count metadata/pin
+work in that budget, and bound potentially waiting helpers by remaining time.
+Fail before raw compilation on tracked source, lock, binding or carried artifact
+drift. Save mode-specific registrant SHA/mtime, plugin metadata and source/pin
+receipts; do not manually remove plugin references.
+
+The unchanged Release compile then passed with the two `integration_test`
+references removed. Debug generation restored those references before the
+unchanged call-native runner passed 692 unique class/name cases in 53 fresh
+JUnit XML files, with zero failures, errors or skips. Require the actual
+`build/app/test-results/testDebugUnitTest` output newer than setup, nonempty
+individual cases, matching suite counts and the runner's exit/marker. Keep each
+leg's case inventory separate; summed per-leg counts are not a verified unique
+inventory. All five pin boundaries retained the same 50 source, 26 setup/artifact
+and 10 input entries,
+harness, clean tracked status and unchanged pubspec/lock. Receipts remain under
+`b29-4-full-green/native-green-d-registrant-07f2e4de/` in the BL29 evidence.
+
+For unsigned Xcode Release proof, a global `LD_MAP_FILE_PATH` override applies
+to every linking target and can make multiple targets produce one file. Target
+name alone is insufficient because distinct projects can share one. Keep
+`LD_GENERATE_MAP_FILE=YES` and use Xcode's installed per-target default; inspect
+the actual Runner map in its target/configuration/architecture intermediates.
+The corrected B4 C3/C4 proof retains the GoBridge compiler invocation, actual
+object/class and both export call sites, Runner symbols and NSE gate. Preserve
+the original shared-map failure and wrong-mode registrant failure separately
+under `native-green-first-07f2e4de/` and `native-green-c3-linkmap-07f2e4de/`.
+
+Canonical adoption
+`383fa9c6511c77dfb8b3e4d0edc6ef97020d559eada75873d35983f1521361af`
+closes reviewed host and complete A-E native proof only. Host analysis uses the
+approved Dart style descendant `fca77eec4b28ef7e72dff38c695634dccb6f078b`;
+native evidence retains its actual tested `07f2e4de` identity. These receipts do
+not certify signed artifacts, live/device behavior, full E2 integration or
+shipping. No additional per-unit run is required without new relevant evidence.
+
+The separate group engagement visibility probe at
+`6726c0ce8a295f5ea087e3dc36b07d9fc9471017` passed its 12 unchanged causal
+RED-to-GREEN cases for actual painted/clipped viewport visibility, current
+uncovered route, resumed lifecycle and caller eligibility, with next-frame
+confirmation and binding/disposal fences. The initial 11 causal failures plus
+one cached-sliver finder failure and corrected causal RED remain retained; the
+fixture correction does not erase the first outcome. This proves only the
+visibility primitive. Canonical other-author classification, unlocked content,
+week/consent, witnesses and production caller integration remain separate.
 
 Sticker usage diagnostics count calls to `StickerUsageRecorder.recordSent` at
 the admitted-message boundary, once per message rather than per recipient or
