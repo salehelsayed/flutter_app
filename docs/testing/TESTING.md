@@ -6452,6 +6452,31 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **iOS cold-start badge recovery (BL-38):** an unanswered FCM initial-message
+  lookup can retain the exhaustive `cold_start` mutation scope after native APNs
+  consumption returns empty. Later resume scopes finish, but remain nested
+  behind that owner, so their batch never reaches the native commit. Build 279
+  on `b2af28fa9` identified exactly one unclosed scope, `cold_start`; the
+  sticky incomplete latch alone was not the blocker.
+  `f1475e205` bounds lookup discovery to two seconds only when exact iOS cold
+  recovery is installed. A timeout settles the scope incomplete while the
+  same lookup retains one late-routing continuation. Late messages route once
+  unless newer root navigation or a tab change supersedes them; late null
+  results do nothing. Timely route preparation and live overlapping mutation
+  owners retain their existing completeness protection.
+  The five added cases in `startup_router_recovery_test.dart` fail causally on
+  RED `6e0286a77` and pass unchanged on GREEN. They are included in the 212
+  passing curated/preservation cases, not 217 distinct tests. Analysis is clean.
+  Build 280 on `f1475e205` wrote the Runner badge on all five iPhone 13 resumes,
+  about 5.1 to 5.8 seconds after each foreground return. The canonical count
+  query is unchanged. Device badge-to-unread equality remains **UNVERIFIED**:
+  the partial UI list omitted collapsed contacts and could not establish
+  canonical eligibility. This is neither a count-formula failure nor a claim
+  that count equality was proved. Retain the RED/GREEN evidence in the
+  Claude-UI checkout's `.audit/bl38r/out/` and `.audit/bl38g/out/`, and the
+  Flutter checkout's `.codex-test-logs/bl38-diag/` and
+  `.codex-test-logs/bl38-fix/`. These host and device observations do not
+  certify a later signed store candidate.
 - **PostListener disposal after durable storage:** cancelling its input
   subscription does not join an in-flight async receive. A media completion
   after `dispose()` must finish storage and retain the single durable ACK while
@@ -7272,14 +7297,15 @@ visible and cannot become an ordinary first-attempt PASS.
   scoped host result does not certify the final integrated or device candidate.
 
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
-  on an empty consume. Its FCM fallback can still await native initial-message
-  discovery indefinitely. StartupRouter now starts its existing group
-  rejoin/drain future independently of that discovery, while canonical
-  notification settlement still waits for initial-open ownership and all
-  required drains. `startup_router_recovery_test.dart` holds the empty-native
+  on an empty consume. Before BL-38, the FCM fallback could await initial-message discovery
+  indefinitely and retain canonical startup ownership. The initial repair
+  starts the group rejoin/drain future independently of discovery and keeps
+  required-drain ordering. BL-38 supersedes the unbounded ownership wait
+  with the two-second, incomplete-settlement behavior described above. `startup_router_recovery_test.dart` holds the empty-native
   FCM lookup pending and checks actual group join/inbox calls before release;
-  settlement remains withheld until the lookup completes. The initial repair
-  introduced no timeout or coalescing; its host evidence remains in
+  the historical fixture withheld settlement until lookup completion.
+  BL-38 supersedes that expectation after its lookup deadline. The original
+  2026-10-24 repair introduced no timeout or coalescing; its evidence remains in
   `.codex-test-logs/startup-group-catchup-20261024/`.
   The later duplicate-pass fix lets only the retrier's debounced initial
   incoming-group pass consume a successful canonical startup/resume completion.
