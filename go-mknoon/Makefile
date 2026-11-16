@@ -40,9 +40,18 @@ all: ios android
 # Install gomobile and gobind at the exact golang.org/x/mobile version that
 # go.mod pins (the `tool` directives) into this checkout's bin/tools, so every
 # machine binds with the same generator and other checkouts keep their own.
-# Cheap when already installed.
+# A stamp names the pinned version and Go toolchain; while it and both tools
+# are present, nothing is installed (a reinstall cost up to 5 min per build).
+MOBILE_VERSION := $(shell awk '$$1 == "golang.org/x/mobile" { print $$2; exit }' go.mod)
+GOMOBILE_STAMP := $(TOOLS_BIN)/.gomobile-$(GOTOOLCHAIN)-$(MOBILE_VERSION)
+
 gomobile-tools:
-	GOBIN=$(TOOLS_BIN) go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+	@test -n "$(MOBILE_VERSION)" || { echo "golang.org/x/mobile is not pinned in go.mod" >&2; exit 1; }
+	@if [ -x $(TOOLS_BIN)/gomobile ] && [ -x $(TOOLS_BIN)/gobind ] && [ -f $(GOMOBILE_STAMP) ]; then :; else \
+		rm -f $(TOOLS_BIN)/.gomobile-* && \
+		GOBIN=$(TOOLS_BIN) go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind && \
+		touch $(GOMOBILE_STAMP); \
+	fi
 
 ios: nse-ios
 	gomobile bind -target=ios -o $(IOS_OUT) $(BIND_PKG)

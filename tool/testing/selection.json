@@ -2311,6 +2311,32 @@
         "docker-ws/bootstrap_ios_receiver.sh"
       ]
     },
+    "gomobile-tools-skip": {
+      "kind": "command",
+      "command": [
+        "bash",
+        "go-mknoon/gomobile_tools_test.sh"
+      ],
+      "paths": [
+        "go-mknoon/gomobile_tools_test.sh"
+      ],
+      "success_marker": "GOMOBILE_TOOLS_SKIP_PASS",
+      "boundary": "make gomobile-tools installs gomobile and gobind once per pinned golang.org/x/mobile version and Go toolchain, and again only when a tool is missing or the pin changes",
+      "limitations": "Fake go records installs; the real install and bind stay with the ensure scripts and device builds",
+      "timeout_seconds": 120,
+      "requirements": [
+        "bash",
+        "make"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "go-mknoon/Makefile",
+        "go-mknoon/gomobile_tools_test.sh",
+        "scripts/ensure_go_ios_bindings.sh"
+      ]
+    },
     "go-send-wrapper": {
       "kind": "command",
       "command": [
@@ -7137,6 +7163,17 @@
         "test-derived-data-contract"
       ],
       "why": "Persistent DerivedData for Hetzner test iOS builds (owner 11-15 build-time work)"
+    },
+    {
+      "id": "gomobile-tools",
+      "patterns": [
+        "go-mknoon/Makefile",
+        "go-mknoon/gomobile_tools_test.sh"
+      ],
+      "checks": [
+        "gomobile-tools-skip"
+      ],
+      "why": "The ensure scripts call make gomobile-tools before every build (owner 11-15 build-time work)"
     },
     {
       "id": "retained-go-send-wrapper",
