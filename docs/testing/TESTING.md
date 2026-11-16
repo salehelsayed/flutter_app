@@ -14327,6 +14327,38 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   `baseline-db-summary.json`, `candidate-db-comparison.json`, both
   `*-sqlite-runtime.json` probes, `db-comparison-coverage.json`,
   `candidate-focused/results.json` and `signing-source-comparison.json`.
+- **BL-15 fixed-WAV replay, scoped evidence (2026-11-16):** Flutter completed
+  three baseline runs at `9a99424b0d8726fef36780449ff8efe5d5839e96` and three
+  conditioned runs at `cc680cf772c1223b1eb2656d368d5f638be37706` on one iPhone 13
+  using `bl15_dinner_low_noise.wav`. All six raw transcriptions matched the
+  expected sentence. Baseline input retained all 90,389 normalized frames;
+  conditioned input retained a byte-exact PCM prefix of 42,720 frames, including
+  the full 42,389-frame TTS source. The checker returned valid evidence with
+  `NOT_REPRODUCED`: baseline did not append words either. This proves trimming
+  and word preservation for this fixture, not recognition improvement, the
+  original iPhone 11 cause, general accuracy or a performance benefit. Release
+  281 was restored, with foreground/profile/history/empty-draft and both WDA
+  sessions checked through Appium MCP.
+  Fresh iOS debug checkouts need platform generation before a `--no-pub` run:
+  `flutter pub get --offline --enforce-lockfile` generated the previously missing
+  `ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift`.
+  Require unchanged tracked sources and `pubspec.yaml`/`pubspec.lock`, a nonempty
+  generated package, and keep generation inside the same build-ready deadline.
+  Incremental builds can legitimately reuse an older `app.dill` and
+  `kernel_blob.bin`. Bind the producing directory from the current run log,
+  actual payload SHA/size equality, current source/defines and installed bundle
+  identity; retain the logged `kernel_snapshot_program` skip when reusing the
+  payload. Do not use timestamps alone to reject valid cached Dart output.
+  The attached `--debug --no-hot` run avoids a separate initial DevFS upload.
+  Reuse the exact root-workspace metadata exception below; the real app's
+  `ios/Runner/Info.plist` remains pinned. Preserve the three earlier zero-trial
+  setup/provenance stops and the resolved draft-cleanup errors; they are not app
+  or model failures. Never infer a fix from checker exit zero alone.
+  Evidence: `.codex-test-logs/bl15-n3/session-a4/` contains `comparison.json`,
+  both variant/trial logs, WAV exports and `post.txt`; the comparison SHA-256 is
+  `bb33a8c512e14e2599082e3b76920732f966fbd28cc9ad2b4ead40f2f1f4c6a1`.
+  Scoped adoption: `codex-attempt4-valid-not-reproduced-and-restoration-adoption.json`,
+  SHA-256 `c67a53d780824ef65fb7896950a3a253aaae8fa659ced17714aff99e01ca490e`.
 - **Archived-source analysis and workspace access metadata:** strict analysis
   included historical Dart copies under `artifacts/`, producing 98,277 archive
   diagnostics alongside five current-source lint issues. Exclude the historical
