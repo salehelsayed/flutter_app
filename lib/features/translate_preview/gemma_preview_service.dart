@@ -109,7 +109,9 @@ final class GemmaPreviewService implements OnDeviceAi {
           'TRANSLATE_PREVIEW_DIAG ${jsonEncode({'event': 'decoded_audio', 'operation': 'transcribe', 'inputBasename': input.uri.pathSegments.last, 'inputBytes': inputBytes, 'inputSha256': digest.toString(), 'inputHeaderHex': header.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(), 'sourceContainer': decoded['sourceContainer'], 'sourceCodec': decoded['sourceCodec'], 'pcmBytes': pcm.lengthInBytes, 'sampleRate': sampleRate, 'channels': channels, 'sampleCount': sampleCount, 'frameCount': frameCount, 'durationMs': frameCount != null && sampleRate > 0 ? frameCount * 1000 / sampleRate : null})}',
         );
       }
-      final wav = wav16kMono(pcm, sampleRate: sampleRate, channels: channels);
+      final wav = trimTrailingQuietWav16kMono(
+        wav16kMono(pcm, sampleRate: sampleRate, channels: channels),
+      );
       if (_diagnosticsEnabled) {
         final wavHeader = ByteData.sublistView(wav);
         final wavSampleRate = wavHeader.getUint32(24, Endian.little);

@@ -69,3 +69,40 @@ Uint8List wav16kMono(
   }
   return out.buffer.asUint8List();
 }
+
+/// Conditions only the canonical WAV produced by [wav16kMono] for transcription.
+/// Keep a short pad after activity, and preserve inputs with no active window.
+/// Energy is a conservative input heuristic, not word or segment confidence.
+Uint8List trimTrailingQuietWav16kMono(Uint8List wav) {
+  const headerBytes = 44;
+  const rate = 16000;
+  const windowFrames = rate * 20 ~/ 1000;
+  const minimumQuietFrames = rate * 600 ~/ 1000;
+  const retainedQuietFrames = rate * 250 ~/ 1000;
+  // -50 dBFS RMS: (32768 * 10^(-50/20)) squared.
+  const quietMeanSquare = 32768.0 * 32768.0 * 0.00001;
+  final data = ByteData.sublistView(wav);
+  final frames = (wav.lengthInBytes - headerBytes) ~/ 2;
+  var lastActiveEnd = frames;
+  while (lastActiveEnd > 0) {
+    // Anchor 20 ms windows at frame zero, including a partial final window.
+    final start = ((lastActiveEnd - 1) ~/ windowFrames) * windowFrames;
+    var energy = 0;
+    for (var frame = start; frame < lastActiveEnd; frame++) {
+      final sample = data.getInt16(headerBytes + frame * 2, Endian.little);
+      energy += sample * sample;
+    }
+    if (energy >= quietMeanSquare * (lastActiveEnd - start)) break;
+    lastActiveEnd = start;
+  }
+  if (lastActiveEnd == 0 || frames - lastActiveEnd < minimumQuietFrames) {
+    return wav;
+  }
+
+  final outputBytes = headerBytes + (lastActiveEnd + retainedQuietFrames) * 2;
+  final output = Uint8List(outputBytes)..setRange(0, outputBytes, wav);
+  final header = ByteData.sublistView(output);
+  header.setUint32(4, outputBytes - 8, Endian.little);
+  header.setUint32(40, outputBytes - headerBytes, Endian.little);
+  return output;
+}
