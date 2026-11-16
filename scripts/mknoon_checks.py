@@ -630,14 +630,20 @@ def launch(command, cwd, timeout, env=None):
                 _LAUNCH_CONTEXT.capture_failure = capacity
                 raise _EvidenceCapacityExceeded()
 
-        def terminate_owned_group():
-            try: os.killpg(p.pid, signal.SIGTERM)
+        def signal_owned_group(sig):
+            try: os.killpg(p.pid, sig)
             except ProcessLookupError: pass
+            except PermissionError:
+                # macOS reports EPERM, not ESRCH, once only unreaped members of
+                # the owned group remain. A live leader keeps the real error.
+                if p.poll() is None: raise
+
+        def terminate_owned_group():
+            signal_owned_group(signal.SIGTERM)
             try: p.wait(timeout=3)
             except subprocess.TimeoutExpired: pass
             # A descendant may retain its pipes after the leader exits.
-            try: os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
+            signal_owned_group(signal.SIGKILL)
             p.wait(timeout=5)
 
         try:
@@ -664,8 +670,7 @@ def launch(command, cwd, timeout, env=None):
             timed_out = True
             terminate_owned_group()
         except BaseException as error:
-            try: os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
+            signal_owned_group(signal.SIGKILL)
             p.wait(timeout=5)
             if not isinstance(error, InterruptedError): raise
             timed_out = True

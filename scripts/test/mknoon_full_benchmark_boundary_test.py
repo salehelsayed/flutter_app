@@ -90,6 +90,18 @@ for event in events:print(json.dumps(event),flush=True)
 '''
 
 
+def setUpModule():
+    # BL-31: every default-directory device lease taken by this module's
+    # fixtures stays in a private temp directory, never the shared real one.
+    leases = tempfile.TemporaryDirectory(prefix='benchmark-device-leases-')
+    real = preflight.lease_directory
+    patch = mock.patch.object(preflight, 'lease_directory',
+                              lambda directory=None: real(directory or leases.name))
+    patch.start()
+    unittest.addModuleCleanup(leases.cleanup)
+    unittest.addModuleCleanup(patch.stop)
+
+
 class BenchmarkBoundaryTest(unittest.TestCase):
     def nested(self, *, script='run_benchmark_suite.dart', relay=RELAYS,
                target='boundary-sim', pins=PINS, mode='', protected=True):
@@ -176,6 +188,12 @@ class BenchmarkBoundaryTest(unittest.TestCase):
         self.assertEqual(selections[0] | selections[1], set('A,B,BR,C,D,E,F,G,GP,H,I,J,K,L,M,N,R'.split(',')))
         for name in [*SCRIPTS, 'run_benchmark_suite.dart','benchmark_boundary.dart']:
             self.assertIn('integration_test/scripts/'+name,contract['sources'])
+
+    def test_default_device_leases_stay_out_of_the_real_lease_directory(self):
+        # BL-31: the route executor and this fixture take default-directory
+        # leases; they must not share /tmp/mknoon-device-leases-<uid> with real rows.
+        real = Path('/tmp') / f'mknoon-device-leases-{os.getuid()}'
+        self.assertNotEqual(preflight.lease_directory().resolve(), real.resolve())
 
     def test_partition_leases_preflight_exact_receipts_and_independent_failure(self):
         matrix = dict(errors=[], adb=[PINS['android-physical']],

@@ -8,6 +8,7 @@ fixtures; no application build, device, external account or service is used.
 import argparse
 import contextlib
 import copy
+import errno
 import io
 import json
 import os
@@ -1250,6 +1251,37 @@ class CaptureBudgetTest(unittest.TestCase):
         self.assertEqual((code, timed_out, budget.used), (93, False, 80))
         self.assertTrue(out.startswith('b' * 32))
         self.assertEqual(checks._LAUNCH_CONTEXT.capture_failure['reason'], 'run')
+
+    # BL-31: macOS killpg reports EPERM, not ESRCH, once only unreaped members
+    # of the owned group remain. The workflow suite hit it at random here.
+    @unittest.skipUnless(hasattr(os, 'waitid'), 'waitid observes child exit without reaping')
+    def test_capacity_cleanup_treats_eperm_from_an_exited_group_as_done(self):
+        signals = []
+
+        def exited_group_killpg(pid, sig):
+            try: os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+            except ChildProcessError: pass  # already reaped by the cleanup's wait
+            signals.append(sig)
+            raise PermissionError(errno.EPERM, 'Operation not permitted')
+
+        budget = checks.CaptureBudget(stream_limit=64, run_limit=64)
+        with mock.patch.object(checks.os, 'killpg', exited_group_killpg):
+            try:
+                out, code, timed_out, _ = self.run_script("import os;os.write(1,b'b'*96)", budget)
+            except PermissionError:
+                self.fail('capacity cleanup raised EPERM for an owned group that had already exited')
+        self.assertEqual((code, timed_out), (93, False))
+        self.assertIn('MKNOON_EVIDENCE_CAPACITY_EXCEEDED', out)
+        self.assertEqual(signals, [signal.SIGTERM, signal.SIGKILL])
+
+    def test_capacity_cleanup_keeps_eperm_from_a_live_group(self):
+        def live_group_killpg(pid, sig):
+            raise PermissionError(errno.EPERM, 'Operation not permitted')
+
+        budget = checks.CaptureBudget(stream_limit=64, run_limit=64)
+        with mock.patch.object(checks.os, 'killpg', live_group_killpg):
+            with self.assertRaises(PermissionError):
+                self.run_script("import os,time;os.write(1,b'b'*96);time.sleep(3)", budget)
 
     def test_replacement_decoding_cannot_expand_the_saved_byte_allowance(self):
         budget = checks.CaptureBudget(stream_limit=64, run_limit=512)

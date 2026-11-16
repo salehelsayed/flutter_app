@@ -42,6 +42,17 @@ class OwnershipCompositionTest(RepositoryFixture):
                          ['python3', '-m', 'unittest', '-v', *canonical['paths']])
         self.assertEqual(full['timeout_seconds'], canonical['timeout_seconds'])
 
+    def test_workflow_budget_fits_its_seventeen_file_runtime(self):
+        # BL-31: the 17-file suite took 236-365 s on the host; 360 s left no margin
+        # and timed out once under load. Both workflow rows share one budget.
+        actual = rules()
+        canonical = actual['checks']['workflow']
+        full = next(row for row in actual['full_commands']
+                    if row['id'] == 'full-workflow')
+        self.assertEqual(
+            (canonical['timeout_seconds'], canonical['estimated_seconds'], full['timeout_seconds']),
+            (900, 300, 900))
+
     def test_full_fixture_adapters_cover_partition_without_unsupported_parallel_flag(self):
         actual = rules()
         commands = {row['id']: row for row in actual['full_commands']}

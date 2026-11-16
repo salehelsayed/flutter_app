@@ -687,8 +687,8 @@
         "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
-      "timeout_seconds": 360,
-      "estimated_seconds": 180,
+      "timeout_seconds": 900,
+      "estimated_seconds": 300,
       "requirements": [
         "python3"
       ],
@@ -7848,7 +7848,7 @@
         "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
-      "timeout_seconds": 360,
+      "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [
         "python3"
