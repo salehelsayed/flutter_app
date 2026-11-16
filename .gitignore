@@ -133,6 +133,7 @@ Index.noindex/
 ModuleCache.noindex/
 SDKStatCaches.noindex/
 /SourcePackages/
+/info.plist
 
 # iOS build outputs (Flutter writes the iOS archive/ipa here, separate from the root /build/)
 ios/build/
