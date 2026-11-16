@@ -640,13 +640,21 @@ enum AndroidCallBackNotificationStepKind {
   wait,
 }
 
-/// What the missed-call "Call back" loop does with one UI dump: tap the
-/// unique row's Expand button, tap its "Call back" action, or wait.
+/// What the missed-call "Call back" loop does with one UI dump: reopen the
+/// shade when the dump has no SystemUI content (the app took focus and closed
+/// it, kx0007), tap the unique row's Expand button, tap its "Call back"
+/// action, or wait.
 AndroidCallBackNotificationStep androidCallBackNotificationStep(
   String xml, {
   required String title,
   required Set<String> allowedPackages,
 }) {
+  if (!xml.contains('package="com.android.systemui"')) {
+    return (
+      kind: AndroidCallBackNotificationStepKind.reopenShade,
+      center: null,
+    );
+  }
   final target = findAndroidNotificationActionTapTarget(
     xml,
     title: title,

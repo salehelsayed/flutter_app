@@ -1306,6 +1306,7 @@
       "kind": "flutter",
       "paths": [
         "test/integration/android_production_audio_call_campaign_test.dart",
+        "test/integration/production_call_back_notification_step_test.dart",
         "test/integration/android_foreground_webrtc_audio_campaign_test.dart",
         "test/integration/android_foreground_webrtc_audio_readiness_diagnostic_test.dart",
         "test/tool/sims/sims_build_cache_test.dart",
@@ -7258,6 +7259,7 @@
       "id": "production-call-regressions",
       "patterns": [
         "integration_test/scripts/production_call_back_regressions.dart",
+        "test/integration/production_call_back_notification_step_test.dart",
         "integration_test/scripts/run_production_call_back.dart",
         "tool/sims/production_call_back_criteria.dart",
         "integration_test/support/production_call_notification_evidence.dart",
