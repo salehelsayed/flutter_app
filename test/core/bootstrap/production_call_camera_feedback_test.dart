@@ -197,6 +197,115 @@ void main() {
     expect(result.status, ForegroundCallActionStatus.unavailable);
     expect(result.cameraFailure, isNull);
   });
+
+  test(
+    'BL26 camera ON survives two ICE-only recoveries without another tap',
+    () async {
+      final rig = await _CameraRig.create(recovery: true).timeout(_redDeadline);
+      expect(
+        (await rig.turnOn().timeout(_redDeadline)).status,
+        ForegroundCallActionStatus.applied,
+      );
+      expect(
+        rig.graph.current!.video!.presentation.localCamera,
+        CallCameraState.on,
+      );
+      expect(rig.nativeCameraCommands, [true]);
+
+      for (var episode = 1; episode <= 2; episode++) {
+        await rig.recover().timeout(_redDeadline);
+        expect(rig.engine.iceGeneration, episode);
+      }
+
+      expect(
+        rig.graph.current!.video!.presentation.localCamera,
+        CallCameraState.on,
+        reason: 'ICE replacement must preserve an already-authorized camera',
+      );
+      expect(rig.nativeCameraCommands, [
+        true,
+      ], reason: 'A network handover is not an explicit camera OFF action');
+      expect(rig.engine.video.cameraStarts, 1);
+      expect(rig.permissionCalls, 1);
+    },
+  );
+
+  test('BL26 camera OFF stays OFF through two ICE-only recoveries', () async {
+    final rig = await _CameraRig.create(recovery: true).timeout(_redDeadline);
+    for (var episode = 1; episode <= 2; episode++) {
+      await rig.recover().timeout(_redDeadline);
+    }
+    expect(
+      rig.graph.current!.video!.presentation.localCamera,
+      CallCameraState.off,
+    );
+    expect(rig.nativeCameraCommands.where((active) => active), isEmpty);
+    expect(rig.engine.video.cameraStarts, 0);
+    expect(rig.permissionCalls, 0);
+  });
+
+  for (final boundary in ['background', 'end']) {
+    test('BL26 $boundary during recovery commit cannot resurrect camera', () async {
+      final rig = await _CameraRig.create(recovery: true).timeout(_redDeadline);
+      expect(
+        (await rig.turnOn().timeout(_redDeadline)).status,
+        ForegroundCallActionStatus.applied,
+      );
+      expect(rig.nativeCameraCommands, [true]);
+      final entered = Completer<void>();
+      final commit = Completer<void>();
+      addTearDown(() {
+        if (!commit.isCompleted) commit.complete();
+      });
+      rig.engine.video.beforeCommit = () {
+        if (!entered.isCompleted) entered.complete();
+        return commit.future.timeout(_redDeadline);
+      };
+      final recovery = rig.recover().timeout(_redDeadline);
+      // Observe errors immediately while the test exercises the held boundary.
+      final completed = recovery.then<Object?>(
+        (_) => null,
+        onError: (Object error, StackTrace _) => error,
+      );
+      await entered.future.timeout(_redDeadline);
+      final boundaryWork =
+          (boundary == 'background' ? rig.graph.onBackgrounded() : rig.end())
+              .timeout(_redDeadline);
+      final boundaryCompleted = boundaryWork.then<Object?>(
+        (_) => null,
+        onError: (Object error, StackTrace _) => error,
+      );
+      await _redTurn().timeout(_redDeadline);
+      commit.complete();
+      expect(await boundaryCompleted.timeout(_redDeadline), isNull);
+      final error = await completed.timeout(_redDeadline);
+      expect(error, isNull);
+      await _redTurn().timeout(_redDeadline);
+      expect(rig.nativeCameraCommands.last, isFalse);
+      expect(rig.engine.video.cameraStarts, 1);
+      expect(rig.permissionCalls, 1);
+      final projection = rig.graph.current?.video;
+      if (projection != null) {
+        expect(projection.presentation.localCamera, isNot(CallCameraState.on));
+      }
+    });
+  }
+}
+
+const _redDeadline = Duration(seconds: 2);
+
+Future<void> _redTurn() async {
+  for (var i = 0; i < 12; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+final class _RecoveryEffects implements CallEffectExecutor {
+  _RecoveryEffects(this.run);
+  final Future<CallEvent?> Function(CallEffect, CallSessionSnapshot) run;
+  @override
+  Future<CallEvent?> execute(CallEffect effect, CallSessionSnapshot snapshot) =>
+      run(effect, snapshot);
 }
 
 // The real reducer, negotiation owner and graph run without network/native I/O.
@@ -211,12 +320,14 @@ final class _CameraRig {
   int permissionCalls = 0;
   int sequence = 0;
   final nativeCameraCommands = <bool>[];
+  bool _driveRecoveryEffects = false;
   static final now = DateTime.fromMillisecondsSinceEpoch(10000, isUtc: true);
 
   static Future<_CameraRig> create({
     Future<permissions.PermissionStatus> Function()? permission,
     bool nativeRefusal = false,
     Future<bool> Function()? releaseCamera,
+    bool recovery = false,
   }) async {
     final rig = _CameraRig();
     addTearDown(rig.engine.close);
@@ -224,6 +335,7 @@ final class _CameraRig {
       permission ?? () async => permissions.PermissionStatus.granted,
       nativeRefusal,
       releaseCamera,
+      recovery,
     );
     return rig;
   }
@@ -248,6 +360,7 @@ final class _CameraRig {
     Future<permissions.PermissionStatus> Function() permission,
     bool nativeRefusal,
     Future<bool> Function()? releaseCamera,
+    bool recovery,
   ) async {
     engine.mediaReady = true;
     coordinator = CallCoordinator(
@@ -256,6 +369,18 @@ final class _CameraRig {
       historyProjector: CallHistoryProjector(_UnusedCallHistoryRepository()),
       clock: () => now,
       idSource: () => _call,
+      effectExecutor: _RecoveryEffects((effect, snapshot) async {
+        if (!_driveRecoveryEffects) return null;
+        return owner.execute(effect, snapshot);
+      }),
+      onTimerScheduled: (callId, kind, _, __, effectiveDelay) {
+        if (_driveRecoveryEffects && kind == CallTimeoutKind.reconnect) {
+          owner.observeReconnectTimer(
+            coordinator.activeSession!,
+            effectiveDelay,
+          );
+        }
+      },
     );
     addTearDown(coordinator.dispose);
     final endpoint = _endpoint();
@@ -288,11 +413,21 @@ final class _CameraRig {
       signaling: _LegacySignaling(),
       configuration: _configuration,
       readActiveSnapshot: () => coordinator.activeSession,
-      readStagedIceServers: (_) async => <CallIceServer>[],
+      readStagedIceServers: (_) async => recovery
+          ? [
+              CallIceServer(
+                urls: ['turn:relay.invalid:3478'],
+                username: 'fixture',
+                credential: 'fixture',
+                expiresAt: now.add(const Duration(minutes: 5)),
+              ),
+            ]
+          : <CallIceServer>[],
       clock: () => now,
       dispatchEvent: (event) async {
         await coordinator.dispatch(event);
-        if (event.type == CallEventType.remoteAnswer) {
+        if (!_driveRecoveryEffects &&
+            event.type == CallEventType.remoteAnswer) {
           await owner.execute(
             const CallEffect(CallEffectType.deliverAnswer),
             coordinator.activeSession!,
@@ -354,7 +489,7 @@ final class _CameraRig {
     );
     final nativeEvents = StreamController<Object?>.broadcast();
     addTearDown(nativeEvents.close);
-    final native = nativeRefusal || releaseCamera != null
+    final native = nativeRefusal || releaseCamera != null || recovery
         ? AndroidCallLifecycleAdapter(
             videoEnabled: true,
             invokeMethod: (method, arguments) async {
@@ -395,7 +530,7 @@ final class _CameraRig {
           )
         : null;
     if (native != null) addTearDown(native.close);
-    if (releaseCamera != null) {
+    if (releaseCamera != null || recovery) {
       await native!.start();
       expect(
         await native.registerOutgoing(
@@ -435,8 +570,10 @@ final class _CameraRig {
         store: issued,
         setWakeHandle: (_) async => true,
         revokeWakeHandle: ({required authorizedSenderPeerId}) async => true,
-        publishNativeContact:
-            ({required wakeHandle, required displayName}) async {},
+        publishNativeContact: ({
+          required wakeHandle,
+          required displayName,
+        }) async {},
         revokeNativeContact: (_) async {},
         generateHandle: () => '0123456789abcdef0123456789abcdef',
         nowMs: () => 10000,
@@ -475,6 +612,34 @@ final class _CameraRig {
       video!.presentation.intentFor(CallVideoAction.turnCameraOn),
       isNotNull,
     );
+    _driveRecoveryEffects = recovery;
+  }
+
+  Future<void> recover() async {
+    engine.mediaReady = false;
+    engine.video.onCommit = () => engine.mediaReady = true;
+    await _event(CallEventType.mediaLost).timeout(_redDeadline);
+    await owner.workSettled.timeout(_redDeadline);
+    expect(coordinator.activeSession?.state, CallState.reconnecting);
+    final token = owner.negotiation!;
+    expect(
+      owner.handleAuthenticated(
+        signal: _remote(
+          'answer',
+          negotiation: token.negotiationId,
+          generation: engine.iceGeneration,
+          purpose: 'ice_restart',
+        ),
+        callHandle: _handle,
+        canApply: () => true,
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await owner.workSettled.timeout(_redDeadline);
+    await _redTurn().timeout(_redDeadline);
+    if (coordinator.activeSession?.isTerminal != true) {
+      expect(coordinator.activeSession?.state, CallState.connected);
+    }
   }
 
   Future<ForegroundCallActionResult> turnOn() {
@@ -493,6 +658,8 @@ final class _CameraRig {
   CallSignalV2 _remote(
     String event, {
     String? negotiation,
+    int generation = 0,
+    String purpose = 'initial',
   }) => CallSignalV2.fromMap({
     'schema': CallSignalV2.schema,
     'call_id': _call.value,
@@ -504,7 +671,7 @@ final class _CameraRig {
     'recipient_account_peer_id': 'local-account',
     'recipient_device_peer_id': 'local-device',
     'sender_sequence': sequence,
-    'ice_generation': 0,
+    'ice_generation': generation,
     'created_at_ms': 10000,
     'expires_at_ms': 41000,
     'payload': switch (event) {
@@ -516,7 +683,7 @@ final class _CameraRig {
       'accept' => {'media': 'video', 'camera': 'off'},
       'answer' => {
         'negotiation_id': negotiation,
-        'purpose': 'initial',
+        'purpose': purpose,
         'switch_id': null,
         'media_revision': 0,
         'media': 'video',
@@ -590,6 +757,7 @@ final class _Engine implements CallEngine, CallVideoEngine {
   final _candidates = StreamController<CallIceCandidate>.broadcast(sync: true);
   bool mediaReady = false;
   bool closed = false;
+  int generation = 0;
   @override
   Stream<CallEngineEvent> get events => _events.stream;
   @override
@@ -599,7 +767,10 @@ final class _Engine implements CallEngine, CallVideoEngine {
   @override
   bool get isClosed => closed;
   @override
-  int get iceGeneration => 0;
+  int get iceGeneration => generation;
+  @override
+  Future<int> restartIce({List<CallIceServer> iceServers = const []}) async =>
+      ++generation;
   @override
   int get candidateBatchCapacity => 8;
   @override
@@ -660,10 +831,12 @@ final class _Token implements CallVideoNegotiation {
   final CallMediaKind media;
 }
 
-final class _Video implements CallVideoSession {
+final class _Video implements CallVideoSession, CallVideoSdpReconciler {
   int cameraStarts = 0;
   bool cameraAccepted = true;
   Future<bool> Function()? cameraResult;
+  Future<void> Function()? beforeCommit;
+  void Function()? onCommit;
   @override
   CallId get callId => _call;
   @override
@@ -702,7 +875,18 @@ final class _Video implements CallVideoSession {
     CallSessionDescription description,
   ) async {}
   @override
-  Future<void> commit(CallVideoNegotiation token) async {}
+  Future<void> commit(CallVideoNegotiation token) async {
+    await beforeCommit?.call();
+    onCommit?.call();
+  }
+
+  @override
+  Future<CallVideoSdpReconciliationOutcome> reconcilePending(
+    CallVideoNegotiation token, {
+    required bool Function() canApply,
+  }) async => canApply()
+      ? CallVideoSdpReconciliationOutcome.alreadyStable
+      : CallVideoSdpReconciliationOutcome.unreconciled;
   @override
   Future<bool> setLocalCamera(
     CallVideoNegotiation token,
