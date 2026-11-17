@@ -76,6 +76,40 @@ void main() {
     return blocks;
   }
 
+  test('E2U-R001 bootstrap and root borrow the same daily reporter into route authority', () {
+    final bootstrap = File('lib/app/bootstrap/production_application_bootstrap.dart').readAsStringSync();
+    final root = File('lib/app/application_root.dart').readAsStringSync();
+    expect(bootstrap, contains('activityReporter: activeIdentityReporter,'),
+      reason: 'the already-owned production reporter must reach MyApp');
+    final start = root.indexOf('DirectConversationRouteAuthority get _directRouteAuthority');
+    expect(start, greaterThanOrEqualTo(0));
+    final end = root.indexOf(');', start);
+    expect(end, greaterThan(start));
+    expect(root.substring(start, end), contains('activityReporter: widget.activityReporter,'),
+      reason: 'normal shell routes must receive the same borrowed reporter');
+    expect(bootstrap, contains('disposeActiveIdentityReporter: activeIdentityReporter.dispose,'),
+      reason: 'bootstrap retains its existing disposal responsibility');
+  });
+
+  test('E2U-R002 every non-debug conversation builder forwards the borrowed daily reporter', () {
+    final offenders = <String>[];
+    var sites = 0;
+    for (final file in productionDartFiles()) {
+      if (file.path == wiredPath || file.path == debugCompositionRoot) {
+        continue;
+      }
+      for (final block in conversationWiredArgumentBlocks(file.readAsStringSync())) {
+        sites++;
+        if (!RegExp(r'activityReporter\s*:\s*(?:widget\.)?(?:directRouteAuthority|_directRouteAuthority)\??\.activityReporter').hasMatch(block)) {
+          offenders.add(file.path);
+        }
+      }
+    }
+    expect(sites, greaterThanOrEqualTo(6), reason: 'the computed census must discover real builders');
+    expect(offenders, isEmpty,
+      reason: 'Root, Feed (two), Orbit, Posts and FTE must all borrow the route authority reporter');
+  });
+
   test('TC-362-06b every production ConversationWired push carries the linked '
       'route authority', () {
     expect(

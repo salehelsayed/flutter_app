@@ -13507,6 +13507,16 @@ timeouts; `Future<bool>.sync` can return the same narrow future, not normalize i
 `test/core/diagnostics/engagement_chat_observer_test.dart` E2O-011 retains the throwing fixture; verified contrasts are retained under
 `.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-observer-green/first-failure-investigation/probe-run1/`.
 
+Async widget send fakes must collect observations and leave guarded `expect`
+calls until the owned send future has joined. In the BL29 pre-intent fixture,
+an assertion conflicted with an active `tester.pump`; production error handling
+caught it before the fake reached `markCaptured`, so negative mark assertions
+could pass after an aborted callback. Require a completion flag set after the
+fake's admission and mark step. The corrected fixture and reviewed contract
+pins passed all 288 names in the three changed files, with no errors or skips.
+First failures and the corrected receipt remain separate under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-ui-capture-green/`.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation
@@ -13545,6 +13555,66 @@ Mocknet proves dispatch using the supplied connection identity, not a real
 secure-network handshake. Its stream deadlines are no-ops, so the fixture owns
 bounded context/reset cancellation and cleanup joins. Raw first failures and
 final verdicts remain under `b29-3-red/` and `b29-3-green/` in the same evidence.
+
+The local Go active-identity reporter retains only the current Berlin ISO-week's
+`active`, `chat`, `call` and `group` bits, with per-relay acknowledged kind subsets
+independent from the daily ACKs. Chat/call/group include weekly active. The local
+`weeklyProjection`, `markWeekly` and `ackWeekly` operations require the existing
+full owner/consent fence; midnight preserves the still-open week, while Monday
+expires it without relabelling pending work. These operations implement no
+engagement network dispatch. Daily configure/mark/flush replies and both wire
+protocol builders/parsers remain unchanged.
+
+An optional `occurredAtUnixMillis` on `mark` uses producer qualification time.
+Go rejects future timestamps and ages over two minutes. Only still-open Berlin
+periods qualify: a prior-day occurrence in the current week can mark weekly
+active without creating today's daily activity; a closed-week occurrence returns
+`accepted: false`. Omitting the field preserves processing-time behavior.
+
+At `b1c1ffa07a4931832930a96636c32e50449f2a02`, Claude-UI ran the approved focused
+Go steps once: 241 named cases passed normally, the same 241 passed with race
+detection, and 18 nested calendar cases passed, without skips or race warnings.
+Counts include parent/subtest records and overlap across modes. All thirteen
+weekly groups and existing B293/B294/B29E1/calendar sentinels passed. Exact
+twenty-file pins and clean source were checked at seven boundaries. Causal RED
+`7aae8fca0c40802fe424234bf0c06f812b55a224` retained two controls passing and 46
+assertion-failure records, without compile/setup failure. First raw streams and
+controllers remain separate in `.audit/b29w/out` and `.audit/b29wg/out` in the
+execution owner's UI-update checkout. Root's scoped closure is
+`codex-complete-scoped-source-red-focused-green-b1c1ffa07.json`, SHA-256
+`8903101388c6cc90365ac1f83fcdcae1eb55a72e2d20b4657da19c1c26fd20c1`.
+
+The new reader accepts legacy six-key daily snapshots. Once a weekly block is
+written, the snapshot has seven keys and the old strict reporter binary rejects
+it: old-binary rollback compatibility is not guaranteed. Retain that limitation
+for integration/release. This is focused local-API proof; the sixteen broader
+selected gates remain Batch 13 composition obligations, and matching Dart,
+network dispatch, native/device and published-build proof remain separate.
+
+The Dart `markCaptured(capture, {int? occurredAtUnixMillis})` API at
+`d6a0f11b6baaa20c3e9c40c5f7b03866a15f7e2c` carries a supplied per-operation
+integer unchanged through configuration deferral and the original reporter,
+bridge, generation, account, binding and consent-epoch fences. Absent or null
+values omit the wire field; argument-free calls retain their encoded payload.
+The capture record gains no timestamp or clock/day logic. Contract RED
+`db7e9b5bea0657a934643281475138f59a503bab` passed 24 legacy cases and failed
+15 API-shape assertions. Timestamp and fence assertions were masked by that
+missing method signature, then executed in GREEN; the RED did not demonstrate
+timestamp loss.
+
+Claude-UI's accepted GREEN passed all 39 reporter cases, including each of the
+15 OCC cases once, within the 417-case diagnostics check. The reporter count
+is included in diagnostics, not an additional run. Bootstrap 23, contacts 1,
+diagnostics Python 60 and the subsequent 350-case workflow also passed. The
+workflow used a fresh Core execution window; 34 source/Git pins remained exact
+at 17 clean boundaries, with no errors, skips or unfinished cases. First RED
+and GREEN evidence remains under `.audit/cocr/out/run1` and `.audit/cocg/out`
+in the execution owner's UI-update checkout. Scoped closure is
+`codex-complete-scoped-source-contract-red-four-host-workflow-d6a0f11b6.json`,
+SHA-256 `949d5bf92cb6dd003fefcb500c039b70131f63fd9bb031eaf89dc5d53328a9fd`.
+This is Dart/fake-bridge proof: producer adoption and ongoing-day semantics,
+matching packaged native integration, devices and full B7/BL29 acceptance
+remain separate. No additional Go run is claimed by this Dart unit.
 
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate

@@ -17,6 +17,12 @@ const _profileA = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const _profileB = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const _epoch = 91;
 const _privateError = 'b294-private-native-error-account-signature-sentinel';
+const _qualificationUnixMillis = 1794892800123;
+
+typedef _CapturedOccurrenceMark = void Function(
+  ActiveIdentityReporterCapture capture, {
+  int? occurredAtUnixMillis,
+});
 
 Future<T> _bounded<T>(Future<T> future) => future.timeout(_limit);
 
@@ -786,6 +792,230 @@ void main() {
       }
     }
   });
+
+  _CapturedOccurrenceMark occurrenceMark() {
+    final Object method = reporter.markCaptured;
+    expect(method, isA<_CapturedOccurrenceMark>(),
+        reason: 'Core occurrence API must accept the optional qualification instant');
+    return method as _CapturedOccurrenceMark;
+  }
+
+  test('OCC-001 captured immediate mark preserves the exact qualification instant and fence', () async {
+    await arm();
+    final mark = occurrenceMark();
+    mark(captureFor(reporter), occurredAtUnixMillis: _qualificationUnixMillis);
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    expect(bridge.operations('mark'), [
+      {
+        'version': 1,
+        'revision': 1,
+        'consentEpoch': _epoch,
+        'profileBinding': _profileA,
+        'accountPeerId': _identity('A').peerId,
+        'op': 'mark',
+        'occurredAtUnixMillis': _qualificationUnixMillis,
+      },
+    ]);
+    expect(bridge.operations('mark').single['occurredAtUnixMillis'], isA<int>());
+    expect(jsonEncode(bridge.operations('mark')), isNot(contains(_identity('A').privateKey)));
+  });
+
+  test('OCC-002 configuration deferral preserves the original qualification instant', () async {
+    final mark = occurrenceMark();
+    final release = Completer<void>();
+    Future<void>? configuration;
+    bridge.answer = (request, revision) async {
+      if (request['op'] == 'configure' && revision == 1) {
+        await _bounded(release.future);
+      }
+      return _LocalBridge.reply(request, revision);
+    };
+    try {
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(
+        accountPeerId: _identity('A').peerId,
+        rootPrivateKeyBase64: _identity('A').privateKey,
+        profileBinding: _profileA,
+      );
+      configuration = reporter.observeConsent((enabled: true, consentEpoch: _epoch));
+      await _until(() => bridge.operations('configure').isNotEmpty);
+      final capture = captureFor(reporter);
+      var producerInstant = _qualificationUnixMillis;
+      mark(capture, occurredAtUnixMillis: producerInstant);
+      producerInstant += const Duration(days: 1).inMilliseconds;
+      await turn();
+      expect(bridge.operations('mark'), isEmpty);
+      release.complete();
+      await _bounded(configuration);
+      await _until(() => bridge.operations('mark').isNotEmpty);
+      expect(bridge.operations('mark'), [
+        {
+          'version': 1,
+          'revision': 1,
+          'consentEpoch': _epoch,
+          'profileBinding': _profileA,
+          'accountPeerId': _identity('A').peerId,
+          'op': 'mark',
+          'occurredAtUnixMillis': _qualificationUnixMillis,
+        },
+      ]);
+      expect(bridge.operations('mark').single['occurredAtUnixMillis'], isNot(producerInstant));
+    } finally {
+      if (!release.isCompleted) {
+        release.complete();
+      }
+      if (configuration != null) {
+        await _bounded(configuration);
+      }
+    }
+  });
+
+  test('OCC-003 omitted and explicit null occurrence retain the exact legacy mark payload', () async {
+    await arm();
+    final mark = occurrenceMark();
+    final capture = captureFor(reporter);
+    reporter.markCaptured(capture);
+    await _until(() => bridge.operations('mark').length == 1);
+    final legacy = jsonEncode({
+      'version': 1,
+      'revision': 1,
+      'consentEpoch': _epoch,
+      'profileBinding': _profileA,
+      'accountPeerId': _identity('A').peerId,
+      'op': 'mark',
+    });
+    expect(jsonEncode(bridge.operations('mark').single), legacy);
+    mark(capture);
+    mark(capture, occurredAtUnixMillis: null);
+    await _until(() => bridge.operations('mark').length == 3);
+    expect(bridge.operations('mark').map(jsonEncode), [legacy, legacy, legacy]);
+    expect(bridge.operations('mark').any((r) => r.containsKey('occurredAtUnixMillis')), isFalse);
+    mark(capture, occurredAtUnixMillis: _qualificationUnixMillis);
+    await _until(() => bridge.operations('mark').length == 4);
+    expect(bridge.operations('mark').last['occurredAtUnixMillis'], _qualificationUnixMillis);
+    reporter.markCaptured(capture);
+    await _until(() => bridge.operations('mark').length == 5);
+    expect(jsonEncode(bridge.operations('mark').last), legacy,
+        reason: 'A timestamp belongs to one operation, not the captured owner');
+  });
+
+  for (final deferred in [false, true]) {
+    for (final change in ['identity', 'profile', 'consent epoch', 'OFF then ON', 'bridge', 'dispose']) {
+      test('OCC-004 ${deferred ? 'deferred' : 'immediate'} occurrence rejects the original capture after $change', () async {
+        final mark = occurrenceMark();
+        final release = Completer<void>();
+        Future<void>? configuration;
+        var currentBridge = bridge;
+        var currentAccount = _identity('A').peerId;
+        var currentBinding = _profileA;
+        var currentEpoch = _epoch;
+        if (deferred) {
+          bridge.answer = (request, revision) async {
+            if (request['op'] == 'configure' && revision == 1) {
+              await _bounded(release.future);
+            }
+            return _LocalBridge.reply(request, revision);
+          };
+        }
+        try {
+          if (deferred) {
+            reporter.attachBridge(bridge);
+            reporter.observeIdentity(
+              accountPeerId: currentAccount,
+              rootPrivateKeyBase64: _identity('A').privateKey,
+              profileBinding: currentBinding,
+            );
+            configuration = reporter.observeConsent((enabled: true, consentEpoch: currentEpoch));
+            await _until(() => bridge.operations('configure').isNotEmpty);
+          } else {
+            await arm();
+          }
+          final capture = captureFor(reporter);
+          if (deferred) {
+            mark(capture, occurredAtUnixMillis: _qualificationUnixMillis);
+            await turn();
+            expect(bridge.operations('mark'), isEmpty);
+          }
+          switch (change) {
+            case 'identity':
+              currentAccount = _identity('B').peerId;
+              reporter.observeIdentity(
+                accountPeerId: currentAccount,
+                rootPrivateKeyBase64: _identity('B').privateKey,
+                profileBinding: currentBinding,
+              );
+              await _until(() => bridge.operations('configure').last['accountPeerId'] == currentAccount);
+              break;
+            case 'profile':
+              currentBinding = _profileB;
+              reporter.observeIdentity(
+                accountPeerId: currentAccount,
+                rootPrivateKeyBase64: _identity('A').privateKey,
+                profileBinding: currentBinding,
+              );
+              await _until(() => bridge.operations('configure').last['profileBinding'] == currentBinding);
+              break;
+            case 'consent epoch':
+              currentEpoch++;
+              await _bounded(reporter.observeConsent((enabled: true, consentEpoch: currentEpoch)));
+              break;
+            case 'OFF then ON':
+              await _bounded(reporter.observeConsent((enabled: false, consentEpoch: currentEpoch + 1)));
+              mark(capture, occurredAtUnixMillis: _qualificationUnixMillis);
+              await turn();
+              expect(bridge.operations('mark'), isEmpty);
+              currentEpoch += 2;
+              await _bounded(reporter.observeConsent((enabled: true, consentEpoch: currentEpoch)));
+              break;
+            case 'bridge':
+              currentBridge = _LocalBridge();
+              reporter.attachBridge(currentBridge);
+              await _until(() => currentBridge.operations('configure').isNotEmpty);
+              break;
+            case 'dispose':
+              await _bounded(reporter.dispose());
+              break;
+          }
+          await turn();
+          if (!release.isCompleted) {
+            release.complete();
+          }
+          if (configuration != null) {
+            await _bounded(configuration);
+          }
+          mark(capture, occurredAtUnixMillis: _qualificationUnixMillis);
+          await turn();
+          expect(bridge.operations('mark'), isEmpty);
+          expect(currentBridge.operations('mark'), isEmpty);
+          if (change != 'dispose') {
+            mark(captureFor(reporter, account: currentAccount),
+                occurredAtUnixMillis: _qualificationUnixMillis + 1);
+            await _until(() => currentBridge.operations('mark').isNotEmpty);
+            final fresh = currentBridge.operations('mark').single;
+            expect(fresh.keys.toSet(), {
+              'version', 'revision', 'consentEpoch', 'profileBinding',
+              'accountPeerId', 'op', 'occurredAtUnixMillis',
+            });
+            expect(fresh['occurredAtUnixMillis'], _qualificationUnixMillis + 1);
+            expect(fresh['accountPeerId'], currentAccount);
+            expect(fresh['profileBinding'], currentBinding);
+            expect(fresh['consentEpoch'], currentEpoch);
+            final expectedRevision = change == 'bridge'
+                ? 1
+                : change == 'OFF then ON' ? 3 : 2;
+            expect(fresh['revision'], expectedRevision);
+          }
+        } finally {
+          if (!release.isCompleted) {
+            release.complete();
+          }
+          if (configuration != null) {
+            await _bounded(configuration);
+          }
+        }
+      });
+    }
+  }
 
   test('E2D-010 captured emission never joins held or throwing optional native work', () async {
     await arm();

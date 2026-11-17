@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -758,6 +759,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  // Explicit caller-owned reporter; production composition wiring is separate.
+  ActiveIdentityReporter? activityReporter,
+  // A present UI observation is authoritative, including null fields.
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -787,6 +792,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
 }) async {
+  final capturedReporter = capturedActivity == null
+      ? activityReporter
+      : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      activityCapture = capturedReporter?.captureOwner(
+        expectedAccountPeerId: senderPeerId,
+      );
+    } catch (_) {
+      // Optional observation must never own authoring or expose private failures.
+    }
+  }
   final diagnostics = AppDiagnostics.instance;
   return diagnostics.runWithAttempt(
     feature: 'message',
@@ -813,6 +831,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           text: text,
           senderPeerId: senderPeerId,
           senderUsername: senderUsername,
+          activityReporter: capturedReporter,
+          activityCapture: activityCapture,
           action: action,
           editedAt: editedAt,
           messageId: messageId,
@@ -894,6 +914,8 @@ _sendChatMessageDiagnosed({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  ActiveIdentityReporter? activityReporter,
+  ActiveIdentityReporterCapture? activityCapture,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -2584,6 +2606,16 @@ _sendChatMessageDiagnosed({
           // ciphertext first. From this point onward replay only the winner's
           // immutable bytes returned by the transaction.
           jsonString = exactCustody.wireEnvelope;
+        }
+        if (ownsDirectTextInboxCustody &&
+            stagedOutcome == OutgoingOrdinaryMutationOutcome.applied &&
+            activityCapture != null) {
+          try {
+            activityReporter?.markCaptured(activityCapture);
+          } catch (_) {
+            // Custody is committed; activity failure cannot suppress its observer
+            // or transport, and never adds exception text to diagnostics.
+          }
         }
         try {
           onDirectTextCustodyStaged?.call(resolvedMessageId);

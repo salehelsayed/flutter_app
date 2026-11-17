@@ -10981,6 +10981,7 @@ final class ProductionApplicationBootstrap
             foregroundCallPresentationReady.complete();
           }
         },
+        activityReporter: activeIdentityReporter,
         disposeActiveIdentityReporter: activeIdentityReporter.dispose,
         onAppDetached: () async {
           await activeIdentityReporter.dispose();

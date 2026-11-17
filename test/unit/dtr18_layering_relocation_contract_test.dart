@@ -263,6 +263,8 @@ const _privacySha256 =
 // import and an observation after obtaining the existing showDialog future.
 // Inverting those hunks reproduces the complete b0fe24e3b owner source exactly;
 // resume/Posts relocation, dialog callbacks and awaited decisions stay intact.
+// BL29 UI wiring adds only the borrowed reporter declaration/forwarding here
+// and one bootstrap argument. All 25 URI rewrites and the exact callback stay intact.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
@@ -274,7 +276,7 @@ const _applicationRootNormalizedSha256 =
     // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
     // this same app owner (3 lines); no owner or resume dispatch moves.
     // BL29 B4 disposal is composed with bb8 main's existing app owner.
-    '160680519972def3dc1df47b9262d650976e2c5cdca9da7cf0e2f2e4d367edf4';
+    '0ae29806f48ea10847f40252d32c8e3169d925bb9b5304d280c2ec556e81eab9';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -495,10 +497,12 @@ const _productionBootstrapNormalizedSha256 =
     // BL-30 R2: the every-launch identity.db open and its post-open writes
     // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
     // background assertion); same calls, same order, no owner moves.
-    // BL-29 B7: accepted 03ef32cbd adds only the nine-line capture closure.
-    // Removing it restores 11185e105 bytes and both old pins after the same
-    // 25 URI rewrites; historical callback 843fb41c stays unique and exact.
-    '8c09245ba3a9a29f833030b88218e9e9ebf912aed3c69a2feb60a2fc01e8ea76';
+    // BL-29 composition retains the accepted 03ef32cbd nine-line capture
+    // closure and Core's one-line application-root reporter forwarding.
+    // Removing only forwarding restores 3d00fdd19; removing only the closure
+    // restores d6a0f11b6. Both reverse proofs retain the same 25 URI rewrites
+    // and the unique, exact historical callback 843fb41c.
+    '0c86cde13bf372547de66eff6977a9921eabea090ec488456ea7027c00149f17';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -546,7 +550,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'fa2c0212082e5fdfe657ca730e56b8f5af7961d3bdefd777c73e20fea6c47927';
+    'b2ff8c52797e36e3a01802ae6a41b9b16f0730c65fae2bf83e16c1282f5cc2ca';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

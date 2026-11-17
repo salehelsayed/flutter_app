@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
@@ -622,6 +623,7 @@ class MyApp extends StatefulWidget {
   /// next cold start doesn't stall on the splash screen behind a stale
   /// socket/relay reservation or DB lock.
   final Future<void> Function()? onAppDetached;
+  final ActiveIdentityReporter? activityReporter;
   final Future<void> Function()? disposeActiveIdentityReporter;
 
   /// Call-only lifecycle seams. They own only the dedicated call subscription,
@@ -785,6 +787,7 @@ class MyApp extends StatefulWidget {
     this.firebaseReadiness,
     this.mayArmPushListeners,
     this.onAppDetached,
+    this.activityReporter,
     this.disposeActiveIdentityReporter,
     this.resumeCallSignaling,
     this.pauseCallSignaling,
@@ -821,6 +824,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // Rebuilt per read because the fanout owner is identity/role-scoped.
   DirectConversationRouteAuthority get _directRouteAuthority =>
       DirectConversationRouteAuthority(
+        activityReporter: widget.activityReporter,
         directEventFanoutResolver: widget.directEventFanoutResolver,
         directDeviceTrust: widget.directDeviceTrust,
         isLinkedBlobFreeRuntime: widget.isLinkedBlobFreeRuntime,
@@ -2236,6 +2240,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await navigator.push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          activityReporter: _directRouteAuthority.activityReporter,
           postRepository: widget.postRepository,
           contact: contact,
           // 362: resolved from the ONE shared route-authority bundle so this

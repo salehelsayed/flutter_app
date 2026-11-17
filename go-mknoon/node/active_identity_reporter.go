@@ -68,12 +68,13 @@ type activeIdentityReporterDeps struct {
 }
 
 type activeIdentityReporterDisk struct {
-	Version      int      `json:"version"`
-	ScopeID      string   `json:"scope_id"`
-	ConsentEpoch int64    `json:"consent_epoch"`
-	Day          string   `json:"day"`
-	Marked       bool     `json:"marked"`
-	Acknowledged []string `json:"acknowledged"`
+	Version      int                               `json:"version"`
+	ScopeID      string                            `json:"scope_id"`
+	ConsentEpoch int64                             `json:"consent_epoch"`
+	Day          string                            `json:"day"`
+	Marked       bool                              `json:"marked"`
+	Acknowledged []string                          `json:"acknowledged"`
+	Weekly       *activeIdentityReporterWeeklyDisk `json:"weekly,omitempty"`
 }
 
 // stateMu owns the desired fence and the last durable value; ioMu orders
@@ -248,8 +249,13 @@ func (r *activeIdentityReporter) configure(c ActiveIdentityReporterConfig) error
 		return nil
 	}
 	candidate := activeIdentityReporterDisk{Version: 1, ScopeID: activeIdentityReporterScope(c.Fence), ConsentEpoch: c.Fence.ConsentEpoch, Day: day, Acknowledged: []string{}}
-	if armed && !r.retired && restored.ScopeID == candidate.ScopeID && restored.ConsentEpoch == candidate.ConsentEpoch && restored.Day == day {
-		candidate = restored
+	if armed && !r.retired && restored.ScopeID == candidate.ScopeID && restored.ConsentEpoch == candidate.ConsentEpoch {
+		if restored.Day == day {
+			candidate.Marked, candidate.Acknowledged = restored.Marked, restored.Acknowledged
+		}
+		if restored.Weekly != nil && restored.Weekly.Week == activitycalendar.Week(r.deps.now()) {
+			candidate.Weekly = restored.Weekly
+		}
 	}
 	r.stateMu.Unlock()
 	if err := r.writeCurrent(c.Fence, c.StatePath, candidate, nil); err != nil {
@@ -296,44 +302,77 @@ func (r *activeIdentityReporter) writeCurrent(f ActiveIdentityReporterFence, pat
 }
 
 func (r *activeIdentityReporter) updateDay(f ActiveIdentityReporterFence, mark bool) error {
+	_, err := r.updateActivity(f, mark, nil)
+	return err
+}
+
+func (r *activeIdentityReporter) updateActivity(f ActiveIdentityReporterFence, mark bool, occurredAt *int64) (bool, error) {
 	r.ioMu.Lock()
 	defer r.ioMu.Unlock()
 	r.stateMu.Lock()
 	if !r.armedLocked(f) {
 		r.stateMu.Unlock()
-		return errActiveIdentityReporterStale
+		return false, errActiveIdentityReporterStale
 	}
 	candidate := r.disk
-	day := activitycalendar.Day(r.deps.now())
+	now := r.deps.now()
+	day, week := activitycalendar.Day(now), activitycalendar.Week(now)
+	markDay, markWeek := mark, mark
+	if occurredAt != nil {
+		if *occurredAt > now.UnixMilli() || *occurredAt < now.UnixMilli()-activeIdentityReporterOccurrenceAge.Milliseconds() {
+			r.stateMu.Unlock()
+			return false, errActiveIdentityReporterInput
+		}
+		at := time.UnixMilli(*occurredAt)
+		markDay = mark && activitycalendar.Day(at) == day
+		markWeek = mark && activitycalendar.Week(at) == week
+		if !markDay && !markWeek {
+			r.stateMu.Unlock()
+			return false, nil
+		}
+	}
 	if _, err := activitycalendar.Parse(day); err != nil || day < candidate.Day {
 		r.stateMu.Unlock()
-		return errActiveIdentityReporterUnavailable
+		return false, errActiveIdentityReporterUnavailable
+	}
+	if candidate.Weekly != nil {
+		if week < candidate.Weekly.Week {
+			r.stateMu.Unlock()
+			return false, errActiveIdentityReporterUnavailable
+		}
+		if week != candidate.Weekly.Week {
+			candidate.Weekly = nil
+		}
 	}
 	if day != candidate.Day {
 		candidate.Day, candidate.Marked, candidate.Acknowledged = day, false, []string{}
 	}
-	if mark {
+	if markDay {
 		candidate.Marked = true
 	}
-	if candidate.Day == r.disk.Day && candidate.Marked == r.disk.Marked {
+	if markWeek && (candidate.Weekly == nil || candidate.Weekly.Kinds&activeIdentityWeeklyActive == 0) {
+		candidate.Weekly = activeIdentityReporterWeekCopy(candidate.Weekly, week)
+		candidate.Weekly.Kinds |= activeIdentityWeeklyActive
+	}
+	if candidate.Day == r.disk.Day && candidate.Marked == r.disk.Marked && candidate.Weekly == r.disk.Weekly {
 		r.stateMu.Unlock()
-		return nil
+		return markDay || markWeek, nil
 	}
 	path := r.config.StatePath
 	r.stateMu.Unlock()
 	if err := r.writeCurrent(f, path, candidate, nil); err != nil {
-		return err
+		return false, err
 	}
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
 	if !r.armedLocked(f) {
-		return errActiveIdentityReporterStale
+		return false, errActiveIdentityReporterStale
 	}
 	if r.disk.Day != candidate.Day {
 		r.attempts = make(map[string]*activeIdentityReporterAttempt)
 	}
 	r.disk = candidate
-	return nil
+	return markDay || markWeek, nil
 }
 
 func (r *activeIdentityReporter) mark(f ActiveIdentityReporterFence) error {
@@ -498,8 +537,13 @@ func activeIdentityReporterRestore(raw []byte, today string) (activeIdentityRepo
 		return disk, false
 	}
 	fields, ok := activeIdentityResponseObject(raw)
-	if !ok || len(fields) != 6 {
+	if !ok || (len(fields) != 6 && len(fields) != 7) {
 		return disk, false
+	}
+	if len(fields) == 7 {
+		if _, exists := fields["weekly"]; !exists {
+			return disk, false
+		}
 	}
 	for _, key := range []string{"version", "scope_id", "consent_epoch", "day", "marked", "acknowledged"} {
 		value, exists := fields[key]
@@ -529,6 +573,13 @@ func activeIdentityReporterRestore(raw []byte, today string) (activeIdentityRepo
 		seen[ack] = true
 	}
 	sort.Strings(disk.Acknowledged)
+	if rawWeek, exists := fields["weekly"]; exists {
+		weekly, ok := activeIdentityReporterRestoreWeek(rawWeek, today)
+		if !ok {
+			return activeIdentityReporterDisk{}, false
+		}
+		disk.Weekly = weekly
+	}
 	return disk, true
 }
 
