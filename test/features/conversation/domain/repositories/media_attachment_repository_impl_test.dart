@@ -1568,7 +1568,7 @@ void main() {
             ),
           ],
         );
-        expect(first.state, PreparedDirectMediaBlobUploadState.refused);
+        expect(first.state, PreparedDirectMediaBlobUploadState.retained);
         expect(strictUploadCalls, 0);
 
         secureStore.failRead = false;

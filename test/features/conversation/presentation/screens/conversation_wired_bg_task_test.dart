@@ -907,6 +907,8 @@ void main() {
                 blobId,
                 preparedArtifact,
                 mediaAdmission,
+                ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+                bool preassignedMessageIdIsFresh = false,
               }) async => (SendVoiceMessageResult.success, null),
         );
         final screen = tester.widget<ConversationScreen>(
