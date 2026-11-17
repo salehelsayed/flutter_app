@@ -1420,6 +1420,34 @@ guard or replace it with an existence check. The original checksum failures
 and focused rechecks are retained under
 `.codex-test-logs/audio-validation-fixes-20261010/`.
 
+For exact-candidate Go host comparisons, match the frozen argv and saved
+`GOFLAGS`, `GOWORK`, `GOTOOLCHAIN` and proxy receipts. The November 17 Linux
+qualification at `8325f3dd4f777ded1911a4a5359e6d28b5a43a8c` initially inherited
+`GOFLAGS=-mod=mod` from setup. Its 2,292 passing cases still changed three
+indirect/direct labels in `go.mod`; versions, `go.sum` and production Go files
+were unchanged. Preserve that first output and diff rather than claiming clean
+source validation. After approval to restore only `go.mod`, matching the Mac's
+empty `GOFLAGS` produced 2,292 passes with clean source. The setup default is
+therefore empty `GOFLAGS`. During a reserved Mac batch, use saved environment
+receipts: even a live `go env` probe in the reserved checkout can trip its
+foreign-process ownership fence. Provenance is
+`/Users/I560101/.codex/investigations/scaleway-runner-20261117/`:
+`go-env-correction-source-audit.json` and `feed-exact-parity-verdict.json`.
+
+`TestPeerDialsIdentifyLearnedAddr_NoMdnsLane` requires an available private
+IPv4 address; a server with only public and loopback addresses skips it.
+The approved server prerequisite is persistent networkd `dummy0` at
+`10.99.0.1/24`, without changing physical interfaces or the default route.
+At `c6db8782bc333eda953fb2c3264936122540ebba`, the original full-core skip
+and validator failure remain recorded. One supplemental exact-name run after
+that setup passed without skips or source changes, closing this environment
+gap without repeating the full core lane. This proves the test's Identify
+address-learning and dial path, not physical LAN or phone behavior. Receipts:
+`/srv/evidence/codex2-private-ipv4-20261117/setup-receipt.json` and
+`/Users/I560101/.codex/investigations/batch13-go-server-20261117/`
+`codex2-b13-private-ipv4-one-first/receipt.json` (SHA-256
+`d76b80ad14317f3125c5ed78711d7c58160ab076d92be47fba61964cb861064c`).
+
 DTR-18's Conversation media-adapter body pin also needs Plan 414's existing
 `fileName: stored.fileName` assignment during incoming reconstruction. That
 single owner-commit addition accounts for the complete normalized digest change;
