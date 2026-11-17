@@ -13654,13 +13654,32 @@ void main() {
         attachments: [fixture.completed], fresh: false, observe: false);
       expect(fixture.media.stageCalls, 1);
       final custody = fixture.messages.directCustodyRows.values.single;
+      dailyService
+        ..sendMessageResult = false
+        ..sendMessageAcked = false
+        ..sendMessageReply = null;
       var stores = 0;
-      await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+      final replay = await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
         attachments: [fixture.completed], fresh: false, observe: false, capturedActivity: original,
         service: dailyService, onStore: () => stores++);
-      expect(stores, greaterThan(0), reason: 'the retained custody retry must actually run');
+      expect(replay.$1, SendChatMessageResult.sendFailed);
+      expect(replay.$2?.status, 'failed');
+      expect(dailyService.sendCallCount, greaterThan(0));
+      expect(stores, 2, reason: 'the failed initial inbox attempt and its one terminal retry must run');
       expect(fixture.media.stageCalls, 1);
-      expect(fixture.messages.directCustodyRows.values.single.wireEnvelope, custody.wireEnvelope);
+      expect(fixture.messages.directCustodyRows, hasLength(1));
+      final retained = fixture.messages.directCustodyRows.values.single;
+      expect(retained.recipientPeerId, custody.recipientPeerId);
+      expect(retained.messageId, custody.messageId);
+      expect(retained.incarnationId, custody.incarnationId);
+      expect(retained.wireEnvelope, custody.wireEnvelope);
+      expect(retained.mediaBlobManifestHash, custody.mediaBlobManifestHash);
+      expect(retained.mediaBlobExpiresAtMs, custody.mediaBlobExpiresAtMs);
+      expect(retained.contactAccountPeerId, custody.contactAccountPeerId);
+      expect(retained.createdAt, custody.createdAt);
+      expect(retained.retryCount, custody.retryCount + stores);
+      expect(retained.lastErrorCode, 'store_failed');
+      expect(retained.lastAttemptAt, isNotNull);
       expect(dailyBridge.marks, isEmpty);
     });
 
