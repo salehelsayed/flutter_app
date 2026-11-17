@@ -5862,6 +5862,7 @@
         "scripts/test/legacy_device_helpers_test.py",
         "docker-ws/_device_targets.sh",
         "docker-ws/_host_paths.sh",
+        "docker-ws/start_avd_headless.sh",
         "docker-ws/install_iphones_keep_identity.sh",
         "docker-ws/resign_and_install_iphones.sh",
         "docker-ws/se41_test_variant.sh",
