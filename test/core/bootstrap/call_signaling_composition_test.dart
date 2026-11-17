@@ -26,6 +26,7 @@ import 'package:flutter_app/features/call/application/missed_call_notifier.dart'
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
@@ -527,6 +528,7 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  _b7ActivityTests();
   _vui7TerminalMediaTests();
   _vui7LegacyAndBridgeTests();
   _vui7JoinedBridgeTests();
@@ -10460,6 +10462,8 @@ Future<void> _untilGraphVideo(bool Function() predicate) async {
 Future<void> _deliverGraphVideoInvite(
   _ProductionIosFixture fixture, {
   CallId? callId,
+  String messageId = '00000000-0000-4000-8000-000000000023',
+  String callHandle = '33333333-3333-4333-8333-333333333333',
 }) async {
   final graph = fixture.graphs.single;
   final device = (await graph.trustedRosterProvider.loadForContact(
@@ -10468,7 +10472,7 @@ Future<void> _deliverGraphVideoInvite(
   final signal = CallSignalV2.fromMap({
     'schema': CallSignalV2.schema,
     'call_id': (callId ?? _callA).value,
-    'message_id': '00000000-0000-4000-8000-000000000023',
+    'message_id': messageId,
     'event': 'invite',
     'sender_account_peer_id': 'video-contact',
     'sender_device_peer_id': device.devicePeerId,
@@ -10496,7 +10500,7 @@ Future<void> _deliverGraphVideoInvite(
         'type': 'call_signal',
         'version': '1',
         'message_id': signal.messageId,
-        'call_handle': '33333333-3333-4333-8333-333333333333',
+        'call_handle': callHandle,
         'expires_at_ms': signal.expiresAtMs,
         'kem': base64Encode([1]),
         'ciphertext': base64Encode([2]),
@@ -10526,6 +10530,14 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
   Future<bool> Function()? checkCameraPermission,
+  CaptureCallActivityMark? captureCallActivityMark,
+  Duration Function()? monotonicNow,
+  CallTimerScheduler? timerScheduler,
+  Database? databaseOverride,
+  SecureKeyStore? privacyStore,
+  Future<void> Function(_ProductionIosFixture)? beforeCall,
+  Future<void> Function(_ProductionIosFixture)? whileRinging,
+  Future<void> Function(_ProductionIosFixture)? beforeConnected,
 }) async {
   final connectedCallId = callId ?? _callA;
   final events = StreamController<Object?>.broadcast(sync: true);
@@ -10544,6 +10556,11 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestCameraPermission: permission ?? () async => true,
     onCallTimerScheduled: timerObserver,
+    captureCallActivityMark: captureCallActivityMark,
+    monotonicNow: monotonicNow,
+    timerScheduler: timerScheduler,
+    databaseOverride: databaseOverride,
+    privacyStore: privacyStore,
     qualityEnvironmentSourceFactory: qualityEnvironmentSourceFactory,
     pictureInPictureBridgeFactory: pictureInPictureBridgeFactory,
     checkCameraPermission: checkCameraPermission,
@@ -10585,7 +10602,13 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
   fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
       credentials;
+  if (beforeCall != null) {
+    await _b7Bound(beforeCall(fixture));
+  }
   await _deliverGraphVideoInvite(fixture, callId: connectedCallId);
+  if (whileRinging != null) {
+    await _b7Bound(whileRinging(fixture));
+  }
   final graph = fixture.graphs.single;
   expect(graph.current!.video, isNotNull);
   final Object capability = fixture.composition;
@@ -10688,6 +10711,9 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     ),
   );
   await _untilGraphVideo(() => engine.video?.commits == 1);
+  if (beforeConnected != null) {
+    await _b7Bound(beforeConnected(fixture));
+  }
   await graph.coordinator.dispatch(
     CallEvent(
       type: CallEventType.mediaConnected,
@@ -10960,12 +10986,30 @@ Future<void> _deliverLegacyRecovery(
 }
 
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)>
-_connectedOutgoingGraphAudio() async {
+_connectedOutgoingGraphAudio({
+  Duration? cleanupTimeout,
+  CaptureCallActivityMark? captureCallActivityMark,
+  Duration Function()? monotonicNow,
+  CallTimerScheduler? timerScheduler,
+  int Function()? clockMs,
+  Database? databaseOverride,
+  SecureKeyStore? privacyStore,
+  Future<void> Function(_ProductionIosFixture)? beforeCall,
+  Future<void> Function(_ProductionIosFixture)? whileRinging,
+  Future<void> Function(_ProductionIosFixture)? beforeConnected,
+}) async {
   String? handle;
   int? expires;
   final engine = _InitialVideoGraphEngine();
   late final _ProductionIosFixture fixture;
   fixture = await _createProductionIosFixture(
+    cleanupTimeout: cleanupTimeout,
+    captureCallActivityMark: captureCallActivityMark,
+    monotonicNow: monotonicNow,
+    timerScheduler: timerScheduler,
+    clockMs: clockMs,
+    databaseOverride: databaseOverride,
+    privacyStore: privacyStore,
     microphonePermission: const _GrantedCallMicrophonePermission(),
     outgoingContactAccountPeerId: 'video-contact',
     privacyFlags: const {'video_call_v2_enabled': true},
@@ -11038,11 +11082,17 @@ _connectedOutgoingGraphAudio() async {
   fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
   fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
       credentials;
+  if (beforeCall != null) {
+    await _b7Bound(beforeCall(fixture));
+  }
   expect(
     await (fixture.composition as OutgoingVideoCallCapability)
         .startOutgoingVideoCall('video-contact'),
     OutgoingCallStartResult.started,
   );
+  if (whileRinging != null) {
+    await _b7Bound(whileRinging(fixture));
+  }
   final graph = fixture.graphs.single;
   final id = graph.coordinator.activeSession!.callId!;
   Map<String, dynamic> remote(
@@ -11071,6 +11121,9 @@ _connectedOutgoingGraphAudio() async {
     remote('answer', 2, Map<String, Object?>.from(offer['payload'] as Map)),
   );
   await _untilGraphVideo(() => engine.video?.commits == 1);
+  if (beforeConnected != null) {
+    await _b7Bound(beforeConnected(fixture));
+  }
   await graph.coordinator.dispatch(
     CallEvent(
       type: CallEventType.mediaConnected,
@@ -11206,6 +11259,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   CallEngine Function(CallId)? callEngineFactory,
   void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
   CallScheduledTimerObserver? onCallTimerScheduled,
+  CaptureCallActivityMark? captureCallActivityMark,
+  Duration Function()? monotonicNow,
+  CallTimerScheduler? timerScheduler,
   Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
   Map<String, Object?>? tokenSetResponse,
@@ -11307,6 +11363,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     callEngineFactory: callEngineFactory,
     onCallHistoryProjected: onCallHistoryProjected,
     onCallTimerScheduled: onCallTimerScheduled,
+    captureCallActivityMark: captureCallActivityMark,
+    monotonicNow: monotonicNow,
+    timerScheduler: timerScheduler,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     repairMissingEndpoint: repairMissingEndpoint,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
@@ -13143,4 +13202,486 @@ void _vui7JoinedBridgeTests() {
       timeout: const Timeout.factor(1),
     );
   }
+}
+
+const _b7Limit = Duration(seconds: 2);
+const _b7ProfileA =
+    'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _b7ProfileB =
+    'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+Future<T> _b7Bound<T>(Future<T> future) => future.timeout(_b7Limit);
+
+Future<void> _b7Turn() => _b7Bound(() async {
+  for (var i = 0; i < 12; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}());
+
+Future<void> _b7Until(bool Function() predicate) => _b7Bound(() async {
+  final elapsed = Stopwatch()..start();
+  while (!predicate() && elapsed.elapsed < _b7Limit) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  expect(predicate(), isTrue, reason: 'B7 fixture boundary was not reached');
+}());
+
+final class _B7Timer implements CallTimerHandle {
+  _B7Timer(this.due, this.callback);
+  final Duration due;
+  final Future<void> Function() callback;
+  bool active = true;
+  @override
+  bool get isActive => active;
+  @override
+  void cancel() => active = false;
+}
+
+final class _B7Clock implements CallTimerScheduler {
+  Duration now = Duration.zero;
+  final timers = <_B7Timer>[];
+  final failures = <Object>[];
+  @override
+  CallTimerHandle schedule(Duration delay, Future<void> Function() callback) {
+    final timer = _B7Timer(now + delay, callback);
+    timers.add(timer);
+    return timer;
+  }
+
+  void _fire(_B7Timer timer) {
+    timer.active = false;
+    // DartCallTimerScheduler does not await a callback. A checkpoint waiting
+    // for the serial call lane must not block an independent activity timer.
+    unawaited(timer.callback().catchError((Object error) {
+      failures.add(error);
+    }));
+  }
+
+  Future<void> elapse(Duration delta) => _b7Bound(() async {
+    final target = now + delta;
+    for (var count = 0; count < 1000; count++) {
+      final due = timers.where((t) => t.active && t.due <= target).toList()
+        ..sort((a, b) => a.due.compareTo(b.due));
+      if (due.isEmpty) {
+        now = target;
+        await _b7Turn();
+        expect(failures, isEmpty);
+        return;
+      }
+      now = due.first.due;
+      _fire(due.first);
+      await _b7Turn();
+    }
+    fail('B7 timer fixture did not quiesce');
+  }());
+
+  Future<void> fireQueued(Iterable<_B7Timer> queued) => _b7Bound(() async {
+    for (final timer in queued) {
+      _fire(timer);
+    }
+    await _b7Turn();
+    expect(failures, isEmpty);
+  }());
+}
+
+final class _B7CheckpointStore extends FakeSecureKeyStore {
+  bool Function()? holdWhen;
+  bool failWrite = false;
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  int checkpoints = 0;
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == 'vc2_active_call_history_v1') {
+      checkpoints++;
+      if (holdWhen?.call() == true && !entered.isCompleted) {
+        entered.complete();
+        await _b7Bound(release.future);
+        if (failWrite) {
+          throw StateError('B7 checkpoint fixture failure');
+        }
+      }
+    }
+    await super.write(key, value);
+  }
+}
+
+final class _B7ActivityRig {
+  final clock = _B7Clock();
+  final reporter = ActiveIdentityReporter(statePath: '/tmp/b7-unused-state.json');
+  final store = _B7CheckpointStore();
+  final marks = <Map<String, dynamic>>[];
+  final capturedAccounts = <String>[];
+  _ProductionIosFixture? fixture;
+  int wallMs = 2000000;
+  int epoch = 71;
+  int revision = 0;
+  int eventSequence = 0;
+  bool initiallyUnarmed = false;
+  int handoffs = 0;
+  ProductionCallSignalingGraph get graph => fixture!.graphs.single;
+
+  CallActivityMark? capture(String ownAccount) {
+    capturedAccounts.add(ownAccount);
+    final token = reporter.captureOwner(expectedAccountPeerId: ownAccount);
+    if (token == null) {
+      return null;
+    }
+    return () {
+      handoffs++;
+      reporter.markCaptured(token);
+    };
+  }
+
+  Future<void> arm({bool enabled = true, String profile = _b7ProfileA}) async {
+    reporter.observeIdentity(
+      accountPeerId: 'local-account',
+      rootPrivateKeyBase64: 'b7-private-root-fixture',
+      profileBinding: profile,
+    );
+    await _b7Bound(reporter.observeConsent((
+      enabled: enabled,
+      consentEpoch: epoch,
+    )));
+    await _b7Turn();
+  }
+
+  Future<void> _prepare(_ProductionIosFixture created) async {
+    fixture = created;
+    created.bridge.responseHandlers['active_identity_reporter_v1'] =
+        (request) async {
+      final payload = Map<String, dynamic>.from(request['payload'] as Map);
+      if (payload['op'] == 'configure') {
+        revision++;
+      }
+      if (payload['op'] == 'mark') {
+        marks.add(payload);
+      }
+      return <String, Object?>{
+        'ok': true,
+        'data': <String, Object?>{
+          'revision': payload['op'] == 'configure'
+              ? revision
+              : payload['revision'],
+          'consentEpoch': payload['consentEpoch'],
+          if (payload['op'] == 'configure')
+            'configured': payload['enabled'] == true,
+          if (payload['op'] == 'mark') 'accepted': true,
+          if (payload['op'] == 'flush') 'queued': true,
+        },
+      };
+    };
+    addTearDown(() {
+      if (!store.release.isCompleted) {
+        store.release.complete();
+      }
+    });
+    addTearDown(() => _b7Bound(reporter.dispose()));
+    reporter.attachBridge(created.bridge);
+    await arm();
+    final control = reporter.captureOwner(expectedAccountPeerId: 'local-account');
+    expect(control, isNotNull);
+    reporter.markCaptured(control!);
+    await _b7Until(() => marks.length == 1);
+    expect(marks.single['accountPeerId'], 'local-account');
+    expect(marks.single['consentEpoch'], epoch);
+    expect(marks.single['profileBinding'], _b7ProfileA);
+    marks.clear();
+    if (initiallyUnarmed) {
+      await arm(enabled: false);
+    }
+  }
+
+  Future<void> connect({
+    bool incoming = true,
+    bool durableCheckpoint = false,
+    Future<void> Function(_ProductionIosFixture)? whileRinging,
+    Future<void> Function(_ProductionIosFixture)? beforeConnected,
+  }) => _b7Bound(() async {
+    Database? database;
+    if (durableCheckpoint) {
+      database = await _b7Bound(_openKilledCallDatabase(inMemoryDatabasePath));
+      final ownedDatabase = database;
+      addTearDown(() => _b7Bound(ownedDatabase.close()));
+      await _b7Bound(database.insert('identity', <String, Object?>{
+        'id': 1,
+        'peer_id': 'local-account',
+        'public_key': 'local-public-key',
+        'private_key': null,
+        'mnemonic12': null,
+        'username': 'Local',
+        'ml_kem_public_key': 'local-mlkem-public-key',
+        'created_at': '2026-08-30T00:00:00.000Z',
+        'updated_at': '2026-08-30T00:00:00.000Z',
+      }));
+      await _b7Bound(database.insert('contacts', <String, Object?>{
+        'peer_id': 'video-contact',
+        'public_key': 'remote-public-key',
+        'ml_kem_public_key': 'remote-mlkem-public-key',
+        'rendezvous': 'fixture-rendezvous',
+        'username': 'Remote contact',
+        'signature': 'fixture-signature',
+        'scanned_at': '2026-08-30T00:00:00.000Z',
+        'is_blocked': 0,
+      }));
+    }
+    if (incoming) {
+      await _b7Bound(_connectedGraphVideo(
+        cleanupTimeout: _b7Limit,
+        acceptedMedia: CallMediaKind.audio,
+        captureCallActivityMark: capture,
+        monotonicNow: () => clock.now,
+        timerScheduler: clock,
+        clockMs: () => wallMs,
+        databaseOverride: database,
+        privacyStore: durableCheckpoint ? store : null,
+        beforeCall: _prepare,
+        whileRinging: whileRinging,
+        beforeConnected: beforeConnected,
+      ));
+    } else {
+      await _b7Bound(_connectedOutgoingGraphAudio(
+        cleanupTimeout: _b7Limit,
+        captureCallActivityMark: capture,
+        monotonicNow: () => clock.now,
+        timerScheduler: clock,
+        clockMs: () => wallMs,
+        databaseOverride: database,
+        privacyStore: durableCheckpoint ? store : null,
+        beforeCall: _prepare,
+        whileRinging: whileRinging,
+        beforeConnected: beforeConnected,
+      ));
+    }
+    expect(graph.coordinator.activeSession!.state, CallState.connected);
+  }());
+
+  Future<CallReduction> event(CallEventType type, {CallId? callId}) =>
+      _b7Bound(graph.coordinator.dispatch(CallEvent(
+        type: type,
+        eventId: 'b7-${++eventSequence}',
+        occurredAt: DateTime.fromMillisecondsSinceEpoch(wallMs, isUtc: true),
+        callId: callId ?? graph.coordinator.activeSession!.callId,
+      )));
+
+  Future<void> end() async {
+    await event(CallEventType.end);
+    await _b7Turn();
+    expect(graph.coordinator.activeSession, isNull);
+  }
+}
+
+void _b7ActivityTests() {
+  for (final incoming in [false, true]) {
+    test('B7 partial ${incoming ? 'incoming' : 'outgoing'} marks at10 connected seconds', () async {
+      final rig = _B7ActivityRig();
+      await rig.connect(incoming: incoming);
+      expect(rig.marks, isEmpty);
+      await rig.clock.elapse(const Duration(milliseconds: 9999));
+      expect(rig.marks, isEmpty);
+      await rig.clock.elapse(const Duration(milliseconds: 1));
+      expect(rig.marks, hasLength(1), reason: 'real production call must hand the original capture to the armed reporter');
+      expect(rig.marks.single['accountPeerId'], 'local-account');
+      expect(rig.capturedAccounts, ['local-account']);
+      await rig.clock.elapse(const Duration(seconds: 10));
+      expect(rig.marks, hasLength(1));
+      expect(rig.handoffs, 1);
+    });
+  }
+
+  test('B7 partial ringing Answer and negotiated media earn no connected time', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect(
+      whileRinging: (_) async {
+        expect(rig.graph.coordinator.activeSession!.state, CallState.ringing);
+        await rig.clock.elapse(const Duration(seconds: 8));
+        expect(rig.marks, isEmpty);
+      },
+      beforeConnected: (_) async {
+        expect(rig.graph.coordinator.activeSession!.connectedAt, isNull);
+        await rig.clock.elapse(const Duration(seconds: 8));
+        expect(rig.marks, isEmpty);
+      },
+    );
+    await rig.clock.elapse(const Duration(milliseconds: 9999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+  });
+
+  test('B7 partial canonical connection earns10 while checkpoint save is held', () async {
+    final rig = _B7ActivityRig();
+    final connection = rig.connect(
+      durableCheckpoint: true,
+      beforeConnected: (_) async {
+        rig.store.holdWhen = () => rig.graph.coordinator.activeSession?.state == CallState.connected;
+      },
+    );
+    await _b7Bound(rig.store.entered.future);
+    try {
+      expect(rig.graph.coordinator.activeSession!.state, CallState.connected);
+      expect(rig.graph.current!.session.state, isNot(CallState.connected));
+      await rig.clock.elapse(const Duration(milliseconds: 9999));
+      expect(rig.marks, isEmpty);
+      await rig.clock.elapse(const Duration(milliseconds: 1));
+      expect(rig.marks, hasLength(1));
+    } finally {
+      rig.store.release.complete();
+      await _b7Bound(connection);
+    }
+  });
+
+  test('B7 partial reconnect pauses aggregate6 plus4 across held persistence', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect(durableCheckpoint: true);
+    await rig.clock.elapse(const Duration(seconds: 6));
+    rig.store.holdWhen = () => rig.graph.coordinator.activeSession?.state == CallState.reconnecting;
+    final reconnect = rig.event(CallEventType.audioInterrupted);
+    await _b7Bound(rig.store.entered.future);
+    try {
+      expect(rig.graph.coordinator.activeSession!.state, CallState.reconnecting);
+      await rig.clock.elapse(const Duration(seconds: 5));
+      expect(rig.marks, isEmpty, reason: 'held persistence and reconnect add no connected time');
+    } finally {
+      rig.store.release.complete();
+      await _b7Bound(reconnect);
+    }
+    await rig.event(CallEventType.mediaRecovered);
+    await rig.clock.elapse(const Duration(milliseconds: 3999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+    expect(rig.capturedAccounts, ['local-account']);
+  });
+
+  test('B7 partial quiet checkpoint refresh neither resets nor duplicates mark', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect(durableCheckpoint: true);
+    final original = rig.graph.coordinator.activeSession;
+    final writes = rig.store.checkpoints;
+    await rig.clock.elapse(const Duration(seconds: 10));
+    await _b7Until(() => rig.store.checkpoints > writes);
+    expect(rig.graph.coordinator.activeSession, same(original));
+    expect(rig.marks, hasLength(1));
+    await rig.clock.elapse(const Duration(seconds: 10));
+    expect(rig.marks, hasLength(1));
+    expect(rig.capturedAccounts, ['local-account']);
+  });
+
+  for (final stop in ['End', 'dispose']) {
+    test('B7 partial queued timer after $stop cannot mark old lifetime', () async {
+      final rig = _B7ActivityRig();
+      await rig.connect();
+      await rig.clock.elapse(const Duration(seconds: 9));
+      final queued = rig.clock.timers.where((t) => t.active).toList();
+      if (stop == 'End') {
+        await rig.end();
+      } else {
+        await _b7Bound(rig.fixture!.composition.shutdown());
+      }
+      await rig.clock.elapse(const Duration(seconds: 1));
+      await rig.clock.fireQueued(queued);
+      expect(rig.marks, isEmpty);
+    });
+  }
+
+  test('B7 partial stale sameID connected event cannot revive ended lifetime', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    final id = rig.graph.coordinator.activeSession!.callId!;
+    await rig.clock.elapse(const Duration(seconds: 9));
+    await rig.end();
+    final stale = await rig.event(CallEventType.mediaConnected, callId: id);
+    expect(stale.decision, isNot(CallEventDecision.applied));
+    await rig.clock.elapse(const Duration(seconds: 20));
+    expect(rig.marks, isEmpty);
+  });
+
+  test('B7 partial queued predecessor timer cannot count a ringing successor', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    await rig.clock.elapse(const Duration(seconds: 9));
+    final queued = rig.clock.timers.where((t) => t.active).toList();
+    await rig.end();
+    final successor = CallId.parse('99999999-9999-4999-8999-999999999999');
+    await _b7Bound(_deliverGraphVideoInvite(
+      rig.fixture!,
+      callId: successor,
+      messageId: '99999999-9999-4999-8999-999999999990',
+      callHandle: '99999999-9999-4999-8999-999999999991',
+    ));
+    expect(rig.graph.coordinator.activeSession!.callId, successor);
+    expect(rig.graph.coordinator.activeSession!.state, CallState.ringing);
+    await rig.clock.elapse(const Duration(seconds: 1));
+    await rig.clock.fireQueued(queued);
+    expect(rig.marks, isEmpty);
+  });
+
+  test('B7 partial checkpoint failure preserves the original caller error', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect(durableCheckpoint: true);
+    await rig.clock.elapse(const Duration(seconds: 6));
+    rig.store.holdWhen = () =>
+        rig.graph.coordinator.activeSession?.state == CallState.reconnecting;
+    rig.store.failWrite = true;
+    final reconnect = rig.event(CallEventType.audioInterrupted);
+    final error = expectLater(reconnect, throwsA(isA<StateError>()));
+    await _b7Bound(rig.store.entered.future);
+    rig.store.release.complete();
+    await _b7Bound(error);
+    expect(rig.graph.coordinator.internalFailureCount, greaterThan(0));
+    expect(rig.graph.coordinator.lastSnapshot!.isTerminal, isTrue);
+    await rig.clock.elapse(const Duration(seconds: 10));
+    expect(rig.marks, isEmpty);
+  });
+
+  for (final change in ['OFF', 'OFF then ON', 'profile', 'identity']) {
+    test('B7 partial original capture stays stale after $change', () async {
+      final rig = _B7ActivityRig();
+      await rig.connect();
+      await rig.clock.elapse(const Duration(seconds: 9));
+      if (change == 'OFF' || change == 'OFF then ON') {
+        rig.epoch++;
+        await rig.arm(enabled: false);
+        if (change == 'OFF then ON') {
+          rig.epoch++;
+          await rig.arm();
+        }
+      } else if (change == 'profile') {
+        await rig.arm(profile: _b7ProfileB);
+      } else {
+        rig.reporter.observeIdentity(
+          accountPeerId: 'replacement-account',
+          rootPrivateKeyBase64: 'replacement-root-fixture',
+          profileBinding: _b7ProfileB,
+        );
+        await _b7Turn();
+      }
+      await rig.clock.elapse(const Duration(seconds: 11));
+      expect(rig.marks, isEmpty);
+    });
+  }
+
+  test('B7 partial initial null capture is never reacquired after enable', () async {
+    final rig = _B7ActivityRig()..initiallyUnarmed = true;
+    await rig.connect();
+    await rig.clock.elapse(const Duration(seconds: 5));
+    rig.epoch++;
+    await rig.arm();
+    await rig.clock.elapse(const Duration(seconds: 15));
+    expect(rig.marks, isEmpty);
+  });
+
+  test('B7 partial wall clock jumps cannot change monotonic threshold', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    rig.wallMs += const Duration(days: 40).inMilliseconds;
+    await rig.clock.elapse(const Duration(seconds: 5));
+    expect(rig.marks, isEmpty);
+    rig.wallMs -= const Duration(days: 80).inMilliseconds;
+    await rig.clock.elapse(const Duration(milliseconds: 4999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+  });
 }
