@@ -1289,10 +1289,6 @@ class MediaAttachmentRepositoryImpl
         dbResult.custodyRows.length != custodyRows.length) {
       return const DirectMediaBlobGenerationStageResult.refused();
     }
-    final attachments = await _attachmentsFromRows(dbResult.attachmentRows);
-    final rows = dbResult.custodyRows
-        .map(DirectMediaBlobCustodyRow.fromMap)
-        .toList(growable: false);
     final outcome = switch (dbResult.outcome) {
       DirectMediaBlobGenerationDbStageOutcome.applied =>
         DirectMediaBlobGenerationStageOutcome.applied,
@@ -1301,11 +1297,27 @@ class MediaAttachmentRepositoryImpl
       DirectMediaBlobGenerationDbStageOutcome.refused =>
         DirectMediaBlobGenerationStageOutcome.refused,
     };
-    return DirectMediaBlobGenerationStageResult(
-      outcome: outcome,
-      attachments: attachments,
-      custodyRows: rows,
-    );
+    try {
+      final attachments = await _attachmentsFromRows(dbResult.attachmentRows);
+      if (attachments.any((attachment) =>
+          attachment.encryptionKeyBase64 == null ||
+          attachment.encryptionKeyBase64!.isEmpty ||
+          isSecureStoreReference(attachment.encryptionKeyBase64))) {
+        return DirectMediaBlobGenerationStageResult.authorityOnly(outcome: outcome);
+      }
+      final rows = dbResult.custodyRows
+          .map(DirectMediaBlobCustodyRow.fromMap)
+          .toList(growable: false);
+      return DirectMediaBlobGenerationStageResult(
+        outcome: outcome,
+        attachments: attachments,
+        custodyRows: rows,
+      );
+    } on Object {
+      // SQL already decided this exact owner. A key/readback failure may
+      // prevent upload, but cannot turn its committed admission into refusal.
+      return DirectMediaBlobGenerationStageResult.authorityOnly(outcome: outcome);
+    }
   }
 
   @override
@@ -1468,10 +1480,6 @@ class MediaAttachmentRepositoryImpl
         dbResult.custodyRows.length != custodyRows.length) {
       return const DirectMediaBlobGenerationStageResult.refused();
     }
-    final attachments = await _attachmentsFromRows(dbResult.attachmentRows);
-    final rows = dbResult.custodyRows
-        .map(DirectMediaBlobCustodyRow.fromMap)
-        .toList(growable: false);
     final outcome = switch (dbResult.outcome) {
       DirectMediaBlobGenerationDbStageOutcome.applied =>
         DirectMediaBlobGenerationStageOutcome.applied,
@@ -1480,11 +1488,27 @@ class MediaAttachmentRepositoryImpl
       DirectMediaBlobGenerationDbStageOutcome.refused =>
         DirectMediaBlobGenerationStageOutcome.refused,
     };
-    return DirectMediaBlobGenerationStageResult(
-      outcome: outcome,
-      attachments: attachments,
-      custodyRows: rows,
-    );
+    try {
+      final attachments = await _attachmentsFromRows(dbResult.attachmentRows);
+      if (attachments.any((attachment) =>
+          attachment.encryptionKeyBase64 == null ||
+          attachment.encryptionKeyBase64!.isEmpty ||
+          isSecureStoreReference(attachment.encryptionKeyBase64))) {
+        return DirectMediaBlobGenerationStageResult.authorityOnly(outcome: outcome);
+      }
+      final rows = dbResult.custodyRows
+          .map(DirectMediaBlobCustodyRow.fromMap)
+          .toList(growable: false);
+      return DirectMediaBlobGenerationStageResult(
+        outcome: outcome,
+        attachments: attachments,
+        custodyRows: rows,
+      );
+    } on Object {
+      // SQL already decided this exact owner. A key/readback failure may
+      // prevent upload, but cannot turn its committed admission into refusal.
+      return DirectMediaBlobGenerationStageResult.authorityOnly(outcome: outcome);
+    }
   }
 
   @override

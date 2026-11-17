@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
+
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
@@ -44,6 +47,8 @@ void main() {
 
   Future<(SendReactionResult, MessageReaction?)> invoke({
     InMemoryDirectReactionCustodyRepository? repository,
+    ActiveIdentityReporter? activityReporter,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) => sendReaction(
     p2pService: p2pService,
     bridge: bridge,
@@ -53,6 +58,8 @@ void main() {
     emoji: '👍',
     senderPeerId: 'my-peer',
     recipientMlKemPublicKey: 'key-1',
+    activityReporter: activityReporter,
+    capturedActivity: capturedActivity,
   );
 
   DirectEventFanoutAuthoring fanoutAuthoring({
@@ -60,6 +67,7 @@ void main() {
     required List<String> targets,
     required List<String> events,
     void Function(List<DirectEventFanoutTargetCandidate> candidates)? onStage,
+    DirectEventFanoutStageOutcome outcome = DirectEventFanoutStageOutcome.applied,
   }) => DirectEventFanoutAuthoring(
     selector: selectorOn
         ? const DirectLinkedEventFanoutSelector.enabled()
@@ -125,7 +133,7 @@ void main() {
           events.add('stage:$action');
           onStage?.call(candidates);
           return DbDirectEventFanoutStageResult(
-            outcome: DirectEventFanoutStageOutcome.applied,
+            outcome: outcome,
             rows: <Map<String, Object?>>[
               for (final candidate in candidates)
                 <String, Object?>{
@@ -144,6 +152,176 @@ void main() {
           );
         },
   );
+
+  group('BL29 U2 actual direct ADD admission', () {
+    const budget = Duration(seconds: 2);
+    late _U2ReactionActivityBridge activityBridge;
+    late ActiveIdentityReporter reporter;
+    setUp(() async {
+      activityBridge = _U2ReactionActivityBridge();
+      bridge = activityBridge;
+      reporter = ActiveIdentityReporter(statePath: '/unused/u2-add.json');
+      reporter.attachBridge(activityBridge);
+      reporter.observeIdentity(accountPeerId: 'my-peer',
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: 'v1:${'a' * 64}');
+      await reporter.observeConsent((enabled: true, consentEpoch: 7)).timeout(budget);
+    });
+    tearDown(() async {
+      final block = activityBridge.markBlock;
+      if (block != null && !block.isCompleted) block.complete();
+      await reporter.dispose().timeout(budget);
+    });
+
+    test('B14U2A-001 single applied offline ADD marks after exact custody stage', () async {
+      p2pService = DirectReactionCustodyP2PService(initialState: const NodeState(isStarted: false, peerId: 'my-peer'));
+      final result = await invoke(activityReporter: reporter).timeout(budget);
+      expect(result.$1, SendReactionResult.nodeNotRunning);
+      expect(result.$2, isNotNull);
+      expect(reactionRepo.stageCallCount, 1);
+      expect(reactionRepo.custodyRows.single.eventId, result.$2!.id);
+      expect(activityBridge.marks, hasLength(1));
+      expect(p2pService.sendMessageCallCount, 0);
+    });
+
+    test('B14U2A-002 rejected transport cannot revoke a committed ADD activity', () async {
+      p2pService.sendMessageResult = false;
+      p2pService.detailedInboxOutcome = const InboxStoreOutcome(status: InboxStoreStatus.failed);
+      final result = await invoke(activityReporter: reporter).timeout(budget);
+      expect(result.$1, SendReactionResult.sendFailed);
+      expect(result.$2, isNotNull);
+      expect(reactionRepo.custodyRows, hasLength(1));
+      expect(activityBridge.marks, hasLength(1));
+    });
+
+    test('B14U2A-003 single idempotent stage retains its owner without new activity', () async {
+      p2pService = DirectReactionCustodyP2PService(initialState: const NodeState(isStarted: false, peerId: 'my-peer'));
+      final repository = _U2IdempotentReactionRepository();
+      final result = await invoke(repository: repository, activityReporter: reporter).timeout(budget);
+      expect(result.$2, isNotNull);
+      expect(repository.custodyRows, hasLength(1));
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    for (final (id, failure) in [
+      ('B14U2A-004', 'stage'), ('B14U2A-005', 'encryption'),
+    ]) {
+      test('$id refused $failure never admits or marks ADD', () async {
+        if (failure == 'stage') reactionRepo.refuseStage = true;
+        if (failure == 'encryption') activityBridge.responses['message.encrypt'] = {'ok': false};
+        final result = await invoke(activityReporter: reporter).timeout(budget);
+        expect(result.$2, isNull);
+        expect(reactionRepo.custodyRows, isEmpty);
+        expect(activityBridge.marks, isEmpty);
+        expect(p2pService.sendMessageCallCount, 0);
+      });
+    }
+
+    test('B14U2A-006 present null capture cannot reacquire after enabling', () async {
+      await reporter.observeConsent((enabled: false, consentEpoch: 8)).timeout(budget);
+      final original = (reporter: reporter, capture: reporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNull);
+      await reporter.observeConsent((enabled: true, consentEpoch: 9)).timeout(budget);
+      final result = await invoke(activityReporter: reporter, capturedActivity: original).timeout(budget);
+      expect(result.$2, isNotNull);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test('B14U2A-007 profile turnover during encryption fences original ADD capture', () async {
+      activityBridge.beforeEncrypt = () async {
+        reporter.observeIdentity(accountPeerId: 'my-peer',
+          rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+          profileBinding: 'v1:${'b' * 64}');
+        await reporter.observeConsent((enabled: true, consentEpoch: 7)).timeout(budget);
+      };
+      final result = await invoke(activityReporter: reporter).timeout(budget);
+      expect(result.$2, isNotNull);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    for (final (id, mode) in [('B14U2A-008', 'throw'), ('B14U2A-009', 'block')]) {
+      test('$id optional reporter $mode cannot fail or delay admitted ADD', () async {
+        if (mode == 'throw') activityBridge.throwOnMark = true;
+        if (mode == 'block') activityBridge.markBlock = Completer<void>();
+        p2pService = DirectReactionCustodyP2PService(initialState: const NodeState(isStarted: false, peerId: 'my-peer'));
+        final result = await invoke(activityReporter: reporter).timeout(budget);
+        expect(result.$1, SendReactionResult.nodeNotRunning);
+        expect(reactionRepo.custodyRows, hasLength(1));
+        expect(activityBridge.marks, hasLength(1));
+        if (mode == 'block') expect(activityBridge.markBlock!.isCompleted, isFalse);
+      });
+    }
+
+    for (final (id, outcome) in [
+      ('B14U2A-010', DirectEventFanoutStageOutcome.applied),
+      ('B14U2A-011', DirectEventFanoutStageOutcome.survivorReplay),
+      ('B14U2A-012', DirectEventFanoutStageOutcome.terminal),
+      ('B14U2A-013', DirectEventFanoutStageOutcome.refused),
+    ]) {
+      test('$id linked ADD $outcome only fresh applied batch marks once for all targets', () async {
+        p2pService = DirectReactionCustodyP2PService(initialState: const NodeState(isStarted: false, peerId: 'my-peer'));
+        final events = <String>[];
+        final result = await sendReaction(
+          p2pService: p2pService, bridge: bridge, reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1', messageId: 'msg-1', emoji: '👍',
+          senderPeerId: 'my-peer', recipientMlKemPublicKey: 'key-1',
+          activityReporter: reporter,
+          directEventFanout: fanoutAuthoring(selectorOn: true,
+            targets: ['peer-device-a', 'peer-device-b'], events: events, outcome: outcome),
+        ).timeout(budget);
+        expect(events.where((event) => event == 'stage:add'), hasLength(1));
+        expect(reactionRepo.stageCallCount, 0);
+        expect(result.$2, outcome == DirectEventFanoutStageOutcome.refused ? isNull : isNotNull);
+        expect(activityBridge.marks, outcome == DirectEventFanoutStageOutcome.applied ? hasLength(1) : isEmpty);
+      });
+    }
+
+    test('B14U2A-015 consent epoch turnover during encryption fences original ADD capture', () async {
+      activityBridge.beforeEncrypt = () => reporter.observeConsent((enabled: true, consentEpoch: 8)).timeout(budget);
+      final result = await invoke(activityReporter: reporter).timeout(budget);
+      expect(result.$2, isNotNull);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    for (final (id, initiallyEnabled) in [('B14U2A-016', false), ('B14U2A-017', true)]) {
+      test('$id linked ADD stage turnover cannot capture the replacement epoch', () async {
+        if (!initiallyEnabled) await reporter.observeConsent((enabled: false, consentEpoch: 8)).timeout(budget);
+        Future<void>? replaced;
+        final events = <String>[];
+        final result = await sendReaction(
+          p2pService: p2pService, bridge: bridge, reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1', messageId: 'msg-1', emoji: '👍',
+          senderPeerId: 'my-peer', recipientMlKemPublicKey: 'key-1', activityReporter: reporter,
+          directEventFanout: fanoutAuthoring(selectorOn: true,
+            targets: ['peer-device-a', 'peer-device-b'], events: events,
+            onStage: (_) { replaced = reporter.observeConsent((enabled: true, consentEpoch: 9)); }),
+        ).timeout(budget);
+        expect(result.$2, isNotNull);
+        expect(replaced, isNotNull);
+        await replaced!.timeout(budget);
+        expect(events, contains('stage:add'));
+        expect(activityBridge.marks, isEmpty);
+      });
+    }
+
+    test('B14U2A-014 REMOVE adapter never marks even when a capture is supplied', () async {
+      final payload = ReactionPayload(id: 'u2-remove', messageId: 'msg-1',
+        emoji: '👍', action: ReactionPayload.removeAction, senderPeerId: 'my-peer',
+        timestamp: '2026-11-17T00:00:00.000Z');
+      final events = <String>[];
+      final result = await authorDirectReactionFanout(
+        directEventFanout: fanoutAuthoring(selectorOn: true, targets: ['peer-device-a'], events: events),
+        p2pService: p2pService, custodyRepo: reactionRepo,
+        storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
+        targetPeerId: 'peer-1', messageId: 'msg-1', action: ReactionPayload.removeAction,
+        payload: payload, flowPrefix: 'REMOVE_REACTION',
+        capturedActivity: (reporter: reporter, capture: reporter.captureOwner(expectedAccountPeerId: 'my-peer')),
+      ).timeout(budget);
+      expect(result, isNotNull);
+      expect(events, contains('stage:remove'));
+      expect(activityBridge.marks, isEmpty);
+    });
+  });
 
   group('TC-361-02a reaction fanout adapter', () {
     test(
@@ -631,4 +809,50 @@ void main() {
       expect(source, isNot(contains('saveMessage')));
     });
   });
+}
+
+class _U2IdempotentReactionRepository extends InMemoryDirectReactionCustodyRepository {
+  @override
+  Future<DirectReactionCustodyStageResult> stageOutgoingDirectReactionInboxCustody({
+    required MessageReaction reaction, required String recipientPeerId,
+    required String action, required String wireEnvelope,
+  }) async {
+    final owner = await super.stageOutgoingDirectReactionInboxCustody(
+      reaction: reaction, recipientPeerId: recipientPeerId, action: action, wireEnvelope: wireEnvelope);
+    return DirectReactionCustodyStageResult(outcome: DirectReactionCustodyStageOutcome.idempotent,
+      reaction: owner.reaction, custody: owner.custody);
+  }
+}
+
+class _U2ReactionActivityBridge extends FakeBridge {
+  _U2ReactionActivityBridge() : super(initialResponses: {
+    'message.encrypt': {'ok': true, 'kem': 'test-kem', 'ciphertext': 'test-cipher', 'nonce': 'test-nonce'},
+  });
+  final marks = <Map<String, dynamic>>[];
+  Future<void> Function()? beforeEncrypt;
+  Completer<void>? markBlock;
+  bool throwOnMark = false;
+  int revision = 0;
+  @override
+  bool get isInitialized => true;
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] == 'message.encrypt') await beforeEncrypt?.call();
+    if (envelope['cmd'] != 'active_identity_reporter_v1') return super.send(message);
+    final payload = Map<String, dynamic>.from(envelope['payload'] as Map);
+    final op = payload['op'];
+    if (op == 'mark') {
+      marks.add(payload);
+      if (throwOnMark) throw StateError('optional reporter unavailable');
+      await markBlock?.future;
+    }
+    return jsonEncode({'ok': true, 'data': {
+      'revision': op == 'configure' ? ++revision : payload['revision'],
+      'consentEpoch': payload['consentEpoch'],
+      if (op == 'configure') 'configured': payload['enabled'] == true && payload['profileBinding'] != '',
+      if (op == 'mark') 'accepted': true,
+      if (op == 'flush') 'queued': true,
+    }});
+  }
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -169,6 +170,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required ConversationMessage expectedParent,
     required List<PreparedDirectMediaBlobSource> sources,
     DirectMediaBlobGenerationReadyFn? onGenerationReady,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     if (!_repository.supportsDirectMediaBlobCustody ||
         !_validFreshRequest(
@@ -188,9 +190,13 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           recipientPeerId: recipientPeerId,
           expectedParent: expectedParent,
           sources: sources,
+          capturedActivity: capturedActivity,
         );
         final generation = publication.generation;
         if (generation == null) {
+          if (publication.hasDurableAuthority && !publication.projectionAvailable) {
+            return const PreparedDirectMediaBlobUploadResult.retained();
+          }
           return PreparedDirectMediaBlobUploadResult.refused(
             hasDurableAuthority: publication.hasDurableAuthority,
           );
@@ -1028,6 +1034,9 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
             DirectMediaBlobGenerationStageOutcome.idempotent) {
           return const PreparedDirectMediaBlobUploadResult.refused();
         }
+        if (!revalidated.projectionAvailable) {
+          return const PreparedDirectMediaBlobUploadResult.retained();
+        }
         final generation = await _reopenCompleteGeneration(
           identityPeerId: identityPeerId,
           recipientPeerId: recipientPeerId,
@@ -1071,6 +1080,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     String? authorizedForwardDedupKey,
     DirectMediaBlobAuthorityReadyFn? onAuthorityReady,
     DirectMediaBlobGenerationReadyFn? onGenerationReady,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     final fanoutRepository = _fanoutRepository;
     final targetPeerIds = snapshot.targets
@@ -1114,6 +1124,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           fanoutRepository: fanoutRepository,
           allowFreshParent: allowFreshParent,
           authorizedForwardDedupKey: authorizedForwardDedupKey,
+          capturedActivity: capturedActivity,
         );
         hasDurableAuthority = publication.hasDurableAuthority;
         final generation = publication.generation;
@@ -1252,6 +1263,9 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           return const PreparedDirectMediaBlobFanoutUploadResult.refused(
             hasDurableAuthority: true,
           );
+        }
+        if (!revalidated.projectionAvailable) {
+          return const PreparedDirectMediaBlobFanoutUploadResult.retained();
         }
         final generation = await _reopenCompleteFanoutGeneration(
           identityPeerId: identityPeerId,
@@ -1429,6 +1443,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required OutgoingDirectLinkedMediaBlobFanoutRepository fanoutRepository,
     required bool allowFreshParent,
     required String? authorizedForwardDedupKey,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     final candidates = <_CandidateGenerationEntry>[];
     var stageAttempted = false;
@@ -1513,9 +1528,17 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
             allowFreshParent: allowFreshParent,
             authorizedForwardDedupKey: authorizedForwardDedupKey,
           );
-      hasDurableAuthority = staged.authorizesStrictUpload;
+      hasDurableAuthority = staged.hasDurableAuthority;
       final idempotent =
           staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+      if (staged.outcome == DirectMediaBlobGenerationStageOutcome.applied) {
+        final capture = capturedActivity?.capture;
+        if (capture != null) {
+          try {
+            capturedActivity?.reporter?.markCaptured(capture);
+          } catch (_) {}
+        }
+      }
       if (!staged.authorizesStrictUpload) {
         if (hasDurableAuthority) {
           await _deleteOnlyProvablyUnreferencedCandidates(
@@ -1877,6 +1900,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required List<PreparedDirectMediaBlobSource> sources,
     FreshOutgoingDirectMediaBlobGenerationRepository? freshRepository,
     String? authorizedForwardDedupKey,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     final candidates = <_CandidateGenerationEntry>[];
     var stageAttempted = false;
@@ -1947,6 +1971,8 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           .toList(growable: false);
       late final bool authorizesStrictUpload;
       late final bool idempotent;
+      late final bool freshlyApplied;
+      late final bool projectionAvailable;
       late final List<MediaAttachment> stagedAttachments;
       late final List<DirectMediaBlobCustodyRow> stagedRows;
       if (freshRepository == null) {
@@ -1957,9 +1983,11 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           custodyRows: custodyRows,
         );
         authorizesStrictUpload = staged.authorizesStrictUpload;
-        hasDurableAuthority = staged.authorizesStrictUpload;
+        hasDurableAuthority = staged.hasDurableAuthority;
+        projectionAvailable = staged.projectionAvailable;
         idempotent =
             staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+        freshlyApplied = staged.outcome == DirectMediaBlobGenerationStageOutcome.applied;
         stagedAttachments = staged.attachments;
         stagedRows = staged.custodyRows;
       } else {
@@ -1973,10 +2001,20 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
             );
         authorizesStrictUpload = staged.authorizesStrictUpload;
         hasDurableAuthority = staged.hasDurableAuthority;
+        projectionAvailable = staged.authorizesStrictUpload;
         idempotent =
             staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+        freshlyApplied = staged.outcome == DirectMediaBlobGenerationStageOutcome.applied;
         stagedAttachments = staged.attachments;
         stagedRows = staged.custodyRows;
+      }
+      if (freshlyApplied) {
+        final capture = capturedActivity?.capture;
+        if (capture != null) {
+          try {
+            capturedActivity?.reporter?.markCaptured(capture);
+          } catch (_) {}
+        }
       }
       if (!authorizesStrictUpload) {
         if (hasDurableAuthority) {
@@ -1992,6 +2030,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         return _GenerationPublication(
           generation: null,
           hasDurableAuthority: hasDurableAuthority,
+          projectionAvailable: projectionAvailable,
         );
       }
       if (idempotent) {
@@ -2379,10 +2418,12 @@ final class _GenerationPublication {
   const _GenerationPublication({
     required this.generation,
     required this.hasDurableAuthority,
+    this.projectionAvailable = true,
   });
 
   final _PublishedGeneration? generation;
   final bool hasDurableAuthority;
+  final bool projectionAvailable;
 }
 
 final class _PublishedFanoutGeneration {

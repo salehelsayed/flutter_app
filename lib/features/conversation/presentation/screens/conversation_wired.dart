@@ -235,6 +235,8 @@ typedef SendVoiceMessageFn =
       String? blobId,
       EncryptedMediaArtifact? preparedArtifact,
       DirectMediaFanoutAdmission? mediaAdmission,
+      bool preassignedMessageIdIsFresh,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
     });
 
 typedef SendReactionFn =
@@ -248,6 +250,7 @@ typedef SendReactionFn =
       required String senderPeerId,
       required String recipientMlKemPublicKey,
       DirectEventFanoutAuthoring? directEventFanout,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
     });
 
 typedef RemoveReactionFn =
@@ -3867,19 +3870,25 @@ class _ConversationWiredState extends State<ConversationWired>
     String text, {
     ({String id, PendingComposerMedia media})? sticker,
     VoidCallback? onStickerMediaAdopted,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     final identity = _identity;
     if (identity == null) return;
-    final activityReporter = sticker == null ? widget.activityReporter : null;
-    ActiveIdentityReporterCapture? activityCapture;
-    try {
-      activityCapture = activityReporter?.captureOwner(
-        expectedAccountPeerId: identity.peerId,
-      );
-    } catch (_) {
-      // Optional observation must never prevent authoring.
+    final activityReporter = capturedActivity == null
+        ? widget.activityReporter
+        : capturedActivity.reporter;
+    ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+    if (capturedActivity == null) {
+      try {
+        activityCapture = activityReporter?.captureOwner(
+          expectedAccountPeerId: identity.peerId,
+        );
+      } catch (_) {
+        // Optional observation must never prevent authoring.
+      }
     }
-    final capturedActivity = (reporter: activityReporter, capture: activityCapture);
+    final activityObservation = (reporter: activityReporter, capture: activityCapture);
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture}) finalizationActivity = activityObservation;
     final messenger = ScaffoldMessenger.maybeOf(context);
     // Captured pre-gap: the failure snackbar below runs after awaits, when
     // this State may already be unmounted.
@@ -4831,6 +4840,9 @@ class _ConversationWiredState extends State<ConversationWired>
               // re-read: a pairing that lands mid-send must not turn an
               // already-persisted generation into a late refusal.
               final routedSnapshot = mediaAdmission?.snapshot;
+              if (sticker != null) {
+                finalizationActivity = (reporter: activityReporter, capture: null);
+              }
               if (mediaAdmission != null &&
                   mediaAdmission.requiresLinkedFanout &&
                   routedSnapshot != null) {
@@ -4841,6 +4853,7 @@ class _ConversationWiredState extends State<ConversationWired>
                       contactAccountPeerId: _contact.peerId,
                       snapshot: routedSnapshot,
                       expectedParent: manifestFailureParent,
+                      capturedActivity: sticker == null ? null : activityObservation,
                       sources: preparedUploads
                           .map(
                             (plan) => PreparedDirectMediaBlobSource(
@@ -4873,6 +4886,7 @@ class _ConversationWiredState extends State<ConversationWired>
                   identityPeerId: identity.peerId,
                   recipientPeerId: _contact.peerId,
                   expectedParent: manifestFailureParent,
+                  capturedActivity: sticker == null ? null : activityObservation,
                   sources: preparedUploads
                       .map(
                         (plan) => PreparedDirectMediaBlobSource(
@@ -5085,6 +5099,16 @@ class _ConversationWiredState extends State<ConversationWired>
                       failure: failure,
                     );
                   }
+                  if (sticker != null &&
+                      optimisticMessage.directMediaCustodyIntentId != null &&
+                      manifestFailureParent?.id == optimisticMessage.id &&
+                      projected.applied &&
+                      !projected.isTerminal &&
+                      activityCapture != null) {
+                    try {
+                      activityReporter?.markCaptured(activityCapture);
+                    } catch (_) {}
+                  }
                   if (!projected.isTerminal) {
                     retryMediaUpload = true;
                     _updateLocalMessageStatus(optimisticMessage.id, 'sending');
@@ -5191,7 +5215,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 senderUsername: identity.username,
                 messageId: optimisticMessage.id,
                 preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
-                capturedActivity: capturedActivity,
+                capturedActivity: finalizationActivity,
                 authoredTextIntentToken: authoredTextIntentToken,
                 timestamp: optimisticMessage.timestamp,
                 bridge: widget.bridge,
@@ -6017,6 +6041,14 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _sendSticker(StickerEntry sticker) async {
+    final identity = _identity;
+    if (identity == null) return;
+    final reporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? capture;
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
+    } catch (_) {}
+    final capturedActivity = (reporter: reporter, capture: capture);
     final PendingComposerMedia media;
     try {
       media = await prepareStickerMedia(sticker);
@@ -6029,7 +6061,7 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
     if (!mounted) return;
-    await _onSend('', sticker: (id: sticker.id, media: media));
+    await _onSend('', sticker: (id: sticker.id, media: media), capturedActivity: capturedActivity);
   }
 
   /// Null hides the received-sticker action: flag off, no library or no
@@ -6070,6 +6102,14 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _sendCustomSticker(String id) async {
+    final identity = _identity;
+    if (identity == null) return;
+    final reporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? capture;
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
+    } catch (_) {}
+    final capturedActivity = (reporter: reporter, capture: capture);
     final library = CustomStickerScope.libraryOf(context);
     if (library == null) return;
     await sendCustomSticker(
@@ -6080,6 +6120,7 @@ class _ConversationWiredState extends State<ConversationWired>
         '',
         sticker: (id: markerId, media: media),
         onStickerMediaAdopted: adopt,
+        capturedActivity: capturedActivity,
       ),
       discard: (media) =>
           unawaited(media.file.delete().then((_) {}, onError: (Object _) {})),
@@ -6465,6 +6506,12 @@ class _ConversationWiredState extends State<ConversationWired>
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
+    final reporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? capture;
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
+    } catch (_) {}
+    final capturedActivity = (reporter: reporter, capture: capture);
     final quotedMessageId = _activeQuoteMessageId;
 
     // 362 ADMISSION BOUNDARY (voice). Both callers of this method — the
@@ -6783,6 +6830,8 @@ class _ConversationWiredState extends State<ConversationWired>
           blobId: voiceAttachmentId,
           preparedArtifact: voiceArtifact,
           mediaAdmission: voiceAdmission,
+          preassignedMessageIdIsFresh: true,
+          capturedActivity: capturedActivity,
         );
         if (result == SendVoiceMessageResult.success) {
           _uploadActivityController.markUploadCompleted(
@@ -7237,6 +7286,13 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    final reporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? capture;
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
+    } catch (_) {}
+    final capturedActivity = (reporter: reporter, capture: capture);
+
     // Add/replace reaction optimistically
     final now = DateTime.now().toUtc().toIso8601String();
     final optimisticReaction = MessageReaction(
@@ -7269,6 +7325,7 @@ class _ConversationWiredState extends State<ConversationWired>
       senderPeerId: identity.peerId,
       recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
       directEventFanout: widget.directEventFanout,
+      capturedActivity: capturedActivity,
     );
 
     // The atomic custody stage, rather than the immediate transport diagnostic,

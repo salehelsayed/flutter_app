@@ -9,20 +9,28 @@ final class DirectMediaBlobGenerationStageResult {
     required this.outcome,
     this.attachments = const <MediaAttachment>[],
     this.custodyRows = const <DirectMediaBlobCustodyRow>[],
+    this.projectionAvailable = true,
   });
 
+  /// SQL admitted this owner; unavailable hydration must not authorize upload.
+  const DirectMediaBlobGenerationStageResult.authorityOnly({required this.outcome})
+    : attachments = const <MediaAttachment>[],
+      custodyRows = const <DirectMediaBlobCustodyRow>[],
+      projectionAvailable = false;
+
   const DirectMediaBlobGenerationStageResult.refused()
-    : outcome = DirectMediaBlobGenerationStageOutcome.refused,
+    : projectionAvailable = true,
+      outcome = DirectMediaBlobGenerationStageOutcome.refused,
       attachments = const <MediaAttachment>[],
       custodyRows = const <DirectMediaBlobCustodyRow>[];
 
   final DirectMediaBlobGenerationStageOutcome outcome;
   final List<MediaAttachment> attachments;
   final List<DirectMediaBlobCustodyRow> custodyRows;
+  final bool projectionAvailable;
 
-  bool get authorizesStrictUpload =>
-      outcome == DirectMediaBlobGenerationStageOutcome.applied ||
-      outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+  bool get hasDurableAuthority => outcome != DirectMediaBlobGenerationStageOutcome.refused;
+  bool get authorizesStrictUpload => projectionAvailable && hasDurableAuthority;
 }
 
 /// Result of the Plan 348 absent-parent entry into the existing v111 owner.

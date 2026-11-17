@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -24,6 +25,7 @@ Future<(SendReactionResult, MessageReaction?)?> authorDirectReactionFanout({
   required String action,
   required ReactionPayload payload,
   required String flowPrefix,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
 }) async {
   final routing = await directEventFanout.decideRoute(targetPeerId);
   switch (routing.route) {
@@ -84,6 +86,15 @@ Future<(SendReactionResult, MessageReaction?)?> authorDirectReactionFanout({
     case DirectEventFanoutStageOutcome.applied:
       break;
   }
+  if (action == ReactionPayload.addAction &&
+      staged.outcome == DirectEventFanoutStageOutcome.applied) {
+    final capture = capturedActivity?.capture;
+    if (capture != null) {
+      try {
+        capturedActivity?.reporter?.markCaptured(capture);
+      } catch (_) {}
+    }
+  }
   if (!p2pService.currentState.isStarted) {
     return (SendReactionResult.nodeNotRunning, authoredReaction);
   }
@@ -135,7 +146,17 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
   required String recipientMlKemPublicKey,
   StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   DirectEventFanoutAuthoring? directEventFanout,
+  ActiveIdentityReporter? activityReporter,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
 }) async {
+  final reporter = capturedActivity == null ? activityReporter : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? capture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: senderPeerId);
+    } catch (_) {}
+  }
+  final activityObservation = (reporter: reporter, capture: capture);
   emitFlowEvent(
     layer: 'FL',
     event: 'REACTION_SEND_START',
@@ -199,6 +220,7 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
       action: ReactionPayload.addAction,
       payload: payload,
       flowPrefix: 'REACTION_SEND',
+      capturedActivity: activityObservation,
     );
     if (fanout != null) return fanout;
   }
@@ -262,6 +284,11 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
     }
     committedReaction = stagedReaction;
     custody = stagedCustody;
+    if (staged.outcome == DirectReactionCustodyStageOutcome.applied && capture != null) {
+      try {
+        reporter?.markCaptured(capture);
+      } catch (_) {}
+    }
   } catch (error) {
     emitFlowEvent(
       layer: 'FL',

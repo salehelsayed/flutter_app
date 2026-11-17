@@ -8,6 +8,7 @@
 // ignore_for_file: unused_element_parameter
 
 import 'dart:async';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -990,6 +991,9 @@ void main() {
                 String? blobId,
                 preparedArtifact,
                 mediaAdmission,
+
+                ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+                bool preassignedMessageIdIsFresh = false,
               }) async {
                 operationLog.add('sendVoiceMessageFn');
                 return (SendVoiceMessageResult.success, null);
@@ -1047,6 +1051,9 @@ void main() {
               String? blobId,
               preparedArtifact,
               mediaAdmission,
+
+              ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+              bool preassignedMessageIdIsFresh = false,
             }) async {
               operationLog.add('sendVoiceMessageFn');
               return (SendVoiceMessageResult.uploadFailed, null);
@@ -1098,6 +1105,9 @@ void main() {
                 String? blobId,
                 preparedArtifact,
                 mediaAdmission,
+
+                ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+                bool preassignedMessageIdIsFresh = false,
               }) async {
                 operationLog.add('sendVoiceMessageFn');
                 final ts =

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -54,6 +55,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   required String senderUsername,
   required AudioRecording recording,
   required Bridge bridge,
+  ActiveIdentityReporter? activityReporter,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String? recipientMlKemPublicKey,
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
@@ -75,6 +78,16 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   bool directMediaBlobCustodyClientEnabled =
       kDirectMediaBlobCustodyClientEnabled,
 }) async {
+  final reporter = capturedActivity == null ? activityReporter : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? capture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: senderPeerId);
+    } catch (_) {}
+  }
+  final freshVoiceAuthoring = messageId == null || preassignedMessageIdIsFresh;
+  final activityObservation = (reporter: reporter, capture: freshVoiceAuthoring ? capture : null);
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture}) finalizationActivity = activityObservation;
   final sendStopwatch = Stopwatch()..start();
   void emitVoiceTiming({
     required String outcome,
@@ -107,6 +120,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     required List<MediaAttachment> attachments,
     required int uploadMs,
     required bool cleanupPreparedSource,
+    bool freshEnvelope = false,
     DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   }) async {
     final voiceSendStopwatch = Stopwatch()..start();
@@ -123,9 +137,10 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       messageId: messageId,
-      preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+      preassignedMessageIdIsFresh: freshEnvelope,
       timestamp: timestamp,
       directLinkedMediaFanout: directLinkedMediaFanout,
+      capturedActivity: finalizationActivity,
       emitTimingEvent: false,
     );
 
@@ -524,6 +539,13 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     }
   }
 
+  if (strictRepository != null ||
+      (preparedVoiceAttachment?.uploadRetryCount ?? 0) > 0) {
+    // Strict preparation owns its fresh mark. Retained upload generations may
+    // later finalize, but that is transport recovery rather than new authoring.
+    finalizationActivity = (reporter: reporter, capture: null);
+  }
+
   // 2. Upload
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
@@ -550,6 +572,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
         contactAccountPeerId: targetPeerId,
         snapshot: snapshot,
         expectedParent: parent,
+        capturedActivity: activityObservation,
         sources: <PreparedDirectMediaBlobSource>[
           PreparedDirectMediaBlobSource(
             attachment: attachment,
@@ -615,6 +638,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
             identityPeerId: senderPeerId,
             recipientPeerId: targetPeerId,
             expectedParent: parent,
+            capturedActivity: activityObservation,
             sources: <PreparedDirectMediaBlobSource>[
               PreparedDirectMediaBlobSource(
                 attachment: attachment,
@@ -765,6 +789,17 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       }
     }
     if (projected.applied && !projected.isTerminal) {
+      if (preassignedMessageIdIsFresh &&
+          preparedVoiceParent?.status == 'sending' &&
+          preparedVoiceAttachment != null &&
+          (preparedVoiceAttachment.uploadRetryCount ?? 0) == 0) {
+        final originalCapture = activityObservation.capture;
+        if (originalCapture != null) {
+          try {
+            reporter?.markCaptured(originalCapture);
+          } catch (_) {}
+        }
+      }
       emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_QUEUED', details: {});
       emitVoiceTiming(
         outcome: 'upload_queued',
@@ -814,6 +849,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     attachments: <MediaAttachment>[completedVoiceAttachment],
     uploadMs: uploadMs,
     cleanupPreparedSource: preparedVoiceAttachment != null,
+    freshEnvelope: preparedVoiceAttachment == null && preassignedMessageIdIsFresh,
   );
 }
 

@@ -3751,6 +3751,8 @@ void main() {
             required String senderPeerId,
             required String recipientMlKemPublicKey,
             DirectEventFanoutAuthoring? directEventFanout,
+
+            ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
           }) async => (diagnostic, committed);
 
           Future<RemoveReactionResult> removeStub({
@@ -3808,6 +3810,8 @@ void main() {
           required String senderPeerId,
           required String recipientMlKemPublicKey,
           DirectEventFanoutAuthoring? directEventFanout,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
         }) => addCompletions[addCalls++].future;
 
         Future<RemoveReactionResult> immediateRemove({
@@ -3875,6 +3879,8 @@ void main() {
           required String senderPeerId,
           required String recipientMlKemPublicKey,
           DirectEventFanoutAuthoring? directEventFanout,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
         }) => delayedAdd.future;
 
         Future<RemoveReactionResult> delayedRemove({
@@ -4038,6 +4044,8 @@ void main() {
           EncryptedMediaArtifact? preparedArtifact,
           DirectMediaFanoutAdmission? mediaAdmission,
           ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           calls++;
           observed = capturedActivity;
@@ -4462,6 +4470,198 @@ void main() {
             reason: 'only an unchanged pre-preparation owner may spend this caller observation');
         } finally {
           if (library.prepareGate case final gate? when !gate.isCompleted) gate.complete();
+          if (sending != null) {
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            await sending.timeout(budget);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(budget);
+        }
+      });
+    }
+
+    for (final (id, custom, scenario) in [
+      ('B14U2P-001', false, 'strict-retained'),
+      ('B14U2P-002', true, 'strict-retained'),
+      ('B14U2P-003', false, 'strict-complete'),
+      ('B14U2P-004', true, 'strict-complete'),
+      ('B14U2P-005', false, 'legacy-retained'),
+      ('B14U2P-006', true, 'legacy-retained'),
+      ('B14U2P-007', true, 'strict-refused'),
+      ('B14U2P-008', true, 'strict-epoch'),
+      ('B14U2P-009', true, 'strict-replay'),
+      ('B14U2P-010', false, 'strict-linked'),
+      ('B14U2P-011', true, 'strict-linked'),
+    ]) {
+      testWidgets('$id ${custom ? 'custom' : 'catalog'} sticker actual durable owner ($scenario)', (tester) async {
+        const budget = Duration(seconds: 3);
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        final root = Directory.systemTemp.createTempSync('b14-u2-sticker-owner-');
+        addTearDown(() { if (root.existsSync()) root.deleteSync(recursive: true); });
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(root.path);
+        addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+        final fixture = (await tester.runAsync(() => MediaRepositoryRealDbFixture.create().timeout(budget)))!;
+        addTearDown(() => fixture.dispose().timeout(budget));
+        await tester.runAsync(() => (scenario == 'strict-linked'
+          ? seedPersistedLinkedContact(fixture)
+          : seedPersistedIncumbentContact(fixture)).timeout(budget));
+        final source = File('${root.path}/custom.webp')
+          ..writeAsBytesSync(File('assets/stickers/orbit_crew/planet/angry.webp').readAsBytesSync());
+        final library = _ExclusionStickerLibrary(source);
+        final customRow = await library.admit(fakeStickerAsset('u2-owner', filePath: source.path)).timeout(budget);
+        final files = TrackingDurableConversationMediaFileManager(root);
+        final bridge = _UiCaptureBridge();
+        final identity = makeIdentity();
+        final reporter = ActiveIdentityReporter(statePath: '/unused/u2-sticker-owner.json');
+        reporter.attachBridge(bridge);
+        reporter.observeIdentity(accountPeerId: identity.peerId,
+          rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)), profileBinding: _uiCaptureBinding);
+        await reporter.observeConsent((enabled: true, consentEpoch: 7)).timeout(budget);
+        var prepareCalls = 0;
+        var sendCalls = 0;
+        var callbackCompleted = false;
+        int? uploadSawMarks;
+        int? uploadSawRows;
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? finalObservation;
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: fixture.repo,
+          artifactStore: DirectMediaBlobArtifactStore(documentsDirectoryProvider: () async => root),
+          prepareArtifact: ({required bridge, required localFilePath}) async {
+            prepareCalls++;
+            if (scenario == 'strict-refused') {
+              await fixture.db.update('messages', {'text': 'crossed before stage'}).timeout(budget);
+            } else if (scenario == 'strict-epoch') {
+              await reporter.observeConsent((enabled: true, consentEpoch: 8)).timeout(budget);
+            }
+            final bytes = File(localFilePath).readAsBytesSync();
+            final encrypted = File('$localFilePath.u2.enc')..writeAsBytesSync(bytes);
+            return EncryptedMediaArtifact(encryptedPath: encrypted.path,
+              keyBase64: 'u2-sticker-key', nonce: 'u2-sticker-nonce',
+              scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              contentHash: sha256.convert(bytes).toString(), plaintextSize: bytes.length);
+          },
+          strictUpload: ({required bridge, required attachmentId, required recipientPeerId,
+            required ciphertextPath, required contentHash, required ciphertextSize}) async {
+            uploadSawMarks = (bridge as _UiCaptureBridge).marks.length;
+            final ownedParents = await fixture.db.query('messages').timeout(budget);
+            uploadSawRows = (await fixture.repo.loadDirectMediaBlobCustodyForMessage(ownedParents.single['id'] as String).timeout(budget)).length;
+            if (scenario != 'strict-complete') return {'ok': false, 'errorCode': 'NOT_CONNECTED'};
+            return {'ok': true, 'id': attachmentId, 'storeStatus': 'stored',
+              'custodyKind': 'direct_media_blob_v1', 'custodyContract': 'ack_or_expiry_v1',
+              'contentHash': contentHash, 'size': ciphertextSize, 'mime': 'application/octet-stream',
+              'expiresAtMs': 2000000000000, 'custodyRelayPeerId': 'u2-sticker-relay'};
+          },
+        );
+        Future<(SendChatMessageResult, ConversationMessage?)> finalize({
+          required P2PService p2pService, required MessageRepository messageRepo,
+          required String targetPeerId, required String text,
+          required String senderPeerId, required String senderUsername,
+          String? messageId, required bool preassignedMessageIdIsFresh,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          String? authoredTextIntentToken, String? timestamp, Bridge? bridge,
+          String? recipientMlKemPublicKey, String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments, PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo, TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          sendCalls++;
+          finalObservation = capturedActivity;
+          final result = await sendChatMessage(
+            p2pService: p2pService, messageRepo: messageRepo,
+            targetPeerId: targetPeerId, text: text, senderPeerId: senderPeerId,
+            senderUsername: senderUsername, messageId: messageId,
+            preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+            capturedActivity: capturedActivity, timestamp: timestamp, bridge: bridge,
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            mediaAttachments: mediaAttachments, mediaAttachmentRepo: mediaAttachmentRepo,
+            privateMediaPolicy: privateMediaPolicy,
+            storeInAckCustodyInboxDetailed: (peer, envelope, {required custodyKind, timeoutMs}) async =>
+              const InboxStoreOutcome(status: InboxStoreStatus.failed),
+            storeInMediaExpiryBoundedInboxDetailed: (peer, envelope, {required custodyExpiresAtOrBeforeMs, timeoutMs}) async =>
+              const InboxStoreOutcome(status: InboxStoreStatus.failed),
+          ).timeout(budget);
+          callbackCompleted = true;
+          return result;
+        }
+        Future<void>? sending;
+        var finished = false;
+        try {
+          await pumpScreen(tester, contact: makeContact().copyWith(mlKemPublicKey: 'contact-ml-kem-public-key'),
+            identityRepo: FakeIdentityRepository(identity), messageRepo: fixture.messageRepo,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: fixture.messageRepo, contactRepo: FakeContactRepository()),
+            sendFn: finalize, bridge: bridge, activityReporter: reporter,
+            p2pService: FakeP2PService(initialState: NodeState(isStarted: false, peerId: identity.peerId)),
+            customStickerLibrary: library, mediaAttachmentRepo: fixture.repo, mediaFileManager: files,
+            directMediaBlobCustodyClientEnabled: scenario.startsWith('strict'),
+            directLinkedEventFanoutEnabled: scenario == 'strict-linked',
+            directLinkedMediaFanoutSelector: scenario == 'strict-linked'
+              ? const DirectLinkedMediaFanoutSelector.enabled()
+              : const DirectLinkedMediaFanoutSelector.disabled(),
+            preparedDirectMediaBlobCustodyCoordinator: coordinator,
+            typedUploadMediaFn: ({required bridge, required localFilePath, required mime, required recipientPeerId,
+              mediaFileManager, width, height, durationMs, waveform, allowedPeers, blobId,
+              deleteSourceWhenDone = false, preparedArtifact}) async => const UploadMediaFailed(
+                stage: UploadMediaStage.transport, disposition: UploadMediaDisposition.connectivityRetryable,
+                errorCode: 'U2_STICKER_OFFLINE'),
+          ).timeout(budget);
+          tester.widget<ConversationScreen>(find.byType(ConversationScreen)).onStickerToggle!();
+          await tester.pump();
+          await pumpUntilAsyncIo(tester, () => find.byType(StickerPanel).evaluate().isNotEmpty, timeout: budget);
+          final bundled = tester.widget<BundledStickerPanel>(find.byType(BundledStickerPanel));
+          final panel = tester.widget<StickerPanel>(find.byType(StickerPanel));
+          sending = (custom
+            ? (bundled.onSendCustom! as Future<void> Function(String))(customRow.id)
+            : (bundled.onSend as Future<void> Function(StickerEntry))(panel.catalog.byId('orbit_crew.planet.angry')!))
+              .whenComplete(() => finished = true);
+          await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+          await sending.timeout(budget);
+          final parents = (await tester.runAsync(() => fixture.db.query('messages').timeout(budget)))!;
+          expect(parents, hasLength(1));
+          final messageId = parents.single['id'] as String;
+          final rows = (await tester.runAsync(() => fixture.repo.loadDirectMediaBlobCustodyForMessage(messageId).timeout(budget)))!;
+          final qualified = scenario != 'strict-refused' && scenario != 'strict-epoch';
+          expect(bridge.marks, qualified ? hasLength(1) : isEmpty);
+          if (scenario == 'strict-complete') {
+            expect(callbackCompleted, isTrue);
+            expect(sendCalls, 1);
+            expect(finalObservation, isNotNull);
+            expect(finalObservation!.capture, isNull, reason: 'strict preparation already owned this activity');
+            expect(parents.single['direct_media_custody_intent_id'], isNull);
+            expect((await tester.runAsync(() => fixture.db.query('direct_inbox_custody_outbox').timeout(budget)))!, hasLength(1));
+          } else {
+            expect(sendCalls, 0, reason: 'retained/refused work never reaches final envelope authoring');
+          }
+          if (scenario.startsWith('legacy')) {
+            final attachments = (await tester.runAsync(() => fixture.repo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct).timeout(budget)))!;
+            expect(attachments.single.downloadStatus, 'upload_pending');
+            expect(attachments.single.uploadRetryCount ?? 0, 0);
+          } else {
+            expect(rows, scenario == 'strict-refused' ? isEmpty : hasLength(scenario == 'strict-linked' ? 2 : 1));
+            if (scenario != 'strict-refused') {
+              expect(uploadSawMarks, qualified ? 1 : 0);
+              expect(uploadSawRows, scenario == 'strict-linked' ? 2 : 1);
+            }
+          }
+          if (scenario == 'strict-replay') {
+            await reporter.observeConsent((enabled: true, consentEpoch: 8)).timeout(budget);
+            final parent = (await tester.runAsync(() => fixture.messageRepo.getMessage(messageId).timeout(budget)))!;
+            final attachments = (await tester.runAsync(() => fixture.repo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct).timeout(budget)))!;
+            final reopened = (await tester.runAsync(() => coordinator.reopenAndUpload(
+              bridge: bridge, identityPeerId: identity.peerId, recipientPeerId: makeContact().peerId,
+              expectedParent: parent, expectedAttachments: attachments,
+            ).timeout(budget)))!;
+            expect(reopened.state, PreparedDirectMediaBlobUploadState.retained);
+            expect(prepareCalls, 1);
+            expect(bridge.marks, hasLength(1));
+          }
+        } finally {
           if (sending != null) {
             await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
             await sending.timeout(budget);
@@ -6584,6 +6784,9 @@ void main() {
           String? blobId,
           EncryptedMediaArtifact? preparedArtifact,
           mediaAdmission,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           voiceParentObserved = await messageRepo.getMessage(messageId!);
           final rows = await mediaAttachmentRepo!.getAttachmentsForMessage(
@@ -7620,6 +7823,9 @@ void main() {
             String? blobId,
             EncryptedMediaArtifact? preparedArtifact,
             mediaAdmission,
+
+            ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+            bool preassignedMessageIdIsFresh = false,
           }) async {
             expect(await fixture.db.query('messages'), hasLength(1));
             expect(await fixture.db.query('media_attachments'), hasLength(1));
@@ -15536,6 +15742,9 @@ void main() {
         String? blobId,
         preparedArtifact,
         mediaAdmission,
+
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        bool preassignedMessageIdIsFresh = false,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
@@ -15630,6 +15839,9 @@ void main() {
           String? blobId,
           preparedArtifact,
           mediaAdmission,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           capturedQuotedMessageId = quotedMessageId;
           capturedRecording = recording;
@@ -15723,6 +15935,9 @@ void main() {
         String? blobId,
         preparedArtifact,
         mediaAdmission,
+
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        bool preassignedMessageIdIsFresh = false,
       }) async {
         // Like the real use case: the durable copy lives under the app's
         // media root and the returned attachment carries the stored
@@ -15843,6 +16058,9 @@ void main() {
         String? blobId,
         preparedArtifact,
         mediaAdmission,
+
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        bool preassignedMessageIdIsFresh = false,
       }) async {
         sendVoiceCalls += 1;
         final delivered = ConversationMessage(
@@ -16569,6 +16787,9 @@ void main() {
           String? blobId,
           preparedArtifact,
           mediaAdmission,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           sendVoiceCalls++;
           carriedAdmission = mediaAdmission as DirectMediaFanoutAdmission?;
@@ -16885,6 +17106,9 @@ void main() {
           String? blobId,
           preparedArtifact,
           mediaAdmission,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           capturedBlobId = blobId;
           callOrder.add('sendVoiceMessage');
@@ -17025,6 +17249,9 @@ void main() {
             String? blobId,
             EncryptedMediaArtifact? preparedArtifact,
             mediaAdmission,
+
+            ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+            bool preassignedMessageIdIsFresh = false,
           }) {
             capturedBlobId = blobId;
             return pending.future;
@@ -17148,6 +17375,9 @@ void main() {
           String? blobId,
           preparedArtifact,
           mediaAdmission,
+
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          bool preassignedMessageIdIsFresh = false,
         }) async {
           capturedBlobId = blobId;
           if (mediaAttachmentRepo != null && messageId != null) {
