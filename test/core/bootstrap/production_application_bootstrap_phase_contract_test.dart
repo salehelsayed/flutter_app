@@ -127,7 +127,7 @@ const _expectedSendChatMessageCallers =
           [
             _ExpectedSendChatMessageCaller(
               kind: _SendChatMessageCallerKind.excludedVoice,
-              freshIntent: 'preassignedMessageIdIsFresh',
+              freshIntent: 'freshEnvelope',
               mediaAttachments: 'attachments',
             ),
           ],
