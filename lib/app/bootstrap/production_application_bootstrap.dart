@@ -6636,6 +6636,15 @@ final class ProductionApplicationBootstrap
     // the process. The call graph of each start subscribes and unsubscribes.
     final networkPathSource = NetworkPathSource(events: networkPathEventStream);
     callSignalingComposition = createProductionCallSignalingComposition(
+      captureCallActivityMark: (expectedOwnAccountPeerId) {
+        final capture = activeIdentityReporter.captureOwner(
+          expectedAccountPeerId: expectedOwnAccountPeerId,
+        );
+        if (capture == null) {
+          return null;
+        }
+        return () => activeIdentityReporter.markCaptured(capture);
+      },
       onCallEnvelopeEncoded: debugE2EComposition?.callEnvelopeEncodedObserver,
       onCallTimerScheduled: debugE2EComposition?.callTimerScheduledObserver,
       networkPathOutcomes: networkPathSource.outcomes,

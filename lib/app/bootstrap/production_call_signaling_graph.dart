@@ -97,6 +97,9 @@ import '../../features/identity/domain/models/identity_model.dart';
 import 'call_signaling_composition.dart';
 
 typedef LoadCallSignalingIdentity = Future<IdentityModel?> Function();
+typedef CallActivityMark = void Function();
+typedef CaptureCallActivityMark =
+    CallActivityMark? Function(String expectedOwnAccountPeerId);
 typedef AndroidCallLifecycleAdapterFactory =
     AndroidCallLifecycleAdapter Function({
       required CallCoordinator coordinator,
@@ -167,6 +170,9 @@ final class ProductionCallSignalingGraph
     this.repairMissingEndpoint,
     required this.localDeviceKeyEpoch,
     required this.localIdentity,
+    this.captureCallActivityMark,
+    this.monotonicNow,
+    this.timerScheduler,
     required this.platform,
     required this.mediaOwner,
     this.microphoneCaptureLeases,
@@ -266,6 +272,9 @@ final class ProductionCallSignalingGraph
   final Map<String, Future<bool>> _endpointRecoveryByContact = {};
   final int localDeviceKeyEpoch;
   final IdentityModel localIdentity;
+  final CaptureCallActivityMark? captureCallActivityMark;
+  final Duration Function()? monotonicNow;
+  final CallTimerScheduler? timerScheduler;
   final CallEndpointPlatform platform;
   final CallScopedMediaBundleOwner mediaOwner;
   final AndroidCallLifecycleAdapter? androidCallLifecycleAdapter;
@@ -2931,6 +2940,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallScheduledTimerObserver? onCallTimerScheduled,
   bool Function()? isForeground,
   int Function()? nowMs,
+  CaptureCallActivityMark? captureCallActivityMark,
+  Duration Function()? monotonicNow,
+  CallTimerScheduler? timerScheduler,
   CallEngine Function(CallId)? callEngineFactory,
   Future<bool> Function()? requestCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
@@ -3170,6 +3182,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
         clearActiveCall: historyCheckpoint.clear,
         effectExecutor: boundEffects,
         clock: callClock,
+        monotonicNow: monotonicNow,
+        timerScheduler: timerScheduler,
         idSource: _newCallId,
         onTimerScheduled: videoEnabled
             ? (callId, kind, scheduledAt, requestedDelay, effectiveDelay) {
@@ -3900,6 +3914,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
         repairMissingEndpoint: repairMissingEndpoint,
         localDeviceKeyEpoch: localDeviceKeyEpoch,
         localIdentity: identity,
+        captureCallActivityMark: captureCallActivityMark,
+        monotonicNow: monotonicNow,
+        timerScheduler: timerScheduler,
         platform: endpointPlatform,
         mediaOwner: mediaOwner,
         microphoneCaptureLeases: microphoneCaptureLeases,
