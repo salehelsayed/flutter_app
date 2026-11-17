@@ -58,7 +58,7 @@ class GoBridge internal constructor(
             return JSONObject().put("ok", false).put("errorCode", fixed).toString()
         }
 
-        private fun activityFields(raw: String?): MutableMap<String, Any>? {
+        internal fun activityFields(raw: String?): MutableMap<String, Any>? {
             if (raw == null || raw.toByteArray(Charsets.UTF_8).size > 16_384) return null
             return try {
                 JsonReader(StringReader(raw)).use { reader ->
@@ -85,6 +85,13 @@ class GoBridge internal constructor(
                     fields
                 }
             } catch (_: Throwable) { null }
+        }
+
+        internal fun activityMarkRevision(fields: Map<String, Any>): Long? {
+            val revision = fields["revision"] as? Long
+            if (fields.keys != setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId") ||
+                revision == null || revision <= 0 || revision > 9_007_199_254_740_991L) return null
+            return revision
         }
 
         private fun activityAnswer(raw: String?, fence: MknoonActiveIdentityReporterFence, op: String): String {
@@ -292,9 +299,8 @@ class GoBridge internal constructor(
             fence = admitted
             fields["revision"] = fence.revision
         } else if (op == "mark" || op == "flush") {
-            val revision = fields["revision"] as? Long
-            if (fields.keys != setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId") ||
-                revision == null || revision <= 0 || revision > 9_007_199_254_740_991L) {
+            val revision = activityMarkRevision(fields)
+            if (revision == null) {
                 result.success(activityError("INVALID_INPUT")); return
             }
             fence = MknoonActiveIdentityReporterFence(revision, epoch, profile, account)

@@ -210,7 +210,7 @@ class GoBridge: NSObject {
 
     // The local operation is a bounded flat JSON object. Decode names before
     // duplicate checks so escaped aliases cannot disappear during re-encoding.
-    private static func activityFields(_ raw: String?) -> [String: Any]? {
+    internal static func activityFields(_ raw: String?) -> [String: Any]? {
         guard let raw, raw.utf8.count <= 16_384, let data = raw.data(using: .utf8),
               (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return nil }
         let bytes = Array(raw.utf8)
@@ -266,6 +266,12 @@ class GoBridge: NSObject {
             space()
         }
         return nil
+    }
+
+    internal static func activityMarkRevision(_ fields: [String: Any]) -> Int64? {
+        guard Set(fields.keys) == ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"],
+              let revision = activityInteger(fields["revision"]) else { return nil }
+        return revision
     }
 
     private static func activityAnswer(_ raw: String?, fence: MknoonActiveIdentityReporterFence, op: String) -> String {
@@ -364,8 +370,7 @@ class GoBridge: NSObject {
             fence = admitted
             fields["revision"] = fence.revision
         } else if op == "mark" || op == "flush" {
-            guard Set(fields.keys) == ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"],
-                  let revision = Self.activityInteger(fields["revision"]) else {
+            guard let revision = Self.activityMarkRevision(fields) else {
                 result(Self.activityError("INVALID_INPUT")); return
             }
             fence = MknoonActiveIdentityReporterFence(revision: revision, consentEpoch: epoch,
