@@ -2178,6 +2178,8 @@ _sendGroupMessageWithAuthorityRecheck({
         preparedGroupMediaManifest: preparedGroupMediaManifest,
         legacyMembershipActionPhaseHeld: true,
         entryAuthoringResolution: entryAuthoringResolution,
+        capturedActivity: capturedActivity,
+        preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
       ),
     );
   }
