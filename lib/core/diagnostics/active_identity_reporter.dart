@@ -215,7 +215,10 @@ final class ActiveIdentityReporter {
   }
 
   /// Marks only the logical configuration captured before producer awaits.
-  void markCaptured(ActiveIdentityReporterCapture capture) {
+  void markCaptured(
+    ActiveIdentityReporterCapture capture, {
+    int? occurredAtUnixMillis,
+  }) {
     if (!_captureCurrent(capture)) {
       return;
     }
@@ -228,14 +231,19 @@ final class ActiveIdentityReporter {
         unawaited(
           configuring.then((_) {
             if (_captureCurrent(capture) && _owner != null) {
-              markCaptured(capture);
+              markCaptured(capture, occurredAtUnixMillis: occurredAtUnixMillis);
             }
           }),
         );
       }
       return;
     }
-    unawaited(_send(capture._bridge, {...owner, 'op': 'mark'}));
+    unawaited(_send(capture._bridge, {
+      ...owner,
+      'op': 'mark',
+      if (occurredAtUnixMillis != null)
+        'occurredAtUnixMillis': occurredAtUnixMillis,
+    }));
   }
 
   /// Called only after a qualifying communication, never by configuration.
