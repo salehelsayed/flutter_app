@@ -13372,6 +13372,232 @@ void main() {
       ),
     ));
 
+    const textFanoutTargets = ['daily-text-device-a', 'daily-text-device-b'];
+
+    ({DirectEventFanoutAuthoring authoring, List<String> events,
+      List<Map<String, Object?>> stagedRows, List<OutgoingOrdinaryAttemptKind> mutationKinds,
+      List<DirectEventFanoutStageOutcome> outcomes}) buildDailyTextFanout({
+      bool enabled = true, bool refuseStage = false,
+    }) {
+      final events = <String>[];
+      final stagedRows = <Map<String, Object?>>[];
+      final mutationKinds = <OutgoingOrdinaryAttemptKind>[];
+      final outcomes = <DirectEventFanoutStageOutcome>[];
+      final snapshot = DirectContactFanoutSnapshot(
+        contactAccountPeerId: 'target-peer',
+        contactAccountSigningPublicKey: 'daily-contact-signing-key',
+        rosterInitialized: true,
+        targets: [for (final peer in textFanoutTargets) DirectContactFanoutTargetFact(
+          peerId: peer, mlKemPublicKey: 'mlkem-$peer', isLegacyAccountTarget: false,
+          fingerprint: 'f' * 64, deviceId: 'device-$peer',
+        )],
+      );
+      Future<DbDirectEventFanoutStageResult> stage(
+        Map<String, Object?> stagedRow, List<DirectEventFanoutTargetCandidate> candidates, {
+        String? eventId,
+      }) async {
+        events.add(eventId == null ? 'stage:text' : 'stage:edit');
+        if (refuseStage) {
+          outcomes.add(DirectEventFanoutStageOutcome.refused);
+          return const DbDirectEventFanoutStageResult.refused();
+        }
+        final id = stagedRow['id'] as String;
+        final parent = dailyMessages.existingMessages[id];
+        if (eventId == null && parent != null) {
+          final outcome = parent.directEventFanoutGenerationId == id
+              ? DirectEventFanoutStageOutcome.terminal : DirectEventFanoutStageOutcome.refused;
+          outcomes.add(outcome);
+          return DbDirectEventFanoutStageResult(outcome: outcome, rows: const []);
+        }
+        final rows = <Map<String, Object?>>[
+          for (final candidate in candidates) <String, Object?>{
+            'recipient_peer_id': candidate.recipientPeerId,
+            if (eventId == null) ...{
+              'message_id': id,
+              'incarnation_id': computeDirectEventFanoutIncarnation(
+                messageId: id, recipientPeerId: candidate.recipientPeerId),
+            } else ...{'event_id': eventId, 'parent_message_id': id},
+            'wire_envelope': candidate.wireEnvelope,
+            'retry_count': 0, 'last_attempt_at': null, 'last_error_code': null,
+            'contact_account_peer_id': 'target-peer',
+            'created_at': _dailyDate, 'updated_at': _dailyDate,
+          },
+        ];
+        await _dailyBound(dailyMessages.saveMessage(
+          ConversationMessage.fromMap(Map<String, dynamic>.from(stagedRow))));
+        for (final row in rows) {
+          if (eventId == null) {
+            final entry = DirectInboxCustodyOutboxEntry.fromMap(row);
+            dailyMessages.directCustodyRows['${entry.recipientPeerId}\u0000${entry.messageId}'] = entry;
+          } else {
+            final entry = DirectReactionInboxCustodyOutboxEntry.fromMap(row);
+            dailyMessages.directMutationCustodyRows['${entry.recipientPeerId}\u0000${entry.eventId}'] = entry;
+          }
+        }
+        stagedRows.addAll(rows);
+        outcomes.add(DirectEventFanoutStageOutcome.applied);
+        events.add('committed:${rows.length}');
+        return DbDirectEventFanoutStageResult(outcome: DirectEventFanoutStageOutcome.applied, rows: rows);
+      }
+      final authoring = DirectEventFanoutAuthoring(
+        selector: enabled ? const DirectLinkedEventFanoutSelector.enabled()
+            : const DirectLinkedEventFanoutSelector.disabled(),
+        linkedOrigin: false, senderTransportPeerId: 'my-peer',
+        readSnapshot: (_) async { events.add('resolve'); return snapshot; },
+        encrypt: ({required recipientMlKemPublicKey, required plaintext}) async {
+          events.add('encrypt:$recipientMlKemPublicKey');
+          return (kem: 'kem-$recipientMlKemPublicKey', ciphertext: plaintext, nonce: 'n-$recipientMlKemPublicKey');
+        },
+        loadTextSiblings: (id) async => dailyMessages.directCustodyRows.values
+            .where((entry) => entry.messageId == id).map((entry) => entry.toMap()).toList(),
+        stageTextFanout: ({String? authoredTextIntentToken, required stagedRow, required messageId,
+          required contactAccountPeerId, required senderTransportPeerId, required expectedSnapshot,
+          required candidates}) => stage(stagedRow, candidates),
+        loadEventSiblings: (_) async => const [],
+        stageMutationFanout: ({required expectedRow, required stagedRow, required kind,
+          required eventId, required parentMessageId, required contactAccountPeerId,
+          required senderTransportPeerId, required expectedSnapshot, required candidates}) {
+          mutationKinds.add(kind);
+          return stage(stagedRow, candidates, eventId: eventId);
+        },
+        stageReactionFanout: ({required reactionRow, required action, required parentMessageId,
+          required contactAccountPeerId, required senderTransportPeerId, required expectedSnapshot,
+          required candidates}) async => throw StateError('text sender must not stage a reaction'),
+      );
+      return (authoring: authoring, events: events, stagedRows: stagedRows,
+        mutationKinds: mutationKinds, outcomes: outcomes);
+    }
+
+    Future<(SendChatMessageResult, ConversationMessage?)> submitDailyTextFanout({
+      required String id, required DirectEventFanoutAuthoring authoring,
+      required List<(String, String)> stores, bool observe = true, bool acceptStore = false,
+      String action = MessagePayload.actionSend,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+    }) => _dailyBound(chat_use_case.sendChatMessage(
+      p2pService: dailyService, messageRepo: dailyMessages, targetPeerId: 'target-peer',
+      text: action == MessagePayload.actionEdit ? 'fanout edited text' : 'fanout authored text',
+      senderPeerId: 'my-peer', senderUsername: 'Me', messageId: id,
+      preassignedMessageIdIsFresh: action == MessagePayload.actionSend,
+      timestamp: _dailyDate, createdAt: _dailyDate,
+      editedAt: action == MessagePayload.actionEdit ? '2026-11-17T00:00:01.000Z' : null,
+      action: action, activityReporter: observe ? dailyReporter : null,
+      capturedActivity: capturedActivity, directEventFanout: authoring,
+      storeInAckCustodyInboxDetailed: (peer, envelope, {required custodyKind, timeoutMs}) async {
+        stores.add((peer, envelope));
+        return acceptStore ? const InboxStoreOutcome(status: InboxStoreStatus.stored,
+          storeStatus: 'stored', custodyContract: ackOrExpiryInboxCustodyContract, expiresAtMs: 1900000060000)
+            : const InboxStoreOutcome(status: InboxStoreStatus.failed, errorCode: 'TEST_OFFLINE');
+      },
+    ));
+
+    test('B5T-001 first applied text fanout marks once across two physical targets', () async {
+      final fixture = buildDailyTextFanout();
+      final stores = <(String, String)>[];
+      final result = await submitDailyTextFanout(id: 'daily-text-fresh', authoring: fixture.authoring, stores: stores);
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.directEventFanoutGenerationId, 'daily-text-fresh');
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied]);
+      expect(fixture.stagedRows, hasLength(2));
+      expect(dailyMessages.ordinaryStageCalls, isEmpty, reason: 'the scalar authoring hook never ran');
+      expect(stores.map((entry) => entry.$1).toSet(), textFanoutTargets.toSet());
+      expect(dailyService.sendCallCount, 2);
+      expect(dailyMessages.directCustodyRows, hasLength(2), reason: 'offline failures retain both physical owners');
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1), reason: 'one logical authored admission, not two physical targets');
+    });
+
+    test('B5T-002 exact surviving text re-delivery never restages or marks', () async {
+      final fixture = buildDailyTextFanout();
+      final stores = <(String, String)>[];
+      await submitDailyTextFanout(id: 'daily-text-survivors', authoring: fixture.authoring, stores: stores, observe: false);
+      final before = dailyMessages.directCustodyRows.values.toList();
+      expect(before, hasLength(2));
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied]);
+      final events = List<String>.of(fixture.events);
+      final sent = dailyService.sendCallCount;
+      final result = await submitDailyTextFanout(id: 'daily-text-survivors', authoring: fixture.authoring, stores: stores);
+      expect(result.$1, SendChatMessageResult.sendFailed, reason: 'both exact survivors remain after failed retry STORE');
+      expect(fixture.events, events, reason: 'survivors precede resolver, encryption and staging');
+      expect(dailyService.sendCallCount, sent);
+      expect(stores, hasLength(4));
+      for (final entry in before) {
+        final retained = dailyMessages.directCustodyRows.values.singleWhere((row) => row.recipientPeerId == entry.recipientPeerId);
+        expect(stores.where((store) => store.$1 == entry.recipientPeerId).map((store) => store.$2),
+          [entry.wireEnvelope, entry.wireEnvelope]);
+        expect(retained.incarnationId, entry.incarnationId);
+        expect(retained.wireEnvelope, entry.wireEnvelope);
+        expect(retained.retryCount, entry.retryCount + 1);
+      }
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5T-003 completed existing text generation is terminal without remint or activity', () async {
+      final fixture = buildDailyTextFanout();
+      final stores = <(String, String)>[];
+      await submitDailyTextFanout(id: 'daily-text-terminal', authoring: fixture.authoring, stores: stores,
+        observe: false, acceptStore: true);
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied]);
+      expect(dailyMessages.directCustodyRows, isEmpty);
+      expect(stores, hasLength(2));
+      final sent = dailyService.sendCallCount;
+      final result = await submitDailyTextFanout(id: 'daily-text-terminal', authoring: fixture.authoring, stores: stores);
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.directEventFanoutGenerationId, 'daily-text-terminal');
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied, DirectEventFanoutStageOutcome.terminal]);
+      expect(fixture.stagedRows, hasLength(2), reason: 'the second attempt adds no physical owner');
+      expect(stores, hasLength(2));
+      expect(dailyService.sendCallCount, sent);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5T-004 selector and atomic-stage refusals create no activity or physical owners', () async {
+      for (final selectorOff in [true, false]) {
+        final fixture = buildDailyTextFanout(enabled: !selectorOff, refuseStage: !selectorOff);
+        final stores = <(String, String)>[];
+        final result = await submitDailyTextFanout(id: 'daily-text-refused-$selectorOff', authoring: fixture.authoring, stores: stores);
+        expect(result.$1, SendChatMessageResult.sendFailed);
+        expect(result.$2, isNull);
+        expect(fixture.outcomes, selectorOff ? isEmpty : [DirectEventFanoutStageOutcome.refused]);
+        expect(fixture.events.where((event) => event.startsWith('encrypt:')), selectorOff ? isEmpty : hasLength(2));
+        expect(fixture.stagedRows, isEmpty);
+        expect(stores, isEmpty);
+      }
+      expect(dailyMessages.directCustodyRows, isEmpty);
+      expect(dailyMessages.saved, isEmpty);
+      expect(dailyService.sendCallCount, 0);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5T-005 applied text edit fanout preserves mutation delivery without activity', () async {
+      final fixture = buildDailyTextFanout();
+      final stores = <(String, String)>[];
+      await submitDailyTextFanout(id: 'daily-text-edit', authoring: fixture.authoring, stores: stores,
+        observe: false, acceptStore: true);
+      final result = await submitDailyTextFanout(id: 'daily-text-edit', authoring: fixture.authoring, stores: stores,
+        action: MessagePayload.actionEdit, acceptStore: true);
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.text, 'fanout edited text');
+      expect(fixture.mutationKinds, [OutgoingOrdinaryAttemptKind.edit]);
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied, DirectEventFanoutStageOutcome.applied]);
+      expect(fixture.stagedRows, hasLength(4));
+      expect(stores, hasLength(4));
+      expect(dailyMessages.directMutationCustodyRows, isEmpty, reason: 'both applied mutation owners completed');
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5T-006 present null observation stays unarmed through applied text fanout', () async {
+      final fixture = buildDailyTextFanout();
+      final stores = <(String, String)>[];
+      final result = await submitDailyTextFanout(id: 'daily-text-null', authoring: fixture.authoring, stores: stores,
+        capturedActivity: (reporter: dailyReporter, capture: null));
+      expect(result.$1, SendChatMessageResult.success);
+      expect(fixture.outcomes, [DirectEventFanoutStageOutcome.applied]);
+      expect(fixture.stagedRows, hasLength(2));
+      expect(stores, hasLength(2));
+      expect(dailyMessages.directCustodyRows, hasLength(2));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
     const b5Hash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     const b5Expiry = 2100000000000;
     const b5Snapshot = DirectContactFanoutSnapshot(
