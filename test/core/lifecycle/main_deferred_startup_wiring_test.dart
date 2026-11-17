@@ -429,7 +429,10 @@ void main() {
     );
     expect(foundationBody, contains('DirectBlobFreeLinkedServices('));
     for (final binding in const <String>[
-      'initializeBridge: bridge.initialize,',
+      'initializeBridge: () async {\n'
+          '            await bridge.initialize();\n'
+          '            activeIdentityReporter.attachBridge(bridge);\n'
+          '          },',
       'startMessageRouter: messageRouter.start,',
       'startChatMessageListener: chatMessageListener.start,',
       'startReactionListener: reactionListener.start,',
