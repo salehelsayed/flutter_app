@@ -13912,6 +13912,23 @@ This is Dart/fake-bridge proof: producer adoption and ongoing-day semantics,
 matching packaged native integration, devices and full B7/BL29 acceptance
 remain separate. No additional Go run is claimed by this Dart unit.
 
+The native activity-mark guards at `49a8b77cb5f6b2c34ffaa55d6a3dabcae80f73da`
+accept an optional nonnegative Int64 `occurredAtUnixMillis` only on `mark`.
+They preserve the legacy six required fields, strict unknown/duplicate-field
+rejection, `flush` rejection of occurrence, and the existing positive safe-integer
+revision bound. The timestamp itself retains the full nonnegative Int64 range.
+On the reviewed two-file patch over `62bba8748`, Android JVM GREEN passed all
+13 contract cases; iOS simulator XCTest GREEN passed the 13 timestamp contracts
+and 12 existing critical-task cases (25 total), with no failures, errors or skips.
+Swift RED retained nine controls passing and four intended assertion failures.
+Source pins matched before/after execution and the current source, and owned
+child groups were empty after cleanup. These are native unit proofs, not JNI,
+physical-device, signed-artifact, complete B7/BL29 or release acceptance.
+Android evidence is in
+`~/.codex/investigations/batch14-native-occurrence-20261117/astra-green-actual/`;
+Swift raw output, summary and XCResult remain in the execution worktree's
+`.codex-test-logs/batch14-native-occurrence-green-62b/attempt1/ios/`.
+
 B7's partial call witness at `3d00fdd197052c5171f24883e410d82a97105517`
 marks each live in-process call lifetime once after ten monotonic connected
 seconds. Reconnect gaps pause accumulation; initialization, app open, ringing,
