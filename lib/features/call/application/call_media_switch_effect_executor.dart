@@ -125,6 +125,7 @@ final class CallMediaSwitchEffectExecutor {
     required int reconnectGeneration,
     required int deadlineMs,
     required bool Function() canApply,
+    bool retainVideo = false,
   }) {
     if (_closed ||
         !videoEnabled ||
@@ -144,7 +145,7 @@ final class CallMediaSwitchEffectExecutor {
       }
     }
     // Retire capture before a held SDP or authority lookup can complete.
-    _track(host.closeVideo());
+    if (!retainVideo) _track(host.closeVideo());
     final pending = _transactions[machine.currentSwitchId];
     if (pending != null && !identical(pending, _selected)) {
       _apply(

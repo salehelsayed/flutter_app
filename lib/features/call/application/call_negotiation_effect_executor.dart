@@ -190,6 +190,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   CallEventType? _mediaReadinessEventType;
   int? _mediaReadinessIceGeneration;
   int? _mediaReadinessReconnectGeneration;
+  (CallId, int)? _pendingMediaRecoveryCommit;
   final Set<(CallId, CallEventType)> _closedMediaReadinessPhases =
       <(CallId, CallEventType)>{};
   int _candidateInFlightCount = 0;
@@ -222,7 +223,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   CallEngineEvent? _heldCloseEvent;
 
   /// Reuses the existing observer for an exact canonical recovery episode.
-  bool rearmMediaRecoveryObservation(CallSessionSnapshot snapshot) {
+  bool rearmMediaRecoveryObservation(
+    CallSessionSnapshot snapshot, {
+    bool waitForCommit = false,
+  }) {
     final current = _readSnapshotSafely();
     if (_closed ||
         snapshot.callId == null ||
@@ -236,6 +240,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       snapshot.callId!,
       CallEventType.mediaRecovered,
     ));
+    final phase = (snapshot.callId!, snapshot.reconnectGeneration);
+    if (waitForCommit && _pendingMediaRecoveryCommit != phase) {
+      _pendingMediaRecoveryCommit = phase;
+      _cancelMediaReadinessWatch();
+    }
     return true;
   }
 
@@ -254,6 +263,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           current.state != CallState.reconnecting ||
           current.reconnectGeneration != snapshot.reconnectGeneration) {
         return;
+      }
+      if (_pendingMediaRecoveryCommit ==
+          (snapshot.callId!, snapshot.reconnectGeneration)) {
+        _pendingMediaRecoveryCommit = null;
       }
       try {
         await _startMediaReadinessWatch(current, CallEventType.mediaRecovered);
@@ -1345,6 +1358,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     final generation = type == CallEventType.mediaRecovered
         ? engine.iceGeneration
         : null;
+    if (type == CallEventType.mediaRecovered &&
+        _pendingMediaRecoveryCommit ==
+            (callId, session.reconnectGeneration)) {
+      return;
+    }
     if (_closedMediaReadinessPhases.contains(phase)) return;
     if (_mediaReadinessCallId == callId &&
         _mediaReadinessEventType == type &&
@@ -1461,6 +1479,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         session.callId != callId ||
         session.isTerminal ||
         session.reconnectGeneration != _mediaReadinessReconnectGeneration ||
+        (type == CallEventType.mediaRecovered &&
+            _pendingMediaRecoveryCommit ==
+                (callId, session.reconnectGeneration)) ||
         (_mediaReadinessIceGeneration != null &&
             _mediaReadinessIceGeneration != engine.iceGeneration) ||
         _mediaReadinessTypeFor(session.state) != type) {
@@ -1671,6 +1692,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       }
       _candidateRetryCount = 0;
       _pendingMediaLossCallId = null;
+      _pendingMediaRecoveryCommit = null;
       _cancelMediaReadinessWatch();
       _pendingEngineEvent = null;
       _pendingLocalCandidates.clear();
