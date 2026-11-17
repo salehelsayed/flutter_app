@@ -970,7 +970,7 @@ void main() {
         expect(f.track.stops, boundary == 'retain' ? 0 : 1);
         expect(f.stream.disposals, boundary == 'retain' ? 0 : 1);
         expect(f.renderer.binds, 1);
-        expect(local.binds, 1);
+        expect(local.binds, boundary == 'retain' ? 1 : 2);
         expect(f.renderer.disposals, 0);
         if (boundary == 'retain') {
           expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
