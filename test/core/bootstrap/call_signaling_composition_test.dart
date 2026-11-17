@@ -13400,10 +13400,11 @@ final class _B7ActivityRig {
   }) => _b7Bound(() async {
     Database? database;
     if (durableCheckpoint) {
-      database = await _b7Bound(_openKilledCallDatabase(inMemoryDatabasePath));
-      final ownedDatabase = database;
+      final ownedDatabase =
+          await _b7Bound(_openKilledCallDatabase(inMemoryDatabasePath));
+      database = ownedDatabase;
       addTearDown(() => _b7Bound(ownedDatabase.close()));
-      await _b7Bound(database.insert('identity', <String, Object?>{
+      await _b7Bound(ownedDatabase.insert('identity', <String, Object?>{
         'id': 1,
         'peer_id': 'local-account',
         'public_key': 'local-public-key',
@@ -13414,7 +13415,7 @@ final class _B7ActivityRig {
         'created_at': '2026-08-30T00:00:00.000Z',
         'updated_at': '2026-08-30T00:00:00.000Z',
       }));
-      await _b7Bound(database.insert('contacts', <String, Object?>{
+      await _b7Bound(ownedDatabase.insert('contacts', <String, Object?>{
         'peer_id': 'video-contact',
         'public_key': 'remote-public-key',
         'ml_kem_public_key': 'remote-mlkem-public-key',
