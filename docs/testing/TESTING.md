@@ -13642,6 +13642,38 @@ This is Dart/fake-bridge proof: producer adoption and ongoing-day semantics,
 matching packaged native integration, devices and full B7/BL29 acceptance
 remain separate. No additional Go run is claimed by this Dart unit.
 
+B7's partial call witness at `3d00fdd197052c5171f24883e410d82a97105517`
+marks each live in-process call lifetime once after ten monotonic connected
+seconds. Reconnect gaps pause accumulation; initialization, app open, ringing,
+Answer and negotiation alone do not qualify. The real factory/coordinator and
+actual reporter with a fake bridge prove pre-checkpoint timing, 6+4 accumulation,
+duplicate-checkpoint handling, stale timer/lifetime rejection and the original
+identity, profile, consent-epoch and null-capture fences. Engines, native journals
+and transports are fakes; this is host proof, not device or RTP evidence.
+
+All seventeen selected host checks passed, followed by one 350-case workflow in
+a fresh execution window. Call-signaling's 2,207 cases include all 319 composition
+cases, with each of the seventeen B7 cases visible once. V2 negotiation 132,
+camera feedback 19 and WebRTC 75 preservation cases passed. Counts overlap across
+checks. All 195 source/Git pins matched at 59 clean boundaries. The accepted
+bootstrap DTR correction updates only two provenance-backed hashes, preserving
+the historical callback, relocation URIs and ownership guards.
+
+Fixtures must wait for `composition.current` to publish ringing after checkpoint
+persistence before Answer. A committed fake native terminal journal must remain
+available to `attach` until its terminal ACK: iOS can commit through
+`project(ended)` without calling `end`. Synchronous checkpoint failure preserves
+diagnostics, terminalization and the caller's original error; it does not
+increment the separate background `internalFailureCount`. Earlier rejected RED
+streams remain separate from the accepted causal RED `5501fe775`.
+
+This frozen B7 candidate did not compose the later Core/Go occurrence-time API.
+Ongoing-day requalification, exact midnight attribution, deferred handoff and
+native/background handling remain held, as do full B7/BL29 and published-build
+acceptance. Scoped closure is
+`codex-complete-partial-source-red-seventeen-host-workflow-3d00fdd19.json`,
+SHA-256 `85f4b79cd6736e08e6a36b5ea2b59ece5f2402788ebf322cb4331b8b84967fa6`.
+
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate
 `07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
