@@ -13507,6 +13507,16 @@ timeouts; `Future<bool>.sync` can return the same narrow future, not normalize i
 `test/core/diagnostics/engagement_chat_observer_test.dart` E2O-011 retains the throwing fixture; verified contrasts are retained under
 `.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-observer-green/first-failure-investigation/probe-run1/`.
 
+Async widget send fakes must collect observations and leave guarded `expect`
+calls until the owned send future has joined. In the BL29 pre-intent fixture,
+an assertion conflicted with an active `tester.pump`; production error handling
+caught it before the fake reached `markCaptured`, so negative mark assertions
+could pass after an aborted callback. Require a completion flag set after the
+fake's admission and mark step. The corrected fixture and reviewed contract
+pins passed all 288 names in the three changed files, with no errors or skips.
+First failures and the corrected receipt remain separate under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-ui-capture-green/`.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation
