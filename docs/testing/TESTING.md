@@ -1511,6 +1511,21 @@ The preflight and platform-binding repairs passed 188 workflow tests and the
 existing 10-case connectivity-launch contract in
 `.codex-test-logs/all-tests-y227gs8x/platform-preflight-repair-run-001/`.
 
+The iOS notification runner's `--selection-only` path validates the Node-backed
+matrix, selector pairing and retry policy before requiring Flutter, Xcode or
+simulator tools, and before creating a result directory. Actual native execution
+retains those SDK checks. The Python full/reliability route-owner audit also
+lists Dart runners whose imports need the frozen Flutter package resolution;
+run `flutter pub get --offline --enforce-lockfile` before that audit in a fresh
+checkout. Missing `.dart_tool/package_config.json` surfaced as three generic
+scenario-expansion errors; a bounded listing diagnostic exposed the unresolved
+`crypto`/`flutter_app` packages. The verified focused result combines ten initial
+passes with the single audit parent passing after setup; retain the first error.
+This qualifies the metadata path, not the complete Linux workflow or device
+journeys. Evidence: `/Users/I560101/.codex/investigations/`
+`workflow-metadata-preflight-20261117/green-b01-first/` and
+`green-b01-recovery/`; accepted source `b01b8728c`.
+
 Fixed-wake device observation must capture the live notification dump alongside
 the independent sender/recipient log reads, and collect slower relay diagnostics
 after observing the generic card. Fast warm recovery can retire that card in
