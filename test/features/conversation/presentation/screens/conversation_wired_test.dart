@@ -118,6 +118,11 @@ import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import '../../../stickers/sticker_usage_tally_fixture.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
+import '../../../stickers/fake_custom_sticker_library.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fixtures/complete_pdf.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
@@ -2083,6 +2088,7 @@ void main() {
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
     ActiveIdentityReporter? activityReporter,
+    CustomStickerLibrary? customStickerLibrary,
     SendPrivateMediaFanoutChatMessageFn? sendPrivateMediaFanoutFn,
     EditChatMessageFn? editFn,
     DeleteMessageForMeFn? deleteForMeFn,
@@ -2139,6 +2145,8 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: themeOverride,
+        builder: customStickerLibrary == null ? null : (context, child) =>
+            CustomStickerScope(library: customStickerLibrary, child: child!),
         home: ConversationWired(
           contact: contact ?? makeContact(),
           identityRepo: identityRepo,
@@ -4086,6 +4094,154 @@ void main() {
         findsNothing,
       );
     });
+
+    for (final (name, custom) in [
+      ('B13S-001 catalog sticker hands off successfully with a present excluded activity record', false),
+      ('B13S-002 custom sticker hands off successfully with a present excluded activity record', true),
+    ]) {
+      testWidgets(name, (tester) async {
+        const budget = Duration(seconds: 2);
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        final root = Directory.systemTemp.createTempSync('b13-sticker-exclusion-');
+        addTearDown(() { if (root.existsSync()) root.deleteSync(recursive: true); });
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(root.path);
+        addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+        final photo = File('${root.path}/draft.png')..writeAsBytesSync(_tinyPngBytes);
+        final stickerBytes = File('assets/stickers/orbit_crew/planet/angry.webp').readAsBytesSync();
+        final customFile = File('${root.path}/custom.webp')..writeAsBytesSync(stickerBytes);
+        final library = _ExclusionStickerLibrary(customFile);
+        final customRow = await library.admit(fakeStickerAsset('exclusion', filePath: customFile.path)).timeout(budget);
+        final fixture = (await tester.runAsync(() => MediaRepositoryRealDbFixture.create().timeout(budget)))!;
+        addTearDown(() => fixture.dispose().timeout(budget));
+        await tester.runAsync(() => seedPersistedIncumbentContact(fixture).timeout(budget));
+        final files = TrackingDurableConversationMediaFileManager(root);
+        final identity = makeIdentity();
+        final bridge = _UiCaptureBridge();
+        final reporter = ActiveIdentityReporter(statePath: '/unused/b13-sticker-exclusion.json');
+        reporter.attachBridge(bridge);
+        reporter.observeIdentity(accountPeerId: identity.peerId,
+          rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)), profileBinding: _uiCaptureBinding);
+        await reporter.observeConsent((enabled: true, consentEpoch: 7)).timeout(budget);
+        expect(reporter.captureOwner(expectedAccountPeerId: identity.peerId), isNotNull);
+        final uploaded = <List<int>>[];
+        final sent = <MediaAttachment>[];
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        String? observedText;
+        String? sentId;
+        var calls = 0;
+        var callbackCompleted = false;
+        SendChatMessageResult? handoffResult;
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService, required MessageRepository messageRepo,
+          required String targetPeerId, required String text,
+          required String senderPeerId, required String senderUsername,
+          String? messageId, required bool preassignedMessageIdIsFresh,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          String? authoredTextIntentToken, String? timestamp, Bridge? bridge,
+          String? recipientMlKemPublicKey, String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments, PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo, TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          calls++;
+          observed = capturedActivity;
+          observedText = text;
+          sentId = messageId;
+          sent.addAll(mediaAttachments ?? const []);
+          final result = await _instantSuccessSendFn(
+            p2pService: p2pService, messageRepo: messageRepo, targetPeerId: targetPeerId,
+            text: text, senderPeerId: senderPeerId, senderUsername: senderUsername,
+            messageId: messageId, preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+            authoredTextIntentToken: authoredTextIntentToken, timestamp: timestamp,
+            mediaAttachments: mediaAttachments, privateMediaPolicy: privateMediaPolicy,
+          ).timeout(budget);
+          handoffResult = result.$1;
+          callbackCompleted = true;
+          return result;
+        }
+        Future<void>? sending;
+        var finished = false;
+        try {
+          await pumpScreen(tester, identityRepo: FakeIdentityRepository(identity),
+            messageRepo: fixture.messageRepo, chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(), messageRepo: fixture.messageRepo,
+              contactRepo: FakeContactRepository()), contactRepo: FakeContactRepository(),
+            initialText: 'draft kept for later', initialAttachments: [photo],
+            bridge: bridge, activityReporter: reporter, customStickerLibrary: library,
+            mediaAttachmentRepo: fixture.repo, mediaFileManager: files,
+            directMediaBlobCustodyClientEnabled: false, sendFn: sendFn,
+            uploadMediaFn: ({required bridge, required localFilePath, required mime,
+              required recipientPeerId, mediaFileManager, blobId, width, height,
+              durationMs, waveform, allowedPeers, deleteSourceWhenDone = false, preparedArtifact}) async {
+              uploaded.add(File(localFilePath).readAsBytesSync());
+              final canonicalPath = files.relativePathForAttachment(
+                contactPeerId: recipientPeerId, blobId: blobId!, mime: mime);
+              final destination = await files.localPathForAttachment(
+                contactPeerId: recipientPeerId, blobId: blobId, mime: mime).timeout(budget);
+              await File(localFilePath).copy(destination).timeout(budget);
+              return MediaAttachment(id: blobId!, messageId: '', mime: mime,
+                size: uploaded.last.length, mediaType: 'image', width: width, height: height,
+                localPath: canonicalPath, downloadStatus: 'done', createdAt: '2026-11-17T00:00:00.000Z',
+                contentHash: 'exclusion-test-hash', encryptionKeyBase64: 'exclusion-test-key',
+                encryptionNonce: 'exclusion-test-nonce', encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
+            }).timeout(budget);
+          final screen = tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+          screen.onStickerToggle!();
+          await tester.pump();
+          await pumpUntilAsyncIo(tester, () => find.byType(StickerPanel).evaluate().isNotEmpty, timeout: budget);
+          final bundled = tester.widget<BundledStickerPanel>(find.byType(BundledStickerPanel));
+          final panel = tester.widget<StickerPanel>(find.byType(StickerPanel));
+          if (custom) {
+            expect(bundled.onSendCustom, isNotNull, reason: 'the production custom-send callback is wired independently of panel visibility');
+            sending = (bundled.onSendCustom! as Future<void> Function(String))(customRow.id)
+                .whenComplete(() => finished = true);
+          } else {
+            final entry = panel.catalog.byId('orbit_crew.planet.angry');
+            expect(entry, isNotNull);
+            sending = (bundled.onSend as Future<void> Function(StickerEntry))(entry!)
+                .whenComplete(() => finished = true);
+          }
+          await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+          await sending.timeout(budget);
+          expect(callbackCompleted, isTrue, reason: 'the observing fake must finish the successful handoff');
+          expect(calls, 1);
+          expect(handoffResult, SendChatMessageResult.success);
+          expect(observedText, '');
+          expect(sent, hasLength(1));
+          expect(sent.single.stickerId, custom ? 'custom' : 'orbit_crew.planet.angry');
+          expect(sent.single.mime, 'image/webp');
+          expect(sent.single.width, 512);
+          expect(sent.single.height, 512);
+          expect(uploaded, [stickerBytes]);
+          expect((await tester.runAsync(() => fixture.messageRepo.getMessage(sentId!).timeout(budget)))?.status, 'delivered');
+          final material = await tester.runAsync(() => fixture.repo.getAttachmentsForMessage(sentId!, owner: MediaOwnerLane.direct).timeout(budget));
+          expect(material!.single.stickerId, sent.single.stickerId);
+          expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'draft kept for later');
+          expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+          expect(photo.readAsBytesSync(), _tinyPngBytes);
+          if (custom) {
+            expect(library.prepareCalls, [(customRow.id, defaultCustomStickerSendRepresentation)]);
+          }
+          expect(reporter.captureOwner(expectedAccountPeerId: identity.peerId), isNotNull);
+          expect(observed, isNotNull, reason: 'exclusion is a present record so the use case cannot capture a later owner');
+          expect(observed!.reporter, isNull, reason: 'sticker eligibility remains excluded until pre-preparation capture is implemented');
+          expect(observed!.capture, isNull);
+        } finally {
+          if (sending != null) {
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            await sending.timeout(budget);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(budget);
+        }
+      });
+    }
 
     for (final strict in [true, false]) {
       testWidgets('the field toggle opens the panel and a tapped sticker goes '
@@ -20951,5 +21107,18 @@ class _UiCaptureBridge extends FakeBridge {
       if (request['op'] == 'mark') 'accepted': true,
       if (request['op'] == 'flush') 'queued': true,
     }});
+  }
+}
+
+/// The shared fake intentionally returns a nonexistent path; this route fixture
+/// needs real prepared bytes to reach the incumbent successful media handoff.
+class _ExclusionStickerLibrary extends FakeCustomStickerLibrary {
+  _ExclusionStickerLibrary(this.file);
+  final File file;
+  @override
+  Future<PendingComposerMedia> prepareSend(String id, {required CustomStickerSendRepresentation representation}) async {
+    prepareCalls.add((id, representation));
+    final prepared = file.copySync('${file.parent.path}/prepared-custom-${prepareCalls.length}.webp');
+    return PendingComposerMedia(file: prepared, budgetBytes: prepared.lengthSync(), width: 512, height: 512);
   }
 }

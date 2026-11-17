@@ -13661,6 +13661,17 @@ This closes text fanout only; first preparation/later-finalization suppression,
 voice/sticker, ADD reactions, weekly wiring, native/device and overall B5/BL29
 proof remain separate. This testing note requires no new execution.
 
+Batch13 is an incremental daily-active slice. Normal composer final-media
+handoffs retain the original owner captured before preparation. First-preparation
+admission, voice and linked-private UI fanout remain uncounted; sticker daily
+observations are deliberately excluded by forwarding a present null-owner record.
+This leaves early preparation/upload failures undercounted rather than claiming
+complete B5 coverage. Calls use accepted partial `3d00fdd19`, without caller
+`012338f71`'s occurrence timestamp. Processing-time day attribution near midnight
+remains a limit until that separate wire integration lands. Beta diagnostics
+remain default ON with the existing profile/epoch fences. Composed checks remain
+pending; this scope note claims no Batch13, weekly, native/device or overall closure.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation
