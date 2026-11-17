@@ -929,17 +929,12 @@ run_scenario() {
 }
 
 main() {
-  require_command flutter
   require_command node
-  require_command xcodebuild
-  require_command xcrun
 
   if ! [[ "$scenario_retries" =~ ^[0-9]+$ ]]; then
     printf '--retries must be a non-negative integer.\n' >&2
     exit 2
   fi
-
-  mkdir -p "$RESULT_ROOT"
 
   if [[ ! -f "$MATRIX_FIXTURE" ]]; then
     printf 'Missing iOS notification matrix fixture: %s\n' "$MATRIX_FIXTURE" >&2
@@ -960,6 +955,11 @@ main() {
     print_selected_scenarios
     exit 0
   fi
+
+  require_command flutter
+  require_command xcodebuild
+  require_command xcrun
+  mkdir -p "$RESULT_ROOT"
 
   if [[ "$skip_build" -eq 0 ]]; then
     flutter build ios --simulator --debug --target lib/main.dart \
