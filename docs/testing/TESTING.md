@@ -11594,9 +11594,30 @@ visible and cannot become an ordinary first-attempt PASS.
   `astra-preadoption-green-full-raw-verification-e46a15a67.json` and
   `astra-native-c495-l3c-post-release-rtp.json` in the investigation directory
   above. No Go, bridge or quiet-recovery lane was selected for this delta.
-  These host results do not supersede the native failure. Exact-candidate
-  three-leg rendering/video-RTP proof in both handover directions remains
-  pending. Audio RTP was unmeasured. No signed/store or current-main integration
+  Debug 284 on exact `e46a15a67` subsequently passed all five planned native
+  legs on Pixel 6 and iPhone 13: legacy audio, V2 answered as audio, and three
+  independent video runs, with no retries. The independent native audit checked
+  all 30 recovery episodes (maximum 6.222278s) against the unchanged 15.0s gate
+  and confirmed real 60s/65s radio windows. All 12 video phone/direction streams
+  had sustained positive RTP growth across 25–51 samples, and all 24 main frames
+  showed actual remote video after the latest recovery and before End. Each
+  video call granted the Pixel camera once and released it only at `call_end`.
+  Leg 3a's return-direction main captures were late at back+57.6s/+78.3s due
+  to MCP latency. The review accepted the longer observation: both frames were
+  after recovery and before End, with no recovery, radio, RTP or assertion
+  relaxation. Every main pair passed; unused extra frames are not acceptance
+  evidence. The three planned video runs do not establish a general reliability
+  rate or uninterrupted rendering at every instant.
+  The debug-284 install-over preserved schema 132 and device data; Pixel's
+  first-install time stayed unchanged, and iPhone 13/11 WDA remained available.
+  Exact APK, IPA, Runner, source and audit identities are recorded in
+  `codex-complete-scoped-source-host-debug284-five-leg-native-e46a15a67.json`
+  (SHA-256 `48643c7163dbf46c631f6e1be28a1faadad553249dffc6d01d072d52964cabb4`)
+  in the investigation directory above, with native raw evidence under
+  `.codex-test-logs/bl26-proof/e46/`. This closes the scoped source/host/native
+  blocker on that candidate; preserve the old `c49569d72` native FAIL and all
+  first-failure receipts without relabeling them. Audio RTP and audible quality
+  remain unmeasured. No signed/store, current-main integration, push or deploy
   claim follows; the first recovery after an optional audio-to-video switch is
   outside this completed-recovery regression's proven scope.
   The relay distinguishes short encrypted-payload expiry from active routing.
