@@ -6433,6 +6433,15 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    final reporter = widget.activityReporter;
+    final account = _identity?.peerId;
+    ActiveIdentityReporterCapture? capture;
+    if (account != null) {
+      try {
+        capture = reporter?.captureOwner(expectedAccountPeerId: account);
+      } catch (_) {}
+    }
+    final capturedActivity = (reporter: reporter, capture: capture);
     final outcome = await _voiceCaptureController.stop();
     if (outcome == null || !_voiceCaptureController.isCurrentOutcome(outcome)) {
       return;
@@ -6466,6 +6475,7 @@ class _ConversationWiredState extends State<ConversationWired>
       recording,
       outcome.waveform,
       captureOutcome: outcome,
+      capturedActivity: capturedActivity,
     );
   }
 
@@ -6502,16 +6512,19 @@ class _ConversationWiredState extends State<ConversationWired>
     AudioRecording recording,
     List<double> waveform, {
     ConversationVoiceCaptureOutcome? captureOutcome,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
-    final reporter = widget.activityReporter;
-    ActiveIdentityReporterCapture? capture;
-    try {
-      capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
-    } catch (_) {}
-    final capturedActivity = (reporter: reporter, capture: capture);
+    final reporter = capturedActivity == null ? widget.activityReporter : capturedActivity.reporter;
+    ActiveIdentityReporterCapture? capture = capturedActivity?.capture;
+    if (capturedActivity == null) {
+      try {
+        capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
+      } catch (_) {}
+    }
+    final activityObservation = (reporter: reporter, capture: capture);
     final quotedMessageId = _activeQuoteMessageId;
 
     // 362 ADMISSION BOUNDARY (voice). Both callers of this method — the
@@ -6831,7 +6844,7 @@ class _ConversationWiredState extends State<ConversationWired>
           preparedArtifact: voiceArtifact,
           mediaAdmission: voiceAdmission,
           preassignedMessageIdIsFresh: true,
-          capturedActivity: capturedActivity,
+          capturedActivity: activityObservation,
         );
         if (result == SendVoiceMessageResult.success) {
           _uploadActivityController.markUploadCompleted(
@@ -7142,6 +7155,15 @@ class _ConversationWiredState extends State<ConversationWired>
         VoiceRecordingState.transcribing) {
       return;
     }
+    final reporter = widget.activityReporter;
+    final account = _identity?.peerId;
+    ActiveIdentityReporterCapture? capture;
+    if (account != null) {
+      try {
+        capture = reporter?.captureOwner(expectedAccountPeerId: account);
+      } catch (_) {}
+    }
+    final capturedActivity = (reporter: reporter, capture: capture);
     _voiceTextGeneration++;
     final captureOutcome = _pendingReviewOutcome;
     _pendingReviewOutcome = null;
@@ -7166,6 +7188,7 @@ class _ConversationWiredState extends State<ConversationWired>
       recording,
       waveform,
       captureOutcome: captureOutcome,
+      capturedActivity: capturedActivity,
     );
   }
 

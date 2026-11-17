@@ -4002,19 +4002,23 @@ void main() {
 
     // These are caller wiring/fence tests. The observing callback is not a
     // substitute for the use-case durable-admission tests in the GREEN unit.
-    for (final (id, scenario) in [
-      ('B14U2V-001', 'same'),
-      ('B14U2V-002', 'unarmed'),
-      ('B14U2V-003', 'profile'),
+    for (final (id, scenario, review) in [
+      ('B14U2V-001', 'same', false),
+      ('B14U2V-002', 'unarmed', false),
+      ('B14U2V-003', 'profile', false),
+      ('B14U2V-010', 'same', true),
+      ('B14U2V-011', 'unarmed', true),
+      ('B14U2V-012', 'epoch', true),
+      ('B14U2V-013', 'profile', true),
     ]) {
-      testWidgets('$id voice carries the original owner across its first admission await ($scenario)', (tester) async {
+      testWidgets('$id voice carries the original owner across its first admission await ($scenario)${review ? ' review send' : ''}', (tester) async {
         installPrivateMediaProtectionEventChannelStub(tester);
         UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
         final root = Directory.systemTemp.createTempSync('b14-u2-voice-');
         addTearDown(() { if (root.existsSync()) root.deleteSync(recursive: true); });
         final voice = File('${root.path}/voice.m4a')..writeAsBytesSync(List<int>.filled(2048, 9));
         final recorder = FakeAudioRecorderService()
-          ..fakeDurationMs = 1200
+          ..fakeDurationMs = review ? 300000 : 1200
           ..fakeSizeBytes = 2048
           ..fakeOutputPath = voice.path;
         final messages = FakeMessageRepository();
@@ -4070,8 +4074,15 @@ void main() {
           ConversationScreen screen() => tester.widget<ConversationScreen>(find.byType(ConversationScreen));
           await (screen().onRecordStart! as Future<void> Function())().timeout(budget);
           await tester.pump(const Duration(milliseconds: 100));
-          sending = (screen().onRecordStop! as Future<void> Function())()
-              .whenComplete(() => finished = true);
+          if (review) {
+            await recorder.triggerAutoStop().timeout(budget);
+            await tester.pump();
+            sending = (screen().onReviewSend! as Future<void> Function())()
+                .whenComplete(() => finished = true);
+          } else {
+            sending = (screen().onRecordStop! as Future<void> Function())()
+                .whenComplete(() => finished = true);
+          }
           await pumpUntilAsyncIo(tester, () => media.snapshotRequested, timeout: budget);
           expect(calls, 0);
           expect(bridge.marks, isEmpty, reason: 'preparation does not create activity');
@@ -4095,6 +4106,127 @@ void main() {
           expect(screen().composerStateListenable!.value.isUploading, isFalse);
         } finally {
           if (!media.snapshotGate.isCompleted) media.snapshotGate.complete();
+          if (sending != null) {
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            await sending.timeout(budget);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(budget);
+        }
+      });
+    }
+
+    for (final (id, scenario) in [
+      ('B14U2V-004', 'same'),
+      ('B14U2V-005', 'unarmed'),
+      ('B14U2V-006', 'epoch'),
+      ('B14U2V-007', 'profile'),
+      ('B14U2V-008', 'refused'),
+      ('B14U2V-009', 'arming'),
+    ]) {
+      testWidgets('$id manual voice Send preserves its owner while actual recorder stop is pending ($scenario)', (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
+        final root = Directory.systemTemp.createTempSync('b14-u2-voice-stop-');
+        addTearDown(() { if (root.existsSync()) root.deleteSync(recursive: true); });
+        final voice = File('${root.path}/voice.m4a')..writeAsBytesSync(List<int>.filled(2048, 9));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = scenario == 'refused' ? 100 : 1200
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = voice.path
+          ..stopGate = Completer<void>();
+        if (scenario == 'arming') recorder.startGate = Completer<void>();
+        final messages = FakeMessageRepository();
+        final media = _B14U2VoiceAdmissionRepository(makeContact())..snapshotGate.complete();
+        final bridge = _UiCaptureBridge();
+        final reporter = await makeReporter(bridge, enabled: scenario != 'unarmed');
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        var calls = 0;
+        var callbackCompleted = false;
+        Future<(SendVoiceMessageResult, ConversationMessage?)> observeVoice({
+          required P2PService p2pService, required MessageRepository messageRepo,
+          required String targetPeerId, required String senderPeerId, required String senderUsername,
+          required AudioRecording recording, required Bridge bridge,
+          String? recipientMlKemPublicKey, MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager, String? text, String? quotedMessageId,
+          List<double>? waveform, String? messageId, String? timestamp, String? blobId,
+          EncryptedMediaArtifact? preparedArtifact, DirectMediaFanoutAdmission? mediaAdmission,
+          bool preassignedMessageIdIsFresh = false,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        }) async {
+          calls++;
+          observed = capturedActivity;
+          final capture = capturedActivity?.capture;
+          if (capture != null) capturedActivity?.reporter?.markCaptured(capture);
+          callbackCompleted = true;
+          return (SendVoiceMessageResult.uploadQueued, null);
+        }
+        Future<void>? starting;
+        Future<void>? sending;
+        var startFinished = false;
+        var finished = false;
+        try {
+          await pumpScreen(tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()), messageRepo: messages,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: messages, contactRepo: FakeContactRepository()),
+            sendFn: _instantSuccessSendFn, activityReporter: reporter, bridge: bridge,
+            mediaAttachmentRepo: media, mediaFileManager: TrackingDurableConversationMediaFileManager(root),
+            audioRecorderService: recorder, sendVoiceMessageFn: observeVoice,
+            directMediaBlobCustodyClientEnabled: false).timeout(budget);
+          ConversationScreen screen() => tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+          starting = (screen().onRecordStart! as Future<void> Function())()
+              .whenComplete(() => startFinished = true);
+          if (scenario == 'arming') {
+            await pumpUntilAsyncIo(tester, () => recorder.startCallCount == 1, timeout: budget);
+            sending = (screen().onRecordStop! as Future<void> Function())()
+                .whenComplete(() => finished = true);
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            recorder.startGate!.complete();
+            await pumpUntilAsyncIo(tester, () => startFinished, timeout: budget);
+            await starting.timeout(budget);
+          } else {
+            await starting.timeout(budget);
+            await tester.pump(const Duration(milliseconds: 100));
+            sending = (screen().onRecordStop! as Future<void> Function())()
+                .whenComplete(() => finished = true);
+            await pumpUntilAsyncIo(tester, () => recorder.stopCallCount == 1, timeout: budget);
+            expect(finished, isFalse);
+            expect(calls, 0, reason: 'the actual recorder stop is still held');
+            expect(bridge.marks, isEmpty);
+            if (scenario == 'profile') {
+              reporter.observeIdentity(accountPeerId: makeIdentity().peerId,
+                rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+                profileBinding: _uiCaptureOtherBinding);
+            }
+            if (scenario == 'unarmed' || scenario == 'epoch' || scenario == 'profile') {
+              await reporter.observeConsent((enabled: true, consentEpoch: scenario == 'profile' ? 7 : 8)).timeout(budget);
+            }
+            recorder.stopGate!.complete();
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+          }
+          await sending.timeout(budget);
+          if (scenario == 'refused' || scenario == 'arming') {
+            expect(calls, 0);
+            expect(callbackCompleted, isFalse);
+            expect(bridge.marks, isEmpty, reason: 'arming cancellation and refused/short stop never admit communication');
+            expect(media.snapshotRequested, isFalse);
+          } else {
+            expect(callbackCompleted, isTrue);
+            expect(calls, 1);
+            expect(observed, isNotNull);
+            expect(observed!.reporter, same(reporter));
+            expect(observed!.capture, scenario == 'unarmed' ? isNull : isNotNull);
+            expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty,
+              reason: 'a pending recorder stop cannot acquire a successor owner');
+          }
+        } finally {
+          if (recorder.startGate case final gate? when !gate.isCompleted) gate.complete();
+          if (recorder.stopGate case final gate? when !gate.isCompleted) gate.complete();
+          if (starting != null) {
+            await pumpUntilAsyncIo(tester, () => startFinished, timeout: budget);
+            await starting.timeout(budget);
+          }
           if (sending != null) {
             await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
             await sending.timeout(budget);
