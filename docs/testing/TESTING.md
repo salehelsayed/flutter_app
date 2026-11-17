@@ -13556,6 +13556,41 @@ secure-network handshake. Its stream deadlines are no-ops, so the fixture owns
 bounded context/reset cancellation and cleanup joins. Raw first failures and
 final verdicts remain under `b29-3-red/` and `b29-3-green/` in the same evidence.
 
+The local Go active-identity reporter retains only the current Berlin ISO-week's
+`active`, `chat`, `call` and `group` bits, with per-relay acknowledged kind subsets
+independent from the daily ACKs. Chat/call/group include weekly active. The local
+`weeklyProjection`, `markWeekly` and `ackWeekly` operations require the existing
+full owner/consent fence; midnight preserves the still-open week, while Monday
+expires it without relabelling pending work. These operations implement no
+engagement network dispatch. Daily configure/mark/flush replies and both wire
+protocol builders/parsers remain unchanged.
+
+An optional `occurredAtUnixMillis` on `mark` uses producer qualification time.
+Go rejects future timestamps and ages over two minutes. Only still-open Berlin
+periods qualify: a prior-day occurrence in the current week can mark weekly
+active without creating today's daily activity; a closed-week occurrence returns
+`accepted: false`. Omitting the field preserves processing-time behavior.
+
+At `b1c1ffa07a4931832930a96636c32e50449f2a02`, Claude-UI ran the approved focused
+Go steps once: 241 named cases passed normally, the same 241 passed with race
+detection, and 18 nested calendar cases passed, without skips or race warnings.
+Counts include parent/subtest records and overlap across modes. All thirteen
+weekly groups and existing B293/B294/B29E1/calendar sentinels passed. Exact
+twenty-file pins and clean source were checked at seven boundaries. Causal RED
+`7aae8fca0c40802fe424234bf0c06f812b55a224` retained two controls passing and 46
+assertion-failure records, without compile/setup failure. First raw streams and
+controllers remain separate in `.audit/b29w/out` and `.audit/b29wg/out` in the
+execution owner's UI-update checkout. Root's scoped closure is
+`codex-complete-scoped-source-red-focused-green-b1c1ffa07.json`, SHA-256
+`8903101388c6cc90365ac1f83fcdcae1eb55a72e2d20b4657da19c1c26fd20c1`.
+
+The new reader accepts legacy six-key daily snapshots. Once a weekly block is
+written, the snapshot has seven keys and the old strict reporter binary rejects
+it: old-binary rollback compatibility is not guaranteed. Retain that limitation
+for integration/release. This is focused local-API proof; the sixteen broader
+selected gates remain Batch 13 composition obligations, and matching Dart,
+network dispatch, native/device and published-build proof remain separate.
+
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate
 `07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
