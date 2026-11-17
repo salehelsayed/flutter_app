@@ -1933,6 +1933,8 @@ _sendChatMessageDiagnosed({
           : null,
       createdAt: createdAt,
       existingOutgoing: existingOutgoing,
+      activityReporter: activityReporter,
+      activityCapture: activityCapture,
       onDirectTextCustodyStaged: onDirectTextCustodyStaged,
       emitSendTiming: emitSendTiming,
       recordMetrics: recordMetrics,
@@ -4731,6 +4733,8 @@ _authorDirectBlobFreeTextFanout({
   required List<Map<String, dynamic>>? media,
   required String? createdAt,
   required ConversationMessage? existingOutgoing,
+  required ActiveIdentityReporter? activityReporter,
+  required ActiveIdentityReporterCapture? activityCapture,
   required void Function(String messageId)? onDirectTextCustodyStaged,
   required void Function({
     required String outcome,
@@ -4848,6 +4852,13 @@ _authorDirectBlobFreeTextFanout({
       break;
   }
   if (staged.outcome == DirectEventFanoutStageOutcome.applied && !isEdit) {
+    if (action == MessagePayload.actionSend && activityCapture != null) {
+      try {
+        activityReporter?.markCaptured(activityCapture);
+      } catch (_) {
+        // The logical admission and every target remain independent of activity.
+      }
+    }
     onDirectTextCustodyStaged?.call(resolvedMessageId);
   }
 

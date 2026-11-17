@@ -13639,6 +13639,28 @@ later-finalization suppression, voice/sticker entry capture, ADD reactions,
 text fanout, whole B5, composed native/device and signed-build proof remain
 separate. The documentation follow-up does not require another execution.
 
+The separate blob-free text-fanout unit closed at `397f79420`: all six B5T
+cases passed once within the 221-case sender and 3,022-case conversation suites.
+Eight effective host checks passed: six fresh plus valid bootstrap (23 cases)
+and contacts (one case) carries, followed by a fresh 350-case workflow last.
+Thirty-eight pins matched at 26 fresh and six carry boundaries; counts overlap.
+The canonical text-fanout closure SHA-256 is
+`000678c92b9cf24452ef08e596c3334701a9bcbb6684c1ba66ce9f904f87387a`.
+
+A direct use-case test must supply the encryption prerequisites that the local
+sender wrapper normally injects. The first `19c3e46d7` fixture omitted bridge/key,
+so all six cases failed before admission; the two-argument correction at
+`a265c3334` closed that fixture finding. Initial GREEN A raw `fd7c0a1b` is invalid
+candidate evidence because the executor changed its checkout from `397` to `012`
+mid-run; it is not a product failure. Never change a checkout under another
+active claim. Dedicated unit trees remained owned through workflow; valid B
+bootstrap/contacts receipts were retained explicitly as carries. Original
+failures, invalid A evidence and valid receipts remain separate under
+`b5-producer-hooks/text-fanout-red/` and `text-fanout-green/` in the BL29 evidence.
+This closes text fanout only; first preparation/later-finalization suppression,
+voice/sticker, ADD reactions, weekly wiring, native/device and overall B5/BL29
+proof remain separate. This testing note requires no new execution.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation
