@@ -13477,6 +13477,8 @@ void main() {
       p2pService: dailyService, messageRepo: dailyMessages, targetPeerId: 'target-peer',
       text: action == MessagePayload.actionEdit ? 'fanout edited text' : 'fanout authored text',
       senderPeerId: 'my-peer', senderUsername: 'Me', messageId: id,
+      bridge: dailyBridge,
+      recipientMlKemPublicKey: testRecipientMlKemPublicKey,
       preassignedMessageIdIsFresh: action == MessagePayload.actionSend,
       timestamp: _dailyDate, createdAt: _dailyDate,
       editedAt: action == MessagePayload.actionEdit ? '2026-11-17T00:00:01.000Z' : null,
