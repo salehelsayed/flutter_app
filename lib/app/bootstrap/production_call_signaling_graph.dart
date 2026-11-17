@@ -97,6 +97,9 @@ import '../../features/identity/domain/models/identity_model.dart';
 import 'call_signaling_composition.dart';
 
 typedef LoadCallSignalingIdentity = Future<IdentityModel?> Function();
+typedef CallActivityMark = void Function();
+typedef CaptureCallActivityMark =
+    CallActivityMark? Function(String expectedOwnAccountPeerId);
 typedef AndroidCallLifecycleAdapterFactory =
     AndroidCallLifecycleAdapter Function({
       required CallCoordinator coordinator,
@@ -125,6 +128,149 @@ typedef ProductionCallSignalingGraphObserver =
     void Function(ProductionCallSignalingGraph graph);
 typedef LoadCallWakeEligibleContacts =
     Future<List<CallWakeEligibleContact>> Function();
+
+Duration Function() _callActivityMonotonicClock() {
+  final clock = Stopwatch()..start();
+  return () => clock.elapsed;
+}
+
+final class _CallActivityLifetime {
+  _CallActivityLifetime(this.callId, this.mark);
+
+  final CallId callId;
+  final CallActivityMark? mark;
+  Duration connected = Duration.zero;
+  Duration? connectedSince;
+  CallTimerHandle? timer;
+  bool marked = false;
+  bool retired = false;
+}
+
+final class _CallActivityObserver {
+  _CallActivityObserver({
+    required this.readActive,
+    required this.ownAccountPeerId,
+    required this.capture,
+    required this.monotonicNow,
+    required this.scheduler,
+  });
+
+  static const threshold = Duration(seconds: 10);
+  final CallSessionSnapshot? Function() readActive;
+  final String ownAccountPeerId;
+  final CaptureCallActivityMark capture;
+  final Duration Function() monotonicNow;
+  final CallTimerScheduler scheduler;
+  _CallActivityLifetime? _current;
+  bool _disposed = false;
+
+  CallActivityMark? _capture() {
+    try {
+      return capture(ownAccountPeerId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void observe() {
+    if (_disposed) {
+      return;
+    }
+    final active = readActive();
+    final callId = active?.callId;
+    if (active == null || active.isTerminal || callId == null) {
+      _retire();
+      return;
+    }
+    var lifetime = _current;
+    if (lifetime == null || lifetime.callId != callId) {
+      _retire();
+      lifetime = _CallActivityLifetime(callId, _capture());
+      _current = lifetime;
+    }
+    if (lifetime.marked) {
+      return;
+    }
+    final now = monotonicNow();
+    if (active.state == CallState.connected) {
+      lifetime.connectedSince ??= now;
+      _arm(lifetime, now);
+    } else {
+      lifetime.connected = _elapsed(lifetime, now);
+      lifetime.connectedSince = null;
+      lifetime.timer?.cancel();
+      lifetime.timer = null;
+    }
+  }
+
+  Duration _elapsed(_CallActivityLifetime lifetime, Duration now) {
+    final since = lifetime.connectedSince;
+    final interval = since == null ? Duration.zero : now - since;
+    return lifetime.connected +
+        (interval.isNegative ? Duration.zero : interval);
+  }
+
+  void _arm(_CallActivityLifetime lifetime, Duration now) {
+    if (lifetime.mark == null || lifetime.timer?.isActive == true) {
+      return;
+    }
+    final remaining = threshold - _elapsed(lifetime, now);
+    late final CallTimerHandle timer;
+    timer = scheduler.schedule(
+      remaining.isNegative ? Duration.zero : remaining,
+      () async {
+        if (!identical(lifetime.timer, timer)) {
+          return;
+        }
+        lifetime.timer = null;
+        try {
+          _onTimer(lifetime);
+        } catch (_) {
+          // Activity reporting cannot fail the call or its timer lane.
+        }
+      },
+    );
+    lifetime.timer = timer;
+  }
+
+  void _onTimer(_CallActivityLifetime lifetime) {
+    if (_disposed || lifetime.retired || !identical(_current, lifetime)) {
+      return;
+    }
+    final active = readActive();
+    if (active?.callId != lifetime.callId ||
+        active?.state != CallState.connected) {
+      observe();
+      return;
+    }
+    if (lifetime.marked) {
+      return;
+    }
+    final now = monotonicNow();
+    if (_elapsed(lifetime, now) < threshold) {
+      _arm(lifetime, now);
+      return;
+    }
+    lifetime.marked = true;
+    lifetime.mark?.call();
+  }
+
+  void _retire() {
+    final lifetime = _current;
+    _current = null;
+    if (lifetime == null) {
+      return;
+    }
+    lifetime.retired = true;
+    lifetime.timer?.cancel();
+    lifetime.timer = null;
+  }
+
+  void dispose() {
+    _disposed = true;
+    _retire();
+  }
+}
 
 final class PreparedOutgoingCall {
   const PreparedOutgoingCall({required this.endpoint, required this.reduction});
@@ -167,6 +313,9 @@ final class ProductionCallSignalingGraph
     this.repairMissingEndpoint,
     required this.localDeviceKeyEpoch,
     required this.localIdentity,
+    this.captureCallActivityMark,
+    this.monotonicNow,
+    this.timerScheduler,
     required this.platform,
     required this.mediaOwner,
     this.microphoneCaptureLeases,
@@ -203,6 +352,16 @@ final class ProductionCallSignalingGraph
                await (requestCameraPermission?.call() ?? Future.value(false))
                ? permissions.PermissionStatus.granted
                : permissions.PermissionStatus.denied) {
+    final captureActivity = captureCallActivityMark;
+    _activityObserver = captureActivity == null
+        ? null
+        : _CallActivityObserver(
+            readActive: () => coordinator.activeSession,
+            ownAccountPeerId: localIdentity.peerId,
+            capture: captureActivity,
+            monotonicNow: monotonicNow ?? _callActivityMonotonicClock(),
+            scheduler: timerScheduler ?? const DartCallTimerScheduler(),
+          );
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
         videoEnabled: true,
@@ -266,6 +425,10 @@ final class ProductionCallSignalingGraph
   final Map<String, Future<bool>> _endpointRecoveryByContact = {};
   final int localDeviceKeyEpoch;
   final IdentityModel localIdentity;
+  final CaptureCallActivityMark? captureCallActivityMark;
+  final Duration Function()? monotonicNow;
+  final CallTimerScheduler? timerScheduler;
+  late final _CallActivityObserver? _activityObserver;
   final CallEndpointPlatform platform;
   final CallScopedMediaBundleOwner mediaOwner;
   final AndroidCallLifecycleAdapter? androidCallLifecycleAdapter;
@@ -2052,6 +2215,7 @@ final class ProductionCallSignalingGraph
   }
 
   void _onSessionSnapshot(CallSessionSnapshot session) {
+    _observeCallActivity();
     // Coordinator snapshots are synchronous and precede terminal effects and
     // context cleanup. The current machine is already unavailable at terminal;
     // preserve its last observed settlement across reconnect until this point.
@@ -2105,6 +2269,14 @@ final class ProductionCallSignalingGraph
           audio: controller?.state ?? CallAudioControlState.idle,
         ),
       );
+    }
+  }
+
+  void _observeCallActivity() {
+    try {
+      _activityObserver?.observe();
+    } catch (_) {
+      // Preserve the original call persistence and signaling outcomes.
     }
   }
 
@@ -2619,6 +2791,11 @@ final class ProductionCallSignalingGraph
   Future<void> shutdown() async {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    try {
+      _activityObserver?.dispose();
+    } catch (_) {
+      // Activity timer cleanup cannot block call shutdown.
+    }
     _lastSettledMedia = null;
     unawaited(_pip?.close());
     unawaited(_revokeLocalCamera());
@@ -2931,6 +3108,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallScheduledTimerObserver? onCallTimerScheduled,
   bool Function()? isForeground,
   int Function()? nowMs,
+  CaptureCallActivityMark? captureCallActivityMark,
+  Duration Function()? monotonicNow,
+  CallTimerScheduler? timerScheduler,
   CallEngine Function(CallId)? callEngineFactory,
   Future<bool> Function()? requestCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
@@ -3006,6 +3186,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
       if (identity == null || endpointPlatform == null) {
         throw StateError('call graph is not ready');
       }
+      final callMonotonicNow = monotonicNow ?? _callActivityMonotonicClock();
+      final callTimerScheduler =
+          timerScheduler ?? const DartCallTimerScheduler();
       final codec = SecureCallEnvelopeCodec(
         crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
         nowMs: clock,
@@ -3166,10 +3349,15 @@ CallSignalingComposition createProductionCallSignalingComposition({
           CallHistoryRepositoryImpl(database),
           onTerminalProjected: onCallHistoryProjected,
         ),
-        persistActiveCall: historyCheckpoint.save,
+        persistActiveCall: (snapshot) {
+          diagnosticGraph?._observeCallActivity();
+          return historyCheckpoint.save(snapshot);
+        },
         clearActiveCall: historyCheckpoint.clear,
         effectExecutor: boundEffects,
         clock: callClock,
+        monotonicNow: callMonotonicNow,
+        timerScheduler: callTimerScheduler,
         idSource: _newCallId,
         onTimerScheduled: videoEnabled
             ? (callId, kind, scheduledAt, requestedDelay, effectiveDelay) {
@@ -3900,6 +4088,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
         repairMissingEndpoint: repairMissingEndpoint,
         localDeviceKeyEpoch: localDeviceKeyEpoch,
         localIdentity: identity,
+        captureCallActivityMark: captureCallActivityMark,
+        monotonicNow: callMonotonicNow,
+        timerScheduler: callTimerScheduler,
         platform: endpointPlatform,
         mediaOwner: mediaOwner,
         microphoneCaptureLeases: microphoneCaptureLeases,
