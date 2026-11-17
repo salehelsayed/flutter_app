@@ -13517,6 +13517,32 @@ pins passed all 288 names in the three changed files, with no errors or skips.
 First failures and the corrected receipt remain separate under
 `.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-ui-capture-green/`.
 
+The B5 final-media activity fixtures require a fresh typed `applied`/`committed`
+admission, not merely transport authorization or a returned message. Prepared,
+private and linked finalization cases carry the original caller observation;
+the OFF-created prepared-row control proves a later enabled reporter cannot
+backfill activity. A retained replay fixture must select the intended transport:
+a healthy application ACK correctly skips inbox STORE. B5M-010's first failure
+used that healthy fake while requiring STORE; its correction selects failed,
+unacknowledged transport and proves the two failed STORE attempts, retained exact
+custody, unchanged stage count and no activity. The first rejected RED remains
+separate from the corrected causal RED.
+
+At `83087ad06f73feb30651f2e6cbbfc6f0d4abe3b8`, all twelve causal cases passed
+once in the actual sender suite within 3,016 passing conversation cases. The
+whole sender, exchange and no-background-task files passed 215, 15 and one case;
+the seven other selected host lanes and one final 350-case workflow passed.
+These counts overlap. Thirty-eight source pins matched at 32 clean boundaries;
+workflow used a fresh Flutter window after host completion. Canonical scoped
+closure is `codex-complete-scoped-source-red-eight-host-workflow-83087ad06.json`,
+SHA-256 `be3dc19f05af5a16f1ffc2313f1cce109e2bd3bb8456cd68f32035f1e7cafbab`.
+Raw first failures and final receipts remain in the BL29 implementation
+evidence's `b5-producer-hooks/u1-final-media-red/` and `u1-final-media-green/`.
+This proves final sender admission only. Earlier preparation admission and
+later-finalization suppression, voice/sticker entry capture, ADD reactions,
+text fanout, whole B5, composed native/device and signed-build proof remain
+separate. The documentation follow-up does not require another execution.
+
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
 parent directory; the store must ensure and verify the parent on both creation
