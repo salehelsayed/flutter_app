@@ -497,12 +497,13 @@ const _productionBootstrapNormalizedSha256 =
     // BL-30 R2: the every-launch identity.db open and its post-open writes
     // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
     // background assertion); same calls, same order, no owner moves.
-    // BL-29 composition retains the accepted 03ef32cbd nine-line capture
-    // closure and Core's one-line application-root reporter forwarding.
-    // Removing only forwarding restores 3d00fdd19; removing only the closure
-    // restores d6a0f11b6. Both reverse proofs retain the same 25 URI rewrites
-    // and the unique, exact historical callback 843fb41c.
-    '0c86cde13bf372547de66eff6977a9921eabea090ec488456ea7027c00149f17';
+    // BL-29 baseline 9e0fe0eab composed the accepted nine-line B7 capture
+    // closure with Core's one-line application-root reporter forwarding.
+    // Their reverse proofs restored 3d00fdd19 and d6a0f11b6. Producer adoption
+    // now samples UTC only when the mark closure runs; reversing this caller
+    // delta restores baseline bytes and both pins under the same 25 URI
+    // rewrites. Historical callback 843fb41c stays unique and exact.
+    '282170d2306ae27d7b54e24ec511506aeaed17a3105d48222c24816ea78476e3';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -550,7 +551,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'b2ff8c52797e36e3a01802ae6a41b9b16f0730c65fae2bf83e16c1282f5cc2ca';
+    'b0183e2238691a7b27eaa251a8374a2806dcddd33f79459a0af1ebe1930f89f8';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

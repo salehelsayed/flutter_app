@@ -6643,7 +6643,10 @@ final class ProductionApplicationBootstrap
         if (capture == null) {
           return null;
         }
-        return () => activeIdentityReporter.markCaptured(capture);
+        return () => activeIdentityReporter.markCaptured(
+          capture,
+          occurredAtUnixMillis: DateTime.now().toUtc().millisecondsSinceEpoch,
+        );
       },
       onCallEnvelopeEncoded: debugE2EComposition?.callEnvelopeEncodedObserver,
       onCallTimerScheduled: debugE2EComposition?.callTimerScheduledObserver,
