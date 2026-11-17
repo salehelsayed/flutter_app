@@ -424,6 +424,27 @@ abstract interface class CallVideoSdpReconciler {
   });
 }
 
+/// Custody of existing video resources during one same-media ICE replacement.
+/// Reading this handle never grants capture or a new video mutation.
+abstract interface class CallVideoIceRetention {
+  bool get isCurrent;
+  CallVideoNegotiation get negotiation;
+}
+
+/// Optional transport-only continuation on the existing video session.
+abstract interface class CallVideoIceRecovery {
+  Future<CallVideoIceRetention?> retainForIceRecovery(
+    CallVideoNegotiation previous, {
+    required bool Function() canApply,
+  });
+
+  Future<CallVideoNegotiation> continueIceRecovery(
+    CallVideoIceRetention retention, {
+    required String negotiationId,
+    required bool Function() canApply,
+  });
+}
+
 /// Optional operations fail independently of the live audio connection.
 abstract interface class CallVideoSession {
   CallId get callId;

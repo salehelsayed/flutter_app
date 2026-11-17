@@ -1740,6 +1740,147 @@ void main() {
     },
   );
 
+  test('BL26-R1 old connected pair cannot finish the return recovery before SDP commit', () async {
+    const bound = Duration(seconds: 2);
+    final h = _Rig(recovery: true);
+    final offerStarted = Completer<void>();
+    final releaseOffer = Completer<void>();
+    final commitStarted = Completer<void>();
+    final releaseCommit = Completer<void>();
+    addTearDown(() async {
+      if (!releaseOffer.isCompleted) releaseOffer.complete();
+      if (!offerStarted.isCompleted) offerStarted.complete();
+      if (!releaseCommit.isCompleted) releaseCommit.complete();
+      if (!commitStarted.isCompleted) commitStarted.complete();
+      await h.close().timeout(bound);
+    });
+    await h.connect().timeout(bound);
+
+    expect(
+      h.admit(
+        h.remote(
+          'ice_restart',
+          negotiation: h.owner.negotiation!.negotiationId,
+        ),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await h.owner.workSettled.timeout(bound);
+    final firstOffer = h.sent.lastWhere(
+      (signal) => signal.event == CallSignalV2Type.offer,
+    );
+    h.engine.mediaReady = true;
+    expect(
+      h.admit(
+        h.remote(
+          'answer',
+          negotiation: firstOffer.payload['negotiation_id']! as String,
+          generation: 1,
+          purpose: 'ice_restart',
+        ),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await h.owner.workSettled.timeout(bound);
+    await _turn().timeout(bound);
+    expect(h.snapshot.state, CallState.connected);
+    expect(
+      h.events.where((event) => event.type == CallEventType.mediaRecovered),
+      hasLength(1),
+    );
+
+    bool Function()? heldOfferCanApply;
+    h.asyncDeliveryFor = (signal, canApply) async {
+      if (signal.event == CallSignalV2Type.offer && signal.iceGeneration == 2) {
+        heldOfferCanApply = canApply;
+        if (!offerStarted.isCompleted) offerStarted.complete();
+        await releaseOffer.future.timeout(bound);
+      }
+      return canApply();
+    };
+    expect(
+      h.admit(
+        h.remote(
+          'ice_restart',
+          negotiation: h.owner.negotiation!.negotiationId,
+          generation: 1,
+        ),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await offerStarted.future.timeout(bound);
+    final deadline = h.reconnectDeadline!;
+    h.engine.eventController.add(
+      const CallEngineEvent(
+        type: CallEngineEventType.state,
+        connectionState: CallConnectionState.connected,
+        transport: CallTransportClass.relay,
+        quality: CallQualityBand.good,
+        failureReason: CallFailureReason.none,
+      ),
+    );
+    await _turn().timeout(bound);
+    expect(
+      h.snapshot.state,
+      CallState.reconnecting,
+      reason: 'The old ready pair cannot prove the new SDP exchange.',
+    );
+    expect(
+      h.events.where((event) => event.type == CallEventType.mediaRecovered),
+      hasLength(1),
+    );
+    expect(heldOfferCanApply, isNotNull);
+    expect(heldOfferCanApply!(), isTrue);
+    expect(h.reconnectDeadline, same(deadline));
+    expect(deadline.isActive, isTrue);
+    expect(h.reconnectTimers, 2);
+    expect(
+      h.timers.delays.where((delay) => delay.inSeconds == 15),
+      hasLength(2),
+    );
+
+    releaseOffer.complete();
+    await h.owner.workSettled.timeout(bound);
+    final returnOffer = h.sent.lastWhere(
+      (signal) =>
+          signal.event == CallSignalV2Type.offer && signal.iceGeneration == 2,
+    );
+    h.engine.video.commitGate = releaseCommit;
+    h.engine.video.onCommit = () {
+      if (!commitStarted.isCompleted) commitStarted.complete();
+    };
+    expect(
+      h.admit(
+        h.remote(
+          'answer',
+          negotiation: returnOffer.payload['negotiation_id']! as String,
+          generation: 2,
+          purpose: 'ice_restart',
+        ),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await commitStarted.future.timeout(bound);
+    await _turn().timeout(bound);
+    expect(h.snapshot.state, CallState.reconnecting);
+    expect(
+      h.events.where((event) => event.type == CallEventType.mediaRecovered),
+      hasLength(1),
+    );
+    expect(deadline.isActive, isTrue);
+    releaseCommit.complete();
+    await h.owner.workSettled.timeout(bound);
+    await _turn().timeout(bound);
+    expect(h.snapshot.state, CallState.connected);
+    expect(
+      h.events.where((event) => event.type == CallEventType.mediaRecovered),
+      hasLength(2),
+    );
+    expect(deadline.isActive, isFalse);
+    expect(h.engine.restartCalls, 2);
+    expect(h.engine.video.commits, 3);
+  });
+
   test(
     'U3j-R revoked call during credential lookup cannot restart native ICE',
     () async {
@@ -3152,6 +3293,13 @@ final class _Rig {
                 cameraDeliveryGate != null) {
               return await cameraDeliveryGate!.future;
             }
+            final asyncDelivery = asyncDeliveryFor;
+            if (asyncDelivery != null) {
+              return await asyncDelivery(
+                signal,
+                canApply,
+              ).timeout(const Duration(seconds: 2));
+            }
             return deliveryFor?.call(signal) ?? delivered;
           },
       canApply: () => current,
@@ -3186,6 +3334,8 @@ final class _Rig {
   Completer<ResolvedCallEndpoint>? lookupGate;
   Completer<List<CallIceServer>>? serversGate;
   bool Function(CallSignalV2)? deliveryFor;
+  Future<bool> Function(CallSignalV2 signal, bool Function() canApply)?
+  asyncDeliveryFor;
   _TimerHandle? reconnectDeadline;
   int reconnectTimers = 0;
   int eventIds = 0;

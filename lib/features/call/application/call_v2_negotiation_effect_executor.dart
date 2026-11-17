@@ -658,11 +658,78 @@ final class CallV2NegotiationEffectExecutor
   CallVideoSession? get videoSession => _session;
   CallVideoNegotiation? get negotiation => _token;
 
+  bool _hasPendingRecoveryMedia() {
+    final machine = _switch?.machine;
+    final settled = machine == null || const {
+      null,
+      MediaSwitchPhase.committed,
+      MediaSwitchPhase.declined,
+      MediaSwitchPhase.superseded,
+    }.contains(machine.phase);
+    return !settled ||
+        machine?.requiresReconciliation == true ||
+        _optionalJobs != 0 ||
+        _optionalSends != 0 ||
+        _optionalAuthority != 0 ||
+        _optionalCommitPending;
+  }
+
+  bool _canRetainVideo(CallSessionSnapshot snapshot) {
+    final token = _token;
+    return _session is CallVideoIceRecovery &&
+        _initialCommitted &&
+        !_pendingTakeoverBlocked &&
+        _callCurrent() &&
+        !legacy.engine.isClosed &&
+        snapshot.state == CallState.reconnecting &&
+        snapshot.transportRecoveryRequired &&
+        token != null &&
+        token.media == CallMediaKind.video &&
+        (_switch?.machine.settledMedia ?? token.media) == token.media &&
+        (_switch?.machine.settledRevision ?? token.mediaRevision) ==
+            token.mediaRevision &&
+        !_hasPendingRecoveryMedia();
+  }
+
+  /// Existing resources only. Fresh UI actions still require [current].
+  CallVideoNegotiation? cameraIntentBinding(CallVideoNegotiation intent) {
+    final snapshot = _snapshot;
+    if (snapshot == null || !_callCurrent() || legacy.engine.isClosed) return null;
+    final recovery = _recovery;
+    if (recovery != null &&
+        recovery.retainVideo &&
+        snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration &&
+        (identical(intent, recovery.oldToken) || identical(intent, _token))) {
+      final retained = recovery.retained;
+      if (retained != null) {
+        return retained.isCurrent ? retained.negotiation : null;
+      }
+      if (_recoveryCurrent(recovery)) return recovery.oldToken;
+    }
+    if (current &&
+        identical(intent, _currentCameraToken) &&
+        _switch?.machine.videoGatesOpen == true) return intent;
+    final adopted = recovery != null &&
+        snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration;
+    return !adopted && identical(intent, _token) && _canRetainVideo(snapshot)
+        ? intent
+        : null;
+  }
+
+  CallVideoNegotiation? get presentationNegotiation {
+    final token = _token;
+    return current || token == null ? token : cameraIntentBinding(token);
+  }
+
   /// Authenticated presentation hint for the current committed video token.
   /// It never authorizes local capture and disappears with that token's gates.
   CallCameraState get remoteCamera {
-    final token = _currentCameraToken;
-    return token != null && identical(token, _remoteCameraToken)
+    final token = current ? _currentCameraToken : presentationNegotiation;
+    final retained = _recovery;
+    return token != null &&
+        (identical(token, _remoteCameraToken) ||
+            (retained?.retainVideo == true &&
+                identical(retained!.oldToken, _remoteCameraToken)))
         ? _remoteCamera
         : CallCameraState.off;
   }
@@ -1103,26 +1170,16 @@ final class CallV2NegotiationEffectExecutor
   _V2Recovery? _adoptRecovery(CallSessionSnapshot snapshot) {
     if (!_ready || _session == null || _token == null) return null;
     final existing = _recovery;
-    if (existing?.snapshot.reconnectGeneration ==
-        snapshot.reconnectGeneration) {
+    if (existing != null &&
+        existing.snapshot.reconnectGeneration == snapshot.reconnectGeneration) {
+      if (snapshot.transportRecoveryRequired && !existing.completed) {
+        legacy.rearmMediaRecoveryObservation(snapshot, waitForCommit: true);
+      }
       return existing;
     }
     final machine = _switch?.machine;
-    final settled =
-        machine == null ||
-        const {
-          null,
-          MediaSwitchPhase.committed,
-          MediaSwitchPhase.declined,
-          MediaSwitchPhase.superseded,
-        }.contains(machine.phase);
-    final pending =
-        !settled ||
-        machine?.requiresReconciliation == true ||
-        _optionalJobs != 0 ||
-        _optionalSends != 0 ||
-        _optionalAuthority != 0 ||
-        _optionalCommitPending;
+    final pending = _hasPendingRecoveryMedia();
+    final retainVideo = _canRetainVideo(snapshot);
     final observed =
         _observedReconnectGeneration == snapshot.reconnectGeneration;
     final takeover = observed && !_pendingTakeoverBlocked;
@@ -1149,6 +1206,7 @@ final class CallV2NegotiationEffectExecutor
       transportRequested: !observed,
     );
     _recovery = recovery;
+    recovery.retainVideo = retainVideo;
     _mediaRetired = true;
     _awaitingOptionalOffer = false;
     _optionalTokenCurrent = null;
@@ -1156,11 +1214,28 @@ final class CallV2NegotiationEffectExecutor
     _remoteApplied = false;
     _localCandidates.clear();
     _remoteCandidates.clear();
-    legacy.rearmMediaRecoveryObservation(snapshot);
-    recovery.retirement = _session!.retireVideo().then(
-      (closed) => closed,
-      onError: (Object _, StackTrace _) => false,
+    legacy.rearmMediaRecoveryObservation(
+      snapshot,
+      waitForCommit: snapshot.transportRecoveryRequired,
     );
+    recovery.retirement = retainVideo
+        ? (_session! as CallVideoIceRecovery).retainForIceRecovery(
+            old,
+            canApply: () => _recoveryVideoCustodyCurrent(recovery),
+          ).then((retained) {
+            if (!identical(_recovery, recovery)) return false;
+            recovery.retained = retained;
+            if (retained != null) return true;
+            recovery.retainVideo = false;
+            try {
+              onMediaChanged?.call();
+            } catch (_) {}
+            return _session!.retireVideo();
+          })
+        : _session!.retireVideo().then(
+            (closed) => closed,
+            onError: (Object _, StackTrace _) => false,
+          );
     _track(recovery.retirement!.then<void>((_) {}));
     final switches = _switch;
     if (takeover && switches != null) {
@@ -1169,6 +1244,7 @@ final class CallV2NegotiationEffectExecutor
         reconnectGeneration: snapshot.reconnectGeneration,
         deadlineMs: recovery.deadlineMs,
         canApply: () => _recoveryCurrent(recovery),
+        retainVideo: retainVideo,
       );
       recovery.media = switches.machine.settledMedia;
       recovery.revision = switches.machine.settledRevision;
@@ -1197,6 +1273,9 @@ final class CallV2NegotiationEffectExecutor
     final work = incoming.isEmpty ? null : incoming.first;
     if (effect.type != CallEffectType.resumeRecoverySignals || work != null) {
       recovery.transportRequested = true;
+    }
+    if (recovery.transportRequested && !recovery.completed) {
+      legacy.rearmMediaRecoveryObservation(snapshot, waitForCommit: true);
     }
     if (effect.type == CallEffectType.resumeRecoverySignals &&
         recovery.takeover &&
@@ -1239,6 +1318,33 @@ final class CallV2NegotiationEffectExecutor
         (recovery.budget == null ||
             recovery.budget!.remaining > Duration.zero) &&
         _monotonicMs < recovery.deadlineMs;
+  }
+
+  // Read-only custody can bridge checkpoint persistence before the next
+  // eligible ICE episode adopts resources. It never grants SDP mutation.
+  bool _recoveryVideoCustodyCurrent(_V2Recovery recovery) {
+    if (!recovery.retainVideo) return false;
+    if (_recoveryCurrent(recovery)) return true;
+    final snapshot = _snapshot;
+    final token = _token;
+    if (!identical(_recovery, recovery) ||
+        !recovery.completed ||
+        recovery.blocked ||
+        _epoch != recovery.epoch ||
+        !_ready ||
+        _pendingTakeoverBlocked ||
+        legacy.engine.isClosed ||
+        legacy.engine.iceGeneration != recovery.oldGeneration + 1 ||
+        recovery.retained == null ||
+        !identical(recovery.retained!.negotiation, token) ||
+        token?.media != recovery.media ||
+        token?.mediaRevision != recovery.revision ||
+        _hasPendingRecoveryMedia() ||
+        snapshot == null) return false;
+    return (snapshot.state == CallState.connected &&
+            snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration) ||
+        (snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration + 1 &&
+            _canRetainVideo(snapshot));
   }
 
   bool _recoveryTokenCurrent(_V2Recovery recovery) =>
@@ -1388,19 +1494,25 @@ final class CallV2NegotiationEffectExecutor
     }
     _checkRecovery(recovery);
     final session = _session!;
-    if (session is! CallVideoSdpReconciler) {
+    if (recovery.retained != null) {
+      if (!recovery.retained!.isCurrent) {
+        recovery.blocked = true;
+        return;
+      }
+    } else if (session is! CallVideoSdpReconciler) {
       recovery.blocked = true;
       return;
-    }
-    recovery.stage = _V2RecoveryStage.reconcileSdp;
-    final proof = await (session as CallVideoSdpReconciler).reconcilePending(
-      recovery.oldToken,
-      canApply: () => _recoveryCurrent(recovery),
-    );
-    _checkRecovery(recovery);
-    if (proof == CallVideoSdpReconciliationOutcome.unreconciled) {
-      recovery.blocked = true;
-      return;
+    } else {
+      recovery.stage = _V2RecoveryStage.reconcileSdp;
+      final proof = await (session as CallVideoSdpReconciler).reconcilePending(
+        recovery.oldToken,
+        canApply: () => _recoveryCurrent(recovery),
+      );
+      _checkRecovery(recovery);
+      if (proof == CallVideoSdpReconciliationOutcome.unreconciled) {
+        recovery.blocked = true;
+        return;
+      }
     }
     recovery.stage = _V2RecoveryStage.resolveEndpoint;
     await _freshAuthority();
@@ -1430,12 +1542,19 @@ final class CallV2NegotiationEffectExecutor
     _seenIncoming.clear();
     recovery.negotiationId ??= idSource();
     recovery.stage = _V2RecoveryStage.beginNegotiation;
-    _token = session.beginNegotiation(
-      negotiationId: recovery.negotiationId!,
-      mediaRevision: recovery.revision,
-      media: recovery.media,
-      canApply: () => _recoveryTokenCurrent(recovery),
-    );
+    _token = recovery.retained != null
+        ? await (session as CallVideoIceRecovery).continueIceRecovery(
+            recovery.retained!,
+            negotiationId: recovery.negotiationId!,
+            canApply: () => _recoveryTokenCurrent(recovery),
+          )
+        : session.beginNegotiation(
+            negotiationId: recovery.negotiationId!,
+            mediaRevision: recovery.revision,
+            media: recovery.media,
+            canApply: () => _recoveryTokenCurrent(recovery),
+          );
+    _checkRecovery(recovery);
     _optionalTokenCurrent = () => _recoveryTokenCurrent(recovery);
     _mediaRetired = false;
     recovery.prepared = true;
@@ -1547,6 +1666,14 @@ final class CallV2NegotiationEffectExecutor
     await _session!.commit(token);
     _checkRecovery(recovery, recovery.remoteWork);
     recovery.completed = true;
+    if (recovery.retainVideo) {
+      if (identical(_remoteCameraToken, recovery.oldToken)) {
+        _remoteCameraToken = _token;
+      }
+      try {
+        onMediaChanged?.call();
+      } catch (_) {}
+    }
     if (recovery.candidateSignal == null) {
       recovery.timer?.cancel();
       recovery.timer = null;
@@ -2372,6 +2499,8 @@ final class _V2Recovery {
   bool remoteApplied = false;
   bool localDelivered = false;
   bool completed = false;
+  bool retainVideo = false;
+  CallVideoIceRetention? retained;
   String? negotiationId;
   Future<bool>? retirement;
   _V2MediaWork? remoteWork;
