@@ -13704,16 +13704,64 @@ This closes text fanout only; first preparation/later-finalization suppression,
 voice/sticker, ADD reactions, weekly wiring, native/device and overall B5/BL29
 proof remain separate. This testing note requires no new execution.
 
-Batch13 is an incremental daily-active slice. Normal composer final-media
-handoffs retain the original owner captured before preparation. First-preparation
-admission, voice and linked-private UI fanout remain uncounted; sticker daily
-observations are deliberately excluded by forwarding a present null-owner record.
-This leaves early preparation/upload failures undercounted rather than claiming
-complete B5 coverage. Calls use accepted partial `3d00fdd19`, without caller
-`012338f71`'s occurrence timestamp. Processing-time day attribution near midnight
-remains a limit until that separate wire integration lands. Beta diagnostics
-remain default ON with the existing profile/epoch fences. Composed checks remain
-pending; this scope note claims no Batch13, weekly, native/device or overall closure.
+Batch13's historical daily-active slice retained the original owner for normal
+composer final-media handoffs, but excluded voice, sticker observations and
+first-preparation admission. Batch14 U2 at `1197dd9a5` closes the direct voice,
+catalog/custom sticker and ADD producer unit described below. Ordinary/private
+media first-preparation admission and linked-private UI fanout remain separate.
+The accepted call occurrence-time producer `012338f71` has its own scoped evidence
+below. Beta `AppDiagnostics` intentionally remains default ON with the existing
+profile/epoch fences; no additional consent-provenance marker is required.
+Initialization, app open and enabling diagnostics alone do not mark activity.
+
+Direct producer observations must be captured before the first authoring await,
+including recorder stop and custom-sticker preparation. A supplied present-null
+observation is authoritative: later enablement, profile replacement or an epoch
+change must not reacquire an owner. Fresh voice and sticker preparation counts
+only its typed durable `applied` admission, including retained offline and linked
+fanout owners. Direct ADD likewise counts only fresh applied custody; survivor
+replay, idempotent terminal outcomes, retry and REMOVE cannot create activity.
+Optional observation must neither delay nor fail communication. Keep original
+fresh authoring intent distinct from `freshEnvelope`: prepared finalization and
+replay must not create another mark or backfill an OFF-created owner.
+
+After a validated direct-media commit, a hydration failure preserves typed
+`authorityOnly` admission, referenced ciphertext and the winner key. It returns
+retained authority with upload unauthorized until the projection can be read;
+it does not turn an applied commit into refusal. Idempotent authority remains
+retained without another mark. TC-347-02f must expect `retained` while preserving
+its zero-upload, ciphertext and reopen assertions. Precommit rejection and key
+write compensation retain their existing failure behavior.
+
+Legacy successful-upload fakes must copy fixture bytes to the canonical completed
+media path. Returning `done` with a `pending_uploads/` path is correctly refused
+by legacy custody preflight; do not relax production to accommodate that fixture.
+Injected `SendVoiceMessageFn` fakes must accept optional `capturedActivity` and
+`preassignedMessageIdIsFresh`; that typedef does not contain `activityReporter`.
+The TC-342-07 caller census expects `freshEnvelope` at the voice sender's nested
+call, retaining exact caller inventory/counts, `attachments` and classification
+checks. Keep the original assertion and compilation failures visible after these
+fixture corrections.
+
+B6 at `b7210bb55` qualifies fresh durable group message/replay-outbox and prepared
+media admission, independently of live transport success. Fresh sole-member
+group terminal admission qualifies; replay/idempotent owners, retry and REMOVE
+do not. Its closed scope passed 3,956 host cases and a 350-case Mac workflow.
+U2 passed 83 focused cases at `e35d46a3d` and eight correction cases at `312b90a54`.
+Its original thirteen host checks are qualified by twelve reviewed clean carries
+from `312b90a54` plus the fresh 311-case, nine-file group-media preservation run
+at `1197dd9a5`, including TC-342-07 once. Full conversation passed 3,103 cases in
+207 complete files. Counts overlap; do not sum them. U2 first failures and scoped
+evidence remain under `/Users/I560101/.codex/investigations/`
+`bl29-b14-u2-server-red-20261117/` and the owned
+`.codex-test-logs/bl29-b14-u2/` artifacts.
+
+Root disposition `m-4c371a95`, relayed by owner `m-c03a3ad9`, defers eight newly
+selected bootstrap families to the Batch14 wave: they remain PENDING, not waived
+or passed. The composed workflow is selected and held for one run LAST on final
+source; B6's standalone workflow does not replace it. Weekly wiring, composed
+native/device/Swift, signed-build and whole B5/BL29 proof remain separate. These
+scoped producer receipts establish no overall thirty-check or candidate PASS.
 
 The BL29 active-identity snapshot requires a private `0700` parent directory as
 well as a `0600` file. The shared atomic writer owns file permissions, not the
