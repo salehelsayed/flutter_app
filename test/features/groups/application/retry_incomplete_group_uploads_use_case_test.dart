@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'b6_daily_activity_test_support.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -663,6 +666,73 @@ final class _CountingGroupRepository extends InMemoryGroupRepository {
     return super.getMembers(groupId);
   }
 }
+
+final class _B6GroupBlobRepository extends _StrictGroupUploadRetryRepository {
+  _B6GroupBlobRepository(super.messages);
+  bool refuse = false;
+  bool allowExactIdempotent = false;
+  bool throwFirstReadbackAfterApplied = false;
+  bool applied = false;
+  bool threwReadback = false;
+  int idempotentCalls = 0;
+
+  @override
+  Future<GroupMediaBlobCustodyStageOutcome>
+  stageFreshOutgoingGroupMediaBlobGeneration({
+    required GroupMessage parent,
+    required List<MediaAttachment> attachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required Map<String, String> custodyBlobIdsByAttachmentId,
+  }) async {
+    if (refuse) return GroupMediaBlobCustodyStageOutcome.refused;
+    if (allowExactIdempotent && rows.isNotEmpty) {
+      final current = await messages.getMessage(parent.id);
+      final stored = await getAttachmentsForMessage(
+        parent.id,
+        owner: MediaOwnerLane.group,
+      );
+      final exactRows =
+          rows.length == custodyRows.length &&
+          custodyRows.every(
+            (candidate) => rows.any(
+              (row) => row.exactDatabaseProjectionMatches(candidate),
+            ),
+          );
+      if (current == null ||
+          jsonEncode(current.toMap()) != jsonEncode(parent.toMap()) ||
+          jsonEncode(stored.map((a) => a.toMap()).toList()) !=
+              jsonEncode(attachments.map((a) => a.toMap()).toList()) ||
+          !exactRows)
+        return GroupMediaBlobCustodyStageOutcome.refused;
+      idempotentCalls++;
+      return GroupMediaBlobCustodyStageOutcome.idempotent;
+    }
+    final result = await super.stageFreshOutgoingGroupMediaBlobGeneration(
+      parent: parent,
+      attachments: attachments,
+      custodyRows: custodyRows,
+      custodyBlobIdsByAttachmentId: custodyBlobIdsByAttachmentId,
+    );
+    applied = result == GroupMediaBlobCustodyStageOutcome.applied;
+    return result;
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyForMessage({
+    required String groupId,
+    required String messageId,
+  }) async {
+    if (applied && throwFirstReadbackAfterApplied && !threwReadback) {
+      threwReadback = true;
+      throw StateError('public post-commit readback failure');
+    }
+    return super.loadGroupMediaBlobCustodyForMessage(
+      groupId: groupId,
+      messageId: messageId,
+    );
+  }
+}
+
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -4842,6 +4912,231 @@ void main() {
           (await changedMessages.getMessage(changedPending.messageId))?.text,
           'Competing parent mutation',
         );
+      },
+    );
+  });
+  group('BL29 B6 prepared group media activity', () {
+    late Directory root;
+    late B6ActivityBridge activityBridge;
+    late ActiveIdentityReporter reporter;
+    late InMemoryGroupRepository groups;
+    late InMemoryGroupMessageRepository messages;
+    late _B6GroupBlobRepository media;
+    late GroupContentAuthoringContext context;
+    late PreparedGroupMediaBlobCustodyCoordinator coordinator;
+    late GroupMessage parent;
+    late PreparedGroupMediaBlobSource source;
+    late File encryptedSource;
+    late List<int> ciphertext;
+
+    setUp(() async {
+      root = await b6Bound(
+        Directory.systemTemp.createTemp('b6-public-group-media-'),
+      );
+      activityBridge = B6ActivityBridge();
+      reporter = await b6Reporter(activityBridge);
+      groups = InMemoryGroupRepository();
+      messages = InMemoryGroupMessageRepository();
+      media = _B6GroupBlobRepository(messages);
+      final now = DateTime.now().toUtc();
+      await b6Bound(
+        groups.saveGroup(
+          GroupModel(
+            id: 'group-1',
+            name: 'Public B6 group',
+            type: GroupType.chat,
+            topicName: 'public-b6-topic',
+            createdAt: now,
+            createdBy: 'peer-1',
+            myRole: GroupRole.admin,
+          ),
+        ),
+      );
+      context = await b6StrictContext(groups, _NoopStrictGroupInboxStore());
+      final plaintext = <int>[
+        0xff,
+        0xd8,
+        0xff,
+        ...List<int>.generate(61, (i) => i),
+      ];
+      final original = File('${root.path}/public-source.jpg');
+      await b6Bound(original.writeAsBytes(plaintext));
+      ciphertext = [...List<int>.filled(16, 0xa5), ...plaintext];
+      encryptedSource = File('${root.path}/public-ciphertext.bin');
+      await b6Bound(encryptedSource.writeAsBytes(ciphertext));
+      parent = GroupMessage(
+        id: 'b6-group-media',
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderUsername: 'Alice',
+        text: 'public media',
+        timestamp: now,
+        status: GroupMessage.statusQueuedOffline,
+        isIncoming: false,
+        createdAt: now,
+      );
+      source = PreparedGroupMediaBlobSource(
+        plaintextPath: original.path,
+        attachment: MediaAttachment(
+          id: 'b6-group-attachment',
+          messageId: parent.id,
+          mime: 'image/jpeg',
+          size: plaintext.length,
+          mediaType: 'image',
+          width: 8,
+          height: 8,
+          localPath: original.path,
+          downloadStatus: 'upload_pending',
+          createdAt: now.toIso8601String(),
+          ownerLane: MediaOwnerLane.group,
+        ),
+        preparedArtifact: EncryptedMediaArtifact(
+          encryptedPath: encryptedSource.path,
+          keyBase64: 'public-key',
+          nonce: 'public-nonce',
+          scheme: groupMediaBlobEncryptionScheme,
+          contentHash: sha256.convert(ciphertext).toString(),
+          plaintextSize: plaintext.length,
+        ),
+      );
+      coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+        artifactStore: GroupMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => root,
+        ),
+        clock: () => now,
+        strictUpload:
+            ({
+              required Bridge bridge,
+              required String custodyBlobId,
+              required String recipientPeerId,
+              required String ciphertextPath,
+              required String contentHash,
+              required int ciphertextSize,
+            }) async {
+              throw StateError('public retained offline upload');
+            },
+      );
+      expect(activityBridge.marks, isEmpty);
+    });
+    tearDown(() async {
+      await b6Bound(reporter.dispose());
+      if (await b6Bound(root.exists()))
+        await b6Bound(root.delete(recursive: true));
+    });
+
+    Future<PreparedGroupMediaBlobResult> prepare({
+      B6CapturedActivity? capturedActivity,
+    }) => b6Invoke<PreparedGroupMediaBlobResult>(
+      coordinator.prepareAndUploadFresh,
+      {
+        #bridge: activityBridge,
+        #groupRepository: groups,
+        #mediaAttachmentRepository: media,
+        #identityPeerId: 'peer-1',
+        #senderPublicKey: 'b6-current-pk',
+        #senderDeviceId: 'b6-current',
+        #senderTransportPeerId: 'b6-current',
+        #parent: parent,
+        #sources: [source],
+        #groupContentAuthoring: context,
+      },
+      reporter: reporter,
+      capturedActivity: capturedActivity,
+    );
+
+    test('B6M-001 applied durable preparation counts before retained offline upload', () async {
+      var committedAtMark = false;
+      activityBridge.onMark = () {
+        committedAtMark = media.applied && media.rows.isNotEmpty;
+      };
+      final result = await prepare();
+      expect(result.state, PreparedGroupMediaBlobState.retained);
+      expect(media.applied, isTrue);
+      expect(await b6Bound(messages.getMessage(parent.id)), isNotNull);
+      expect(activityBridge.marks, hasLength(1));
+      expect(committedAtMark, isTrue);
+    });
+
+    test(
+      'B6M-002 applied owner counts despite later readback exception',
+      () async {
+        media.throwFirstReadbackAfterApplied = true;
+        final result = await prepare();
+        expect(
+          result.state,
+          PreparedGroupMediaBlobState.refused,
+          reason: 'preserve the existing outward post-commit failure result',
+        );
+        expect(media.applied, isTrue);
+        expect(media.threwReadback, isTrue);
+        expect(media.rows, isNotEmpty);
+        expect(await b6Bound(messages.getMessage(parent.id)), isNotNull);
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test(
+      'B6M-003 exact idempotent preparation cannot create another mark',
+      () async {
+        expect((await prepare()).hasDurableAuthority, isTrue);
+        activityBridge.requests.clear();
+        await b6Bound(encryptedSource.writeAsBytes(ciphertext));
+        media.allowExactIdempotent = true;
+        final result = await prepare();
+        expect(result.hasDurableAuthority, isTrue);
+        expect(media.idempotentCalls, 1);
+        expect(activityBridge.marks, isEmpty);
+      },
+    );
+
+    test('B6M-004 persisted-generation retry cannot create activity', () async {
+      expect((await prepare()).hasDurableAuthority, isTrue);
+      activityBridge.requests.clear();
+      final saved = await b6Bound(messages.getMessage(parent.id));
+      final retried = await b6Bound(
+        coordinator.retryPersistedGeneration(
+          bridge: activityBridge,
+          mediaAttachmentRepository: media,
+          identityPeerId: 'peer-1',
+          expectedParent: saved!,
+        ),
+      );
+      expect(retried.hasDurableAuthority, isTrue);
+      expect(media.stageCalls, 1);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test(
+      'B6M-005 refused preparation never creates activity or a durable owner',
+      () async {
+        media.refuse = true;
+        expect((await prepare()).hasDurableAuthority, isFalse);
+        expect(media.rows, isEmpty);
+        expect(await b6Bound(messages.getMessage(parent.id)), isNull);
+        expect(activityBridge.marks, isEmpty);
+      },
+    );
+
+    test(
+      'B6M-006 present-null original capture cannot backfill fresh preparation',
+      () async {
+        await b6Bound(
+          reporter.observeConsent((enabled: false, consentEpoch: 8)),
+        );
+        final original = (
+          reporter: reporter,
+          capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+        );
+        expect(original.capture, isNull);
+        await b6Bound(
+          reporter.observeConsent((enabled: true, consentEpoch: 9)),
+        );
+        expect(
+          (await prepare(capturedActivity: original)).hasDurableAuthority,
+          isTrue,
+        );
+        expect(media.applied, isTrue);
+        expect(activityBridge.marks, isEmpty);
       },
     );
   });

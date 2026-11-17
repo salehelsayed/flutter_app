@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'b6_daily_activity_test_support.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12753,6 +12756,315 @@ void main() {
           ),
           attachments.first.custodyBlobId,
         );
+      },
+    );
+  });
+  group('BL29 B6 group message activity', () {
+    late B6ActivityBridge activityBridge;
+    late ActiveIdentityReporter reporter;
+    late DateTime authoredAt;
+
+    setUp(() async {
+      activityBridge = B6ActivityBridge();
+      activityBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'public-group-frame',
+      };
+      bridge = activityBridge;
+      reporter = await b6Reporter(activityBridge);
+      authoredAt = DateTime.now().toUtc();
+      expect(activityBridge.marks, isEmpty);
+    });
+    tearDown(() => b6Bound(reporter.dispose()));
+
+    Future<(SendGroupMessageResult, GroupMessage?)> submit({
+      String id = 'b6-fresh-message',
+      String? quote,
+      B6CapturedActivity? capturedActivity,
+      GroupContentAuthoringContext? context,
+      List<MediaAttachment>? media,
+      InMemoryMediaAttachmentRepository? mediaRepository,
+      String? publicKey,
+    }) => b6Invoke<(SendGroupMessageResult, GroupMessage?)>(
+      sendGroupMessage,
+      {
+        #bridge: bridge,
+        #groupRepo: groupRepo,
+        #msgRepo: msgRepo,
+        #groupId: 'group-1',
+        #text: 'public B6 content',
+        #senderPeerId: 'peer-1',
+        #senderPublicKey:
+            publicKey ?? (context == null ? 'pk-1' : 'b6-current-pk'),
+        #senderPrivateKey: 'public-fixture-key',
+        #senderUsername: 'Alice',
+        #messageId: id,
+        #timestamp: authoredAt,
+        #quotedMessageId: quote,
+        #mediaAttachments: media,
+        #mediaAttachmentRepo: mediaRepository,
+        #groupContentAuthoring: context,
+        if (context != null) #senderDeviceId: 'b6-current',
+        if (context != null) #senderTransportPeerId: 'b6-current',
+      },
+      reporter: reporter,
+      capturedActivity: capturedActivity,
+    );
+
+    for (final quote in <String?>[null, 'public-original-post']) {
+      test(
+        'B6G-${quote == null ? '001' : '002'} fresh ${quote == null ? 'post' : 'reply'} marks once after durable parent',
+        () async {
+          Future<GroupMessage?>? parentAtMark;
+          activityBridge.onMark = () {
+            parentAtMark = msgRepo.getMessage('b6-fresh-message');
+          };
+          final result = await submit(quote: quote);
+          expect(result.$1, SendGroupMessageResult.success);
+          expect(result.$2, isNotNull);
+          expect(
+            await b6Bound(msgRepo.getMessage('b6-fresh-message')),
+            isNotNull,
+          );
+          expect(activityBridge.marks, hasLength(1));
+          expect(parentAtMark, isNotNull);
+          expect((await b6Bound(parentAtMark!))?.id, 'b6-fresh-message');
+          expect(
+            activityBridge.marks.single.keys,
+            unorderedEquals([
+              'version',
+              'revision',
+              'consentEpoch',
+              'profileBinding',
+              'accountPeerId',
+              'op',
+            ]),
+          );
+        },
+      );
+    }
+
+    test(
+      'B6G-003 fresh legacy media counts one parent, not attachments',
+      () async {
+        final media = InMemoryMediaAttachmentRepository();
+        final result = await submit(
+          mediaRepository: media,
+          media: [
+            for (var i = 0; i < 2; i++)
+              MediaAttachment(
+                id: 'b6-media-$i',
+                messageId: '',
+                mime: 'image/jpeg',
+                size: 12,
+                mediaType: 'image',
+                downloadStatus: 'done',
+                createdAt: authoredAt.toIso8601String(),
+                localPath: '/unused/b6-$i.jpg',
+                contentHash: _validContentHash,
+                encryptionKeyBase64: 'public-key',
+                encryptionNonce: 'public-nonce',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ),
+          ],
+        );
+        expect(result.$1, SendGroupMessageResult.success);
+        expect(
+          await b6Bound(
+            media.getAttachmentsForMessage(
+              'b6-fresh-message',
+              owner: MediaOwnerLane.group,
+            ),
+          ),
+          hasLength(2),
+        );
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test('B6G-004 existing retry parent does not create activity', () async {
+      await b6Bound(
+        msgRepo.saveMessage(
+          GroupMessage(
+            id: 'b6-fresh-message',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'public B6 content',
+            timestamp: authoredAt,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: authoredAt,
+            logicalDeliveryId: 'b6-fresh-message',
+          ),
+        ),
+      );
+      final retry = await submit();
+      expect(retry.$2?.id, 'b6-fresh-message');
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test('B6G-005 rejected durable parent stays unmarked', () async {
+      msgRepo = _SilentSaveGroupMessageRepository();
+      final result = await submit();
+      expect(result.$1, SendGroupMessageResult.error);
+      expect(await b6Bound(msgRepo.getMessage('b6-fresh-message')), isNull);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test('B6G-006 strict committed offline handoff counts even after readback failure', () async {
+      final strict = _PreparedReadbackFailureRepository();
+      msgRepo = strict;
+      final store = _StrictContentInboxStore();
+      final context = await b6StrictContext(groupRepo, store);
+      var evidenceAtMark = false;
+      activityBridge.onMark = () {
+        evidenceAtMark = strict.protectedEvidence.isNotEmpty;
+      };
+      final result = await submit(context: context);
+      expect(result.$1, SendGroupMessageResult.queuedOffline);
+      expect(strict.protectedEvidence, hasLength(1));
+      expect(store.recipients, isEmpty);
+      expect(await b6Bound(strict.getMessage('b6-fresh-message')), isNotNull);
+      expect(activityBridge.marks, hasLength(1));
+      expect(evidenceAtMark, isTrue);
+    });
+
+    test('B6G-007 strict sole-member terminal admission counts once', () async {
+      msgRepo = _StrictContentMessageRepository();
+      final context = await b6StrictContext(
+        groupRepo,
+        _StrictContentInboxStore(),
+        remote: false,
+      );
+      final result = await submit(context: context);
+      expect(result.$1, SendGroupMessageResult.success);
+      expect(result.$2?.inboxStored, isTrue);
+      expect(activityBridge.marks, hasLength(1));
+    });
+
+    test('B6G-008 strict signer refusal never counts', () async {
+      final strict = _StrictContentMessageRepository();
+      msgRepo = strict;
+      final context = await b6StrictContext(
+        groupRepo,
+        _StrictContentInboxStore(),
+      );
+      final result = await submit(
+        context: context,
+        publicKey: 'wrong-public-signer',
+      );
+      expect(
+        result.$1,
+        isIn([
+          SendGroupMessageResult.unauthorized,
+          SendGroupMessageResult.authorityUnavailable,
+        ]),
+      );
+      expect(strict.protectedEvidence, isEmpty);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    for (final replaceProfile in [false, true]) {
+      test(
+        'B6G-${replaceProfile ? '010' : '009'} original capture fences ${replaceProfile ? 'profile' : 'consent'} turnover during first await',
+        () async {
+          final previous = groupRepo;
+          final gated = B6FirstReadGroupRepository();
+          await b6Bound(gated.saveGroup(testGroup));
+          await b6Bound(
+            gated.saveMember(
+              (await b6Bound(previous.getMember('group-1', 'peer-1')))!,
+            ),
+          );
+          await b6Bound(_saveGroupKey(gated, 'group-1'));
+          groupRepo = gated;
+          gated.armed = true;
+          final sending = submit();
+          try {
+            await b6Bound(gated.entered.future);
+            if (replaceProfile) {
+              reporter.observeIdentity(
+                accountPeerId: 'peer-1',
+                rootPrivateKeyBase64: 'public-successor-root',
+                profileBinding: b6OtherBinding,
+              );
+              await b6Bound(
+                reporter.observeConsent((enabled: true, consentEpoch: 7)),
+              );
+            } else {
+              await b6Bound(
+                reporter.observeConsent((enabled: false, consentEpoch: 8)),
+              );
+              await b6Bound(
+                reporter.observeConsent((enabled: true, consentEpoch: 9)),
+              );
+            }
+            gated.release.complete();
+            final result = await sending;
+            expect(result.$1, SendGroupMessageResult.success);
+            expect(result.$2, isNotNull);
+            expect(activityBridge.marks, isEmpty);
+          } finally {
+            if (!gated.release.isCompleted) gated.release.complete();
+            await b6Bound(sending);
+          }
+        },
+      );
+    }
+
+    test(
+      'B6G-011 caller present-null capture never reacquires after enabling',
+      () async {
+        await b6Bound(
+          reporter.observeConsent((enabled: false, consentEpoch: 8)),
+        );
+        final original = (
+          reporter: reporter,
+          capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+        );
+        expect(original.capture, isNull);
+        await b6Bound(
+          reporter.observeConsent((enabled: true, consentEpoch: 9)),
+        );
+        final result = await submit(capturedActivity: original);
+        expect(result.$1, SendGroupMessageResult.success);
+        expect(activityBridge.marks, isEmpty);
+      },
+    );
+
+    test(
+      'B6G-012 supplied current original capture marks without recapture',
+      () async {
+        final original = (
+          reporter: reporter,
+          capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+        );
+        expect(original.capture, isNotNull);
+        final result = await submit(capturedActivity: original);
+        expect(result.$1, SendGroupMessageResult.success);
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test(
+      'B6G-013 optional blocked mark cannot delay the accepted send',
+      () async {
+        final release = Completer<void>();
+        activityBridge.activityAnswer = (request, revision) async {
+          if (request['op'] == 'mark') await b6Bound(release.future);
+          return B6ActivityBridge.reply(request, revision);
+        };
+        try {
+          final result = await submit().timeout(
+            const Duration(milliseconds: 500),
+          );
+          expect(result.$1, SendGroupMessageResult.success);
+          expect(activityBridge.marks, hasLength(1));
+          expect(release.isCompleted, isFalse);
+        } finally {
+          release.complete();
+        }
       },
     );
   });

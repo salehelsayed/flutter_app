@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'b6_daily_activity_test_support.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
@@ -268,6 +272,42 @@ class _TerminalizingStrictReactionStore implements AckOrExpiryInboxStore {
     );
   }
 }
+
+class _B6IdempotentStrictReactionOutbox extends _StrictReactionOutbox {
+  int idempotentPrepared = 0;
+
+  @override
+  Future<bool> stageStrictContentPrepared(
+    GroupReactionReplayOutboxEntry entry, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  }) async {
+    final existing = await getEntry(entry.reactionId);
+    if (existing == null) {
+      return super.stageStrictContentPrepared(
+        entry,
+        sourcePeerId: sourcePeerId,
+        sourceEventId: sourceEventId,
+        sourceTimestamp: sourceTimestamp,
+        preparedEventPayload: preparedEventPayload,
+      );
+    }
+    final sameOwner = jsonEncode(existing.toMap()) == jsonEncode(entry.toMap());
+    final sameEvent = completedRows.any(
+      (row) =>
+          row['source_peer_id'] == sourcePeerId &&
+          row['source_event_id'] == sourceEventId &&
+          row['source_timestamp'] == sourceTimestamp &&
+          jsonEncode(row['event_payload']) == jsonEncode(preparedEventPayload),
+    );
+    if (!sameOwner || !sameEvent) return false;
+    idempotentPrepared++;
+    return true;
+  }
+}
+
 
 void main() {
   late FakeBridge bridge;
@@ -2819,6 +2859,278 @@ void main() {
       expect(stored.single.id, reaction.id);
     },
   );
+  group('BL29 B6 group reaction activity', () {
+    late B6ActivityBridge activityBridge;
+    late ActiveIdentityReporter reporter;
+    late DateTime authoredAt;
+
+    setUp(() async {
+      activityBridge = B6ActivityBridge();
+      activityBridge.responses['group:publishReaction'] = {'ok': true};
+      bridge = activityBridge;
+      reporter = await b6Reporter(activityBridge);
+      authoredAt = DateTime.now().toUtc();
+      expect(activityBridge.marks, isEmpty);
+    });
+    tearDown(() => b6Bound(reporter.dispose()));
+
+    Future<(SendGroupReactionResult, MessageReaction?)> submit({
+      B6CapturedActivity? capturedActivity,
+      GroupContentAuthoringContext? context,
+      String? publicKey,
+    }) => b6Invoke<(SendGroupReactionResult, MessageReaction?)>(
+      sendGroupReaction,
+      {
+        #bridge: bridge,
+        #groupRepo: groupRepo,
+        #msgRepo: msgRepo,
+        #reactionRepo: reactionRepo,
+        #reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        #groupId: 'group-1',
+        #messageId: 'msg-1',
+        #emoji: '👍',
+        #senderPeerId: 'peer-1',
+        #senderPublicKey:
+            publicKey ?? (context == null ? 'pk-1' : 'b6-current-pk'),
+        #senderPrivateKey: 'public-fixture-key',
+        #groupContentAuthoring: context,
+        #authoredAt: authoredAt,
+        #transitionIdFactory: () => '11111111-1111-4111-8111-111111111111',
+      },
+      reporter: reporter,
+      capturedActivity: capturedActivity,
+    );
+
+    test(
+      'B6R-001 fresh ADD observes durable replay and local reaction once',
+      () async {
+        var durableAtMark = false;
+        activityBridge.onMark = () {
+          durableAtMark =
+              reactionReplayOutboxRepo.entries.isNotEmpty &&
+              reactionRepo.reactions.isNotEmpty;
+        };
+        final result = await submit();
+        expect(result.$1, SendGroupReactionResult.success);
+        expect(result.$2, isNotNull);
+        expect(reactionReplayOutboxRepo.entries, hasLength(1));
+        expect(reactionRepo.reactions, hasLength(1));
+        expect(activityBridge.marks, hasLength(1));
+        expect(durableAtMark, isTrue);
+      },
+    );
+
+    test(
+      'B6R-002 failed live publish retains qualifying offline ADD',
+      () async {
+        activityBridge.responses['group:publishReaction'] = {
+          'ok': false,
+          'errorCode': 'PUBLIC_OFFLINE',
+        };
+        final result = await submit();
+        expect(result.$1, SendGroupReactionResult.queuedForRetry);
+        expect(reactionReplayOutboxRepo.entries, hasLength(1));
+        expect(reactionRepo.reactions, hasLength(1));
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test(
+      'B6R-003 local result without replay insertion is not admission',
+      () async {
+        reactionReplayOutboxRepo.guardBlocksInserts = true;
+        final result = await submit();
+        expect(
+          result.$2,
+          isNotNull,
+          reason: 'incumbent local result is deliberately insufficient',
+        );
+        expect(reactionRepo.reactions, hasLength(1));
+        expect(reactionReplayOutboxRepo.entries, isEmpty);
+        expect(activityBridge.marks, isEmpty);
+      },
+    );
+
+    test(
+      'B6R-004 rescuable needs-build ADD still counts its durable owner',
+      () async {
+        activityBridge.responses['group:encrypt'] = {
+          'ok': false,
+          'errorCode': 'PUBLIC_BUILD_UNAVAILABLE',
+        };
+        final result = await submit();
+        expect(result.$2, isNotNull);
+        expect(reactionReplayOutboxRepo.entries, hasLength(1));
+        expect(
+          reactionReplayOutboxRepo.entries.single.deliveryStatus,
+          GroupReactionReplayOutboxStatus.needsBuild,
+        );
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test('B6R-005 legacy exact retry never creates another mark', () async {
+      final first = await submit();
+      final staged = reactionReplayOutboxRepo.saveEntryCallCount;
+      final second = await submit();
+      expect(first.$2?.id, second.$2?.id);
+      expect(reactionReplayOutboxRepo.saveEntryCallCount, staged);
+      expect(reactionReplayOutboxRepo.entries, hasLength(1));
+      expect(activityBridge.marks, hasLength(1));
+    });
+
+    test(
+      'B6R-006 strict pending owner qualifies with null outward reaction',
+      () async {
+        final strict = _StrictReactionOutbox();
+        reactionReplayOutboxRepo = strict;
+        final context = await b6StrictContext(
+          groupRepo,
+          _ThrowingStrictReactionStore(),
+        );
+        final result = await submit(context: context);
+        expect(result.$1, SendGroupReactionResult.queuedForRetry);
+        expect(result.$2, isNull);
+        expect(strict.entries, hasLength(1));
+        expect(strict.completedRows, hasLength(1));
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+
+    test('B6R-007 strict idempotent true is not a fresh ADD commit', () async {
+      final strict = _B6IdempotentStrictReactionOutbox();
+      reactionReplayOutboxRepo = strict;
+      final context = await b6StrictContext(
+        groupRepo,
+        _ThrowingStrictReactionStore(),
+      );
+      final first = await submit(context: context);
+      final second = await submit(context: context);
+      expect(first.$1, SendGroupReactionResult.queuedForRetry);
+      expect(second.$1, SendGroupReactionResult.queuedForRetry);
+      expect(second.$2, isNull);
+      expect(
+        strict.idempotentPrepared,
+        1,
+        reason: 'model the production true-on-exact-replay contract',
+      );
+      expect(strict.entries, hasLength(1));
+      expect(strict.completedRows, hasLength(1));
+      expect(activityBridge.marks, hasLength(1));
+    });
+
+    test('B6R-008 strict authority refusal preserves zero activity', () async {
+      final strict = _StrictReactionOutbox();
+      reactionReplayOutboxRepo = strict;
+      final context = await b6StrictContext(
+        groupRepo,
+        _ThrowingStrictReactionStore(),
+      );
+      final result = await submit(
+        context: context,
+        publicKey: 'wrong-public-signer',
+      );
+      expect(result.$1, SendGroupReactionResult.unauthorizedSenderKey);
+      expect(strict.entries, isEmpty);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test('B6R-009 REMOVE never creates activity', () async {
+      await submit();
+      activityBridge.requests.clear();
+      final result = await b6Bound(
+        removeGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'public-fixture-key',
+          targetMessage: testMessage,
+        ),
+      );
+      expect(result, RemoveGroupReactionResult.success);
+      expect(reactionRepo.reactions, isEmpty);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test(
+      'B6R-010 first-await consent turnover invalidates the original capture',
+      () async {
+        final gated = B6FirstReadGroupRepository();
+        await b6Bound(gated.saveGroup(testGroup));
+        await b6Bound(gated.saveMember(testMember));
+        await b6Bound(
+          gated.saveKey(
+            GroupKeyInfo(
+              groupId: 'group-1',
+              keyGeneration: 0,
+              encryptedKey: 'public-key-0',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          ),
+        );
+        groupRepo = gated;
+        gated.armed = true;
+        final sending = submit();
+        try {
+          await b6Bound(gated.entered.future);
+          await b6Bound(
+            reporter.observeConsent((enabled: false, consentEpoch: 8)),
+          );
+          await b6Bound(
+            reporter.observeConsent((enabled: true, consentEpoch: 9)),
+          );
+          gated.release.complete();
+          expect((await sending).$2, isNotNull);
+          expect(activityBridge.marks, isEmpty);
+        } finally {
+          if (!gated.release.isCompleted) gated.release.complete();
+          await b6Bound(sending);
+        }
+      },
+    );
+
+    test(
+      'B6R-011 present-null caller capture never reacquires current owner',
+      () async {
+        await b6Bound(
+          reporter.observeConsent((enabled: false, consentEpoch: 8)),
+        );
+        final original = (
+          reporter: reporter,
+          capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+        );
+        expect(original.capture, isNull);
+        await b6Bound(
+          reporter.observeConsent((enabled: true, consentEpoch: 9)),
+        );
+        expect((await submit(capturedActivity: original)).$2, isNotNull);
+        expect(activityBridge.marks, isEmpty);
+      },
+    );
+
+    test(
+      'B6R-012 optional reporter failure cannot change admitted ADD result',
+      () async {
+        activityBridge.activityAnswer = (request, revision) async {
+          if (request['op'] == 'mark')
+            throw StateError('public injected optional failure');
+          return B6ActivityBridge.reply(request, revision);
+        };
+        final result = await submit();
+        expect(result.$1, SendGroupReactionResult.success);
+        expect(reactionRepo.reactions, hasLength(1));
+        expect(reactionReplayOutboxRepo.entries, hasLength(1));
+        expect(activityBridge.marks, hasLength(1));
+      },
+    );
+  });
 }
 
 class _ThrowingGetMembersGroupRepository extends InMemoryGroupRepository {
