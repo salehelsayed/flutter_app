@@ -6357,12 +6357,35 @@ AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
     return left.y.compareTo(right.y);
   });
   final selected = candidates.first;
-  return AndroidNotificationCardTapTarget(
-    cardCenter: (selected.x, selected.y),
-    collapsedGroupExpandCenter: _findCollapsedAncestorGroupExpandCenter(
-      selected.element,
-    ),
-  );
+  final rowBounds = _nodeBounds(selected.element.toXmlString(pretty: false))!;
+  for (final element in selected.element.descendants.whereType<XmlElement>()) {
+    if (!identical(_nearestAndroidNotificationRow(element), selected.element) ||
+        element.getAttribute('visible-to-user') == 'false' ||
+        (element.getAttribute('text') != body &&
+            element.getAttribute('content-desc') != body)) {
+      continue;
+    }
+    final bounds = _nodeBounds(element.toXmlString(pretty: false));
+    if (bounds == null || bounds.$3 <= bounds.$1 || bounds.$4 <= bounds.$2 ||
+        bounds.$3 <= rowBounds.$1 || bounds.$1 >= rowBounds.$3) {
+      continue;
+    }
+    final top = bounds.$2 > rowBounds.$2 ? bounds.$2 : rowBounds.$2;
+    final bottom = bounds.$4 < rowBounds.$4 ? bounds.$4 : rowBounds.$4;
+    if (bottom <= top) continue;
+    // Keep X clear of the right-edge expander, but never tap a tall row's
+    // footer below its actual body content.
+    final y = selected.y >= top && selected.y < bottom
+        ? selected.y
+        : (top + bottom) ~/ 2;
+    return AndroidNotificationCardTapTarget(
+      cardCenter: (selected.x, y),
+      collapsedGroupExpandCenter: _findCollapsedAncestorGroupExpandCenter(
+        selected.element,
+      ),
+    );
+  }
+  return null;
 }
 
 /// Selects an action only inside the unique matching native notification row.
