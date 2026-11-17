@@ -88,8 +88,14 @@ class GoBridge internal constructor(
         }
 
         internal fun activityMarkRevision(fields: Map<String, Any>): Long? {
+            var keys = setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId")
+            if (fields.containsKey("occurredAtUnixMillis")) {
+                val occurrence = fields["occurredAtUnixMillis"]
+                if (fields["op"] != "mark" || occurrence !is Long || occurrence < 0) return null
+                keys = keys + "occurredAtUnixMillis"
+            }
             val revision = fields["revision"] as? Long
-            if (fields.keys != setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId") ||
+            if (fields.keys != keys ||
                 revision == null || revision <= 0 || revision > 9_007_199_254_740_991L) return null
             return revision
         }

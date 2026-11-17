@@ -269,7 +269,13 @@ class GoBridge: NSObject {
     }
 
     internal static func activityMarkRevision(_ fields: [String: Any]) -> Int64? {
-        guard Set(fields.keys) == ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"],
+        var keys: Set<String> = ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"]
+        if let occurrence = fields["occurredAtUnixMillis"] {
+            guard fields["op"] as? String == "mark", type(of: occurrence) == Int64.self,
+                  let timestamp = occurrence as? Int64, timestamp >= 0 else { return nil }
+            keys.insert("occurredAtUnixMillis")
+        }
+        guard Set(fields.keys) == keys,
               let revision = activityInteger(fields["revision"]) else { return nil }
         return revision
     }
