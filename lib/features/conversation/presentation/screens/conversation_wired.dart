@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'dart:async';
 import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'dart:io';
@@ -179,6 +180,7 @@ typedef SendChatMessageFn =
       required String senderUsername,
       String? messageId,
       required bool preassignedMessageIdIsFresh,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
       String? authoredTextIntentToken,
       String? timestamp,
       Bridge? bridge,
@@ -475,6 +477,7 @@ class ConversationWired extends StatefulWidget {
   final ChatMessageListener chatMessageListener;
   final P2PService p2pService;
   final Bridge? bridge;
+  final ActiveIdentityReporter? activityReporter;
   final SendChatMessageFn sendChatMessageFn;
   final SendPrivateMediaFanoutChatMessageFn sendPrivateMediaFanoutChatMessageFn;
   final EditChatMessageFn editChatMessageFn;
@@ -639,6 +642,7 @@ class ConversationWired extends StatefulWidget {
     required this.chatMessageListener,
     required this.p2pService,
     this.bridge,
+    this.activityReporter,
     this.sendChatMessageFn = sendChatMessage,
     this.sendPrivateMediaFanoutChatMessageFn = sendChatMessage,
     this.editChatMessageFn = editChatMessage,

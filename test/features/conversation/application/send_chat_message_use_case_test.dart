@@ -1912,6 +1912,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String senderPeerId,
   required String senderUsername,
   ActiveIdentityReporter? activityReporter,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -2043,6 +2044,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     activityReporter: activityReporter,
+    capturedActivity: capturedActivity,
     action: action,
     editedAt: editedAt,
     messageId: messageId,
@@ -13333,6 +13335,7 @@ void main() {
       bool forwarded = false,
       bool fresh = true,
       bool observe = true,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
       String action = MessagePayload.actionSend,
       List<MediaAttachment>? media,
       MediaAttachmentRepository? mediaRepository,
@@ -13344,6 +13347,7 @@ void main() {
       senderPeerId: 'my-peer',
       senderUsername: 'Me',
       activityReporter: observe ? dailyReporter : null,
+      capturedActivity: capturedActivity,
       messageId: id,
       preassignedMessageIdIsFresh: fresh,
       timestamp: _dailyDate,
@@ -13365,6 +13369,49 @@ void main() {
         errorCode: 'TEST_OFFLINE',
       ),
     ));
+
+    test('E2U-S001 present captured record works without legacy reporter', () async {
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      final result = await submit(
+        observe: false,
+        capturedActivity: (reporter: dailyReporter, capture: capture),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2U-S002 present null capture never reacquires legacy current owner', () async {
+      final result = await submit(
+        capturedActivity: (reporter: dailyReporter, capture: null),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2U-S003 present null reporter never falls back to legacy reporter', () async {
+      final result = await submit(
+        capturedActivity: (reporter: null, capture: null),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2U-S004 stale UI record never acquires a same-tuple successor', () async {
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      await _dailyBound(dailyReporter.observeConsent((enabled: true, consentEpoch: 7)));
+      final result = await submit(
+        capturedActivity: (reporter: dailyReporter, capture: capture),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
 
     test('E2P-001 fresh applied text marks once after commit before transport', () async {
       final order = <String>[];

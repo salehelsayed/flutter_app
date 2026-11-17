@@ -1,3 +1,6 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_session_reply.dart';
 // test/features/feed/presentation/screens/feed_wired_bg_task_test.dart
 import '../../../../shared/fakes/in_memory_contact_request_repository.dart';
 //
@@ -458,7 +461,9 @@ void main() {
   });
 
   /// Builds a FeedWired with the _OrderRecordingBridge, wrapped in MaterialApp.
-  Widget buildFeedWiredWithBridge(_OrderRecordingBridge bridge) {
+  Widget buildFeedWiredWithBridge(_OrderRecordingBridge bridge, {
+    ActiveIdentityReporter? activityReporter,
+  }) {
     final effectiveContactRepo = contactRepo;
     final effectiveMessageRepo = messageRepo;
 
@@ -480,6 +485,7 @@ void main() {
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: FeedWired(
+        directRouteAuthority: DirectConversationRouteAuthority(activityReporter: activityReporter),
         repository: identityRepo,
         contactRepository: effectiveContactRepo,
         contactRequestRepository: contactRequestRepo,
@@ -504,8 +510,9 @@ void main() {
   /// Seeds identity and contact, pumps, and waits for feed to load.
   Future<void> pumpAndSeedFeed(
     WidgetTester tester,
-    _OrderRecordingBridge bridge,
-  ) async {
+    _OrderRecordingBridge bridge, {
+    ActiveIdentityReporter? activityReporter,
+  }) async {
     // Suppress RenderFlex overflow errors from card layouts in test surface
     final originalOnError = FlutterError.onError;
     FlutterError.onError = (details) {
@@ -534,11 +541,146 @@ void main() {
     tester.view.physicalSize = const Size(1284, 2778);
     tester.view.devicePixelRatio = 1.0;
 
-    await tester.pumpWidget(buildFeedWiredWithBridge(bridge));
+    await tester.pumpWidget(buildFeedWiredWithBridge(bridge, activityReporter: activityReporter));
     // Allow feed to load
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+  }
+
+  const feedCaptureScenarios = [
+    ('E2U-F001 unchanged Feed owner marks admitted inline text', 'same'),
+    ('E2U-F002 Feed sender drift preserves communication and suppresses activity', 'drift'),
+    ('E2U-F003 unarmed Feed observation cannot be replaced after enabling', 'unarmed'),
+    ('E2U-F004 refused Feed intent creates neither custody nor activity', 'refused'),
+    ('E2U-F005 Feed retained-custody retry creates no new activity observation', 'retry'),
+  ];
+  for (final (name, scenario) in feedCaptureScenarios) {
+    testWidgets(name, (tester) async {
+      final originalOnError = FlutterError.onError;
+      final repository = _IntentFeedRepository();
+      messageRepo = repository;
+      final bridge = _DailyFeedBridge();
+      final reporter = ActiveIdentityReporter(statePath: '/unused/feed-capture.json');
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(accountPeerId: _testIdentity.peerId,
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: _feedCaptureBinding);
+      await reporter.observeConsent((enabled: scenario != 'unarmed', consentEpoch: 7))
+          .timeout(const Duration(seconds: 2));
+      Future<void>? sending;
+      var finished = false;
+      Object? sendError;
+      try {
+        await pumpAndSeedFeed(tester, bridge, activityReporter: reporter);
+        FeedScreen screen() => tester.widget<FeedScreen>(find.byType(FeedScreen));
+        final callback = screen().onComposerSend!;
+        sending = Future<void>.sync(() => callback('contact-peer-id', 'fresh private Feed text'))
+            .then<void>((_) { finished = true; }, onError: (Object error, StackTrace stack) {
+              sendError = error;
+              finished = true;
+            });
+        for (var i = 0; i < 20 && repository.requested == null; i++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(repository.requested, isNotNull, reason: 'hold the first authored intent await');
+        expect(repository.directInboxCustodyStageCallCount, 0);
+        expect(bridge.marks, isEmpty);
+        if (scenario == 'drift') {
+          final successor = IdentityModel(peerId: 'successor-peer', publicKey: 'successor-pk',
+            privateKey: 'successor-sk', mnemonic12: _testIdentity.mnemonic12,
+            username: 'Successor', createdAt: _testIdentity.createdAt,
+            updatedAt: _testIdentity.updatedAt);
+          identityRepo.seed(successor);
+          reporter.observeIdentity(accountPeerId: successor.peerId,
+            rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 19)),
+            profileBinding: _feedCaptureOtherBinding);
+          await reporter.observeConsent((enabled: true, consentEpoch: 7))
+              .timeout(const Duration(seconds: 2));
+          appShellController.notifyIdentityChanged();
+          for (var i = 0; i < 20 && screen().userPeerId != successor.peerId; i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          expect(screen().userPeerId, successor.peerId, reason: 'the real Feed identity reload must finish');
+        } else if (scenario == 'unarmed') {
+          await reporter.observeConsent((enabled: true, consentEpoch: 8))
+              .timeout(const Duration(seconds: 2));
+        }
+        repository.admission.complete(scenario != 'refused');
+        for (var i = 0; i < 40 && !finished; i++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(finished, isTrue, reason: 'authored callback must settle within the fixture budget');
+        await sending.timeout(const Duration(seconds: 2));
+        if (scenario == 'refused') {
+          expect(sendError, isA<StateError>());
+          expect(repository.directInboxCustodyStageCallCount, 0);
+          expect(bridge.callLog, isNot(contains('bg:begin')));
+          expect(bridge.marks, isEmpty);
+        } else {
+          expect(sendError, isNull);
+          for (var i = 0; i < 60 && !bridge.callLog.contains('bg:end'); i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          expect(bridge.callLog, contains('bg:end'), reason: 'join the actual detached send, not just intent admission');
+          expect(repository.directInboxCustodyStageCallCount, 1);
+          final id = repository.requested!.id;
+          final message = await repository.getMessage(id).timeout(const Duration(seconds: 2));
+          expect(message, isNotNull);
+          expect(message!.senderPeerId, scenario == 'drift' ? 'successor-peer' : _testIdentity.peerId,
+            reason: 'analytics must not rewrite the incumbent communication identity');
+          if (scenario == 'retry') {
+            bridge.marks.clear();
+            final transportsBefore = p2pService.operationLog.where((entry) => entry == 'p2p:sendMessageWithReply').length;
+            await repository.updateMessageStatus(id, 'failed').timeout(const Duration(seconds: 2));
+            final retry = (screen().onRetrySend as Future<void> Function(String, FeedSessionReply))(
+              'contact-peer-id', FeedSessionReply(messageId: id, text: message.text));
+            var retried = false;
+            final settled = retry.whenComplete(() => retried = true);
+            for (var i = 0; i < 60 && !retried; i++) {
+              await tester.pump(const Duration(milliseconds: 10));
+            }
+            expect(retried, isTrue);
+            await settled.timeout(const Duration(seconds: 2));
+            expect(p2pService.operationLog.where((entry) => entry == 'p2p:sendMessageWithReply').length,
+              greaterThan(transportsBefore), reason: 'the retry must actually attempt the retained transport');
+            expect(repository.directInboxCustodyStageCallCount, 1, reason: 'retry reuses retained custody');
+            expect(bridge.marks, isEmpty);
+          } else {
+            for (var i = 0; i < 10; i++) {
+              await tester.pump(const Duration(milliseconds: 10));
+            }
+            expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+          }
+        }
+      } finally {
+        if (!repository.admission.isCompleted) {
+          repository.admission.complete(false);
+        }
+        for (var i = 0; i < 40 && !finished && sending != null; i++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        if (sending != null) {
+          await sending.timeout(const Duration(seconds: 2));
+        }
+        // The authored callback detaches dispatch; settle every started native
+        // background-task scope before disposing its widget/reporter, even
+        // when an earlier contract assertion failed.
+        for (var i = 0; i < 60; i++) {
+          await tester.pump(const Duration(milliseconds: 10));
+          final begins = bridge.callLog.where((cmd) => cmd == 'bg:begin').length;
+          final ends = bridge.callLog.where((cmd) => cmd == 'bg:end').length;
+          if (ends >= begins) {
+            break;
+          }
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await reporter.dispose().timeout(const Duration(seconds: 2));
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        FlutterError.onError = originalOnError;
+      }
+    });
   }
 
   group('FeedWired _onInlineSend — background task ordering', () {
@@ -737,4 +879,32 @@ void main() {
       );
     });
   });
+}
+
+const _feedCaptureBinding = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _feedCaptureOtherBinding = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+class _DailyFeedBridge extends _OrderRecordingBridge {
+  final marks = <Map<String, dynamic>>[];
+  int _revision = 0;
+  @override
+  bool get isInitialized => true;
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] != 'active_identity_reporter_v1') {
+      return super.send(message);
+    }
+    final request = Map<String, dynamic>.from(envelope['payload'] as Map);
+    final revision = request['op'] == 'configure' ? ++_revision : request['revision'];
+    if (request['op'] == 'mark') {
+      marks.add(request);
+    }
+    return jsonEncode({'ok': true, 'data': {
+      'revision': revision, 'consentEpoch': request['consentEpoch'],
+      if (request['op'] == 'configure') 'configured': request['enabled'] == true && request['profileBinding'] != '',
+      if (request['op'] == 'mark') 'accepted': true,
+      if (request['op'] == 'flush') 'queued': true,
+    }});
+  }
 }

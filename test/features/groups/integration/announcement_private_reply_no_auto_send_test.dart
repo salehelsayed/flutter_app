@@ -295,6 +295,7 @@ void main() {
                     required String senderUsername,
                     String? messageId,
                     required bool preassignedMessageIdIsFresh,
+                    capturedActivity,
                     String? authoredTextIntentToken,
                     String? timestamp,
                     Bridge? bridge,

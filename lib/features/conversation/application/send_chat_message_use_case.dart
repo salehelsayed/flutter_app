@@ -761,6 +761,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String senderUsername,
   // Explicit caller-owned reporter; production composition wiring is separate.
   ActiveIdentityReporter? activityReporter,
+  // A present UI observation is authoritative, including null fields.
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,

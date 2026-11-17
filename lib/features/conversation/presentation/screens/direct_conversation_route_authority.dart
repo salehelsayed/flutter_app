@@ -11,6 +11,8 @@
 /// instead of copying it per site.
 library;
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
@@ -25,12 +27,16 @@ import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.da
 /// composition" and preserves the incumbent single-target behaviour exactly.
 class DirectConversationRouteAuthority {
   const DirectConversationRouteAuthority({
+    this.activityReporter,
     this.directEventFanoutResolver,
     this.directDeviceTrust,
     this.isLinkedBlobFreeRuntime,
     this.outgoingCallCapability,
     this.callTimelineSource,
   });
+
+  /// Borrowed from bootstrap; the route bundle never disposes it.
+  final ActiveIdentityReporter? activityReporter;
 
   /// Builds the shared blob-free fanout authoring owner for the CURRENT
   /// role/identity at route-push time; a null result means incumbent sender.

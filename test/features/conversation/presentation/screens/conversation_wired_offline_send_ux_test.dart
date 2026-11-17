@@ -508,6 +508,7 @@ class _GatedSendRecorder {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         dynamic bridge,
