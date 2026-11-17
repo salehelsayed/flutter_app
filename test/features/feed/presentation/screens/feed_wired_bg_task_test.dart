@@ -632,6 +632,9 @@ void main() {
           if (scenario == 'retry') {
             bridge.marks.clear();
             final transportsBefore = p2pService.operationLog.where((entry) => entry == 'p2p:sendMessageWithReply').length;
+            final custodyBefore = await repository.loadDirectInboxCustodyOwnerForMessageId(messageId: id)
+                .timeout(const Duration(seconds: 2));
+            expect(custodyBefore, isNotNull);
             await repository.updateMessageStatus(id, 'failed').timeout(const Duration(seconds: 2));
             final retry = (screen().onRetrySend as Future<void> Function(String, FeedSessionReply))(
               'contact-peer-id', FeedSessionReply(messageId: id, text: message.text));
@@ -642,8 +645,18 @@ void main() {
             }
             expect(retried, isTrue);
             await settled.timeout(const Duration(seconds: 2));
+            final custodyAfter = await repository.loadDirectInboxCustodyOwnerForMessageId(messageId: id)
+                .timeout(const Duration(seconds: 2));
+            expect(custodyAfter, isNotNull);
+            expect(custodyAfter!.recipientPeerId, custodyBefore!.recipientPeerId);
+            expect(custodyAfter.messageId, custodyBefore.messageId);
+            expect(custodyAfter.incarnationId, custodyBefore.incarnationId);
+            expect(custodyAfter.wireEnvelope, custodyBefore.wireEnvelope);
+            expect(custodyAfter.retryCount, custodyBefore.retryCount + 1,
+              reason: 'the exact retained custody retry must actually run');
+            expect(custodyAfter.lastErrorCode, 'store_failed');
             expect(p2pService.operationLog.where((entry) => entry == 'p2p:sendMessageWithReply').length,
-              greaterThan(transportsBefore), reason: 'the retry must actually attempt the retained transport');
+              transportsBefore, reason: 'retained custody owns retry without a new live send');
             expect(repository.directInboxCustodyStageCallCount, 1, reason: 'retry reuses retained custody');
             expect(bridge.marks, isEmpty);
           } else {
