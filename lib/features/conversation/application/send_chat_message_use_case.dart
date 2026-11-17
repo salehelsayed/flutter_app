@@ -792,13 +792,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
 }) async {
-  ActiveIdentityReporterCapture? activityCapture;
-  try {
-    activityCapture = activityReporter?.captureOwner(
-      expectedAccountPeerId: senderPeerId,
-    );
-  } catch (_) {
-    // Optional observation must never own authoring or expose private failures.
+  final capturedReporter = capturedActivity == null
+      ? activityReporter
+      : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      activityCapture = capturedReporter?.captureOwner(
+        expectedAccountPeerId: senderPeerId,
+      );
+    } catch (_) {
+      // Optional observation must never own authoring or expose private failures.
+    }
   }
   final diagnostics = AppDiagnostics.instance;
   return diagnostics.runWithAttempt(
@@ -826,7 +831,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           text: text,
           senderPeerId: senderPeerId,
           senderUsername: senderUsername,
-          activityReporter: activityReporter,
+          activityReporter: capturedReporter,
           activityCapture: activityCapture,
           action: action,
           editedAt: editedAt,

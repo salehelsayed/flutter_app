@@ -3692,6 +3692,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final pushedRoute = Navigator.of(context).push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
+            activityReporter: widget.directRouteAuthority?.activityReporter,
             directEventFanout:
                 widget.directRouteAuthority.resolvedDirectEventFanout,
             directDeviceTrust:

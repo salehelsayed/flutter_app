@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -1810,6 +1811,7 @@ class _FeedWiredState extends State<FeedWired>
     await Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          activityReporter: widget.directRouteAuthority?.activityReporter,
           postRepository: widget.postRepository,
           directEventFanout:
               widget.directRouteAuthority.resolvedDirectEventFanout,
@@ -1861,6 +1863,7 @@ class _FeedWiredState extends State<FeedWired>
         .push(
           buildConversationRoute(
             builder: (_) => ConversationWired(
+              activityReporter: widget.directRouteAuthority?.activityReporter,
               postRepository: widget.postRepository,
               directEventFanout:
                   widget.directRouteAuthority.resolvedDirectEventFanout,
@@ -2210,6 +2213,19 @@ class _FeedWiredState extends State<FeedWired>
   Future<void> _onFeedComposerSend(String threadId, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final activitySenderPeerId = _identity?.peerId;
+    final activityReporter = widget.directRouteAuthority?.activityReporter;
+    ActiveIdentityReporterCapture? activityCapture;
+    if (activitySenderPeerId != null && !threadId.startsWith('group:')) {
+      try {
+        activityCapture = activityReporter?.captureOwner(
+          expectedAccountPeerId: activitySenderPeerId,
+        );
+      } catch (_) {
+        // Optional observation must never prevent authored intent admission.
+      }
+    }
+    final capturedActivity = (reporter: activityReporter, capture: activityCapture);
     final reply = FeedSessionReply(messageId: _uuid.v4(), text: trimmed);
     AuthoredDirectTextIntent? intent;
     final repository = widget.messageRepository;
@@ -2236,7 +2252,13 @@ class _FeedWiredState extends State<FeedWired>
       event: 'FEED_SEND_APPEND',
       details: {'threadId': threadId},
     );
-    unawaited(_dispatchFeedComposerSend(threadId, reply, intent: intent));
+    unawaited(_dispatchFeedComposerSend(
+      threadId,
+      reply,
+      intent: intent,
+      activitySenderPeerId: activitySenderPeerId,
+      capturedActivity: capturedActivity,
+    ));
   }
 
   void _appendSessionOutgoing(String threadId, FeedSessionReply reply) {
@@ -2323,6 +2345,8 @@ class _FeedWiredState extends State<FeedWired>
     String threadId,
     FeedSessionReply reply, {
     AuthoredDirectTextIntent? intent,
+    required String? activitySenderPeerId,
+    required ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture}) capturedActivity,
   }) async {
     if (threadId.startsWith('group:')) {
       final groupId = threadId.substring('group:'.length);
@@ -2336,6 +2360,8 @@ class _FeedWiredState extends State<FeedWired>
       reply.text,
       messageId: reply.messageId,
       intent: intent,
+      activitySenderPeerId: activitySenderPeerId,
+      capturedActivity: capturedActivity,
     );
     if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
   }
@@ -2371,6 +2397,8 @@ class _FeedWiredState extends State<FeedWired>
     String text, {
     required String messageId,
     AuthoredDirectTextIntent? intent,
+    String? activitySenderPeerId,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture}) capturedActivity = (reporter: null, capture: null),
   }) async {
     final identity = _identity;
     if (identity == null) {
@@ -2421,6 +2449,9 @@ class _FeedWiredState extends State<FeedWired>
         text: sanitizedText,
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
+        capturedActivity: activitySenderPeerId == identity.peerId
+            ? capturedActivity
+            : (reporter: null, capture: null),
         messageId: optimisticMessage.id,
         preassignedMessageIdIsFresh: true,
         authoredTextIntentToken: intent?.token,

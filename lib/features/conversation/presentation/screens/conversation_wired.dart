@@ -3870,6 +3870,16 @@ class _ConversationWiredState extends State<ConversationWired>
   }) async {
     final identity = _identity;
     if (identity == null) return;
+    final activityReporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? activityCapture;
+    try {
+      activityCapture = activityReporter?.captureOwner(
+        expectedAccountPeerId: identity.peerId,
+      );
+    } catch (_) {
+      // Optional observation must never prevent authoring.
+    }
+    final capturedActivity = (reporter: activityReporter, capture: activityCapture);
     final messenger = ScaffoldMessenger.maybeOf(context);
     // Captured pre-gap: the failure snackbar below runs after awaits, when
     // this State may already be unmounted.
@@ -5181,6 +5191,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 senderUsername: identity.username,
                 messageId: optimisticMessage.id,
                 preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
+                capturedActivity: capturedActivity,
                 authoredTextIntentToken: authoredTextIntentToken,
                 timestamp: optimisticMessage.timestamp,
                 bridge: widget.bridge,

@@ -824,6 +824,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // Rebuilt per read because the fanout owner is identity/role-scoped.
   DirectConversationRouteAuthority get _directRouteAuthority =>
       DirectConversationRouteAuthority(
+        activityReporter: widget.activityReporter,
         directEventFanoutResolver: widget.directEventFanoutResolver,
         directDeviceTrust: widget.directDeviceTrust,
         isLinkedBlobFreeRuntime: widget.isLinkedBlobFreeRuntime,
@@ -2239,6 +2240,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await navigator.push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          activityReporter: _directRouteAuthority.activityReporter,
           postRepository: widget.postRepository,
           contact: contact,
           // 362: resolved from the ONE shared route-authority bundle so this
