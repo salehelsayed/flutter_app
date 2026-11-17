@@ -201,7 +201,9 @@ void main() {
       expect(h.bridge.marks, initiallyEnabled ? hasLength(1) : isEmpty);
       await h.reporter.observeConsent((enabled: true, consentEpoch: 9)).timeout(_budget);
       h.uploadCompletes = true;
-      await h.send(strict: false, fresh: false).timeout(_budget);
+      final finalized = await h.send(strict: false, fresh: false).timeout(_budget);
+      expect(finalized.$1, SendVoiceMessageResult.sendFailed,
+        reason: 'the stopped node affects transport after durable custody admission');
       expect((await h.fixture.messageRepo.getMessage(_message).timeout(_budget))!.directMediaCustodyIntentId, isNull);
       expect(await h.fixture.db.query('direct_inbox_custody_outbox').timeout(_budget), hasLength(1));
       expect(h.bridge.marks, initiallyEnabled ? hasLength(1) : isEmpty);
@@ -452,9 +454,14 @@ class _VoiceActivityHarness {
       await beforeLegacyUpload?.call();
       if (!uploadCompletes) return UploadMediaFailed(stage: failureStage,
         disposition: failureDisposition, errorCode: 'U2_TEST_FAILURE');
+      final completedRelativePath = MediaFilePathConvention.relativePathForAttachment(
+        contactPeerId: recipientPeerId, blobId: blobId!, mime: mime);
+      final completedFile = File('${root.path}/$completedRelativePath');
+      await completedFile.parent.create(recursive: true).timeout(_budget);
+      await File(localFilePath).copy(completedFile.path).timeout(_budget);
       return UploadMediaSucceeded(MediaAttachment(id: blobId!, messageId: '', mime: mime,
         size: recording.sizeBytes, mediaType: 'audio', durationMs: recording.durationMs,
-        localPath: pending.localPath, downloadStatus: 'done', createdAt: _authoredAt,
+        localPath: completedRelativePath, downloadStatus: 'done', createdAt: _authoredAt,
         contentHash: 'a' * 64, encryptionKeyBase64: base64Encode(List<int>.filled(32, 1)),
         encryptionNonce: base64Encode(List<int>.filled(12, 2)),
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1));
