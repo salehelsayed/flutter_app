@@ -11535,6 +11535,41 @@ visible and cannot become an ordinary first-attempt PASS.
   recovery within the same episode. If focus returns before native media is
   ready, bounded readiness retries continue within that original deadline
   without requiring a new native connected callback.
+  BL-26 also fences the opposite ordering: an already-ready native pair must
+  not publish V2 transport `mediaRecovered` before the current SDP/signaling
+  commit. The post-commit sample still works without another native callback;
+  V1, focus-only recovery, send authority and the original 15s deadline retain
+  their guards. Settled same-revision video can retain its existing capture,
+  remote track and renderers through an ICE-only continuation. This does not
+  admit a fresh camera ON while reconnecting. OFF, permission loss, background,
+  End, refused retention and unfinished media switches retain their cleanup
+  boundaries; an old token cannot mutate SDP or resurrect revoked capture.
+  The concrete host fixture must implement the pinned peer connection's
+  `setConfiguration`: the real engine's `restartIce` first updates ICE servers,
+  even for an empty replacement. A missing fake method throws before the
+  resource assertions run. The manually composed graph fixture must also
+  deliver the owner's `onMediaChanged` notification, as production composition
+  does. Its existing presentation stream provides that wake without inventing
+  tracks or renderers. The refused-retention check holds fallback cleanup and
+  requires camera stop, native lease release and OFF before releasing it;
+  waiting until cleanup finishes would not prove that boundary.
+  At `c49569d72`, the full R1 executor file passed 132 cases in the original
+  affected lanes; fresh corrected graph and concrete files passed 18 and 72
+  cases. The explicit carry composes those results with 17 unchanged passing
+  host lanes and 347 workflow tests. The original affected-calls and
+  call-signaling receipts remain failed for the missing fixture method and
+  notification; the pre-test launcher failures are also retained. Source/host
+  closure and raw hashes are indexed by
+  `codex-production-source-and-composed-host-green-closure-c49569d72.json`,
+  `astra-first-green-full-raw-verification-c1adff5d1.json` and
+  `astra-corrected-green-raw-verification-c49569d72.json` under
+  `/Users/I560101/.codex/investigations/bl26-handover-20261116/`.
+  These prove host state and fake-resource ownership, not native rendering or
+  video RTP. The debug-282 failed/incomplete handovers remain historical
+  failures; exact-candidate three-leg device proof, including both handover
+  directions and actual video RTP growth, is still pending. Audio RTP was not
+  measured in that earlier device evidence. No signed/store or current-main
+  integration claim follows from this composed host result.
   The relay distinguishes short encrypted-payload expiry from active routing.
   An exact authenticated recipient retrieve renews an acknowledged call's
   routing lease for 45s. The runtime performs this read only for the current
