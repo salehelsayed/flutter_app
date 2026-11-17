@@ -495,7 +495,10 @@ const _productionBootstrapNormalizedSha256 =
     // BL-30 R2: the every-launch identity.db open and its post-open writes
     // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
     // background assertion); same calls, same order, no owner moves.
-    '7bd3f158db8c9fe3b6e8cde87720ae0df7c9c5168023677fb83430596bbf04f9';
+    // BL-29 B7: accepted 03ef32cbd adds only the nine-line capture closure.
+    // Removing it restores 11185e105 bytes and both old pins after the same
+    // 25 URI rewrites; historical callback 843fb41c stays unique and exact.
+    '8c09245ba3a9a29f833030b88218e9e9ebf912aed3c69a2feb60a2fc01e8ea76';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -543,7 +546,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '302b80dd4c1ed125320945a5df639d4a946a9f58ce311418889aa9dbfca64bcc';
+    'fa2c0212082e5fdfe657ca730e56b8f5af7961d3bdefd777c73e20fea6c47927';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
