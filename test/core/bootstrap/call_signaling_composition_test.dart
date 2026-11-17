@@ -3991,7 +3991,16 @@ void main() {
     expect(graph.coordinator.activeSession?.state, CallState.accepted);
   });
 
-  setUpAll(sqfliteFfiInit);
+  setUpAll(() async {
+    sqfliteFfiInit();
+    // Cold FFI database setup belongs to setup, outside the two-second
+    // call scenarios. No call deadline is extended for initialization.
+    const setupLimit = Duration(seconds: 3);
+    final database = await databaseFactoryFfi
+        .openDatabase(inMemoryDatabasePath)
+        .timeout(setupLimit);
+    await database.close().timeout(setupLimit);
+  });
 
   for (final callerRequests in [true, false]) {
     test(
@@ -10512,8 +10521,9 @@ Future<void> _deliverGraphVideoInvite(
       transport: 'direct',
     ),
   );
-  await _untilComposition(
-    () => graph.coordinator.activeSession?.state == CallState.ringing,
+  await _b7Until(
+    () => fixture.composition.current?.session.callId == (callId ?? _callA) &&
+        fixture.composition.current?.session.state == CallState.ringing,
   );
 }
 
@@ -10538,9 +10548,11 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Future<void> Function(_ProductionIosFixture)? beforeCall,
   Future<void> Function(_ProductionIosFixture)? whileRinging,
   Future<void> Function(_ProductionIosFixture)? beforeConnected,
+  void Function(StreamController<Object?>)? onNativeEventsReady,
 }) async {
   final connectedCallId = callId ?? _callA;
   final events = StreamController<Object?>.broadcast(sync: true);
+  onNativeEventsReady?.call(events);
   if (cleanupTimeout == null) {
     addTearDown(events.close);
   } else {
@@ -13318,6 +13330,10 @@ final class _B7ActivityRig {
   int revision = 0;
   int eventSequence = 0;
   bool initiallyUnarmed = false;
+  bool completeNativeEndJournal = false;
+  bool nativeEndSent = false;
+  StreamController<Object?>? nativeEvents;
+  final terminalAcknowledged = Completer<void>();
   int handoffs = 0;
   ProductionCallSignalingGraph get graph => fixture!.graphs.single;
 
@@ -13392,6 +13408,46 @@ final class _B7ActivityRig {
     }
   }
 
+  Future<Object?> _nativeLifecycle(
+    String method,
+    Map<String, Object?> arguments,
+  ) async {
+    const handle = '33333333-3333-4333-8333-333333333333';
+    if (completeNativeEndJournal && arguments['callHandle'] == handle) {
+      if (method == 'end' && !nativeEndSent) {
+        nativeEndSent = true;
+        nativeEvents!.add({
+          'version': 1,
+          'descriptor': {
+            'callHandle': handle,
+            'expiresAtMs': 2040000,
+            'presented': true,
+            'phase': 'journal',
+            'direction': 'incoming',
+          },
+          'nativeCallId': handle,
+          'highestSequence': 3,
+          'events': [
+            {
+              'callHandle': handle,
+              'sequence': 3,
+              'eventId': '99999999-9999-4999-8999-999999999993',
+              'type': 'end',
+              'occurredAtMs': 2000002,
+            },
+          ],
+        });
+      }
+      if (method == 'acknowledge' &&
+          arguments['disposition'] == 'TERMINAL' &&
+          arguments['throughSequence'] == 3 &&
+          !terminalAcknowledged.isCompleted) {
+        terminalAcknowledged.complete();
+      }
+    }
+    return null;
+  }
+
   Future<void> connect({
     bool incoming = true,
     bool durableCheckpoint = false,
@@ -13439,6 +13495,8 @@ final class _B7ActivityRig {
         beforeCall: _prepare,
         whileRinging: whileRinging,
         beforeConnected: beforeConnected,
+        onNativeEventsReady: (events) => nativeEvents = events,
+        nativeOverride: _nativeLifecycle,
       ));
     } else {
       await _b7Bound(_connectedOutgoingGraphAudio(
@@ -13512,14 +13570,19 @@ void _b7ActivityTests() {
 
   test('B7 partial canonical connection earns10 while checkpoint save is held', () async {
     final rig = _B7ActivityRig();
+    Object? connectionFailure;
+    StackTrace? connectionFailureStack;
     final connection = rig.connect(
       durableCheckpoint: true,
       beforeConnected: (_) async {
         rig.store.holdWhen = () => rig.graph.coordinator.activeSession?.state == CallState.connected;
       },
-    );
-    await _b7Bound(rig.store.entered.future);
+    ).then<void>((_) {}, onError: (Object error, StackTrace stack) {
+      connectionFailure = error;
+      connectionFailureStack = stack;
+    });
     try {
+      await _b7Bound(rig.store.entered.future);
       expect(rig.graph.coordinator.activeSession!.state, CallState.connected);
       expect(rig.graph.current!.session.state, isNot(CallState.connected));
       await rig.clock.elapse(const Duration(milliseconds: 9999));
@@ -13527,8 +13590,14 @@ void _b7ActivityTests() {
       await rig.clock.elapse(const Duration(milliseconds: 1));
       expect(rig.marks, hasLength(1));
     } finally {
-      rig.store.release.complete();
+      if (!rig.store.release.isCompleted) {
+        rig.store.release.complete();
+      }
       await _b7Bound(connection);
+      final error = connectionFailure;
+      if (error != null) {
+        Error.throwWithStackTrace(error, connectionFailureStack!);
+      }
     }
   });
 
@@ -13599,11 +13668,16 @@ void _b7ActivityTests() {
   });
 
   test('B7 partial queued predecessor timer cannot count a ringing successor', () async {
-    final rig = _B7ActivityRig();
+    final rig = _B7ActivityRig()..completeNativeEndJournal = true;
     await rig.connect();
     await rig.clock.elapse(const Duration(seconds: 9));
     final queued = rig.clock.timers.where((t) => t.active).toList();
     await rig.end();
+    await _b7Bound(rig.terminalAcknowledged.future);
+    expect(
+      await _b7Bound(rig.graph.iosCallLifecycleAdapter!.reconcileBeforeOutgoing()),
+      isTrue,
+    );
     final successor = CallId.parse('99999999-9999-4999-8999-999999999999');
     await _b7Bound(_deliverGraphVideoInvite(
       rig.fixture!,
