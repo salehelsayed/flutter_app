@@ -13591,6 +13591,36 @@ for integration/release. This is focused local-API proof; the sixteen broader
 selected gates remain Batch 13 composition obligations, and matching Dart,
 network dispatch, native/device and published-build proof remain separate.
 
+The BL29 relay runtime binds one daily/weekly store in both control-plane
+backends; main registers its collector and advances the calendar on the existing
+60-second tick. Scrapes expose only durable aggregates, with readiness zero and
+no estimate rows on persistence failure. At
+`4bd611c6e9bcded34040f6a470e8ffa4011024a7`, Claude-UI's full relay normal run
+passed 2,292 named cases (777 top-level); focused B29/bootstrap/Thought race
+passed 316 (94 top-level), without actual test skips or race warnings. Counts
+include parents/subtests and overlap. All five frozen runtime causal groups and
+both strict/durable handler controls passed in each step. Twenty-two source pins
+matched at six clean checkpoints. Host coverage includes real bootstrap binding,
+daily/weekly exposition, durable restart, weekly OFF preserving daily operation,
+failure/recovery, DST, ISO-year retention and private labels.
+
+The first full normal attempt retained a focused two-minute package timeout and
+stopped after 2,222 PASS records with an existing update-check parent/subtest
+unfinished.
+It remains a timeout, not GREEN. The mapped full relay timeout is ten minutes;
+the corrected normal package completed in 127.814 seconds. A checker initially
+misclassified the exact `testutil/circuitrelay` package's `[no test files]` event.
+Its correction re-evaluated saved normal output without rerunning tests, then
+only the previously unrun race step ran once. That empty helper is N/A; named
+test skips remain incomplete. First and corrected evidence remains separate in
+`.audit/e1g/out/` and `.audit/e1g/out2/` in the execution owner's UI-update
+checkout. Scoped closure is
+`codex-complete-scoped-source-red-full-relay-normal-focused-race-4bd611c6e.json`,
+SHA-256 `d19119e587d5dd1b8deef00f143eb6e6ead957beee4d4fd7c22f14336168adab`.
+The other fifteen mapped checks remain Batch13 composed-selection obligations;
+live metrics, deployed configuration, native/device and release proof remain
+separate. The documentation follow-up requires no additional execution.
+
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate
 `07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
