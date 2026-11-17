@@ -232,9 +232,9 @@ val allowDebugSigningInRelease =
 val simsAndroidAbi =
     when (val raw = providers.gradleProperty("simsAndroidAbi").orNull?.trim()) {
         null, "" -> null
-        "arm64-v8a" -> raw
+        "arm64-v8a", "x86_64" -> raw
         else -> throw GradleException(
-            "simsAndroidAbi must be exactly arm64-v8a when supplied."
+            "simsAndroidAbi must be exactly arm64-v8a or x86_64 when supplied."
         )
     }
 

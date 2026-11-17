@@ -715,7 +715,10 @@ final class SimsBuildOrchestrator {
     return BuildProfileInput(
       profileId: profile.id,
       platform: profile.platform,
-      architecture: _architectureFor(profile),
+      architecture: effectiveSimsBuildArchitecture(
+        profile,
+        environment: environment,
+      ),
       entrypoint:
           environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile),
       mode: _iosDeviceBuildConfiguration(profile.id) != null
@@ -1268,12 +1271,13 @@ List<String> effectiveSimsBuildArguments(
     ];
   }
   if (profile.platform == 'android') {
+    final target = _androidBuildTarget(effectiveEnvironment);
     return <String>[
       'build',
       'apk',
       '--debug',
-      '--target-platform=android-arm64',
-      '--android-project-arg=simsAndroidAbi=arm64-v8a',
+      '--target-platform=${target.flutterTarget}',
+      '--android-project-arg=simsAndroidAbi=${target.abi}',
       if (profile.id == _androidProductionAudioCallProfileId ||
           profile.id == _androidCallPreferenceProfileId) ...const <String>[
         '--android-project-arg=enableAndroidNativeCalls=true',
@@ -2318,8 +2322,26 @@ bool _ignoredSourcePath(String path) {
       ).hasMatch(normalized);
 }
 
-String _architectureFor(BuildProfileSpec profile) {
-  if (profile.platform == 'android') return 'android-arm64';
+({String abi, String flutterTarget}) _androidBuildTarget(
+  Map<String, String> environment,
+) => switch (environment['SIMS_ANDROID_ABI']) {
+  null || 'arm64-v8a' => (abi: 'arm64-v8a', flutterTarget: 'android-arm64'),
+  'x86_64' => (abi: 'x86_64', flutterTarget: 'android-x64'),
+  final value => throw ArgumentError.value(
+    value,
+    'SIMS_ANDROID_ABI',
+    'must be arm64-v8a or x86_64 when supplied',
+  ),
+};
+
+/// Uses the same Android target selection for build arguments and cache identity.
+String effectiveSimsBuildArchitecture(
+  BuildProfileSpec profile, {
+  Map<String, String>? environment,
+}) {
+  if (profile.platform == 'android') {
+    return _androidBuildTarget(environment ?? Platform.environment).flutterTarget;
+  }
   if (profile.artifactKind.contains('universal') ||
       profile.artifactKind == 'apk') {
     return 'universal';

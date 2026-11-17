@@ -65,6 +65,119 @@ void _write(Directory root, String path, String contents) {
 }
 
 void main() {
+  test('Android ABI default preserves arm64 command and cache identity', () {
+    const legacyArguments = <String>[
+      'build',
+      'apk',
+      '--debug',
+      '--target-platform=android-arm64',
+      '--android-project-arg=simsAndroidAbi=arm64-v8a',
+      '--target=integration_test/sims_dispatcher.dart',
+      '--dart-define=SIMS_BUILD_PROFILE_ID=android.e2e.standard',
+    ];
+    final legacy = _input(
+      architecture: 'android-arm64',
+      buildOptions: legacyArguments,
+    );
+    for (final environment in const <Map<String, String>>[
+      {},
+      {'SIMS_ANDROID_ABI': 'arm64-v8a'},
+    ]) {
+      final arguments = effectiveSimsBuildArguments(
+        _androidProfile,
+        environment: environment,
+      );
+      final architecture = effectiveSimsBuildArchitecture(
+        _androidProfile,
+        environment: environment,
+      );
+      expect(arguments, legacyArguments);
+      expect(architecture, 'android-arm64');
+      final current = _input(
+        architecture: architecture,
+        buildOptions: arguments,
+      );
+      expect(current.fingerprintJson, legacy.fingerprintJson);
+      expect(current.inputDigest, legacy.inputDigest);
+    }
+  });
+
+  test('x86_64 opt-in binds build arguments architecture and distinct cache', () {
+    const environment = <String, String>{'SIMS_ANDROID_ABI': 'x86_64'};
+    final defaultArguments = effectiveSimsBuildArguments(
+      _androidProfile,
+      environment: const {},
+    );
+    final arguments = effectiveSimsBuildArguments(
+      _androidProfile,
+      environment: environment,
+    );
+    expect(
+      arguments,
+      defaultArguments.map(
+        (argument) => switch (argument) {
+          '--target-platform=android-arm64' => '--target-platform=android-x64',
+          '--android-project-arg=simsAndroidAbi=arm64-v8a' =>
+            '--android-project-arg=simsAndroidAbi=x86_64',
+          _ => argument,
+        },
+      ).toList(),
+    );
+    final architecture = effectiveSimsBuildArchitecture(
+      _androidProfile,
+      environment: environment,
+    );
+    expect(architecture, 'android-x64');
+    final arm64 = _input(
+      architecture: 'android-arm64',
+      buildOptions: defaultArguments,
+    );
+    final x86 = _input(architecture: architecture, buildOptions: arguments);
+    expect(x86.inputDigest, isNot(arm64.inputDigest));
+    final artifact = utf8.encode('arm64-apk');
+    final attestation = BuildAttestation.create(
+      input: arm64,
+      artifactBytes: artifact,
+      artifactPath: '/cache/app.apk',
+      redactedCommand: const <String>['flutter', 'build', 'apk'],
+      createdAt: DateTime.utc(2026, 11, 17),
+    );
+    expect(BuildCacheVerifier.verify(arm64, attestation, artifact).isHit, isTrue);
+    expect(BuildCacheVerifier.verify(x86, attestation, artifact).isHit, isFalse);
+  });
+
+  test('Android ABI opt-in rejects unknown and empty values', () {
+    for (final abi in ['', 'x86', 'armeabi-v7a', 'android-x64', ' x86_64 ']) {
+      final environment = <String, String>{'SIMS_ANDROID_ABI': abi};
+      expect(
+        () => effectiveSimsBuildArguments(
+          _androidProfile,
+          environment: environment,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => effectiveSimsBuildArchitecture(
+          _androidProfile,
+          environment: environment,
+        ),
+        throwsArgumentError,
+      );
+    }
+  });
+
+  test('Android ABI selection leaves iOS command and architecture unchanged', () {
+    const environment = <String, String>{'SIMS_ANDROID_ABI': 'x86_64'};
+    expect(
+      effectiveSimsBuildArguments(_iosProfile, environment: environment),
+      effectiveSimsBuildArguments(_iosProfile, environment: const {}),
+    );
+    expect(
+      effectiveSimsBuildArchitecture(_iosProfile, environment: environment),
+      effectiveSimsBuildArchitecture(_iosProfile, environment: const {}),
+    );
+  });
+
   test(
     'non-provider disposable package build options invalidate shared APK cache',
     () {
