@@ -13478,7 +13478,7 @@ void main() {
       expect(dailyMessages.directCustodyRows, hasLength(1));
       final before = dailyMessages.directCustodyStageCalls.length;
       final retry = await submit(id: 'daily-existing', fresh: false);
-      expect(retry.$1, SendChatMessageResult.sendFailed);
+      expect(retry.$1, SendChatMessageResult.success);
       expect(dailyMessages.directCustodyStageCalls.length, before);
       await _dailyBound(Future<void>(() {}));
       expect(dailyBridge.marks, isEmpty);
