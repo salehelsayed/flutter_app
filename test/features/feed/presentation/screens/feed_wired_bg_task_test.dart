@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_session_reply.dart';
@@ -560,6 +561,10 @@ void main() {
       final originalOnError = FlutterError.onError;
       final repository = _IntentFeedRepository();
       messageRepo = repository;
+      final retryService = scenario == 'retry' ? _RetryCustodyFeedP2PService(repository) : null;
+      if (retryService != null) {
+        p2pService = retryService;
+      }
       final bridge = _DailyFeedBridge();
       final reporter = ActiveIdentityReporter(statePath: '/unused/feed-capture.json');
       reporter.attachBridge(bridge);
@@ -636,6 +641,8 @@ void main() {
                 .timeout(const Duration(seconds: 2));
             expect(custodyBefore, isNotNull);
             await repository.updateMessageStatus(id, 'failed').timeout(const Duration(seconds: 2));
+            expect(retryService!.retryStores, isEmpty);
+            retryService.retryArmed = true;
             final retry = (screen().onRetrySend as Future<void> Function(String, FeedSessionReply))(
               'contact-peer-id', FeedSessionReply(messageId: id, text: message.text));
             var retried = false;
@@ -655,6 +662,13 @@ void main() {
             expect(custodyAfter.retryCount, custodyBefore.retryCount + 1,
               reason: 'the exact retained custody retry must actually run');
             expect(custodyAfter.lastErrorCode, 'store_failed');
+            expect(retryService.retryStores, [(
+              recipientPeerId: custodyBefore.recipientPeerId,
+              messageId: custodyBefore.messageId,
+              incarnationId: custodyBefore.incarnationId,
+              wireEnvelope: custodyBefore.wireEnvelope,
+              custodyKind: AckCustodyKind.directTextV108,
+            )], reason: 'retry must STORE the exact immutable retained owner once');
             expect(p2pService.operationLog.where((entry) => entry == 'p2p:sendMessageWithReply').length,
               transportsBefore, reason: 'retained custody owns retry without a new live send');
             expect(repository.directInboxCustodyStageCallCount, 1, reason: 'retry reuses retained custody');
@@ -919,5 +933,45 @@ class _DailyFeedBridge extends _OrderRecordingBridge {
       if (request['op'] == 'mark') 'accepted': true,
       if (request['op'] == 'flush') 'queued': true,
     }});
+  }
+}
+
+/// Only E2U-F005 supplies this capability. Fresh-send failures stay unrecorded;
+/// arming after that send settles exposes only the manual retained-custody retry.
+class _RetryCustodyFeedP2PService extends _FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _RetryCustodyFeedP2PService(this.repository);
+  final _IntentFeedRepository repository;
+  bool retryArmed = false;
+  final retryStores = <({
+    String recipientPeerId,
+    String? messageId,
+    String? incarnationId,
+    String wireEnvelope,
+    AckCustodyKind custodyKind,
+  })>[];
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    if (retryArmed) {
+      final owner = repository.directCustodyRows.values.where((entry) =>
+          entry.recipientPeerId == toPeerId && entry.wireEnvelope == message).firstOrNull;
+      retryStores.add((
+        recipientPeerId: toPeerId,
+        messageId: owner?.messageId,
+        incarnationId: owner?.incarnationId,
+        wireEnvelope: message,
+        custodyKind: custodyKind,
+      ));
+    }
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.failed,
+      errorCode: 'TEST_RETAINED_RETRY',
+    );
   }
 }
