@@ -33,10 +33,14 @@ type ActiveIdentityReporterLocalRequest struct {
 	Version int    `json:"version"`
 	Op      string `json:"op"`
 	ActiveIdentityReporterFence
-	Enabled                *bool  `json:"enabled,omitempty"`
-	StatePath              string `json:"statePath,omitempty"`
-	RootPrivateKeyBase64   string `json:"rootPrivateKeyBase64,omitempty"`
-	PreservePendingOnUnarm bool   `json:"preservePendingOnUnarm,omitempty"`
+	Enabled                *bool    `json:"enabled,omitempty"`
+	StatePath              string   `json:"statePath,omitempty"`
+	RootPrivateKeyBase64   string   `json:"rootPrivateKeyBase64,omitempty"`
+	PreservePendingOnUnarm bool     `json:"preservePendingOnUnarm,omitempty"`
+	Week                   string   `json:"week,omitempty"`
+	Kinds                  []string `json:"kinds,omitempty"`
+	RelayPeerID            string   `json:"relayPeerId,omitempty"`
+	OccurredAtUnixMillis   *int64   `json:"occurredAtUnixMillis,omitempty"`
 }
 
 type ActiveIdentityReporterLocalResult struct {
@@ -44,6 +48,7 @@ type ActiveIdentityReporterLocalResult struct {
 	Accepted   bool
 	Queued     bool
 	Fence      ActiveIdentityReporterFence
+	Weekly     *ActiveIdentityReporterWeeklyProjection
 }
 
 // Node ownership is independent of host lifetime: Stop cancels the captured
@@ -72,7 +77,7 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 	reporter := n.activeIdentityReporterInstance()
 	switch request.Op {
 	case "configure":
-		if request.Enabled == nil {
+		if request.Enabled == nil || request.Week != "" || request.Kinds != nil || request.RelayPeerID != "" || request.OccurredAtUnixMillis != nil {
 			return result, ErrActiveIdentityReporterInput
 		}
 		reporter.stateMu.Lock()
@@ -88,11 +93,40 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 		err := reporter.configure(ActiveIdentityReporterConfig{Fence: result.Fence, StatePath: request.StatePath, RootPrivateKeyBase64: request.RootPrivateKeyBase64, PreservePendingOnUnarm: request.PreservePendingOnUnarm})
 		result.Configured = *request.Enabled && result.Fence.AccountPeerID != "" && !request.PreservePendingOnUnarm
 		return result, err
-	case "mark", "flush":
+	case "mark", "flush", "weeklyProjection", "markWeekly", "ackWeekly":
 		if request.Enabled != nil || request.StatePath != "" || request.RootPrivateKeyBase64 != "" || request.PreservePendingOnUnarm {
 			return result, ErrActiveIdentityReporterInput
 		}
+		if request.Op != "mark" && request.OccurredAtUnixMillis != nil {
+			return result, ErrActiveIdentityReporterInput
+		}
+		if request.Op != "markWeekly" && request.Op != "ackWeekly" && (request.Week != "" || request.Kinds != nil || request.RelayPeerID != "") {
+			return result, ErrActiveIdentityReporterInput
+		}
+		if request.Op == "weeklyProjection" {
+			var err error
+			result.Weekly, err = reporter.weeklyProjection(result.Fence)
+			return result, err
+		}
+		if request.Op == "markWeekly" {
+			if request.RelayPeerID != "" {
+				return result, ErrActiveIdentityReporterInput
+			}
+			err := reporter.markWeekly(result.Fence, request.Week, request.Kinds)
+			result.Accepted = err == nil
+			return result, err
+		}
+		if request.Op == "ackWeekly" {
+			err := reporter.ackWeekly(result.Fence, request.Week, request.RelayPeerID, request.Kinds)
+			result.Accepted = err == nil
+			return result, err
+		}
 		if request.Op == "mark" {
+			if request.OccurredAtUnixMillis != nil {
+				var err error
+				result.Accepted, err = reporter.updateActivity(result.Fence, true, request.OccurredAtUnixMillis)
+				return result, err
+			}
 			err := reporter.mark(result.Fence)
 			result.Accepted = err == nil
 			return result, err

@@ -54,7 +54,27 @@ func ActiveIdentityReporterV1(paramsJSON string) string {
 			return activityReporterError(node.ErrActiveIdentityReporterInput)
 		}
 		request.Enabled = &enabled
-	case "mark", "flush":
+	case "mark":
+		if raw, present := fields["occurredAtUnixMillis"]; present {
+			keys = append(keys, "occurredAtUnixMillis")
+			var at int64
+			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &at) != nil {
+				return activityReporterError(node.ErrActiveIdentityReporterInput)
+			}
+			request.OccurredAtUnixMillis = &at
+		}
+	case "flush", "weeklyProjection":
+	case "markWeekly", "ackWeekly":
+		keys = append(keys, "week", "kinds")
+		if !activityReporterString(fields["week"], &request.Week) || bytes.Equal(bytes.TrimSpace(fields["kinds"]), []byte("null")) || json.Unmarshal(fields["kinds"], &request.Kinds) != nil {
+			return activityReporterError(node.ErrActiveIdentityReporterInput)
+		}
+		if request.Op == "ackWeekly" {
+			keys = append(keys, "relayPeerId")
+			if !activityReporterString(fields["relayPeerId"], &request.RelayPeerID) {
+				return activityReporterError(node.ErrActiveIdentityReporterInput)
+			}
+		}
 	default:
 		return activityReporterError(node.ErrActiveIdentityReporterInput)
 	}
@@ -70,8 +90,10 @@ func ActiveIdentityReporterV1(paramsJSON string) string {
 	switch request.Op {
 	case "configure":
 		data["configured"] = result.Configured
-	case "mark":
+	case "mark", "markWeekly", "ackWeekly":
 		data["accepted"] = result.Accepted
+	case "weeklyProjection":
+		data["weekly"] = result.Weekly
 	case "flush":
 		data["queued"] = result.Queued
 	}
