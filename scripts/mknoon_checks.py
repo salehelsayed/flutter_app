@@ -357,7 +357,7 @@ def command_for(check, root, files):
         return [sys.executable, '-m', 'unittest', '-v', *check['paths']], check['paths']
     if kind == 'node': return ['node', '--test', '--test-reporter=tap', *check['paths']], check['paths']
     if kind == 'go':
-        return ['go', 'test', '-json', '-count=1', '-timeout=10m', *check['packages']], check['packages']
+        return ['go', 'test', '-json', '-count=1', '-timeout=10m', '-p', '4', *check['packages']], check['packages']
     if kind == 'sims':
         if check.get('adapter'):
             command = ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']]

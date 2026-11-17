@@ -434,9 +434,13 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
         self.assertEqual(check['kind'], 'go')
         self.assertEqual(check['cwd'], 'go-mknoon/activitycalendar')
         self.assertEqual(check['packages'], ['./...'])
-        argv, _ = checks.command_for(check, self.root, [])
-        self.assertEqual(argv[:2], ['go', 'test'])
-        self.assertIn('./...', argv)
+        for cid in ('go-core', 'go-relay', 'go-activity-calendar'):
+            with self.subTest(check=cid):
+                go_check = self.rules['checks'][cid]
+                argv, packages = checks.command_for(go_check, self.root, [])
+                self.assertEqual(argv, ['go', 'test', '-json', '-count=1', '-timeout=10m',
+                                        '-p', '4', *go_check['packages']])
+                self.assertEqual(packages, go_check['packages'])
 
     def test_feature_dart_edits_do_not_match_root_entrypoint_build_rule(self):
         # fnmatch '*' crosses '/' in Python; the former lib/*.dart rule
