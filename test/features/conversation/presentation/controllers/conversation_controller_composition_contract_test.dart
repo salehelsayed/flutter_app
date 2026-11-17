@@ -105,7 +105,9 @@ const _controllerTestPaths = <String>[
 // Stickers v1: one optional field, `stickerUsageRecorder`, defaulting to the
 // const diagnostics tally recorder. Without it the fingerprint is the
 // previous 2cf4b34f; with the earlier no-op default it was c2d1898f.
-const _expectedDirectApiFingerprint = '38b3be9b';
+// BL29: one approved optional borrowed reporter field, `activityReporter`,
+// and its optional constructor parameter. No controller or screen handoff change.
+const _expectedDirectApiFingerprint = '397800a2';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 // Composer drafts (owner, 11-01): the same optional `composerDraftStore`

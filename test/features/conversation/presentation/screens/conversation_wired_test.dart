@@ -7322,6 +7322,8 @@ void main() {
           contactRepo: FakeContactRepository(),
         );
         ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        String? observedSenderPeerId;
+        var callbackCompleted = false;
         var calls = 0;
         Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
           required P2PService p2pService,
@@ -7346,7 +7348,7 @@ void main() {
         }) async {
           calls++;
           observed = capturedActivity;
-          expect(senderPeerId, identity.peerId);
+          observedSenderPeerId = senderPeerId;
           final result = await _instantSuccessSendFn(
             p2pService: p2pService, messageRepo: messageRepo,
             targetPeerId: targetPeerId, text: text,
@@ -7358,6 +7360,7 @@ void main() {
           if (capture != null) {
             capturedActivity?.reporter?.markCaptured(capture);
           }
+          callbackCompleted = true;
           return result;
         }
         Future<void>? sending;
@@ -7402,6 +7405,8 @@ void main() {
             expect(repository.intents, isEmpty);
           } else {
             expect(calls, 1);
+            expect(observedSenderPeerId, identity.peerId);
+            expect(callbackCompleted, isTrue, reason: 'the observing fake must finish admission and the captured mark step');
             expect(repository.intents, hasLength(1));
             expect(observed, isNotNull, reason: 'UI supplies a present record even without a usable capture');
             expect(identical(observed!.reporter, scenario == 'absent' ? null : reporter), isTrue);
