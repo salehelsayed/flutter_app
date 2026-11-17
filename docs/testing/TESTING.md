@@ -11564,12 +11564,41 @@ visible and cannot become an ordinary first-attempt PASS.
   `astra-first-green-full-raw-verification-c1adff5d1.json` and
   `astra-corrected-green-raw-verification-c49569d72.json` under
   `/Users/I560101/.codex/investigations/bl26-handover-20261116/`.
-  These prove host state and fake-resource ownership, not native rendering or
-  video RTP. The debug-282 failed/incomplete handovers remain historical
-  failures; exact-candidate three-leg device proof, including both handover
-  directions and actual video RTP growth, is still pending. Audio RTP was not
-  measured in that earlier device evidence. No signed/store or current-main
-  integration claim follows from this composed host result.
+  The debug-283 confirmation on `c49569d72` subsequently failed native video:
+  the Pixel explicitly released its camera during the return handover. After
+  that release, iPhone inbound video stayed flat across 40 samples while Pixel
+  inbound video grew by 11,972,360 bytes across 39 samples. Both phones recovered
+  call state within 15s, which did not establish video correctness. Preserve
+  `.codex-test-logs/bl26-proof/c495-l3c/` and the earlier failed/incomplete
+  debug-282 handovers. The source-traced race is a causal explanation tested on
+  the host; the exact quality callback taken on the phone was not logged.
+  The coordinator assigns the next reconnect snapshot before awaiting the
+  active-call checkpoint, then publishes snapshots and adopts retention.
+  During that await, a completed recovery's SDP token can expire before the
+  next retention handle pauses quality work. A pending quality-stats response
+  previously called `stopLocalCamera` despite current camera-intent authority.
+  `e46a15a67` keeps exact completed resource custody through one eligible next
+  episode and pauses stale-token quality callbacks. It grants no fresh capture,
+  reconfiguration or SDP mutation; OFF and permission revocation still stop
+  capture. The graph regression holds the actual checkpoint before adoption;
+  the concrete regression releases a real held stats response and checks exact
+  capture, renderer callbacks and the next commit, with OFF/permission controls.
+  Renderer fixture `binds` counts `setSrcObject(null)` too: explicit revocation
+  expects one attach plus one unbind, while retained capture expects one attach.
+  Keep the original two incorrect control expectations in the first RED receipt.
+  Valid RED was graph 18 passes/one custody assertion failure plus corrected
+  concrete 74 passes/one capture assertion failure. At `e46a15a67`, all five
+  selected host lanes passed, including R1 132/132, graph 19/19 and concrete
+  75/75, followed by one fresh-window workflow run with 347 passes. Evidence is
+  indexed by `astra-preadoption-valid-causal-red-certification-2abaa0f6b.json`,
+  `astra-preadoption-green-full-raw-verification-e46a15a67.json` and
+  `astra-native-c495-l3c-post-release-rtp.json` in the investigation directory
+  above. No Go, bridge or quiet-recovery lane was selected for this delta.
+  These host results do not supersede the native failure. Exact-candidate
+  three-leg rendering/video-RTP proof in both handover directions remains
+  pending. Audio RTP was unmeasured. No signed/store or current-main integration
+  claim follows; the first recovery after an optional audio-to-video switch is
+  outside this completed-recovery regression's proven scope.
   The relay distinguishes short encrypted-payload expiry from active routing.
   An exact authenticated recipient retrieve renews an acknowledged call's
   routing lease for 45s. The runtime performs this read only for the current
