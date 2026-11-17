@@ -1221,7 +1221,7 @@ final class CallV2NegotiationEffectExecutor
     recovery.retirement = retainVideo
         ? (_session! as CallVideoIceRecovery).retainForIceRecovery(
             old,
-            canApply: () => _recoveryCurrent(recovery),
+            canApply: () => _recoveryVideoCustodyCurrent(recovery),
           ).then((retained) {
             if (!identical(_recovery, recovery)) return false;
             recovery.retained = retained;
@@ -1318,6 +1318,33 @@ final class CallV2NegotiationEffectExecutor
         (recovery.budget == null ||
             recovery.budget!.remaining > Duration.zero) &&
         _monotonicMs < recovery.deadlineMs;
+  }
+
+  // Read-only custody can bridge checkpoint persistence before the next
+  // eligible ICE episode adopts resources. It never grants SDP mutation.
+  bool _recoveryVideoCustodyCurrent(_V2Recovery recovery) {
+    if (!recovery.retainVideo) return false;
+    if (_recoveryCurrent(recovery)) return true;
+    final snapshot = _snapshot;
+    final token = _token;
+    if (!identical(_recovery, recovery) ||
+        !recovery.completed ||
+        recovery.blocked ||
+        _epoch != recovery.epoch ||
+        !_ready ||
+        _pendingTakeoverBlocked ||
+        legacy.engine.isClosed ||
+        legacy.engine.iceGeneration != recovery.oldGeneration + 1 ||
+        recovery.retained == null ||
+        !identical(recovery.retained!.negotiation, token) ||
+        token?.media != recovery.media ||
+        token?.mediaRevision != recovery.revision ||
+        _hasPendingRecoveryMedia() ||
+        snapshot == null) return false;
+    return (snapshot.state == CallState.connected &&
+            snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration) ||
+        (snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration + 1 &&
+            _canRetainVideo(snapshot));
   }
 
   bool _recoveryTokenCurrent(_V2Recovery recovery) =>

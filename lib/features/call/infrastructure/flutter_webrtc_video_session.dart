@@ -222,7 +222,20 @@ final class FlutterWebRtcVideoSession
 
   bool _checkQualityIntent(_QualityIntent intent) {
     if (_qualityCurrent(intent)) return true;
-    if (identical(_qualityIntent, intent)) unawaited(stopLocalCamera());
+    final retention = _iceRetention;
+    final grant = intent.grant;
+    final retained = retention != null &&
+        _retentionCurrent(retention) &&
+        identical(retention.negotiation, intent.token) &&
+        intent.token.committed &&
+        intent.token.media == CallMediaKind.video &&
+        grant.foregroundConsent && grant.permissionGranted && grant.videoAgreed &&
+        _currentGrant(grant.isCurrent);
+    // A stale SDP token pauses quality work while exact existing resources
+    // retain read-only custody. Actual camera revocation still closes capture.
+    if (identical(_qualityIntent, intent) && !retained) {
+      unawaited(stopLocalCamera());
+    }
     return false;
   }
 
