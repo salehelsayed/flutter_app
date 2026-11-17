@@ -230,6 +230,74 @@ void main() {
     },
   );
 
+  test('BL26 retained custody survives next reconnect persistence before adoption', () async {
+    final entered = Completer<void>();
+    final checkpoint = Completer<void>();
+    var held = false;
+    final rig = await _CameraRig.create(
+      recovery: true,
+      persistActiveCall: (snapshot) async {
+        if (!held &&
+            snapshot.state == CallState.reconnecting &&
+            snapshot.reconnectGeneration == 2) {
+          held = true;
+          entered.complete();
+          await checkpoint.future.timeout(_redDeadline);
+        }
+      },
+    ).timeout(_redDeadline);
+    expect(
+      (await rig.turnOn().timeout(_redDeadline)).status,
+      ForegroundCallActionStatus.applied,
+    );
+    await rig.recover().timeout(_redDeadline);
+    final previous = rig.owner.negotiation! as _Token;
+    final retained = rig.engine.video.retained!;
+    expect(previous.committed, isTrue);
+    expect(retained.negotiation, same(previous));
+    expect(retained.isCurrent, isTrue);
+    expect(rig.engine.iceGeneration, 1);
+    final completed = rig.recover().timeout(_redDeadline).then<Object?>(
+      (_) => null,
+      onError: (Object error, StackTrace _) => error,
+    );
+    addTearDown(() async {
+      if (!checkpoint.isCompleted) checkpoint.complete();
+      await completed.timeout(_redDeadline);
+    });
+    await entered.future.timeout(_redDeadline);
+    expect(rig.coordinator.activeSession?.state, CallState.reconnecting);
+    expect(rig.coordinator.activeSession?.reconnectGeneration, 2);
+    expect(rig.owner.current, isFalse);
+    expect(rig.owner.negotiation, same(previous));
+    expect(rig.owner.cameraIntentBinding(previous), same(previous));
+    expect(rig.engine.video.retained, same(retained));
+    expect(rig.engine.iceGeneration, 1);
+    expect(rig.nativeCameraCommands, [true]);
+    expect(rig.engine.video.cameraStops, 0);
+    expect(
+      retained.isCurrent,
+      isTrue,
+      reason: 'Existing video custody must survive checkpointing before adoption',
+    );
+    checkpoint.complete();
+    expect(await completed.timeout(_redDeadline), isNull);
+    expect(rig.engine.iceGeneration, 2);
+    expect(
+      rig.graph.current!.video!.presentation.localCamera,
+      CallCameraState.on,
+    );
+    expect(rig.engine.video.retained!.isCurrent, isTrue);
+    expect(
+      rig.owner.cameraIntentBinding(rig.owner.negotiation!),
+      same(rig.owner.negotiation),
+    );
+    expect(rig.nativeCameraCommands, [true]);
+    expect(rig.engine.video.cameraStops, 0);
+    expect(rig.engine.video.cameraStarts, 1);
+    expect(rig.permissionCalls, 1);
+  });
+
   test('BL26 camera OFF stays OFF through two ICE-only recoveries', () async {
     final rig = await _CameraRig.create(recovery: true).timeout(_redDeadline);
     for (var episode = 1; episode <= 2; episode++) {
@@ -381,6 +449,7 @@ final class _CameraRig {
     bool nativeRefusal = false,
     Future<bool> Function()? releaseCamera,
     bool recovery = false,
+    Future<void> Function(CallSessionSnapshot)? persistActiveCall,
   }) async {
     final rig = _CameraRig();
     addTearDown(rig.engine.close);
@@ -389,6 +458,7 @@ final class _CameraRig {
       nativeRefusal,
       releaseCamera,
       recovery,
+      persistActiveCall,
     );
     return rig;
   }
@@ -414,6 +484,7 @@ final class _CameraRig {
     bool nativeRefusal,
     Future<bool> Function()? releaseCamera,
     bool recovery,
+    Future<void> Function(CallSessionSnapshot)? persistActiveCall,
   ) async {
     engine.mediaReady = true;
     coordinator = CallCoordinator(
@@ -422,6 +493,7 @@ final class _CameraRig {
       historyProjector: CallHistoryProjector(_UnusedCallHistoryRepository()),
       clock: () => now,
       idSource: () => _call,
+      persistActiveCall: persistActiveCall,
       effectExecutor: _RecoveryEffects((effect, snapshot) async {
         if (!_driveRecoveryEffects) return null;
         return owner.execute(effect, snapshot);

@@ -823,6 +823,167 @@ void main() {
       expect(f.peer.closes, 0);
     });
 
+    for (final boundary in ['retain', 'off', 'permission']) {
+      test(boundary == 'retain'
+          ? 'BL26 pending quality stats preserve capture before second ICE retention adoption'
+          : 'BL26 $boundary before second ICE adoption revokes capture without resurrection', () async {
+        const bound = Duration(seconds: 2);
+        final f = Fixture();
+        await f.start().timeout(bound);
+        var tokenEpoch = 0;
+        var permission = true;
+        var token = f.session.beginNegotiation(
+          negotiationId: 'initial-before-quality-gap',
+          mediaRevision: 1,
+          media: CallMediaKind.video,
+          canApply: () => tokenEpoch == 0,
+        );
+        Future<void> commitVideo(CallVideoNegotiation selected) async {
+          await f.session.applyLocal(
+            selected,
+            await f.session.createOffer(selected).timeout(bound),
+          ).timeout(bound);
+          await f.session.applyRemote(
+            selected,
+            description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+          ).timeout(bound);
+          await f.session.commit(selected).timeout(bound);
+        }
+        await commitVideo(token).timeout(bound);
+        final incoming = remote(f);
+        await f.session.attachRenderer(token, CallVideoRendererSlot.remote).timeout(bound);
+        final local = Renderer()..texture = 44;
+        f.renderers.add(local);
+        final grant = f.grant(fresh: () => permission);
+        expect(await f.session.setLocalCamera(token, grant).timeout(bound), isTrue);
+        await f.session.attachRenderer(token, CallVideoRendererSlot.local).timeout(bound);
+        final p = source(f);
+        final capability = f.session as CallVideoIceRecovery;
+        tokenEpoch = 1;
+        // Read-only custody is independent of the successor's SDP token epoch.
+        var firstCustodyCurrent = true;
+        final first = await capability.retainForIceRecovery(
+          token,
+          canApply: () => firstCustodyCurrent,
+        ).timeout(bound);
+        expect(first, isNotNull);
+        await f.engine.restartIce().timeout(bound);
+        token = await capability.continueIceRecovery(
+          first!,
+          negotiationId: 'first-before-quality-gap',
+          canApply: () => tokenEpoch == 1,
+        ).timeout(bound);
+        await commitVideo(token).timeout(bound);
+        expect(f.peer.video.sender.track, same(f.track));
+        expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        expect(f.captures, 1);
+        expect(f.track.stops, 0);
+
+        final statsEntered = Completer<void>();
+        final statsResponse = Completer<List<rtc.StatsReport>>();
+        addTearDown(() {
+          if (!statsResponse.isCompleted) statsResponse.complete([]);
+        });
+        // Debug stats are disabled in this fixture. This is the real restored
+        // one-second quality poll, with its native response held across the gap.
+        f.peer.stats = () {
+          if (!statsEntered.isCompleted) statsEntered.complete();
+          return statsResponse.future.timeout(bound);
+        };
+        await statsEntered.future.timeout(bound);
+        // Production exposes the next reconnect snapshot before awaiting its
+        // checkpoint and notifying the timer/adoption observers. The previous
+        // successor loses SDP authority, while the already-started grant remains
+        // current and no second retention handle has yet been created.
+        tokenEpoch = 2;
+        expect(first.isCurrent, isTrue);
+        expect(grant.isCurrent(), isTrue);
+        if (boundary == 'off') {
+          final stopped = f.session.stopLocalCamera();
+          expect(f.track.enabled, isFalse);
+          expect(await stopped.timeout(bound), isTrue);
+        } else if (boundary == 'permission') {
+          permission = false;
+        }
+        statsResponse.complete([]);
+        await flush().timeout(bound);
+        if (boundary == 'retain') {
+          expect(f.track.enabled, isTrue,
+              reason: 'A quality read must not revoke existing capture before adoption');
+          expect(f.peer.video.sender.track, same(f.track));
+          expect(f.track.stops, 0);
+          expect(f.stream.disposals, 0);
+          expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
+          expect(f.renderer.disposals, 0);
+          expect(local.disposals, 0);
+          final changes = <CallVideoPresentationState>[];
+          final subscription = p.presentationChanges.listen(changes.add);
+          addTearDown(() => subscription.cancel().timeout(bound));
+          f.renderer.width = 777;
+          f.renderer.onResize!();
+          local.width = 445;
+          local.onFirstFrameRendered!();
+          await flush().timeout(bound);
+          expect(changes.any((state) =>
+              state.slot == CallVideoRendererSlot.remote &&
+              identical(state.negotiation, token) && state.view?.width == 777), isTrue);
+          expect(changes.any((state) =>
+              state.slot == CallVideoRendererSlot.local &&
+              identical(state.negotiation, token) && state.view?.width == 445), isTrue);
+        } else {
+          expect(f.track.enabled, isFalse);
+          expect(f.peer.video.sender.track, isNull);
+          expect(f.track.stops, 1);
+          expect(p.presentationFor(CallVideoRendererSlot.local).hasTrack, isFalse);
+        }
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        expect(incoming.enabled, isTrue);
+
+        var secondRecovering = true;
+        final second = await capability.retainForIceRecovery(
+          token,
+          canApply: () => secondRecovering,
+        ).timeout(bound);
+        expect(second, isNotNull);
+        firstCustodyCurrent = false;
+        // Old SDP mutation is still rejected after read-only custody is adopted.
+        await expectLater(
+          f.session.createOffer(token),
+          throwsA(isA<CallEngineException>()),
+        ).timeout(bound);
+        await f.engine.restartIce().timeout(bound);
+        token = await capability.continueIceRecovery(
+          second!,
+          negotiationId: 'second-after-quality-gap',
+          canApply: () => tokenEpoch == 2,
+        ).timeout(bound);
+        await commitVideo(token).timeout(bound);
+        secondRecovering = false;
+        expect(p.presentationFor(CallVideoRendererSlot.local).hasTrack, boundary == 'retain');
+        expect(p.presentationFor(CallVideoRendererSlot.remote).view?.textureId, 42);
+        expect(p.presentationFor(CallVideoRendererSlot.remote).negotiation, same(token));
+        expect(f.peer.video.sender.track, boundary == 'retain' ? same(f.track) : isNull);
+        expect(f.track.enabled, boundary == 'retain');
+        expect(incoming.enabled, isTrue);
+        expect(f.captures, 1);
+        expect(f.track.stops, boundary == 'retain' ? 0 : 1);
+        expect(f.stream.disposals, boundary == 'retain' ? 0 : 1);
+        expect(f.renderer.binds, 1);
+        expect(local.binds, 1);
+        expect(f.renderer.disposals, 0);
+        if (boundary == 'retain') {
+          expect(p.presentationFor(CallVideoRendererSlot.local).view?.textureId, 44);
+          expect(local.disposals, 0);
+        }
+        expect(f.peer.restarts, 2);
+        expect(f.engine.iceGeneration, 2);
+        expect(f.peer.audio.track!.enabled, isTrue);
+        expect((f.peer.audio.track! as Track).stops, 0);
+        expect(f.peer.closes, 0);
+      });
+    }
+
     for (final boundary in ['off', 'permission']) {
       test('BL26 $boundary during ICE retention preserves remote recovery without local resurrection', () async {
         const bound = Duration(seconds: 2);
