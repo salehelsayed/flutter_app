@@ -13706,8 +13706,8 @@ proof remain separate. This testing note requires no new execution.
 
 Batch13's historical daily-active slice retained the original owner for normal
 composer final-media handoffs, but excluded voice, sticker observations and
-first-preparation admission. Batch14 U2 at `1197dd9a5` closes the direct voice,
-catalog/custom sticker and ADD producer unit described below. Ordinary/private
+first-preparation admission. Batch14 U2 at `1197dd9a5` verifies the direct voice,
+catalog/custom sticker and ADD producer behavior described below. Ordinary/private
 media first-preparation admission and linked-private UI fanout remain separate.
 The accepted call occurrence-time producer `012338f71` has its own scoped evidence
 below. Beta `AppDiagnostics` intentionally remains default ON with the existing
@@ -13728,10 +13728,11 @@ replay must not create another mark or backfill an OFF-created owner.
 After a validated direct-media commit, a hydration failure preserves typed
 `authorityOnly` admission, referenced ciphertext and the winner key. It returns
 retained authority with upload unauthorized until the projection can be read;
-it does not turn an applied commit into refusal. Idempotent authority remains
-retained without another mark. TC-347-02f must expect `retained` while preserving
-its zero-upload, ciphertext and reopen assertions. Precommit rejection and key
-write compensation retain their existing failure behavior.
+it does not turn an applied commit into refusal. An idempotent `authorityOnly`
+result likewise retains the owner without another mark. TC-347-02f must expect
+`retained` while preserving its zero-upload, ciphertext and reopen assertions.
+Precommit rejection and key write compensation retain their existing failure
+behavior.
 
 Legacy successful-upload fakes must copy fixture bytes to the canonical completed
 media path. Returning `done` with a `pending_uploads/` path is correctly refused
@@ -13752,11 +13753,13 @@ Its original thirteen host checks are qualified by twelve reviewed clean carries
 from `312b90a54` plus the fresh 311-case, nine-file group-media preservation run
 at `1197dd9a5`, including TC-342-07 once. Full conversation passed 3,103 cases in
 207 complete files. Counts overlap; do not sum them. U2 first failures and scoped
-evidence remain under `/Users/I560101/.codex/investigations/`
-`bl29-b14-u2-server-red-20261117/` and the owned
-`.codex-test-logs/bl29-b14-u2/` artifacts.
+evidence remain under `/Users/I560101/.codex/investigations/`:
+`bl29-b14-u2-server-red-20261117/`,
+`bl29-b14-u2-all13-312-20261117/saved-actual/` and
+`bl29-b14-u2-census-metadata-1197dd9a5-20261117/saved-actual/`.
+The owned `.codex-test-logs/bl29-b14-u2/` artifacts retain packet references.
 
-Root disposition `m-4c371a95`, relayed by owner `m-c03a3ad9`, defers eight newly
+Owner decision `m-c03a3ad9`, relayed by Root `m-4c371a95`, defers eight newly
 selected bootstrap families to the Batch14 wave: they remain PENDING, not waived
 or passed. The composed workflow is selected and held for one run LAST on final
 source; B6's standalone workflow does not replace it. Weekly wiring, composed
