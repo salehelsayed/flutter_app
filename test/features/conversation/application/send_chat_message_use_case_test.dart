@@ -13361,7 +13361,7 @@ void main() {
         required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async => const InboxStoreOutcome(
-        status: InboxStoreStatus.error,
+        status: InboxStoreStatus.failed,
         errorCode: 'TEST_OFFLINE',
       ),
     ));
