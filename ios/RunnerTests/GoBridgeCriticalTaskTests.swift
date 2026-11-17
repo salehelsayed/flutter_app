@@ -3,6 +3,119 @@
 import XCTest
 @testable import Runner
 
+final class GoBridgeActivityReporterContractTests: XCTestCase {
+    func testMarkAcceptsZeroOccurrenceUnchanged() throws {
+        try assertOccurrenceUnchanged(0)
+    }
+
+    func testMarkAcceptsCurrentMillisOccurrenceUnchanged() throws {
+        try assertOccurrenceUnchanged(1_794_902_400_123)
+    }
+
+    func testMarkAcceptsAboveDoublePrecisionOccurrenceUnchanged() throws {
+        try assertOccurrenceUnchanged(9_007_199_254_740_993)
+    }
+
+    func testMarkAcceptsInt64MaxOccurrenceUnchanged() throws {
+        try assertOccurrenceUnchanged(Int64.max)
+    }
+
+    func testLegacyMarkAndFlushKeepExactlySixFields() throws {
+        for op in ["mark", "flush"] {
+            let fields = try decoded(request(op: op))
+            XCTAssertEqual(GoBridge.activityMarkRevision(fields), 1)
+            XCTAssertEqual(Set(fields.keys), requiredKeys)
+            let forwarded = try JSONSerialization.data(withJSONObject: fields)
+            let reparsed = try decoded(String(decoding: forwarded, as: UTF8.self))
+            XCTAssertEqual(fields as NSDictionary, reparsed as NSDictionary)
+        }
+    }
+
+    func testEveryRequiredFieldRemainsRequiredWithAndWithoutOccurrence() throws {
+        let timestamps: [String?] = [nil, "0"]
+        for timestamp in timestamps {
+            for missing in requiredKeys {
+                var fields = try decoded(request(timestamp: timestamp))
+                fields.removeValue(forKey: missing)
+                XCTAssertNil(GoBridge.activityMarkRevision(fields), "Missing \(missing), occurrence=\(String(describing: timestamp))")
+            }
+        }
+    }
+
+    func testUnknownFieldRemainsRejectedWithoutOccurrence() {
+        assertRejected(String(request().dropLast()) + ",\"unknown\":0}")
+    }
+
+    func testUnknownFieldRemainsRejectedWithOccurrence() {
+        assertRejected(String(request(timestamp: "0").dropLast()) + ",\"unknown\":0}")
+    }
+
+    func testFlushRejectsOccurrenceIncludingZero() {
+        for timestamp in ["0", "1794902400123", "9223372036854775807"] {
+            assertRejected(request(op: "flush", timestamp: timestamp))
+        }
+    }
+
+    func testMalformedOccurrenceValuesRemainRejected() {
+        for timestamp in ["null", "true", "false", "\"0\"", "-1", "0.0", "1.5", "1e3", "9223372036854775808", "[]", "{}"] {
+            assertRejected(request(timestamp: timestamp))
+        }
+    }
+
+    func testDuplicateOccurrenceNamesAndDecodedAliasesRemainRejected() {
+        let timestamped = String(request(timestamp: "0").dropLast())
+        for duplicate in ["occurredAtUnixMillis", #"\u006fccurredAtUnixMillis"#] {
+            XCTAssertNil(GoBridge.activityFields(timestamped + ",\"\(duplicate)\":1}"))
+        }
+    }
+
+    func testRevisionRetainsItsOriginalPositiveSafeIntegerBounds() throws {
+        for op in ["mark", "flush"] {
+            XCTAssertEqual(GoBridge.activityMarkRevision(try decoded(request(op: op, revision: "9007199254740991"))), 9_007_199_254_740_991)
+            for revision in ["0", "9007199254740992", "9223372036854775807", "-1", "true", "\"1\"", "1.0"] {
+                assertRejected(request(op: op, revision: revision))
+            }
+        }
+    }
+
+    func testDuplicateRequiredNamesAndDecodedAliasesRemainRejected() {
+        for duplicate in ["revision", #"\u0072evision"#] {
+            XCTAssertNil(GoBridge.activityFields(String(request().dropLast()) + ",\"\(duplicate)\":1}"))
+        }
+    }
+
+    private func assertOccurrenceUnchanged(_ timestamp: Int64) throws {
+        let fields = try decoded(request(timestamp: String(timestamp)))
+        let revision = GoBridge.activityMarkRevision(fields)
+        XCTAssertEqual(revision, 1, "A valid mark occurrence must pass the real handler's shape guard")
+        guard revision == 1 else { return }
+        XCTAssertEqual(fields["occurredAtUnixMillis"] as? Int64, timestamp)
+        XCTAssertEqual(Set(fields.keys), requiredKeys.union(["occurredAtUnixMillis"]))
+        let forwarded = try JSONSerialization.data(withJSONObject: fields)
+        let reparsed = try decoded(String(decoding: forwarded, as: UTF8.self))
+        XCTAssertEqual(reparsed["occurredAtUnixMillis"] as? Int64, timestamp)
+        XCTAssertEqual(fields as NSDictionary, reparsed as NSDictionary)
+    }
+
+    private func assertRejected(_ raw: String) {
+        if let fields = GoBridge.activityFields(raw) {
+            XCTAssertNil(GoBridge.activityMarkRevision(fields), "Must reject \(raw)")
+        }
+    }
+
+    private func decoded(_ raw: String) throws -> [String: Any] {
+        try XCTUnwrap(GoBridge.activityFields(raw), "Canonical fixture must parse: \(raw)")
+    }
+
+    private func request(op: String = "mark", timestamp: String? = nil, revision: String = "1") -> String {
+        "{\"version\":1,\"op\":\"\(op)\",\"revision\":\(revision),\"consentEpoch\":1," +
+            "\"profileBinding\":\"v1:\(String(repeating: "a", count: 64))\",\"accountPeerId\":\"12D3KooWJsEmQWn5WGGn9AZX79emq3RkGNx2ihFwWzZAqbiUQGMF\"" +
+            (timestamp.map { ",\"occurredAtUnixMillis\":\($0)" } ?? "") + "}"
+    }
+
+    private let requiredKeys: Set<String> = ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"]
+}
+
 final class GoBridgeCriticalTaskTests: XCTestCase {
 
     // --- Test 1: bgBegin returns a non-empty task ID string ---
