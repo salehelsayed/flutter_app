@@ -3976,6 +3976,213 @@ void main() {
     );
   }
 
+  group('BL29 B14 U2 original direct producer observations', () {
+    const budget = Duration(seconds: 2);
+
+    Future<ActiveIdentityReporter> makeReporter(
+      _UiCaptureBridge bridge, {
+      required bool enabled,
+    }) async {
+      final reporter = ActiveIdentityReporter(statePath: '/unused/b14-u2-ui.json');
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(
+        accountPeerId: makeIdentity().peerId,
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: _uiCaptureBinding,
+      );
+      await reporter.observeConsent((enabled: enabled, consentEpoch: 7)).timeout(budget);
+      return reporter;
+    }
+
+    // These are caller wiring/fence tests. The observing callback is not a
+    // substitute for the use-case durable-admission tests in the GREEN unit.
+    for (final (id, scenario) in [
+      ('B14U2V-001', 'same'),
+      ('B14U2V-002', 'unarmed'),
+      ('B14U2V-003', 'profile'),
+    ]) {
+      testWidgets('$id voice carries the original owner across its first admission await ($scenario)', (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
+        final root = Directory.systemTemp.createTempSync('b14-u2-voice-');
+        addTearDown(() { if (root.existsSync()) root.deleteSync(recursive: true); });
+        final voice = File('${root.path}/voice.m4a')..writeAsBytesSync(List<int>.filled(2048, 9));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1200
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = voice.path;
+        final messages = FakeMessageRepository();
+        final media = _B14U2VoiceAdmissionRepository(makeContact());
+        final bridge = _UiCaptureBridge();
+        final reporter = await makeReporter(bridge, enabled: scenario != 'unarmed');
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        var calls = 0;
+        var callbackCompleted = false;
+        Future<(SendVoiceMessageResult, ConversationMessage?)> observeVoice({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String senderPeerId,
+          required String senderUsername,
+          required AudioRecording recording,
+          required Bridge bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          String? text,
+          String? quotedMessageId,
+          List<double>? waveform,
+          String? messageId,
+          String? timestamp,
+          String? blobId,
+          EncryptedMediaArtifact? preparedArtifact,
+          DirectMediaFanoutAdmission? mediaAdmission,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        }) async {
+          calls++;
+          observed = capturedActivity;
+          final capture = capturedActivity?.capture;
+          if (capture != null) capturedActivity?.reporter?.markCaptured(capture);
+          callbackCompleted = true;
+          // An offline handoff diagnostic is independent of the observation.
+          return (SendVoiceMessageResult.uploadQueued, null);
+        }
+
+        Future<void>? sending;
+        var finished = false;
+        try {
+          await pumpScreen(tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()), messageRepo: messages,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: messages, contactRepo: FakeContactRepository()),
+            sendFn: _instantSuccessSendFn, activityReporter: reporter, bridge: bridge,
+            mediaAttachmentRepo: media, mediaFileManager: TrackingDurableConversationMediaFileManager(root),
+            audioRecorderService: recorder, sendVoiceMessageFn: observeVoice,
+            directMediaBlobCustodyClientEnabled: false).timeout(budget);
+          ConversationScreen screen() => tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+          await (screen().onRecordStart! as Future<void> Function())().timeout(budget);
+          await tester.pump(const Duration(milliseconds: 100));
+          sending = (screen().onRecordStop! as Future<void> Function())()
+              .whenComplete(() => finished = true);
+          await pumpUntilAsyncIo(tester, () => media.snapshotRequested, timeout: budget);
+          expect(calls, 0);
+          expect(bridge.marks, isEmpty, reason: 'preparation does not create activity');
+          if (scenario == 'profile') {
+            reporter.observeIdentity(accountPeerId: makeIdentity().peerId,
+              rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+              profileBinding: _uiCaptureOtherBinding);
+          }
+          if (scenario != 'same') {
+            await reporter.observeConsent((enabled: true, consentEpoch: scenario == 'profile' ? 7 : 8)).timeout(budget);
+          }
+          media.snapshotGate.complete();
+          await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+          await sending.timeout(budget);
+          expect(callbackCompleted, isTrue);
+          expect(calls, 1, reason: 'the voice route must reach its normal callback');
+          expect(observed, isNotNull, reason: 'present-null is authoritative and must not allow later recapture');
+          expect(observed!.reporter, same(reporter));
+          expect(observed!.capture, scenario == 'unarmed' ? isNull : isNotNull);
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+          expect(screen().composerStateListenable!.value.isUploading, isFalse);
+        } finally {
+          if (!media.snapshotGate.isCompleted) media.snapshotGate.complete();
+          if (sending != null) {
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            await sending.timeout(budget);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(budget);
+        }
+      });
+    }
+
+    for (final (id, scenario) in [
+      ('B14U2R-001', 'same'),
+      ('B14U2R-002', 'unarmed'),
+      ('B14U2R-003', 'profile'),
+    ]) {
+      testWidgets('$id ADD reaction carries its original observation without awaiting analytics ($scenario)', (tester) async {
+        final messages = FakeMessageRepository();
+        final parent = ConversationMessage(
+          id: 'b14-u2-react-parent', contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId, text: 'react to me',
+          timestamp: '2026-11-17T00:00:00.000Z', status: 'delivered',
+          isIncoming: true, createdAt: '2026-11-17T00:00:00.000Z');
+        messages.store[parent.id] = parent;
+        final bridge = _UiCaptureBridge();
+        final reporter = await makeReporter(bridge, enabled: scenario != 'unarmed');
+        final release = Completer<void>();
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        var calls = 0;
+        var callbackCompleted = false;
+        Future<(SendReactionResult, MessageReaction?)> observeAdd({
+          required P2PService p2pService, required Bridge bridge,
+          required ReactionRepository reactionRepo, required String targetPeerId,
+          required String messageId, required String emoji, required String senderPeerId,
+          required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        }) async {
+          calls++;
+          observed = capturedActivity;
+          await release.future.timeout(budget);
+          final capture = capturedActivity?.capture;
+          if (capture != null) capturedActivity?.reporter?.markCaptured(capture);
+          callbackCompleted = true;
+          return (SendReactionResult.nodeNotRunning, MessageReaction(
+            id: 'b14-u2-committed', messageId: messageId, emoji: emoji,
+            senderPeerId: senderPeerId, timestamp: '2026-11-17T00:00:01.000Z',
+            createdAt: '2026-11-17T00:00:01.000Z'));
+        }
+        Future<void>? sending;
+        var finished = false;
+        try {
+          await pumpScreen(tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()), messageRepo: messages,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: messages, contactRepo: FakeContactRepository()),
+            sendFn: _instantSuccessSendFn, activityReporter: reporter, bridge: bridge,
+            reactionRepo: FakeReactionRepository(), initialMessages: [parent],
+            sendReactionFn: observeAdd).timeout(budget);
+          final screen = tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+          sending = (screen.onReactionSelected! as Future<void> Function(String, String))(parent.id, '👍')
+              .whenComplete(() => finished = true);
+          await pumpUntilAsyncIo(tester, () => calls == 1, timeout: budget);
+          expect(bridge.marks, isEmpty, reason: 'the caller never marks before the admitted ADD callback');
+          if (scenario == 'profile') {
+            reporter.observeIdentity(accountPeerId: makeIdentity().peerId,
+              rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+              profileBinding: _uiCaptureOtherBinding);
+          }
+          if (scenario != 'same') {
+            await reporter.observeConsent((enabled: true, consentEpoch: scenario == 'profile' ? 7 : 8)).timeout(budget);
+          }
+          release.complete();
+          await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+          await sending.timeout(budget);
+          expect(callbackCompleted, isTrue);
+          expect(calls, 1);
+          expect(observed, isNotNull, reason: 'the ADD callback must receive the present original observation');
+          expect(observed!.reporter, same(reporter));
+          expect(observed!.capture, scenario == 'unarmed' ? isNull : isNotNull);
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+          expect(tester.widget<ConversationScreen>(find.byType(ConversationScreen))
+            .reactions[parent.id]!.single.id, 'b14-u2-committed',
+            reason: 'observation cannot hide the existing committed diagnostic result');
+        } finally {
+          if (!release.isCompleted) release.complete();
+          if (sending != null) {
+            await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
+            await sending.timeout(budget);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(budget);
+        }
+      });
+    }
+  });
+
   group('stickers v1', () {
     Future<void> pumpStickerComposer(
       WidgetTester tester, {
@@ -4095,9 +4302,12 @@ void main() {
       );
     });
 
-    for (final (name, custom) in [
-      ('B13S-001 catalog sticker hands off successfully with a present excluded activity record', false),
-      ('B13S-002 custom sticker hands off successfully with a present excluded activity record', true),
+    for (final (name, custom, scenario) in [
+      ('B14U2S-001 catalog sticker carries its pre-preparation activity owner', false, 'same'),
+      ('B14U2S-002 custom sticker carries its pre-preparation activity owner', true, 'same'),
+      ('B14U2S-003 custom sticker created OFF cannot capture after preparation enables diagnostics', true, 'unarmed'),
+      ('B14U2S-004 custom sticker preparation profile turnover fences the original capture', true, 'profile'),
+      ('B14U2S-005 custom sticker preparation epoch turnover fences the original capture', true, 'epoch'),
     ]) {
       testWidgets(name, (tester) async {
         const budget = Duration(seconds: 2);
@@ -4116,6 +4326,7 @@ void main() {
         final stickerBytes = File('assets/stickers/orbit_crew/planet/angry.webp').readAsBytesSync();
         final customFile = File('${root.path}/custom.webp')..writeAsBytesSync(stickerBytes);
         final library = _ExclusionStickerLibrary(customFile);
+        if (scenario != 'same') library.prepareGate = Completer<void>();
         final customRow = await library.admit(fakeStickerAsset('exclusion', filePath: customFile.path)).timeout(budget);
         final fixture = (await tester.runAsync(() => MediaRepositoryRealDbFixture.create().timeout(budget)))!;
         addTearDown(() => fixture.dispose().timeout(budget));
@@ -4127,8 +4338,8 @@ void main() {
         reporter.attachBridge(bridge);
         reporter.observeIdentity(accountPeerId: identity.peerId,
           rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)), profileBinding: _uiCaptureBinding);
-        await reporter.observeConsent((enabled: true, consentEpoch: 7)).timeout(budget);
-        expect(reporter.captureOwner(expectedAccountPeerId: identity.peerId), isNotNull);
+        await reporter.observeConsent((enabled: scenario != 'unarmed', consentEpoch: 7)).timeout(budget);
+        expect(reporter.captureOwner(expectedAccountPeerId: identity.peerId), scenario == 'unarmed' ? isNull : isNotNull);
         final uploaded = <List<int>>[];
         final sent = <MediaAttachment>[];
         ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
@@ -4162,6 +4373,9 @@ void main() {
             mediaAttachments: mediaAttachments, privateMediaPolicy: privateMediaPolicy,
           ).timeout(budget);
           handoffResult = result.$1;
+          // This fake proves caller observation/fencing only, not real custody.
+          final capture = capturedActivity?.capture;
+          if (capture != null) capturedActivity?.reporter?.markCaptured(capture);
           callbackCompleted = true;
           return result;
         }
@@ -4207,6 +4421,18 @@ void main() {
             sending = (bundled.onSend as Future<void> Function(StickerEntry))(entry!)
                 .whenComplete(() => finished = true);
           }
+          if (scenario != 'same') {
+            await pumpUntilAsyncIo(tester, () => library.prepareStarted, timeout: budget);
+            expect(calls, 0, reason: 'the original observation precedes preparation');
+            expect(bridge.marks, isEmpty);
+            if (scenario == 'profile') {
+              reporter.observeIdentity(accountPeerId: identity.peerId,
+                rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+                profileBinding: _uiCaptureOtherBinding);
+            }
+            await reporter.observeConsent((enabled: true, consentEpoch: scenario == 'profile' ? 7 : 8)).timeout(budget);
+            library.prepareGate!.complete();
+          }
           await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
           await sending.timeout(budget);
           expect(callbackCompleted, isTrue, reason: 'the observing fake must finish the successful handoff');
@@ -4229,10 +4455,13 @@ void main() {
             expect(library.prepareCalls, [(customRow.id, defaultCustomStickerSendRepresentation)]);
           }
           expect(reporter.captureOwner(expectedAccountPeerId: identity.peerId), isNotNull);
-          expect(observed, isNotNull, reason: 'exclusion is a present record so the use case cannot capture a later owner');
-          expect(observed!.reporter, isNull, reason: 'sticker eligibility remains excluded until pre-preparation capture is implemented');
-          expect(observed!.capture, isNull);
+          expect(observed, isNotNull, reason: 'the original observation must be present even when its capture is null');
+          expect(observed!.reporter, same(reporter), reason: 'fresh sticker authoring borrows the caller-owned reporter');
+          expect(observed!.capture, scenario == 'unarmed' ? isNull : isNotNull);
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty,
+            reason: 'only an unchanged pre-preparation owner may spend this caller observation');
         } finally {
+          if (library.prepareGate case final gate? when !gate.isCompleted) gate.complete();
           if (sending != null) {
             await pumpUntilAsyncIo(tester, () => finished, timeout: budget);
             await sending.timeout(budget);
@@ -21115,10 +21344,32 @@ class _UiCaptureBridge extends FakeBridge {
 class _ExclusionStickerLibrary extends FakeCustomStickerLibrary {
   _ExclusionStickerLibrary(this.file);
   final File file;
+  Completer<void>? prepareGate;
+  bool prepareStarted = false;
   @override
   Future<PendingComposerMedia> prepareSend(String id, {required CustomStickerSendRepresentation representation}) async {
     prepareCalls.add((id, representation));
+    prepareStarted = true;
+    if (prepareGate case final gate?) await gate.future.timeout(const Duration(seconds: 2));
     final prepared = file.copySync('${file.parent.path}/prepared-custom-${prepareCalls.length}.webp');
     return PendingComposerMedia(file: prepared, budgetBytes: prepared.lengthSync(), width: 512, height: 512);
+  }
+}
+
+class _B14U2VoiceAdmissionRepository extends _FanoutComposerMediaRepository {
+  _B14U2VoiceAdmissionRepository(ContactModel contact)
+    : super(snapshot: DirectContactFanoutSnapshot(
+        contactAccountPeerId: contact.peerId,
+        contactAccountSigningPublicKey: contact.publicKey,
+        rosterInitialized: false,
+        targets: const [],
+      ));
+  final snapshotGate = Completer<void>();
+  bool snapshotRequested = false;
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(String contactAccountPeerId) async {
+    snapshotRequested = true;
+    await snapshotGate.future.timeout(const Duration(seconds: 2));
+    return super.readDirectContactFanoutSnapshotForMedia(contactAccountPeerId);
   }
 }
