@@ -13876,6 +13876,32 @@ The other fifteen mapped checks remain Batch13 composed-selection obligations;
 live metrics, deployed configuration, native/device and release proof remain
 separate. The documentation follow-up requires no additional execution.
 
+Producer adoption at `012338f712b913100107571a5c00b77beb36c036` composes the
+accepted Core/Go occurrence API and partial B7 witness. The returned mark closure
+samples UTC epoch milliseconds only when invoked, before existing configuration
+deferral; the original capture and fences remain unchanged. All twenty host
+checks and one subsequent 350-case workflow passed with 218 exact source/Git
+pins and clean source. Composition passed 319 unique cases, including all
+seventeen causal B7 cases once; V2 negotiation 132, camera feedback 19 and
+WebRTC 75 preservation cases passed within their containing checks. The workflow
+ran last after all host checks passed, in new window `m-69007b29`. Evidence is
+under `.audit/b7a/out`; workflow raw SHA-256 is
+`ae0d52a9546e209220e93ddfb4794859f1a8fd332e74a3f016c91f35a487d003`.
+Scoped closure is
+`codex-complete-qualified-producer-source-twenty-host-fresh-workflow-012338f71.json`,
+SHA-256 `7e3f6e5fcbeb4d2f376466ac516bd34395a61f0ccde5c07acfc90bac3073c56f`.
+The normal outer bootstrap caller wiring is established by source inspection.
+Runtime proof for normal boot or live/native behavior, requalification across
+days, exact midnight attribution and background handling remains separate,
+as do full B7/BL29 and release acceptance.
+
+Check source ownership separately from native/device leases and quiet Flutter
+windows: a paused child still owns its checkout. Switching a checkout for the
+correctly pinned B7 workflow while a paused text397 child still owned it
+invalidated that text lane. B7 uses no mixed text raw, and the other lane's
+recovery remains held separately. Use a distinct pinned, owned checkout or wait
+for the owning child to terminate before switching source.
+
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate
 `07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
