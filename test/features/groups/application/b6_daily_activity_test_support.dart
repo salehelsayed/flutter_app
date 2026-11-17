@@ -35,6 +35,7 @@ Future<T> b6Invoke<T>(
   Map<Symbol, dynamic> arguments, {
   required ActiveIdentityReporter reporter,
   B6CapturedActivity? capturedActivity,
+  bool? preassignedMessageIdIsFresh,
 }) {
   Object? result;
   try {
@@ -42,6 +43,8 @@ Future<T> b6Invoke<T>(
       ...arguments,
       #activityReporter: reporter,
       #capturedActivity: capturedActivity,
+      if (preassignedMessageIdIsFresh != null)
+        #preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
     });
   } on NoSuchMethodError {
     result = Function.apply(producer, const [], arguments);

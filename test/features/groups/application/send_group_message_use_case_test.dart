@@ -12785,6 +12785,8 @@ void main() {
       List<MediaAttachment>? media,
       InMemoryMediaAttachmentRepository? mediaRepository,
       String? publicKey,
+      bool? preassignedFresh,
+      GroupMessage? expectedRetryParent,
     }) => b6Invoke<(SendGroupMessageResult, GroupMessage?)>(
       sendGroupMessage,
       {
@@ -12804,11 +12806,13 @@ void main() {
         #mediaAttachments: media,
         #mediaAttachmentRepo: mediaRepository,
         #groupContentAuthoring: context,
+        #expectedRetryParentBeforeDispatch: expectedRetryParent,
         if (context != null) #senderDeviceId: 'b6-current',
         if (context != null) #senderTransportPeerId: 'b6-current',
       },
       reporter: reporter,
       capturedActivity: capturedActivity,
+      preassignedMessageIdIsFresh: preassignedFresh,
     );
 
     for (final quote in <String?>[null, 'public-original-post']) {
@@ -13065,6 +13069,126 @@ void main() {
         } finally {
           release.complete();
         }
+      },
+    );
+    Future<
+      ({
+        GroupMessage parent,
+        InMemoryMediaAttachmentRepository media,
+        MediaAttachment complete,
+      })
+    >
+    legacyOptimisticMedia({
+      String status = 'sending',
+      bool completedInitially = false,
+    }) async {
+      final parent = GroupMessage(
+        id: 'b6-fresh-message',
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderUsername: 'Alice',
+        text: 'public B6 content',
+        timestamp: authoredAt,
+        status: status,
+        isIncoming: false,
+        createdAt: authoredAt,
+        logicalDeliveryId: 'b6-fresh-message',
+      );
+      final complete = MediaAttachment(
+        id: 'b6-optimistic-media',
+        messageId: parent.id,
+        mime: 'image/jpeg',
+        size: 12,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: authoredAt.toIso8601String(),
+        localPath: '/unused/b6-preview.jpg',
+        contentHash: _validContentHash,
+        encryptionKeyBase64: 'public-key',
+        encryptionNonce: 'public-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ownerLane: MediaOwnerLane.group,
+      );
+      final media = InMemoryMediaAttachmentRepository();
+      await b6Bound(
+        media.saveAttachment(
+          completedInitially
+              ? complete
+              : complete.copyWith(downloadStatus: 'upload_pending'),
+          owner: MediaOwnerLane.group,
+        ),
+      );
+      await b6Bound(msgRepo.saveMessage(parent));
+      return (parent: parent, media: media, complete: complete);
+    }
+
+    test('B6G-014 fresh preassigned optimistic media parent qualifies at final admission', () async {
+      final original = (
+        reporter: reporter,
+        capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+      );
+      expect(original.capture, isNotNull);
+      final fixture = await legacyOptimisticMedia();
+      final result = await submit(
+        capturedActivity: original,
+        preassignedFresh: true,
+        media: [fixture.complete],
+        mediaRepository: fixture.media,
+      );
+      expect(result.$1, SendGroupMessageResult.success);
+      expect(result.$2?.id, fixture.parent.id);
+      final stored = await b6Bound(
+        fixture.media.getAttachmentsForMessage(
+          fixture.parent.id,
+          owner: MediaOwnerLane.group,
+        ),
+      );
+      expect(stored, hasLength(1));
+      expect(stored.single.downloadStatus, 'done');
+      expect(activityBridge.marks, hasLength(1));
+    });
+
+    test('B6G-015 OFF-created optimistic media never reacquires on final admission', () async {
+      await b6Bound(reporter.observeConsent((enabled: false, consentEpoch: 8)));
+      final original = (
+        reporter: reporter,
+        capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+      );
+      expect(original.capture, isNull);
+      final fixture = await legacyOptimisticMedia();
+      await b6Bound(reporter.observeConsent((enabled: true, consentEpoch: 9)));
+      final result = await submit(
+        capturedActivity: original,
+        preassignedFresh: true,
+        media: [fixture.complete],
+        mediaRepository: fixture.media,
+      );
+      expect(result.$1, SendGroupMessageResult.success);
+      expect(result.$2?.id, fixture.parent.id);
+      expect(activityBridge.marks, isEmpty);
+    });
+
+    test(
+      'B6G-016 explicit retry media stays excluded despite a fresh-ID hint',
+      () async {
+        final original = (
+          reporter: reporter,
+          capture: reporter.captureOwner(expectedAccountPeerId: 'peer-1'),
+        );
+        final fixture = await legacyOptimisticMedia(
+          status: 'failed',
+          completedInitially: true,
+        );
+        final result = await submit(
+          capturedActivity: original,
+          preassignedFresh: true,
+          expectedRetryParent: fixture.parent,
+          media: [fixture.complete],
+          mediaRepository: fixture.media,
+        );
+        expect(result.$2?.id, fixture.parent.id);
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(activityBridge.marks, isEmpty);
       },
     );
   });
