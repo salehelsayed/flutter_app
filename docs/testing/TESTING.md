@@ -10475,6 +10475,53 @@ visible and cannot become an ordinary first-attempt PASS.
   for another campaign when exact staged-message/device/ciphertext binding is
   retained. Time-window relay success alone has no recipient attribution and
   the parent notification campaign remains FAIL.
+
+  **OPEN Batch14: Android notification final OS-state restoration**
+
+  The verified content-tap fix at `055228f37` selects the visible exact body band
+  inside the matched native notification row, avoiding a tall row's Settings
+  footer; absent or unusable exact body bounds must not produce a guessed tap.
+  At that source, only the proof helper and its two regression cases change;
+  application, native, Go and relay production trees equal `c6db8782b`.
+  In notifications-only retry3, nine case artifacts and all runnable app
+  assertions validated. G24 is N/A because the configured OS blocked the
+  runtime-backed POST_NOTIFICATION UID override. Ten attempted scenarios
+  therefore do not mean ten PASS results.
+  The complete campaign remains FAIL.
+
+  Card cleanup, app-state restoration and campaign-entry app-op restoration
+  completed. `legFailure` stayed null; only final
+  `_verifyExactNotificationOsState` failed at
+  `integration_test/scripts/notification_android_payload_campaign.dart:3763`.
+  Its predicate rejects nonempty app cards OR a durable channel-policy
+  fingerprint differing from preflight. The final dump/fingerprint values were
+  not retained, so the failing disjunct and exact cause remain unresolved.
+  Notification posts after original emulator-profile restoration (log lines
+  98077/98144), before the final dump at 100048, are a lead, not a proven cause.
+  The wrong-Settings-tap finding is CLOSED: retry3 has no adaptive-notification
+  Settings intent. Do not reopen that fix or weaken app/final-state assertions.
+
+  Owner `m-c1f6de9d` accepts the primary app-scenario evidence for C6 source
+  publication and defers this restoration defect plus iOS notifications to
+  Batch14. That scoped acceptance does not pass the campaign or whole candidate.
+  Flutter alone published the plain `86bc7569e` to `c6db8782b` fast-forward at
+  2026-11-17 21:04:57Z; parent independently verified the full remote C6 head.
+  There was no force push, version-file change, store/tester upload or relay
+  deployment. Phones remain build 285; the background-call limit is separate B15
+  work. No further phone retry is authorized by this deferral.
+
+  Preserve retry3's Sims JSON, raw output and
+  `device-notifications-android-1-captures/sims-7nejoV/proofs/`
+  `notifications.android_payload_campaign/device-logcat.txt` under
+  `/Volumes/CrucialX9/flutter_app/.codex-test-logs/b13-native/`
+  `c6db8782-run1/notifications-hitpoint-retry3/`, alongside the original attempt5
+  failure and retry1/retry2 setup BLOCKED evidence. The retained defect source is
+  `/Users/I560101/.codex/investigations/notification-tap-harness-20261117/`
+  `batch14-restoration-defect.md`. The next authorized Batch14 campaign must save
+  content-safe before/after card and channel-policy evidence, identify the exact
+  restoration mismatch and apply the smallest causal harness fix with the final
+  oracle intact. This record authorizes no new execution.
+
   On debug 138, Appium's physical-origin Ringing → lock → normal private
   unlock → natural Ringing return → relock → remote Answer passed with
   Connected screenshots before/after eight-second bidirectional decoded PCM,
