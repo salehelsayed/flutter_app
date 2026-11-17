@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -68,7 +69,30 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   GroupContentAuthoringContext? groupContentAuthoring,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   DateTime? authoredAt,
+  ActiveIdentityReporter? activityReporter,
+  ({
+    ActiveIdentityReporter? reporter,
+    ActiveIdentityReporterCapture? capture,
+  })? capturedActivity,
 }) async {
+  final capturedReporter = capturedActivity == null
+      ? activityReporter
+      : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      activityCapture = capturedReporter?.captureOwner(
+        expectedAccountPeerId: senderPeerId,
+      );
+    } catch (_) {}
+  }
+  void observeFreshAdmission() {
+    final capture = activityCapture;
+    if (capture == null) return;
+    try {
+      capturedReporter?.markCaptured(capture);
+    } catch (_) {}
+  }
   (SendGroupReactionResult, MessageReaction?) observedResult(
     (SendGroupReactionResult, MessageReaction?) result,
   ) {
@@ -215,6 +239,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     explicitGroupContentAuthoring: groupContentAuthoring,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     authoredAt: authoredAt,
+    onFreshAdmission: activityCapture == null ? null : observeFreshAdmission,
   );
   return observedResult(result);
 }
@@ -238,6 +263,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
   GroupContentAuthoringContext? explicitGroupContentAuthoring,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   DateTime? authoredAt,
+  void Function()? onFreshAdmission,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -378,6 +404,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       authoredAt: authoredAt ?? DateTime.now().toUtc(),
       action: GroupReactionPayload.actionAdd,
+      onFreshAdmission: onFreshAdmission,
     );
   }
 
@@ -442,6 +469,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
   //    failure still leaves a retryable replay-outbox row (INV-R1/INV-R2). The
   //    reaction id is deterministic, so any later retry re-publish stays
   //    idempotent at the receiver (INV-R3).
+  var replayOwnerCommitted = false;
   if (exactRetry) {
     unawaited(
       _attemptReactionInboxStore(
@@ -453,7 +481,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
       ),
     );
   } else {
-    await _stageReactionInboxStore(
+    replayOwnerCommitted = await _stageReactionInboxStore(
       bridge: bridge,
       groupRepo: groupRepo,
       reactionReplayOutboxRepo: reactionReplayOutboxRepo,
@@ -470,6 +498,13 @@ Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
   // 6. Persist locally (optimistic) regardless of the publish outcome.
   final reaction = payload.toMessageReaction();
   await reactionRepo.saveReaction(reaction);
+  if (!exactRetry &&
+      replayOwnerCommitted &&
+      latestTransition?.reactionId != transitionId) {
+    try {
+      onFreshAdmission?.call();
+    } catch (_) {}
+  }
 
   // 7. Attempt live publish (Go encrypts + signs). A failure downgrades the
   //    result to queuedForRetry but never discards the custody/optimistic
@@ -548,6 +583,7 @@ sendStrictGroupReactionContent({
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   required DateTime authoredAt,
   required String action,
+  void Function()? onFreshAdmission,
 }) async {
   if (action != GroupReactionPayload.actionAdd &&
       action != GroupReactionPayload.actionRemove) {
@@ -701,11 +737,20 @@ sendStrictGroupReactionContent({
           return mutation();
         },
       );
+  var freshTransition = false;
   final stagedUnderCurrentAuthority = await runGroupAuthorityPhase(
     groupId: groupId,
     action: () async {
       if (!await authorityMatchesAssumingPhase()) {
         return false;
+      }
+      if (onFreshAdmission != null && action == GroupReactionPayload.actionAdd) {
+        try {
+          freshTransition =
+              await reactionReplayOutboxRepo.getEntry(transitionId) == null;
+        } catch (_) {
+          freshTransition = false;
+        }
       }
       if (recipients.isEmpty) {
         if (reactionReplayOutboxRepo
@@ -749,6 +794,11 @@ sendStrictGroupReactionContent({
   );
   if (!stagedUnderCurrentAuthority) {
     return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  if (freshTransition && action == GroupReactionPayload.actionAdd) {
+    try {
+      onFreshAdmission?.call();
+    } catch (_) {}
   }
   if (recipients.isEmpty) {
     _emitStrictGroupReactionQueued(
@@ -1342,7 +1392,7 @@ String _requiredTransitionId(String value) {
 }
 
 /// Wraps inbox store in try/catch so failures don't propagate.
-Future<void> _stageReactionInboxStore({
+Future<bool> _stageReactionInboxStore({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupReactionReplayOutboxRepository reactionReplayOutboxRepo,
@@ -1432,7 +1482,7 @@ Future<void> _stageReactionInboxStore({
       event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
       details: {'error': e.toString(), 'phase': 'build'},
     );
-    return;
+    return needsBuildStaged;
   }
 
   var staged = false;
@@ -1460,6 +1510,7 @@ Future<void> _stageReactionInboxStore({
       staged: staged,
     ),
   );
+  return needsBuildStaged;
 }
 
 ({

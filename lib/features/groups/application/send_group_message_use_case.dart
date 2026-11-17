@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
@@ -1720,7 +1721,30 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   CurrentGroupSendAuthorityCheck? currentAuthorityCheck,
   GroupContentAuthoringContext? groupContentAuthoring,
   PreparedGroupMediaManifestAuthority? preparedGroupMediaManifest,
+  ActiveIdentityReporter? activityReporter,
+  ({
+    ActiveIdentityReporter? reporter,
+    ActiveIdentityReporterCapture? capture,
+  })? capturedActivity,
+  // Caller-created optimistic media rows qualify only with their original
+  // observation. Explicit retries remain excluded regardless of this hint.
+  bool preassignedMessageIdIsFresh = false,
 }) async {
+  final capturedReporter = capturedActivity == null
+      ? activityReporter
+      : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      activityCapture = capturedReporter?.captureOwner(
+        expectedAccountPeerId: senderPeerId,
+      );
+    } catch (_) {}
+  }
+  final originalActivity = (
+    reporter: capturedReporter,
+    capture: activityCapture,
+  );
   Future<(SendGroupMessageResult, GroupMessage?)> runSend({
     required bool legacyMembershipActionPhaseHeld,
     GroupContentAuthoringResolution? entryAuthoringResolution,
@@ -1758,6 +1782,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     preparedGroupMediaManifest: preparedGroupMediaManifest,
     legacyMembershipActionPhaseHeld: legacyMembershipActionPhaseHeld,
     entryAuthoringResolution: entryAuthoringResolution,
+    capturedActivity: originalActivity,
+    preassignedMessageIdIsFresh:
+        preassignedMessageIdIsFresh && capturedActivity != null,
   );
 
   // An explicit context is a strict-only unit seam. It can never select the
@@ -1865,6 +1892,11 @@ _sendGroupMessageWithAuthorityRecheck({
   PreparedGroupMediaManifestAuthority? preparedGroupMediaManifest,
   bool legacyMembershipActionPhaseHeld = false,
   GroupContentAuthoringResolution? entryAuthoringResolution,
+  required ({
+    ActiveIdentityReporter? reporter,
+    ActiveIdentityReporterCapture? capture,
+  }) capturedActivity,
+  bool preassignedMessageIdIsFresh = false,
 }) async {
   int currentPrivateMediaNowMs() =>
       privateMediaNowMs?.call() ??
@@ -2665,6 +2697,18 @@ _sendGroupMessageWithAuthorityRecheck({
           .toList(growable: false) ??
       const <MediaAttachment>[];
   final preExistingMessage = await msgRepo.getMessage(resolvedMessageId);
+  var freshAdmission = expectedRetryParentBeforeDispatch == null &&
+      (preExistingMessage == null ||
+          (preassignedMessageIdIsFresh &&
+              preExistingMessage.wireEnvelope == null &&
+              preExistingMessage.inboxRetryPayload == null));
+  void observeFreshAdmission() {
+    final capture = capturedActivity.capture;
+    if (!freshAdmission || capture == null) return;
+    try {
+      capturedActivity.reporter?.markCaptured(capture);
+    } catch (_) {}
+  }
   var strictDurableOwnerCommitted = false;
   if (expectedDispatchParent != null &&
       (preExistingMessage == null ||
@@ -2756,6 +2800,19 @@ _sendGroupMessageWithAuthorityRecheck({
         }
       }
 
+      if (strictSelected && freshAdmission && capturedActivity.capture != null) {
+        // The earlier snapshot may precede another admission of this same ID.
+        // Check freshness under the authority phase shared with the commit.
+        try {
+          final currentOwner = await msgRepo.getMessage(prePersistMessage.id);
+          freshAdmission = currentOwner == null ||
+              (preassignedMessageIdIsFresh &&
+                  currentOwner.wireEnvelope == null &&
+                  currentOwner.inboxRetryPayload == null);
+        } catch (_) {
+          freshAdmission = false;
+        }
+      }
       if (strictSelected && recipientPeerIds.isEmpty) {
         if (msgRepo is! GroupMessageStrictLocalTerminalRepository ||
             !await (msgRepo as GroupMessageStrictLocalTerminalRepository)
@@ -2769,6 +2826,7 @@ _sendGroupMessageWithAuthorityRecheck({
           throw StateError('strict local message terminal commit rejected');
         }
         strictDurableOwnerCommitted = true;
+        observeFreshAdmission();
         final terminal = await msgRepo.getMessage(prePersistMessage.id);
         if (terminal == null ||
             terminal.status != 'sent' ||
@@ -2801,6 +2859,7 @@ _sendGroupMessageWithAuthorityRecheck({
           throw StateError('strict message prepared commit rejected');
         }
         strictDurableOwnerCommitted = true;
+        observeFreshAdmission();
         final prepared = await msgRepo.getMessage(prePersistMessage.id);
         if (!_isExpectedDurablePrePersistMessage(prepared, prePersistMessage)) {
           throw StateError('strict message prepared readback rejected');
@@ -2849,6 +2908,7 @@ _sendGroupMessageWithAuthorityRecheck({
           'outgoing group parent/media pre-persist was rejected',
         );
       }
+      observeFreshAdmission();
     }
 
     await runGroupAuthorityPhaseIfNeeded(

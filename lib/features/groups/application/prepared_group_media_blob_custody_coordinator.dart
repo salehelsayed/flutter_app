@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
@@ -154,7 +155,24 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
     String? senderTransportPeerId,
     GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
     GroupContentAuthoringContext? groupContentAuthoring,
+    ActiveIdentityReporter? activityReporter,
+    ({
+      ActiveIdentityReporter? reporter,
+      ActiveIdentityReporterCapture? capture,
+    })? capturedActivity,
   }) async {
+    final capturedReporter = capturedActivity == null
+        ? activityReporter
+        : capturedActivity.reporter;
+    ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+    if (capturedActivity == null) {
+      try {
+        activityCapture = capturedReporter?.captureOwner(
+          expectedAccountPeerId: identityPeerId,
+        );
+      } catch (_) {}
+    }
+
     final prepared = await prepareAndUploadFresh(
       bridge: bridge,
       groupRepository: groupRepository,
@@ -167,6 +185,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
       senderTransportPeerId: senderTransportPeerId,
       inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
       groupContentAuthoring: groupContentAuthoring,
+      capturedActivity: (reporter: capturedReporter, capture: activityCapture),
     );
     if (!prepared.isComplete) {
       return PreparedGroupMediaSendResult(preparation: prepared);
@@ -195,6 +214,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepository,
       groupContentAuthoring: groupContentAuthoring,
       preparedGroupMediaManifest: authority,
+      capturedActivity: (reporter: capturedReporter, capture: null),
     );
     if (authority.manifest.recipientPeerIds.isEmpty &&
         (sendResult == SendGroupMessageResult.success ||
@@ -223,7 +243,24 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
     String? senderTransportPeerId,
     GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
     GroupContentAuthoringContext? groupContentAuthoring,
+    ActiveIdentityReporter? activityReporter,
+    ({
+      ActiveIdentityReporter? reporter,
+      ActiveIdentityReporterCapture? capture,
+    })? capturedActivity,
   }) async {
+    final capturedReporter = capturedActivity == null
+        ? activityReporter
+        : capturedActivity.reporter;
+    ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+    if (capturedActivity == null) {
+      try {
+        activityCapture = capturedReporter?.captureOwner(
+          expectedAccountPeerId: identityPeerId,
+        );
+      } catch (_) {}
+    }
+
     final repository = switch (mediaAttachmentRepository) {
       GroupMediaBlobCustodyRepository value
           when value.supportsGroupMediaBlobCustody =>
@@ -279,6 +316,13 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
           snapshot: snapshot,
           parent: parent.copyWith(text: sanitizedText),
           sources: sources,
+          onFreshAdmission: () {
+            final capture = activityCapture;
+            if (capture == null) return;
+            try {
+              capturedReporter?.markCaptured(capture);
+            } catch (_) {}
+          },
         );
         hasDurableAuthority = publication.hasDurableAuthority;
         final generation = publication.generation;
@@ -462,6 +506,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
     required StrictGroupContentAuthoringSnapshot snapshot,
     required GroupMessage parent,
     required List<PreparedGroupMediaBlobSource> sources,
+    void Function()? onFreshAdmission,
   }) async {
     final candidates = <_GroupCandidate>[];
     var stageAttempted = false;
@@ -575,6 +620,11 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
             },
             custodyRows: rows,
           );
+      if (staged == GroupMediaBlobCustodyStageOutcome.applied) {
+        try {
+          onFreshAdmission?.call();
+        } catch (_) {}
+      }
       if (staged == GroupMediaBlobCustodyStageOutcome.refused) {
         final persistedRows = await repository
             .loadGroupMediaBlobCustodyForMessage(
