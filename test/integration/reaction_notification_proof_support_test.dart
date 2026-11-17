@@ -3002,6 +3002,58 @@ Ranking Config:
       expect(target?.collapsedGroupExpandCenter, (956, 2025));
     });
 
+    test('taps body content above the settings footer in a tall row', () {
+      const dump = '''
+<hierarchy>
+  <node package="com.android.systemui" resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,600][1038,1376]">
+    <node text="TC257Group123" bounds="[231,620][586,670]" />
+    <node text="Alice reacted to your message" bounds="[231,680][1006,740]" />
+    <node text="Manage adaptive notifications" clickable="true" bounds="[42,940][1038,1120]" />
+  </node>
+</hierarchy>
+''';
+
+      final target = findAndroidNotificationCardTapTarget(
+        dump,
+        title: 'TC257Group123',
+        body: 'Alice reacted to your message',
+        allowedPackages: {'com.android.systemui'},
+        requireUnique: true,
+      );
+      expect(target, isNotNull);
+      expect(target!.cardCenter.$1, 540);
+      expect(target.cardCenter.$2, inInclusiveRange(680, 739));
+      expect(target.cardCenter.$2, lessThan(940));
+      expect(target.collapsedGroupExpandCenter, isNull);
+    });
+
+    test('does not guess a tap without usable exact body bounds', () {
+      for (final bodyNode in [
+        '<node text="Target body" />',
+        '<node text="Target body" bounds="[10,170][490,170]" />',
+        '<node text="Target body" visible-to-user="false" bounds="[10,170][490,220]" />',
+        '<node text="Other Target body content" bounds="[10,170][490,220]" />',
+      ]) {
+        final dump = '''
+<hierarchy>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[0,100][500,300]">
+    <node text="Target title" bounds="[10,110][490,160]" />
+    $bodyNode
+  </node>
+</hierarchy>
+''';
+        expect(
+          findAndroidNotificationCardTapTarget(
+            dump,
+            title: 'Target title',
+            body: 'Target body',
+          ),
+          isNull,
+          reason: bodyNode,
+        );
+      }
+    });
+
     test('strict content tap rejects foreign and ambiguous native rows', () {
       String row(String package) =>
           '''
