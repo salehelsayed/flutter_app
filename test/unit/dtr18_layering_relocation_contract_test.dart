@@ -263,6 +263,8 @@ const _privacySha256 =
 // import and an observation after obtaining the existing showDialog future.
 // Inverting those hunks reproduces the complete b0fe24e3b owner source exactly;
 // resume/Posts relocation, dialog callbacks and awaited decisions stay intact.
+// BL29 UI wiring adds only the borrowed reporter declaration/forwarding here
+// and one bootstrap argument. All 25 URI rewrites and the exact callback stay intact.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
@@ -274,7 +276,7 @@ const _applicationRootNormalizedSha256 =
     // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
     // this same app owner (3 lines); no owner or resume dispatch moves.
     // BL29 B4 disposal is composed with bb8 main's existing app owner.
-    '160680519972def3dc1df47b9262d650976e2c5cdca9da7cf0e2f2e4d367edf4';
+    '0ae29806f48ea10847f40252d32c8e3169d925bb9b5304d280c2ec556e81eab9';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -495,7 +497,7 @@ const _productionBootstrapNormalizedSha256 =
     // BL-30 R2: the every-launch identity.db open and its post-open writes
     // now run inside openIdentityDatabaseWithPostOpenWrites (one iOS
     // background assertion); same calls, same order, no owner moves.
-    '7bd3f158db8c9fe3b6e8cde87720ae0df7c9c5168023677fb83430596bbf04f9';
+    '817101f0b88f85f25999425aa09a615cb1891132bfee4ba89b76d02c8c8adf92';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -543,7 +545,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '302b80dd4c1ed125320945a5df639d4a946a9f58ce311418889aa9dbfca64bcc';
+    '7d6bca2e5c6674bac544ef53c182c633198127f18f42bb4aec72469498b1aa1c';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
