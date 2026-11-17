@@ -10548,11 +10548,9 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Future<void> Function(_ProductionIosFixture)? beforeCall,
   Future<void> Function(_ProductionIosFixture)? whileRinging,
   Future<void> Function(_ProductionIosFixture)? beforeConnected,
-  void Function(StreamController<Object?>)? onNativeEventsReady,
 }) async {
   final connectedCallId = callId ?? _callA;
   final events = StreamController<Object?>.broadcast(sync: true);
-  onNativeEventsReady?.call(events);
   if (cleanupTimeout == null) {
     addTearDown(events.close);
   } else {
@@ -13332,7 +13330,7 @@ final class _B7ActivityRig {
   bool initiallyUnarmed = false;
   bool completeNativeEndJournal = false;
   bool nativeEndSent = false;
-  StreamController<Object?>? nativeEvents;
+  Map<String, Object?>? committedNativeTerminal;
   final terminalAcknowledged = Completer<void>();
   int handoffs = 0;
   ProductionCallSignalingGraph get graph => fixture!.graphs.single;
@@ -13413,10 +13411,17 @@ final class _B7ActivityRig {
     Map<String, Object?> arguments,
   ) async {
     const handle = '33333333-3333-4333-8333-333333333333';
+    if (completeNativeEndJournal &&
+        method == 'attach' &&
+        committedNativeTerminal != null) {
+      return committedNativeTerminal;
+    }
     if (completeNativeEndJournal && arguments['callHandle'] == handle) {
-      if (method == 'end' && !nativeEndSent) {
+      final commitsTerminal = method == 'end' ||
+          (method == 'project' && arguments['state'] == 'ended');
+      if (commitsTerminal && !nativeEndSent) {
         nativeEndSent = true;
-        nativeEvents!.add({
+        committedNativeTerminal = {
           'version': 1,
           'descriptor': {
             'callHandle': handle,
@@ -13436,12 +13441,13 @@ final class _B7ActivityRig {
               'occurredAtMs': 2000002,
             },
           ],
-        });
+        };
       }
       if (method == 'acknowledge' &&
           arguments['disposition'] == 'TERMINAL' &&
           arguments['throughSequence'] == 3 &&
           !terminalAcknowledged.isCompleted) {
+        committedNativeTerminal = null;
         terminalAcknowledged.complete();
       }
     }
@@ -13495,7 +13501,6 @@ final class _B7ActivityRig {
         beforeCall: _prepare,
         whileRinging: whileRinging,
         beforeConnected: beforeConnected,
-        onNativeEventsReady: (events) => nativeEvents = events,
         nativeOverride: _nativeLifecycle,
       ));
     } else {
@@ -13704,7 +13709,7 @@ void _b7ActivityTests() {
     await _b7Bound(rig.store.entered.future);
     rig.store.release.complete();
     await _b7Bound(error);
-    expect(rig.graph.coordinator.internalFailureCount, greaterThan(0));
+    expect(rig.graph.coordinator.internalFailureCount, 0);
     expect(rig.graph.coordinator.lastSnapshot!.isTerminal, isTrue);
     await rig.clock.elapse(const Duration(seconds: 10));
     expect(rig.marks, isEmpty);
