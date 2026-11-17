@@ -637,6 +637,65 @@ run_scenario_once simulator 'Contract phone' direct_text "$CONTRACT_MODE" case
         self.assertNotIn('route_assertions',order)
         self.assertNotIn('PASS case',result.stdout)
 
+class SelectorMetadataPreflightContracts(unittest.TestCase):
+    """Metadata works without native SDK tools; execution still requires them."""
+
+    def invoke_without_native_sdk(self, args, *, selection_only=True):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            script = root / 'scripts/run_ios_notification_tap_ui_smoke.sh'
+            script.parent.mkdir()
+            script.write_bytes((ROOT / 'scripts/run_ios_notification_tap_ui_smoke.sh').read_bytes())
+            fixture = root / 'test/features/push/fixtures/ios_notification_message_matrix.json'
+            fixture.parent.mkdir(parents=True)
+            fixture.write_bytes((ROOT / 'test/features/push/fixtures/ios_notification_message_matrix.json').read_bytes())
+            tools = root / 'bin'
+            tools.mkdir()
+            # Deliberately exclude Flutter, xcodebuild, xcrun and mkdir on every host.
+            for tool in ('node', 'dirname', 'date'):
+                executable = shutil.which(tool)
+                self.assertIsNotNone(executable, tool + ' is a workflow prerequisite')
+                (tools / tool).symlink_to(executable)
+            command = [shutil.which('bash'), str(script)]
+            if selection_only:
+                command.append('--selection-only')
+            result = subprocess.run(command + args, text=True, capture_output=True,
+                                    env={**os.environ, 'PATH': str(tools)}, timeout=3)
+            return result, (root / 'build').exists()
+
+    def test_matrix_metadata_does_not_require_native_sdk_or_create_results(self):
+        result, created = self.invoke_without_native_sdk([])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 12)
+        self.assertFalse(created)
+
+    def test_exact_native_selector_metadata_does_not_require_native_sdk(self):
+        for method, scenario in [('testNotificationTap', 'warm:direct_text'),
+                                 ('testColdNotificationTap', 'cold:direct_video'),
+                                 ('testTapExistingNotification', 'cold:direct_video')]:
+            with self.subTest(method=method):
+                result, created = self.invoke_without_native_sdk(
+                    ['--native-selector', method, '--scenario', scenario, '--retries', '0'])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), scenario)
+                self.assertFalse(created)
+
+    def test_invalid_selector_is_rejected_before_native_sdk_discovery(self):
+        result, created = self.invoke_without_native_sdk(
+            ['--native-selector', 'testArbitraryMethod', '--scenario', 'warm:direct_text', '--retries', '0'])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('Unsupported native selector/scenario pairing.', result.stderr)
+        self.assertFalse(created)
+
+    def test_native_execution_still_requires_sdk_before_build_or_device_actions(self):
+        result, created = self.invoke_without_native_sdk(
+            ['--native-selector', 'testNotificationTap', '--scenario', 'warm:direct_text', '--retries', '0'],
+            selection_only=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('Missing required command: flutter', result.stderr)
+        self.assertFalse(created)
+
+
 class SelectorArgumentContracts(unittest.TestCase):
     def selection(self, args):
         with tempfile.TemporaryDirectory() as name:
