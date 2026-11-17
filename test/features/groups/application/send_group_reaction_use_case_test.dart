@@ -2954,10 +2954,7 @@ void main() {
     test(
       'B6R-004 rescuable needs-build ADD still counts its durable owner',
       () async {
-        activityBridge.responses['group:encrypt'] = {
-          'ok': false,
-          'errorCode': 'PUBLIC_BUILD_UNAVAILABLE',
-        };
+        reactionReplayOutboxRepo.failAttachBuiltPayload = true;
         final result = await submit();
         expect(result.$2, isNotNull);
         expect(reactionReplayOutboxRepo.entries, hasLength(1));
@@ -3055,7 +3052,10 @@ void main() {
         ),
       );
       expect(result, RemoveGroupReactionResult.success);
-      expect(reactionRepo.reactions, isEmpty);
+      expect(
+        await b6Bound(reactionRepo.getReactionsForMessage('msg-1')),
+        isEmpty,
+      );
       expect(activityBridge.marks, isEmpty);
     });
 
