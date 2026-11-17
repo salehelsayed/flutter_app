@@ -13617,6 +13617,31 @@ for integration/release. This is focused local-API proof; the sixteen broader
 selected gates remain Batch 13 composition obligations, and matching Dart,
 network dispatch, native/device and published-build proof remain separate.
 
+The Dart `markCaptured(capture, {int? occurredAtUnixMillis})` API at
+`d6a0f11b6baaa20c3e9c40c5f7b03866a15f7e2c` carries a supplied per-operation
+integer unchanged through configuration deferral and the original reporter,
+bridge, generation, account, binding and consent-epoch fences. Absent or null
+values omit the wire field; argument-free calls retain their encoded payload.
+The capture record gains no timestamp or clock/day logic. Contract RED
+`db7e9b5bea0657a934643281475138f59a503bab` passed 24 legacy cases and failed
+15 API-shape assertions. Timestamp and fence assertions were masked by that
+missing method signature, then executed in GREEN; the RED did not demonstrate
+timestamp loss.
+
+Claude-UI's accepted GREEN passed all 39 reporter cases, including each of the
+15 OCC cases once, within the 417-case diagnostics check. The reporter count
+is included in diagnostics, not an additional run. Bootstrap 23, contacts 1,
+diagnostics Python 60 and the subsequent 350-case workflow also passed. The
+workflow used a fresh Core execution window; 34 source/Git pins remained exact
+at 17 clean boundaries, with no errors, skips or unfinished cases. First RED
+and GREEN evidence remains under `.audit/cocr/out/run1` and `.audit/cocg/out`
+in the execution owner's UI-update checkout. Scoped closure is
+`codex-complete-scoped-source-contract-red-four-host-workflow-d6a0f11b6.json`,
+SHA-256 `949d5bf92cb6dd003fefcb500c039b70131f63fd9bb031eaf89dc5d53328a9fd`.
+This is Dart/fake-bridge proof: producer adoption and ongoing-day semantics,
+matching packaged native integration, devices and full B7/BL29 acceptance
+remain separate. No additional Go run is claimed by this Dart unit.
+
 Before raw native commands, record each generated dependency, its build mode
 and when the SDK generated it. At the B4 native candidate
 `07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
