@@ -6,13 +6,25 @@ MigrationCutoverLeaseCleanup buildBridgeMigrationCutoverLeaseCleanup({
   required Bridge bridge,
   required Future<void> Function() clearLocalStalePushToken,
   Future<void> Function()? stopLocalRuntime,
+  Future<void> Function()? beforeCleanup,
   String? namespace,
   List<String>? serverAddresses,
 }) {
   return MigrationCutoverLeaseCleanup(
-    clearLocalStalePushToken: clearLocalStalePushToken,
-    stopLocalRuntime: stopLocalRuntime,
+    clearLocalStalePushToken: beforeCleanup == null
+        ? clearLocalStalePushToken
+        : () async {
+            await beforeCleanup();
+            await clearLocalStalePushToken();
+          },
+    stopLocalRuntime: stopLocalRuntime == null || beforeCleanup == null
+        ? stopLocalRuntime
+        : () async {
+            await beforeCleanup();
+            await stopLocalRuntime();
+          },
     unregisterPersonalRendezvous: () async {
+      if (beforeCleanup != null) await beforeCleanup();
       final response = await callP2PRendezvousUnregister(
         bridge,
         namespace: namespace,
@@ -23,6 +35,7 @@ MigrationCutoverLeaseCleanup buildBridgeMigrationCutoverLeaseCleanup({
       }
     },
     unregisterInboxPushToken: () async {
+      if (beforeCleanup != null) await beforeCleanup();
       final response = await callP2PInboxUnregisterToken(
         bridge,
         serverAddresses: serverAddresses,

@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -1476,6 +1477,7 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
 
   final FakeMessageRepository messageRepository;
   int stageCalls = 0;
+  OutgoingOrdinaryMutationOutcome? lastStageOutcome;
   String? stagedWireMediaBlobManifestHash;
   int? stagedWireMediaBlobExpiresAtMs;
 
@@ -1502,6 +1504,7 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
       staged: staged,
       kind: kind,
     );
+    lastStageOutcome = stagedResult.outcome;
     if (!stagedResult.authorizesTransport) {
       return OutgoingDirectMediaCustodyStageResult(
         outcome: stagedResult.outcome,
@@ -1910,6 +1913,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  ActiveIdentityReporter? activityReporter,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -2040,6 +2045,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     text: text,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
+    activityReporter: activityReporter,
+    capturedActivity: capturedActivity,
     action: action,
     editedAt: editedAt,
     messageId: messageId,
@@ -2102,6 +2109,86 @@ Map<String, dynamic> decodeWirePayload(String wireJson) {
   }
   final encrypted = envelope['encrypted'] as Map<String, dynamic>;
   return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+}
+
+const _dailyBinding = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _dailyOtherBinding = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _dailyDate = '2026-11-17T00:00:00.000Z';
+const _dailyBudget = Duration(seconds: 2);
+
+Future<T> _dailyBound<T>(Future<T> future) => future.timeout(_dailyBudget);
+
+Future<void> _dailyArrival(Completer<void> signal) async {
+  final arrived = await signal.future.then<bool>((_) => true)
+      .timeout(const Duration(seconds: 1), onTimeout: () => false);
+  expect(arrived, isTrue, reason: 'the expected producer boundary must be observed');
+}
+
+class _DailyProducerBridge extends PassthroughCryptoBridge {
+  final activityRequests = <Map<String, dynamic>>[];
+  final markStarted = Completer<void>();
+  Future<String> Function(Map<String, dynamic>, int)? activityAnswer;
+  void Function()? onMark;
+  int _revision = 0;
+
+  @override
+  bool get isInitialized => true;
+
+  List<Map<String, dynamic>> get marks => activityRequests
+      .where((request) => request['op'] == 'mark').toList();
+
+  static String reply(Map<String, dynamic> request, int revision) => jsonEncode({
+    'ok': true,
+    'data': {
+      'revision': revision,
+      'consentEpoch': request['consentEpoch'],
+      if (request['op'] == 'configure')
+        'configured': request['enabled'] == true && request['profileBinding'] != '',
+      if (request['op'] == 'mark') 'accepted': true,
+      if (request['op'] == 'flush') 'queued': true,
+    },
+  });
+
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] != 'active_identity_reporter_v1') {
+      return super.send(message);
+    }
+    final request = Map<String, dynamic>.from(envelope['payload'] as Map);
+    activityRequests.add(request);
+    final revision = request['op'] == 'configure'
+        ? ++_revision : request['revision'] as int;
+    if (request['op'] == 'mark') {
+      onMark?.call();
+      if (!markStarted.isCompleted) {
+        markStarted.complete();
+      }
+    }
+    final answer = activityAnswer;
+    if (answer != null) {
+      return answer(request, revision);
+    }
+    return reply(request, revision);
+  }
+}
+
+class _DailyFirstReadRepository extends FakeMessageRepository {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  bool _first = true;
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyOwnerForMessageId({
+    required String messageId,
+  }) async {
+    if (_first) {
+      _first = false;
+      entered.complete();
+      await _dailyBound(release.future);
+    }
+    return super.loadDirectInboxCustodyOwnerForMessageId(messageId: messageId);
+  }
 }
 
 void main() {
@@ -13212,6 +13299,630 @@ void main() {
       },
     );
   });
+
+  group('BL29 daily producer', () {
+    late _DailyProducerBridge dailyBridge;
+    late ActiveIdentityReporter dailyReporter;
+    late FakeMessageRepository dailyMessages;
+    late FakeP2PService dailyService;
+
+    setUp(() async {
+      dailyBridge = _DailyProducerBridge();
+      dailyReporter = ActiveIdentityReporter(statePath: '/unused/daily-producer.json');
+      dailyMessages = FakeMessageRepository();
+      dailyService = FakeP2PService(sendMessageTransport: 'direct')
+        ..isConnectedToPeerResult = true;
+      await _dailyBound(AppDiagnostics.installForTesting(useNative: false, enabled: true));
+      dailyReporter.attachBridge(dailyBridge);
+      dailyReporter.observeIdentity(
+        accountPeerId: 'my-peer',
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: _dailyBinding,
+      );
+      await _dailyBound(dailyReporter.observeConsent((enabled: true, consentEpoch: 7)));
+      expect(dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'), isNotNull);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    tearDown(() async {
+      await _dailyBound(dailyReporter.dispose());
+      await _dailyBound(AppDiagnostics.instance.dispose());
+    });
+
+    Future<(SendChatMessageResult, ConversationMessage?)> submit({
+      String id = 'daily-private-message',
+      FakeMessageRepository? messages,
+      FakeP2PService? service,
+      String? quote,
+      bool forwarded = false,
+      bool fresh = true,
+      bool observe = true,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+      String action = MessagePayload.actionSend,
+      List<MediaAttachment>? media,
+      MediaAttachmentRepository? mediaRepository,
+    }) => _dailyBound(sendChatMessage(
+      p2pService: service ?? dailyService,
+      messageRepo: messages ?? dailyMessages,
+      targetPeerId: 'target-peer',
+      text: action == MessagePayload.actionEdit ? 'daily-private-content-edited' : 'daily-private-content',
+      senderPeerId: 'my-peer',
+      senderUsername: 'Me',
+      activityReporter: observe ? dailyReporter : null,
+      capturedActivity: capturedActivity,
+      messageId: id,
+      preassignedMessageIdIsFresh: fresh,
+      timestamp: _dailyDate,
+      createdAt: _dailyDate,
+      editedAt: action == MessagePayload.actionEdit ? '2026-11-17T00:00:01.000Z' : null,
+      action: action,
+      bridge: dailyBridge,
+      quotedMessageId: quote,
+      isForwarded: forwarded,
+      mediaAttachments: media,
+      mediaAttachmentRepo: mediaRepository,
+      storeInAckCustodyInboxDetailed: (
+        String peer,
+        String envelope, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async => const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'TEST_OFFLINE',
+      ),
+    ));
+
+    const b5Hash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const b5Expiry = 2100000000000;
+    const b5Snapshot = DirectContactFanoutSnapshot(
+      contactAccountPeerId: 'target-peer',
+      contactAccountSigningPublicKey: 'contact-signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(peerId: 'target-peer', mlKemPublicKey: 'key-account',
+          isLegacyAccountTarget: true, fingerprint: 'account-fingerprint'),
+        DirectContactFanoutTargetFact(peerId: 'peer-device-a', mlKemPublicKey: 'key-device',
+          isLegacyAccountTarget: false, fingerprint: 'device-fingerprint',
+          deviceId: 'device-a', transportPublicKey: 'device-transport-key'),
+      ],
+    );
+
+    MediaAttachment b5Attachment(String id, {bool strict = false, String suffix = 'image',
+      String mime = 'image/jpeg', String mediaType = 'image'}) => MediaAttachment(
+      id: '$id-$suffix', messageId: id, mime: mime, size: 24, mediaType: mediaType,
+      localPath: MediaFilePathConvention.relativePathForAttachment(
+        contactPeerId: 'target-peer', blobId: '$id-$suffix', mime: mime),
+      downloadStatus: 'done', createdAt: _dailyDate,
+      contentHash: b5Hash, encryptionKeyBase64: 'b5-key', encryptionNonce: 'b5-nonce',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      ownerLane: MediaOwnerLane.direct,
+      blobCustody: strict ? const DirectMediaBlobCustodyCommitment(
+        contentHash: b5Hash, ciphertextSize: 64, expiresAtMs: b5Expiry) : null,
+    );
+
+    ConversationMessage b5Parent(String id, {PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+      String? intent, bool fanout = false}) => ConversationMessage(
+      id: id, contactPeerId: 'target-peer', senderPeerId: 'my-peer', text: '',
+      timestamp: _dailyDate, status: 'sending', isIncoming: false, createdAt: _dailyDate,
+      privateMediaPolicy: policy, privateMediaState: policy.initialState,
+      directMediaCustodyIntentId: intent,
+    ).copyWith(directEventFanoutGenerationId: fanout ? id : null);
+
+    ({FakeMessageRepository messages, _DirectMediaCustodyFakeRepository media,
+      MediaAttachment completed}) b5Prepared(String id, {PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary()}) {
+      final candidate = b5Attachment(id);
+      final pending = candidate.copyWith(downloadStatus: 'upload_pending',
+        localPath: MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: id, attachmentId: candidate.id, mime: candidate.mime));
+      final complete = pending.copyWith(downloadStatus: 'done',
+        blobCustody: const DirectMediaBlobCustodyCommitment(
+          contentHash: b5Hash, ciphertextSize: 64, expiresAtMs: b5Expiry));
+      final intent = computeDirectMediaCustodyIntentId(messageId: id, attachmentIds: [complete.id]);
+      final messages = FakeMessageRepository()..forceCurrent(b5Parent(id, policy: policy, intent: intent));
+      return (messages: messages, media: _DirectMediaCustodyFakeRepository(messages)..seed([pending]),
+        completed: complete.copyWith(localPath: pending.localPath));
+    }
+
+    Map<String, List<DirectMediaBlobCustodyRow>> b5TargetRows(String id, MediaAttachment attachment) => {
+      for (final target in b5Snapshot.targets)
+        target.peerId: [DirectMediaBlobCustodyRow(
+          attachmentId: attachment.id, messageId: id,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          inboxCustodyIncarnationId: null, recipientPeerId: target.peerId,
+          contactAccountPeerId: 'target-peer', recipientMlKemPublicKey: target.mlKemPublicKey,
+          ciphertextRelativePath: 'direct_media_blob_custody_v1/$b5Hash/${attachment.id}.blob',
+          contentHash: b5Hash, ciphertextSize: 64, expiresAtMs: b5Expiry,
+          custodyRelayPeerId: 'peer-relay', lastAttemptAt: null, nextAttemptAt: null,
+          createdAt: _dailyDate, updatedAt: _dailyDate,
+        )],
+    };
+
+    Future<(SendChatMessageResult, ConversationMessage?)> submitB5Media({
+      required String id, required FakeMessageRepository messages,
+      required MediaAttachmentRepository media, required List<MediaAttachment> attachments,
+      bool fresh = true, bool observe = true,
+      PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+      DirectLinkedMediaFanoutContext? fanout, DirectPrivateMediaFanoutContext? privateFanout,
+      FakeP2PService? service, VoidCallback? onStore,
+    }) => _dailyBound(chat_use_case.sendChatMessage(
+      p2pService: service ?? FakeP2PService(currentState: const NodeState(isStarted: false, peerId: 'my-peer')),
+      messageRepo: messages, targetPeerId: 'target-peer', text: '',
+      senderPeerId: 'my-peer', senderUsername: 'Me',
+      activityReporter: observe ? dailyReporter : null, capturedActivity: capturedActivity,
+      messageId: id, preassignedMessageIdIsFresh: fresh, timestamp: _dailyDate, createdAt: _dailyDate,
+      bridge: dailyBridge, recipientMlKemPublicKey: 'key-account',
+      mediaAttachments: attachments, mediaAttachmentRepo: media, privateMediaPolicy: policy,
+      directLinkedMediaFanout: fanout, directPrivateMediaFanout: privateFanout,
+      storeInAckCustodyInboxDetailed: (peer, envelope, {required custodyKind, timeoutMs}) async {
+        onStore?.call();
+        return const InboxStoreOutcome(status: InboxStoreStatus.failed, errorCode: 'TEST_OFFLINE');
+      },
+      storeInMediaExpiryBoundedInboxDetailed: (peer, envelope, {required custodyExpiresAtOrBeforeMs, timeoutMs}) async {
+        onStore?.call();
+        return const InboxStoreOutcome(status: InboxStoreStatus.failed, errorCode: 'TEST_OFFLINE');
+      },
+    ));
+
+    test('B5M-001 fresh ordinary media batch marks once after applied final admission', () async {
+      const id = 'b5-ordinary-batch';
+      final messages = FakeMessageRepository();
+      final media = _DirectMediaCustodyFakeRepository(messages);
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      final result = await submitB5Media(id: id, messages: messages, media: media,
+        attachments: [b5Attachment(id), b5Attachment(id, suffix: 'file', mime: 'application/pdf', mediaType: 'file')],
+        observe: false, capturedActivity: (reporter: dailyReporter, capture: capture));
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(media.stageCalls, 1);
+      expect(media.lastStageOutcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(messages.ordinaryStageCalls.single.kind, OutgoingOrdinaryAttemptKind.fresh);
+      expect(messages.directCustodyRows.values.single.mediaBlobManifestHash, isNull);
+      expect(result.$2!.media, hasLength(2));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1), reason: 'one authored batch, not one activity per attachment');
+    });
+
+    test('B5M-002 prepared ordinary token finalization marks its first applied admission', () async {
+      const id = 'b5-prepared-ordinary';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      final fixture = b5Prepared(id);
+      final result = await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+        attachments: [fixture.completed], fresh: false, observe: false, capturedActivity: original);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(fixture.media.stageCalls, 1);
+      expect(fixture.media.lastStageOutcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(fixture.messages.ordinaryStageCalls.single.kind, OutgoingOrdinaryAttemptKind.existing);
+      expect(fixture.messages.ordinaryStageCalls.single.expected!.directMediaCustodyIntentId, isNotNull);
+      expect(result.$2!.directMediaCustodyIntentId, isNull);
+      expect(fixture.messages.directCustodyRows, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('B5M-003 prepared disappearing media marks only after strict final admission', () async {
+      const id = 'b5-prepared-disappearing';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      final policy = PrivateMediaPolicy.disappearing(3600);
+      final fixture = b5Prepared(id, policy: policy);
+      final result = await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+        attachments: [fixture.completed], fresh: false, observe: false, capturedActivity: original, policy: policy);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(fixture.media.stageCalls, 1);
+      expect(fixture.media.lastStageOutcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(fixture.media.stagedWireMediaBlobManifestHash, isNotNull);
+      expect(fixture.media.stagedWireMediaBlobExpiresAtMs, b5Expiry);
+      expect(result.$2!.directMediaCustodyIntentId, isNull);
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('B5M-004 protected and view-once final committed admissions each mark once', () async {
+      for (final entry in [(name: 'protected', policy: const PrivateMediaPolicy.protected()),
+        (name: 'view-once', policy: const PrivateMediaPolicy.viewOnce())]) {
+        final id = 'b5-private-${entry.name}';
+        final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+        expect(original.capture, isNotNull);
+        final attachment = b5Attachment(id, strict: true);
+        final messages = _PrivateStrictCustodyMessageRepository(b5Parent(id, policy: entry.policy));
+        final media = _PrivateMutationMediaRepository()..seed([attachment]);
+        final result = await submitB5Media(id: id, messages: messages, media: media,
+          attachments: [attachment], fresh: false, policy: entry.policy,
+          observe: false, capturedActivity: original);
+        expect(result.$1, SendChatMessageResult.nodeNotRunning);
+        expect(messages.strictHandoffCalls, 1);
+        expect(messages.legacyEnvelopeHandoffCalls, 0);
+        expect(messages.directCustodyRows, hasLength(1));
+      }
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(2));
+    });
+
+    test('B5M-005 linked media final applied batch marks once across two recipients', () async {
+      const id = 'b5-linked-media';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      final attachment = b5Attachment(id, strict: true);
+      final parent = b5Parent(id, fanout: true, intent: computeDirectMediaCustodyIntentId(
+        messageId: id, attachmentIds: [attachment.id]));
+      final messages = FakeMessageRepository()..forceCurrent(parent);
+      final media = _LinkedMediaFanoutFakeRepository()..seed([attachment]);
+      final rows = b5TargetRows(id, attachment);
+      final result = await submitB5Media(id: id, messages: messages, media: media,
+        attachments: [attachment], fresh: false, observe: false, capturedActivity: original,
+        service: FakeP2PService(currentState: const NodeState(isStarted: true, peerId: 'my-peer')),
+        fanout: DirectLinkedMediaFanoutContext(contactAccountPeerId: 'target-peer', snapshot: b5Snapshot, targetRows: rows));
+      expect(result.$1, SendChatMessageResult.success);
+      expect(media.fanoutStageCalls, 1);
+      expect(media.singularMediaStageCalls, 0);
+      expect(media.fanoutStageBindings, hasLength(2));
+      expect(result.$2!.directMediaCustodyIntentId, isNull);
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('B5M-006 linked private final committed batch marks once across two recipients', () async {
+      const id = 'b5-linked-private';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      const policy = PrivateMediaPolicy.protected();
+      final attachment = b5Attachment(id, strict: true);
+      final messages = _PrivateFanoutCustodyMessageRepository(b5Parent(id, policy: policy, fanout: true));
+      final media = _PrivateMutationMediaRepository()..seed([attachment]);
+      final result = await submitB5Media(id: id, messages: messages, media: media,
+        attachments: [attachment], fresh: false, observe: false, capturedActivity: original, policy: policy,
+        service: FakeP2PService(currentState: const NodeState(isStarted: true, peerId: 'my-peer')),
+        privateFanout: DirectPrivateMediaFanoutContext(contactAccountPeerId: 'target-peer',
+          snapshot: b5Snapshot, targetRows: b5TargetRows(id, attachment)));
+      expect(result.$1, SendChatMessageResult.success);
+      expect(messages.pluralHandoffCalls, 1);
+      expect(messages.strictHandoffCalls, 0);
+      expect(messages.observedBindings, hasLength(2));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('B5M-007 refused and idempotent media stages add no activity', () async {
+      for (final outcome in [OutgoingOrdinaryMutationOutcome.refused, OutgoingOrdinaryMutationOutcome.idempotent]) {
+        final id = 'b5-media-${outcome.name}';
+        final messages = FakeMessageRepository()..forcedStageOutcome = outcome;
+        if (outcome == OutgoingOrdinaryMutationOutcome.idempotent) {
+          messages.onOrdinaryStage = () => messages.forceCurrent(messages.ordinaryStageCalls.single.staged);
+        }
+        final media = _DirectMediaCustodyFakeRepository(messages);
+        final result = await submitB5Media(id: id, messages: messages, media: media, attachments: [b5Attachment(id)]);
+        expect(media.stageCalls, 1);
+        expect(media.lastStageOutcome, outcome);
+        expect(result.$1, outcome == OutgoingOrdinaryMutationOutcome.refused
+          ? SendChatMessageResult.sendFailed : SendChatMessageResult.nodeNotRunning);
+        expect(messages.directCustodyRows, outcome == OutgoingOrdinaryMutationOutcome.refused ? isEmpty : hasLength(1));
+      }
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5M-008 private idempotent handoff authorizes transport without new activity', () async {
+      const id = 'b5-private-idempotent';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      const policy = PrivateMediaPolicy.protected();
+      final attachment = b5Attachment(id, strict: true);
+      final messages = _B5IdempotentPrivateRepository(b5Parent(id, policy: policy));
+      final media = _PrivateMutationMediaRepository()..seed([attachment]);
+      final result = await submitB5Media(id: id, messages: messages, media: media,
+        attachments: [attachment], fresh: false, observe: false, capturedActivity: original, policy: policy);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(messages.strictHandoffCalls, 1);
+      expect(messages.directCustodyRows, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5M-009 present null and superseded media observations never reacquire an owner', () async {
+      const nullId = 'b5-media-null';
+      final nullMessages = FakeMessageRepository();
+      final nullMedia = _DirectMediaCustodyFakeRepository(nullMessages);
+      expect((await submitB5Media(id: nullId, messages: nullMessages, media: nullMedia,
+        attachments: [b5Attachment(nullId)], capturedActivity: (reporter: dailyReporter, capture: null))).$1,
+        SendChatMessageResult.nodeNotRunning);
+      expect(nullMedia.stageCalls, 1);
+      const staleId = 'b5-media-stale';
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      final staleMessages = FakeMessageRepository();
+      Future<void>? replaced;
+      staleMessages.onOrdinaryStage = () {
+        replaced = dailyReporter.observeConsent((enabled: true, consentEpoch: 8));
+      };
+      final staleMedia = _DirectMediaCustodyFakeRepository(staleMessages);
+      expect((await submitB5Media(id: staleId, messages: staleMessages, media: staleMedia,
+        attachments: [b5Attachment(staleId)], capturedActivity: (reporter: dailyReporter, capture: capture))).$1,
+        SendChatMessageResult.nodeNotRunning);
+      expect(staleMedia.stageCalls, 1);
+      expect(replaced, isNotNull);
+      await _dailyBound(replaced!);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5M-010 exact retained media replay adds no stage or activity', () async {
+      const id = 'b5-media-replay';
+      final original = (reporter: dailyReporter, capture: dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'));
+      expect(original.capture, isNotNull);
+      final fixture = b5Prepared(id);
+      await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+        attachments: [fixture.completed], fresh: false, observe: false);
+      expect(fixture.media.stageCalls, 1);
+      final custody = fixture.messages.directCustodyRows.values.single;
+      dailyService
+        ..sendMessageResult = false
+        ..sendMessageAcked = false
+        ..sendMessageReply = null;
+      var stores = 0;
+      final replay = await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+        attachments: [fixture.completed], fresh: false, observe: false, capturedActivity: original,
+        service: dailyService, onStore: () => stores++);
+      expect(replay.$1, SendChatMessageResult.sendFailed);
+      expect(replay.$2?.status, 'failed');
+      expect(dailyService.sendCallCount, greaterThan(0));
+      expect(stores, 2, reason: 'the failed initial inbox attempt and its one terminal retry must run');
+      expect(fixture.media.stageCalls, 1);
+      expect(fixture.messages.directCustodyRows, hasLength(1));
+      final retained = fixture.messages.directCustodyRows.values.single;
+      expect(retained.recipientPeerId, custody.recipientPeerId);
+      expect(retained.messageId, custody.messageId);
+      expect(retained.incarnationId, custody.incarnationId);
+      expect(retained.wireEnvelope, custody.wireEnvelope);
+      expect(retained.mediaBlobManifestHash, custody.mediaBlobManifestHash);
+      expect(retained.mediaBlobExpiresAtMs, custody.mediaBlobExpiresAtMs);
+      expect(retained.contactAccountPeerId, custody.contactAccountPeerId);
+      expect(retained.createdAt, custody.createdAt);
+      expect(retained.retryCount, custody.retryCount + stores);
+      expect(retained.lastErrorCode, 'store_failed');
+      expect(retained.lastAttemptAt, isNotNull);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('B5M-011 old prepared row with only a late enabled reporter cannot backfill activity', () async {
+      await _dailyBound(dailyReporter.observeConsent((enabled: false, consentEpoch: 8)));
+      const id = 'b5-prepared-before-enable';
+      final fixture = b5Prepared(id);
+      await _dailyBound(dailyReporter.observeConsent((enabled: true, consentEpoch: 9)));
+      expect(dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer'), isNotNull,
+        reason: 'late legacy capture is available but is not an original user observation');
+      final result = await submitB5Media(id: id, messages: fixture.messages, media: fixture.media,
+        attachments: [fixture.completed], fresh: false);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(fixture.media.stageCalls, 1);
+      expect(fixture.media.lastStageOutcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(fixture.messages.ordinaryStageCalls.single.kind, OutgoingOrdinaryAttemptKind.existing);
+      expect(fixture.messages.directCustodyRows, hasLength(1));
+      expect(result.$2!.directMediaCustodyIntentId, isNull);
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2U-S001 present captured record works without legacy reporter', () async {
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      final result = await submit(
+        observe: false,
+        capturedActivity: (reporter: dailyReporter, capture: capture),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2U-S002 present null capture never reacquires legacy current owner', () async {
+      final result = await submit(
+        capturedActivity: (reporter: dailyReporter, capture: null),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2U-S003 present null reporter never falls back to legacy reporter', () async {
+      final result = await submit(
+        capturedActivity: (reporter: null, capture: null),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2U-S004 stale UI record never acquires a same-tuple successor', () async {
+      final capture = dailyReporter.captureOwner(expectedAccountPeerId: 'my-peer');
+      expect(capture, isNotNull);
+      await _dailyBound(dailyReporter.observeConsent((enabled: true, consentEpoch: 7)));
+      final result = await submit(
+        capturedActivity: (reporter: dailyReporter, capture: capture),
+      );
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2P-001 fresh applied text marks once after commit before transport', () async {
+      final order = <String>[];
+      dailyMessages.afterDirectCustodyStage = () => order.add('commit');
+      dailyBridge.onMark = () => order.add('mark');
+      dailyService.onSendMessage = () => order.add('transport');
+      final result = await submit();
+      expect(result.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyService.sendCallCount, greaterThan(0));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, [
+        {'version': 1, 'revision': 1, 'consentEpoch': 7,
+          'profileBinding': _dailyBinding, 'accountPeerId': 'my-peer', 'op': 'mark'},
+      ]);
+      expect(order.indexOf('commit'), lessThan(order.indexOf('mark')));
+      expect(order.indexOf('mark'), lessThan(order.indexOf('transport')));
+    });
+
+    test('E2P-002 fresh quoted admission qualifies for daily activity', () async {
+      dailyMessages.forceCurrent(ConversationMessage(
+        id: 'daily-quote-parent', contactPeerId: 'target-peer',
+        senderPeerId: 'target-peer', text: 'quoted', timestamp: _dailyDate,
+        status: 'delivered', isIncoming: true, createdAt: _dailyDate,
+      ));
+      final result = await submit(quote: 'daily-quote-parent');
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.quotedMessageId, 'daily-quote-parent');
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-003 fresh deliberate forwarded text qualifies for daily activity', () async {
+      final result = await submit(forwarded: true);
+      expect(result.$1, SendChatMessageResult.success);
+      expect(result.$2?.isForwarded, isTrue);
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-004 committed admission still qualifies when transport cannot start', () async {
+      final stopped = FakeP2PService(currentState: const NodeState(isStarted: false));
+      final result = await submit(service: stopped);
+      expect(result.$1, SendChatMessageResult.nodeNotRunning);
+      expect(result.$2?.status, 'failed');
+      expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+      expect(dailyMessages.directCustodyRows, hasLength(1));
+      expect(stopped.sendCallCount, 0);
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-005 first repository await cannot acquire a successor same-account scope', () async {
+      for (final change in ['runtime', 'profile', 'epoch']) {
+        final held = _DailyFirstReadRepository();
+        Future<(SendChatMessageResult, ConversationMessage?)>? pending;
+        try {
+          pending = submit(id: 'daily-race-$change', messages: held);
+          await _dailyArrival(held.entered);
+          expect(held.directCustodyStageCalls, isEmpty);
+          expect(dailyBridge.marks, isEmpty);
+          if (change == 'profile') {
+            dailyReporter.observeIdentity(
+              accountPeerId: 'my-peer',
+              rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+              profileBinding: _dailyOtherBinding,
+            );
+          }
+          await _dailyBound(dailyReporter.observeConsent((
+            enabled: true, consentEpoch: change == 'epoch' ? 8 : 7,
+          )));
+          held.release.complete();
+          final result = await _dailyBound(pending);
+          expect(result.$1, SendChatMessageResult.success);
+          expect(held.directCustodyStageCalls, hasLength(1));
+          await _dailyBound(Future<void>(() {}));
+          expect(dailyBridge.marks, isEmpty, reason: change);
+        } finally {
+          if (!held.release.isCompleted) {
+            held.release.complete();
+          }
+          if (pending != null) {
+            await _dailyBound(pending);
+          }
+        }
+      }
+    });
+
+    test('E2P-006 refusal idempotent admission and existing retry add no activity', () async {
+      final refused = FakeMessageRepository()
+        ..forcedStageOutcome = OutgoingOrdinaryMutationOutcome.refused;
+      expect((await submit(id: 'daily-refused', messages: refused)).$1,
+          SendChatMessageResult.sendFailed);
+      expect(refused.directCustodyStageCalls, hasLength(1));
+      final idempotent = FakeMessageRepository()
+        ..forcedStageOutcome = OutgoingOrdinaryMutationOutcome.idempotent;
+      // Model a concurrent winner already owning the exact staged row when
+      // the transaction returns idempotent: it authorizes transport, not new activity.
+      idempotent.onOrdinaryStage = () {
+        idempotent.forceCurrent(idempotent.directCustodyStageCalls.single.staged);
+      };
+      final stopped = FakeP2PService(currentState: const NodeState(isStarted: false));
+      final existing = await submit(id: 'daily-idempotent', messages: idempotent, service: stopped);
+      expect(existing.$1, SendChatMessageResult.nodeNotRunning,
+          reason: 'Idempotent with a durable row passed the transport authority gate');
+      expect(idempotent.directCustodyStageCalls, hasLength(1));
+      final seeded = await submit(id: 'daily-existing', observe: false, service: stopped);
+      expect(seeded.$1, SendChatMessageResult.nodeNotRunning);
+      expect(dailyMessages.directCustodyRows, hasLength(1));
+      final before = dailyMessages.directCustodyStageCalls.length;
+      final retry = await submit(id: 'daily-existing', fresh: false);
+      expect(retry.$1, SendChatMessageResult.success);
+      expect(dailyMessages.directCustodyStageCalls.length, before);
+      await _dailyBound(Future<void>(() {}));
+      expect(dailyBridge.marks, isEmpty);
+    });
+
+    test('E2P-007 edits stay excluded while fresh media admission qualifies', () async {
+      expect((await submit(id: 'daily-edit', observe: false)).$1, SendChatMessageResult.success);
+      final edited = await submit(id: 'daily-edit', fresh: false, action: MessagePayload.actionEdit);
+      expect(edited.$1, SendChatMessageResult.success);
+      expect(edited.$2?.text, 'daily-private-content-edited');
+      expect(dailyMessages.ordinaryStageCalls.last.kind, OutgoingOrdinaryAttemptKind.edit);
+      expect(dailyBridge.marks, isEmpty, reason: 'B5 extends media eligibility, not edit eligibility');
+      final mediaMessages = FakeMessageRepository();
+      final media = FakeMediaAttachmentRepository();
+      const attachment = MediaAttachment(
+        id: 'daily-file', messageId: '', mime: 'application/pdf', size: 24,
+        mediaType: 'file', localPath: 'media/peer/daily-file.pdf', downloadStatus: 'done',
+        createdAt: _dailyDate,
+        contentHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        encryptionKeyBase64: 'key', encryptionNonce: 'nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final mediaResult = await submit(id: 'daily-media', messages: mediaMessages,
+        service: FakeP2PService(currentState: const NodeState(isStarted: false)),
+        media: const [attachment], mediaRepository: media);
+      expect(mediaResult.$1, SendChatMessageResult.nodeNotRunning);
+      expect(mediaMessages.ordinaryStageCalls.single.kind, OutgoingOrdinaryAttemptKind.fresh);
+      expect(mediaMessages.ordinaryStageCalls.single.staged.media, hasLength(1));
+      await _dailyArrival(dailyBridge.markStarted);
+      expect(dailyBridge.marks, hasLength(1));
+    });
+
+    test('E2P-008 held throwing native mark never joins admitted communication', () async {
+      final release = Completer<void>();
+      final finished = Completer<void>();
+      dailyBridge.activityAnswer = (request, revision) async {
+        if (request['op'] == 'mark') {
+          try {
+            await _dailyBound(release.future);
+            throw StateError('controlled daily producer mark failure');
+          } finally {
+            finished.complete();
+          }
+        }
+        return _DailyProducerBridge.reply(request, revision);
+      };
+      try {
+        final result = await submit();
+        expect(result.$1, SendChatMessageResult.success);
+        expect(dailyMessages.directCustodyStageCalls, hasLength(1));
+        await _dailyArrival(dailyBridge.markStarted);
+        expect(finished.isCompleted, isFalse);
+        expect(dailyBridge.marks, hasLength(1));
+        release.complete();
+        await _dailyBound(finished.future);
+        await _dailyBound(Future<void>(() {}));
+      } finally {
+        if (!release.isCompleted) {
+          release.complete();
+        }
+        if (dailyBridge.markStarted.isCompleted) {
+          await _dailyBound(finished.future);
+        }
+      }
+    });
+  });
 }
 
 /// Fake caption-edit custody owner: returns the persisted classification and
@@ -14275,5 +14986,29 @@ class _LinkedMediaFanoutFakeRepository extends FakeMediaAttachmentRepository
           },
       ],
     );
+  }
+}
+
+/// Models the concurrent winner returned by the existing private transaction;
+/// idempotent transport authority must never count as a new authored admission.
+class _B5IdempotentPrivateRepository extends _PrivateStrictCustodyMessageRepository {
+  _B5IdempotentPrivateRepository(super.current);
+  @override
+  Future<OutgoingDirectPrivateInboxCustodyResult> commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+    required String wireMediaBlobManifestHash,
+    required int wireMediaBlobExpiresAtMs,
+  }) async {
+    final winner = await super.commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+      messageId: messageId, completedAttachment: completedAttachment,
+      expectedPendingLocalPath: expectedPendingLocalPath, envelope: envelope,
+      hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+      wireMediaBlobManifestHash: wireMediaBlobManifestHash, wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs);
+    return OutgoingDirectPrivateInboxCustodyResult(
+      outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent, custody: winner.custody);
   }
 }

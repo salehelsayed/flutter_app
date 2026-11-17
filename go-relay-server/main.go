@@ -190,6 +190,7 @@ func main() {
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
+	prometheus.MustRegister(inbox)
 	thoughts, thoughtsErr := newConfiguredThoughtMetrics(filepath.Join(storageCfg.RootDir, "thoughts-metrics.json"), time.Now)
 	if thoughtsErr != nil {
 		// Missing series mean unavailable, never a fabricated zero. Analytics
@@ -442,6 +443,11 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 			groupInboxMessagesStoredGauge.Set(float64(groupInboxMsgs))
 
 			// Business metrics (aggregate only, privacy-safe)
+			if inbox.activeIdentities != nil {
+				// Close observed Berlin days even when no client reports activity.
+				// The store withholds estimates if this durable write fails.
+				_ = inbox.activeIdentities.advance()
+			}
 			biz.CheckAndResetPeriods()
 			dau := biz.dailyHLL.Estimate()
 			wau := biz.weeklyHLL.Estimate()

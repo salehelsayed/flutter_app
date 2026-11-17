@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -758,6 +759,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  // Explicit caller-owned reporter; production composition wiring is separate.
+  ActiveIdentityReporter? activityReporter,
+  // A present UI observation is authoritative, including null fields.
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -787,6 +792,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
 }) async {
+  final hasOriginalActivityObservation = capturedActivity != null;
+  final capturedReporter = capturedActivity == null
+      ? activityReporter
+      : capturedActivity.reporter;
+  ActiveIdentityReporterCapture? activityCapture = capturedActivity?.capture;
+  if (capturedActivity == null) {
+    try {
+      activityCapture = capturedReporter?.captureOwner(
+        expectedAccountPeerId: senderPeerId,
+      );
+    } catch (_) {
+      // Optional observation must never own authoring or expose private failures.
+    }
+  }
   final diagnostics = AppDiagnostics.instance;
   return diagnostics.runWithAttempt(
     feature: 'message',
@@ -813,6 +832,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           text: text,
           senderPeerId: senderPeerId,
           senderUsername: senderUsername,
+          activityReporter: capturedReporter,
+          activityCapture: activityCapture,
+          hasOriginalActivityObservation: hasOriginalActivityObservation,
           action: action,
           editedAt: editedAt,
           messageId: messageId,
@@ -894,6 +916,9 @@ _sendChatMessageDiagnosed({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  required bool hasOriginalActivityObservation,
+  ActiveIdentityReporter? activityReporter,
+  ActiveIdentityReporterCapture? activityCapture,
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
@@ -2192,6 +2217,9 @@ _sendChatMessageDiagnosed({
       expectedParent: existingOutgoing,
       completedAttachment: normalizedAttachments.single,
       resolvedMessageId: resolvedMessageId,
+      hasOriginalActivityObservation: hasOriginalActivityObservation,
+      activityReporter: activityReporter,
+      activityCapture: activityCapture,
       onDirectTextCustodyStaged: onDirectTextCustodyStaged,
       emitSendTiming: emitSendTiming,
       recordMetrics: recordMetrics,
@@ -2239,6 +2267,9 @@ _sendChatMessageDiagnosed({
       expectedParent: existingOutgoing,
       normalizedAttachments: normalizedAttachments,
       resolvedMessageId: resolvedMessageId,
+      hasOriginalActivityObservation: hasOriginalActivityObservation,
+      activityReporter: activityReporter,
+      activityCapture: activityCapture,
       onDirectTextCustodyStaged: onDirectTextCustodyStaged,
       emitSendTiming: emitSendTiming,
       recordMetrics: recordMetrics,
@@ -2370,6 +2401,16 @@ _sendChatMessageDiagnosed({
       );
       emitSendTiming(outcome: 'private_envelope_handoff_refused');
       return (SendChatMessageResult.sendFailed, null);
+    }
+    if (hasOriginalActivityObservation &&
+        action == MessagePayload.actionSend &&
+        handoff.outcome == OutgoingDirectPrivateEnvelopeHandoffOutcome.committed &&
+        activityCapture != null) {
+      try {
+        activityReporter?.markCaptured(activityCapture);
+      } catch (_) {
+        // Durable admission and transport do not depend on optional activity.
+      }
     }
   } else if (exactReplay == null) {
     final hasOrdinaryMedia = normalizedAttachments?.isNotEmpty ?? false;
@@ -2546,6 +2587,20 @@ _sendChatMessageDiagnosed({
         );
         return (SendChatMessageResult.sendFailed, null);
       }
+      if (hasOrdinaryMedia &&
+          action == MessagePayload.actionSend &&
+          stagedOutcome == OutgoingOrdinaryMutationOutcome.applied &&
+          (hasOriginalActivityObservation ||
+              (attemptKind == OutgoingOrdinaryAttemptKind.fresh &&
+                  existingOutgoing == null &&
+                  effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary)) &&
+          activityCapture != null) {
+        try {
+          activityReporter?.markCaptured(activityCapture);
+        } catch (_) {
+          // Optional activity cannot change the committed media or its egress.
+        }
+      }
       if (ownsDirectInboxCustody) {
         stagedCustodyMessage = stagedMessage;
         if (ownsDirectMutationInboxCustody) {
@@ -2584,6 +2639,16 @@ _sendChatMessageDiagnosed({
           // ciphertext first. From this point onward replay only the winner's
           // immutable bytes returned by the transaction.
           jsonString = exactCustody.wireEnvelope;
+        }
+        if (ownsDirectTextInboxCustody &&
+            stagedOutcome == OutgoingOrdinaryMutationOutcome.applied &&
+            activityCapture != null) {
+          try {
+            activityReporter?.markCaptured(activityCapture);
+          } catch (_) {
+            // Custody is committed; activity failure cannot suppress its observer
+            // or transport, and never adds exception text to diagnostics.
+          }
         }
         try {
           onDirectTextCustodyStaged?.call(resolvedMessageId);
@@ -4201,14 +4266,16 @@ Future<_RaceResult> _tryDirectSendInner(
 /// [custody] is non-null only for a strict Barrier B commit/adoption; it is the
 /// exact v108 owner returned by the same transaction.
 final class _OutgoingDirectPrivateHandoff {
-  const _OutgoingDirectPrivateHandoff({required this.authorized, this.custody});
+  const _OutgoingDirectPrivateHandoff({required this.outcome, this.custody});
 
   const _OutgoingDirectPrivateHandoff.refused()
-    : authorized = false,
+    : outcome = OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
       custody = null;
 
-  final bool authorized;
+  final OutgoingDirectPrivateEnvelopeHandoffOutcome outcome;
   final DirectInboxCustodyOutboxEntry? custody;
+
+  bool get authorized => outcome.authorizesTransport;
 }
 
 Future<_OutgoingDirectPrivateHandoff>
@@ -4313,7 +4380,7 @@ _commitOutgoingDirectPrivateEnvelopeForTransport({
           );
       return result.authorizesTransport
           ? _OutgoingDirectPrivateHandoff(
-              authorized: true,
+              outcome: result.outcome,
               custody: result.custody,
             )
           : const _OutgoingDirectPrivateHandoff.refused();
@@ -4328,7 +4395,7 @@ _commitOutgoingDirectPrivateEnvelopeForTransport({
           hasOwnedPendingCompletion: hasOwnedPendingCompletion,
         );
     return _OutgoingDirectPrivateHandoff(
-      authorized: outcome.authorizesTransport,
+      outcome: outcome,
     );
   });
 }
@@ -4910,6 +4977,9 @@ _authorDirectPrivateMediaFanout({
   required ConversationMessage expectedParent,
   required MediaAttachment completedAttachment,
   required String resolvedMessageId,
+  required bool hasOriginalActivityObservation,
+  required ActiveIdentityReporter? activityReporter,
+  required ActiveIdentityReporterCapture? activityCapture,
   required void Function(String messageId)? onDirectTextCustodyStaged,
   required void Function({
     required String outcome,
@@ -5130,6 +5200,13 @@ _authorDirectPrivateMediaFanout({
     return refuse('private_barrier_b_refused');
   }
   if (staged.outcome == OutgoingDirectPrivateEnvelopeHandoffOutcome.committed) {
+    if (hasOriginalActivityObservation && activityCapture != null) {
+      try {
+        activityReporter?.markCaptured(activityCapture);
+      } catch (_) {
+        // The one committed logical admission is independent of every target.
+      }
+    }
     try {
       onDirectTextCustodyStaged?.call(resolvedMessageId);
     } catch (_) {
@@ -5193,6 +5270,9 @@ _authorDirectLinkedMediaFanout({
   required ConversationMessage expectedParent,
   required List<MediaAttachment> normalizedAttachments,
   required String resolvedMessageId,
+  required bool hasOriginalActivityObservation,
+  required ActiveIdentityReporter? activityReporter,
+  required ActiveIdentityReporterCapture? activityCapture,
   required void Function(String messageId)? onDirectTextCustodyStaged,
   required void Function({
     required String outcome,
@@ -5419,6 +5499,13 @@ _authorDirectLinkedMediaFanout({
     return (SendChatMessageResult.sendFailed, null);
   }
   if (staged.outcome == OutgoingOrdinaryMutationOutcome.applied) {
+    if (hasOriginalActivityObservation && activityCapture != null) {
+      try {
+        activityReporter?.markCaptured(activityCapture);
+      } catch (_) {
+        // Count the logical batch once, never one observation per recipient.
+      }
+    }
     try {
       onDirectTextCustodyStaged?.call(resolvedMessageId);
     } catch (error) {

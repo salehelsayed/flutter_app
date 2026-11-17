@@ -228,7 +228,7 @@ const _relocations = <String, List<String>>{
     'lib/features/identity/data/repositories/identity_repository_impl.dart',
     // LL-36 keeps unavailable saved accounts on a retryable startup error in
     // this same data adapter; imports and placement are unchanged.
-    '7d37c6e9b472393801567492338517349c2103ec49348323d8a4c549cea53851',
+    'edcc5415f5e58b0fbe90d0a39a2278324ec0d18dc65021b4c5032f142c608414',
   ],
   'lib/features/introduction/domain/repositories/'
       'intro_review_seen_repository_impl.dart': <String>[

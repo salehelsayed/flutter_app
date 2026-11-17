@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
@@ -2080,6 +2082,7 @@ void main() {
     required MessageRepository messageRepo,
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
+    ActiveIdentityReporter? activityReporter,
     SendPrivateMediaFanoutChatMessageFn? sendPrivateMediaFanoutFn,
     EditChatMessageFn? editFn,
     DeleteMessageForMeFn? deleteForMeFn,
@@ -2145,6 +2148,7 @@ void main() {
           notificationTappedAt: notificationTappedAt,
           bridge: bridge,
           sendChatMessageFn: sendFn,
+          activityReporter: activityReporter,
           sendPrivateMediaFanoutChatMessageFn:
               sendPrivateMediaFanoutFn ?? sendChatMessage,
           directEventFanout: directEventFanout,
@@ -4220,6 +4224,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required bool preassignedMessageIdIsFresh,
+                capturedActivity,
                 String? authoredTextIntentToken,
                 timestamp,
                 bridge,
@@ -4702,6 +4707,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               timestamp,
               bridge,
@@ -4983,6 +4989,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               timestamp,
               bridge,
@@ -5286,6 +5293,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -5874,6 +5882,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required bool preassignedMessageIdIsFresh,
+                capturedActivity,
                 String? authoredTextIntentToken,
                 timestamp,
                 bridge,
@@ -6310,6 +6319,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -6501,6 +6511,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               timestamp,
               bridge,
@@ -6737,6 +6748,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               timestamp,
               bridge,
@@ -6890,6 +6902,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               timestamp,
               bridge,
@@ -7279,6 +7292,144 @@ void main() {
       );
     }
 
+    const uiCaptureScenarios = [
+      ('E2U-C001 unchanged owner forwards one pre-intent capture', 'same'),
+      ('E2U-C002 same-account runtime replacement rejects pre-intent capture', 'runtime'),
+      ('E2U-C003 same-account profile replacement rejects pre-intent capture', 'profile'),
+      ('E2U-C004 consent epoch replacement rejects pre-intent capture', 'epoch'),
+      ('E2U-C005 initially unarmed capture stays null after enabling', 'unarmed'),
+      ('E2U-C006 initially absent reporter stays absent after composition update', 'absent'),
+      ('E2U-C007 refused intent neither delegates nor marks activity', 'refused'),
+    ];
+    for (final (name, scenario) in uiCaptureScenarios) {
+      testWidgets(name, (tester) async {
+        final identity = makeIdentity();
+        final identities = FakeIdentityRepository(identity);
+        final repository = _IntentMessageRepository();
+        final bridge = _UiCaptureBridge();
+        final reporter = ActiveIdentityReporter(statePath: '/unused/ui-capture.json');
+        reporter.attachBridge(bridge);
+        reporter.observeIdentity(
+          accountPeerId: identity.peerId,
+          rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+          profileBinding: _uiCaptureBinding,
+        );
+        await reporter.observeConsent((enabled: scenario != 'unarmed', consentEpoch: 7))
+            .timeout(const Duration(seconds: 2));
+        final listener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: repository,
+          contactRepo: FakeContactRepository(),
+        );
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? observed;
+        String? observedSenderPeerId;
+        var callbackCompleted = false;
+        var calls = 0;
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+          String? authoredTextIntentToken,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          calls++;
+          observed = capturedActivity;
+          observedSenderPeerId = senderPeerId;
+          final result = await _instantSuccessSendFn(
+            p2pService: p2pService, messageRepo: messageRepo,
+            targetPeerId: targetPeerId, text: text,
+            senderPeerId: senderPeerId, senderUsername: senderUsername,
+            messageId: messageId, preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+            authoredTextIntentToken: authoredTextIntentToken, timestamp: timestamp,
+          );
+          final capture = capturedActivity?.capture;
+          if (capture != null) {
+            capturedActivity?.reporter?.markCaptured(capture);
+          }
+          callbackCompleted = true;
+          return result;
+        }
+        Future<void>? sending;
+        var finished = false;
+        try {
+          await pumpScreen(tester, identityRepo: identities, messageRepo: repository,
+            chatListener: listener, sendFn: sendFn, bridge: bridge,
+            activityReporter: scenario == 'absent' ? null : reporter);
+          final screen = tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+          sending = (screen.onSend as Future<void> Function(String))('fresh private text')
+              .whenComplete(() => finished = true);
+          for (var i = 0; i < 20 && repository.requested == null; i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          expect(repository.requested, isNotNull, reason: 'the first intent await must be held');
+          expect(calls, 0);
+          expect(bridge.marks, isEmpty, reason: 'capture and initialization are inactive');
+          if (scenario == 'runtime') {
+            await reporter.observeConsent((enabled: true, consentEpoch: 7))
+                .timeout(const Duration(seconds: 2));
+          } else if (scenario == 'profile') {
+            reporter.observeIdentity(accountPeerId: identity.peerId,
+              rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+              profileBinding: _uiCaptureOtherBinding);
+            await reporter.observeConsent((enabled: true, consentEpoch: 7))
+                .timeout(const Duration(seconds: 2));
+          } else if (scenario == 'epoch' || scenario == 'unarmed') {
+            await reporter.observeConsent((enabled: true, consentEpoch: 8))
+                .timeout(const Duration(seconds: 2));
+          } else if (scenario == 'absent') {
+            await pumpScreen(tester, identityRepo: identities, messageRepo: repository,
+              chatListener: listener, sendFn: sendFn, bridge: bridge, activityReporter: reporter);
+          }
+          repository.admission.complete(scenario != 'refused');
+          for (var i = 0; i < 40 && !finished; i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          expect(finished, isTrue, reason: 'communication must complete within the bounded fixture');
+          await sending.timeout(const Duration(seconds: 2));
+          if (scenario == 'refused') {
+            expect(calls, 0);
+            expect(repository.intents, isEmpty);
+          } else {
+            expect(calls, 1);
+            expect(observedSenderPeerId, identity.peerId);
+            expect(callbackCompleted, isTrue, reason: 'the observing fake must finish admission and the captured mark step');
+            expect(repository.intents, hasLength(1));
+            expect(observed, isNotNull, reason: 'UI supplies a present record even without a usable capture');
+            expect(identical(observed!.reporter, scenario == 'absent' ? null : reporter), isTrue);
+            expect(observed!.capture, scenario == 'unarmed' || scenario == 'absent' ? isNull : isNotNull);
+          }
+          await tester.pump();
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+        } finally {
+          if (!repository.admission.isCompleted) {
+            repository.admission.complete(false);
+          }
+          for (var i = 0; i < 40 && !finished && sending != null; i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          if (sending != null) {
+            await sending.timeout(const Duration(seconds: 2));
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await reporter.dispose().timeout(const Duration(seconds: 2));
+        }
+      });
+    }
+
     for (final scenario in [0, 1, 2, 3, 4]) {
       final writeThrows = scenario == 4;
       final admitted = scenario != 0 && !writeThrows;
@@ -7391,6 +7542,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -7617,6 +7769,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
@@ -7701,6 +7854,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -7783,6 +7937,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -7896,6 +8051,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -8017,6 +8173,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -8149,6 +8306,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
@@ -8520,6 +8678,7 @@ void main() {
             required String senderUsername,
             String? messageId,
             required bool preassignedMessageIdIsFresh,
+            capturedActivity,
             String? authoredTextIntentToken,
             String? timestamp,
             Bridge? bridge,
@@ -8635,6 +8794,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9213,6 +9373,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9440,6 +9601,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9564,6 +9726,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9681,6 +9844,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9809,6 +9973,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -9936,6 +10101,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -10086,6 +10252,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -10166,6 +10333,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -11817,6 +11985,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required preassignedMessageIdIsFresh,
+                capturedActivity,
                 String? authoredTextIntentToken,
                 timestamp,
                 bridge,
@@ -12164,6 +12333,7 @@ void main() {
                   required senderUsername,
                   messageId,
                   required preassignedMessageIdIsFresh,
+                  capturedActivity,
                   String? authoredTextIntentToken,
                   timestamp,
                   bridge,
@@ -13177,6 +13347,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
@@ -13249,6 +13420,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
@@ -13314,6 +13486,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        capturedActivity,
         String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
@@ -13411,6 +13584,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -13505,6 +13679,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -17394,6 +17569,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -17554,6 +17730,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          capturedActivity,
           String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
@@ -18212,6 +18389,7 @@ void main() {
               required String senderUsername,
               String? messageId,
               required bool preassignedMessageIdIsFresh,
+              capturedActivity,
               String? authoredTextIntentToken,
               String? timestamp,
               Bridge? bridge,
@@ -20159,6 +20337,7 @@ void main() {
             required senderUsername,
             messageId,
             required preassignedMessageIdIsFresh,
+            capturedActivity,
             String? authoredTextIntentToken,
             timestamp,
             bridge,
@@ -20529,6 +20708,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  capturedActivity,
   String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
@@ -20636,6 +20816,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  capturedActivity,
   String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
@@ -20743,4 +20924,32 @@ class _StickerTempPath extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => path;
   @override
   Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+const _uiCaptureBinding = 'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _uiCaptureOtherBinding = 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+class _UiCaptureBridge extends FakeBridge {
+  final marks = <Map<String, dynamic>>[];
+  int _revision = 0;
+  @override
+  bool get isInitialized => true;
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] != 'active_identity_reporter_v1') {
+      return super.send(message);
+    }
+    final request = Map<String, dynamic>.from(envelope['payload'] as Map);
+    final revision = request['op'] == 'configure' ? ++_revision : request['revision'];
+    if (request['op'] == 'mark') {
+      marks.add(request);
+    }
+    return jsonEncode({'ok': true, 'data': {
+      'revision': revision, 'consentEpoch': request['consentEpoch'],
+      if (request['op'] == 'configure') 'configured': request['enabled'] == true && request['profileBinding'] != '',
+      if (request['op'] == 'mark') 'accepted': true,
+      if (request['op'] == 'flush') 'queued': true,
+    }});
+  }
 }

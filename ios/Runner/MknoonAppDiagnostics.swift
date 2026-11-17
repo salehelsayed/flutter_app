@@ -14,6 +14,116 @@ internal protocol MknoonAppDiagnosticBackend {
   func replace(_ data: Data) throws
 }
 
+internal struct MknoonActiveIdentityReporterFence: Equatable {
+  let revision: Int64
+  let consentEpoch: Int64
+  let profileBinding: String
+  let accountPeerID: String
+}
+
+/// Serializes native receipt with the memory-only Go fence publication.
+/// Paths, private keys and slow configuration stay outside this lock.
+internal final class MknoonActiveIdentityReporterAdmission {
+  private struct Desired {
+    let fence: MknoonActiveIdentityReporterFence
+    let enabled: Bool
+    let hasRootKey: Bool
+    let preserve: Bool
+  }
+  private let lock = NSLock()
+  private let publishDesired: (MknoonActiveIdentityReporterFence, Bool, Bool) throws -> Bool
+  private var desired: Desired?
+  private var published = false
+  private var revision: Int64 = 0
+  private var lastError = "ACTIVE_IDENTITY_UNAVAILABLE"
+  private static let maxInteger: Int64 = 9_007_199_254_740_991
+
+  var errorCode: String {
+    lock.lock(); defer { lock.unlock() }
+    return lastError
+  }
+
+  init(publishDesired: @escaping (MknoonActiveIdentityReporterFence, Bool, Bool) throws -> Bool) {
+    self.publishDesired = publishDesired
+  }
+
+  func admitConfiguration(consentEpoch: Int64, enabled: Bool, profileBinding: String,
+                          accountPeerID: String, hasRootKey: Bool,
+                          preservePendingOnUnarm: Bool = false) -> MknoonActiveIdentityReporterFence? {
+    lock.lock(); defer { lock.unlock() }
+    return admitLocked(consentEpoch: consentEpoch, enabled: enabled,
+      profileBinding: profileBinding, accountPeerID: accountPeerID,
+      hasRootKey: hasRootKey, preserve: preservePendingOnUnarm)
+  }
+
+  @discardableResult
+  func observeConsent(consentEpoch: Int64, enabled: Bool) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    if let desired, desired.fence.consentEpoch == consentEpoch && desired.enabled == enabled {
+      lastError = published ? "" : "ACTIVE_IDENTITY_UNAVAILABLE"
+      return published
+    }
+    return admitLocked(consentEpoch: consentEpoch, enabled: enabled,
+      profileBinding: "", accountPeerID: "", hasRootKey: false, preserve: false) != nil
+  }
+
+  @discardableResult
+  func unarmPreservingPending() -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    guard let desired else { return true }
+    return admitLocked(consentEpoch: desired.fence.consentEpoch, enabled: desired.enabled,
+      profileBinding: "", accountPeerID: "", hasRootKey: false, preserve: desired.enabled) != nil
+  }
+
+  func isCurrent(_ fence: MknoonActiveIdentityReporterFence) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    return published && desired?.fence == fence
+  }
+
+  func admitMark(_ fence: MknoonActiveIdentityReporterFence) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    guard published, let desired, desired.fence == fence else { return false }
+    return desired.enabled && desired.hasRootKey && !desired.preserve && !fence.accountPeerID.isEmpty
+  }
+
+  private func admitLocked(consentEpoch: Int64, enabled: Bool, profileBinding: String,
+                           accountPeerID: String, hasRootKey: Bool, preserve: Bool) -> MknoonActiveIdentityReporterFence? {
+    let empty = profileBinding.isEmpty && accountPeerID.isEmpty
+    let base58 = Array("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8)
+    let validScope = empty || (profileBinding.utf8.count == 67 && profileBinding.hasPrefix("v1:") &&
+      profileBinding.utf8.dropFirst(3).allSatisfy { (48...57).contains($0) || (97...102).contains($0) } &&
+      !accountPeerID.isEmpty && accountPeerID.utf8.count <= 128 && accountPeerID.utf8.allSatisfy { base58.contains($0) })
+    guard consentEpoch > 0, consentEpoch <= Self.maxInteger, validScope,
+          (empty ? !hasRootKey : hasRootKey == enabled),
+          !preserve || (enabled && empty && !hasRootKey) else {
+      lastError = "ACTIVE_IDENTITY_INVALID_REQUEST"; return nil
+    }
+    if let desired {
+      guard consentEpoch >= desired.fence.consentEpoch else {
+        lastError = "ACTIVE_IDENTITY_REPORTER_STALE"; return nil
+      }
+      guard consentEpoch != desired.fence.consentEpoch || !enabled || desired.enabled else {
+        lastError = "ACTIVE_IDENTITY_INVALID_REQUEST"; return nil
+      }
+      if desired.fence.consentEpoch == consentEpoch && desired.fence.profileBinding == profileBinding &&
+          desired.fence.accountPeerID == accountPeerID && desired.enabled == enabled &&
+          desired.hasRootKey == hasRootKey && desired.preserve == preserve && published {
+        lastError = ""; return desired.fence
+      }
+    }
+    guard revision < Self.maxInteger else { lastError = "ACTIVE_IDENTITY_UNAVAILABLE"; return nil }
+    revision += 1
+    let fence = MknoonActiveIdentityReporterFence(revision: revision, consentEpoch: consentEpoch,
+      profileBinding: profileBinding, accountPeerID: accountPeerID)
+    // Invalidate old native work even if Go refuses or throws during publication.
+    desired = Desired(fence: fence, enabled: enabled, hasRootKey: hasRootKey, preserve: preserve)
+    published = false
+    do { published = try publishDesired(fence, enabled, preserve) } catch { published = false }
+    lastError = published ? "" : "ACTIVE_IDENTITY_UNAVAILABLE"
+    return published ? fence : nil
+  }
+}
+
 /// Bounds pending observations independently from archive size and disk speed.
 internal final class MknoonAppDiagnosticAdmission {
   private let lock = NSLock()
@@ -277,6 +387,9 @@ internal final class MknoonAppDiagnosticSpool {
 
 internal final class MknoonAppDiagnostics: NSObject {
   static let shared = MknoonAppDiagnostics()
+  private let activityOwnerLock = NSLock()
+  private var activityOwner: ObjectIdentifier?
+  private var activityConsent: ((Int64, Bool) -> Bool)?
   private let queue = DispatchQueue(label: "com.mknoon.app-diagnostics", qos: .utility)
   private let admission = MknoonAppDiagnosticAdmission()
   private var spool: MknoonAppDiagnosticSpool?
@@ -293,6 +406,35 @@ internal final class MknoonAppDiagnostics: NSObject {
 #if os(iOS)
     if #available(iOS 14.0, *) { MXMetricManager.shared.add(self) }
 #endif
+  }
+  func installActivityOwner(_ owner: AnyObject, retirePrevious: () -> Void, observeConsent: @escaping (Int64, Bool) -> Bool) {
+    activityOwnerLock.lock(); defer { activityOwnerLock.unlock() }
+    if activityOwner != ObjectIdentifier(owner) { retirePrevious() }
+    activityOwner = ObjectIdentifier(owner)
+    activityConsent = observeConsent
+  }
+  // Only memory-only publication may run under this owner guard.
+  func withActivityOwner<T>(_ owner: AnyObject, publish: () -> T) -> T? {
+    activityOwnerLock.lock(); defer { activityOwnerLock.unlock() }
+    guard activityOwner == ObjectIdentifier(owner) else { return nil }
+    return publish()
+  }
+  func retireActivityOwner(_ owner: AnyObject, publish: () -> Void) {
+    activityOwnerLock.lock(); defer { activityOwnerLock.unlock() }
+    guard activityOwner == ObjectIdentifier(owner) else { return }
+    publish()
+    activityOwner = nil
+    activityConsent = nil
+  }
+  private func observeActivityConsent(_ method: String, _ raw: Any?, owner: AnyObject?) {
+    guard method == "configure", let owner, let args = raw as? [String: Any],
+          MknoonAppDiagnosticSpool.integer(args["version"]) == 1,
+          let epoch = MknoonAppDiagnosticSpool.integer(args["consentEpoch"]), epoch > 0,
+          let value = args["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return }
+    activityOwnerLock.lock()
+    let observer = activityOwner == ObjectIdentifier(owner) ? activityConsent : nil
+    activityOwnerLock.unlock()
+    _ = observer?(epoch, value.boolValue)
   }
   func record(_ feature: String, _ stage: String, _ outcome: String, _ reason: String = "none", values: [String: Any] = [:], traceId: String? = nil) {
     admission.enqueue({ work in queue.async { work() } }) { [weak self] dropped in
@@ -330,7 +472,8 @@ internal final class MknoonAppDiagnostics: NSObject {
     return grant
   }
 #endif
-  func command(_ method: String, _ raw: Any?, completion: @escaping (Any) -> Void) {
+  func command(_ method: String, _ raw: Any?, activityOwner: AnyObject? = nil, completion: @escaping (Any) -> Void) {
+    observeActivityConsent(method, raw, owner: activityOwner)
 #if os(iOS)
     let grant = Self.sharedInboxMethods.contains(method) ? Self.beginSharedInboxGrant() : nil
     let inboxAllowed = { grant.map { CriticalTaskRegistry.shared.isLive($0) } ?? false }
@@ -442,9 +585,13 @@ extension MknoonAppDiagnostics {
 
 internal final class MknoonAppDiagnosticBridge {
   private let channel: FlutterMethodChannel
+  private weak var activityOwner: AnyObject?
+  func setActivityOwner(_ owner: AnyObject) { activityOwner = owner }
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "mknoon/app_diagnostics", binaryMessenger: messenger)
-    channel.setMethodCallHandler { call, result in MknoonAppDiagnostics.shared.command(call.method, call.arguments) { result($0) } }
+    channel.setMethodCallHandler { [weak self] call, result in
+      MknoonAppDiagnostics.shared.command(call.method, call.arguments, activityOwner: self?.activityOwner) { result($0) }
+    }
   }
   deinit { channel.setMethodCallHandler(nil) }
 }

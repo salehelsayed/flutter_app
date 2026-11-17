@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -146,6 +147,7 @@ func newControlPlaneStores(
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(false)
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(false)
 		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
+		stores.Inbox.activeIdentities = initActiveIdentitiesFromEnvironment()
 		return stores, nil
 	case backendKindRedis:
 		if cfg.RedisURL == "" {
@@ -245,6 +247,7 @@ func newControlPlaneStores(
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
+		stores.Inbox.activeIdentities = initActiveIdentitiesFromEnvironment()
 		if strings.EqualFold(strings.TrimSpace(os.Getenv("MKNOON_RELAY_STICKER_METRICS_ENABLED")), "true") {
 			stores.Inbox.stickerMetrics = newStickerMetrics(client, cfg.RedisPrefix, time.Now)
 		}
@@ -252,6 +255,17 @@ func newControlPlaneStores(
 	default:
 		return nil, fmt.Errorf("unsupported relay backend: %s", cfg.Kind)
 	}
+}
+
+func initActiveIdentitiesFromEnvironment() *activeIdentityStore {
+	store, err := newConfiguredActiveIdentityStore()
+	if err != nil {
+		// Optional analytics must not prevent messaging startup. Do not log the
+		// operator key, snapshot contents or account proof on any failure.
+		log.Print("[ACTIVE] Counter unavailable; aggregate estimates withheld")
+		return nil
+	}
+	return store
 }
 
 func (s *controlPlaneStores) Close() error {

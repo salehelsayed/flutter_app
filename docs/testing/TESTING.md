@@ -1608,6 +1608,17 @@ scenario mappings remain visible gaps, not successful wrapper registrations.
 The static reliability classification listing does not start Dart or execute
 scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
 
+Go `./...` does not traverse a nested module. A root-module mapping previously
+claimed `activitycalendar/week_test.go` because `fnmatch` allowed its `*` to cross
+directory separators. The optional mapping `module` qualifier now checks the
+existing nearest-module discovery, leaving nested tests with their actual module
+owner. The calendar change check is registered separately; the earlier node
+calendar contract already belonged to `go-core`. The causal mapping tests failed
+twice with one passing control, then the focused tooling selection passed all
+12 cases at `59982d5cd486538720488828f92e37908709dc13`. These are inventory and
+selection results, not Go runtime evidence. The reviewed receipt is retained in
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/calendar-tooling-final-scoped-verdict.json`.
+
 The direct gate classifier recognizes update-check background/tool tests as the
 existing `feature-host-all` sweep. The pure SE42 D12 fixture contract is curated
 in `1to1`; its device seed/snapshot stays manual support, so completeness never
@@ -13584,6 +13595,267 @@ update goes to Hetzner, then AWS, before an app carrying the labels reaches
 testers. There is no capability negotiation. An older receiver can reject a
 labeled event if that order is violated; old-shape records remain valid on the
 updated receiver. Host schema tests do not establish deployment or device proof.
+
+On pinned Dart 3.13.2, a context-typed async throw can return `Future<Never>`.
+A bool-valued `timeout` fallback can then fail before subscribing and leak the
+original error. Without a fallback, the existing catch contains errors and
+timeouts; `Future<bool>.sync` can return the same narrow future, not normalize it.
+`test/core/diagnostics/engagement_chat_observer_test.dart` E2O-011 retains the throwing fixture; verified contrasts are retained under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-observer-green/first-failure-investigation/probe-run1/`.
+
+Async widget send fakes must collect observations and leave guarded `expect`
+calls until the owned send future has joined. In the BL29 pre-intent fixture,
+an assertion conflicted with an active `tester.pump`; production error handling
+caught it before the fake reached `markCaptured`, so negative mark assertions
+could pass after an aborted callback. Require a completion flag set after the
+fake's admission and mark step. The corrected fixture and reviewed contract
+pins passed all 288 names in the three changed files, with no errors or skips.
+First failures and the corrected receipt remain separate under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/e2-ui-capture-green/`.
+
+The B5 final-media activity fixtures require a fresh typed `applied`/`committed`
+admission, not merely transport authorization or a returned message. Prepared,
+private and linked finalization cases carry the original caller observation;
+the OFF-created prepared-row control proves a later enabled reporter cannot
+backfill activity. A retained replay fixture must select the intended transport:
+a healthy application ACK correctly skips inbox STORE. B5M-010's first failure
+used that healthy fake while requiring STORE; its correction selects failed,
+unacknowledged transport and proves the two failed STORE attempts, retained exact
+custody, unchanged stage count and no activity. The first rejected RED remains
+separate from the corrected causal RED.
+
+At `83087ad06f73feb30651f2e6cbbfc6f0d4abe3b8`, all twelve causal cases passed
+once in the actual sender suite within 3,016 passing conversation cases. The
+whole sender, exchange and no-background-task files passed 215, 15 and one case;
+the seven other selected host lanes and one final 350-case workflow passed.
+These counts overlap. Thirty-eight source pins matched at 32 clean boundaries;
+workflow used a fresh Flutter window after host completion. Canonical scoped
+closure is `codex-complete-scoped-source-red-eight-host-workflow-83087ad06.json`,
+SHA-256 `be3dc19f05af5a16f1ffc2313f1cce109e2bd3bb8456cd68f32035f1e7cafbab`.
+Raw first failures and final receipts remain in the BL29 implementation
+evidence's `b5-producer-hooks/u1-final-media-red/` and `u1-final-media-green/`.
+This proves final sender admission only. Earlier preparation admission and
+later-finalization suppression, voice/sticker entry capture, ADD reactions,
+text fanout, whole B5, composed native/device and signed-build proof remain
+separate. The documentation follow-up does not require another execution.
+
+The BL29 active-identity snapshot requires a private `0700` parent directory as
+well as a `0600` file. The shared atomic writer owns file permissions, not the
+parent directory; the store must ensure and verify the parent on both creation
+and reuse, failing closed on errors. The first B29-2 normal run retained
+59 passing cases and one directory-permission failure, with race unrun. At
+`7cc457f1737c4ec869259adddf7f263502a7b3ce`, the unchanged focused tests passed
+all 60 named cases in each of normal and race modes. They cover durable
+generation acknowledgements, mutation during writes, strict snapshot restore,
+31 raw days and seven frozen finished-day count triples, partial-day omission,
+failed-write visibility and private aggregate storage. Empty finalized history
+may serialize as `null`. The first failure and final reviewed receipts remain
+separate under
+`.codex-test-logs/codex-ui-bl29-implementation-20261114/b29-2-green/` and
+`b29-2-dir0700/`. This establishes the internal host store contract; relay
+authentication, phone wiring, metrics, devices and deployment are separate units.
+
+The optional weekly engagement block shares that atomic snapshot, key and
+persistence generation. Four dense sketches per Berlin ISO week (current plus
+seven previous weeks) produce five coherent counts, with reciprocal derived by
+union of chat and call and included in active. Disabling engagement preserves
+its known block and the daily contract. At `65e684365013c6e07e8dc143dd3ca0aa1e4373a4`,
+96 named cases passed in each focused normal and race run; these include
+aggregate parents/subtests and overlap the daily store controls. Original causal
+RED, strict restore/rank and forced-interleaving fixture corrections, and final
+reviewed receipts remain under the BL29 implementation evidence's `e1-store/`.
+This proves the host storage model, not weekly wire or phone witnesses.
+
+The daily `active_identity_v1` proof binds the logical root account to the
+stream's authenticated transport peer, including a linked secondary. At
+`5e72cda357e97dafa60bc50942ebe1ad925a87a4`, all 21 original named RED failure
+records passed in GREEN: relay normal 75 named PASS, node normal 73, and relay
+race 75, with no skips or race warnings. These counts include parents/subtests
+and overlap across runs. Strict bounded decoding, typed unsupported/retry,
+durable ACKs and the existing authenticated diagnostics inbox sentinel passed.
+Mocknet proves dispatch using the supplied connection identity, not a real
+secure-network handshake. Its stream deadlines are no-ops, so the fixture owns
+bounded context/reset cancellation and cleanup joins. Raw first failures and
+final verdicts remain under `b29-3-red/` and `b29-3-green/` in the same evidence.
+
+The local Go active-identity reporter retains only the current Berlin ISO-week's
+`active`, `chat`, `call` and `group` bits, with per-relay acknowledged kind subsets
+independent from the daily ACKs. Chat/call/group include weekly active. The local
+`weeklyProjection`, `markWeekly` and `ackWeekly` operations require the existing
+full owner/consent fence; midnight preserves the still-open week, while Monday
+expires it without relabelling pending work. These operations implement no
+engagement network dispatch. Daily configure/mark/flush replies and both wire
+protocol builders/parsers remain unchanged.
+
+An optional `occurredAtUnixMillis` on `mark` uses producer qualification time.
+Go rejects future timestamps and ages over two minutes. Only still-open Berlin
+periods qualify: a prior-day occurrence in the current week can mark weekly
+active without creating today's daily activity; a closed-week occurrence returns
+`accepted: false`. Omitting the field preserves processing-time behavior.
+
+At `b1c1ffa07a4931832930a96636c32e50449f2a02`, Claude-UI ran the approved focused
+Go steps once: 241 named cases passed normally, the same 241 passed with race
+detection, and 18 nested calendar cases passed, without skips or race warnings.
+Counts include parent/subtest records and overlap across modes. All thirteen
+weekly groups and existing B293/B294/B29E1/calendar sentinels passed. Exact
+twenty-file pins and clean source were checked at seven boundaries. Causal RED
+`7aae8fca0c40802fe424234bf0c06f812b55a224` retained two controls passing and 46
+assertion-failure records, without compile/setup failure. First raw streams and
+controllers remain separate in `.audit/b29w/out` and `.audit/b29wg/out` in the
+execution owner's UI-update checkout. Root's scoped closure is
+`codex-complete-scoped-source-red-focused-green-b1c1ffa07.json`, SHA-256
+`8903101388c6cc90365ac1f83fcdcae1eb55a72e2d20b4657da19c1c26fd20c1`.
+
+The new reader accepts legacy six-key daily snapshots. Once a weekly block is
+written, the snapshot has seven keys and the old strict reporter binary rejects
+it: old-binary rollback compatibility is not guaranteed. Retain that limitation
+for integration/release. This is focused local-API proof; the sixteen broader
+selected gates remain Batch 13 composition obligations, and matching Dart,
+network dispatch, native/device and published-build proof remain separate.
+
+The Dart `markCaptured(capture, {int? occurredAtUnixMillis})` API at
+`d6a0f11b6baaa20c3e9c40c5f7b03866a15f7e2c` carries a supplied per-operation
+integer unchanged through configuration deferral and the original reporter,
+bridge, generation, account, binding and consent-epoch fences. Absent or null
+values omit the wire field; argument-free calls retain their encoded payload.
+The capture record gains no timestamp or clock/day logic. Contract RED
+`db7e9b5bea0657a934643281475138f59a503bab` passed 24 legacy cases and failed
+15 API-shape assertions. Timestamp and fence assertions were masked by that
+missing method signature, then executed in GREEN; the RED did not demonstrate
+timestamp loss.
+
+Claude-UI's accepted GREEN passed all 39 reporter cases, including each of the
+15 OCC cases once, within the 417-case diagnostics check. The reporter count
+is included in diagnostics, not an additional run. Bootstrap 23, contacts 1,
+diagnostics Python 60 and the subsequent 350-case workflow also passed. The
+workflow used a fresh Core execution window; 34 source/Git pins remained exact
+at 17 clean boundaries, with no errors, skips or unfinished cases. First RED
+and GREEN evidence remains under `.audit/cocr/out/run1` and `.audit/cocg/out`
+in the execution owner's UI-update checkout. Scoped closure is
+`codex-complete-scoped-source-contract-red-four-host-workflow-d6a0f11b6.json`,
+SHA-256 `949d5bf92cb6dd003fefcb500c039b70131f63fd9bb031eaf89dc5d53328a9fd`.
+This is Dart/fake-bridge proof: producer adoption and ongoing-day semantics,
+matching packaged native integration, devices and full B7/BL29 acceptance
+remain separate. No additional Go run is claimed by this Dart unit.
+
+B7's partial call witness at `3d00fdd197052c5171f24883e410d82a97105517`
+marks each live in-process call lifetime once after ten monotonic connected
+seconds. Reconnect gaps pause accumulation; initialization, app open, ringing,
+Answer and negotiation alone do not qualify. The real factory/coordinator and
+actual reporter with a fake bridge prove pre-checkpoint timing, 6+4 accumulation,
+duplicate-checkpoint handling, stale timer/lifetime rejection and the original
+identity, profile, consent-epoch and null-capture fences. Engines, native journals
+and transports are fakes; this is host proof, not device or RTP evidence.
+
+All seventeen selected host checks passed, followed by one 350-case workflow in
+a fresh execution window. Call-signaling's 2,207 cases include all 319 composition
+cases, with each of the seventeen B7 cases visible once. V2 negotiation 132,
+camera feedback 19 and WebRTC 75 preservation cases passed. Counts overlap across
+checks. All 195 source/Git pins matched at 59 clean boundaries. The accepted
+bootstrap DTR correction updates only two provenance-backed hashes, preserving
+the historical callback, relocation URIs and ownership guards.
+
+Fixtures must wait for `composition.current` to publish ringing after checkpoint
+persistence before Answer. A committed fake native terminal journal must remain
+available to `attach` until its terminal ACK: iOS can commit through
+`project(ended)` without calling `end`. Synchronous checkpoint failure preserves
+diagnostics, terminalization and the caller's original error; it does not
+increment the separate background `internalFailureCount`. Earlier rejected RED
+streams remain separate from the accepted causal RED `5501fe775`.
+
+This frozen B7 candidate did not compose the later Core/Go occurrence-time API.
+Ongoing-day requalification, exact midnight attribution, deferred handoff and
+native/background handling remain held, as do full B7/BL29 and published-build
+acceptance. Scoped closure is
+`codex-complete-partial-source-red-seventeen-host-workflow-3d00fdd19.json`,
+SHA-256 `85f4b79cd6736e08e6a36b5ea2b59ece5f2402788ebf322cb4331b8b84967fa6`.
+
+The BL29 relay runtime binds one daily/weekly store in both control-plane
+backends; main registers its collector and advances the calendar on the existing
+60-second tick. Scrapes expose only durable aggregates, with readiness zero and
+no estimate rows on persistence failure. At
+`4bd611c6e9bcded34040f6a470e8ffa4011024a7`, Claude-UI's full relay normal run
+passed 2,292 named cases (777 top-level); focused B29/bootstrap/Thought race
+passed 316 (94 top-level), without actual test skips or race warnings. Counts
+include parents/subtests and overlap. All five frozen runtime causal groups and
+both strict/durable handler controls passed in each step. Twenty-two source pins
+matched at six clean checkpoints. Host coverage includes real bootstrap binding,
+daily/weekly exposition, durable restart, weekly OFF preserving daily operation,
+failure/recovery, DST, ISO-year retention and private labels.
+
+The first full normal attempt retained a focused two-minute package timeout and
+stopped after 2,222 PASS records with an existing update-check parent/subtest
+unfinished.
+It remains a timeout, not GREEN. The mapped full relay timeout is ten minutes;
+the corrected normal package completed in 127.814 seconds. A checker initially
+misclassified the exact `testutil/circuitrelay` package's `[no test files]` event.
+Its correction re-evaluated saved normal output without rerunning tests, then
+only the previously unrun race step ran once. That empty helper is N/A; named
+test skips remain incomplete. First and corrected evidence remains separate in
+`.audit/e1g/out/` and `.audit/e1g/out2/` in the execution owner's UI-update
+checkout. Scoped closure is
+`codex-complete-scoped-source-red-full-relay-normal-focused-race-4bd611c6e.json`,
+SHA-256 `d19119e587d5dd1b8deef00f143eb6e6ead957beee4d4fd7c22f14336168adab`.
+The other fifteen mapped checks remain Batch13 composed-selection obligations;
+live metrics, deployed configuration, native/device and release proof remain
+separate. The documentation follow-up requires no additional execution.
+
+Before raw native commands, record each generated dependency, its build mode
+and when the SDK generated it. At the B4 native candidate
+`07f2e4de0d905297d482531646a386f2215d13a9`, raw Release Gradle first inherited a
+Debug-generated Java plugin registrant containing `integration_test`, which is
+excluded from the Release plugin classpath. Installed Flutter 3.47.2 supports
+`flutter build apk --release --config-only --pub --target=lib/main.dart` to
+regenerate Release platform tooling before the unchanged Kotlin/Java compile.
+Use matching `--debug` generation before the call-native JVM lane. In this SDK,
+`--no-pub` also skips registrant generation; earlier Debug/pub setup therefore
+cannot supply Release provenance. Config-only returns before APK assembly and
+signing, but normal implicit pub may resolve packages. Keep each setup within
+120 seconds inside the packet's existing 1800-second stage, count metadata/pin
+work in that budget, and bound potentially waiting helpers by remaining time.
+Fail before raw compilation on tracked source, lock, binding or carried artifact
+drift. Save mode-specific registrant SHA/mtime, plugin metadata and source/pin
+receipts; do not manually remove plugin references.
+
+The unchanged Release compile then passed with the two `integration_test`
+references removed. Debug generation restored those references before the
+unchanged call-native runner passed 692 unique class/name cases in 53 fresh
+JUnit XML files, with zero failures, errors or skips. Require the actual
+`build/app/test-results/testDebugUnitTest` output newer than setup, nonempty
+individual cases, matching suite counts and the runner's exit/marker. Keep each
+leg's case inventory separate; summed per-leg counts are not a verified unique
+inventory. All five pin boundaries retained the same 50 source, 26 setup/artifact
+and 10 input entries,
+harness, clean tracked status and unchanged pubspec/lock. Receipts remain under
+`b29-4-full-green/native-green-d-registrant-07f2e4de/` in the BL29 evidence.
+
+For unsigned Xcode Release proof, a global `LD_MAP_FILE_PATH` override applies
+to every linking target and can make multiple targets produce one file. Target
+name alone is insufficient because distinct projects can share one. Keep
+`LD_GENERATE_MAP_FILE=YES` and use Xcode's installed per-target default; inspect
+the actual Runner map in its target/configuration/architecture intermediates.
+The corrected B4 C3/C4 proof retains the GoBridge compiler invocation, actual
+object/class and both export call sites, Runner symbols and NSE gate. Preserve
+the original shared-map failure and wrong-mode registrant failure separately
+under `native-green-first-07f2e4de/` and `native-green-c3-linkmap-07f2e4de/`.
+
+Canonical adoption
+`383fa9c6511c77dfb8b3e4d0edc6ef97020d559eada75873d35983f1521361af`
+closes reviewed host and complete A-E native proof only. Host analysis uses the
+approved Dart style descendant `fca77eec4b28ef7e72dff38c695634dccb6f078b`;
+native evidence retains its actual tested `07f2e4de` identity. These receipts do
+not certify signed artifacts, live/device behavior, full E2 integration or
+shipping. No additional per-unit run is required without new relevant evidence.
+
+The separate group engagement visibility probe at
+`6726c0ce8a295f5ea087e3dc36b07d9fc9471017` passed its 12 unchanged causal
+RED-to-GREEN cases for actual painted/clipped viewport visibility, current
+uncovered route, resumed lifecycle and caller eligibility, with next-frame
+confirmation and binding/disposal fences. The initial 11 causal failures plus
+one cached-sliver finder failure and corrected causal RED remain retained; the
+fixture correction does not erase the first outcome. This proves only the
+visibility primitive. Canonical other-author classification, unlocked content,
+week/consent, witnesses and production caller integration remain separate.
 
 Sticker usage diagnostics count calls to `StickerUsageRecorder.recordSent` at
 the admitted-message boundary, once per message rather than per recipient or

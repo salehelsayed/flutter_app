@@ -1,0 +1,298 @@
+import 'dart:async';
+import 'dart:convert';
+
+import '../bridge/bridge.dart';
+import 'app_diagnostics.dart';
+
+/// Opaque logical ownership captured before a producer's first await.
+final class ActiveIdentityReporterCapture {
+  ActiveIdentityReporterCapture._({
+    required ActiveIdentityReporter reporter,
+    required Bridge bridge,
+    required int generation,
+    required String account,
+    required String binding,
+    required int epoch,
+  }) : _reporter = reporter,
+       _bridge = bridge,
+       _generation = generation,
+       _account = account,
+       _binding = binding,
+       _epoch = epoch;
+
+  final ActiveIdentityReporter _reporter;
+  final Bridge _bridge;
+  final int _generation;
+  final String _account;
+  final String _binding;
+  final int _epoch;
+}
+
+/// Coordinates the current local owner; Go owns daily state and relay work.
+final class ActiveIdentityReporter {
+  ActiveIdentityReporter({required String statePath}) : _statePath = statePath;
+
+  static const _budget = Duration(seconds: 2);
+  final String _statePath;
+  Bridge? _bridge;
+  LocalDiagnosticConsent? _consent;
+  LocalDiagnosticConsent? _lastConsent;
+  ({String account, String root, String binding})? _identity;
+  Map<String, Object?>? _owner;
+  Future<void>? _configuration;
+  int _generation = 0;
+  bool _retired = false;
+  bool _disposed = false;
+
+  void attachBridge(Bridge bridge) {
+    if (_disposed) return;
+    if (identical(_bridge, bridge) && _owner != null) return;
+    _bridge = bridge;
+    unawaited(_configure());
+  }
+
+  void observeIdentity({
+    required String? accountPeerId,
+    required String? rootPrivateKeyBase64,
+    String? profileBinding,
+  }) {
+    if (_disposed) return;
+    if (accountPeerId == null && rootPrivateKeyBase64 == null) {
+      unawaited(retire());
+      return;
+    }
+    final binding = profileBinding;
+    final next =
+        binding != null &&
+            RegExp(r'^v1:[0-9a-f]{64}$').hasMatch(binding) &&
+            accountPeerId != null &&
+            accountPeerId.isNotEmpty &&
+            rootPrivateKeyBase64 != null &&
+            rootPrivateKeyBase64.isNotEmpty
+        ? (
+            account: accountPeerId,
+            root: rootPrivateKeyBase64,
+            binding: binding,
+          )
+        : null;
+    if (next == _identity && !_retired) return;
+    final replacingKnownOwner = _identity != null && next == null;
+    _identity = next;
+    _retired = replacingKnownOwner;
+    unawaited(_configure(empty: replacingKnownOwner && _consent != null));
+  }
+
+  Future<void> observeConsent(LocalDiagnosticConsent? consent) {
+    if (_disposed) return Future<void>.value();
+    if (consent != null &&
+        (consent.consentEpoch <= 0 ||
+            consent.consentEpoch > 9007199254740991)) {
+      _consent = null;
+      return _configure(preserve: true, empty: true);
+    }
+    _consent = consent;
+    if (consent != null) _lastConsent = consent;
+    return _configure(preserve: consent == null, empty: consent == null);
+  }
+
+  Future<void> _configure({bool preserve = false, bool empty = false}) {
+    final pending = _configureNow(preserve: preserve, empty: empty);
+    _configuration = pending;
+    return pending;
+  }
+
+  Future<void> _configureNow({
+    bool preserve = false,
+    bool empty = false,
+  }) async {
+    // This counter is only a Dart callback fence. Native alone issues the
+    // revision admitted by Go, and a late receipt never replaces a newer owner.
+    final generation = ++_generation;
+    _owner = null;
+    final bridge = _bridge;
+    final consent = _consent ?? (empty ? _lastConsent : null);
+    final identity = empty ? null : _identity;
+    if (bridge == null || !bridge.isInitialized || consent == null) return;
+    if (consent.enabled && identity == null && !_retired && !empty) return;
+    final enabled = consent.enabled;
+    final request = <String, Object?>{
+      'version': 1,
+      'op': 'configure',
+      'enabled': enabled,
+      'consentEpoch': consent.consentEpoch,
+      'profileBinding': identity?.binding ?? '',
+      'accountPeerId': identity?.account ?? '',
+      'rootPrivateKeyBase64': enabled ? identity?.root ?? '' : '',
+      'statePath': _statePath,
+      'preservePendingOnUnarm': preserve && enabled,
+    };
+    final response = await _send(bridge, request);
+    if (_disposed ||
+        generation != _generation ||
+        !identical(bridge, _bridge) ||
+        !enabled ||
+        identity == null ||
+        empty) {
+      return;
+    }
+    final data = response?['data'];
+    if (response?['ok'] != true ||
+        response!.length != 2 ||
+        data is! Map ||
+        data.length != 3 ||
+        data['configured'] != true ||
+        data['consentEpoch'] is! int ||
+        data['consentEpoch'] != consent.consentEpoch) {
+      return;
+    }
+    final revision = data['revision'];
+    if (revision is! int || revision <= 0 || revision > 9007199254740991) {
+      return;
+    }
+    _owner = {
+      'version': 1,
+      'revision': revision,
+      'consentEpoch': consent.consentEpoch,
+      'profileBinding': identity.binding,
+      'accountPeerId': identity.account,
+    };
+  }
+
+  Future<Map<String, dynamic>?> _send(
+    Bridge bridge,
+    Map<String, Object?> payload,
+  ) async {
+    try {
+      final raw = await bridge
+          .send(
+            jsonEncode({
+              'cmd': 'active_identity_reporter_v1',
+              'payload': payload,
+            }),
+          )
+          .timeout(_budget);
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      // Local reporting never owns communication or logs private native text.
+      return null;
+    }
+  }
+
+  /// Captures logical ownership even while its native configuration is pending.
+  /// Capturing alone never marks activity and retains no root secret.
+  ActiveIdentityReporterCapture? captureOwner({
+    required String expectedAccountPeerId,
+  }) {
+    final bridge = _bridge;
+    final identity = _identity;
+    final consent = _consent;
+    if (_disposed || _retired || bridge == null || !bridge.isInitialized ||
+        identity == null || consent == null || !consent.enabled ||
+        identity.account != expectedAccountPeerId) {
+      return null;
+    }
+    return ActiveIdentityReporterCapture._(
+      reporter: this,
+      bridge: bridge,
+      generation: _generation,
+      account: identity.account,
+      binding: identity.binding,
+      epoch: consent.consentEpoch,
+    );
+  }
+
+  bool _captureCurrent(ActiveIdentityReporterCapture capture) {
+    final identity = _identity;
+    final consent = _consent;
+    return !_disposed && !_retired &&
+        identical(capture._reporter, this) &&
+        identical(capture._bridge, _bridge) &&
+        capture._bridge.isInitialized && capture._generation == _generation &&
+        identity != null && identity.account == capture._account &&
+        identity.binding == capture._binding && consent != null &&
+        consent.enabled && consent.consentEpoch == capture._epoch;
+  }
+
+  /// Marks only the logical configuration captured before producer awaits.
+  void markCaptured(
+    ActiveIdentityReporterCapture capture, {
+    int? occurredAtUnixMillis,
+  }) {
+    if (!_captureCurrent(capture)) {
+      return;
+    }
+    final owner = _owner;
+    if (owner == null) {
+      // This future belongs to the capture's still-current generation. Never
+      // mint a new capture or spend a successor's native revision on completion.
+      final configuring = _configuration;
+      if (configuring != null) {
+        unawaited(
+          configuring.then((_) {
+            if (_captureCurrent(capture) && _owner != null) {
+              markCaptured(capture, occurredAtUnixMillis: occurredAtUnixMillis);
+            }
+          }),
+        );
+      }
+      return;
+    }
+    unawaited(_send(capture._bridge, {
+      ...owner,
+      'op': 'mark',
+      if (occurredAtUnixMillis != null)
+        'occurredAtUnixMillis': occurredAtUnixMillis,
+    }));
+  }
+
+  /// Called only after a qualifying communication, never by configuration.
+  void mark() {
+    final owner = _owner;
+    final bridge = _bridge;
+    if (_disposed || bridge == null || !bridge.isInitialized) return;
+    if (owner == null) {
+      final configuring = _configuration;
+      final generation = _generation;
+      if (configuring != null &&
+          _consent?.enabled == true &&
+          _identity != null) {
+        unawaited(
+          configuring.then((_) {
+            if (!_disposed && generation == _generation && _owner != null) {
+              mark();
+            }
+          }),
+        );
+      }
+      return;
+    }
+    unawaited(_send(bridge, {...owner, 'op': 'mark'}));
+  }
+
+  Future<void> retire() {
+    if (_disposed) return Future<void>.value();
+    _identity = null;
+    _retired = true;
+    return _configure(empty: true);
+  }
+
+  Future<void> flush() async {
+    final owner = _owner;
+    final bridge = _bridge;
+    if (_disposed || owner == null || bridge == null || !bridge.isInitialized) {
+      return;
+    }
+    await _send(bridge, {...owner, 'op': 'flush'});
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _identity = null;
+    await _configure(preserve: true, empty: true);
+    _bridge = null;
+    _consent = null;
+    _lastConsent = null;
+  }
+}

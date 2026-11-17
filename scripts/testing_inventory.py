@@ -351,6 +351,8 @@ def reconcile(root: Path, rules: dict, selected: list[dict], files: list[str], w
     errors = validate_policy(root, rules, files)
     if errors: raise InventoryError('\n'.join(errors))
     inventory = discover(root)
+    go_module_by_path = {row['path']: row.get('module') for row in inventory['entries']
+                         if row['family'] == 'go'}
     obligations = {}
     listings = []
     covered = {}
@@ -429,6 +431,8 @@ def reconcile(root: Path, rules: dict, selected: list[dict], files: list[str], w
             if scope is None or scope['filters']: continue
         for path in files:
             if any(fnmatch.fnmatchcase(path, pattern) for pattern in mapping['patterns']):
+                if 'module' in mapping and go_module_by_path.get(path) != mapping['module']:
+                    continue
                 registration = mapping.get('source_registration')
                 if registration and PurePosixPath(path).name + ' in Sources' not in (root/registration).read_text(): continue
                 if mapping.get('untagged_only') and re.search(r'^//go:build ', (root/path).read_text(), re.M): continue
@@ -703,7 +707,11 @@ def validate_policy(root, rules, files):
                 errors.append('Support/manual source changed; classification requires review: '+item.get('pattern',''))
         if not item.get('reason') or not any(fnmatch.fnmatchcase(p, item.get('pattern','')) for p in files):
             errors.append('Stale or unexplained inventory exclusion: ' + item.get('pattern',''))
+    go_modules = {str(PurePosixPath(path).parent) for path in files
+                  if PurePosixPath(path).name == 'go.mod'}
     for item in policy.get('mappings', []) + policy.get('listings', []):
+        if 'module' in item and (not isinstance(item['module'], str) or item['module'] not in go_modules):
+            errors.append('Invalid or missing Go mapping module')
         if item.get('owner') not in owners: errors.append('Unknown full inventory owner: ' + item.get('owner',''))
         if 'patterns' in item and (not item.get('reason') or not all(
                 any(fnmatch.fnmatchcase(p, pattern) for p in files) for pattern in item['patterns'])):

@@ -1,6 +1,7 @@
 import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -741,10 +742,12 @@ final class ProductionApplicationBootstrap
     // first, so its terminate can still resolve the peer from SQLCipher and
     // leave through Go before either is shut down.
     void Function()? disposeThoughtExpiry;
+    Future<void> Function()? disposeActiveIdentityReporter;
     TranslatePreviewPersistence? accountPreviewPersistence;
     Future<void> Function()? retireCustomStickerLibrary;
     final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
       shutdownRuntime: () async {
+        await disposeActiveIdentityReporter?.call();
         await retireCustomStickerLibrary?.call();
         if (identical(translatePreviewPersistence, accountPreviewPersistence)) {
           translatePreviewPersistence = null;
@@ -1009,6 +1012,16 @@ final class ProductionApplicationBootstrap
       loadForAction: groupExitDiagnosticRepository.loadForAction,
     );
 
+    final activeIdentityReporter = ActiveIdentityReporter(
+      statePath: '${appDocDir.path}/active_identity/state.json',
+    );
+    disposeActiveIdentityReporter = activeIdentityReporter.dispose;
+    await AppDiagnostics.instance.setLocalConsentObserver(
+      activeIdentityReporter.observeConsent,
+    );
+    String? activityProfileBinding;
+    String? activityBindingAccount;
+
     // 5. Create repository with database helpers + secure key store
     final repository = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
@@ -1020,9 +1033,12 @@ final class ProductionApplicationBootstrap
       publishCanonicalAccountBinding: canonicalRuntimeBindingCoordinator == null
           ? null
           : (accountPeerId) async {
-              await canonicalRuntimeBindingCoordinator.publishAccount(
-                accountPeerId,
-              );
+              activityProfileBinding = null;
+              activityBindingAccount = null;
+              final binding = await canonicalRuntimeBindingCoordinator
+                  .publishAccount(accountPeerId);
+              activityProfileBinding = binding;
+              activityBindingAccount = accountPeerId;
             },
       retireCanonicalAccountBinding: canonicalRuntimeBindingCoordinator == null
           ? null
@@ -1032,6 +1048,21 @@ final class ProductionApplicationBootstrap
       retireIosNseInboxTransport: iosNseTransportAdmissionActive
           ? iosNseInboxTransportProjection.retireAndReadBack
           : null,
+      observeLoadedIdentity: (identity) {
+        if (identity == null) {
+          activityProfileBinding = null;
+          activityBindingAccount = null;
+          return activeIdentityReporter.retire();
+        }
+        activeIdentityReporter.observeIdentity(
+          accountPeerId: identity.peerId,
+          rootPrivateKeyBase64: identity.privateKey,
+          profileBinding: activityBindingAccount == identity.peerId
+              ? activityProfileBinding
+              : null,
+        );
+        return Future<void>.value();
+      },
       refreshIosNseInboxTransport: iosNseTransportAdmissionActive
           ? (identity) async {
               final refresh = refreshIosNseTransportAfterIdentityCommit;
@@ -5587,6 +5618,7 @@ final class ProductionApplicationBootstrap
 
     // Create and initialize the bridge (Go native)
     bridge = GoBridgeClient();
+    activeIdentityReporter.attachBridge(bridge);
     AppDiagnostics.instance.attachTransport(
       bridge: bridge,
       networkAllowed: () =>
@@ -5992,6 +6024,7 @@ final class ProductionApplicationBootstrap
       oldPhoneCutoverCoordinator: accountMigrationCutoverCoordinator,
       oldPhoneLeaseCleanup: buildBridgeMigrationCutoverLeaseCleanup(
         bridge: bridge,
+        beforeCleanup: activeIdentityReporter.retire,
         clearLocalStalePushToken: () async {
           try {
             await iosNotificationRecoveryCoordinator?.clearAccount();
@@ -9879,6 +9912,7 @@ final class ProductionApplicationBootstrap
       });
       await liveServiceStartupSteps.runAsync('bridge_initialize', () async {
         await bridge.initialize();
+        activeIdentityReporter.attachBridge(bridge);
         StartupTiming.instance.mark('bridge_initialized');
         unawaited(CallDiagnostics.instance.flush());
       });
@@ -10132,7 +10166,10 @@ final class ProductionApplicationBootstrap
       startLinkedFoundationPrerequisites: () async {
         StartupTiming.instance.mark('bridge_initialized');
         final linkedServices = DirectBlobFreeLinkedServices(
-          initializeBridge: bridge.initialize,
+          initializeBridge: () async {
+            await bridge.initialize();
+            activeIdentityReporter.attachBridge(bridge);
+          },
           startMessageRouter: messageRouter.start,
           startChatMessageListener: chatMessageListener.start,
           startReactionListener: reactionListener.start,
@@ -10857,6 +10894,7 @@ final class ProductionApplicationBootstrap
           }
           // Retire before incoming files can replace account-owned content.
           // Only committed receiver activation may open the next generation.
+          await activeIdentityReporter.retire();
           await customStickerLibrary.retire();
           return accountMigrationTransferRuntime.startNewPhoneReceiver(output);
         },
@@ -10864,14 +10902,11 @@ final class ProductionApplicationBootstrap
             accountMigrationTransferRuntime.stopNewPhoneReceiver,
         accountMigrationReceiverEvents:
             accountMigrationTransferRuntime.receiverEvents,
-        retireCanonicalNotificationBinding:
-            canonicalRuntimeBindingCoordinator == null &&
-                iosNseInboxTransportProjection == null
-            ? null
-            : () async {
-                await iosNseInboxTransportProjection?.retireAndReadBack();
-                await canonicalRuntimeBindingCoordinator?.retireAccount();
-              },
+        retireCanonicalNotificationBinding: () async {
+          await activeIdentityReporter.retire();
+          await iosNseInboxTransportProjection?.retireAndReadBack();
+          await canonicalRuntimeBindingCoordinator?.retireAccount();
+        },
         retireIosNseInboxTransport: iosNseTransportAdmissionActive
             ? iosNseInboxTransportProjection.retireAndReadBack
             : null,
@@ -10937,7 +10972,10 @@ final class ProductionApplicationBootstrap
             foregroundCallPresentationReady.complete();
           }
         },
+        activityReporter: activeIdentityReporter,
+        disposeActiveIdentityReporter: activeIdentityReporter.dispose,
         onAppDetached: () async {
+          await activeIdentityReporter.dispose();
           disposeThoughtExpiry?.call();
           if (kDebugMode && Platform.isAndroid) {
             DebugCallEvidenceObserver.uninstall(debugCallEvidenceObserver);

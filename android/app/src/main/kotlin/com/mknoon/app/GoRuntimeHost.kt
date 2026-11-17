@@ -122,6 +122,16 @@ internal class GoRuntimeHost(
         return token
     }
 
+    /** Only for synchronous memory fencing, never disk or network work. */
+    fun <T> publishWhileActive(token: OwnerToken, publish: () -> T): T? {
+        if (!admit(token, requireActive = true)) return null
+        try {
+            return publish()
+        } finally {
+            completeAdmitted()
+        }
+    }
+
     fun <T> execute(
         token: OwnerToken,
         work: () -> T,

@@ -177,6 +177,179 @@ class MknoonAppDiagnosticSpoolTest {
         memory.bytes = stored.toString().toByteArray()
         assertFalse(events(spool(memory)).any { it["eventId"] == id })
     }
+    private val activityProfileA = "v1:" + "a".repeat(64)
+    private val activityProfileB = "v1:" + "b".repeat(64)
+    private val activityAccountA = "12D3KooWJsEmQWn5WGGn9AZX79emq3RkGNx2ihFwWzZAqbiUQGMF"
+    private val activityAccountB = "12D3KooWJsEmQWn5WGGn9AZX79emq3RkGNx2ihFwWzZAqbiUQGMG"
+
+    @Test fun activeIdentityPublishesBeforeHeldConfiguration() {
+        val order = mutableListOf<String>()
+        val publications = mutableListOf<Triple<MknoonActiveIdentityReporterFence, Boolean, Boolean>>()
+        val queued = mutableListOf<() -> Unit>()
+        var configured = 0
+        val admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            order.add("publish"); publications.add(Triple(fence, enabled, preserve)); true
+        }
+        val result = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull("Positive publisher control", result)
+        val fence = result!!
+        assertEquals(listOf("publish"), order)
+        assertEquals(1, publications.size); assertTrue(fence.revision > 0)
+        assertEquals(10L, fence.consentEpoch); assertEquals(activityProfileA, fence.profileBinding)
+        assertEquals(activityAccountA, fence.accountPeerID)
+        assertTrue(publications.single().second); assertFalse(publications.single().third)
+        order.add("queued")
+        queued.add { if (admission.isCurrent(fence)) configured++ }
+        assertEquals(0, configured)
+        queued.removeAt(0).invoke()
+        assertEquals(listOf("publish", "queued"), order); assertEquals(1, configured)
+        assertTrue(admission.admitMark(fence))
+    }
+
+    @Test fun activeIdentityOffReceiptFencesHeldConfigurationAndMark() {
+        val publications = mutableListOf<Triple<MknoonActiveIdentityReporterFence, Boolean, Boolean>>()
+        val queued = mutableListOf<() -> Unit>()
+        var configured = 0; var marked = 0
+        val admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            publications.add(Triple(fence, enabled, preserve)); true
+        }
+        val result = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull("Positive publisher control", result)
+        val old = result!!
+        assertEquals(1, publications.size)
+        queued.add {
+            if (admission.isCurrent(old)) configured++
+            if (admission.admitMark(old)) marked++
+        }
+        assertTrue(admission.observeConsent(11, false))
+        assertEquals("OFF publication must happen while the background job is held", 2, publications.size)
+        val off = publications.last().first
+        assertFalse(publications.last().second); assertEquals(11L, off.consentEpoch)
+        assertTrue(off.revision > old.revision)
+        assertTrue("Current disabled work may still clear durably", admission.isCurrent(off))
+        assertFalse(admission.admitMark(off)); assertFalse(admission.isCurrent(old))
+        queued.removeAt(0).invoke()
+        assertEquals(0, configured); assertEquals(0, marked)
+    }
+
+    @Test fun activeIdentityNewProfileRequiresExactCapturedTuple() {
+        val published = mutableListOf<MknoonActiveIdentityReporterFence>()
+        val admission = MknoonActiveIdentityReporterAdmission { fence, _, _ -> published.add(fence); true }
+        val first = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull(first)
+        val old = first!!
+        val second = admission.admitConfiguration(10, true, activityProfileB, activityAccountB, true)
+        assertNotNull(second)
+        val current = second!!
+        assertEquals(2, published.size); assertTrue(current.revision > old.revision)
+        assertFalse(admission.isCurrent(old)); assertFalse(admission.admitMark(old))
+        assertTrue(admission.isCurrent(current)); assertTrue(admission.admitMark(current))
+        val mutations = listOf(
+            current.copy(revision = current.revision + 1),
+            current.copy(consentEpoch = current.consentEpoch + 1),
+            current.copy(profileBinding = activityProfileA),
+            current.copy(accountPeerID = activityAccountA),
+        )
+        mutations.forEach { changed ->
+            assertFalse(admission.isCurrent(changed)); assertFalse(admission.admitMark(changed))
+        }
+    }
+
+    @Test fun activeIdentityConsentMirrorCannotRestoreProfileAuthority() {
+        val publications = mutableListOf<Triple<MknoonActiveIdentityReporterFence, Boolean, Boolean>>()
+        val admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            publications.add(Triple(fence, enabled, preserve)); true
+        }
+        val result = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull("Positive full-configuration control", result)
+        val initial = result!!
+        assertTrue(admission.observeConsent(10, true))
+        assertEquals(1, publications.size); assertTrue(admission.admitMark(initial))
+        assertFalse(admission.observeConsent(9, false))
+        assertTrue(admission.observeConsent(10, false))
+        assertFalse(admission.admitMark(initial)); assertEquals(2, publications.size)
+        assertTrue(admission.observeConsent(11, false))
+        assertFalse(admission.observeConsent(10, true))
+        assertFalse(admission.observeConsent(11, true))
+        assertTrue(admission.observeConsent(12, true))
+        val mirrorOn = publications.last().first
+        assertEquals(12L, mirrorOn.consentEpoch); assertTrue(admission.isCurrent(mirrorOn))
+        assertFalse("Mirror ON cannot arm without root configuration", admission.admitMark(mirrorOn))
+        assertFalse(admission.admitMark(initial))
+        assertFalse(admission.admitMark(mirrorOn.copy(
+            profileBinding = activityProfileA, accountPeerID = activityAccountA)))
+    }
+
+    @Test fun activeIdentitySameScopeRefreshReusesNativeRevision() {
+        val published = mutableListOf<MknoonActiveIdentityReporterFence>()
+        val admission = MknoonActiveIdentityReporterAdmission { fence, _, _ -> published.add(fence); true }
+        val firstResult = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull(firstResult)
+        val first = firstResult!!
+        // Restarted Dart callers provide no caller counter or wall-clock revision.
+        val refreshed = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull(refreshed)
+        assertEquals(first, refreshed); assertEquals(1, published.size)
+        assertTrue(admission.observeConsent(10, true))
+        assertEquals(1, published.size); assertTrue(admission.admitMark(first))
+        val replacement = admission.admitConfiguration(10, true, activityProfileB, activityAccountB, true)
+        assertNotNull(replacement)
+        assertTrue(replacement!!.revision > first.revision); assertEquals(2, published.size)
+    }
+
+    @Test fun activeIdentityUnarmPolicyAndMalformedRequestsHaveFixedPrivateErrors() {
+        val privateError = "b294-native-private-account-signature-error"
+        var failPublisher = false
+        val publications = mutableListOf<Triple<MknoonActiveIdentityReporterFence, Boolean, Boolean>>()
+        val admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            publications.add(Triple(fence, enabled, preserve))
+            if (failPublisher) error(privateError)
+            true
+        }
+        val originalResult = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull(originalResult)
+        val original = originalResult!!
+        val retiredResult = admission.admitConfiguration(10, true, "", "", false)
+        assertNotNull(retiredResult)
+        val retired = retiredResult!!
+        assertFalse("Discard policy must publish before any background clear", publications.last().third)
+        assertTrue(admission.isCurrent(retired)); assertFalse(admission.admitMark(retired))
+        assertFalse(admission.isCurrent(original))
+        val rebound = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull(rebound); assertTrue(rebound!!.revision > retired.revision)
+        val disposedResult = admission.admitConfiguration(10, true, "", "", false, preservePendingOnUnarm = true)
+        assertNotNull(disposedResult)
+        val disposed = disposedResult!!
+        assertTrue(publications.last().third)
+        assertTrue(admission.isCurrent(disposed)); assertFalse(admission.admitMark(disposed))
+        data class Bad(val epoch: Long, val profile: String, val account: String, val root: Boolean, val preserve: Boolean = false)
+        val malformed = listOf(
+            Bad(0, activityProfileA, activityAccountA, true),
+            Bad(-1, activityProfileA, activityAccountA, true),
+            Bad(10, "", activityAccountA, true), Bad(10, activityProfileA, "", true),
+            Bad(10, "not-a-binding", activityAccountA, true),
+            Bad(10, activityProfileA + "a", activityAccountA, true),
+            Bad(10, activityProfileA, " $activityAccountA", true),
+            Bad(10, activityProfileA, "x".repeat(129), true),
+            Bad(10, activityProfileA, activityAccountA, false),
+            Bad(10, "", "", true), Bad(10, activityProfileA, activityAccountA, true, true),
+            Bad(10, privateError, privateError, true),
+        )
+        val beforeInvalid = publications.size
+        malformed.forEach { bad ->
+            assertNull(admission.admitConfiguration(bad.epoch, true, bad.profile, bad.account, bad.root, bad.preserve))
+            assertEquals("ACTIVE_IDENTITY_INVALID_REQUEST", admission.errorCode)
+            assertTrue(admission.isCurrent(disposed))
+        }
+        assertEquals(beforeInvalid, publications.size)
+        failPublisher = true
+        assertNull(admission.admitConfiguration(10, true, activityProfileB, activityAccountB, true))
+        assertEquals("ACTIVE_IDENTITY_UNAVAILABLE", admission.errorCode)
+        assertFalse(admission.errorCode.contains(privateError))
+        assertFalse(admission.errorCode.contains(activityAccountB))
+        assertFalse(admission.admitMark(publications.last().first))
+    }
+
     @Test fun canonicalVocabularyMatchesNativeCopy() {
         val root = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }.first { File(it, "tool/app_diagnostics/schema_v1.json").exists() }
         val schema = JSONObject(File(root, "tool/app_diagnostics/schema_v1.json").readText())
@@ -189,4 +362,40 @@ class MknoonAppDiagnosticSpoolTest {
         assertEquals(MknoonAppDiagnosticSchema.enumValues.keys, enums.keys().asSequence().toSet())
         for ((key, expected) in MknoonAppDiagnosticSchema.enumValues) { val rows = enums.getJSONArray(key); assertEquals(expected, (0 until rows.length()).map { rows.getString(it) }.toSet()) }
     }
+    @Test fun activeIdentitySameEpochAutomaticOffRevokesHeldOwner() {
+        val publications = mutableListOf<Triple<MknoonActiveIdentityReporterFence, Boolean, Boolean>>()
+        val admission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve ->
+            publications.add(Triple(fence, enabled, preserve)); true
+        }
+        val armedResult = admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true)
+        assertNotNull("Positive full-configuration control", armedResult)
+        val armed = armedResult!!
+        assertEquals(1, publications.size)
+        assertTrue(admission.isCurrent(armed)); assertTrue(admission.admitMark(armed))
+        var heldMarkAccepted = false
+        val heldMark = {
+            if (admission.isCurrent(armed) && admission.admitMark(armed)) heldMarkAccepted = true
+        }
+        // AppDiagnostics archive failure disables locally without advancing its epoch.
+        assertTrue("Same-epoch automatic OFF must publish before returning", admission.observeConsent(10, false))
+        assertEquals(2, publications.size)
+        val off = publications.last().first
+        assertEquals(armed.consentEpoch, off.consentEpoch)
+        assertTrue(off.revision > armed.revision)
+        assertFalse(publications.last().second); assertFalse(publications.last().third)
+        assertTrue(admission.isCurrent(off)); assertFalse(admission.admitMark(off))
+        assertFalse(admission.isCurrent(armed)); assertFalse(admission.admitMark(armed))
+        heldMark()
+        assertFalse(heldMarkAccepted)
+        assertFalse(admission.observeConsent(10, true))
+        assertNull(admission.admitConfiguration(10, true, activityProfileA, activityAccountA, true))
+        assertEquals(2, publications.size); assertTrue(admission.isCurrent(off))
+        val rearmedResult = admission.admitConfiguration(11, true, activityProfileA, activityAccountA, true)
+        assertNotNull(rearmedResult)
+        val rearmed = rearmedResult!!
+        assertEquals(3, publications.size); assertTrue(rearmed.revision > off.revision)
+        assertTrue(admission.isCurrent(rearmed)); assertTrue(admission.admitMark(rearmed))
+        assertFalse(admission.isCurrent(off)); assertFalse(admission.admitMark(armed))
+    }
+
 }

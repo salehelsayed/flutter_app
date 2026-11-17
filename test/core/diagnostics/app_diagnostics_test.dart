@@ -2536,4 +2536,53 @@ void main() {
       expect((await diagnostics.status())['storageHealthy'], false);
     },
   );
+  test('B294 automatic storage failure publishes OFF before completion', () async {
+    const bound = Duration(seconds: 2);
+    var failWrites = false;
+    var healthyWrites = 0;
+    var failedWrites = 0;
+    final seen = <LocalDiagnosticConsent?>[];
+    final release = Completer<void>();
+    Future<void>? persisting;
+    final diagnostics = await install(persist: (_, _) async {
+      if (failWrites) {
+        failedWrites++;
+        throw const FileSystemException('controlled later archive failure');
+      }
+      healthyWrites++;
+    }).timeout(bound);
+    await diagnostics.setLocalConsentObserver((consent) async {
+      seen.add(consent);
+      if (consent?.enabled == false) await release.future.timeout(bound);
+    }).timeout(bound);
+    expect(diagnostics.enabled, isTrue);
+    expect(healthyWrites, greaterThan(0));
+    expect(seen, hasLength(1));
+    expect(seen.single?.enabled, isTrue);
+    expect(seen.single!.consentEpoch, greaterThan(0));
+    try {
+      var completed = false;
+      failWrites = true;
+      diagnostics.record(feature: 'message', stage: 'send', outcome: 'ok');
+      persisting = diagnostics.eventsForTesting().then<void>((_) {
+        completed = true;
+      });
+      await Future<void>.delayed(Duration.zero).timeout(bound);
+      expect(failedWrites, 1, reason: 'The later write must actually fail');
+      expect(diagnostics.enabled, isFalse);
+      expect(seen.map((consent) => consent?.enabled), [true, false],
+          reason: 'Automatic OFF must fence the observer before failure completion');
+      expect(completed, isFalse,
+          reason: 'Failure completion must await the bounded OFF attempt');
+      release.complete();
+      await persisting.timeout(bound);
+      expect(completed, isTrue);
+    } finally {
+      failWrites = false;
+      if (!release.isCompleted) release.complete();
+      if (persisting != null) await persisting.timeout(bound);
+      await diagnostics.setLocalConsentObserver(null).timeout(bound);
+    }
+  });
+
 }

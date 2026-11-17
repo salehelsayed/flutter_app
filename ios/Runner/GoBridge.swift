@@ -1,4 +1,5 @@
 import UIKit
+import CoreFoundation
 
 /// Small UIApplication seam used by the process-wide critical-task registry.
 /// Tests inject a deterministic manager instead of asking the simulator OS for
@@ -164,6 +165,125 @@ import GoMknoon
 /// MethodChannel `com.mknoon/go_bridge` handles request/response calls.
 /// EventChannel `com.mknoon/go_bridge_events` streams push events from Go.
 class GoBridge: NSObject {
+    private static let activityAdmission = MknoonActiveIdentityReporterAdmission { fence, enabled, preserve in
+        var desired = activityFenceFields(fence)
+        desired["enabled"] = enabled
+        desired["preservePendingOnUnarm"] = preserve
+        guard let data = try? JSONSerialization.data(withJSONObject: desired),
+              let request = String(data: data, encoding: .utf8) else { return false }
+        let published: String? = BridgePublishActiveIdentityReporterDesired(request)
+        guard let raw = published, raw.utf8.count <= 16_384,
+              let response = raw.data(using: .utf8),
+              let answer = try? JSONSerialization.jsonObject(with: response) as? [String: Any],
+              activityBool(answer["ok"]) == true, Set(answer.keys) == ["ok", "data"],
+              let receipt = answer["data"] as? [String: Any], Set(receipt.keys) == ["revision", "consentEpoch"] else { return false }
+        return activityInteger(receipt["revision"]) == fence.revision &&
+            activityInteger(receipt["consentEpoch"]) == fence.consentEpoch
+    }
+
+    private static func activityFenceFields(_ fence: MknoonActiveIdentityReporterFence) -> [String: Any] {
+        ["version": 1, "revision": fence.revision, "consentEpoch": fence.consentEpoch,
+         "profileBinding": fence.profileBinding, "accountPeerId": fence.accountPeerID]
+    }
+
+    private static func activityInteger(_ value: Any?) -> Int64? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue >= 1, number.doubleValue <= 9_007_199_254_740_991,
+              number.doubleValue.rounded() == number.doubleValue else { return nil }
+        return number.int64Value
+    }
+
+    private static func activityBool(_ value: Any?) -> Bool? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+        return number.boolValue
+    }
+
+    private static func activityError(_ code: String) -> String {
+        let fixed: String
+        switch code {
+        case "INVALID_INPUT", "ACTIVE_IDENTITY_INVALID_REQUEST": fixed = "INVALID_INPUT"
+        case "ACTIVE_IDENTITY_REPORTER_STALE": fixed = "ACTIVE_IDENTITY_REPORTER_STALE"
+        default: fixed = "ACTIVE_IDENTITY_REPORTER_UNAVAILABLE"
+        }
+        return "{\"ok\":false,\"errorCode\":\"\(fixed)\"}"
+    }
+
+    // The local operation is a bounded flat JSON object. Decode names before
+    // duplicate checks so escaped aliases cannot disappear during re-encoding.
+    private static func activityFields(_ raw: String?) -> [String: Any]? {
+        guard let raw, raw.utf8.count <= 16_384, let data = raw.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return nil }
+        let bytes = Array(raw.utf8)
+        var position = 0
+        func space() {
+            while position < bytes.count && [UInt8(9), 10, 13, 32].contains(bytes[position]) { position += 1 }
+        }
+        func string() -> String? {
+            guard position < bytes.count, bytes[position] == 34 else { return nil }
+            let start = position
+            position += 1
+            while position < bytes.count {
+                if bytes[position] == 34 {
+                    position += 1
+                    return (try? JSONSerialization.jsonObject(with: Data(bytes[start..<position]), options: .fragmentsAllowed)) as? String
+                }
+                position += bytes[position] == 92 ? 2 : 1
+            }
+            return nil
+        }
+        space()
+        guard position < bytes.count, bytes[position] == 123 else { return nil }
+        position += 1
+        var fields: [String: Any] = [:]
+        space()
+        if position < bytes.count && bytes[position] == 125 { position += 1; space(); return position == bytes.count ? fields : nil }
+        while position < bytes.count {
+            guard let key = string(), fields[key] == nil else { return nil }
+            space()
+            guard position < bytes.count, bytes[position] == 58 else { return nil }
+            position += 1
+            space()
+            if position < bytes.count && bytes[position] == 34 {
+                guard let value = string() else { return nil }
+                fields[key] = value
+            } else {
+                let start = position
+                while position < bytes.count && bytes[position] != 44 && bytes[position] != 125 { position += 1 }
+                let token = String(decoding: bytes[start..<position], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                if token == "true" { fields[key] = true }
+                else if token == "false" { fields[key] = false }
+                else {
+                    guard !token.isEmpty, token.utf8.allSatisfy({ (48...57).contains($0) }),
+                          token.count == 1 || token.first != "0", let number = Int64(token) else { return nil }
+                    fields[key] = number
+                }
+            }
+            space()
+            guard position < bytes.count else { return nil }
+            if bytes[position] == 125 { position += 1; space(); return position == bytes.count ? fields : nil }
+            guard bytes[position] == 44 else { return nil }
+            position += 1
+            space()
+        }
+        return nil
+    }
+
+    private static func activityAnswer(_ raw: String?, fence: MknoonActiveIdentityReporterFence, op: String) -> String {
+        guard let raw, raw.utf8.count <= 16_384, let bytes = raw.data(using: .utf8),
+              let answer = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return activityError("") }
+        guard activityBool(answer["ok"]) == true else { return activityError(answer["errorCode"] as? String ?? "") }
+        let field = op == "configure" ? "configured" : op == "mark" ? "accepted" : "queued"
+        guard Set(answer.keys) == ["ok", "data"], let data = answer["data"] as? [String: Any],
+              Set(data.keys) == Set([field, "revision", "consentEpoch"]),
+              activityInteger(data["revision"]) == fence.revision,
+              activityInteger(data["consentEpoch"]) == fence.consentEpoch,
+              let value = activityBool(data[field]) else { return activityError("") }
+        let receipt: [String: Any] = [field: value, "revision": fence.revision, "consentEpoch": fence.consentEpoch]
+        let result: [String: Any] = ["ok": true, "data": receipt]
+        guard let encoded = try? JSONSerialization.data(withJSONObject: result),
+              let response = String(data: encoded, encoding: .utf8) else { return activityError("") }
+        return response
+    }
     private let appDiagnosticBridge: MknoonAppDiagnosticBridge
     private let methodChannel: FlutterMethodChannel
     private let eventChannel: FlutterEventChannel
@@ -195,6 +315,78 @@ class GoBridge: NSObject {
 
         // Initialize the Go singleton with our event callback
         BridgeInitialize(self)
+        appDiagnosticBridge.setActivityOwner(self)
+        MknoonAppDiagnostics.shared.installActivityOwner(self, retirePrevious: {
+            _ = Self.activityAdmission.unarmPreservingPending()
+        }) { [weak self] epoch, enabled in
+            guard let self else { return false }
+            return MknoonAppDiagnostics.shared.withActivityOwner(self) {
+                Self.activityAdmission.observeConsent(consentEpoch: epoch, enabled: enabled)
+            } ?? false
+        }
+    }
+
+    deinit {
+        MknoonAppDiagnostics.shared.retireActivityOwner(self) { _ = Self.activityAdmission.unarmPreservingPending() }
+    }
+
+    private func activeActivityOwner() -> Bool {
+        MknoonAppDiagnostics.shared.withActivityOwner(self) { true } == true
+    }
+
+    private func handleActivityReporter(_ raw: String?, result: @escaping FlutterResult) {
+        guard activeActivityOwner() else { result(Self.activityError("")); return }
+        guard var fields = Self.activityFields(raw), Self.activityInteger(fields["version"]) == 1,
+              let op = fields["op"] as? String, let epoch = Self.activityInteger(fields["consentEpoch"]),
+              let profile = fields["profileBinding"] as? String, let account = fields["accountPeerId"] as? String else {
+            result(Self.activityError("INVALID_INPUT")); return
+        }
+        let fence: MknoonActiveIdentityReporterFence
+        if op == "configure" {
+            let keys: Set<String> = ["version", "op", "enabled", "consentEpoch", "profileBinding", "accountPeerId",
+                "rootPrivateKeyBase64", "statePath", "preservePendingOnUnarm"]
+            guard Set(fields.keys) == keys || Set(fields.keys) == keys.union(["revision"]),
+                  fields["revision"] == nil || Self.activityInteger(fields["revision"]) != nil,
+                  let enabled = Self.activityBool(fields["enabled"]), let root = fields["rootPrivateKeyBase64"] as? String,
+                  fields["statePath"] is String, let preserve = Self.activityBool(fields["preservePendingOnUnarm"]) else {
+                result(Self.activityError("INVALID_INPUT")); return
+            }
+            var entered = false
+            let admitted = MknoonAppDiagnostics.shared.withActivityOwner(self) {
+                entered = true
+                return Self.activityAdmission.admitConfiguration(consentEpoch: epoch, enabled: enabled,
+                    profileBinding: profile, accountPeerID: account, hasRootKey: !root.isEmpty,
+                    preservePendingOnUnarm: preserve)
+            } ?? nil
+            guard let admitted else {
+                result(Self.activityError(entered ? Self.activityAdmission.errorCode : "")); return
+            }
+            fence = admitted
+            fields["revision"] = fence.revision
+        } else if op == "mark" || op == "flush" {
+            guard Set(fields.keys) == ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"],
+                  let revision = Self.activityInteger(fields["revision"]) else {
+                result(Self.activityError("INVALID_INPUT")); return
+            }
+            fence = MknoonActiveIdentityReporterFence(revision: revision, consentEpoch: epoch,
+                profileBinding: profile, accountPeerID: account)
+            guard Self.activityAdmission.admitMark(fence) else { result(Self.activityError("ACTIVE_IDENTITY_REPORTER_STALE")); return }
+        } else { result(Self.activityError("INVALID_INPUT")); return }
+        guard let data = try? JSONSerialization.data(withJSONObject: fields), let request = String(data: data, encoding: .utf8) else {
+            result(Self.activityError("INVALID_INPUT")); return
+        }
+        runOnBackground({ [weak self] in
+            guard let self, self.activeActivityOwner(), Self.activityAdmission.isCurrent(fence),
+                  op == "configure" || Self.activityAdmission.admitMark(fence) else {
+                return Self.activityError("ACTIVE_IDENTITY_REPORTER_STALE")
+            }
+            return Self.activityAnswer(BridgeActiveIdentityReporterV1(request), fence: fence, op: op)
+        }, result: { [weak self] value in
+            guard let self, self.activeActivityOwner(), Self.activityAdmission.isCurrent(fence) else {
+                result(Self.activityError("ACTIVE_IDENTITY_REPORTER_STALE")); return
+            }
+            result(value)
+        })
     }
 
     private func runOnBackground(_ work: @escaping () -> Any?, method: String = "", result: @escaping FlutterResult) {
@@ -237,6 +429,10 @@ class GoBridge: NSObject {
     #endif
 
     func handleMethodCall(_ call: FlutterMethodCall, result rawResult: @escaping FlutterResult) {
+        if call.method == "activeIdentityReporterV1" {
+            handleActivityReporter(call.arguments as? String, result: rawResult)
+            return
+        }
         let result = MknoonAppDiagnostics.shared.wrapBridge(call.method, arguments: call.arguments, result: rawResult)
         let args = call.arguments as? String
 

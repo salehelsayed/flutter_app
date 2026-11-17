@@ -420,6 +420,24 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
     def select_path(self, path):
         return checks.select(copy.deepcopy(self.rules), [{'path': path, 'status': 'M'}], 'change', [], self.root)
 
+    def test_b29_nested_calendar_changes_select_its_own_go_module(self):
+        self.assertIn('go-activity-calendar', self.rules['checks'])
+        for path in ('go-mknoon/activitycalendar/week.go',
+                     'go-mknoon/activitycalendar/week_test.go',
+                     'go-mknoon/activitycalendar/go.mod'):
+            with self.subTest(path=path):
+                selected = self.select_path(path)
+                ids = {row['id'] for row in selected['selected']}
+                self.assertIn('go-activity-calendar', ids)
+                self.assertIn('go-core', ids)
+        check = self.rules['checks']['go-activity-calendar']
+        self.assertEqual(check['kind'], 'go')
+        self.assertEqual(check['cwd'], 'go-mknoon/activitycalendar')
+        self.assertEqual(check['packages'], ['./...'])
+        argv, _ = checks.command_for(check, self.root, [])
+        self.assertEqual(argv[:2], ['go', 'test'])
+        self.assertIn('./...', argv)
+
     def test_feature_dart_edits_do_not_match_root_entrypoint_build_rule(self):
         # fnmatch '*' crosses '/' in Python; the former lib/*.dart rule
         # accidentally broadened every feature edit into a platform rebuild.
@@ -437,6 +455,55 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
         ids = {row['id'] for row in selected['selected']}
         self.assertTrue({'affected-conversation', 'affected-groups', 'affected-media', 'affected-push'}.issubset(ids))
         self.assertIn('transport', selected['affected_areas'])
+
+
+class NestedCalendarInventoryRegressionTest(RepositoryFixture):
+    def calendar_inventory(self, *, scoped):
+        import testing_inventory as inventory
+        for path in ('go-mknoon/go.mod', 'go-mknoon/activitycalendar/go.mod'):
+            self.write(path, 'module fixture\n\ngo 1.27.1\n')
+        for path in ('go-mknoon/node/node_test.go',
+                     'go-mknoon/activitycalendar/week_test.go'):
+            self.write(path, 'package fixture\n')
+        repository_rules = json.loads((Path(__file__).resolve().parents[2] /
+                                      checks.RULES).read_text())
+        mapping = copy.deepcopy(next(row for row in
+            repository_rules['full_inventory']['mappings']
+            if row.get('capability') == 'go.node.all'))
+        if not scoped:
+            mapping.pop('module', None)
+        # Only metadata is reconciled: no listing, Go process or app code runs.
+        owner = {'id': mapping['owner'], 'kind': 'command',
+                 'command': ['fixture-not-executed'], 'timeout_seconds': 10}
+        rules = {'checks': {}, 'full_commands': [owner], 'full_inventory': {
+            'automatic': [{'family': 'go', 'patterns': ['go-mknoon/*']}],
+            'mappings': [mapping]}}
+        selected = [copy.deepcopy(owner)]
+        files = inventory.source_files(self.root)
+        result = inventory.reconcile(self.root, rules, selected, files)
+        rows = {row['path']: row for row in result['obligations']
+                if row['family'] == 'go'}
+        return mapping, selected, rows
+
+    def test_b29_nested_week_has_real_module_owner_not_root_receipt(self):
+        mapping, selected, rows = self.calendar_inventory(scoped=True)
+        root = rows['go-mknoon/node/node_test.go']
+        nested = rows['go-mknoon/activitycalendar/week_test.go']
+        self.assertEqual(root['owners'], [mapping['owner']])
+        self.assertNotIn(mapping['owner'], nested['owners'])
+        self.assertEqual(nested['status'], 'SELECTED')
+        self.assertEqual(len(nested['owners']), 1)
+        command = next(row for row in selected if row['id'] == nested['owners'][0])
+        self.assertEqual(command['cwd'], 'go-mknoon/activitycalendar')
+        self.assertEqual(command['kind'], 'go')
+        self.assertIn('go-mknoon/activitycalendar/week_test.go', command['selected_paths'])
+        self.assertEqual(command['packages'], ['./.'])
+        self.assertEqual(command['command'][:2], ['go', 'test'])
+
+    def test_b29_module_filter_is_optional_for_existing_mappings(self):
+        mapping, _, rows = self.calendar_inventory(scoped=False)
+        self.assertEqual(rows['go-mknoon/node/node_test.go']['owners'], [mapping['owner']])
+        self.assertEqual(rows['go-mknoon/activitycalendar/week_test.go']['owners'], [mapping['owner']])
 
 
 class ExternalReportRegressionTest(unittest.TestCase):
