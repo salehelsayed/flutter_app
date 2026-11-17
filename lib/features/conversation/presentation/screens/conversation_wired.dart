@@ -3870,7 +3870,7 @@ class _ConversationWiredState extends State<ConversationWired>
   }) async {
     final identity = _identity;
     if (identity == null) return;
-    final activityReporter = widget.activityReporter;
+    final activityReporter = sticker == null ? widget.activityReporter : null;
     ActiveIdentityReporterCapture? activityCapture;
     try {
       activityCapture = activityReporter?.captureOwner(
