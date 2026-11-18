@@ -7,6 +7,7 @@ import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart'
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'sticker_still_export.dart';
+import 'sticker_overlay_editor_result.dart';
 import 'sticker_text_layers.dart';
 import 'sticker_text_overlay.dart';
 
@@ -14,21 +15,51 @@ const double _moveStep = 0.05;
 const double _scaleStep = 1.15;
 const double _rotateStep = math.pi / 12;
 
+sealed class _StickerEditorTarget {
+  const _StickerEditorTarget();
+}
+
+final class _StillEditorTarget extends _StickerEditorTarget {
+  const _StillEditorTarget(this.sourceBytes, this.outputFile);
+  final Uint8List sourceBytes;
+  final File outputFile;
+}
+
+final class _OverlayEditorTarget extends _StickerEditorTarget {
+  const _OverlayEditorTarget(this.preview);
+  final Widget preview;
+}
+
 /// Free multi-layer text editor over an already cut-out or cropped image.
 /// Pops with [StickerEditorResult]: ready after Save sticker (the PNG is
 /// written to [outputFile], which the caller owns), cancelled otherwise.
 class StickerTextEditorScreen extends StatefulWidget {
-  const StickerTextEditorScreen({
+  StickerTextEditorScreen({
     super.key,
-    required this.sourceBytes,
-    required this.outputFile,
+    required Uint8List sourceBytes,
+    required File outputFile,
     this.shape = StickerShape.square,
-  });
+  }) : _target = _StillEditorTarget(sourceBytes, outputFile);
+
+  StickerTextEditorScreen.overlay({
+    super.key,
+    required Widget preview,
+    this.shape = StickerShape.square,
+  }) : _target = _OverlayEditorTarget(preview);
 
   static const canvasKey = Key('sticker_text_editor_canvas');
 
-  final Uint8List sourceBytes;
-  final File outputFile;
+  final _StickerEditorTarget _target;
+
+  Uint8List get sourceBytes => switch (_target) {
+    _StillEditorTarget(:final sourceBytes) => sourceBytes,
+    _OverlayEditorTarget() => throw StateError('Overlay editor has no image'),
+  };
+
+  File get outputFile => switch (_target) {
+    _StillEditorTarget(:final outputFile) => outputFile,
+    _OverlayEditorTarget() => throw StateError('Overlay editor writes no file'),
+  };
   final StickerShape shape;
 
   @override
@@ -161,7 +192,12 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
 
   void _cancel() {
     if (_saving) return;
-    Navigator.of(context).pop(const StickerEditorResult.cancelled());
+    switch (widget._target) {
+      case _StillEditorTarget():
+        Navigator.of(context).pop(const StickerEditorResult.cancelled());
+      case _OverlayEditorTarget():
+        Navigator.of(context).pop(const StickerOverlayEditorCancelled());
+    }
   }
 
   Future<void> _save() async {
@@ -170,14 +206,22 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
       _saving = true;
     });
     try {
-      final asset = await exportStickerStill(
-        sourceBytes: widget.sourceBytes,
-        layers: _state.layers,
-        shape: widget.shape,
-        outputFile: widget.outputFile,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop(StickerEditorResult.ready(asset));
+      final layers = List<StickerTextLayer>.unmodifiable(_state.layers);
+      switch (widget._target) {
+        case _StillEditorTarget(:final sourceBytes, :final outputFile):
+          final asset = await exportStickerStill(
+            sourceBytes: sourceBytes,
+            layers: layers,
+            shape: widget.shape,
+            outputFile: outputFile,
+          );
+          if (!mounted) return;
+          Navigator.of(context).pop(StickerEditorResult.ready(asset));
+        case _OverlayEditorTarget():
+          final overlay = await rasterizeStickerTextOverlay(layers);
+          if (!mounted) return;
+          Navigator.of(context).pop(StickerOverlayEditorReady(overlay));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -240,10 +284,29 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
   }
 
   Widget _buildCanvas(double side) {
-    final image = Image.memory(
-      widget.sourceBytes,
-      fit: BoxFit.contain,
-      gaplessPlayback: true,
+    final image = switch (widget._target) {
+      _StillEditorTarget(:final sourceBytes) => Image.memory(
+        sourceBytes,
+        fit: BoxFit.contain,
+        gaplessPlayback: true,
+      ),
+      _OverlayEditorTarget(:final preview) => preview,
+    };
+    final canvas = Stack(
+      clipBehavior: Clip.hardEdge,
+      children: [
+        Positioned.fill(
+          child: ColoredBox(
+            color: Colors.white10,
+            child:
+                widget._target is _StillEditorTarget &&
+                    widget.shape == StickerShape.circle
+                ? ClipOval(child: image)
+                : image,
+          ),
+        ),
+        for (final layer in _state.layers) _buildLayer(layer, side),
+      ],
     );
     return SizedBox.square(
       key: StickerTextEditorScreen.canvasKey,
@@ -258,20 +321,11 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
           onScaleStart: (_) => _onScaleStart(),
           onScaleUpdate: (d) => _onScaleUpdate(d, side),
           onScaleEnd: (_) => _onScaleEnd(),
-          child: Stack(
-            clipBehavior: Clip.hardEdge,
-            children: [
-              Positioned.fill(
-                child: ColoredBox(
-                  color: Colors.white10,
-                  child: widget.shape == StickerShape.circle
-                      ? ClipOval(child: image)
-                      : image,
-                ),
-              ),
-              for (final layer in _state.layers) _buildLayer(layer, side),
-            ],
-          ),
+          child:
+              widget._target is _OverlayEditorTarget &&
+                  widget.shape == StickerShape.circle
+              ? ClipOval(child: canvas)
+              : canvas,
         ),
       ),
     );

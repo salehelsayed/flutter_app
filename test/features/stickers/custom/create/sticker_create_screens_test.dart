@@ -8,12 +8,16 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+// The pinned video_player dependency supplies this controlled platform boundary.
+// ignore: depend_on_referenced_packages
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../../fake_custom_sticker_library.dart';
 
@@ -36,6 +40,70 @@ class _OnePhotoPicker implements MediaPicker {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _ClipVideoPlatform extends VideoPlayerPlatform {
+  StreamController<VideoEvent>? _events;
+  final volumes = <double>[];
+  final looping = <bool>[];
+  final disposed = <int>[];
+  var plays = 0;
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async => 1;
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) {
+    final initialized = VideoEvent(
+      eventType: VideoEventType.initialized,
+      duration: const Duration(seconds: 2),
+      size: const Size(1080, 1920),
+    );
+    // Native player events stay open until the player is released.
+    final events = StreamController<VideoEvent>(
+      onListen: () => _events!.add(initialized),
+      onCancel: () async {},
+    );
+    _events = events;
+    return events.stream;
+  }
+
+  @override
+  Future<void> setLooping(int playerId, bool value) async => looping.add(value);
+
+  @override
+  Future<void> setVolume(int playerId, double value) async =>
+      volumes.add(value);
+
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+
+  @override
+  Future<void> play(int playerId) async {
+    plays++;
+  }
+
+  @override
+  Future<void> pause(int playerId) async {}
+
+  @override
+  Future<Duration> getPosition(int playerId) async => Duration.zero;
+
+  @override
+  Future<void> dispose(int playerId) async {
+    disposed.add(playerId);
+    final events = _events;
+    if (events != null) {
+      await events.close().timeout(const Duration(seconds: 2));
+    }
+  }
+
+  @override
+  Widget buildViewWithOptions(VideoViewOptions options) =>
+      const ColoredBox(color: Colors.blue);
+}
+
 Future<void> _settleUntil(WidgetTester tester, bool Function() done) async {
   for (var i = 0; i < 250 && !done(); i++) {
     await tester.runAsync(
@@ -46,6 +114,124 @@ Future<void> _settleUntil(WidgetTester tester, bool Function() done) async {
 }
 
 void main() {
+  for (final crop in [
+    const Rect.fromLTRB(0, 0.21875, 1, 0.78125),
+    const Rect.fromLTRB(0.25, 0, 0.75, 1),
+    const Rect.fromLTRB(0.1, 0.2, 0.6, 0.7),
+  ]) {
+    testWidgets('clip text preview maps the exact selected crop $crop', (
+      tester,
+    ) async {
+      const viewportKey = Key('clip-viewport');
+      const sourceKey = Key('clip-source');
+      await tester
+          .pumpWidget(
+            MaterialApp(
+              home: Center(
+                child: SizedBox.square(
+                  key: viewportKey,
+                  dimension: 200,
+                  child: StickerClipPreview(
+                    crop: crop,
+                    child: const ColoredBox(key: sourceKey, color: Colors.blue),
+                  ),
+                ),
+              ),
+            ),
+          )
+          .timeout(const Duration(seconds: 2));
+
+      final viewport = tester.getRect(find.byKey(viewportKey));
+      final source = tester.getRect(find.byKey(sourceKey));
+      final selected = Rect.fromLTRB(
+        source.left + source.width * crop.left,
+        source.top + source.height * crop.top,
+        source.left + source.width * crop.right,
+        source.top + source.height * crop.bottom,
+      );
+      expect(selected.left, moreOrLessEquals(viewport.left));
+      expect(selected.top, moreOrLessEquals(viewport.top));
+      expect(selected.right, moreOrLessEquals(viewport.right));
+      expect(selected.bottom, moreOrLessEquals(viewport.bottom));
+    });
+  }
+
+  testWidgets(
+    'clip text route reuses the editor and owns a muted looping player',
+    (tester) async {
+      final original = VideoPlayerPlatform.instance;
+      final video = _ClipVideoPlatform();
+      VideoPlayerPlatform.instance = video;
+      addTearDown(() => VideoPlayerPlatform.instance = original);
+      StickerOverlayEditorResult? result;
+      await tester
+          .pumpWidget(
+            _app(
+              Builder(
+                builder: (context) => Scaffold(
+                  body: TextButton(
+                    onPressed: () => unawaited(
+                      Navigator.of(context)
+                          .push<StickerOverlayEditorResult>(
+                            MaterialPageRoute(
+                              builder: (_) => const StickerClipTextScreen(
+                                clipPath: '/tmp/owned-sticker-clip.mp4',
+                                crop: (
+                                  crop: Rect.fromLTRB(0, 0.21875, 1, 0.78125),
+                                  circle: true,
+                                ),
+                              ),
+                            ),
+                          )
+                          .then((value) {
+                            result = value;
+                          }),
+                    ),
+                    child: const Text('open clip text'),
+                  ),
+                ),
+              ),
+            ),
+          )
+          .timeout(const Duration(seconds: 2));
+      await tester
+          .tap(find.text('open clip text'))
+          .timeout(const Duration(seconds: 2));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 2),
+      );
+
+      expect(find.byType(StickerTextEditorScreen), findsOneWidget);
+      expect(find.byIcon(Icons.text_fields), findsOneWidget);
+      expect(video.volumes.last, 0);
+      expect(video.looping.last, isTrue);
+      expect(video.plays, 1);
+      expect(video.disposed, isEmpty);
+      await tester
+          .tap(find.byTooltip('Cancel'))
+          .timeout(const Duration(seconds: 2));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 2),
+      );
+      expect(result, isA<StickerOverlayEditorCancelled>());
+      // Observe player release at the platform boundary after the route pops.
+      for (var i = 0; i < 40 && video.disposed.isEmpty; i++) {
+        await tester
+            .pump(const Duration(milliseconds: 20))
+            .timeout(const Duration(seconds: 2));
+      }
+      expect(
+        find.byType(StickerClipTextScreen, skipOffstage: false),
+        findsNothing,
+      );
+      expect(video.disposed, [1]);
+    },
+  );
+
   group('centeredSquareCrop', () {
     test('a portrait frame keeps the full width, centred vertically', () {
       expect(

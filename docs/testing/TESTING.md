@@ -7319,6 +7319,28 @@ visible and cannot become an ordinary first-attempt PASS.
   the original integrated assertion failure remains in
   `final-integrated-host-20261111/host-first/affected-conversation-1.raw.log`.
 
+- **Custom sticker clip text:** the creation flow reuses the layered editor for
+  clips, retains the cropped muted looping preview, and distinguishes empty
+  Save from cancellation before export. The flow owns export, admission and
+  temporary-file cleanup; still-image editor results remain unchanged.
+  On `c6db8782` plus the reviewed eight-file clip-text patch, the original
+  player-disposal widget passed once, all 48 focused flag-OFF cases passed,
+  targeted analysis of seven Dart files passed, and the full five-file
+  `custom-stickers-creation-enabled` gate passed 51 cases. These counts overlap.
+  The scoped wrapper overall remains NOT RUN for omitted obligations.
+  Evidence is under `~/.codex/investigations/bl17-remaining-20261117/`
+  (`checks7/`, `mapped8/`), with server originals under
+  `/srv/evidence/codex-astra-bl17-clip-text/`.
+  Preserve the earlier compile, assertion and capacity-stop receipts. An open
+  fake event stream alone did not fix disposal: without an asynchronous
+  `onCancel` callback, Dart returns a root-zone singleton cancellation future,
+  whose late continuation is not flushed by the widget fake-async queue.
+  The fixture now acknowledges cancellation asynchronously in the test zone;
+  exact player ID, route absence, assertions and await bounds remain intact.
+  This is host evidence, not native encoded-frame, device-motion, delivery,
+  visual-parity or signed-artifact proof. The shipping flag and static-poster
+  default remain unchanged.
+
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
   changed or linked files block export rather than downgrade to missing chat

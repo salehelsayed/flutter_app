@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -6,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,7 +90,149 @@ double _angle(WidgetTester tester, String text) {
   return math.atan2(edge.dy, edge.dx);
 }
 
+Future<void> _openOverlayEditor(
+  WidgetTester tester,
+  void Function(StickerOverlayEditorResult?) completed, {
+  StickerShape shape = StickerShape.square,
+}) async {
+  tester.view.physicalSize = const Size(420, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester
+      .pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => unawaited(
+                  Navigator.of(context)
+                      .push<StickerOverlayEditorResult>(
+                        MaterialPageRoute(
+                          builder: (_) => StickerTextEditorScreen.overlay(
+                            preview: const ColoredBox(
+                              key: Key('clip-preview'),
+                              color: Colors.red,
+                            ),
+                            shape: shape,
+                          ),
+                        ),
+                      )
+                      .then(completed),
+                ),
+                child: const Text('open overlay'),
+              ),
+            ),
+          ),
+        ),
+      )
+      .timeout(const Duration(seconds: 2));
+  await tester
+      .tap(find.text('open overlay'))
+      .timeout(const Duration(seconds: 2));
+  await tester.pumpAndSettle(
+    const Duration(milliseconds: 50),
+    EnginePhase.sendSemanticsUpdate,
+    const Duration(seconds: 2),
+  );
+}
+
+Future<void> _awaitOverlayResult(
+  WidgetTester tester,
+  bool Function() completed,
+) async {
+  for (var i = 0; i < 75 && !completed(); i++) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)))
+        .timeout(const Duration(seconds: 2));
+    await tester.pump().timeout(const Duration(seconds: 2));
+  }
+  expect(completed(), isTrue);
+}
+
 void main() {
+  testWidgets('clip text Save returns transparent RGBA without its preview', (
+    tester,
+  ) async {
+    StickerOverlayEditorResult? result;
+    await _openOverlayEditor(tester, (value) => result = value);
+    await _addText(tester, 'H').timeout(const Duration(seconds: 2));
+    await tester
+        .tap(find.text('Save sticker'))
+        .timeout(const Duration(seconds: 2));
+    await _awaitOverlayResult(tester, () => result != null);
+
+    final rgba = (result as StickerOverlayEditorReady).rgba!;
+    expect(rgba, hasLength(512 * 512 * 4));
+    expect(rgba.sublist(0, 4), [0, 0, 0, 0]);
+    final center = 4 * (256 * 512 + 256);
+    expect(rgba.sublist(center, center + 4), [255, 255, 255, 255]);
+  });
+
+  testWidgets('clip text empty Save is ready and Cancel is distinct', (
+    tester,
+  ) async {
+    StickerOverlayEditorResult? result;
+    await _openOverlayEditor(tester, (value) => result = value);
+    await tester
+        .tap(find.text('Save sticker'))
+        .timeout(const Duration(seconds: 2));
+    await _awaitOverlayResult(tester, () => result != null);
+    expect(result, isA<StickerOverlayEditorReady>());
+    expect((result as StickerOverlayEditorReady).rgba, isNull);
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 2),
+    );
+
+    result = null;
+    await tester
+        .tap(find.text('open overlay'))
+        .timeout(const Duration(seconds: 2));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 2),
+    );
+    await tester
+        .tap(find.byTooltip('Cancel'))
+        .timeout(const Duration(seconds: 2));
+    await _awaitOverlayResult(tester, () => result != null);
+    expect(result, isA<StickerOverlayEditorCancelled>());
+  });
+
+  testWidgets('clip circle preview clips text and background together', (
+    tester,
+  ) async {
+    await _openOverlayEditor(tester, (_) {}, shape: StickerShape.circle);
+    await _addText(tester, 'H').timeout(const Duration(seconds: 2));
+
+    final mask = find.descendant(
+      of: find.byKey(StickerTextEditorScreen.canvasKey),
+      matching: find.byType(ClipOval),
+    );
+    expect(mask, findsOneWidget);
+    expect(find.descendant(of: mask, matching: find.text('H')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: mask,
+        matching: find.byKey(const Key('clip-preview')),
+      ),
+      findsOneWidget,
+    );
+    await tester
+        .tap(find.byTooltip('Cancel'))
+        .timeout(const Duration(seconds: 2));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 2),
+    );
+  });
+
   testWidgets('adding a layer shows its text at the canvas centre', (
     tester,
   ) async {

@@ -11,6 +11,7 @@ import 'package:flutter_app/features/stickers/application/method_channel_sticker
 import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
 import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
@@ -309,6 +310,104 @@ class _CircleClip extends CustomClipper<Path> {
   bool shouldReclip(_CircleClip oldClipper) => false;
 }
 
+class StickerClipPreview extends StatelessWidget {
+  const StickerClipPreview({
+    super.key,
+    required this.crop,
+    required this.child,
+  });
+
+  final Rect crop;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => ClipRect(
+      child: Stack(
+        children: [
+          Positioned(
+            left: -constraints.maxWidth * crop.left / crop.width,
+            top: -constraints.maxHeight * crop.top / crop.height,
+            width: constraints.maxWidth / crop.width,
+            height: constraints.maxHeight / crop.height,
+            child: child,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class StickerClipTextScreen extends StatefulWidget {
+  const StickerClipTextScreen({
+    super.key,
+    required this.clipPath,
+    required this.crop,
+  });
+
+  final String clipPath;
+  final StickerClipCrop crop;
+
+  @override
+  State<StickerClipTextScreen> createState() => _StickerClipTextScreenState();
+}
+
+class _StickerClipTextScreenState extends State<StickerClipTextScreen> {
+  late final VideoPlayerController _video = VideoPlayerController.file(
+    File(widget.clipPath),
+  );
+  late final Future<void> _ready = _initialize();
+
+  Future<void> _initialize() async {
+    await _video.initialize();
+    if (!mounted) return;
+    await _video.setVolume(0);
+    await _video.setLooping(true);
+    if (!mounted) return;
+    await _video.play();
+  }
+
+  @override
+  void dispose() {
+    _video.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<void>(
+    future: _ready,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.done &&
+          !snapshot.hasError) {
+        return StickerTextEditorScreen.overlay(
+          preview: StickerClipPreview(
+            crop: widget.crop.crop,
+            child: VideoPlayer(_video),
+          ),
+          shape: widget.crop.circle ? StickerShape.circle : StickerShape.square,
+        );
+      }
+      final l10n = AppLocalizations.of(context)!;
+      return Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            tooltip: l10n.btn_cancel,
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(const StickerOverlayEditorCancelled()),
+          ),
+        ),
+        body: Center(
+          child: snapshot.hasError
+              ? Text(l10n.stickers_save_failed)
+              : const CircularProgressIndicator(),
+        ),
+      );
+    },
+  );
+}
+
 /// A device without subject extraction: every photo goes straight to crop.
 final class UnsupportedStickerCutout implements StickerCutoutService {
   const UnsupportedStickerCutout();
@@ -389,8 +488,22 @@ Future<void> openStickerCreate(
       ),
       editStill: (bytes, shape) async =>
           _editInto(navigator, bytes, shape, await temporaryDirectory()),
-      exportClip: (path, crop) =>
-          clips.export(clipPath: path, crop: crop.crop, circle: crop.circle),
+      editClipText: (path, crop) async {
+        if (!context.mounted) return const StickerOverlayEditorCancelled();
+        return await navigator.push<StickerOverlayEditorResult>(
+              MaterialPageRoute(
+                builder: (_) =>
+                    StickerClipTextScreen(clipPath: path, crop: crop),
+              ),
+            ) ??
+            const StickerOverlayEditorCancelled();
+      },
+      exportClip: (path, crop, overlay) => clips.export(
+        clipPath: path,
+        crop: crop.crop,
+        circle: crop.circle,
+        textOverlay: overlay,
+      ),
       showNoSubject: () => messenger.showSnackBar(
         SnackBar(content: Text(l10n.stickers_no_subject)),
       ),

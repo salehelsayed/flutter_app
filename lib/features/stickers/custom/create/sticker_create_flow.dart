@@ -3,6 +3,7 @@ import 'dart:ui' show Rect;
 
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
@@ -51,6 +52,7 @@ final class StickerCreateFlow {
     required this.editStill,
     required this.exportClip,
     required this.showNoSubject,
+    required this.editClipText,
   });
 
   final CustomStickerLibrary library;
@@ -63,6 +65,11 @@ final class StickerCreateFlow {
   final Future<void> Function(String path) deleteFile;
   final Future<StickerStillCrop?> Function(String photoPath) cropStill;
   final Future<StickerClipCrop?> Function(String clipPath) cropClip;
+  final Future<StickerOverlayEditorResult> Function(
+    String clipPath,
+    StickerClipCrop crop,
+  )
+  editClipText;
   final Future<StickerEditorResult> Function(
     Uint8List bytes,
     StickerShape shape,
@@ -71,6 +78,7 @@ final class StickerCreateFlow {
   final Future<NormalizedStickerAsset?> Function(
     String clipPath,
     StickerClipCrop crop,
+    Uint8List? textOverlay,
   )
   exportClip;
   final void Function() showNoSubject;
@@ -136,7 +144,14 @@ final class StickerCreateFlow {
 
   Future<NormalizedStickerAsset?> _clip(String clip) async {
     final crop = await cropClip(clip);
-    if (crop == null) return null;
-    return exportClip(clip, crop);
+    if (crop == null || _cancelled) return null;
+    final edited = await editClipText(clip, crop);
+    if (_cancelled || edited is! StickerOverlayEditorReady) return null;
+    final overlay = edited.rgba;
+    return exportClip(
+      clip,
+      crop,
+      overlay == null ? null : Uint8List.fromList(overlay),
+    );
   }
 }

@@ -5509,18 +5509,22 @@
         "--no-pub",
         "--concurrency=4",
         "--dart-define=CUSTOM_STICKERS_ENABLED=true",
+        "test/features/stickers/custom/create/sticker_create_flow_test.dart",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/custom/editor/sticker_text_editor_screen_test.dart",
         "test/features/stickers/presentation/custom_sticker_scope_test.dart",
         "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
       "paths": [
+        "test/features/stickers/custom/create/sticker_create_flow_test.dart",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/custom/editor/sticker_text_editor_screen_test.dart",
         "test/features/stickers/presentation/custom_sticker_scope_test.dart",
         "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
       "success_marker": "All tests passed!",
-      "boundary": "Production sticker creation supplies the real cutout service behind its compile-time gate, uses validated native cutout bytes when ready, preserves crop fallback, and cleans owned files on cancellation. A received-photo action cannot open an editor or show late feedback after its originating chat accepts Back, including the still-mounted reverse transition.",
-      "limitations": "Host widget tests use real PNG files, the production Dart cutout service with a controlled native channel, and a real Navigator with the production chat. Actual model availability, segmentation quality, device cost and live navigation remain separate proof. Default-off counterparts run in the selected sticker and conversation host lanes.",
+      "boundary": "Production sticker creation supplies the real cutout service behind its compile-time gate, uses validated native cutout bytes when ready, preserves crop fallback, and cleans owned files on cancellation. Clip text approval precedes export, forwards an independent RGBA overlay, distinguishes empty Save from cancellation, and preserves still editor results. Preview checks bind the exact crop, circle composition and owned muted looping player. A received-photo action cannot open an editor or show late feedback after its originating chat accepts Back, including the still-mounted reverse transition.",
+      "limitations": "Host widget tests use real PNG files, the production Dart cutout service with a controlled native channel, a controlled video-player platform, and a real Navigator with the production chat. Overlay pixel and flow checks do not prove native frame decoding, physical capture, encoded animation delivery or signed artifacts. Actual model availability, segmentation quality, device cost and live navigation remain separate proof. Default-off counterparts run in the selected sticker and conversation host lanes.",
       "requirements": [
         "flutter"
       ],
@@ -7446,8 +7450,12 @@
         "lib/features/stickers/application/method_channel_sticker_cutout_service.dart",
         "lib/features/stickers/application/received_sticker_feedback.dart",
         "lib/features/stickers/custom/create/*",
+        "lib/features/stickers/custom/editor/sticker_text_editor_screen.dart",
+        "lib/features/stickers/custom/editor/sticker_overlay_editor_result.dart",
         "lib/features/stickers/presentation/custom_sticker_scope.dart",
+        "test/features/stickers/custom/create/sticker_create_flow_test.dart",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
+        "test/features/stickers/custom/editor/sticker_text_editor_screen_test.dart",
         "test/features/stickers/presentation/custom_sticker_scope_test.dart",
         "test/features/conversation/presentation/screens/received_sticker_route_exit_test.dart"
       ],
@@ -7455,7 +7463,7 @@
         "custom-stickers-creation-enabled",
         "affected-stickers"
       ],
-      "why": "The production create and received-photo routes must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lanes; default-off tests cannot prove native cutout composition or the accepted-Back interval of an enabled received-sticker action."
+      "why": "The production create and received-photo routes must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lanes; default-off tests cannot prove native cutout composition or the accepted-Back interval of an enabled received-sticker action. Clip creation and shared text-editor changes also select the enabled overlay approval, cancellation and preview checks."
     }
   ],
   "documentation_only": [
