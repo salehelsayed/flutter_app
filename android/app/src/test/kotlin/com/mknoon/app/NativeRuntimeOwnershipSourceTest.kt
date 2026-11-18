@@ -69,7 +69,7 @@ class NativeRuntimeOwnershipSourceTest {
         val shutdownStart = source.indexOf("Future<bool> shutdownCanonicalRuntime()", delegate)
         val viaSequence = source.indexOf("canonicalRuntimeShutdownSequence.shutdown()", shutdownStart)
         val channel = source.indexOf("'mknoon/canonical_runtime_shutdown'", viaSequence)
-        val open = source.indexOf("await canonicalWritableRuntimeSession.open(", channel)
+        val open = source.indexOf("canonicalWritableRuntimeSession.open(", channel)
 
         assertTrue(construct >= 0)
         assertTrue(closeCallback > construct)
