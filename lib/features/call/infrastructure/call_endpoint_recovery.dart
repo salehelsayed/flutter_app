@@ -15,15 +15,24 @@ final class CallEndpointRecovery {
     required this.budget,
     required ResolvedCallEndpoint admitted,
     this.bindingCurrent,
-  }) : admitted = ResolvedCallEndpoint.frozen(admitted);
+  }) : admitted = ResolvedCallEndpoint.frozen(admitted),
+       _preferenceEpochFloor = admitted.preferenceEpoch;
 
   final CallRecoveryBudget budget;
   final ResolvedCallEndpoint admitted;
   final bool Function()? bindingCurrent;
+  int _preferenceEpochFloor;
   int _lookups = 0;
   ResolvedCallEndpoint? _verified;
   bool _transient = false;
   bool _denied = false;
+
+  ResolvedCallEndpoint? get _fallbackEndpoint {
+    final endpoint = _verified ?? (_transient ? admitted : null);
+    return endpoint != null && endpoint.preferenceEpoch >= _preferenceEpochFloor
+        ? endpoint
+        : null;
+  }
 
   void _check() {
     if (bindingCurrent?.call() == false) _deny();
@@ -107,7 +116,7 @@ final class CallEndpointRecovery {
     try {
       await local();
       if (_lookups >= 3) {
-        final reusable = _verified ?? (_transient ? admitted : null);
+        final reusable = _fallbackEndpoint;
         if (reusable == null) throw const CallEndpointRecoveryUnavailable();
         _record(
           'reuse',
@@ -133,7 +142,8 @@ final class CallEndpointRecovery {
         _transient = true;
         await local();
         _record('pin', 'lookup_timeout', durationMs: durationMs());
-        return _verified ?? admitted;
+        return _fallbackEndpoint ??
+            (throw const CallEndpointRecoveryUnavailable());
       } on CallAuthorityException catch (error) {
         if (error.code != CallAuthorityErrorCode.bridgeFailure ||
             !(error.isTransient ||
@@ -143,7 +153,8 @@ final class CallEndpointRecovery {
         _transient = true;
         await local();
         _record('pin', 'transport_unavailable', durationMs: durationMs());
-        return _verified ?? admitted;
+        return _fallbackEndpoint ??
+            (throw const CallEndpointRecoveryUnavailable());
       }
       await local();
       if (remote == null) {
@@ -161,8 +172,12 @@ final class CallEndpointRecovery {
         wakeHandleGrant: grant,
       );
       await local();
-      if (!_sameAuthority(admitted, endpoint)) _deny();
+      if (!_sameAuthority(admitted, endpoint) ||
+          endpoint.preferenceEpoch < _preferenceEpochFloor) {
+        _deny();
+      }
       _verified = ResolvedCallEndpoint.frozen(endpoint);
+      _preferenceEpochFloor = endpoint.preferenceEpoch;
       _record('lookup', 'verified', durationMs: durationMs());
       return _verified!;
     } on CallEndpointRecoveryUnavailable {
@@ -194,7 +209,6 @@ final class CallEndpointRecovery {
       a.mlKemPublicKey == b.mlKemPublicKey &&
       a.admissionAuthority == b.admissionAuthority &&
       a.deviceKeyEpoch == b.deviceKeyEpoch &&
-      a.preferenceEpoch == b.preferenceEpoch &&
       a.platform == b.platform &&
       a.routingHandle == b.routingHandle &&
       a.wakeHandle == b.wakeHandle &&

@@ -13063,6 +13063,16 @@ visible and cannot become an ordinary first-attempt PASS.
   than resetting it. [Episode and focus evidence](../../.codex-test-logs/audio-call-beta-rest-20260917/recovery/source-review.json)
   and the [queued-timeout regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/reconnect/audio-beta-timer-episode-red.log)
   are source proofs, separate from historical secure-transition device causes.
+  **Endpoint recovery revision floor:** the retained `a683cb189` kx0002 causal
+  audit verified a pre-End rejection solely on `preferenceEpoch` after an
+  active-call resume publication. Publisher/composition code is byte-identical
+  to C6; the B14 differential and initial ICE-loss cause remain unknown. Linux
+  RED `b7d3df2b3` has five intended renewal failures and 30 passing controls
+  ([receipt](../../.codex-test-logs/b14-recovery-epoch-fix-source/parent-RED-runtime-adoption.json)).
+  The retained regression covers equal/newer same-authority renewal, a floor
+  surviving endpoint absence, signed rollback and transient/timeout/quota
+  fallback, with strict authority checks and the original deadline preserved.
+  Host fakes are not device proof; GREEN and the fixed device run remain pending.
   **VC-024 virtual long-call preservation:** the coordinator and screen tests
   cover a virtual 30-minute call, repeated recovery, stable connected time,
   terminal history duration, cleanup acknowledgement, screen remount/disposal,
