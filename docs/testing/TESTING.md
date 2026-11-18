@@ -13072,7 +13072,9 @@ visible and cannot become an ordinary first-attempt PASS.
   The retained regression covers equal/newer same-authority renewal, a floor
   surviving endpoint absence, signed rollback and transient/timeout/quota
   fallback, with strict authority checks and the original deadline preserved.
-  Host fakes are not device proof; GREEN and the fixed device run remain pending.
+  Scoped Linux GREEN `637073c75` passed 43 host cases
+  ([receipt](../../.codex-test-logs/b14-recovery-epoch-fix-source/green/parent-focused-GREEN-runtime-adoption.json));
+  host fakes are not device proof, and the fixed device run remains pending.
   **VC-024 virtual long-call preservation:** the coordinator and screen tests
   cover a virtual 30-minute call, repeated recovery, stable connected time,
   terminal history duration, cleanup acknowledgement, screen remount/disposal,

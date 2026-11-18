@@ -12825,6 +12825,11 @@ void _vui7LegacyAndBridgeTests() {
       fixture.graphs.single.coordinator.activeSession?.incomingValidated == true);
     final graph = fixture.graphs.single;
     expect(graph.videoContexts!.read(invite.callId)!.wireVersion, CallWireVersion.v1);
+    await _untilGraphVideo(() {
+      final shown =
+          (fixture.composition as ForegroundCallCapability).current?.session;
+      return shown?.callId == invite.callId && shown?.state == CallState.ringing;
+    });
     final terminal = await _vui7EndProjection(fixture, event: CallEventType.decline);
     expect(terminal.terminalMedia, CallMediaKind.audio);
     expect(terminal.video, isNull);
