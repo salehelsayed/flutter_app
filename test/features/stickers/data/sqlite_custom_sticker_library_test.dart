@@ -598,6 +598,17 @@ void main() {
       expect((stored.asset.frameCount, stored.asset.durationMs), (2, 167));
       expect((rowBefore['frame_count'], rowBefore['duration_ms']), (2, 167));
 
+      final canonicalPrepared = await value.prepareSend(
+        stored.id,
+        representation: CustomStickerSendRepresentation.canonical,
+      );
+      final canonicalBytes = await canonicalPrepared.file.readAsBytes();
+      expect(canonicalBytes, orderedEquals(original));
+      expect(canonicalPrepared.budgetBytes, original.length);
+      expect(canonicalPrepared.durationMs, 167);
+      expect(canonicalPrepared.width, 16);
+      expect(canonicalPrepared.height, 16);
+
       final prepared = await value.prepareSend(
         stored.id,
         representation: defaultCustomStickerSendRepresentation,
@@ -648,6 +659,7 @@ void main() {
       ]) {
         expect(rowAfter[field], rowBefore[field], reason: field);
       }
+      await canonicalPrepared.file.delete();
       await prepared.file.delete(); // Composer-owned poster lifetime.
       expect(await _files(temporary), temporaryBefore);
       expect(
