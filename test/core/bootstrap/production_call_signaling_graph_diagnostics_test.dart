@@ -246,7 +246,7 @@ void main() {
       final diagnostics = await installDiagnostics();
       final traceId = diagnostics.beginAttempt();
       final authority = _Authority(endpoint: _endpoint());
-      final available = await diagnostics.runWithTrace(
+      final probe = await diagnostics.runWithTrace(
         traceId,
         () => _probe(
           authority: authority,
@@ -260,7 +260,7 @@ void main() {
           ),
         ),
       );
-      expect(available, deviceCount == 1);
+      expect(probe.available, deviceCount == 1);
       expect(authority.reads, deviceCount == 1 ? 1 : 0);
       final events = await exportedEvents(diagnostics);
       final snapshots = events

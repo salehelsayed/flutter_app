@@ -93,6 +93,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   }
 
   var repairRequested = false;
+  var relayEndpointLoaded = false;
   try {
     resolver.requireLocalAuthority(
       contactAccountPeerId: contactAccountPeerId,
@@ -105,6 +106,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
       stage: 'relay_endpoint_load',
       load: () => authorityClient.getEndpoint(contactAccountPeerId),
     );
+    relayEndpointLoaded = true;
     Future<void> reload() async {
       await beforeOperation?.call();
       roster = await rosterProvider.loadForContact(contactAccountPeerId);
@@ -246,11 +248,13 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     rethrow;
   } catch (_) {
     if (repairRequested) recordRepair('failed', reason: 'unknown');
-    emitCallEndpointResolutionResult(
-      stage: 'endpoint_resolve',
-      outcome: 'error',
-      reason: 'dependency_error',
-    );
+    if (relayEndpointLoaded) {
+      emitCallEndpointResolutionResult(
+        stage: 'endpoint_resolve',
+        outcome: 'error',
+        reason: 'dependency_error',
+      );
+    }
     rethrow;
   }
 }
