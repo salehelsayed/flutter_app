@@ -738,7 +738,6 @@ void main() {
     ) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       await tester.pumpWidget(
         buildApp(
           baseAttachment,
@@ -752,6 +751,7 @@ void main() {
       final size = tester.getSize(control);
       expect(size.width, greaterThanOrEqualTo(44));
       expect(size.height, greaterThanOrEqualTo(44));
+      semantics.dispose();
     }, timeout: const Timeout(Duration(seconds: 10)));
 
     testWidgets(
