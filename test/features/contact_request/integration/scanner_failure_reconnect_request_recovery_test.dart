@@ -3,12 +3,12 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
-import 'package:flutter_app/features/contact_request/application/contact_request_retry_journal.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
@@ -351,12 +351,15 @@ void main() {
             receiver.start();
             final coordinator = KeyExchangeRetryCoordinator(
               performRetry: () async {
-                final count = await retryIncompleteKeyExchanges(
-                  contactRepo: aliceContacts,
-                  identityRepo: aliceIdentity,
-                  p2pService: aliceP2p,
-                  bridge: bridge,
-                  secureKeyStore: keys,
+                final count = await withClock(
+                  Clock.fixed(DateTime.now()),
+                  () => retryIncompleteKeyExchanges(
+                    contactRepo: aliceContacts,
+                    identityRepo: aliceIdentity,
+                    p2pService: aliceP2p,
+                    bridge: bridge,
+                    secureKeyStore: keys,
+                  ),
                 );
                 if (!retryCompleted.isCompleted) retryCompleted.complete(count);
                 return count;
@@ -375,17 +378,6 @@ void main() {
             aliceP2p.reconnect();
             final count = await retryCompleted.future.timeout(
               const Duration(seconds: 10),
-            );
-            final rawJournal = await keys.read(contactRequestRetryJournalKey);
-            final journalRows = rawJournal == null
-                ? const <dynamic>[]
-                : (jsonDecode(rawJournal) as Map<String, dynamic>)['entries']
-                      as List<dynamic>;
-            final scannedAt = (await aliceContacts.getContact(
-              _bob.peerId,
-            ))?.scannedAt;
-            print(
-              'BL41 retry count=$count now=${DateTime.now().millisecondsSinceEpoch} scannedAt=$scannedAt entries=${journalRows.map((row) => {'attempts': row['attempts'], 'nextAttemptAtMs': row['nextAttemptAtMs'], 'expiresAtMs': row['expiresAtMs'], 'hasEnvelope': row['envelope'] != null}).toList()}',
             );
             if (recoveryState == _RecoveryState.ready) {
               expect(count, 1);

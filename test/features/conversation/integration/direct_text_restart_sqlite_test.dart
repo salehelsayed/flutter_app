@@ -646,11 +646,15 @@ void main() {
     final burst = await Future.wait([
       for (var i = 0; i < 100; i++) sender.send(i),
     ]);
+    final wireEnvelopes = [
+      ...sender.transport.sentChatEnvelopes,
+      ...sender.transport.storedChatEnvelopes,
+    ];
     for (final sent in burst) {
       expect(sent.$1, SendChatMessageResult.success);
       ids.add(sent.$2!.id);
       // Replay the actual serialized envelope, not a regenerated message.
-      final envelope = sender.transport.sentChatEnvelopes.firstWhere(
+      final envelope = wireEnvelopes.firstWhere(
         (wire) => (jsonDecode(wire) as Map)['id'] == sent.$2!.id,
       );
       expect((jsonDecode(envelope) as Map)['id'], sent.$2!.id);
