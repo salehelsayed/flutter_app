@@ -7232,15 +7232,14 @@ visible and cannot become an ordinary first-attempt PASS.
   canonical dedup, both quota limits, serialized admission, exact reorder,
   owned deletion, independent canonical/poster sends, tamper rejection and
   retirement/access revocation while normalization is paused. The core-owned
-  `defaultCustomStickerSendRepresentation` is temporarily `staticPoster` until
-  the permitted supported baseline has accepted animation-decoding proof. The
-  real-file library cases apply this default to both static and animated assets:
-  static bytes stay exact, the animated send contains the bounded first visual
-  frame, and the stored animation remains unchanged. Explicit canonical
-  preparation stays covered; changing the default later needs one production
-  constant change, not a capability handshake or per-recipient representation.
-  These host codec checks do not close v1 animated-delivery acceptance; current
-  receiver animation and supported-baseline compatibility need separate proof.
+  `defaultCustomStickerSendRepresentation` is `canonical` for enabled tester
+  acceptance, with no capability handshake or per-recipient representation. The
+  real-file library cases require exact animated bytes from that default and a
+  bounded first visual frame from explicit `staticPoster`; the stored animation
+  remains unchanged. Flutter engine decoding covers two distinct frames in
+  `/srv/evidence/kimi1-bl17-motion5-20261118/`. These host codec checks do not
+  close v1 animated-delivery acceptance; current receiver motion and an older
+  tester's static-frame-or-placeholder behavior need separate device proof.
   The focused policy receipt is `default-send-policy-focused-verdict.json` in
   the evidence directory below. Listing does not
   prune missing-file accounting rows. The implementation assumes one library

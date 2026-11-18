@@ -20,13 +20,11 @@ final class CustomSticker {
 /// The transport selects one representation for the complete logical send.
 enum CustomStickerSendRepresentation { canonical, staticPoster }
 
-/// Interim policy until the supported baseline is proven to decode animation.
-/// Static assets retain their canonical bytes; animations use a sanitized first
-/// frame. Select once for the whole logical send and reuse its prepared bytes
-/// for every recipient and retry. Accepted baseline proof permits changing this
-/// value to canonical without changing the preparation API.
+/// Canonical bytes preserve animation. Select once for the whole logical send
+/// and reuse its prepared bytes for every recipient and retry. The staticPoster
+/// option remains the explicit compatibility fallback.
 const CustomStickerSendRepresentation defaultCustomStickerSendRepresentation =
-    CustomStickerSendRepresentation.staticPoster;
+    CustomStickerSendRepresentation.canonical;
 
 enum CustomStickerErrorCode {
   disabled,

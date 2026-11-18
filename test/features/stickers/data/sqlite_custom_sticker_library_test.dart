@@ -560,7 +560,7 @@ void main() {
   );
 
   test(
-    'default send policy preserves the first frame and leaves canonical animation intact',
+    'explicit staticPoster preserves the first frame and leaves canonical animation intact',
     () async {
       final value = library();
       final first = _pixels(0)..frameDuration = 83;
@@ -600,7 +600,7 @@ void main() {
 
       final canonicalPrepared = await value.prepareSend(
         stored.id,
-        representation: CustomStickerSendRepresentation.canonical,
+        representation: defaultCustomStickerSendRepresentation,
       );
       final canonicalBytes = await canonicalPrepared.file.readAsBytes();
       expect(canonicalBytes, orderedEquals(original));
@@ -611,7 +611,7 @@ void main() {
 
       final prepared = await value.prepareSend(
         stored.id,
-        representation: defaultCustomStickerSendRepresentation,
+        representation: CustomStickerSendRepresentation.staticPoster,
       );
       expect(prepared.file.path, isNot(stored.asset.filePath));
       expect(prepared.file.path, isNot(source.filePath));
