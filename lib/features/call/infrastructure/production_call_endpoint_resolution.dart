@@ -92,6 +92,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     );
   }
 
+  var repairRequested = false;
   try {
     resolver.requireLocalAuthority(
       contactAccountPeerId: contactAccountPeerId,
@@ -142,7 +143,6 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
         'wakeHandleGrantPresent': wakeHandleGrant != null,
       },
     );
-    var repairRequested = false;
     while (true) {
       await beforeOperation?.call();
       recordInput();
