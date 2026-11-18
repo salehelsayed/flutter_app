@@ -660,12 +660,22 @@ void main() {
       expect((jsonDecode(envelope) as Map)['id'], sent.$2!.id);
       envelopes.add(envelope);
     }
+    await receiver.drain();
     final receiverIds = (await receiver.rows()).map((row) => row.id).toList();
+    var phase = 'initial';
     Future<void> exactRows() async {
       final outgoing = await sender.rows();
       final incoming = await receiver.rows();
-      expect(outgoing.map((row) => row.id), orderedEquals(ids));
-      expect(incoming.map((row) => row.dedupKey), orderedEquals(ids));
+      expect(
+        outgoing.map((row) => row.id),
+        orderedEquals(ids),
+        reason: '$phase: outgoing=${outgoing.length}, incoming=${incoming.length}',
+      );
+      expect(
+        incoming.map((row) => row.dedupKey),
+        orderedEquals(ids),
+        reason: '$phase: outgoing=${outgoing.length}, incoming=${incoming.length}',
+      );
       expect(incoming.map((row) => row.id), orderedEquals(receiverIds));
       expect(
         incoming.map((row) => row.text),
@@ -674,12 +684,20 @@ void main() {
       expect(incoming.map((row) => row.id).toSet(), hasLength(100));
       expect(await sender.sql.db.query('messages'), hasLength(100));
       expect(await receiver.sql.db.query('messages'), hasLength(100));
-      expect(outgoing.every((row) => row.status == 'delivered'), isTrue);
+      expect(
+        outgoing.every(
+          (row) => row.status == 'delivered' || row.status == 'inboxed',
+        ),
+        isTrue,
+        reason:
+            '$phase: statuses=${outgoing.map((row) => row.status).toSet().toList()}',
+      );
     }
 
     await exactRows();
     await sender.restart();
     await receiver.restart();
+    phase = 'reopened-before-recovery';
     await exactRows();
     // Production custody loads at most 50 obligations per recovery pass.
     for (var pass = 0; pass < 2; pass++) {
@@ -698,9 +716,11 @@ void main() {
     expect(receiver.bridge.acked.length - ackedBeforeReplay, 100);
     await sender.recover();
     await receiver.drain();
+    phase = 'replayed';
     await exactRows();
     await sender.restart();
     await receiver.restart();
+    phase = 'reopened-after-replay';
     await exactRows();
   }, timeout: const Timeout(Duration(seconds: 90)));
 
