@@ -3551,6 +3551,38 @@ and fixture-setup evidence under `.codex-test-logs/astra-batch6-qr/` remains
 historical evidence, superseded only for these seven fixed contracts. CR-025's
 older unreadable/future acceptance note is superseded by current rejection and
 active negative/fresh controls.
+
+BL-40's signed contact QR relay hint uses the first effective address from the
+existing `MKNOON_RELAY_ADDRESSES` resolver. At
+`18adb28697ff9492981eec190ee8fae962e1abd0`, configured builds advertise their
+configured hint while default and all-blank configurations retain the original
+production WSS value. The `rv` field remains one string; canonical keys, signing,
+verification and legacy QR parsing are unchanged. HIGH pairing review passed.
+The causal RED had one configured-hint assertion failure and six controls
+passing. The same seven-case builder file then passed under configured, default
+and blank CSV builds, and the whole relay-resolver file passed 74 cases: 95
+focused case executions, with the builder cases repeated across configurations.
+
+The required affected-identity run remains FAILED: all 108 manifest files ran,
+with 1,177 passes, one raw widget ERROR and no skips or unfinished cases. The
+CR-012 scanner reconnect `ready` case expected retry count 1 but received 0 at
+`scanner_failure_reconnect_request_recovery_test.dart:379`. Existing exact-source
+C6 full-host evidence reproduces the same name, source hash, printed assertion
+and raw ERROR category. Its original `dart-04/test.raw.jsonl` SHA-256 is
+`41322b6f1031a7e78e8690c669d38a646ded81164667c30bd9b2e248d61e5efd`
+under `/srv/evidence/codex2-c6-full-host-baseline-20261117/`. This establishes
+a pre-existing failure, not its cause, a flake classification or a family waiver.
+No scanner fix, assertion retry or family rerun followed. Only the originally
+unrun validation and explicit RED-base preview then ran; both passed, with one
+changed file, zero unmapped changes and 14 selected rows. The identity row keeps
+its FAIL and the other 13 row commands remain required and NOT RUN for the next
+batch. Twelve source pins, the unchanged RED/GREEN test blob and empty owned
+process groups matched. Evidence and the exact C6 extraction are under
+`~/.codex/investigations/bl40-qr-relay-hint-20261118/`, especially
+`green-18adb2869/actual-green-first/scoped-actual.json` and
+`metadata-after-family-failure-actual.json`. Focused payload/resolver proof does
+not certify the failed family, complete batch or a published artifact.
+
 This host evidence does not cover camera decoding, native crypto, physical scans,
 OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
 
