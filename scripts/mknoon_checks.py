@@ -373,6 +373,15 @@ def command_for(check, root, files):
     return check.get('command', []), check.get('paths', [])
 
 
+def device_continuation_command(command, enabled):
+    command = list(command)
+    if (enabled and command[:3] == ['dart', 'run',
+            'integration_test/scripts/run_production_audio_call_sims.dart']
+            and '--continue-on-failure' not in command):
+        command.append('--continue-on-failure')
+    return command
+
+
 def whole_flutter_prefix(check):
     """Recognize only the existing unfiltered, explicit-file command recipe."""
     paths, command = check.get('selected_paths', []), check.get('command', [])
@@ -876,10 +885,12 @@ def make_plan(args, root, rules, *, capture_toolchains=True):
     for c in selection['selected']:
         if c['kind'] == 'flutter': c['workers'] = getattr(args, 'flutter_workers', 1)
         c['command'], c['selected_paths'] = command_for(c, root, files)
+        c['command'] = device_continuation_command(c['command'], getattr(args, 'continue_device_campaigns', False))
     known = sum(c.get('estimated_seconds') or 0 for c in selection['selected'])
     return {'schema_version':1, 'mode':args.mode, 'baseline':baseline,
             'baseline_provenance':'operator-supplied published revision' if args.mode == 'release' else 'explicit comparison revision',
             'candidate_build': args.build_label, 'identity':identity,
+            'execution_settings': {'continue_device_campaigns':getattr(args, 'continue_device_campaigns', False)},
             'toolchains':toolchain_identity(root) if capture_toolchains else {}, 'changes':changes,
             'estimated_test_seconds_known':known,
             'runtime_unknown_checks':[c['id'] for c in selection['selected'] if c.get('estimated_seconds') is None],
@@ -925,6 +936,7 @@ def _main(argv=None, managed=None):
     parser.add_argument('--build-label', default='', help='Intended signed version, e.g. 1.0.1(117); not proof of artifact version')
     parser.add_argument('--only', help='Comma-separated diagnostic subset; required omitted checks stay NOT RUN')
     parser.add_argument('--rerun-failed', action='store_true', help='One host diagnostic rerun; devices require cleanup review and a fresh run; preserve first failure')
+    parser.add_argument('--continue-device-campaigns', action='store_true', help='Continue independent non-legacy device campaigns after failure; retain cleanup obligations and cancel immediately for unsafe phone/artifact state')
     parser.add_argument('--evidence', type=Path)
     parser.add_argument('--candidate-artifact', action='append', type=Path, default=[])
     parser.add_argument('--device-config', type=Path, help='Ignored JSON attesting disposable accounts/devices/services')
@@ -1204,6 +1216,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     artifact_hashes = {p.name:file_hash(p) for p in args.candidate_artifact}
     if len(artifact_hashes) != len(args.candidate_artifact): raise InvalidPlan('Candidate artifact basenames must be unique')
     only = set(args.only.split(',')) if args.only else None
+    continue_device_campaigns = plan.get('execution_settings', {}).get('continue_device_campaigns', False)
     if only and only - {c['id'] for c in plan['selected']}:
         raise InvalidPlan('Unknown/unselected --only check: ' + ', '.join(sorted(only - {c['id'] for c in plan['selected']})))
     results = []
@@ -1260,7 +1273,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                 row.update(status='BLOCKED', checkpoint='prerequisite_unavailable', reasons=c['blocked_prerequisites'])
             elif c['kind'] in runner_blocked:
                 row.update(status='NOT RUN', checkpoint='shared_runner_startup_failed')
-            elif is_campaign(c) and device_cleanup_pending and not per_route_legacy(c):
+            elif (is_campaign(c) and device_cleanup_pending and not per_route_legacy(c)
+                    and (not continue_device_campaigns or c['kind'] == 'legacy')):
                 row.update(status='NOT RUN', checkpoint='device_cleanup_review_required')
             elif is_campaign(c) and prerequisite_failed:
                 row.update(status='NOT RUN', checkpoint='host_prerequisite_failed')
@@ -1491,8 +1505,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 continue
                             if len(active) >= jobs: continue
                             if any(d not in results_by_id for d in c.get('dependencies', [])): continue
-                            # Device failure/cleanup barriers remain invocation-wide. All
-                            # host prerequisites finish before a campaign acquires leases.
+                            # Host prerequisites finish before a campaign acquires leases.
+                            # Continuation never bypasses explicit dependency gates.
                             if is_campaign(c) and any(
                                     x['id'] in host_prerequisite_ids
                                     for x in pending + list(active.values()) if x is not c): continue
@@ -1548,6 +1562,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     report = {**{k:plan[k] for k in ('mode','baseline','candidate_build','identity','not_selected')},
               'obligations': obligation_results(plan.get('obligations', []), results_by_id),
               'scheduling': {'jobs': jobs, 'max_observed_concurrency': max_running},
+              'execution_settings':plan.get('execution_settings', {}),
               'capture_budget': {'per_stream_bytes': capture_budget.stream_limit,
                                  'per_run_bytes': capture_budget.run_limit,
                                  'charged_bytes': capture_budget.used},
@@ -1840,13 +1855,14 @@ def make_full_plan(args, root, rules, *, capture_toolchains=True):
     if not args.local and git(root,'status','--porcelain','--untracked-files=normal').strip():
         raise InvalidPlan('Full source is dirty; use --local or clean checkout')
     files = source_files(root)
-    plan = {'execution_settings': {'jobs':getattr(args,'jobs',1), 'flutter_workers':getattr(args,'flutter_workers',1), 'sims_jobs':getattr(args,'sims_jobs',1)},
+    plan = {'execution_settings': {'jobs':getattr(args,'jobs',1), 'flutter_workers':getattr(args,'flutter_workers',1), 'sims_jobs':getattr(args,'sims_jobs',1),
+                                   'continue_device_campaigns':getattr(args,'continue_device_campaigns',False)},
             'mode':'full', 'baseline':baseline, 'candidate_build':args.build_label,
             'toolchains':toolchain_identity(root) if capture_toolchains else {},
             'identity':source_identity(root,files,rules), 'not_selected':[], 'unmapped_changes':[], 'selected':[]}
     for c in rules['full_commands']:
         check = dict(c)
-        check['command'] = list(c['command'])
+        check['command'] = device_continuation_command(c['command'], getattr(args, 'continue_device_campaigns', False))
         if c['kind'] == 'sims' and not c.get('adapter') and getattr(args, 'sims_jobs', 1) > 1:
             check['command'].append('--simultaneous')
         check['selected_paths'] = expand_paths(root, c.get('paths',[]), files) if c['kind'] == 'flutter' else c.get('paths',[])

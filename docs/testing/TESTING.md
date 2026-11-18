@@ -1174,14 +1174,24 @@ app state, and any temporary relay changes. Follow the user's explicit retention
 instructions for authorized changes. Never copy private PIN/unlock helpers into
 shared tooling or put secrets in a report.
 
-After a launched device campaign fails or blocks, the wrapper preserves the
-first result, sets `cleanup_review_required`, and leaves later device campaigns
-`NOT RUN`. It does not automatically retry devices even with `--rerun-failed`.
-The agent must diagnose the failure and verify cleanup before a fresh invocation;
-the wrapper cannot certify that human/agent review occurred. Keep the original
-failure visible when recording a later diagnostic success. Identify timing
-problems with existing causal tests and monotonic timing; do not move assertions
-or lengthen deadlines merely to obtain a pass.
+By default, a launched device campaign failure preserves its first result, sets
+`cleanup_review_required`, and leaves later device campaigns `NOT RUN`. Owner
+direction on 2026-11-18 (Kayan `m-970aa69b`) authorizes Batch 15 to use
+`--continue-device-campaigns`: collect failures from later independent campaigns
+and use the existing SIMS `--continue-on-failure` for independent rows. Preserve
+the actual dependency graph, prerequisites, leases, artifact/report verification,
+and owned-state restoration. Do not apply this setting to the legacy per-route
+runner, which retains its separate cleanup barrier.
+
+The executor must stop the phase immediately for damaged or unrecoverable phone
+state, a production-relay artifact, or a phone-rule violation. The continuation
+setting does not detect those conditions; retain the packet's safety checks and
+cancel the owned run when one is observed. Keep all first failures visible.
+After collecting failures, owners diagnose and fix them, verify owned cleanup,
+then make one fresh clean invocation for failed campaigns and anything touched
+by the fixes. Neither this setting nor `--rerun-failed` retries device campaigns
+automatically. A diagnostic continuation is not a clean release-green report.
+Do not move assertions or lengthen deadlines merely to obtain a pass.
 
 The automation-conflict and host-hook causes are supported by the existing
 Android audio ownership and SQLite dependency entries below. The new guard's

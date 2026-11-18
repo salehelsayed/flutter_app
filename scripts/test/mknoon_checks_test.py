@@ -95,6 +95,29 @@ class RepositoryFixture(unittest.TestCase):
 
 
 class SelectionTest(RepositoryFixture):
+    def test_device_continuation_is_bound_to_change_and_full_plans(self):
+        adapter = 'integration_test/scripts/run_production_audio_call_sims.dart'
+        self.write(adapter, '// isolated planner fixture; never executed\n')
+        self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.audio'}]}))
+        audio = {'kind': 'sims', 'capability': 'fixture.audio', 'adapter': adapter,
+                 'boundary': 'isolated planner fixture', 'timeout_seconds': 10}
+        self.rules['checks']['audio'] = audio
+        self.rules['fast'].append('audio')
+        command = ['dart', 'run', adapter, '--mode', 'major', '--scenario', 'fixture.audio']
+        self.rules['full_commands'] = [dict(audio, id='audio', command=command)]
+        for planner in (checks.make_plan, checks.make_full_plan):
+            with self.subTest(planner=planner.__name__):
+                default, _ = planner(self.args(), self.root, self.rules, capture_toolchains=False)
+                continued, _ = planner(self.args(continue_device_campaigns=True),
+                                       self.root, self.rules, capture_toolchains=False)
+                self.assertFalse(default['execution_settings']['continue_device_campaigns'])
+                self.assertTrue(continued['execution_settings']['continue_device_campaigns'])
+                self.assertNotEqual(checks.plan_fingerprint(default), checks.plan_fingerprint(continued))
+                row = next(row for row in continued['selected'] if row['id'] == 'audio')
+                self.assertEqual(row['command'], command + ['--continue-on-failure'])
+                row = next(row for row in default['selected'] if row['id'] == 'audio')
+                self.assertEqual(row['command'], command)
+
     def test_android_sims_policy_and_adapter_validation_fail_closed(self):
         self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.android'}]}))
         adapter = 'integration_test/scripts/fixture_android.dart'
@@ -558,6 +581,17 @@ class ExternalReportRegressionTest(unittest.TestCase):
         self.assertEqual(command, ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']])
         self.assertEqual(selected, [check['capability']])
 
+    def test_device_continuation_only_adds_the_supported_audio_adapter_flag(self):
+        audio = ['dart', 'run', 'integration_test/scripts/run_production_audio_call_sims.dart',
+                 '--mode', 'major', '--scenario', 'android.production_1to1_audio_call']
+        self.assertEqual(checks.device_continuation_command(audio, False), audio)
+        self.assertEqual(checks.device_continuation_command(audio, True), audio + ['--continue-on-failure'])
+        continued = audio + ['--continue-on-failure']
+        self.assertEqual(checks.device_continuation_command(continued, True), continued)
+        unrelated = ['dart', 'run', 'integration_test/scripts/other.dart']
+        self.assertEqual(checks.device_continuation_command(unrelated, True), unrelated)
+        self.assertNotIn('--continue-on-failure', audio, 'planning must not mutate the catalog command')
+
     def test_sims_timeout_preserves_observed_failure(self):
         self.assertEqual(self.inspect([self.verdict(status='FAIL', exitCode=1)], timeout=True)['status'], 'FAIL')
         self.assertEqual(self.inspect([self.verdict()], timeout=True)['status'], 'BLOCKED')
@@ -942,7 +976,8 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 self.assertEqual(rows['device']['checkpoint'], 'host_prerequisite_failed')
                 self.assertFalse(any(command[0] == 'dart' for command in launched))
 
-    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False, verification_failure=False, host_dependency=False, verification_timeout=False):
+    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False, verification_failure=False, host_dependency=False, verification_timeout=False,
+                              continue_campaigns=False, next_dependency=False, cancel_after_device=False):
         self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.device'}]}))
         self.rules['checks']['device'] = {'kind': 'sims', 'capability': 'fixture.device',
                                           'boundary': 'fake device scheduler boundary', 'timeout_seconds': 10,
@@ -954,11 +989,14 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         device_checks = ['device']
         if second_device:
             self.rules['checks']['device-next'] = copy.deepcopy(self.rules['checks']['device'])
+            if next_dependency:
+                self.rules['checks']['device-next']['dependencies'] = ['device']
             device_checks.append('device-next')
         self.rules['areas'].append({'id': 'device-fixture', 'patterns': ['lib/shared.dart', 'tool/sims/critical_features.json'],
                                     'checks': device_checks, 'why': 'isolated scheduling sentinel'})
         self.write('lib/shared.dart', 'candidate requiring the fake device boundary\n')
-        args = self.args(only=','.join((['fast'] if host_status else []) + device_checks), rerun_failed=retry)
+        args = self.args(only=','.join((['fast'] if host_status else []) + device_checks),
+                         rerun_failed=retry, continue_device_campaigns=continue_campaigns)
         if host_status == 'SKIPS':
             self.write('fixture_test.py', 'import unittest\nclass Fixture(unittest.TestCase):\n    def test_pass(self): pass\n    @unittest.skip("external fixture absent")\n    def test_external(self): pass\n')
         if host_status == 'FAIL':
@@ -970,8 +1008,10 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         for row in plan['selected']:
             row['blocked_prerequisites'] = ['fixture prerequisite unavailable'] if row['id'] == 'fast' and host_status == 'BLOCKED' else []
         launched = []
+        device_runs = 0
         real_launch = checks.launch
         def launch(command, cwd, timeout, env=None):
+            nonlocal device_runs
             launched.append(command)
             if command[0] == sys.executable:
                 return real_launch(command, cwd, timeout, env)
@@ -979,15 +1019,19 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             # Stub the external boundary: this test must never start Flutter,
             # Dart, adb, an app or an external service.
             if 'verify-report' not in command:
+                device_runs += 1
                 verdict = ExternalReportRegressionTest.verdict('fixture.device')
-                if device_failure:
+                if device_failure and device_runs == 1:
                     verdict.update(status='FAIL', exitCode=1)
                 Path(env['SIMS_REPORT_PATH']).write_text(json.dumps({'verdicts': [verdict], 'validationErrors': []}))
-            elif verification_failure:
-                return '', 1, False, .001
-            elif verification_timeout:
-                self.assertEqual(timeout, 600)
-                return '', None, True, 600.0
+            else:
+                if cancel_after_device and device_runs == 1:
+                    checks._LAUNCH_CONTEXT.cancel_event.set()
+                if verification_failure:
+                    return '', 1, False, .001
+                if verification_timeout:
+                    self.assertEqual(timeout, 600)
+                    return '', None, True, 600.0
             return '', 0, False, .001
         with contextlib.redirect_stdout(io.StringIO()), \
                 mock.patch.object(checks, 'launch', side_effect=launch), \
@@ -1016,6 +1060,65 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         self.assertEqual(rows['device-next']['checkpoint'], 'device_cleanup_review_required')
         self.assertEqual(len(launched), 2, 'failed reports still need independent integrity verification')
         self.assertTrue(rows['device']['attempts'][0]['report_verification_observed'])
+
+    def test_device_continuation_runs_independent_campaign_once_and_retains_failure(self):
+        code, report, launched = self.execute_device_subset(
+            device_failure=True, retry=True, second_device=True, continue_campaigns=True)
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(code, 1)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertTrue(report['execution_settings']['continue_device_campaigns'])
+        self.assertEqual(rows['device']['status'], 'FAIL')
+        self.assertEqual(rows['device-next']['status'], 'PASS')
+        self.assertTrue(rows['device']['attempts'][0]['cleanup_review_required'])
+        for check in ('device', 'device-next'):
+            self.assertEqual(len(rows[check]['attempts']), 1, 'devices are never automatically retried')
+            self.assertEqual(len(rows[check]['preflight']), 1)
+            self.assertTrue(rows[check]['attempts'][0]['report_verification_observed'])
+        self.assertEqual(len(launched), 4, 'each campaign and its report verifier run exactly once')
+
+    def test_device_continuation_still_blocks_a_failed_campaign_dependency(self):
+        _, report, launched = self.execute_device_subset(
+            device_failure=True, second_device=True, continue_campaigns=True, next_dependency=True)
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(rows['device']['status'], 'FAIL')
+        self.assertEqual(rows['device-next']['status'], 'NOT RUN')
+        self.assertEqual(rows['device-next']['checkpoint'], 'dependency_failed')
+        self.assertEqual(rows['device-next']['attempts'], [])
+        self.assertEqual(len(launched), 2)
+
+    def test_device_continuation_never_bypasses_fresh_preflight(self):
+        _, report, launched = self.execute_device_subset(
+            preflight_status={'status': 'BLOCKED', 'checkpoint': 'device_automation_busy'},
+            retry=True, second_device=True, continue_campaigns=True)
+        rows = {row['id']: row for row in report['results']}
+        for check in ('device', 'device-next'):
+            self.assertEqual(rows[check]['status'], 'BLOCKED')
+            self.assertEqual(rows[check]['checkpoint'], 'device_automation_busy')
+            self.assertEqual(len(rows[check]['attempts']), 1)
+        self.assertEqual(launched, [])
+
+    def test_device_continuation_never_hides_failed_report_verification(self):
+        _, report, launched = self.execute_device_subset(
+            device_failure=True, verification_failure=True, second_device=True, continue_campaigns=True)
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(rows['device']['status'], 'FAIL')
+        self.assertEqual(rows['device-next']['status'], 'BLOCKED')
+        self.assertEqual(report['status'], 'FAIL')
+        for check in ('device', 'device-next'):
+            self.assertTrue(rows[check]['attempts'][0]['report_verification_failed'])
+            self.assertFalse(rows[check]['attempts'][0].get('report_verification_observed'))
+        self.assertEqual(len(launched), 4)
+
+    def test_device_continuation_still_stops_on_operator_cancellation(self):
+        _, report, launched = self.execute_device_subset(
+            device_failure=True, second_device=True, continue_campaigns=True, cancel_after_device=True)
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(rows['device']['status'], 'FAIL')
+        self.assertEqual(rows['device-next']['status'], 'NOT RUN')
+        self.assertEqual(rows['device-next']['checkpoint'], 'run_cancelled')
+        self.assertIn('Run cancelled; unfinished obligations retained', report['gaps'])
+        self.assertEqual(len(launched), 2)
 
     def test_report_verification_failure_never_hides_an_observed_test_failure(self):
         for failed in (False, True):
