@@ -146,14 +146,32 @@ final class _CallActivityLifetime {
   bool retired = false;
 }
 
-final class _CallActivityObserver {
+enum _CallActivityPhase { observing, paused, disposed }
+
+final class _CallActivityObserver with WidgetsBindingObserver {
   _CallActivityObserver({
     required this.readActive,
     required this.ownAccountPeerId,
     required this.capture,
     required this.monotonicNow,
     required this.scheduler,
-  });
+    required bool Function() isForeground,
+  }) {
+    try {
+      _phase = isForeground()
+          ? _CallActivityPhase.observing
+          : _CallActivityPhase.paused;
+    } catch (_) {
+      // An unavailable lifecycle observation cannot authorize elapsed time.
+    }
+    try {
+      final binding = WidgetsBinding.instance;
+      binding.addObserver(this);
+      _binding = binding;
+    } catch (_) {
+      // Pure host callers may not have an initialized Flutter binding.
+    }
+  }
 
   static const threshold = Duration(seconds: 10);
   final CallSessionSnapshot? Function() readActive;
@@ -162,7 +180,21 @@ final class _CallActivityObserver {
   final Duration Function() monotonicNow;
   final CallTimerScheduler scheduler;
   _CallActivityLifetime? _current;
-  bool _disposed = false;
+  _CallActivityPhase _phase = _CallActivityPhase.paused;
+  WidgetsBinding? _binding;
+  int _generation = 0;
+
+  int get generation => _generation;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) return;
+    try {
+      pause();
+    } catch (_) {
+      // Analytics cannot change application lifecycle handling.
+    }
+  }
 
   CallActivityMark? _capture() {
     try {
@@ -173,7 +205,7 @@ final class _CallActivityObserver {
   }
 
   void observe() {
-    if (_disposed) {
+    if (_phase == _CallActivityPhase.disposed) {
       return;
     }
     final active = readActive();
@@ -188,7 +220,7 @@ final class _CallActivityObserver {
       lifetime = _CallActivityLifetime(callId, _capture());
       _current = lifetime;
     }
-    if (lifetime.marked) {
+    if (_phase != _CallActivityPhase.observing || lifetime.marked) {
       return;
     }
     final now = monotonicNow();
@@ -234,7 +266,9 @@ final class _CallActivityObserver {
   }
 
   void _onTimer(_CallActivityLifetime lifetime) {
-    if (_disposed || lifetime.retired || !identical(_current, lifetime)) {
+    if (_phase != _CallActivityPhase.observing ||
+        lifetime.retired ||
+        !identical(_current, lifetime)) {
       return;
     }
     final active = readActive();
@@ -267,8 +301,41 @@ final class _CallActivityObserver {
   }
 
   void dispose() {
-    _disposed = true;
-    _retire();
+    _generation++;
+    _phase = _CallActivityPhase.disposed;
+    final binding = _binding;
+    _binding = null;
+    try {
+      binding?.removeObserver(this);
+    } finally {
+      _retire();
+    }
+  }
+
+  void pause() {
+    _generation++;
+    if (_phase != _CallActivityPhase.observing) return;
+    _phase = _CallActivityPhase.paused;
+    final lifetime = _current;
+    if (lifetime == null) return;
+    try {
+      if (lifetime.connectedSince != null) {
+        lifetime.connected = _elapsed(lifetime, monotonicNow());
+      }
+    } finally {
+      lifetime.connectedSince = null;
+      final timer = lifetime.timer;
+      lifetime.timer = null;
+      timer?.cancel();
+    }
+  }
+
+  void resume(int generation) {
+    if (_phase == _CallActivityPhase.disposed || generation != _generation) {
+      return;
+    }
+    _phase = _CallActivityPhase.observing;
+    observe();
   }
 }
 
@@ -361,6 +428,7 @@ final class ProductionCallSignalingGraph
             capture: captureActivity,
             monotonicNow: monotonicNow ?? _callActivityMonotonicClock(),
             scheduler: timerScheduler ?? const DartCallTimerScheduler(),
+            isForeground: _isVideoForeground,
           );
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
@@ -555,8 +623,16 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<void> onResume() async {
+    final activityGeneration = _activityObserver?.generation;
     _videoForegroundAllowed = true;
     await runtime.onResume();
+    try {
+      if (activityGeneration != null) {
+        _activityObserver?.resume(activityGeneration);
+      }
+    } catch (_) {
+      // Activity observation cannot change call recovery outcomes.
+    }
     final active = coordinator.activeSession;
     if (active != null) _onSessionSnapshot(active);
     _pip?.foreground();
@@ -2148,6 +2224,11 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<void> onBackgrounded() async {
+    try {
+      _activityObserver?.pause();
+    } catch (_) {
+      // Activity timer cleanup cannot block call background handling.
+    }
     _videoForegroundAllowed = false;
     _stagedAnswerMedia = null;
     final lease = _pip?.current;

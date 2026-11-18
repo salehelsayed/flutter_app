@@ -13968,8 +13968,12 @@ checks. All 195 source/Git pins matched at 59 clean boundaries. The accepted
 bootstrap DTR correction updates only two provenance-backed hashes, preserving
 the historical callback, relocation URIs and ownership guards.
 
-Fixtures must wait for `composition.current` to publish ringing after checkpoint
-persistence before Answer. A committed fake native terminal journal must remain
+Foreground-Answer fixtures must wait for `composition.current` to publish ringing
+after checkpoint persistence. A native-Answer-only background fixture instead
+waits for the same call's canonical coordinator ringing state: its foreground
+projection is deliberately hidden. It must retain the existing native journal,
+offer and media-connected path, not fabricate connection. A committed fake
+native terminal journal must remain
 available to `attach` until its terminal ACK: iOS can commit through
 `project(ended)` without calling `end`. Synchronous checkpoint failure preserves
 diagnostics, terminalization and the caller's original error; it does not
@@ -13982,6 +13986,40 @@ native/background handling remain held, as do full B7/BL29 and published-build
 acceptance. Scoped closure is
 `codex-complete-partial-source-red-seventeen-host-workflow-3d00fdd19.json`,
 SHA-256 `85f4b79cd6736e08e6a36b5ea2b59ece5f2402788ebf322cb4331b8b84967fa6`.
+
+The subsequent B15 conservative lifecycle candidate, based on `c6db8782`, retains
+observed connected credit while excluding the entire graph-background interval,
+including background time during which Dart briefly runs. A captured lifecycle
+generation fences asynchronous resume; only normal completion of the current
+graph resume can restart a segment. A private analytics binding observer catches
+initial background state and pauses dropped while composition startup is still
+in progress. Binding resume alone never rearms counting. Terminal, reporter,
+profile and consent-epoch fences remain in force; call-engine, plugin, native and
+media behavior is unchanged. Calls held entirely while the app is suspended may
+not count. Keep that limitation in the push note; this is not native suspended
+media-state evidence, ongoing-day requalification or full B7 acceptance.
+
+Its 28 focused cases passed: the original seventeen plus nine lifecycle cases
+and two startup regressions. The earlier nine-case RED had five causal assertion
+failures and four fence controls passing. The first startup attempt stopped on
+two bounded fixture awaits because it waited for the hidden foreground
+projection; it is not causal RED. After correcting only that fixture predicate,
+both startup cases failed on unwanted real activity marks before the production
+fix. Await bounds remained two seconds. First raw outputs remain separate.
+
+The approved affected checks also passed: `affected-calls` covered 135 files and
+2,808 cases; `call-signaling` covered 68 files and 2,218 cases, without errors or
+skips. Counts overlap with each other and the focused cases. The first broader
+run retained one stale source-text assertion requiring contiguous `onResume`
+statements. Test-only maintenance now checks the real recovery order within that
+method and exactly one runtime resume invocation, permitting optional analytics
+interposition. Only the failed call-signaling lane reran; the unchanged
+affected-calls PASS was adopted. Evidence is under
+`/srv/evidence/codex-astra-b15-conservative-green/{run1,affected1,affected2}`;
+the startup first failure and corrected RED are under
+`/srv/evidence/codex-astra-b15-startup-red/{run1,run2}`. Broader batch obligations,
+workflow, devices and release checks remain NOT RUN by this unit. Batch14-source
+adoption/rebase remains separate.
 
 The BL29 relay runtime binds one daily/weekly store in both control-plane
 backends; main registers its collector and advances the calendar on the existing

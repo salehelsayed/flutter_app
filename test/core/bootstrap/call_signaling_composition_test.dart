@@ -10117,17 +10117,25 @@ void main() {
     expect(source, contains('ProductionCallNegotiationSignalingAdapter('));
     expect(source, contains('type: CallEventType.appShutdown'));
     expect(source, contains('mediaOwner.bundleChanges.listen('));
+    final resumeStart = source.indexOf('  Future<void> onResume() async {');
+    expect(resumeStart, greaterThanOrEqualTo(0));
+    final resumeEnd = source.indexOf('\n  }', resumeStart);
+    expect(resumeEnd, greaterThan(resumeStart));
+    final resume = source.substring(resumeStart, resumeEnd + '\n  }'.length);
     expect(
-      source,
-      contains(
-        'await runtime.onResume();\n'
-        '    final active = coordinator.activeSession;\n'
-        '    if (active != null) _onSessionSnapshot(active);\n'
-        '    _pip?.foreground();\n'
-        '    _refreshVideo();\n'
-        '    await _resumePipCamera();\n'
-        '  }',
-      ),
+      resume,
+      stringContainsInOrder(const [
+        'await runtime.onResume();',
+        'final active = coordinator.activeSession;',
+        'if (active != null) _onSessionSnapshot(active);',
+        '_pip?.foreground();',
+        '_refreshVideo();',
+        'await _resumePipCamera();',
+      ]),
+    );
+    expect(
+      RegExp(r'\bruntime\.onResume\s*\(').allMatches(resume),
+      hasLength(1),
     );
     expect(source, contains('nativeLifecycleAdapter?.bindNativeMuteApplier('));
     expect(source, contains('await audioController.setMuted(muted);'));
@@ -10471,6 +10479,7 @@ Future<void> _untilGraphVideo(bool Function() predicate) async {
 Future<void> _deliverGraphVideoInvite(
   _ProductionIosFixture fixture, {
   CallId? callId,
+  bool requireForegroundProjection = true,
   String messageId = '00000000-0000-4000-8000-000000000023',
   String callHandle = '33333333-3333-4333-8333-333333333333',
 }) async {
@@ -10522,8 +10531,13 @@ Future<void> _deliverGraphVideoInvite(
     ),
   );
   await _b7Until(
-    () => fixture.composition.current?.session.callId == (callId ?? _callA) &&
-        fixture.composition.current?.session.state == CallState.ringing,
+    () {
+      final session = requireForegroundProjection
+          ? fixture.composition.current?.session
+          : graph.coordinator.activeSession;
+      return session?.callId == (callId ?? _callA) &&
+          session?.state == CallState.ringing;
+    },
   );
 }
 
@@ -10532,6 +10546,9 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   CallEndpointPlatform platform = CallEndpointPlatform.ios,
   CallMediaKind acceptedMedia = CallMediaKind.video,
+  bool nativeAnswerOnly = false,
+  bool Function()? isForeground,
+  Future<void> Function(_ProductionIosFixture)? duringNativeAttach,
   int Function()? clockMs,
   CallId? callId,
   Future<bool> Function()? permission,
@@ -10558,10 +10575,12 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   }
   var audioActive = false;
   final engine = _InitialVideoGraphEngine();
-  final fixture = await _createProductionIosFixture(
+  late final _ProductionIosFixture fixture;
+  fixture = await _createProductionIosFixture(
     cleanupTimeout: cleanupTimeout,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     nativePlatform: platform,
+    isForeground: isForeground,
     clockMs: clockMs,
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestCameraPermission: permission ?? () async => true,
@@ -10579,6 +10598,9 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     lifecycleEventStream: events.stream,
     callEngineFactory: (_) => engine,
     lifecycleOverride: (method, arguments) async {
+      if (method == 'attach' && duringNativeAttach != null) {
+        await _b7Bound(duringNativeAttach(fixture));
+      }
       final overridden = await nativeOverride?.call(method, arguments);
       if (overridden != null) return overridden;
       if (method == 'activateAudio') audioActive = true;
@@ -10615,22 +10637,28 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   if (beforeCall != null) {
     await _b7Bound(beforeCall(fixture));
   }
-  await _deliverGraphVideoInvite(fixture, callId: connectedCallId);
+  await _deliverGraphVideoInvite(
+    fixture,
+    callId: connectedCallId,
+    requireForegroundProjection: !nativeAnswerOnly,
+  );
   if (whileRinging != null) {
     await _b7Bound(whileRinging(fixture));
   }
   final graph = fixture.graphs.single;
   expect(graph.current!.video, isNotNull);
-  final Object capability = fixture.composition;
-  expect(capability, isA<ForegroundCallMediaAnswerCapability>());
-  expect(
-    await (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
-      connectedCallId,
-      generation: graph.current!.video!.generation,
-      acceptedMedia: acceptedMedia,
-    ),
-    ForegroundCallActionResult.applied,
-  );
+  if (!nativeAnswerOnly) {
+    final Object capability = fixture.composition;
+    expect(capability, isA<ForegroundCallMediaAnswerCapability>());
+    expect(
+      await (capability as ForegroundCallMediaAnswerCapability).answerWithMedia(
+        connectedCallId,
+        generation: graph.current!.video!.generation,
+        acceptedMedia: acceptedMedia,
+      ),
+      ForegroundCallActionResult.applied,
+    );
+  }
   const handle = '33333333-3333-4333-8333-333333333333';
   events.add({
     'version': 1,
@@ -11261,6 +11289,7 @@ final class _ProductionIosFixture {
 Future<_ProductionIosFixture> _createProductionIosFixture({
   Duration? cleanupTimeout,
   CallEndpointPlatform nativePlatform = CallEndpointPlatform.ios,
+  bool Function()? isForeground,
   IssuedCallWakeHandleStore? issuedStore,
   Stream<Object?>? lifecycleEventStream,
   SecureKeyStore? privacyStore,
@@ -11474,7 +11503,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
           clock: clock,
           publicationAllowed: publicationAllowed,
         ),
-    isForeground: () => true,
+    isForeground: isForeground ?? () => true,
     nowMs: clockMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
   );
@@ -13462,6 +13491,9 @@ final class _B7ActivityRig {
   Future<void> connect({
     bool incoming = true,
     bool durableCheckpoint = false,
+    bool nativeAnswerOnly = false,
+    bool Function()? isForeground,
+    Future<void> Function(_ProductionIosFixture)? duringNativeAttach,
     Future<void> Function(_ProductionIosFixture)? whileRinging,
     Future<void> Function(_ProductionIosFixture)? beforeConnected,
   }) => _b7Bound(() async {
@@ -13497,6 +13529,9 @@ final class _B7ActivityRig {
       await _b7Bound(_connectedGraphVideo(
         cleanupTimeout: _b7Limit,
         acceptedMedia: CallMediaKind.audio,
+        nativeAnswerOnly: nativeAnswerOnly,
+        isForeground: isForeground,
+        duringNativeAttach: duringNativeAttach,
         captureCallActivityMark: capture,
         monotonicNow: () => clock.now,
         timerScheduler: clock,
@@ -13541,6 +13576,68 @@ final class _B7ActivityRig {
 }
 
 void _b7ActivityTests() {
+  test('B7b startup initially background graph waits for reconciled foreground time', () async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    final originalState = binding.lifecycleState;
+    addTearDown(() {
+      binding.handleAppLifecycleStateChanged(originalState ?? AppLifecycleState.resumed);
+    });
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    var foreground = false;
+    final rig = _B7ActivityRig();
+    await rig.connect(
+      nativeAnswerOnly: true,
+      isForeground: () => foreground,
+    );
+    await rig.clock.elapse(const Duration(seconds: 20));
+    expect(rig.marks, isEmpty, reason: 'an initially background graph has no observed foreground connected interval');
+    foreground = true;
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(milliseconds: 9999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+    expect(rig.capturedAccounts, ['local-account']);
+  });
+
+  test('B7b startup pause before composition started fences counting after startup', () async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    final originalState = binding.lifecycleState;
+    addTearDown(() {
+      binding.handleAppLifecycleStateChanged(originalState ?? AppLifecycleState.resumed);
+    });
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    var foreground = true;
+    var pausedDuringStart = false;
+    final rig = _B7ActivityRig();
+    await rig.connect(
+      nativeAnswerOnly: true,
+      isForeground: () => foreground,
+      duringNativeAttach: (fixture) async {
+        if (pausedDuringStart) return;
+        pausedDuringStart = true;
+        expect(fixture.graphs, hasLength(1));
+        expect(fixture.composition.isStarted, isFalse);
+        foreground = false;
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await _b7Bound(fixture.composition.onBackgrounded());
+        foreground = true;
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      },
+    );
+    expect(pausedDuringStart, isTrue);
+    expect(rig.fixture!.composition.isStarted, isTrue);
+    await rig.clock.elapse(const Duration(seconds: 20));
+    expect(rig.marks, isEmpty, reason: 'a startup pause dropped by composition must still fence analytics until reconciliation');
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(milliseconds: 9999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+    expect(rig.capturedAccounts, ['local-account']);
+  });
+
   for (final incoming in [false, true]) {
     test('B7 partial ${incoming ? 'incoming' : 'outgoing'} marks at10 connected seconds', () async {
       final rig = _B7ActivityRig();
@@ -13756,6 +13853,142 @@ void _b7ActivityTests() {
     await rig.clock.elapse(const Duration(seconds: 15));
     expect(rig.marks, isEmpty);
   });
+
+  for (final incoming in [false, true]) {
+    test('B7b conservative ${incoming ? 'incoming' : 'outgoing'} excludes background gap and retains6 plus4 observed seconds', () async {
+      final rig = _B7ActivityRig();
+      await rig.connect(incoming: incoming);
+      await rig.clock.elapse(const Duration(seconds: 6));
+      await _b7Bound(rig.graph.onBackgrounded());
+      expect(rig.graph.coordinator.activeSession!.state, CallState.connected);
+      await rig.clock.elapse(const Duration(minutes: 2));
+      expect(rig.marks, isEmpty, reason: 'unobserved background time cannot qualify a call');
+      await _b7Bound(rig.graph.onResume());
+      await _b7Turn();
+      expect(rig.marks, isEmpty, reason: 'resume alone must not create activity');
+      await rig.clock.elapse(const Duration(milliseconds: 3999));
+      expect(rig.marks, isEmpty);
+      await rig.clock.elapse(const Duration(milliseconds: 1));
+      expect(rig.marks, hasLength(1));
+      expect(rig.handoffs, 1);
+      expect(rig.capturedAccounts, ['local-account']);
+    });
+  }
+
+  test('B7b conservative connection first observed while backgrounded earns time only after resume', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect(beforeConnected: (_) async {
+      await _b7Bound(rig.graph.onBackgrounded());
+    });
+    await rig.clock.elapse(const Duration(minutes: 2));
+    expect(rig.marks, isEmpty, reason: 'a background connected snapshot is not observed connected duration');
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(milliseconds: 9999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+    expect(rig.capturedAccounts, ['local-account']);
+  });
+
+  test('B7b conservative queued timer cannot qualify a paused call', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    await rig.clock.elapse(const Duration(seconds: 9));
+    final queued = rig.clock.timers.where((timer) => timer.active).toList();
+    expect(queued, isNotEmpty);
+    await _b7Bound(rig.graph.onBackgrounded());
+    rig.clock.now += const Duration(minutes: 2);
+    await rig.clock.fireQueued(queued);
+    expect(rig.marks, isEmpty, reason: 'already queued callbacks must retain the background fence');
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(milliseconds: 999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+  });
+
+  test('B7b conservative background during delayed resume keeps observation paused', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    await rig.clock.elapse(const Duration(seconds: 6));
+    await _b7Bound(rig.graph.onBackgrounded());
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+    rig.fixture!.bridge.responseHandlers['call_retrieve_v1'] = (_) async {
+      if (!entered.isCompleted) entered.complete();
+      await _b7Bound(release.future);
+      return <String, Object?>{
+        'ok': true,
+        'events': <Object?>[],
+        'receiptAtMs': 1,
+        'expiresAtMs': 1,
+        'hasMore': false,
+      };
+    };
+    final resume = _b7Bound(rig.graph.onResume());
+    try {
+      await _b7Bound(entered.future);
+      await rig.clock.elapse(const Duration(seconds: 3));
+      expect(rig.marks, isEmpty);
+      await _b7Bound(rig.graph.onBackgrounded());
+    } finally {
+      release.complete();
+      await _b7Bound(resume);
+    }
+    await rig.clock.elapse(const Duration(seconds: 4));
+    expect(rig.marks, isEmpty, reason: 'an older resume completion must not override a later background event');
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(milliseconds: 3999));
+    expect(rig.marks, isEmpty);
+    await rig.clock.elapse(const Duration(milliseconds: 1));
+    expect(rig.marks, hasLength(1));
+  });
+
+  test('B7b conservative terminal while paused cannot resume the old lifetime', () async {
+    final rig = _B7ActivityRig();
+    await rig.connect();
+    await rig.clock.elapse(const Duration(seconds: 9));
+    final queued = rig.clock.timers.where((timer) => timer.active).toList();
+    await _b7Bound(rig.graph.onBackgrounded());
+    await _b7Bound(rig.end());
+    await _b7Bound(rig.graph.onResume());
+    await rig.clock.elapse(const Duration(seconds: 20));
+    await rig.clock.fireQueued(queued);
+    expect(rig.marks, isEmpty);
+    expect(rig.graph.coordinator.activeSession, isNull);
+  });
+
+  for (final change in ['OFF then ON', 'profile', 'identity']) {
+    test('B7b conservative original capture stays stale across paused $change', () async {
+      final rig = _B7ActivityRig();
+      await rig.connect();
+      await rig.clock.elapse(const Duration(seconds: 6));
+      await _b7Bound(rig.graph.onBackgrounded());
+      if (change == 'OFF then ON') {
+        rig.epoch++;
+        await _b7Bound(rig.arm(enabled: false));
+        rig.epoch++;
+        await _b7Bound(rig.arm());
+      } else if (change == 'profile') {
+        await _b7Bound(rig.arm(profile: _b7ProfileB));
+      } else {
+        rig.reporter.observeIdentity(
+          accountPeerId: 'replacement-account',
+          rootPrivateKeyBase64: 'replacement-root-fixture',
+          profileBinding: _b7ProfileB,
+        );
+        await _b7Turn();
+      }
+      await rig.clock.elapse(const Duration(minutes: 2));
+      await _b7Bound(rig.graph.onResume());
+      await rig.clock.elapse(const Duration(seconds: 10));
+      expect(rig.marks, isEmpty, reason: 'resume must retain the original call admission fence');
+      expect(rig.capturedAccounts, ['local-account']);
+    });
+  }
 
   test('B7 partial wall clock jumps cannot change monotonic threshold', () async {
     final rig = _B7ActivityRig();
