@@ -2272,6 +2272,10 @@
   "@media_voice_message_label": {
     "description": "Screen-reader label that tells the user a chat bubble holds a voice message."
   },
+  "media_playback_speed": "Playback speed",
+  "@media_playback_speed": {
+    "description": "Screen-reader label for the voice-message playback speed control."
+  },
   "call_end_permission": "Microphone permission is needed to make calls.",
   "call_end_unsupported": "Voice calling is unavailable on this device.",
   "call_end_busy": "The contact is on another call.",

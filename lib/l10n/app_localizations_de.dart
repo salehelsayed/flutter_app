@@ -4624,6 +4624,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get media_voice_message_label => 'Sprachnachricht';
 
   @override
+  String get media_playback_speed => 'Wiedergabegeschwindigkeit';
+
+  @override
   String get call_end_permission =>
       'Zum Telefonieren wird die Mikrofonberechtigung benötigt.';
 

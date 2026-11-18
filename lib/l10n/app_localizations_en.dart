@@ -4522,6 +4522,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_voice_message_label => 'Voice message';
 
   @override
+  String get media_playback_speed => 'Playback speed';
+
+  @override
   String get call_end_permission =>
       'Microphone permission is needed to make calls.';
 

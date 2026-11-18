@@ -4595,6 +4595,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_voice_message_label => 'رسالة صوتية';
 
   @override
+  String get media_playback_speed => 'سرعة التشغيل';
+
+  @override
   String get call_end_permission =>
       'يلزم السماح باستخدام الميكروفون لإجراء المكالمات.';
 

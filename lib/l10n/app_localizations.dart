@@ -7478,6 +7478,12 @@ abstract class AppLocalizations {
   /// **'Voice message'**
   String get media_voice_message_label;
 
+  /// Screen-reader label for the voice-message playback speed control.
+  ///
+  /// In en, this message translates to:
+  /// **'Playback speed'**
+  String get media_playback_speed;
+
   /// No description provided for @call_end_permission.
   ///
   /// In en, this message translates to:

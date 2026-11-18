@@ -2031,6 +2031,7 @@
   "orbit_loading_contacts": "جارٍ تحميل جهات الاتصال…",
   "media_loading": "جارٍ تحميل الوسائط…",
   "media_voice_message_label": "رسالة صوتية",
+  "media_playback_speed": "سرعة التشغيل",
   "call_end_permission": "يلزم السماح باستخدام الميكروفون لإجراء المكالمات.",
   "call_end_unsupported": "المكالمات الصوتية غير متاحة على هذا الجهاز.",
   "call_end_busy": "جهة الاتصال في مكالمة أخرى.",

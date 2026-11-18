@@ -12,6 +12,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
+import 'voice_playback_speed.dart';
 import 'waveform_seek_bar.dart';
 
 /// Emitted only when the widget's reported playing state changes.
@@ -227,6 +228,7 @@ class AudioPlayerWidget extends StatefulWidget {
 
   @visibleForTesting
   final Stream<AudioInterruptionEvent>? interruptionEvents;
+  final VoicePlaybackSpeedStore? speedStore;
 
   const AudioPlayerWidget({
     super.key,
@@ -235,6 +237,7 @@ class AudioPlayerWidget extends StatefulWidget {
     this.onRetryUnavailableMedia,
     this.renderedSemanticsLabel,
     this.interruptionEvents,
+    this.speedStore,
   });
 
   @override
@@ -244,6 +247,7 @@ class AudioPlayerWidget extends StatefulWidget {
 class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     with AutomaticKeepAliveClientMixin<AudioPlayerWidget> {
   late final AudioPlayer _player;
+  late final VoicePlaybackSpeedStore _speedStore;
   late final StreamSubscription<PlayerState> _playerStateSubscription;
   late final StreamSubscription<Duration?> _durationSubscription;
   late final UserInitiatedVoiceInterruptionHandler _interruptionHandler;
@@ -299,6 +303,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   void initState() {
     super.initState();
     _player = UserInitiatedVoicePlaybackPolicy.createPlayer();
+    _speedStore = widget.speedStore ?? VoicePlaybackSpeedStore.shared;
+    _speedStore.value.addListener(_applyCurrentSpeed);
     _interruptionHandler = UserInitiatedVoiceInterruptionHandler(
       isPlaying: () => mounted && _player.playing,
       pause: () async {
@@ -395,6 +401,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
     try {
       await _player.setFilePath(path);
+      await _player.setSpeed(_speedStore.value.value);
       if (!mounted || loadVersion != _loadVersion) return;
       if (mounted) {
         setState(() {
@@ -487,6 +494,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   @override
   void dispose() {
     _recordAudioAction('stop', cause: 'disposed');
+    _speedStore.value.removeListener(_applyCurrentSpeed);
     _isDisposing = true;
     _stopPositionTimer();
     _interruptionHandler.cancelPendingResume();
@@ -538,6 +546,17 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   void _stopPositionTimer() {
     _positionTimer?.cancel();
     _positionTimer = null;
+  }
+
+  void _applyCurrentSpeed() {
+    if (mounted && !_isDisposing) setState(() {});
+    if (_isLoaded) {
+      unawaited(_player.setSpeed(_speedStore.value.value));
+    }
+  }
+
+  void _cycleSpeed() {
+    unawaited(_speedStore.cycle());
   }
 
   void _togglePlayPause() {
@@ -746,6 +765,23 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
               fontSize: 11,
               fontWeight: FontWeight.w400,
               color: Color.fromRGBO(255, 255, 255, 0.25),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Semantics(
+            label: AppLocalizations.of(context)!.media_playback_speed,
+            button: true,
+            child: TextButton(
+              style: TextButton.styleFrom(
+                minimumSize: const Size(36, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                foregroundColor: const Color(0xFF4ecdc4),
+                textStyle: const TextStyle(fontSize: 11),
+              ),
+              onPressed: _cycleSpeed,
+              child: Text(
+                '${voicePlaybackSpeedLabel(_speedStore.value.value)}×',
+              ),
             ),
           ),
         ],

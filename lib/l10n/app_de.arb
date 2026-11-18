@@ -2031,6 +2031,7 @@
   "orbit_loading_contacts": "Kontakte werden geladen…",
   "media_loading": "Medien werden geladen…",
   "media_voice_message_label": "Sprachnachricht",
+  "media_playback_speed": "Wiedergabegeschwindigkeit",
   "call_end_permission": "Zum Telefonieren wird die Mikrofonberechtigung benötigt.",
   "call_end_unsupported": "Sprachanrufe sind auf diesem Gerät nicht verfügbar.",
   "call_end_busy": "Der Kontakt führt bereits ein Gespräch.",
