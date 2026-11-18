@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/features/call/application/call_recovery_budget.dart';
+import 'package:flutter_app/features/call/diagnostics/call_end_detail.dart';
 import 'package:flutter_app/features/call/infrastructure/call_endpoint_recovery.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
@@ -16,6 +17,102 @@ const _account = 'remote-account';
 const _device = 'remote-device';
 
 void main() {
+  test('BL43 renewed epoch rollback reports the exact declining check', () {
+    fakeAsync((async) {
+      final details = <CallEndDetail>[];
+      final rig = _RecoveryRig(async, onEndDetail: details.add);
+      rig.authority.preferenceEpoch = 3;
+      ResolvedCallEndpoint? renewed;
+      rig.resolve().then((value) => renewed = value);
+      async.flushMicrotasks();
+      expect(renewed?.preferenceEpoch, 3);
+      expect(details, isEmpty);
+      rig.authority.preferenceEpoch = 2;
+      Object? failure;
+      var completed = false;
+      rig.resolve().then<void>((_) => completed = true,
+          onError: (Object error) { failure = error; completed = true; });
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(failure, isA<CallEndpointResolutionException>().having(
+        (error) => error.code, 'code', CallEndpointResolutionCode.mismatched));
+      expect(rig.authority.lookups, 2);
+      expect(details, hasLength(1));
+      expect(details.single.cause, CallEndCause.recoveryDenied);
+      expect(details.single.stage, CallEndCauseStage.authority);
+      expect(details.single.recoveryCheck, CallRecoveryCheck.preferenceEpoch);
+    });
+  });
+
+  test('BL43 binding denial reports without an extra remote lookup', () {
+    fakeAsync((async) {
+      final details = <CallEndDetail>[];
+      final rig = _RecoveryRig(async, onEndDetail: details.add)
+        ..bindingCurrent = false;
+      Object? failure;
+      var completed = false;
+      rig.resolve().then<void>((_) => completed = true,
+          onError: (Object error) { failure = error; completed = true; });
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(failure, isA<CallEndpointResolutionException>().having(
+        (error) => error.code, 'code', CallEndpointResolutionCode.mismatched));
+      expect(rig.authority.lookups, 0);
+      expect(details, hasLength(1));
+      expect(details.single.recoveryCheck, CallRecoveryCheck.bindingCurrent);
+    });
+  });
+
+  test('BL43 throwing cause observer cannot replace authority refusal', () {
+    fakeAsync((async) {
+      var observed = false;
+      final rig = _RecoveryRig(async, onEndDetail: (_) {
+        observed = true;
+        throw StateError('observer-only-public-fixture');
+      })..bindingCurrent = false;
+      Object? failure;
+      var completed = false;
+      rig.resolve().then<void>((_) => completed = true,
+          onError: (Object error) { failure = error; completed = true; });
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(failure, isA<CallEndpointResolutionException>().having(
+        (error) => error.code, 'code', CallEndpointResolutionCode.mismatched));
+      expect(rig.authority.lookups, 0);
+      expect(observed, isTrue);
+    });
+  });
+
+  test('BL43 retired episode never becomes a timeout cause', () {
+    fakeAsync((async) {
+      final details = <CallEndDetail>[];
+      final rig = _RecoveryRig(async, onEndDetail: details.add)..current = false;
+      Object? failure;
+      var completed = false;
+      rig.resolve().then<void>((_) => completed = true,
+          onError: (Object error) { failure = error; completed = true; });
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(failure, isA<CallEndpointRecoveryUnavailable>());
+      expect(rig.authority.lookups, 0);
+      expect(details, isEmpty);
+    });
+  });
+
+  test('BL43 successful same-authority renewal emits no failure detail', () {
+    fakeAsync((async) {
+      final details = <CallEndDetail>[];
+      final rig = _RecoveryRig(async, onEndDetail: details.add);
+      rig.authority.preferenceEpoch = 2;
+      ResolvedCallEndpoint? renewed;
+      rig.resolve().then((value) => renewed = value);
+      async.flushMicrotasks();
+      expect(renewed?.preferenceEpoch, 2);
+      expect(rig.authority.lookups, 1);
+      expect(details, isEmpty);
+    });
+  });
+
   test('BL26-HA six authorizations share three remote lookups', () {
     fakeAsync((async) {
       final rig = _RecoveryRig(async);
@@ -772,16 +869,29 @@ final class _Authority implements CallAuthorityClient {
 }
 
 final class _RecoveryRig {
-  _RecoveryRig(this.async) {
+  _RecoveryRig(this.async, {void Function(CallEndDetail)? onEndDetail}) {
     resolver = CallEndpointResolver(
       nowMs: () => _now + async.elapsed.inMilliseconds,
       verifyEndpointSignature: (_, _) async => true,
     );
-    recovery = CallEndpointRecovery(
-      budget: newBudget(),
-      admitted: admitted,
-      bindingCurrent: () => bindingCurrent,
+    final budget = newBudget();
+    CallEndpointRecovery original() => CallEndpointRecovery(
+      budget: budget, admitted: admitted, bindingCurrent: () => bindingCurrent,
     );
+    if (onEndDetail == null) {
+      recovery = original();
+    } else {
+      try {
+        recovery = Function.apply(CallEndpointRecovery.new, const [], {
+          #budget: budget, #admitted: admitted,
+          #bindingCurrent: () => bindingCurrent,
+          #onEndDetail: onEndDetail,
+        }) as CallEndpointRecovery;
+      } on NoSuchMethodError {
+        // The pre-hook source still executes its real authority path for RED.
+        recovery = original();
+      }
+    }
   }
   final FakeAsync async;
   bool current = true;
