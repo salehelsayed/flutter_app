@@ -429,13 +429,14 @@ void main() {
   Widget buildApp(
     MediaAttachment attachment, {
     bool requireVerifiedContentHash = false,
+    Locale locale = const Locale('en'),
     VoidCallback? onRetryUnavailableMedia,
     String? renderedSemanticsLabel,
     Stream<AudioInterruptionEvent>? interruptionEvents,
     VoicePlaybackSpeedStore? speedStore,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -729,6 +730,27 @@ void main() {
       await flushAsyncPlayerTasks(tester);
       expect(find.text('1×'), findsOneWidget);
       expect(fakePlatform.speedCalls, [1.5, 2.0, 1.0]);
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    testWidgets('speed pill keeps a 44-point accessible target in Arabic', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
+      await tester.pumpWidget(
+        buildApp(
+          baseAttachment,
+          locale: const Locale('ar'),
+          speedStore: VoicePlaybackSpeedStore(),
+        ),
+      );
+      await tester.pump();
+      final control = find.bySemanticsLabel('سرعة التشغيل');
+      expect(control, findsOneWidget);
+      final size = tester.getSize(control);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
     }, timeout: const Timeout(Duration(seconds: 10)));
 
     testWidgets(

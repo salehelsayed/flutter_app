@@ -773,7 +773,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
             button: true,
             child: TextButton(
               style: TextButton.styleFrom(
-                minimumSize: const Size(36, 32),
+                minimumSize: const Size(44, 44),
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 foregroundColor: const Color(0xFF4ecdc4),
                 textStyle: const TextStyle(fontSize: 11),
