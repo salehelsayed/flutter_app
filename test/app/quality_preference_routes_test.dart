@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
@@ -425,7 +426,17 @@ class _IntroductionListener extends _Unused implements IntroductionListener {}
 class _IntroductionRepositoryImpl extends _Unused
     implements IntroductionRepositoryImpl {}
 
-class _KeyExchangeRetrier extends _Unused implements KeyExchangeRetrier {}
+class _KeyExchangeRetrier extends _Unused implements KeyExchangeRetrier {
+  @override
+  ValueListenable<Set<String>> get stoppedPeerIds =>
+      const AlwaysStoppedAnimation<Set<String>>(<String>{});
+
+  @override
+  Future<void> refreshRetryStatus() async {}
+
+  @override
+  Future<int> retryOnInterest(String peerId) async => 0;
+}
 
 class _MessageDeletionListener extends _Unused
     implements MessageDeletionListener {}

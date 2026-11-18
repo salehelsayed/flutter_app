@@ -1664,6 +1664,16 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^test/core/diagnostics/.*_test\.dart$ ]]; then
+    printf 'core diagnostics direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/debug/.*_test\.dart$ ]]; then
+    printf 'debug support direct suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/core/(bootstrap|bridge|constants|database|device|inbox|l10n|local_discovery|media|permissions|secure_storage|theme|utils|widgets)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
     return 0
@@ -1706,6 +1716,21 @@ classify_path() {
 
   if [[ "$path" =~ ^test/features/[^/]+/integration/.*_test\.dart$ ]]; then
     printf 'feature integration direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/features/[^/]+/data/.*_test\.dart$ ]]; then
+    printf 'feature data direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/features/call/diagnostics/.*_test\.dart$ ]]; then
+    printf 'call diagnostics direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/features/stickers/custom/.*_test\.dart$ ]]; then
+    printf 'custom stickers direct suite'
     return 0
   fi
 

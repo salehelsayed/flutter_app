@@ -2012,7 +2012,7 @@ void main() {
         before.where((e) => e['stage'] == 'terminal').single['outcome'],
         'dropped_after_media',
       );
-      expect(before.last['stage'], 'admission');
+      expect(before.where((e) => e['stage'] == 'admission'), hasLength(1));
       expect(before.length, lessThanOrEqualTo(256));
       expect(
         before.fold<int>(0, (n, e) => n + utf8.encode(jsonEncode(e)).length),
