@@ -245,9 +245,11 @@ void main() {
         '$deviceCount trusted devices', () async {
       final diagnostics = await installDiagnostics();
       final traceId = diagnostics.beginAttempt();
-      await diagnostics.runWithTrace(
+      final authority = _Authority(endpoint: _endpoint());
+      final available = await diagnostics.runWithTrace(
         traceId,
         () => _probe(
+          authority: authority,
           rosterProvider: _RosterProvider(
             snapshot: CallTrustedRosterSnapshot(
               contactAccountPeerId: _accountPeerId,
@@ -258,6 +260,8 @@ void main() {
           ),
         ),
       );
+      expect(available, deviceCount == 1);
+      expect(authority.reads, deviceCount == 1 ? 1 : 0);
       final events = await exportedEvents(diagnostics);
       final snapshots = events
           .where(
@@ -272,7 +276,7 @@ void main() {
         'contactAccepted': true,
         'contactBlocked': false,
         'trustedDeviceCount': deviceCount > 16 ? 16 : deviceCount,
-        'relayEndpointPresent': true,
+        'relayEndpointPresent': deviceCount == 1,
         'wakeHandleGrantPresent': true,
       });
     });
@@ -418,10 +422,13 @@ void main() {
   });
 
   test('availability reports the typed resolver rejection', () async {
+    final authority = _Authority(endpoint: _endpoint());
     final actual = await _probe(
+      authority: authority,
       rosterProvider: _RosterProvider(snapshot: _roster(accepted: false)),
     );
 
+    expect(authority.reads, 0);
     _expectSingleResult(
       actual,
       available: false,

@@ -13,13 +13,13 @@ import 'call_trusted_roster_provider.dart';
 /// graph and the headless decline reply (plan 404): trusted roster, the
 /// caller's wake-handle grant, and the relay endpoint record feed one
 /// [CallEndpointResolver.resolve], with identifier-free diagnostics.
-typedef EnsureReceivedCallWakeHandle =
-    Future<bool> Function(String contactAccountPeerId);
-typedef RepairCallEndpoint =
-    Future<bool> Function(
-      String contactAccountPeerId, {
-      Future<void> Function()? beforeRequest,
-    });
+typedef EnsureReceivedCallWakeHandle = Future<bool> Function(
+  String contactAccountPeerId,
+);
+typedef RepairCallEndpoint = Future<bool> Function(
+  String contactAccountPeerId, {
+  Future<void> Function()? beforeRequest,
+});
 
 Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   required String contactAccountPeerId,
@@ -72,76 +72,80 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     load: () => receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
   );
   await beforeOperation?.call();
-  resolver.requireLocalAuthority(
-    contactAccountPeerId: contactAccountPeerId,
-    contactAccepted: roster.contactAccepted,
-    contactBlocked: roster.contactBlocked,
-    trustedDevices: roster.devices,
-    wakeHandleGrant: wakeHandleGrant,
-  );
-  var relayEndpoint = await loadCallEndpointDependency(
-    stage: 'relay_endpoint_load',
-    load: () => authorityClient.getEndpoint(contactAccountPeerId),
-  );
-  Future<void> reload() async {
-    await beforeOperation?.call();
-    roster = await rosterProvider.loadForContact(contactAccountPeerId);
-    if (!roster.contactAccepted || roster.contactBlocked) {
-      throw CallEndpointResolutionException(
-        roster.contactBlocked
-            ? CallEndpointResolutionCode.blocked
-            : CallEndpointResolutionCode.notAccepted,
-      );
-    }
-    await beforeOperation?.call();
-    wakeHandleGrant = await receivedCallWakeHandleStore.readForIssuer(
-      contactAccountPeerId,
+  SignedCallEndpointRecord? relayEndpoint;
+  var inputRecorded = false;
+  void recordInput() {
+    if (inputRecorded || traceId == null) return;
+    inputRecorded = true;
+    diagnostics.record(
+      traceId: traceId,
+      stage: 'preflight',
+      action: 'snapshot',
+      outcome: 'ok',
+      values: <String, Object?>{
+        'contactAccepted': roster.contactAccepted,
+        'contactBlocked': roster.contactBlocked,
+        'trustedDeviceCount': roster.devices.length.clamp(0, 16),
+        'relayEndpointPresent': relayEndpoint != null,
+        'wakeHandleGrantPresent': wakeHandleGrant != null,
+      },
     );
-    await beforeOperation?.call();
-    relayEndpoint = await authorityClient.getEndpoint(contactAccountPeerId);
-    await beforeOperation?.call();
   }
 
-  Future<bool> canRepair() => resolver.canRepairEndpoint(
-    contactAccountPeerId: contactAccountPeerId,
-    contactAccepted: roster.contactAccepted,
-    contactBlocked: roster.contactBlocked,
-    trustedDevices: roster.devices,
-    relayEndpoint: relayEndpoint,
-    wakeHandleGrant: wakeHandleGrant,
-  );
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'CALL_ENDPOINT_RESOLUTION_INPUT',
-    details: <String, Object?>{
-      'contactAccepted': roster.contactAccepted,
-      'contactBlocked': roster.contactBlocked,
-      'trustedDeviceCount': roster.devices.length,
-      'relayEndpointPresent': relayEndpoint != null,
-      'wakeHandleGrantPresent': wakeHandleGrant != null,
-    },
-  );
-  var repairRequested = false;
-  var inputRecorded = false;
   try {
-    while (true) {
+    resolver.requireLocalAuthority(
+      contactAccountPeerId: contactAccountPeerId,
+      contactAccepted: roster.contactAccepted,
+      contactBlocked: roster.contactBlocked,
+      trustedDevices: roster.devices,
+      wakeHandleGrant: wakeHandleGrant,
+    );
+    relayEndpoint = await loadCallEndpointDependency(
+      stage: 'relay_endpoint_load',
+      load: () => authorityClient.getEndpoint(contactAccountPeerId),
+    );
+    Future<void> reload() async {
       await beforeOperation?.call();
-      if (!inputRecorded && traceId != null) {
-        inputRecorded = true;
-        diagnostics.record(
-          traceId: traceId,
-          stage: 'preflight',
-          action: 'snapshot',
-          outcome: 'ok',
-          values: <String, Object?>{
-            'contactAccepted': roster.contactAccepted,
-            'contactBlocked': roster.contactBlocked,
-            'trustedDeviceCount': roster.devices.length.clamp(0, 16),
-            'relayEndpointPresent': relayEndpoint != null,
-            'wakeHandleGrantPresent': wakeHandleGrant != null,
-          },
+      roster = await rosterProvider.loadForContact(contactAccountPeerId);
+      if (!roster.contactAccepted || roster.contactBlocked) {
+        throw CallEndpointResolutionException(
+          roster.contactBlocked
+              ? CallEndpointResolutionCode.blocked
+              : CallEndpointResolutionCode.notAccepted,
         );
       }
+      await beforeOperation?.call();
+      wakeHandleGrant = await receivedCallWakeHandleStore.readForIssuer(
+        contactAccountPeerId,
+      );
+      await beforeOperation?.call();
+      relayEndpoint = await authorityClient.getEndpoint(contactAccountPeerId);
+      await beforeOperation?.call();
+    }
+
+    Future<bool> canRepair() => resolver.canRepairEndpoint(
+      contactAccountPeerId: contactAccountPeerId,
+      contactAccepted: roster.contactAccepted,
+      contactBlocked: roster.contactBlocked,
+      trustedDevices: roster.devices,
+      relayEndpoint: relayEndpoint,
+      wakeHandleGrant: wakeHandleGrant,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_ENDPOINT_RESOLUTION_INPUT',
+      details: <String, Object?>{
+        'contactAccepted': roster.contactAccepted,
+        'contactBlocked': roster.contactBlocked,
+        'trustedDeviceCount': roster.devices.length,
+        'relayEndpointPresent': relayEndpoint != null,
+        'wakeHandleGrantPresent': wakeHandleGrant != null,
+      },
+    );
+    var repairRequested = false;
+    while (true) {
+      await beforeOperation?.call();
+      recordInput();
       try {
         final endpoint = await resolver.resolve(
           contactAccountPeerId: contactAccountPeerId,
@@ -215,6 +219,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
       CallEndpointResolutionCode.unavailable => 'capability_unavailable',
       _ => 'endpoint_invalid',
     };
+    recordInput();
     if (repairRequested) recordRepair('failed', reason: reason);
     diagnostics.record(
       traceId: traceId,
