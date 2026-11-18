@@ -15,9 +15,11 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/voice_playback_speed.dart';
 import 'package:flutter_app/shared/widgets/media/waveform_seek_bar.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../fakes/fake_just_audio.dart';
 
@@ -430,6 +432,7 @@ void main() {
     VoidCallback? onRetryUnavailableMedia,
     String? renderedSemanticsLabel,
     Stream<AudioInterruptionEvent>? interruptionEvents,
+    VoicePlaybackSpeedStore? speedStore,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -442,6 +445,7 @@ void main() {
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           renderedSemanticsLabel: renderedSemanticsLabel,
           interruptionEvents: interruptionEvents,
+          speedStore: speedStore,
         ),
       ),
     );
@@ -684,6 +688,48 @@ void main() {
       // Should find the play icon
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
+
+    testWidgets('speed control cycles, reaches the player, and persists', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final store = VoicePlaybackSpeedStore();
+      final load = fakePlatform.enqueueLoad(
+        reportedDuration: const Duration(seconds: 8),
+      );
+      await tester.pumpWidget(
+        buildApp(
+          availableAttachment(
+            id: 'speed-voice',
+            localPath: '/tmp/speed-voice.m4a',
+            durationMs: 8000,
+          ),
+          speedStore: store,
+        ),
+      );
+      await tester.pump();
+      await load.started;
+      load.complete();
+      await settleCompletedLoad(tester);
+
+      expect(find.text('1×'), findsOneWidget);
+      await tester.tap(find.text('1×'));
+      await flushAsyncPlayerTasks(tester);
+      expect(find.text('1.5×'), findsOneWidget);
+      expect(fakePlatform.speedCalls, [1.5]);
+      await tester.tap(find.text('1.5×'));
+      await flushAsyncPlayerTasks(tester);
+      expect(find.text('2×'), findsOneWidget);
+      expect(fakePlatform.speedCalls, [1.5, 2.0]);
+
+      final reopened = VoicePlaybackSpeedStore();
+      await reopened.ready;
+      expect(reopened.value.value, 2.0);
+      await tester.tap(find.text('2×'));
+      await flushAsyncPlayerTasks(tester);
+      expect(find.text('1×'), findsOneWidget);
+      expect(fakePlatform.speedCalls, [1.5, 2.0, 1.0]);
+    }, timeout: const Timeout(Duration(seconds: 10)));
 
     testWidgets(
       'publishes playing for subsecond voice on initial and reopened rows',

@@ -19,6 +19,7 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
   /// Optional native-source check; default tests still accept synthetic paths.
   void Function(String uri)? loadUriValidator;
   int playCallCount = 0;
+  final List<double> speedCalls = [];
 
   /// Queues one caller-controlled load. Existing users that do not queue a
   /// barrier retain the original immediate zero-duration behavior.
@@ -41,6 +42,7 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
       request.id,
       loadAudio: _loadAudio,
       onPlay: () => playCallCount++,
+      onSpeed: speedCalls.add,
     );
     _players[request.id] = player;
     return player;
@@ -118,13 +120,19 @@ class FakeAudioLoadBarrier {
 class _FakeAudioPlayer extends AudioPlayerPlatform {
   final Future<Duration> Function(AudioSourceMessage source) loadAudio;
   final void Function() onPlay;
+  final void Function(double speed) onSpeed;
   final _playbackEvents = StreamController<PlaybackEventMessage>.broadcast(
     sync: true,
   );
   final _playerData = StreamController<PlayerDataMessage>.broadcast();
   bool _disposed = false;
 
-  _FakeAudioPlayer(super.id, {required this.loadAudio, required this.onPlay});
+  _FakeAudioPlayer(
+    super.id, {
+    required this.loadAudio,
+    required this.onPlay,
+    required this.onSpeed,
+  });
 
   @override
   Stream<PlaybackEventMessage> get playbackEventMessageStream =>
@@ -168,8 +176,10 @@ class _FakeAudioPlayer extends AudioPlayerPlatform {
       SetVolumeResponse();
 
   @override
-  Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async =>
-      SetSpeedResponse();
+  Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async {
+    onSpeed(request.speed);
+    return SetSpeedResponse();
+  }
 
   @override
   Future<SetPitchResponse> setPitch(SetPitchRequest request) async =>
