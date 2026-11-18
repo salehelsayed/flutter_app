@@ -712,6 +712,7 @@ void main() {
       await load.started;
       load.complete();
       await settleCompletedLoad(tester);
+      fakePlatform.speedCalls.clear();
 
       expect(find.text('1×'), findsOneWidget);
       await tester.tap(find.text('1×'));

@@ -770,6 +770,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           const SizedBox(width: 4),
           Semantics(
             label: AppLocalizations.of(context)!.media_playback_speed,
+            container: true,
             button: true,
             child: TextButton(
               style: TextButton.styleFrom(
