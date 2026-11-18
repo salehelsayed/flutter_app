@@ -90,7 +90,9 @@ const _relocations = <String, List<String>>{
     // Plan 414 preserves stored.fileName during incoming reconstruction in
     // this same data adapter. Removing only that line reproduces the prior pin;
     // placement, ownership and dependency direction are unchanged.
-    'f0ac543584446f9acd86c160e716a6e7b12216fee31d020104e8988cae96f902',
+    // BL-29 U2 preserves committed scalar/linked generation authority when key
+    // hydration fails in this same adapter; no placement or owner moves.
+    'ffb2615856ed71925fb91d53c2d9559094f6d7374f524cc045a46ba99d274791',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

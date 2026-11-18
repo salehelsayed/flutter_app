@@ -119,14 +119,25 @@ void main() {
       expect(appBuild, contains('gradleProperty("simsAndroidAbi")'));
       expect(
         appBuild,
-        contains('simsAndroidAbi must be exactly arm64-v8a when supplied.'),
+        contains(
+          'simsAndroidAbi must be exactly arm64-v8a or x86_64 when supplied.',
+        ),
       );
       expect(appBuild, contains('getByName("debug")'));
       expect(appBuild, contains('abiFilters.clear()'));
       expect(appBuild, contains('abiFilters.add(abi)'));
       expect(
         orchestrator,
-        contains('--android-project-arg=simsAndroidAbi=arm64-v8a'),
+        allOf(
+          contains(r'--android-project-arg=simsAndroidAbi=${target.abi}'),
+          contains(
+            "null || 'arm64-v8a' => "
+            "(abi: 'arm64-v8a', flutterTarget: 'android-arm64')",
+          ),
+          contains(
+            "'x86_64' => (abi: 'x86_64', flutterTarget: 'android-x64')",
+          ),
+        ),
       );
       expect(orchestrator, isNot(contains('--split-per-abi')));
     });
