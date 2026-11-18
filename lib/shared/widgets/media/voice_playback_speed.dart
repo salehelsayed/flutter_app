@@ -7,7 +7,7 @@ const _voicePlaybackSpeedKey = 'media.voice_playback_speed';
 const _speeds = <double>[1.0, 1.5, 2.0];
 
 String voicePlaybackSpeedLabel(double speed) =>
-    speed == speed.roundToInt() ? '${speed.toInt()}' : '$speed';
+    speed == speed.round() ? '${speed.toInt()}' : '$speed';
 
 final class VoicePlaybackSpeedStore {
   VoicePlaybackSpeedStore({Future<SharedPreferences> Function()? preferences})
