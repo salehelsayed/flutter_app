@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -44,6 +45,35 @@ void main() {
 
   setUp(() {
     repo = _FakeIdentityRepo()..identity = _testIdentity;
+  });
+
+  test('BL40 signed contact QR uses the build relay hint', () async {
+    const expectedRelayHint = String.fromEnvironment(
+      'BL40_TEST_EXPECTED_RELAY_HINT',
+      defaultValue: rendezvousAddress,
+    );
+    Map<String, dynamic>? signedFields;
+    final (result, jsonString) = await buildQRPayload(
+      repo: repo,
+      cachedIdentity: _testIdentity,
+      callSign: (data, privateKey) async {
+        signedFields = jsonDecode(data) as Map<String, dynamic>;
+        expect(privateKey, _testIdentity.privateKey);
+        return {'ok': true, 'signature': 'relay-hint-signature'};
+      },
+    ).timeout(const Duration(seconds: 2));
+
+    expect(result, BuildQRPayloadResult.success);
+    final payload = jsonDecode(jsonString!) as Map<String, dynamic>;
+    expect(payload['rv'], expectedRelayHint);
+    expect(signedFields!['rv'], expectedRelayHint);
+    expect(signedFields!.keys, ['ns', 'pk', 'rv', 'ts', 'un']);
+    expect(payload.keys, ['ns', 'pk', 'rv', 'sig', 'ts', 'un']);
+    expect(payload['sig'], 'relay-hint-signature');
+    expect(
+      Map<String, dynamic>.from(payload)..remove('sig'),
+      signedFields,
+    );
   });
 
   test('success: builds signed QR payload with sorted keys', () async {
