@@ -36,6 +36,330 @@ void main() {
     });
   });
 
+  test(
+    'BL26-HA newer same-authority revision survives cache quota and original deadline',
+    () {
+      fakeAsync((async) {
+        final rig = _RecoveryRig(async);
+        rig.authority.preferenceEpoch = 2;
+        final revisions = <int>[];
+        Object? failure;
+        var completed = false;
+        Future<void> exercise() async {
+          try {
+            revisions.add((await rig.resolve()).preferenceEpoch);
+            rig.authority.preferenceEpoch = 3;
+            for (var i = 0; i < 5; i++) {
+              revisions.add((await rig.resolve()).preferenceEpoch);
+            }
+          } catch (error) {
+            failure = error;
+          } finally {
+            completed = true;
+          }
+        }
+
+        unawaited(exercise());
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(failure, isNull);
+        expect(revisions, [2, 3, 3, 3, 3, 3]);
+        expect(rig.authority.lookups, 3);
+
+        async.elapse(const Duration(seconds: 14));
+        ResolvedCallEndpoint? cached;
+        completed = false;
+        rig.resolve().then<void>(
+          (endpoint) {
+            cached = endpoint;
+            completed = true;
+          },
+          onError: (Object error) {
+            failure = error;
+            completed = true;
+          },
+        );
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(failure, isNull);
+        expect(cached?.preferenceEpoch, 3);
+        expect(rig.authority.lookups, 3);
+
+        async.elapse(const Duration(seconds: 1));
+        var deadlineSucceeded = false;
+        completed = false;
+        rig.resolve().then<void>(
+          (_) {
+            deadlineSucceeded = true;
+            completed = true;
+          },
+          onError: (Object error) {
+            failure = error;
+            completed = true;
+          },
+        );
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(deadlineSucceeded, isFalse);
+        expect(failure, isA<CallEndpointRecoveryUnavailable>());
+        expect(rig.authority.lookups, 3);
+      });
+    },
+  );
+
+  test('BL26-HA revision rollback after renewal destroys episode authority', () {
+    fakeAsync((async) {
+      final rig = _RecoveryRig(async);
+      rig.authority.preferenceEpoch = 3;
+      ResolvedCallEndpoint? renewed;
+      Object? renewalFailure;
+      var completed = false;
+      rig.resolve().then<void>(
+        (endpoint) {
+          renewed = endpoint;
+          completed = true;
+        },
+        onError: (Object error) {
+          renewalFailure = error;
+          completed = true;
+        },
+      );
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(renewalFailure, isNull);
+      expect(renewed?.preferenceEpoch, 3);
+      expect(rig.authority.lookups, 1);
+
+      final failures = <Object>[];
+      var successes = 0;
+      completed = false;
+      Future<void> rejectRollbackAndRevival() async {
+        for (final revision in [2, 3]) {
+          rig.authority.preferenceEpoch = revision;
+          try {
+            await rig.resolve();
+            successes++;
+          } catch (error) {
+            failures.add(error);
+          }
+        }
+        completed = true;
+      }
+
+      unawaited(rejectRollbackAndRevival());
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(successes, 0);
+      expect(failures, hasLength(2));
+      expect(
+        failures,
+        everyElement(
+          isA<CallEndpointResolutionException>().having(
+            (error) => error.code,
+            'code',
+            CallEndpointResolutionCode.mismatched,
+          ),
+        ),
+      );
+      expect(rig.authority.lookups, 2);
+    });
+  });
+
+  test('BL26-HA revision below admission is refused', () {
+    fakeAsync((async) {
+      final rig = _RecoveryRig(async);
+      rig.authority.preferenceEpoch = 0;
+      Object? failure;
+      var completed = false;
+      var succeeded = false;
+      rig.resolve().then<void>(
+        (_) {
+          succeeded = true;
+          completed = true;
+        },
+        onError: (Object error) {
+          failure = error;
+          completed = true;
+        },
+      );
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(succeeded, isFalse);
+      expect(
+        failure,
+        isA<CallEndpointResolutionException>().having(
+          (error) => error.code,
+          'code',
+          CallEndpointResolutionCode.mismatched,
+        ),
+      );
+      expect(rig.authority.lookups, 1);
+    });
+  });
+
+  test('BL26-HA absent endpoint cannot erase accepted revision floor', () {
+    fakeAsync((async) {
+      final rig = _RecoveryRig(async);
+      rig.authority.preferenceEpoch = 2;
+      ResolvedCallEndpoint? renewed;
+      Object? renewalFailure;
+      final refusals = <Object>[];
+      var unexpectedSuccesses = 0;
+      var completed = false;
+      Future<void> exercise() async {
+        try {
+          renewed = await rig.resolve();
+          rig.authority.response = () async => null;
+          try {
+            await rig.resolve();
+            unexpectedSuccesses++;
+          } catch (error) {
+            refusals.add(error);
+          }
+          rig.authority.response = null;
+          rig.authority.preferenceEpoch = 1;
+          try {
+            await rig.resolve();
+            unexpectedSuccesses++;
+          } catch (error) {
+            refusals.add(error);
+          }
+        } catch (error) {
+          renewalFailure = error;
+        } finally {
+          completed = true;
+        }
+      }
+
+      unawaited(exercise());
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(renewalFailure, isNull);
+      expect(renewed?.preferenceEpoch, 2);
+      expect(unexpectedSuccesses, 0);
+      expect(refusals, hasLength(2));
+      expect(refusals.first, isA<CallEndpointRecoveryUnavailable>());
+      expect(
+        refusals.last,
+        isA<CallEndpointResolutionException>().having(
+          (error) => error.code,
+          'code',
+          CallEndpointResolutionCode.mismatched,
+        ),
+      );
+      expect(rig.authority.lookups, 3);
+    });
+  });
+
+  for (final fallback in ['transport', 'timeout']) {
+    test('BL26-HA absent endpoint cannot roll back via $fallback or quota', () {
+      fakeAsync((async) {
+        final rig = _RecoveryRig(async);
+        rig.authority.preferenceEpoch = 2;
+        final held = Completer<SignedCallEndpointRecord?>();
+        ResolvedCallEndpoint? renewed;
+        Object? renewalFailure;
+        final refusals = <Object>[];
+        var unexpectedSuccesses = 0;
+        var completed = false;
+        Future<void> exercise() async {
+          try {
+            renewed = await rig.resolve();
+            rig.authority.response = () async => null;
+            try {
+              await rig.resolve();
+              unexpectedSuccesses++;
+            } catch (error) {
+              refusals.add(error);
+            }
+            rig.authority.response = fallback == 'timeout'
+                ? () => held.future
+                : () async => throw const CallAuthorityException(
+                    CallAuthorityErrorCode.bridgeFailure,
+                    isTransient: true,
+                  );
+            for (var i = 0; i < 2; i++) {
+              try {
+                await rig.resolve();
+                unexpectedSuccesses++;
+              } catch (error) {
+                refusals.add(error);
+              }
+            }
+          } catch (error) {
+            renewalFailure = error;
+          } finally {
+            completed = true;
+          }
+        }
+
+        unawaited(exercise());
+        async.flushMicrotasks();
+        expect(renewalFailure, isNull);
+        expect(renewed?.preferenceEpoch, 2);
+        if (fallback == 'timeout') {
+          expect(completed, isFalse);
+          async.elapse(const Duration(seconds: 2));
+        }
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(unexpectedSuccesses, 0);
+        expect(refusals, hasLength(3));
+        expect(refusals, everyElement(isA<CallEndpointRecoveryUnavailable>()));
+        expect(rig.authority.lookups, 3);
+        held.complete(null);
+        async.flushMicrotasks();
+        expect(unexpectedSuccesses, 0);
+        expect(rig.authority.lookups, 3);
+      });
+    });
+  }
+
+  for (final changed in ['routing', 'platform', 'capabilities']) {
+    test('BL26-HA newer revision still rejects changed $changed', () {
+      fakeAsync((async) {
+        final rig = _RecoveryRig(async);
+        rig.authority.preferenceEpoch = 2;
+        switch (changed) {
+          case 'routing':
+            rig.authority.routingHandle = '1123456789abcdef0123456789abcdef';
+            break;
+          case 'platform':
+            rig.authority.platform = CallEndpointPlatform.ios;
+            break;
+          case 'capabilities':
+            rig.authority.capabilities = const {'voice_call_v1'};
+            break;
+        }
+        Object? failure;
+        var completed = false;
+        var succeeded = false;
+        rig.resolve().then<void>(
+          (_) {
+            succeeded = true;
+            completed = true;
+          },
+          onError: (Object error) {
+            failure = error;
+            completed = true;
+          },
+        );
+        async.flushMicrotasks();
+        expect(completed, isTrue);
+        expect(succeeded, isFalse);
+        expect(
+          failure,
+          isA<CallEndpointResolutionException>().having(
+            (error) => error.code,
+            'code',
+            CallEndpointResolutionCode.mismatched,
+          ),
+        );
+        expect(rig.authority.lookups, 1);
+      });
+    });
+  }
+
   for (final denial in [
     'blocked',
     'not-accepted',
@@ -416,6 +740,10 @@ final class _WakeStore implements ReceivedCallWakeHandleStore {
 
 final class _Authority implements CallAuthorityClient {
   int lookups = 0;
+  int preferenceEpoch = 1;
+  String routingHandle = '0123456789abcdef0123456789abcdef';
+  CallEndpointPlatform platform = CallEndpointPlatform.android;
+  Set<String> capabilities = const {'voice_call_v1', 'video_call_v2'};
   Future<SignedCallEndpointRecord?> Function()? response;
 
   @override
@@ -425,12 +753,12 @@ final class _Authority implements CallAuthorityClient {
     final record = CallEndpointRecord(
       accountPeerId: account,
       devicePeerId: _device,
-      capabilities: const {'voice_call_v1', 'video_call_v2'},
-      platform: CallEndpointPlatform.android,
+      capabilities: capabilities,
+      platform: platform,
       expiresAtMs: _now + 60000,
-      preferenceEpoch: 1,
+      preferenceEpoch: preferenceEpoch,
       deviceKeyEpoch: 1,
-      routingHandle: '0123456789abcdef0123456789abcdef',
+      routingHandle: routingHandle,
     );
     return SignedCallEndpointRecord(
       record: record,
