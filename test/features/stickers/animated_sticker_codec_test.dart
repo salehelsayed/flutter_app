@@ -149,7 +149,7 @@ void main() {
       for (final frame in frames) frame.dispose();
       codec.dispose();
     }
-  });
+  }, timeout: const Timeout(Duration(seconds: 10)));
 
   test(
     'circle output discards hidden source pixels and decodes with zero RGB',
