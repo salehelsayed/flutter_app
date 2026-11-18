@@ -2777,8 +2777,13 @@ Direct text catalog host coverage also includes
 100 sends without awaiting each send, injects duplicate live deliveries, and
 requires all original identities in send order, stable receiver row identities,
 and exactly 100 SQL rows per peer after both peers reopen and after production
-protected-inbox replay of already-delivered envelopes. DC-004 pauses the real
-send path before custody, after custody, after committed live delivery before
+protected-inbox replay of already-delivered envelopes. A successful concurrent
+send can retain that exact envelope through relay custody rather than the live
+transport, so the replay fixture selects from both actual-envelope records. The
+corrected full file passed on Linux in
+`/srv/evidence/kimi1-bl41-final-20261118/direct-text-restart/`.
+DC-004 pauses the real send path before custody, after custody, after committed
+live delivery before
 local settlement, and after relay acceptance before local custody completion.
 All four checkpoints recover one logical message. Before custody, the UI first
 commits a six-field authored-text intent (v123), and recovery prepares that
@@ -3741,6 +3746,13 @@ and ordinary retry outer timestamp. Claude-Dev's `build/clke3-proof/` retains
 raw JSON, child exit 0 and three clean 32-pin identity records (96 matches),
 including both merge parents; setup produced no tracked delta. This host merge
 proof does not refresh broader lanes, native/device or signed-artifact evidence.
+
+CR-012's scanner/reopen fixture must invoke the retry owner with a current fixed
+`clock`: contact creation uses real time, while an inherited fake-zone clock can
+precede `scannedAt` and correctly refuse the retry without creating a journal
+entry. The corrected scanner file passed on Linux in
+`/srv/evidence/kimi1-bl41-final-20261118/scanner-retry/`. This is fixture clock
+alignment, not a change to retry policy or delivery behavior.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
