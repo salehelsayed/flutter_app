@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -66,7 +67,13 @@ func TestCallDiagnosticsCallEndDetailPreservesOriginalSummary(t *testing.T) {
 	if !s.appendEvent("caller", raw, false) {
 		t.Fatal("separate detail rejected")
 	}
-	if len(s.records[trace].Summaries) != 1 || len(s.records[trace].Events) != 1 {
+	record := s.records[trace]
+	if len(record.Summaries) != 1 || len(record.Events) != 2 {
 		t.Fatal("detail displaced the authoritative terminal summary")
+	}
+	for _, summary := range record.Summaries {
+		if !bytes.Equal(summary.Event, final) {
+			t.Fatal("detail replaced the original final bytes")
+		}
 	}
 }
