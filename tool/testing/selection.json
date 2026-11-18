@@ -420,6 +420,8 @@
       "paths": [
         "test/core/diagnostics/",
         "test/features/call/diagnostics/call_diagnostics_test.dart",
+        "test/features/call/diagnostics/call_end_detail_contract_test.dart",
+        "test/features/call/diagnostics/call_end_detail_test.dart",
         "test/features/call/diagnostics/routine_authority_publication_test.dart",
         "test/features/call/diagnostics/routine_authority_publication_producer_test.dart",
         "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart",

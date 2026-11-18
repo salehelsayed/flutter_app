@@ -12,6 +12,7 @@ import 'package:flutter/widgets.dart';
 import '../../../core/bridge/bridge.dart';
 import '../../../core/diagnostics/diagnostic_archive_writer.dart';
 import 'call_diagnostic_schema.dart';
+import 'call_end_detail.dart';
 import 'routine_authority_publication.dart';
 import '../../../core/diagnostics/local_connection_diagnostics.dart';
 
@@ -635,9 +636,11 @@ final class CallDiagnostics with WidgetsBindingObserver {
     required String outcome,
     String reason = 'none',
     Map<String, Object?> values = const {},
+    CallEndDetail? detail,
   }) {
     final id = _canonicalTrace(traceId) ?? currentTraceId;
     if (!enabled || id == null || !_finished.add(id)) return;
+    final detailIsCurrent = _open.containsKey(id);
     record(
       traceId: id,
       stage: 'terminal',
@@ -645,7 +648,9 @@ final class CallDiagnostics with WidgetsBindingObserver {
       outcome: outcome,
       reason: reason,
       values: {
-        ...values,
+        for (final entry in values.entries)
+          if (!CallEndDetail.valueKeys.contains(entry.key))
+            entry.key: entry.value,
         'terminal': true,
         if ((_traceDropped[id] ?? 0) > 0) ...{
           'truncated': true,
@@ -654,6 +659,16 @@ final class CallDiagnostics with WidgetsBindingObserver {
         },
       },
     );
+    if (detail != null && detailIsCurrent) {
+      record(
+        traceId: id,
+        stage: 'terminal',
+        action: 'snapshot',
+        outcome: outcome,
+        reason: reason,
+        values: detail.toValues(),
+      );
+    }
     _open.remove(id);
     _schedulePersist();
     if (_testUpload == null) unawaited(flush());
@@ -903,6 +918,13 @@ final class CallDiagnostics with WidgetsBindingObserver {
       localCallConnectionEnums,
     );
     final values = projected['values']! as Map;
+    if (event['stage'] != 'terminal' ||
+        event['action'] != 'snapshot' ||
+        !values.containsKey('endCause')) {
+      for (final key in CallEndDetail.valueKeys) {
+        values.remove(key);
+      }
+    }
     // Receivers have no negotiated support for these new incident fields.
     // Keep their full local evidence while preserving v1 event IDs and ACKs.
     for (final key in const [
@@ -1057,6 +1079,11 @@ final class CallDiagnostics with WidgetsBindingObserver {
     final outcome = event['outcome'];
     final values = event['values'] as Map?;
     if (stage == 'attempt' && action == 'start') return 3;
+    if (stage == 'terminal' &&
+        action == 'snapshot' &&
+        values?.containsKey('endCause') == true) {
+      return 1;
+    }
     if (stage == 'terminal') return 2;
     if (stage == 'signaling' &&
         action == 'commit' &&
