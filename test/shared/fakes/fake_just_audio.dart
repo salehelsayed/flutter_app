@@ -20,6 +20,13 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
   void Function(String uri)? loadUriValidator;
   int playCallCount = 0;
   final List<double> speedCalls = [];
+  final _speedGates = <Completer<void>>[];
+
+  Completer<void> deferNextSpeed() {
+    final gate = Completer<void>();
+    _speedGates.add(gate);
+    return gate;
+  }
 
   /// Queues one caller-controlled load. Existing users that do not queue a
   /// barrier retain the original immediate zero-duration behavior.
@@ -43,6 +50,11 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
       loadAudio: _loadAudio,
       onPlay: () => playCallCount++,
       onSpeed: speedCalls.add,
+      waitForSpeed: () async {
+        if (_speedGates.isNotEmpty) {
+          await _speedGates.removeAt(0).future;
+        }
+      },
     );
     _players[request.id] = player;
     return player;
@@ -121,6 +133,7 @@ class _FakeAudioPlayer extends AudioPlayerPlatform {
   final Future<Duration> Function(AudioSourceMessage source) loadAudio;
   final void Function() onPlay;
   final void Function(double speed) onSpeed;
+  final Future<void> Function() waitForSpeed;
   final _playbackEvents = StreamController<PlaybackEventMessage>.broadcast(
     sync: true,
   );
@@ -132,6 +145,7 @@ class _FakeAudioPlayer extends AudioPlayerPlatform {
     required this.loadAudio,
     required this.onPlay,
     required this.onSpeed,
+    required this.waitForSpeed,
   });
 
   @override
@@ -178,6 +192,7 @@ class _FakeAudioPlayer extends AudioPlayerPlatform {
   @override
   Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async {
     onSpeed(request.speed);
+    await waitForSpeed();
     return SetSpeedResponse();
   }
 

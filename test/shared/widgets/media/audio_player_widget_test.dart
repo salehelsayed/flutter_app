@@ -733,6 +733,49 @@ void main() {
       expect(fakePlatform.speedCalls, [1.5, 2.0, 1.0]);
     }, timeout: const Timeout(Duration(seconds: 10)));
 
+    testWidgets('a speed change during the initial native call reconciles', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final store = VoicePlaybackSpeedStore();
+      final deferred = fakePlatform.deferNextSpeed();
+      addTearDown(() {
+        if (!deferred.isCompleted) deferred.complete();
+      });
+      final load = fakePlatform.enqueueLoad(
+        reportedDuration: const Duration(seconds: 8),
+      );
+      await tester.pumpWidget(
+        buildApp(
+          availableAttachment(
+            id: 'deferred-speed-voice',
+            localPath: '/tmp/deferred-speed-voice.m4a',
+            durationMs: 8000,
+          ),
+          speedStore: store,
+        ),
+      );
+      await tester.pump();
+      await load.started;
+      load.complete();
+      for (var i = 0; i < 10 && fakePlatform.speedCalls.isEmpty; i++) {
+        await tester.pump();
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(fakePlatform.speedCalls, [1.0]);
+
+      await store.cycle();
+      expect(find.text('1.5×'), findsOneWidget);
+      deferred.complete();
+      await settleCompletedLoad(tester);
+
+      expect(
+        fakePlatform.speedCalls,
+        [1.0, 1.5],
+        reason: 'the latest preference must reach the loaded player',
+      );
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
     testWidgets('speed pill keeps a 44-point accessible target in Arabic', (
       tester,
     ) async {
