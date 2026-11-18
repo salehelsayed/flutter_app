@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:collection';
 
-import 'package:flutter_app/core/constants/network_constants.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart'
+    show defaultRelayAddresses;
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -58,7 +59,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
     'ns': identity.peerId,
     'pk': identity.publicKey,
-    'rv': rendezvousAddress,
+    'rv': defaultRelayAddresses().first,
     'ts': timestamp,
     'un': identity.username,
   });
