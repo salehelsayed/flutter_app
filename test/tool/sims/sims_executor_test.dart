@@ -1154,6 +1154,51 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
     ).execute(row);
   }
 
+  test('B14DEVICE executor preserves the deviceState blocker and detail', () async {
+    const detail = 'The dedicated receiver must have no candidate app before '
+        'a fresh notification phase install.';
+    final execution = await executeStructuredSentinel(
+      <String, Object?>{
+        'status': 'BLOCKED',
+        'assertionsAttempted': 0,
+        'artifactPresent': false,
+        'printOnly': false,
+        'blocker': 'deviceState',
+        'exitCode': 78,
+        'detail': detail,
+      },
+      processExitCode: 78,
+    ).timeout(const Duration(seconds: 3));
+
+    expect(execution.verdict.status, SimsVerdictStatus.blocked);
+    expect(execution.verdict.blocker?.name, 'deviceState');
+    expect(execution.verdict.exitCode, 78);
+    expect(execution.verdict.assertionsAttempted, 0);
+    expect(execution.verdict.artifactPresent, isFalse);
+    expect(execution.verdict.printOnly, isFalse);
+    expect(execution.verdict.reason, isNull);
+    expect(execution.verdict.detail, detail);
+  });
+
+  test('B14DEVICE executor keeps unknown blocker names invalid', () async {
+    final execution = await executeStructuredSentinel(
+      <String, Object?>{
+        'status': 'BLOCKED',
+        'assertionsAttempted': 0,
+        'artifactPresent': false,
+        'printOnly': false,
+        'blocker': 'futureDeviceState',
+        'exitCode': 78,
+      },
+      processExitCode: 78,
+    ).timeout(const Duration(seconds: 3));
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.verdict.blocker, SimsBlockerKind.harness);
+    expect(execution.verdict.exitCode, 78);
+    expect(execution.verdict.assertionsAttempted, 0);
+    expect(execution.verdict.detail, contains('Invalid structured result'));
+  });
+
   Map<String, Object?> passSentinel({Object? evidence}) => <String, Object?>{
     'status': 'PASS',
     'assertionsAttempted': 1,

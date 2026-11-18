@@ -73,6 +73,7 @@ Future<int> _runDirectMediaBlobCustodySimsAdapter(
       androidCampaignFirstTargetEnvironment(environment): devices.first,
       'SIMS_ANDROID_EMULATOR_DEVICE_ID': devices.last,
       'MKNOON_RELAY_ADDRESSES': fixture.multiaddr,
+      'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': fixture.multiaddr,
       _fixtureIdentityEnvironment: fixture.fixtureIdentitySha256,
       _fixtureProbeEnvironment: fixture.probeUrl,
     };

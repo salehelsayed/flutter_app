@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../tool/sims/build_cache.dart';
 import '../../../tool/sims/build_orchestrator.dart';
 import '../../../tool/sims/manifest.dart';
+import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/report.dart';
 
 BuildProfileInput _input({
@@ -65,6 +66,189 @@ void _write(Directory root, String path, String contents) {
 }
 
 void main() {
+  group('B14 resolved artifact relay authority', () {
+    const testRelay = '/dns4/relay.test.invalid/tcp/443';
+    const fixtureRelay = '/ip4/127.0.0.1/tcp/43123';
+    const productionRelay = '/dns4/relay.mknoun.xyz/tcp/443';
+    late Directory root;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('sims-relay-guard-');
+      _write(root, 'artifact.bin', 'fake artifact bytes');
+      _write(root, 'flutter', r'''#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '{}\n'
+else
+  printf 'built\n' >> "$SIMS_RELAY_TEST_BUILDS"
+  printf 'SIMS_BUILD_ARTIFACT=%s\n' "$SIMS_RELAY_TEST_ARTIFACT"
+fi
+''');
+      expect(
+        Process.runSync('/bin/chmod', ['+x', '${root.path}/flutter']).exitCode,
+        0,
+      );
+    });
+    tearDown(() => root.deleteSync(recursive: true));
+
+    Future<SimsBuildPreparation> prepare(
+      String actualRelay,
+      Map<String, String> authority,
+    ) {
+      final original = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      const profileId = 'android.e2e.main';
+      final profile = BuildProfileSpec(
+        id: profileId,
+        // Exercise the real prepare/cache path with a tiny host builder,
+        // without starting any Android, Go, SDK or provider work.
+        platform: 'host',
+        artifactKind: 'test-binary',
+        buildRequired: true,
+        compileDefines: {'MKNOON_RELAY_ADDRESSES': actualRelay},
+        declaredException: false,
+      );
+      final manifest = SimsManifest(
+        schemaVersion: original.schemaVersion,
+        buildProfiles: [profile],
+        capabilities: original.capabilities,
+        ownership: original.ownership,
+      );
+      final plan = SimsPlan(
+        mode: SimsMode.major,
+        simultaneous: false,
+        releaseEligibleCandidate: false,
+        manifestDigest: manifest.digest,
+        family: null,
+        onlyId: 'build.$profileId',
+        rows: [original.capabilityById('build.$profileId')!],
+      );
+      return SimsBuildOrchestrator(
+        cacheDirectory: Directory('${root.path}/cache'),
+        environment: {
+          'PATH': root.path,
+          'SIMS_RELAY_TEST_BUILDS': '${root.path}/builds',
+          'SIMS_RELAY_TEST_ARTIFACT': '${root.path}/artifact.bin',
+          'SIMS_TEST_ALLOW_SOURCE_DIGEST_OVERRIDE': '1',
+          'SIMS_SOURCE_DIGEST': 'fixed-public-test-source',
+          ...authority,
+        },
+      ).prepare(manifest, plan).timeout(const Duration(seconds: 3));
+    }
+
+    final rejected = <String, (String, Map<String, String>)>{
+      'production cache despite TEST expectation': (
+        productionRelay,
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay},
+      ),
+      'different nonproduction resolved relay': (
+        fixtureRelay,
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay},
+      ),
+      'missing expectation': (testRelay, {}),
+      'empty expectation': (
+        testRelay,
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': ' '},
+      ),
+      'missing resolved relay': (
+        '',
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay},
+      ),
+      'production apex': (
+        '/dnsaddr/mknoun.xyz/tcp/443',
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': '/dnsaddr/mknoun.xyz/tcp/443'},
+      ),
+      'both production': (
+        productionRelay,
+        {'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': productionRelay},
+      ),
+      'case and trailing dot production DNS': (
+        '/dns6/Relay.MKNOUN.XYZ./tcp/443',
+        {
+          'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES':
+              '/dns6/Relay.MKNOUN.XYZ./tcp/443',
+        },
+      ),
+      'production in second address': (
+        '$testRelay,$productionRelay',
+        {
+          'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES':
+              '$testRelay,$productionRelay',
+        },
+      ),
+      'malformed present marker': (
+        testRelay,
+        {
+          'B14_REQUIRE_ARTIFACT_RELAY': '0',
+          'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay,
+        },
+      ),
+      'empty present marker': (
+        testRelay,
+        {
+          'B14_REQUIRE_ARTIFACT_RELAY': '',
+          'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay,
+        },
+      ),
+    };
+    for (final entry in rejected.entries) {
+      test('rejects ${entry.key} before cache reuse', () async {
+        final (actual, authority) = entry.value;
+        final seeded = await prepare(actual, {});
+        expect(seeded.report.actualBuilds, 1);
+        expect(seeded.failures, isEmpty);
+        final guarded = await prepare(actual, {
+          'B14_REQUIRE_ARTIFACT_RELAY': '1',
+          ...authority,
+        });
+        expect(guarded.artifacts, isEmpty);
+        expect(guarded.failures.keys, ['android.e2e.main']);
+        expect(guarded.report.hits, 0);
+        expect(guarded.report.actualBuilds, 0);
+        expect(File('${root.path}/builds').readAsLinesSync(), ['built']);
+        if (actual.isNotEmpty) {
+          expect(guarded.failures.values.single, isNot(contains(actual)));
+        }
+      });
+    }
+    for (final relay in [testRelay, fixtureRelay]) {
+      test('matching approved authority builds and reuses $relay', () async {
+        final environment = {
+          'B14_REQUIRE_ARTIFACT_RELAY': '1',
+          'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': relay,
+        };
+        final built = await prepare(relay, environment);
+        final cached = await prepare(relay, environment);
+        expect(built.failures, isEmpty);
+        expect(built.report.actualBuilds, 1);
+        expect(cached.report.hits, 1);
+        expect(cached.artifacts, built.artifacts);
+        expect(cached.report.artifactDigests, built.report.artifactDigests);
+        expect(File('${root.path}/builds').readAsLinesSync(), ['built']);
+      });
+    }
+    test('rejects fresh production input before invoking builder', () async {
+      final guarded = await prepare(productionRelay, {
+        'B14_REQUIRE_ARTIFACT_RELAY': '1',
+        'B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES': testRelay,
+      });
+      expect(guarded.artifacts, isEmpty);
+      expect(guarded.failures.keys, ['android.e2e.main']);
+      expect(guarded.report.actualBuilds, 0);
+      expect(File('${root.path}/builds').existsSync(), isFalse);
+    });
+    test(
+      'absent marker preserves existing nonpacket production cache caller',
+      () async {
+        final built = await prepare(productionRelay, {});
+        final cached = await prepare(productionRelay, {});
+        expect(built.failures, isEmpty);
+        expect(cached.report.hits, 1);
+        expect(cached.artifacts, built.artifacts);
+      },
+    );
+  });
+
   test('Android ABI default preserves arm64 command and cache identity', () {
     const legacyArguments = <String>[
       'build',

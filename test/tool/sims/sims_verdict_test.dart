@@ -43,6 +43,48 @@ SimsPlan _plan(CapabilitySpec row) => SimsPlan(
 );
 
 void main() {
+  test('B14DEVICE verdict preserves the deviceState BLOCKED round trip', () {
+    const detail = 'The dedicated receiver must have no candidate app before '
+        'a fresh notification phase install.';
+    final json = <String, Object?>{
+      'capabilityId': 'ios.payload.device_state_fixture',
+      'status': 'BLOCKED',
+      'assertionsAttempted': 0,
+      'exitCode': 78,
+      'artifactPresent': false,
+      'printOnly': false,
+      'blocker': 'deviceState',
+      'detail': detail,
+    };
+    expect(() => SimsVerdict.fromJson(json), returnsNormally);
+    final verdict = SimsVerdict.fromJson(json);
+    expect(verdict.status, SimsVerdictStatus.blocked);
+    expect(verdict.blocker?.name, 'deviceState');
+    expect(verdict.exitCode, 78);
+    expect(verdict.assertionsAttempted, 0);
+    expect(verdict.reason, isNull);
+    expect(verdict.detail, detail);
+    expect(verdict.satisfies(_row()), isFalse);
+    expect(SimsVerdict.fromJson(verdict.toJson()).toJson(), json);
+  });
+
+  test('B14DEVICE verdict keeps unknown blocker names invalid', () {
+    for (final blocker in ['futureDeviceState', 'device_state']) {
+      expect(
+        () => SimsVerdict.fromJson(<String, Object?>{
+          'capabilityId': 'ios.payload.device_state_fixture',
+          'status': 'BLOCKED',
+          'assertionsAttempted': 0,
+          'exitCode': 78,
+          'artifactPresent': false,
+          'printOnly': false,
+          'blocker': blocker,
+        }),
+        throwsArgumentError,
+      );
+    }
+  });
+
   test(
     'restoration blocker round trips and unknown blockers stay rejected',
     () {

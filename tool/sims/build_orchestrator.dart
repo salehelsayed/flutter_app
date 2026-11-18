@@ -600,6 +600,25 @@ final class SimsBuildOrchestrator {
           () => _toolchainFingerprint(profile),
         );
         final input = _inputFor(profile, sourceDigest, toolchain);
+        if (environment.containsKey('B14_REQUIRE_ARTIFACT_RELAY')) {
+          final expectedRelay =
+              environment['B14_EXPECTED_ARTIFACT_RELAY_ADDRESSES'];
+          final actualRelay = input.compileDefines['MKNOON_RELAY_ADDRESSES'];
+          final productionRelay = RegExp(
+            r'(^|[/.,\s])mknoun\.xyz\.?(?=[:/,\s]|$)',
+            caseSensitive: false,
+          );
+          if (environment['B14_REQUIRE_ARTIFACT_RELAY'] != '1' ||
+              expectedRelay == null ||
+              expectedRelay.trim().isEmpty ||
+              actualRelay != expectedRelay ||
+              productionRelay.hasMatch(actualRelay ?? '')) {
+            failures[profile.id] =
+                'B14 artifact resolved relay does not match its approved authority.';
+            failedProfileIds.add(profile.id);
+            continue;
+          }
+        }
         inputDigests[profile.id] = input.inputDigest;
         final profileRoot = Directory('${cacheDirectory.path}/${profile.id}');
         final entryRoot = Directory('${profileRoot.path}/${input.inputDigest}');

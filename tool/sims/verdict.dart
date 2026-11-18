@@ -37,6 +37,7 @@ enum SimsBlockerKind {
   restoration,
   environment,
   flake,
+  deviceState,
 }
 
 class SimsVerdict {
