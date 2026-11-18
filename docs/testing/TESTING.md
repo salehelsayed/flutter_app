@@ -2781,7 +2781,7 @@ protected-inbox replay of already-delivered envelopes. A successful concurrent
 send can retain that exact envelope through relay custody rather than the live
 transport, so the replay fixture selects from both actual-envelope records. The
 corrected full file passed on Linux in
-`/srv/evidence/kimi1-bl41-final-20261118/direct-text-restart/`.
+`/srv/evidence/kimi1-bl41-change-ce951-run-3/changed.9698c933ea63-1.raw.log`.
 DC-004 pauses the real send path before custody, after custody, after committed
 live delivery before
 local settlement, and after relay acceptance before local custody completion.
@@ -3751,7 +3751,7 @@ CR-012's scanner/reopen fixture must invoke the retry owner with a current fixed
 `clock`: contact creation uses real time, while an inherited fake-zone clock can
 precede `scannedAt` and correctly refuse the retry without creating a journal
 entry. The corrected scanner file passed on Linux in
-`/srv/evidence/kimi1-bl41-final-20261118/scanner-retry/`. This is fixture clock
+`/srv/evidence/kimi1-bl41-change-ce951-run-3/changed.456fd662bee6-1.raw.log`. This is fixture clock
 alignment, not a change to retry policy or delivery behavior.
 
 CR-013/017 decisions use one transaction on the existing contact/request tables.
