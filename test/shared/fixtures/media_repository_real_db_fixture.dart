@@ -77,6 +77,10 @@ class MediaRepositoryRealDbFixture {
       Future<DirectMediaBlobGenerationDbStageResult> Function() stage,
     )?
     dbStageFreshOutgoingDirectMediaBlobGenerationAround,
+    Future<DirectMediaInboxCustodyDbStageResult> Function(
+      Future<DirectMediaInboxCustodyDbStageResult> Function() stage,
+    )?
+    dbStageOutgoingDirectMediaInboxCustodyAround,
     bool wireFreshOutgoingDirectMediaBlobGeneration = true,
     // Plan 354: legacy-lane tests opt out so a selector-on private send keeps
     // exercising the unchanged legacy upload path instead of strict custody.
@@ -162,17 +166,31 @@ class MediaRepositoryRealDbFixture {
             required wireEnvelope,
             wireMediaBlobManifestHash,
             wireMediaBlobExpiresAtMs,
-          }) => dbStageOutgoingDirectMediaInboxCustody(
-            db,
-            expectedRow: expectedRow,
-            stagedRow: stagedRow,
-            attachmentRows: attachmentRows,
-            kind: kind,
-            recipientPeerId: recipientPeerId,
-            wireEnvelope: wireEnvelope,
-            wireMediaBlobManifestHash: wireMediaBlobManifestHash,
-            wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
-          ),
+          }) => dbStageOutgoingDirectMediaInboxCustodyAround == null
+              ? dbStageOutgoingDirectMediaInboxCustody(
+                  db,
+                  expectedRow: expectedRow,
+                  stagedRow: stagedRow,
+                  attachmentRows: attachmentRows,
+                  kind: kind,
+                  recipientPeerId: recipientPeerId,
+                  wireEnvelope: wireEnvelope,
+                  wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+                  wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+                )
+              : dbStageOutgoingDirectMediaInboxCustodyAround(
+                  () => dbStageOutgoingDirectMediaInboxCustody(
+                    db,
+                    expectedRow: expectedRow,
+                    stagedRow: stagedRow,
+                    attachmentRows: attachmentRows,
+                    kind: kind,
+                    recipientPeerId: recipientPeerId,
+                    wireEnvelope: wireEnvelope,
+                    wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+                    wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+                  ),
+                ),
       dbClassifyOutgoingDirectDeletionLane:
           wireOutgoingDirectDeletionLaneSelection
           ? ({required messageId}) =>
