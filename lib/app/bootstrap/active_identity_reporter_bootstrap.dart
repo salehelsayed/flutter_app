@@ -9,18 +9,24 @@ prepareProductionActiveIdentityReporter({
   Future<EngagementChatCheckpointStore> Function(String privateDirectory)?
   openGroupWitnessStore,
   int Function()? groupNowMilliseconds,
+  Future<EngagementChatCheckpointStore> Function(String privateDirectory)?
+  openChatWitnessStore,
+  int Function()? chatNowMilliseconds,
 }) {
   const budget = Duration(seconds: 2);
   var retired = false;
   EngagementChatCheckpointStore? groupStore;
+  EngagementChatCheckpointStore? chatStore;
   ActiveIdentityReporter? activeReporter;
-  Future<ActiveIdentityReporter?> prepare() async {
-    final opener = openGroupWitnessStore ?? EngagementChatCheckpointStore.open;
+  Future<EngagementChatCheckpointStore?> openStore(
+    Future<EngagementChatCheckpointStore> Function(String) opener,
+    String privateDirectory,
+  ) async {
     final opening = Future<EngagementChatCheckpointStore>.sync(
-      () => opener('$documentsPath/active_identity/group'),
+      () => opener(privateDirectory),
     );
     try {
-      groupStore = await opening.timeout(budget);
+      return await opening.timeout(budget);
     } on Object {
       // A timed-out open must never attach to a later or retired owner.
       unawaited(
@@ -32,11 +38,30 @@ prepareProductionActiveIdentityReporter({
             .catchError((Object _) {}),
       );
     }
+    return null;
+  }
+
+  Future<ActiveIdentityReporter?> prepare() async {
+    // Independent optional stores share the existing wall-clock open budget.
+    final stores = await Future.wait([
+      openStore(
+        openGroupWitnessStore ?? EngagementChatCheckpointStore.open,
+        '$documentsPath/active_identity/group',
+      ),
+      openStore(
+        openChatWitnessStore ?? EngagementChatCheckpointStore.open,
+        '$documentsPath/active_identity/chat',
+      ),
+    ]);
+    groupStore = stores[0];
+    chatStore = stores[1];
     if (retired) return null;
     return activeReporter = ActiveIdentityReporter(
       statePath: '$documentsPath/active_identity/state.json',
       groupWitnessStore: groupStore,
       groupNowMilliseconds: groupNowMilliseconds,
+      chatWitnessStore: chatStore,
+      chatNowMilliseconds: chatNowMilliseconds,
     );
   }
 
@@ -51,7 +76,11 @@ prepareProductionActiveIdentityReporter({
         await reporter?.dispose();
       }
     } finally {
-      await groupStore?.close();
+      try {
+        await groupStore?.close();
+      } finally {
+        await chatStore?.close();
+      }
     }
   }
 

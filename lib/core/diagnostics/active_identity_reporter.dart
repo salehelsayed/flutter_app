@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../bridge/bridge.dart';
 import 'app_diagnostics.dart';
 import 'engagement_chat_checkpoint_store.dart';
+import 'engagement_chat_observer.dart';
 import 'group_engagement_observer.dart';
 
 /// Calendar boundaries supplied by Go's Berlin calendar, never inferred in Dart.
@@ -22,12 +23,14 @@ final class ActiveIdentityReporterCapture {
     required String account,
     required String binding,
     required int epoch,
+    EngagementChatObserverCapture? chatOwner,
   }) : _reporter = reporter,
        _bridge = bridge,
        _generation = generation,
        _account = account,
        _binding = binding,
-       _epoch = epoch;
+       _epoch = epoch,
+       _chatOwner = chatOwner;
 
   final ActiveIdentityReporter _reporter;
   final Bridge _bridge;
@@ -35,6 +38,7 @@ final class ActiveIdentityReporterCapture {
   final String _account;
   final String _binding;
   final int _epoch;
+  final EngagementChatObserverCapture? _chatOwner;
 }
 
 /// Coordinates the current local owner; Go owns daily state and relay work.
@@ -43,6 +47,8 @@ final class ActiveIdentityReporter {
     required String statePath,
     EngagementChatCheckpointStore? groupWitnessStore,
     int Function()? groupNowMilliseconds,
+    EngagementChatCheckpointStore? chatWitnessStore,
+    int Function()? chatNowMilliseconds,
   }) : _statePath = statePath {
     if (groupWitnessStore != null) {
       _groups = GroupEngagementObserver(
@@ -51,11 +57,32 @@ final class ActiveIdentityReporter {
             groupNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
       );
     }
+    if (chatWitnessStore != null) {
+      _chat = EngagementChatObserver(
+        store: chatWitnessStore,
+        nowMilliseconds:
+            chatNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
+        lookupWeek: (owner) async {
+          final capture = _chatNativeOwnerFor(owner);
+          return capture == null ? null : weeklyProjectionCaptured(capture);
+        },
+        retainChat: (owner, week) async {
+          final capture = _chatNativeOwnerFor(owner);
+          return capture != null && await markWeeklyCaptured(
+            capture,
+            week: week,
+            kinds: const ['chat'],
+          );
+        },
+      );
+    }
   }
 
   static const _budget = Duration(seconds: 2);
   final String _statePath;
   GroupEngagementObserver? _groups;
+  EngagementChatObserver? _chat;
+  ActiveIdentityReporterCapture? _chatNativeOwner;
   Bridge? _bridge;
   LocalDiagnosticConsent? _consent;
   LocalDiagnosticConsent? _lastConsent;
@@ -205,6 +232,28 @@ final class ActiveIdentityReporter {
         );
       }
     }
+    _chatNativeOwner = null;
+    final chat = _chat;
+    if (chat != null) {
+      if (!preserve && (_retired || _consent?.enabled == false)) {
+        chat.revoke();
+      } else {
+        final account = _identity?.account;
+        final capture = account == null || preserve
+            ? null
+            : captureOwner(expectedAccountPeerId: account);
+        chat.replaceOwner(
+          capture == null
+              ? null
+              : (
+                  accountPeerId: capture._account,
+                  profileBinding: capture._binding,
+                  consentEpoch: capture._epoch,
+                ),
+        );
+        _chatNativeOwner = capture;
+      }
+    }
     return pending;
   }
 
@@ -307,6 +356,7 @@ final class ActiveIdentityReporter {
       account: identity.account,
       binding: identity.binding,
       epoch: consent.consentEpoch,
+      chatOwner: _chat?.captureOwner(expectedAccountPeerId: identity.account),
     );
   }
 
@@ -474,6 +524,83 @@ final class ActiveIdentityReporter {
       ) &&
       kinds.toSet().length == kinds.length;
 
+  ActiveIdentityReporterCapture? _chatNativeOwnerFor(
+    EngagementChatObserverCapture owner,
+  ) {
+    final capture = _chatNativeOwner;
+    if (capture == null || !_captureCurrent(capture) ||
+        !identical(
+          _chat?.captureOwner(expectedAccountPeerId: capture._account),
+          owner,
+        )) return null;
+    return capture;
+  }
+
+  bool _chatCaptureCurrent(ActiveIdentityReporterCapture capture) =>
+      _captureCurrent(capture) && capture._chatOwner != null &&
+      identical(
+        _chat?.captureOwner(expectedAccountPeerId: capture._account),
+        capture._chatOwner,
+      );
+
+  /// Reserve a fresh known initial tuple before its durable staging starts.
+  EngagementChatObserverIntent? reserveChatCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required String contactAccountPeerId,
+    required String messageId,
+    required String generationId,
+  }) {
+    if (!_chatCaptureCurrent(capture)) return null;
+    return _chat?.reserve(
+      capture._chatOwner!,
+      contactAccount: contactAccountPeerId,
+      messageId: messageId,
+      generationId: generationId,
+    );
+  }
+
+  /// Only a fresh typed durable applied result admits the reserved intent.
+  void admitChatCaptured(
+    ActiveIdentityReporterCapture capture,
+    EngagementChatObserverIntent intent,
+  ) {
+    if (_chatCaptureCurrent(capture) &&
+        identical(capture._chatOwner, intent.owner)) _chat?.admitted(intent);
+  }
+
+  void cancelChatCaptured(
+    ActiveIdentityReporterCapture capture,
+    EngagementChatObserverIntent intent,
+  ) {
+    if (_chatCaptureCurrent(capture) &&
+        identical(capture._chatOwner, intent.owner)) _chat?.cancel(intent);
+  }
+
+  /// A trusted authenticated delivery must have newly committed locally.
+  void chatDeliveredCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required String contactAccountPeerId,
+    required String messageId,
+    required String generationId,
+  }) {
+    if (!_chatCaptureCurrent(capture)) return;
+    _chat?.delivered(
+      capture._chatOwner!,
+      contactAccount: contactAccountPeerId,
+      messageId: messageId,
+      generationId: generationId,
+    );
+  }
+
+  /// Only fresh, durably applied incoming initial content reaches this hook.
+  void chatIncomingCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required String contactAccountPeerId,
+  }) {
+    if (!_chatCaptureCurrent(capture)) return;
+    _chat?.incoming(capture._chatOwner!, contactAccount: contactAccountPeerId);
+  }
+
   /// Call only for a fresh, durably committed own content post.
   void groupPostCommittedCaptured(
     ActiveIdentityReporterCapture capture, {
@@ -534,6 +661,7 @@ final class ActiveIdentityReporter {
 
   Future<void> flush() async {
     await _groups?.flush();
+    await _chat?.flush();
     final owner = _owner;
     final bridge = _bridge;
     if (_disposed || owner == null || bridge == null || !bridge.isInitialized) {
@@ -549,6 +677,8 @@ final class ActiveIdentityReporter {
     _logicalProfileMarker = null;
     await _configure(preserve: true, empty: true);
     await _groups?.dispose();
+    await _chat?.dispose();
+    _chatNativeOwner = null;
     _bridge = null;
     _consent = null;
     _lastConsent = null;
