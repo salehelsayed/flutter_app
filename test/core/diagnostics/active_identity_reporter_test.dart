@@ -506,6 +506,332 @@ void main() {
 
   Future<void> turn() => _bounded(Future<void>(() {}));
 
+  void freshIdentityCommitted({String? account}) {
+    try {
+      (reporter as dynamic).freshIdentityCommitted(
+        accountPeerId: account ?? _identity('A').peerId,
+        occurredAtUnixMillis: _qualificationUnixMillis,
+      );
+    } on NoSuchMethodError {
+      // The old reporter drops this qualifying event before runtime readiness.
+    }
+  }
+
+  Future<void> observeUninitializedOwner() async {
+    bridge.online = false;
+    reporter.attachBridge(bridge);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+  }
+
+  test('B15REG committed registration survives its original bridge readiness', () async {
+    await observeUninitializedOwner();
+    freshIdentityCommitted();
+    expect(bridge.operations('mark'), isEmpty);
+    final configured = Completer<String>();
+    String? receipt;
+    bridge.answer = (request, revision) {
+      receipt = _LocalBridge.reply(request, revision);
+      return configured.future;
+    };
+    try {
+      bridge.online = true;
+      reporter.attachBridge(bridge);
+      await _until(() => receipt != null);
+      expect(bridge.operations('mark'), isEmpty);
+      bridge.answer = null;
+      configured.complete(receipt!);
+      await _until(() => bridge.operations('mark').isNotEmpty);
+      final mark = bridge.operations('mark').single;
+      expect(mark['accountPeerId'], _identity('A').peerId);
+      expect(mark['profileBinding'], _profileA);
+      expect(mark['consentEpoch'], _epoch);
+      expect(mark['occurredAtUnixMillis'], _qualificationUnixMillis);
+      reporter.attachBridge(bridge);
+      await turn();
+      expect(bridge.operations('mark'), hasLength(1));
+    } finally {
+      bridge.answer = null;
+      if (!configured.isCompleted) configured.complete(receipt ?? '{}');
+    }
+  });
+
+  test('B15REG committed registration marks an already configured owner', () async {
+    await arm();
+    freshIdentityCommitted();
+    await _until(() => bridge.operations('mark').isNotEmpty);
+    final mark = bridge.operations('mark').single;
+    expect(mark['occurredAtUnixMillis'], _qualificationUnixMillis);
+    expect(mark['revision'], 1);
+    expect(bridge.operations('markWeekly'), isEmpty);
+  });
+
+  test('B15REG bridge readiness alone never creates registration activity', () async {
+    await observeUninitializedOwner();
+    bridge.online = true;
+    reporter.attachBridge(bridge);
+    await _until(() => bridge.operations('configure').isNotEmpty);
+    await turn();
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  for (final replacement in [
+    'off-on',
+    'same-epoch configure',
+    'bridge',
+    'profile',
+    'A-B-A',
+    'retire',
+    'dispose',
+  ]) {
+    test('B15REG pending registration is fenced by $replacement', () async {
+      await observeUninitializedOwner();
+      freshIdentityCommitted();
+      switch (replacement) {
+        case 'off-on':
+          await _bounded(reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)));
+          await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch + 2)));
+          break;
+        case 'same-epoch configure':
+          await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch)));
+          break;
+        case 'bridge':
+          bridge = _LocalBridge()..online = false;
+          reporter.attachBridge(bridge);
+          break;
+        case 'profile':
+          reporter.observeIdentity(
+            accountPeerId: _identity('A').peerId,
+            rootPrivateKeyBase64: _identity('A').privateKey,
+            profileBinding: _profileB,
+          );
+          break;
+        case 'A-B-A':
+          for (final suffix in ['B', 'A']) {
+            reporter.observeIdentity(
+              accountPeerId: _identity(suffix).peerId,
+              rootPrivateKeyBase64: _identity(suffix).privateKey,
+              profileBinding: suffix == 'A' ? _profileA : _profileB,
+            );
+          }
+          break;
+        case 'retire':
+          await _bounded(reporter.retire());
+          reporter.observeIdentity(
+            accountPeerId: _identity('A').peerId,
+            rootPrivateKeyBase64: _identity('A').privateKey,
+            profileBinding: _profileA,
+          );
+          break;
+        case 'dispose':
+          await _bounded(reporter.dispose());
+          break;
+      }
+      bridge.online = true;
+      reporter.attachBridge(bridge);
+      await turn();
+      expect(bridge.operations('mark'), isEmpty);
+    });
+  }
+
+  test('B15REG wrong account never queues a registration mark', () async {
+    await observeUninitializedOwner();
+    freshIdentityCommitted(account: _identity('B').peerId);
+    bridge.online = true;
+    reporter.attachBridge(bridge);
+    await turn();
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15REG disabled creation never queues a mark for a new consent epoch', () async {
+    await observeUninitializedOwner();
+    await _bounded(reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)));
+    freshIdentityCommitted();
+    await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch + 2)));
+    bridge.online = true;
+    reporter.attachBridge(bridge);
+    await turn();
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15REG held registration receipt cannot spend a successor consent epoch', () async {
+    await observeUninitializedOwner();
+    freshIdentityCommitted();
+    final configured = Completer<String>();
+    String? originalReceipt;
+    bridge.answer = (request, revision) {
+      originalReceipt = _LocalBridge.reply(request, revision);
+      return configured.future;
+    };
+    try {
+      bridge.online = true;
+      reporter.attachBridge(bridge);
+      await _until(() => originalReceipt != null);
+      bridge.answer = null;
+      await _bounded(reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)));
+      await _bounded(reporter.observeConsent((enabled: true, consentEpoch: _epoch + 2)));
+      configured.complete(originalReceipt!);
+      await turn();
+      expect(bridge.operations('mark'), isEmpty);
+    } finally {
+      bridge.answer = null;
+      if (!configured.isCompleted) configured.complete(originalReceipt ?? '{}');
+    }
+  });
+
+  Object? logicalProfileMarker() {
+    try {
+      return (reporter as dynamic).logicalProfileMarker;
+    } on NoSuchMethodError {
+      return null;
+    }
+  }
+
+  ActiveIdentityReporterCapture? captureLoadedProfile(Object marker) {
+    try {
+      return (reporter as dynamic).captureForLoadedProfile(
+            originalProfileMarker: marker,
+            expectedAccountPeerId: _identity('A').peerId,
+          )
+          as ActiveIdentityReporterCapture?;
+    } on NoSuchMethodError {
+      return null;
+    }
+  }
+
+  test('B15LO logical profile is pinned before bridge initialization', () async {
+    expect(logicalProfileMarker(), isNull);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    final marker = logicalProfileMarker();
+    expect(marker, isNotNull);
+    expect(captureLoadedProfile(marker!), isNull);
+    bridge.online = false;
+    reporter.attachBridge(bridge);
+    await _bounded(
+      reporter.observeConsent((enabled: true, consentEpoch: _epoch)),
+    );
+    expect(logicalProfileMarker(), same(marker));
+    expect(captureLoadedProfile(marker), isNull);
+    bridge.online = true;
+    reporter.attachBridge(bridge);
+    await turn();
+    expect(logicalProfileMarker(), same(marker));
+    expect(captureLoadedProfile(marker), isNotNull);
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15LO loaded profile can be pinned while diagnostics is OFF', () async {
+    await _bounded(arm());
+    await _bounded(
+      reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)),
+    );
+    final marker = logicalProfileMarker();
+    expect(marker, isNotNull);
+    expect(logicalProfileMarker(), same(marker));
+    expect(captureLoadedProfile(marker!), isNull);
+    for (final secret in [
+      _identity('A').peerId,
+      _identity('A').privateKey,
+      _profileA,
+    ]) {
+      expect('$marker', isNot(contains(secret)));
+    }
+    await turn();
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15LO ON renews capture for original profile without marking', () async {
+    await _bounded(arm());
+    final marker = logicalProfileMarker();
+    expect(marker, isNotNull);
+    final before = captureLoadedProfile(marker!);
+    expect(before, isNotNull);
+    await _bounded(
+      reporter.observeConsent((enabled: false, consentEpoch: _epoch + 1)),
+    );
+    expect(logicalProfileMarker(), same(marker));
+    expect(captureLoadedProfile(marker), isNull);
+    await _bounded(
+      reporter.observeConsent((enabled: true, consentEpoch: _epoch + 2)),
+    );
+    expect(logicalProfileMarker(), same(marker));
+    final after = captureLoadedProfile(marker);
+    expect(after, isNotNull);
+    expect(bridge.operations('mark'), isEmpty);
+    reporter.markCaptured(before!);
+    await turn();
+    expect(bridge.operations('mark'), isEmpty);
+    reporter.markCaptured(after!);
+    await turn();
+    expect(bridge.operations('mark'), hasLength(1));
+    expect(bridge.operations('mark').single['consentEpoch'], _epoch + 2);
+  });
+
+  test('B15LO same account in another profile cannot rebrand loaded data', () async {
+    await _bounded(arm());
+    final original = logicalProfileMarker();
+    expect(original, isNotNull);
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileB,
+    );
+    await turn();
+    final replacement = logicalProfileMarker();
+    expect(replacement, isNotNull);
+    expect(replacement, isNot(same(original)));
+    expect(captureLoadedProfile(original!), isNull);
+    expect(captureLoadedProfile(replacement!), isNotNull);
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15LO returning to a profile never revives its old marker', () async {
+    await _bounded(arm());
+    final original = logicalProfileMarker();
+    expect(original, isNotNull);
+    reporter.observeIdentity(
+      accountPeerId: _identity('B').peerId,
+      rootPrivateKeyBase64: _identity('B').privateKey,
+      profileBinding: _profileB,
+    );
+    await turn();
+    reporter.observeIdentity(
+      accountPeerId: _identity('A').peerId,
+      rootPrivateKeyBase64: _identity('A').privateKey,
+      profileBinding: _profileA,
+    );
+    await turn();
+    expect(logicalProfileMarker(), isNot(same(original)));
+    expect(captureLoadedProfile(original!), isNull);
+    final replacement = logicalProfileMarker();
+    expect(replacement, isNotNull);
+    expect(captureLoadedProfile(replacement!), isNotNull);
+    expect(bridge.operations('mark'), isEmpty);
+  });
+
+  test('B15LO configuration preserves profile marker and retirement clears it', () async {
+    await _bounded(arm());
+    final marker = logicalProfileMarker();
+    expect(marker, isNotNull);
+    reporter.attachBridge(_LocalBridge());
+    await turn();
+    expect(logicalProfileMarker(), same(marker));
+    expect(captureLoadedProfile(marker!), isNotNull);
+    await _bounded(reporter.retire());
+    expect(logicalProfileMarker(), isNull);
+    expect(captureLoadedProfile(marker), isNull);
+    await _bounded(reporter.dispose());
+    expect(logicalProfileMarker(), isNull);
+  });
+
   test('E2D-001 capture alone never marks and unavailable owners stay uncaptured', () async {
     final account = _identity('A').peerId;
     expect(reporter.captureOwner(expectedAccountPeerId: account), isNull);
