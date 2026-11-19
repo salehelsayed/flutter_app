@@ -131,6 +131,92 @@ final class GoBridgeActivityReporterContractTests: XCTestCase {
         }
     }
 
+    func testWeeklyProjectionAcceptsAnEmptyCalendarReceipt() throws {
+        let weekly = weeklyReceipt()
+        let answer = try validatedAnswer(op: "weeklyProjection", field: "weekly", value: weekly)
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual((answer["data"] as? NSDictionary)?["weekly"] as? NSDictionary, weekly as NSDictionary)
+    }
+
+    func testWeeklyProjectionPreservesDSTRangesAndAcknowledgements() throws {
+        for hours: Int64 in [167, 169] {
+            var weekly = weeklyReceipt()
+            weekly["endUnixMillis"] = Int64(1_794_902_400_000) + hours * 3_600_000
+            weekly["kinds"] = ["active", "chat", "call", "group"]
+            weekly["acknowledged"] = [["relayPeerId": "public-test-relay", "kinds": ["chat", "group"]]]
+            let answer = try validatedAnswer(op: "weeklyProjection", field: "weekly", value: weekly)
+            XCTAssertEqual(answer["ok"] as? Bool, true)
+            XCTAssertEqual((answer["data"] as? NSDictionary)?["weekly"] as? NSDictionary, weekly as NSDictionary)
+        }
+    }
+
+    func testWeeklyMarkReturnsItsBooleanAcceptanceReceipt() throws {
+        for accepted in [true, false] {
+            let answer = try validatedAnswer(op: "markWeekly", field: "accepted", value: accepted)
+            XCTAssertEqual(answer["ok"] as? Bool, true)
+            XCTAssertEqual((answer["data"] as? [String: Any])?["accepted"] as? Bool, accepted)
+        }
+    }
+
+    func testLegacyBooleanReceiptsKeepTheirExistingShapes() throws {
+        for (op, field) in [("configure", "configured"), ("mark", "accepted"), ("flush", "queued")] {
+            for value in [true, false] {
+                let answer = try validatedAnswer(op: op, field: field, value: value)
+                XCTAssertEqual(answer["ok"] as? Bool, true)
+                let data = try XCTUnwrap(answer["data"] as? [String: Any])
+                XCTAssertEqual(Set(data.keys), [field, "revision", "consentEpoch"])
+                XCTAssertEqual(data[field] as? Bool, value)
+            }
+        }
+    }
+
+    func testWeeklyProjectionRejectsMalformedNestedReceipts() throws {
+        var samples: [[String: Any]] = []
+        for value in [true, 1.5, Int64(9_007_199_254_740_992), "0"] as [Any] {
+            var weekly = weeklyReceipt(); weekly["startUnixMillis"] = value; samples.append(weekly)
+        }
+        for (key, value) in [
+            ("week", "2026-W00"), ("week", "2026-W54"),
+            ("endUnixMillis", 0), ("extra", true),
+            ("kinds", ["chat", "chat"]), ("kinds", ["unknown"]),
+            ("acknowledged", [["relayPeerId": "", "kinds": ["chat"]]]),
+            ("acknowledged", [["relayPeerId": "relay", "kinds": []]]),
+            ("acknowledged", Array(repeating: ["relayPeerId": "relay", "kinds": ["chat"]] as [String: Any], count: 65)),
+        ] as [(String, Any)] {
+            var weekly = weeklyReceipt(); weekly[key] = value; samples.append(weekly)
+        }
+        var missing = weeklyReceipt(); missing.removeValue(forKey: "week"); samples.append(missing)
+        for weekly in samples {
+            XCTAssertEqual(try validatedAnswer(op: "weeklyProjection", field: "weekly", value: weekly)["ok"] as? Bool, false)
+        }
+    }
+
+    func testWeeklyReceiptsRejectStaleNativeRevisionAndEpoch() throws {
+        for (revision, epoch) in [(Int64(2), Int64(7)), (Int64(1), Int64(8))] {
+            for (op, field, value) in [
+                ("weeklyProjection", "weekly", weeklyReceipt()), ("markWeekly", "accepted", true),
+            ] as [(String, String, Any)] {
+                XCTAssertEqual(try validatedAnswer(op: op, field: field, value: value, revision: revision, epoch: epoch)["ok"] as? Bool, false)
+            }
+        }
+    }
+
+    private func weeklyReceipt() -> [String: Any] {
+        ["week": "2026-W47", "startUnixMillis": Int64(1_794_902_400_000),
+         "endUnixMillis": Int64(1_795_507_200_000), "kinds": [String](),
+         "acknowledged": [[String: Any]]()]
+    }
+
+    private func validatedAnswer(op: String, field: String, value: Any, revision: Int64 = 1, epoch: Int64 = 7) throws -> [String: Any] {
+        let raw = try JSONSerialization.data(withJSONObject: ["ok": true, "data": [
+            "revision": revision, "consentEpoch": epoch, field: value,
+        ]])
+        let fence = MknoonActiveIdentityReporterFence(revision: 1, consentEpoch: 7,
+            profileBinding: "v1:" + String(repeating: "a", count: 64), accountPeerID: "public-test-account")
+        let result = GoBridge.activityAnswer(String(decoding: raw, as: UTF8.self), fence: fence, op: op)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any])
+    }
+
     private func assertOccurrenceUnchanged(_ timestamp: Int64) throws {
         let fields = try decoded(request(timestamp: String(timestamp)))
         let revision = GoBridge.activityMarkRevision(fields)
@@ -467,6 +553,26 @@ final class GoBridgeCriticalTaskTests: XCTestCase {
         XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: 999) as? Bool, false)
         XCTAssertEqual(invoke(bridge, "notificationLockIsActive") as? Bool, false)
         XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100, 101])
+    }
+
+    func test_weeklyProjectionUsesTheRealHandlerOwnerFence() throws {
+        try assertUnconfiguredWeeklyRequestIsStale(op: "weeklyProjection")
+    }
+
+    func test_markWeeklyUsesTheRealHandlerOwnerFence() throws {
+        try assertUnconfiguredWeeklyRequestIsStale(op: "markWeekly")
+    }
+
+    private func assertUnconfiguredWeeklyRequestIsStale(op: String) throws {
+        let bridge = makeBridge(manager: FakeBackgroundTaskManager())
+        var fields: [String: Any] = ["version": 1, "op": op, "revision": 1, "consentEpoch": 7,
+            "profileBinding": "v1:" + String(repeating: "a", count: 64), "accountPeerId": "public-test-account"]
+        if op == "markWeekly" { fields["week"] = "2026-W47"; fields["kinds"] = ["group"] }
+        let request = String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
+        let raw = try XCTUnwrap(invoke(bridge, "activeIdentityReporterV1", arguments: request) as? String)
+        let answer = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        XCTAssertEqual(answer["ok"] as? Bool, false)
+        XCTAssertEqual(answer["errorCode"] as? String, "ACTIVE_IDENTITY_REPORTER_STALE")
     }
 
     private func invoke(
