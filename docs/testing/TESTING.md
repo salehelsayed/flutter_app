@@ -3791,8 +3791,8 @@ anchor follows schema version 132, while test-only engagement/call-admission sou
 remain explicitly retained-unresolved and the call-audio soak CLI is a declared
 external entrypoint. Locked `sqflite_common` 2.5.6 disables `singleInstance` for
 `:memory:`, omits null SQL arguments, and emits `transactionId: null` only for BEGIN;
-the SQLCipher mock calls must preserve that wire shape. The native shutdown source
-contract locates `canonicalWritableRuntimeSession.open(` inside the awaited conditional
+the SQLCipher mock calls must preserve that wire shape; the exact fork test is
+registered as `sqflite-fork-host`. The native shutdown source contract locates `canonicalWritableRuntimeSession.open(` inside the awaited conditional
 open helper. Linux proof passed 48/48 Dart tail tests and the exact 76-method native
 suite in `/srv/evidence/kimi1-bl41-tail-green4-d9b9/`.
 

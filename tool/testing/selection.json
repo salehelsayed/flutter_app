@@ -1751,6 +1751,23 @@
       ],
       "inspected": true
     },
+    "sqflite-fork-host": {
+      "kind": "flutter",
+      "paths": [
+        "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart"
+      ],
+      "boundary": "SQLCipher fork open/version/password method-channel arguments, including in-memory and transaction wire contracts",
+      "limitations": "Mock platform channel only; native SQLCipher encryption and device database behavior remain separate",
+      "timeout_seconds": 120,
+      "estimated_seconds": 33,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "third_party/sqflite_sqlcipher/"
+      ],
+      "inspected": true
+    },
     "debug-call-evidence": {
       "kind": "flutter",
       "paths": [
@@ -6653,6 +6670,17 @@
         "affected-calls"
       ],
       "why": "Native call screens and actions must preserve exact-call ownership, lock-screen privacy, notification fallback, drawable Flutter rendering and qualified call startup without waiting for a frame. Additive to conservative platform/build and feature selections; physical keyguard evidence remains separate."
+    },
+    {
+      "id": "sqflite-fork-host",
+      "patterns": [
+        "third_party/sqflite_sqlcipher/lib/*",
+        "third_party/sqflite_sqlcipher/test/*"
+      ],
+      "checks": [
+        "sqflite-fork-host"
+      ],
+      "why": "Fork open/version/password mock contracts must preserve the locked in-memory, null-argument and transaction wire behavior"
     },
     {
       "id": "runtime-roots",
