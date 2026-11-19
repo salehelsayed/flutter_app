@@ -87,7 +87,7 @@ void main() {
         ],
         [
           'execute',
-          {'sql': 'BEGIN EXCLUSIVE', 'arguments': null, 'id': 1, 'inTransaction': true},
+          {'sql': 'BEGIN EXCLUSIVE', 'id': 1, 'transactionId': null, 'inTransaction': true},
           null
         ],
         [
@@ -97,12 +97,12 @@ void main() {
         ],
         [
           'execute',
-          {'sql': 'PRAGMA user_version = 1', 'arguments': null, 'id': 1},
+          {'sql': 'PRAGMA user_version = 1', 'id': 1},
           null
         ],
         [
           'execute',
-          {'sql': 'COMMIT', 'arguments': null, 'id': 1, 'inTransaction': false},
+          {'sql': 'COMMIT', 'id': 1, 'inTransaction': false},
           null
         ],
         [
