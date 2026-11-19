@@ -91,6 +91,7 @@ class MediaRepositoryRealDbFixture {
     // counterexample uses production code rather than a hand-rolled stub.
     bool wireOutgoingDirectDeletionLaneSelection = true,
     bool wireOutgoingDirectTextMutationInboxCustody = false,
+    bool wireDirectFanoutReceiptSettlement = false,
     Future<bool> Function(
       Map<String, Object?> row, {
       required String messageId,
@@ -139,6 +140,7 @@ class MediaRepositoryRealDbFixture {
       beforeDirectInboxCustodyCompletion: beforeDirectInboxCustodyCompletion,
       wireOutgoingDirectTextMutationInboxCustody:
           wireOutgoingDirectTextMutationInboxCustody,
+      wireDirectFanoutReceiptSettlement: wireDirectFanoutReceiptSettlement,
     );
     repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
@@ -1202,6 +1204,7 @@ MessageRepositoryImpl _buildMessageRepository(
   Future<void> Function()? beforeMessageDelete,
   Future<void> Function()? beforeDirectInboxCustodyCompletion,
   required bool wireOutgoingDirectTextMutationInboxCustody,
+  required bool wireDirectFanoutReceiptSettlement,
 }) {
   return MessageRepositoryImpl(
     projectConversationRead: projectConversationRead,
@@ -1432,6 +1435,47 @@ MessageRepositoryImpl _buildMessageRepository(
             relayExpiresAt: relayExpiresAt,
           );
         },
+    dbSettleOutgoingOrdinaryTransportWithFanoutAuthority:
+        !wireDirectFanoutReceiptSettlement
+        ? null
+        : ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+            required isDeleteTombstone,
+            expectedDirectEventFanoutGenerationId,
+            authenticatedTransportPeerId,
+          }) => isDeleteTombstone
+          ? dbSettleOutgoingOrdinaryDeleteTombstone(
+              db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+              expectedDirectEventFanoutGenerationId:
+                  expectedDirectEventFanoutGenerationId,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            )
+          : dbSettleOutgoingOrdinaryTransport(
+              db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+              expectedDirectEventFanoutGenerationId:
+                  expectedDirectEventFanoutGenerationId,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            ),
     dbSettleOutgoingOrdinaryTransport:
         ({
           required messageId,

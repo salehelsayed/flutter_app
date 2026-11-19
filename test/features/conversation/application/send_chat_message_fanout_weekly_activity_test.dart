@@ -163,6 +163,13 @@ void main() {
     }
     await _bounded(h.reporter.flush());
     expect((await _bounded(h.checkpointContacts())).single['deliveredOutgoingSeen'], isFalse);
+    expect(h.fixture.messageRepo.supportsDirectFanoutReceiptSettlement, isTrue);
+    final authority = DatabaseDirectTransportAuthority(database: h.fixture.db);
+    final resolved = await _bounded(
+      authority.resolveDirectTransportAuthority(_targets.first));
+    expect(resolved.authorized, isTrue);
+    expect(resolved.kind, DirectTransportAuthorityKind.linked);
+    expect(resolved.contactAccountPeerId, _contact);
     for (var duplicate = 0; duplicate < 2; duplicate++) {
       await _bounded(handleDeliveryReceipt(
         message: ChatMessage(from: _targets.first, to: _account, timestamp: _authoredAt,
@@ -225,7 +232,9 @@ final class _TextFanoutHarness {
   static Future<_TextFanoutHarness> create() async {
     await _bounded(AppDiagnostics.installForTesting(useNative: false, enabled: true));
     final root = await _bounded(Directory.systemTemp.createTemp('b15-text-fanout-'));
-    final fixture = await _bounded(MediaRepositoryRealDbFixture.create());
+    final fixture = await _bounded(MediaRepositoryRealDbFixture.create(
+      wireDirectFanoutReceiptSettlement: true,
+    ));
     final store = await _bounded(EngagementChatCheckpointStore.open('${root.path}/private'));
     final bridge = _TextFanoutBridge();
     final reporter = ActiveIdentityReporter(
