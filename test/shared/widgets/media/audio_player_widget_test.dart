@@ -756,25 +756,21 @@ void main() {
         ),
       );
       await tester.pump();
-      print('RACE before load.started');
-      await load.started;
-      print('RACE load started');
-      load.complete();
-      for (var i = 0; i < 10 && fakePlatform.speedCalls.isEmpty; i++) {
-        await tester.pump();
-        await Future<void>.delayed(Duration.zero);
+      for (var i = 0; i < 5 && !load.hasStarted; i++) {
+        await flushAsyncPlayerTasks(tester);
       }
-      print('RACE speed calls ${fakePlatform.speedCalls}');
+      expect(load.hasStarted, isTrue);
+      load.complete();
+      for (var i = 0; i < 5 && fakePlatform.speedCalls.isEmpty; i++) {
+        await flushAsyncPlayerTasks(tester);
+      }
       expect(fakePlatform.speedCalls, [1.0]);
 
       await tester.runAsync(store.cycle);
-      print('RACE store cycled');
       await tester.pump();
       expect(find.text('1.5×'), findsOneWidget);
       deferred.complete();
-      print('RACE gate released');
       await settleCompletedLoad(tester);
-      print('RACE load settled ${fakePlatform.speedCalls}');
 
       expect(
         fakePlatform.speedCalls,
