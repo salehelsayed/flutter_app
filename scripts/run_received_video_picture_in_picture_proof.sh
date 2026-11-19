@@ -117,7 +117,7 @@ if [[ "$scenario" == "process-recreation" && ! -f "$process_recreation_driver" ]
 fi
 
 actual_sha256="$(shasum -a 256 "$fixture" | awk '{print $1}')"
-actual_bytes="$(stat -f '%z' "$fixture" 2>/dev/null || stat -c '%s' "$fixture")"
+actual_bytes="$(wc -c < "$fixture" | tr -d '[:space:]')"
 if [[ "$actual_sha256" != "$fixture_sha256" || "$actual_bytes" != "$fixture_bytes" ]]; then
   echo "Reviewed PiP fixture hash/size mismatch." >&2
   exit 1
