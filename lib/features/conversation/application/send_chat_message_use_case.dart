@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/engagement_chat_observer.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -4825,15 +4826,43 @@ _authorDirectBlobFreeTextFanout({
       candidates: candidates,
     );
   } else {
-    staged = await directEventFanout.stageTextFanout(
-      authoredTextIntentToken: authoredTextIntentToken,
-      stagedRow: stagedRow,
-      messageId: resolvedMessageId,
-      contactAccountPeerId: targetPeerId,
-      senderTransportPeerId: directEventFanout.senderTransportPeerId,
-      expectedSnapshot: snapshot,
-      candidates: candidates,
-    );
+    EngagementChatObserverIntent? weeklyIntent;
+    if (action == MessagePayload.actionSend && activityCapture != null) {
+      try {
+        weeklyIntent = activityReporter?.reserveChatCaptured(
+          activityCapture,
+          contactAccountPeerId: targetPeerId,
+          messageId: resolvedMessageId,
+          generationId: resolvedMessageId,
+        );
+      } catch (_) {
+        // Optional observation cannot prevent the real atomic stage.
+      }
+    }
+    try {
+      staged = await directEventFanout.stageTextFanout(
+        authoredTextIntentToken: authoredTextIntentToken,
+        stagedRow: stagedRow,
+        messageId: resolvedMessageId,
+        contactAccountPeerId: targetPeerId,
+        senderTransportPeerId: directEventFanout.senderTransportPeerId,
+        expectedSnapshot: snapshot,
+        candidates: candidates,
+      );
+      if (staged.outcome == DirectEventFanoutStageOutcome.applied &&
+          action == MessagePayload.actionSend &&
+          activityCapture != null && weeklyIntent != null) {
+        try {
+          activityReporter?.admitChatCaptured(activityCapture, weeklyIntent);
+        } catch (_) {}
+      }
+    } finally {
+      if (activityCapture != null && weeklyIntent != null) {
+        try {
+          activityReporter?.cancelChatCaptured(activityCapture, weeklyIntent);
+        } catch (_) {}
+      }
+    }
   }
 
   switch (staged.outcome) {
