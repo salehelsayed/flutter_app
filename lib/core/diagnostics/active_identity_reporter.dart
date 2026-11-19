@@ -63,6 +63,8 @@ final class ActiveIdentityReporter {
   Object? _logicalProfileMarker;
   Map<String, Object?>? _owner;
   Future<void>? _configuration;
+  ({ActiveIdentityReporterCapture capture, int occurredAtUnixMillis})?
+  _pendingFreshRegistration;
   int _generation = 0;
   bool _retired = false;
   bool _disposed = false;
@@ -73,8 +75,55 @@ final class ActiveIdentityReporter {
   void attachBridge(Bridge bridge) {
     if (_disposed) return;
     if (identical(_bridge, bridge) && _owner != null) return;
+    final pending = _pendingFreshRegistration;
+    final registration = pending != null &&
+            identical(pending.capture._bridge, bridge) &&
+            _captureCurrent(pending.capture)
+        ? pending
+        : null;
     _bridge = bridge;
     unawaited(_configure());
+    if (registration != null) {
+      final capture = captureOwner(
+        expectedAccountPeerId: registration.capture._account,
+      );
+      if (capture != null &&
+          capture._generation == registration.capture._generation + 1) {
+        markCaptured(
+          capture,
+          occurredAtUnixMillis: registration.occurredAtUnixMillis,
+        );
+      }
+    }
+  }
+
+  /// A fresh local identity was durably committed, before runtime may be ready.
+  void freshIdentityCommitted({
+    required String accountPeerId,
+    required int occurredAtUnixMillis,
+  }) {
+    final bridge = _bridge;
+    final identity = _identity;
+    final consent = _consent;
+    if (_disposed || _retired || bridge == null || identity == null ||
+        identity.account != accountPeerId || consent == null ||
+        !consent.enabled) return;
+    final capture = ActiveIdentityReporterCapture._(
+      reporter: this,
+      bridge: bridge,
+      generation: _generation,
+      account: identity.account,
+      binding: identity.binding,
+      epoch: consent.consentEpoch,
+    );
+    if (bridge.isInitialized) {
+      markCaptured(capture, occurredAtUnixMillis: occurredAtUnixMillis);
+    } else {
+      _pendingFreshRegistration = (
+        capture: capture,
+        occurredAtUnixMillis: occurredAtUnixMillis,
+      );
+    }
   }
 
   void observeIdentity({
@@ -159,6 +208,7 @@ final class ActiveIdentityReporter {
     bool preserve = false,
     bool empty = false,
   }) async {
+    _pendingFreshRegistration = null;
     // This counter is only a Dart callback fence. Native alone issues the
     // revision admitted by Go, and a late receipt never replaces a newer owner.
     final generation = ++_generation;
