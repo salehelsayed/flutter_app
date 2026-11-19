@@ -2491,9 +2491,9 @@ final class ProductionCallSignalingGraph
             CallEndReason.declined => CallEndCause.declined,
             CallEndReason.busy => CallEndCause.busy,
             CallEndReason.noAnswer ||
-            CallEndReason.expired ||
-            CallEndReason.remotePermissionDenied => CallEndCause.noAnswer,
-            CallEndReason.permissionDenied => CallEndCause.permissionDenied,
+            CallEndReason.expired => CallEndCause.noAnswer,
+            CallEndReason.permissionDenied ||
+            CallEndReason.remotePermissionDenied => CallEndCause.permissionDenied,
             CallEndReason.unsupported => CallEndCause.unsupported,
             CallEndReason.signalingFailed => CallEndCause.signalingFailed,
             CallEndReason.mediaFailed ||
