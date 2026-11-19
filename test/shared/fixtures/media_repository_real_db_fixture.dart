@@ -1,6 +1,7 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
