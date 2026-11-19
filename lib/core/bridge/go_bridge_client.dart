@@ -1177,6 +1177,42 @@ class GoBridgeClient extends Bridge {
     }
   }
 
+  static bool _validActivityWeeklyKinds(Object? value, {bool allowEmpty = false}) =>
+      value is List &&
+      value.length <= 4 &&
+      (allowEmpty || value.isNotEmpty) &&
+      value.every(
+        (kind) => const ['active', 'chat', 'call', 'group'].contains(kind),
+      ) &&
+      value.toSet().length == value.length;
+
+  static bool _validActivityWeeklyProjection(Object? value) {
+    if (value is! Map || value.length != 5) return false;
+    final week = value['week'];
+    final start = value['startUnixMillis'];
+    final end = value['endUnixMillis'];
+    if (week is! String ||
+        week.length != 8 ||
+        !RegExp(r'^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$').hasMatch(week) ||
+        start is! int || start.abs() > 9007199254740991 ||
+        end is! int || end.abs() > 9007199254740991 || end <= start ||
+        !_validActivityWeeklyKinds(value['kinds'], allowEmpty: true)) {
+      return false;
+    }
+    final acknowledged = value['acknowledged'];
+    if (acknowledged is! List || acknowledged.length > 64) return false;
+    for (final ack in acknowledged) {
+      if (ack is! Map ||
+          ack.length != 2 ||
+          ack['relayPeerId'] is! String ||
+          (ack['relayPeerId'] as String).isEmpty ||
+          !_validActivityWeeklyKinds(ack['kinds'])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   @override
   Future<String> send(String message) async {
     final Map<String, dynamic> request;
@@ -1229,16 +1265,19 @@ class GoBridgeClient extends Bridge {
         final op = payload['op'];
         final valueKey = switch (op) {
           'configure' => 'configured',
-          'mark' => 'accepted',
+          'mark' || 'markWeekly' => 'accepted',
           'flush' => 'queued',
+          'weeklyProjection' => 'weekly',
           _ => null,
         };
         if (valueKey == null ||
             decoded.length != 2 ||
             data.length != 3 ||
-            data[valueKey] is! bool ||
             data['revision'] is! int ||
-            data['consentEpoch'] is! int)
+            data['consentEpoch'] is! int ||
+            (op == 'weeklyProjection'
+                ? !_validActivityWeeklyProjection(data[valueKey])
+                : data[valueKey] is! bool))
           return unavailable;
         return jsonEncode({
           'ok': true,
