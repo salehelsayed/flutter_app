@@ -903,6 +903,8 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_ONBOARDING',
             details: {},
           );
+          final registrationReporter =
+              widget.directRouteAuthority?.activityReporter;
           final migrationActivationRefresh =
               widget.onAccountMigrationReceiverActivated;
           final restartedStartupRouter = _buildRestartedStartupRouter();
@@ -916,6 +918,13 @@ class _StartupRouterState extends State<StartupRouter> {
               builder: (_, retainedStartReceiver, retainedStopReceiver) =>
                   IdentityChoiceWired(
                     repository: repository,
+                    onFreshIdentityCommitted: (accountPeerId) {
+                      registrationReporter?.freshIdentityCommitted(
+                        accountPeerId: accountPeerId,
+                        occurredAtUnixMillis:
+                            DateTime.now().millisecondsSinceEpoch,
+                      );
+                    },
                     callIdentityGenerate: () => callIdentityGenerate(bridge),
                     callIdentityRestore: (mnemonic) =>
                         callIdentityRestore(bridge, mnemonic),
