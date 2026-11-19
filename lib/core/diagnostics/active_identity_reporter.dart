@@ -60,11 +60,15 @@ final class ActiveIdentityReporter {
   LocalDiagnosticConsent? _consent;
   LocalDiagnosticConsent? _lastConsent;
   ({String account, String root, String binding})? _identity;
+  Object? _logicalProfileMarker;
   Map<String, Object?>? _owner;
   Future<void>? _configuration;
   int _generation = 0;
   bool _retired = false;
   bool _disposed = false;
+
+  /// Pins loaded content to its logical profile, including while unarmed.
+  Object? get logicalProfileMarker => _logicalProfileMarker;
 
   void attachBridge(Bridge bridge) {
     if (_disposed) return;
@@ -100,6 +104,7 @@ final class ActiveIdentityReporter {
     if (next == _identity && !_retired) return;
     final replacingKnownOwner = _identity != null && next == null;
     _identity = next;
+    _logicalProfileMarker = next == null ? null : Object();
     _retired = replacingKnownOwner;
     unawaited(_configure(empty: replacingKnownOwner && _consent != null));
   }
@@ -249,6 +254,15 @@ final class ActiveIdentityReporter {
       binding: identity.binding,
       epoch: consent.consentEpoch,
     );
+  }
+
+  /// Renews consent/configuration ownership only for the original loaded profile.
+  ActiveIdentityReporterCapture? captureForLoadedProfile({
+    required Object originalProfileMarker,
+    required String expectedAccountPeerId,
+  }) {
+    if (!identical(originalProfileMarker, _logicalProfileMarker)) return null;
+    return captureOwner(expectedAccountPeerId: expectedAccountPeerId);
   }
 
   bool _captureCurrent(ActiveIdentityReporterCapture capture) {
@@ -459,6 +473,7 @@ final class ActiveIdentityReporter {
   Future<void> retire() {
     if (_disposed) return Future<void>.value();
     _identity = null;
+    _logicalProfileMarker = null;
     _retired = true;
     return _configure(empty: true);
   }
@@ -477,6 +492,7 @@ final class ActiveIdentityReporter {
     if (_disposed) return;
     _disposed = true;
     _identity = null;
+    _logicalProfileMarker = null;
     await _configure(preserve: true, empty: true);
     await _groups?.dispose();
     _bridge = null;
