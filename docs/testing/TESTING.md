@@ -6616,6 +6616,19 @@ visible and cannot become an ordinary first-attempt PASS.
   `StateError` before the publication guard; all 25 listener and seven view
   delivery cases pass afterward. Red/green receipts are retained in
   `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+  Host notification polling also depends on the real card-registry file lock
+  and filesystem. A paired Linux run of the unchanged file passed all 28 cases
+  at C6 `c6db8782` but passed 24 and failed the first four notification checks
+  at `15fd3c77`. All 130 local Dart sources in the test/bootstrap import closure,
+  package sources and locked dependencies were identical. The failing raw
+  reports `BoundedPosixFlockUnavailableException` and receives completing after
+  teardown; the fixed notification polls do not join that work. Record this as
+  a host timing/environment baseline limitation, with no demonstrated B14
+  source cause. Preserve paired raws `f93d1786` and `04b1e19f` and the original
+  main failure `808d7a8d`; the full classification and source hashes are in
+  `/Users/I560101/.codex/investigations/post-listener-comparison-20261119/`.
+  This evidence does not justify a production change, test exclusion, longer
+  deadline or another run.
 - **Thought relay replay before persistence:** the composed `Thought reconnect`
   cases in `test/core/services/p2p_service_inbox_ack_ordering_test.dart` use
   real P2PServiceImpl, IncomingMessageRouter and PostListener with a gated
