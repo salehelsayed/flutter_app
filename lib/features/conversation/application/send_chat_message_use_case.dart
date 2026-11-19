@@ -9,6 +9,7 @@ import 'package:clock/clock.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
     show
         DirectMediaBlobCustodyDirection,
@@ -2502,16 +2503,19 @@ _sendChatMessageDiagnosed({
             );
           } catch (_) {}
         }
-        final staged = await directTextCustodyRepo!
-            .stageOutgoingDirectTextInboxCustody(
-              authoredTextIntentToken: authoredTextIntentToken,
-              expected: expectedAttempt,
-              staged: stagedAttempt,
-              kind: attemptKind,
-              recipientPeerId: targetPeerId,
-              incarnationId: custodyIncarnationId!,
-              wireEnvelope: jsonString,
-            );
+        final staged = await runWithOutgoingInitialAuthorityObserver(
+          activityReporter?.captureChatSqlObserver(activityCapture),
+          () => directTextCustodyRepo!
+              .stageOutgoingDirectTextInboxCustody(
+                authoredTextIntentToken: authoredTextIntentToken,
+                expected: expectedAttempt,
+                staged: stagedAttempt,
+                kind: attemptKind,
+                recipientPeerId: targetPeerId,
+                incarnationId: custodyIncarnationId!,
+                wireEnvelope: jsonString,
+              ),
+        );
         stagedOutcome = staged.outcome;
         stagedMessage = staged.message;
         stagedAuthorizesTransport = staged.authorizesTransport;
@@ -2570,17 +2574,20 @@ _sendChatMessageDiagnosed({
           }
         }
         try {
-          final staged = await directMediaCustodyRepo!
-              .stageOutgoingDirectMediaInboxCustody(
-                expected: expectedAttempt,
-                staged: stagedAttempt,
-                attachments: normalizedAttachments!,
-                kind: attemptKind,
-                recipientPeerId: targetPeerId,
-                wireEnvelope: jsonString,
-                wireMediaBlobManifestHash: wireMediaBlobManifestHash,
-                wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
-              );
+          final staged = await runWithOutgoingInitialAuthorityObserver(
+            activityReporter?.captureChatSqlObserver(activityCapture),
+            () => directMediaCustodyRepo!
+                .stageOutgoingDirectMediaInboxCustody(
+                  expected: expectedAttempt,
+                  staged: stagedAttempt,
+                  attachments: normalizedAttachments!,
+                  kind: attemptKind,
+                  recipientPeerId: targetPeerId,
+                  wireEnvelope: jsonString,
+                  wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+                  wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+                ),
+          );
           stagedOutcome = staged.outcome;
           stagedMessage = staged.message;
           stagedAuthorizesTransport = staged.authorizesTransport;
@@ -4897,14 +4904,17 @@ _authorDirectBlobFreeTextFanout({
       }
     }
     try {
-      staged = await directEventFanout.stageTextFanout(
-        authoredTextIntentToken: authoredTextIntentToken,
-        stagedRow: stagedRow,
-        messageId: resolvedMessageId,
-        contactAccountPeerId: targetPeerId,
-        senderTransportPeerId: directEventFanout.senderTransportPeerId,
-        expectedSnapshot: snapshot,
-        candidates: candidates,
+      staged = await runWithOutgoingInitialAuthorityObserver(
+        activityReporter?.captureChatSqlObserver(activityCapture),
+        () => directEventFanout.stageTextFanout(
+          authoredTextIntentToken: authoredTextIntentToken,
+          stagedRow: stagedRow,
+          messageId: resolvedMessageId,
+          contactAccountPeerId: targetPeerId,
+          senderTransportPeerId: directEventFanout.senderTransportPeerId,
+          expectedSnapshot: snapshot,
+          candidates: candidates,
+        ),
       );
       if (staged.outcome == DirectEventFanoutStageOutcome.applied &&
           action == MessagePayload.actionSend &&

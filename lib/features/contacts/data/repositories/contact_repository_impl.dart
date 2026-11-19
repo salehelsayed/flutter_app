@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/database/db_write_transaction.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 
@@ -38,8 +40,10 @@ class ContactRepositoryImpl
   final Future<List<String>> Function(String peerId)?
   loadDirectNotificationAuthorizedTransports;
   final void Function()? onPushEligibilityChanged;
+  final OutgoingInitialAuthorityObserver? Function()? captureInitialAuthorityMutationObserver;
 
   ContactRepositoryImpl({
+    this.captureInitialAuthorityMutationObserver,
     required this.dbLoadAllContacts,
     required this.dbLoadContact,
     required this.dbUpsertContact,
@@ -67,7 +71,7 @@ class ContactRepositoryImpl
 
   @override
   Future<DirectContactConversationPurgeSummary>
-  purgeDirectContactConversationAndContact(String peerId) async {
+  purgeDirectContactConversationAndContact(String peerId) => observeOutgoingInitialAuthority(() async {
     final delegate = dbPurgeDirectContactConversationAndContact;
     if (delegate == null) {
       throw StateError('direct contact conversation purge is unavailable');
@@ -79,7 +83,7 @@ class ContactRepositoryImpl
     await directReactionProjection?.removeContact(peerId);
     _notifyPushEligibilityChanged();
     return summary;
-  }
+  }, captureMutationObserver: captureInitialAuthorityMutationObserver);
 
   @override
   Future<void> addContact(ContactModel contact) async {
@@ -172,12 +176,12 @@ class ContactRepositoryImpl
   }
 
   @override
-  Future<void> deleteContact(String peerId) async {
+  Future<void> deleteContact(String peerId) => observeOutgoingInitialAuthority(() async {
     await directReactionProjection?.retireContactTransportAuthority(peerId);
     await dbDeleteContact(peerId);
     await directReactionProjection?.removeContact(peerId);
     _notifyPushEligibilityChanged();
-  }
+  }, captureMutationObserver: captureInitialAuthorityMutationObserver);
 
   @override
   Future<bool> contactExists(String peerId) async {

@@ -13,6 +13,9 @@ import 'package:flutter_app/core/diagnostics/engagement_chat_checkpoint_store.da
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -148,6 +151,59 @@ void main() {
     }
     await _bounded(h.expectUnobserved());
   });
+
+  test('B15TFW-007 physical sender alias and authenticated linked receipt count one logical contact', () async {
+    h.senderTransport = 'local-physical-sender';
+    final original = h.capture();
+    final sent = await _bounded(h.send(capturedActivity: original));
+    expect(sent.$1, SendChatMessageResult.success);
+    await _bounded(h.expectApplied());
+    for (final row in await _bounded(h.siblings())) {
+      expect((jsonDecode(row['wire_envelope'] as String) as Map)['senderPeerId'],
+        h.senderTransport);
+    }
+    await _bounded(h.reporter.flush());
+    expect((await _bounded(h.checkpointContacts())).single['deliveredOutgoingSeen'], isFalse);
+    for (var duplicate = 0; duplicate < 2; duplicate++) {
+      await _bounded(handleDeliveryReceipt(
+        message: ChatMessage(from: _targets.first, to: _account, timestamp: _authoredAt,
+          isIncoming: true, transport: 'direct', content: jsonEncode({
+            'type': 'delivery_receipt', 'version': '1',
+            'payload': {'messageIds': [_message], 'ts': _authoredAt},
+          })),
+        messageRepo: h.fixture.messageRepo,
+        transportAuthority: DatabaseDirectTransportAuthority(database: h.fixture.db),
+        capturedActivity: original,
+      ));
+    }
+    await _bounded(h.reporter.flush());
+    final parent = (await _bounded(h.fixture.messageRepo.getMessage(_message)))!;
+    expect(parent.status, 'delivered');
+    expect(parent.wireEnvelope, isNull);
+    expect(parent.directEventFanoutGenerationId, _message);
+    final contact = (await _bounded(h.checkpointContacts())).single as Map;
+    expect(contact['account'], _contact);
+    expect(contact['deliveredOutgoingSeen'], isTrue);
+    expect(contact['outgoing'], isEmpty);
+    expect(h.bridge.operations('mark'), hasLength(1));
+    expect(h.bridge.operations('markWeekly'), isEmpty);
+  });
+
+  test('B15TFW-008 sibling insertion rollback cannot admit a fresh weekly tuple', () async {
+    var insertions = 0;
+    h.beforeSiblingInsert = () async {
+      insertions++;
+      if (insertions == 2) {
+        throw StateError('controlled second sibling rollback');
+      }
+    };
+    await expectLater(_bounded(h.send()), throwsA(isA<StateError>()));
+    expect(insertions, 2, reason: 'The real owner inserted a first sibling before rollback');
+    expect(h.stages, isEmpty, reason: 'No real final APPLIED result escaped the outer owner');
+    expect(await _bounded(h.fixture.messageRepo.getMessage(_message)), isNull);
+    expect(await _bounded(h.siblings()), isEmpty);
+    await _bounded(h.expectUnobserved());
+  });
 }
 
 // Only crypto, network and native-calendar boundaries are substituted. Contact
@@ -163,6 +219,8 @@ final class _TextFanoutHarness {
   final service = FakeP2PService(sendMessageResult: false);
   final stages = <DirectEventFanoutStageOutcome>[];
   Future<void> Function()? beforeStage;
+  Future<void> Function()? beforeSiblingInsert;
+  String senderTransport = _account;
   int snapshotReads = 0;
 
   static Future<_TextFanoutHarness> create() async {
@@ -224,7 +282,7 @@ final class _TextFanoutHarness {
 
   DirectEventFanoutAuthoring get authoring => DirectEventFanoutAuthoring(
     selector: const DirectLinkedEventFanoutSelector.enabled(),
-    linkedOrigin: false, senderTransportPeerId: _account,
+    linkedOrigin: false, senderTransportPeerId: senderTransport,
     readSnapshot: (contact) {
       snapshotReads++;
       return _bounded(dbReadDirectContactFanoutSnapshot(
@@ -249,7 +307,7 @@ final class _TextFanoutHarness {
         fixture.db, authoredTextIntentToken: authoredTextIntentToken, stagedRow: stagedRow,
         messageId: messageId, contactAccountPeerId: contactAccountPeerId,
         senderTransportPeerId: senderTransportPeerId, expectedSnapshot: expectedSnapshot,
-        candidates: candidates,
+        candidates: candidates, beforeSiblingInsertForTest: beforeSiblingInsert,
       ));
       stages.add(staged.outcome);
       return staged;

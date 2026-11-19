@@ -106,6 +106,8 @@ class MediaRepositoryRealDbFixture {
     // reopen() deliberately constructs a fresh repository without the hooks.
     Future<void> Function()? beforeDirectTextCustodyStage,
     Future<void> Function()? afterDirectTextCustodyStage,
+    Future<void> Function()? afterOrdinaryReceiptSettlement,
+    Future<void> Function()? beforeMessageDelete,
     Future<void> Function()? beforeDirectInboxCustodyCompletion,
   }) async {
     sqfliteFfiInit();
@@ -131,6 +133,8 @@ class MediaRepositoryRealDbFixture {
       beforePrivateDeletionCustodyInsert: beforePrivateDeletionCustodyInsert,
       beforeDirectTextCustodyStage: beforeDirectTextCustodyStage,
       afterDirectTextCustodyStage: afterDirectTextCustodyStage,
+      afterOrdinaryReceiptSettlement: afterOrdinaryReceiptSettlement,
+      beforeMessageDelete: beforeMessageDelete,
       beforeDirectInboxCustodyCompletion: beforeDirectInboxCustodyCompletion,
       wireOutgoingDirectTextMutationInboxCustody:
           wireOutgoingDirectTextMutationInboxCustody,
@@ -1193,6 +1197,8 @@ MessageRepositoryImpl _buildMessageRepository(
   Future<void> Function()? beforePrivateDeletionCustodyInsert,
   Future<void> Function()? beforeDirectTextCustodyStage,
   Future<void> Function()? afterDirectTextCustodyStage,
+  Future<void> Function()? afterOrdinaryReceiptSettlement,
+  Future<void> Function()? beforeMessageDelete,
   Future<void> Function()? beforeDirectInboxCustodyCompletion,
   required bool wireOutgoingDirectTextMutationInboxCustody,
 }) {
@@ -1237,7 +1243,13 @@ MessageRepositoryImpl _buildMessageRepository(
         dbCountTotalUnreadExcludingArchived(db),
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
-    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+    dbDeleteMessage: (id) {
+      final before = beforeMessageDelete;
+      if (before == null) {
+        return dbDeleteMessage(db, id);
+      }
+      return before().then((_) => dbDeleteMessage(db, id));
+    },
     dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
         dbExistsMessageByContent(
           db,
@@ -1428,7 +1440,8 @@ MessageRepositoryImpl _buildMessageRepository(
           required transport,
           required relayExpiresAt,
           required mode,
-        }) => dbSettleOutgoingOrdinaryTransport(
+        }) {
+          final settled = dbSettleOutgoingOrdinaryTransport(
           db,
           messageId: messageId,
           expectedContactPeerId: expectedContactPeerId,
@@ -1437,7 +1450,16 @@ MessageRepositoryImpl _buildMessageRepository(
           transport: transport,
           relayExpiresAt: relayExpiresAt,
           mode: mode,
-        ),
+        );
+          final after = afterOrdinaryReceiptSettlement;
+          if (after == null || mode != OutgoingOrdinarySettlementMode.receipt) {
+            return settled;
+          }
+          return settled.then((outcome) async {
+            await after();
+            return outcome;
+          });
+        },
     dbSettleOutgoingOrdinaryDeleteTombstone:
         ({
           required messageId,

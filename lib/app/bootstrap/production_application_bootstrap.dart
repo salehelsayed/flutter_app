@@ -1156,6 +1156,14 @@ final class ProductionApplicationBootstrap
 
     // Create contact repository
     final contactRepository = ContactRepositoryImpl(
+      captureInitialAuthorityMutationObserver: () {
+        final account = activityBindingAccount;
+        return account == null ? null :
+            activeIdentityReporter.captureChatSqlMutationObserver(
+              sqlRealm: db, isSqlRealmOpen: () => db.isOpen,
+              expectedAccountPeerId: account,
+            );
+      },
       dbLoadAllContacts: () => dbLoadAllContacts(db),
       dbLoadContact: (peerId) => dbLoadContact(db, peerId),
       dbUpsertContact: (row) => dbUpsertContact(db, row),
@@ -1573,6 +1581,14 @@ final class ProductionApplicationBootstrap
     // Create message repository
     late final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
     final messageRepository = MessageRepositoryImpl(
+      captureInitialAuthorityMutationObserver: () {
+        final account = activityBindingAccount;
+        return account == null ? null :
+            activeIdentityReporter.captureChatSqlMutationObserver(
+              sqlRealm: db, isSqlRealmOpen: () => db.isOpen,
+              expectedAccountPeerId: account,
+            );
+      },
       dbLoadThoughtReactionMessages: (postId) =>
           dbLoadThoughtReactionMessages(db, postId),
       dbLoadThoughtWroteBackMessages: (postId) =>
@@ -2519,6 +2535,14 @@ final class ProductionApplicationBootstrap
     // save closure is the atomic local-state-preserving merge, never a blind
     // INSERT OR REPLACE).
     mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
+      captureInitialAuthorityMutationObserver: () {
+        final account = activityBindingAccount;
+        return account == null ? null :
+            activeIdentityReporter.captureChatSqlMutationObserver(
+              sqlRealm: db, isSqlRealmOpen: () => db.isOpen,
+              expectedAccountPeerId: account,
+            );
+      },
       dbSaveMediaAttachmentPreservingLocalState: (row) =>
           dbSaveMediaAttachmentPreservingLocalState(db, row),
       dbCanApplyGenericMediaAttachmentSave: (row) =>

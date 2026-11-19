@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../bridge/bridge.dart';
+import '../database/db_write_transaction.dart';
+import '../database/outgoing_transport_mutation.dart';
 import 'app_diagnostics.dart';
 import 'engagement_chat_checkpoint_store.dart';
 import 'engagement_chat_observer.dart';
@@ -542,6 +544,77 @@ final class ActiveIdentityReporter {
         _chat?.captureOwner(expectedAccountPeerId: capture._account),
         capture._chatOwner,
       );
+
+  /// SQL boundary for the original optional observation owner.
+  Future<T> observeChatSqlCaptured<T>(
+    ActiveIdentityReporterCapture? capture,
+    Future<T> Function() work, {
+    ({OutgoingInitialAuthorityObserver? observer})? mutationObservation,
+  }) => runWithOutgoingInitialAuthorityObserver(
+    captureChatSqlObserver(capture), work,
+    mutationObservation: mutationObservation,
+  );
+
+  OutgoingInitialAuthorityObserver? captureChatSqlObserver(
+    ActiveIdentityReporterCapture? capture, {
+    Set<String>? receiptMessageIds,
+  }) {
+    if (capture == null) {
+      return null;
+    }
+    try {
+      if (!_chatCaptureCurrent(capture)) {
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+    final candidates = receiptMessageIds == null ? null :
+        _chat!.snapshotReceiptCandidates(capture._chatOwner!, receiptMessageIds);
+    return (decision, sqlRealm) {
+      if (!_chatCaptureCurrent(capture)) {
+        return null;
+      }
+      return _chat?.stageSqlDecision(capture._chatOwner!, decision, sqlRealm,
+          receiptCandidates: candidates);
+    };
+  }
+
+  /// Negative authority only. Consent changes cannot hide a real removal from
+  /// a successor epoch in this same loaded profile and physical SQL lifetime.
+  OutgoingInitialAuthorityObserver? captureChatSqlMutationObserver({
+    required Object sqlRealm,
+    required bool Function() isSqlRealmOpen,
+    required String expectedAccountPeerId,
+  }) {
+    final marker = _logicalProfileMarker;
+    final account = _identity?.account;
+    final binding = _identity?.binding;
+    final bridge = _bridge;
+    if (marker == null || account == null || binding == null || bridge == null ||
+        account != expectedAccountPeerId || _disposed || _retired) {
+      return null;
+    }
+    return (decision, actualSqlRealm) {
+      if (decision.kind != OutgoingInitialAuthorityKind.superseded &&
+          decision.kind != OutgoingInitialAuthorityKind.envelopeReplaced &&
+          decision.kind != OutgoingInitialAuthorityKind.contactRemoved) {
+        return null;
+      }
+      if (_disposed || _retired || !identical(_bridge, bridge) ||
+          !bridge.isInitialized || !identical(_logicalProfileMarker, marker) ||
+          _identity?.account != account ||
+          _identity?.binding != binding ||
+          !identical(actualSqlRealm, sqlRealm) || !isSqlRealmOpen()) {
+        return null;
+      }
+      final owner = _chat?.captureOwner(expectedAccountPeerId: account);
+      if (owner == null) {
+        return null;
+      }
+      return _chat?.stageSqlDecision(owner, decision, actualSqlRealm);
+    };
+  }
 
   /// Reserve a fresh known initial tuple before its durable staging starts.
   EngagementChatObserverIntent? reserveChatCaptured(

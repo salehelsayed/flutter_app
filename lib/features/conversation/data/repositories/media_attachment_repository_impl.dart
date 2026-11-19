@@ -24,6 +24,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
         shouldPreserveImmutableDirectMediaCustodyAttachmentProjection;
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
     show
@@ -725,6 +726,7 @@ class MediaAttachmentRepositoryImpl
   dbCompleteGroupUploadRetryExact;
 
   final SecureKeyStore? secureKeyStore;
+  final OutgoingInitialAuthorityObserver? Function()? captureInitialAuthorityMutationObserver;
   final Future<void> Function(String messageId)?
   refreshDirectPrivateMediaParent;
 
@@ -737,7 +739,12 @@ class MediaAttachmentRepositoryImpl
         sync: true,
       );
 
+  Future<T> _observeInitialAuthorityMutation<T>(Future<T> Function() work) =>
+      observeOutgoingInitialAuthority(work,
+        captureMutationObserver: captureInitialAuthorityMutationObserver);
+
   MediaAttachmentRepositoryImpl({
+    this.captureInitialAuthorityMutationObserver,
     required this.dbSaveMediaAttachmentPreservingLocalState,
     this.dbCanApplyGenericMediaAttachmentSave,
     this.dbStageOutgoingOrdinaryAttemptWithMedia,
@@ -879,7 +886,7 @@ class MediaAttachmentRepositoryImpl
     required String recipientPeerId,
     required String eventId,
     required String wireEnvelope,
-  }) async {
+  }) => _observeInitialAuthorityMutation(() async {
     final stage = dbStageOutgoingDirectMediaDeletionInboxCustody;
     if (!supportsDirectMediaDeletionInboxCustody ||
         stage == null ||
@@ -917,7 +924,7 @@ class MediaAttachmentRepositoryImpl
         result.custodyRow!,
       ),
     );
-  }
+  });
 
   @override
   bool get supportsDirectMediaCaptionEditInboxCustody =>
@@ -989,7 +996,7 @@ class MediaAttachmentRepositoryImpl
     required String recipientPeerId,
     required String eventId,
     required String wireEnvelope,
-  }) async {
+  }) => _observeInitialAuthorityMutation(() async {
     final stage = dbStageOutgoingDirectMediaCaptionEditInboxCustody;
     if (!supportsDirectMediaCaptionEditInboxCustody ||
         stage == null ||
@@ -1037,7 +1044,7 @@ class MediaAttachmentRepositoryImpl
         result.custodyRow!,
       ),
     );
-  }
+  });
 
   @override
   bool get supportsIncomingDirectMediaCaptionEditApply =>
@@ -4309,7 +4316,7 @@ class MediaAttachmentRepositoryImpl
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
     required OutgoingOrdinaryAttemptKind kind,
-  }) async {
+  }) => _observeInitialAuthorityMutation(() async {
     final stage = dbStageOutgoingOrdinaryAttemptWithMedia;
     final publish = publishOutgoingOrdinaryMutation;
     if (stage == null || publish == null || attachments.isEmpty) {
@@ -4404,7 +4411,7 @@ class MediaAttachmentRepositoryImpl
       outcome: outcome,
       committedMedia: committedMedia,
     );
-  }
+  });
 
   @override
   Future<OutgoingDirectMediaCustodyStageResult>
@@ -4417,7 +4424,7 @@ class MediaAttachmentRepositoryImpl
     required String wireEnvelope,
     String? wireMediaBlobManifestHash,
     int? wireMediaBlobExpiresAtMs,
-  }) async {
+  }) => _observeInitialAuthorityMutation(() async {
     final stage = dbStageOutgoingDirectMediaInboxCustody;
     final canonicalWireBinding = _canonicalDirectMediaBlobWireBinding(
       attachments,
@@ -4611,7 +4618,7 @@ class MediaAttachmentRepositoryImpl
       message: committedMessage,
       custody: custody,
     );
-  }
+  });
 
   @override
   Future<DirectMediaFanoutInboxCustodyStageResult>
@@ -4624,7 +4631,7 @@ class MediaAttachmentRepositoryImpl
     required DirectMediaFanoutStageAuthority authority,
     required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
-  }) async {
+  }) => _observeInitialAuthorityMutation(() async {
     final stage = dbStageOutgoingDirectMediaFanoutInboxCustody;
     final bindingPeerIds = targetBindings
         .map((binding) => binding.recipientPeerId)
@@ -4798,7 +4805,7 @@ class MediaAttachmentRepositoryImpl
       attachments: committedMedia,
       custodyRows: dbResult.custodyRows,
     );
-  }
+  });
 
   @override
   Future<UploadRetryProjectionResult> projectDirectMediaCustodyUploadFailure({

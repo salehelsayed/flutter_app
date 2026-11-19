@@ -1,3 +1,4 @@
+import '../outgoing_transport_mutation.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
@@ -204,6 +205,10 @@ Future<void> dbDeleteContactWithinTransaction(
     whereArgs: [peerId],
   );
   if (deleted != 0) {
+    stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+      kind: OutgoingInitialAuthorityKind.contactRemoved,
+      contactAccountPeerId: peerId,
+    ));
     await txn.update(
       'contact_relationship_consent',
       {'updated_at_ms': decisionAtMs},
@@ -327,6 +332,12 @@ dbPurgeDirectContactConversationAndContact(
           where: 'contact_peer_id = ?',
           whereArgs: <Object?>[normalized],
         );
+        if (messages > 0) {
+          stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+            kind: OutgoingInitialAuthorityKind.contactRemoved,
+            contactAccountPeerId: normalized,
+          ));
+        }
         // Test-only barrier between the conversation purge and the
         // roster/contact deletion. It must only signal/await completers.
         await beforeContactDeleteForTest?.call();

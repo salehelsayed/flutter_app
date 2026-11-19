@@ -1402,6 +1402,12 @@ dbStageOutgoingDirectTextFanoutInboxCustody(
     if (authoredTextIntentToken != null) {
       await dbDeleteAuthoredDirectTextIntents(txn, messageId: messageId);
     }
+    stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+      kind: OutgoingInitialAuthorityKind.admission,
+      contactAccountPeerId: contactAccountPeerId, messageId: messageId,
+      senderAccountPeerId: stagedRow['sender_peer_id'] as String,
+      envelopeSenderPeerId: senderTransportPeerId,
+    ));
     return DbDirectEventFanoutStageResult(
       outcome: DirectEventFanoutStageOutcome.applied,
       rows: stagedRows,

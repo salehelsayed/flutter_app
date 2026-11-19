@@ -195,7 +195,9 @@ final class _ReceiptHarness {
     final intent = reporter.reserveChatCaptured(owner,
         contactAccountPeerId: _contact, messageId: _message, generationId: _message);
     expect(intent, isNotNull);
-    final staged = await _bounded(stageParent(_message));
+    final staged = await _bounded(reporter.observeChatSqlCaptured(
+      owner, () => stageParent(_message),
+    ));
     reporter.admitChatCaptured(owner, intent!);
     await _bounded(expectPending());
     return staged;

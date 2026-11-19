@@ -3,6 +3,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/thought_re
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
@@ -475,6 +476,7 @@ class MessageRepositoryImpl
   })?
   dbRearmDirectUploadRetryForManualRetry;
   final DateTime Function() now;
+  final OutgoingInitialAuthorityObserver? Function()? captureInitialAuthorityMutationObserver;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   final StreamController<DirectMessageRemoval> _messageRemovalController =
@@ -486,6 +488,7 @@ class MessageRepositoryImpl
   final Map<String, ConversationMessage> _messageSnapshots = {};
 
   MessageRepositoryImpl({
+    this.captureInitialAuthorityMutationObserver,
     this.dbLoadThoughtReactionMessages,
     this.dbLoadThoughtWroteBackMessages,
     required this.dbInsertMessage,
@@ -651,7 +654,7 @@ class MessageRepositoryImpl
     if (delegate == null) {
       throw StateError('direct event fanout capability is unavailable');
     }
-    return delegate(
+    return _observeInitialAuthority(() => delegate(
       authoredTextIntentToken: authoredTextIntentToken,
       stagedRow: stagedRow,
       messageId: messageId,
@@ -659,7 +662,7 @@ class MessageRepositoryImpl
       senderTransportPeerId: senderTransportPeerId,
       expectedSnapshot: expectedSnapshot,
       candidates: candidates,
-    );
+    ));
   }
 
   @override
@@ -678,7 +681,7 @@ class MessageRepositoryImpl
     if (delegate == null) {
       throw StateError('direct event fanout capability is unavailable');
     }
-    return delegate(
+    return _observeInitialAuthority(() => delegate(
       expectedRow: expectedRow,
       stagedRow: stagedRow,
       kind: kind,
@@ -688,7 +691,7 @@ class MessageRepositoryImpl
       senderTransportPeerId: senderTransportPeerId,
       expectedSnapshot: expectedSnapshot,
       candidates: candidates,
-    );
+    ));
   }
 
   @override
@@ -722,7 +725,7 @@ class MessageRepositoryImpl
       _messageRemovalController.stream;
 
   @override
-  Future<void> saveMessage(ConversationMessage message) async {
+  Future<void> saveMessage(ConversationMessage message) => _observeInitialAuthority(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MESSAGE_REPO_SAVE_START',
@@ -767,7 +770,7 @@ class MessageRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
 
   @override
   Future<void> markIncomingQuietRecovery(ConversationMessage expected) async {
@@ -968,7 +971,7 @@ class MessageRepositoryImpl
   }
 
   @override
-  Future<void> updateWireEnvelope(String id, String envelope) async {
+  Future<void> updateWireEnvelope(String id, String envelope) => _observeInitialAuthority(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MESSAGE_REPO_UPDATE_WIRE_ENVELOPE',
@@ -981,14 +984,14 @@ class MessageRepositoryImpl
       // cache that a refused write committed.
       await _loadAndRememberMessage(id);
     }
-  }
+  });
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,
-  }) async {
+  }) => _observeInitialAuthority(() async {
     final stage = dbStageOutgoingOrdinaryAttempt;
     final outcome = stage == null
         ? OutgoingOrdinaryMutationOutcome.refused
@@ -1001,7 +1004,7 @@ class MessageRepositoryImpl
       messageId: staged.id,
       outcome: outcome,
     );
-  }
+  });
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
@@ -1012,7 +1015,7 @@ class MessageRepositoryImpl
     required String recipientPeerId,
     required String incarnationId,
     required String wireEnvelope,
-  }) async {
+  }) => _observeInitialAuthority(() async {
     if (!supportsDirectTextInboxCustody) {
       return OutgoingOrdinaryMutationResult(
         outcome: OutgoingOrdinaryMutationOutcome.refused,
@@ -1055,7 +1058,7 @@ class MessageRepositoryImpl
       return OutgoingOrdinaryMutationResult(outcome: outcome, message: staged);
     }
     return published;
-  }
+  });
 
   @override
   Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
@@ -1165,7 +1168,7 @@ class MessageRepositoryImpl
     required String recipientPeerId,
     required String eventId,
     required String wireEnvelope,
-  }) async {
+  }) => _observeInitialAuthority(() async {
     final stage = dbStageOutgoingDirectTextMutationInboxCustody;
     if (!supportsDirectTextMutationInboxCustody ||
         stage == null ||
@@ -1195,7 +1198,7 @@ class MessageRepositoryImpl
       message: published.message ?? expected,
       custody: custody,
     );
-  }
+  });
 
   @override
   Future<DirectReactionInboxCustodyOutboxEntry?>
@@ -1425,7 +1428,7 @@ class MessageRepositoryImpl
     required bool isDeleteTombstone,
     String? expectedDirectEventFanoutGenerationId,
     String? authenticatedTransportPeerId,
-  }) async {
+  }) => _observeInitialAuthority(() async {
     final settle = dbSettleOutgoingOrdinaryTransportWithFanoutAuthority;
     if (settle == null) {
       return OutgoingOrdinaryMutationOutcome.refused;
@@ -1450,7 +1453,7 @@ class MessageRepositoryImpl
       );
     }
     return outcome;
-  }
+  });
 
   /// Publishes an already-returned ordinary DB mutation without letting
   /// fallible cache, media, reaction-projection, or stream work rewrite it.
@@ -1511,7 +1514,7 @@ class MessageRepositoryImpl
     required String? transport,
     required int? relayExpiresAt,
     required OutgoingOrdinarySettlementMode mode,
-  }) async {
+  }) => _observeInitialAuthority(() async {
     final settle = dbSettleOutgoingOrdinaryTransport;
     final outcome = settle == null
         ? OutgoingOrdinaryMutationOutcome.refused
@@ -1528,7 +1531,7 @@ class MessageRepositoryImpl
       messageId: messageId,
       outcome: outcome,
     );
-  }
+  });
 
   @override
   Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
@@ -2161,7 +2164,7 @@ class MessageRepositoryImpl
   }
 
   @override
-  Future<int> deleteMessagesForContact(String contactPeerId) async {
+  Future<int> deleteMessagesForContact(String contactPeerId) => _observeInitialAuthority(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MESSAGE_REPO_DELETE_FOR_CONTACT_START',
@@ -2201,10 +2204,10 @@ class MessageRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
 
   @override
-  Future<int> deleteMessage(String id) async {
+  Future<int> deleteMessage(String id) => _observeInitialAuthority(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MESSAGE_REPO_DELETE_START',
@@ -2267,7 +2270,7 @@ class MessageRepositoryImpl
         details: {'error': error.toString()},
       );
     }
-  }
+  });
 
   @override
   Future<bool> isAutoRetryTerminal(String messageId) async =>
@@ -2835,6 +2838,10 @@ class MessageRepositoryImpl
   ) {
     return messages.map(_rememberMessage).toList();
   }
+
+  Future<T> _observeInitialAuthority<T>(Future<T> Function() work) =>
+      observeOutgoingInitialAuthority(work,
+        captureMutationObserver: captureInitialAuthorityMutationObserver);
 
   ConversationMessage? _updatedMessageSnapshot(String id, String status) {
     final cached = _messageSnapshots[id];

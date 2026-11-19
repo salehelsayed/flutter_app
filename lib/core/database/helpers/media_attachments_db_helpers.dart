@@ -2982,6 +2982,15 @@ dbStageOutgoingDirectMediaInboxCustody(
               mediaBlobExpiresAtMs &&
           exactBlobCommit;
       if (!exactCommit) throw const _DirectMediaInboxCustodyRollback();
+      if (prepared && hasExactStrictWireBindingShape && strictBlobRows.isNotEmpty &&
+          _isEligibleDirectMediaCustodyParent(stagedRow)) {
+        stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+          kind: OutgoingInitialAuthorityKind.admission,
+          contactAccountPeerId: recipientPeerId, messageId: messageId,
+          senderAccountPeerId: stagedRow['sender_peer_id'] as String,
+          envelopeSenderPeerId: stagedRow['sender_peer_id'] as String,
+        ));
+      }
 
       return DirectMediaInboxCustodyDbStageResult(
         outcome: OutgoingOrdinaryMutationOutcome.applied,

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -44,7 +45,9 @@ Future<void> handleDeliveryReceipt({
   DirectTransportAuthorityResolver? transportAuthority,
   ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})?
       capturedActivity,
-}) async {
+}) => runWithOutgoingInitialAuthorityObserver(
+  capturedActivity?.reporter?.captureChatSqlObserver(capturedActivity?.capture),
+  () async {
   if (!_trustedDeliveryReceiptTransports.contains(message.transport)) return;
 
   final fromPreview = message.from.length > 10
@@ -82,6 +85,10 @@ Future<void> handleDeliveryReceipt({
     return;
   }
 
+  return runWithOutgoingInitialAuthorityObserver(
+    capturedActivity?.reporter?.captureChatSqlObserver(
+      capturedActivity?.capture, receiptMessageIds: messageIds.toSet()),
+    () async {
   for (final messageId in messageIds) {
     final idPreview = messageId.length > 8
         ? messageId.substring(0, 8)
@@ -143,8 +150,7 @@ Future<void> handleDeliveryReceipt({
       );
       continue;
     }
-    if (row.status == 'delivered') {
-      // Idempotent re-apply (duplicate receipt) — nothing to do.
+    if (row.status == 'delivered' && _isOutgoingOneMoreLookPrivate(row)) {
       continue;
     }
 
@@ -294,7 +300,8 @@ Future<void> handleDeliveryReceipt({
       details: {'from': fromPreview, 'id': idPreview},
     );
   }
-}
+  });
+});
 
 bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
     !message.isIncoming &&

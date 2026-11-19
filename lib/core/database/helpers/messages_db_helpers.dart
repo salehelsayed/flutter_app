@@ -560,6 +560,54 @@ Future<void> dbMarkIncomingQuietRecovery(
   );
 }
 
+String? _initialEnvelopeSender(Object? envelope, String messageId) {
+  if (envelope is! String) {
+    return null;
+  }
+  try {
+    final decoded = jsonDecode(envelope);
+    final sender = decoded is Map ? decoded['senderPeerId'] : null;
+    return sender is String && sender.trim().isNotEmpty && _isExactV2DirectChatInitialEnvelope(
+        envelope, messageId: messageId, senderPeerId: sender) ? sender : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+void _stageOrdinaryInitialDecision(
+  OutgoingInitialAuthorityKind kind,
+  Map<String, Object?> row, {
+  String? envelopeSenderPeerId,
+}) {
+  if (((row['is_incoming'] as num?)?.toInt() ?? 0) != 0) {
+    return;
+  }
+  final message = row['id'];
+  final contact = row['contact_peer_id'];
+  final sender = row['sender_peer_id'];
+  if (message is! String || contact is! String || sender is! String) {
+    return;
+  }
+  stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+    kind: kind, contactAccountPeerId: contact,
+    messageId: message, senderAccountPeerId: sender,
+    envelopeSenderPeerId: envelopeSenderPeerId,
+  ));
+}
+
+bool _genericSaveChangesInitialAuthority(
+  Map<String, Object?> current,
+  Map<String, Object?> merged,
+) => !(const <String>[
+  'id', 'contact_peer_id', 'sender_peer_id', 'is_incoming', 'text',
+  'timestamp', 'created_at', 'edited_at', 'quoted_message_id',
+  'deleted_at', 'deleted_by_peer_id', 'hidden_at',
+].every((column) => current[column] == merged[column]) &&
+    (current['private_media_policy_version'] ?? 0) ==
+        (merged['private_media_policy_version'] ?? 0) &&
+    (current['private_media_mode'] ?? 'ordinary') ==
+        (merged['private_media_mode'] ?? 'ordinary'));
+
 /// Inserts a message into the database.
 Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   final id = row['id'] as String? ?? '';
@@ -800,7 +848,17 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
       if (existingRows.isEmpty) {
         await txn.insert('messages', merged);
       } else {
-        await txn.update('messages', merged, where: 'id = ?', whereArgs: [id]);
+        final changed = await txn.update('messages', merged, where: 'id = ?', whereArgs: [id]);
+        if (changed == 1 &&
+            _genericSaveChangesInitialAuthority(existingRows.single, merged)) {
+          _stageOrdinaryInitialDecision(
+            OutgoingInitialAuthorityKind.superseded, existingRows.single);
+        } else if (changed == 1 && merged['wire_envelope'] != null &&
+            merged['wire_envelope'] != existingRows.single['wire_envelope']) {
+          _stageOrdinaryInitialDecision(
+            OutgoingInitialAuthorityKind.envelopeReplaced, existingRows.single,
+            envelopeSenderPeerId: _initialEnvelopeSender(merged['wire_envelope'], id));
+        }
       }
     });
 
@@ -1415,12 +1473,15 @@ Future<int> dbDeleteMessagesForContact(
         txn,
         contactPeerId: contactPeerId,
       );
-      return intents +
-          await txn.delete(
-            'messages',
-            where: 'contact_peer_id = ?',
-            whereArgs: [contactPeerId],
-          );
+      final messages = await txn.delete(
+        'messages', where: 'contact_peer_id = ?', whereArgs: [contactPeerId]);
+      if (messages > 0) {
+        stageOutgoingInitialAuthorityDecision(OutgoingInitialAuthorityDecision(
+          kind: OutgoingInitialAuthorityKind.contactRemoved,
+          contactAccountPeerId: contactPeerId,
+        ));
+      }
+      return intents + messages;
     });
 
     emitFlowEvent(
@@ -1475,14 +1536,18 @@ Future<int> dbDeleteMessage(Database db, String id) async {
           generation.trim().isNotEmpty &&
           ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0;
       if (!fanoutMarked) {
-        return txn.delete('messages', where: 'id = ?', whereArgs: [id]);
+        final changed = await txn.delete('messages', where: 'id = ?', whereArgs: [id]);
+        if (changed == 1) {
+          _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.superseded, row);
+        }
+        return changed;
       }
       await txn.delete(
         'message_reactions',
         where: 'message_id = ?',
         whereArgs: <Object?>[id],
       );
-      return txn.update(
+      final changed = await txn.update(
         'messages',
         <String, Object?>{
           'text': '',
@@ -1492,6 +1557,10 @@ Future<int> dbDeleteMessage(Database db, String id) async {
         where: 'id = ?',
         whereArgs: <Object?>[id],
       );
+      if (changed == 1) {
+        _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.superseded, row);
+      }
+      return changed;
     });
 
     emitFlowEvent(
@@ -1969,7 +2038,7 @@ Future<void> dbUpdateWireEnvelope(
               (version == 0 && (mode == null || mode == 'ordinary')) ||
               (version == 1 && mode == 'disappearing'));
       if (!genericOutgoing) return;
-      await txn.rawUpdate(
+      final changed = await txn.rawUpdate(
         'UPDATE messages SET wire_envelope = ? WHERE id = ? '
         'AND is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL '
         '$intentPredicate'
@@ -1981,6 +2050,10 @@ Future<void> dbUpdateWireEnvelope(
         "AND private_media_mode = 'disappearing'))",
         <Object?>[wireEnvelope, id],
       );
+      if (changed == 1 && wireEnvelope != row['wire_envelope']) {
+        _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.envelopeReplaced, row,
+          envelopeSenderPeerId: _initialEnvelopeSender(wireEnvelope, id));
+      }
     });
 
     emitFlowEvent(
@@ -2236,6 +2309,14 @@ dbStageOutgoingOrdinaryAttemptWithinTransaction(
       stagedRow,
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
+    if (!allowDirectAttachments && !allowDirectMediaCustodyIntent &&
+        ((stagedRow['private_media_policy_version'] as num?)?.toInt() ?? 0) == 0 &&
+        (stagedRow['private_media_mode'] ?? 'ordinary') == 'ordinary' &&
+        _isExactV2DirectChatInitialEnvelope(stagedRow['wire_envelope'],
+          messageId: messageId, senderPeerId: stagedRow['sender_peer_id'])) {
+      _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.admission, stagedRow,
+          envelopeSenderPeerId: stagedRow['sender_peer_id'] as String);
+    }
     return OutgoingOrdinaryMutationOutcome.applied;
   }
 
@@ -2374,6 +2455,16 @@ dbStageOutgoingOrdinaryAttemptWithinTransaction(
     where: exactCurrent.clause,
     whereArgs: exactCurrent.arguments,
   );
+  if (changed == 1) {
+    if (kind == OutgoingOrdinaryAttemptKind.edit ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneRetry) {
+      _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.superseded, current);
+    } else if (stagedRow['wire_envelope'] != current['wire_envelope']) {
+      _stageOrdinaryInitialDecision(OutgoingInitialAuthorityKind.envelopeReplaced, current,
+        envelopeSenderPeerId: _initialEnvelopeSender(stagedRow['wire_envelope'], messageId));
+    }
+  }
   return changed == 1
       ? OutgoingOrdinaryMutationOutcome.applied
       : OutgoingOrdinaryMutationOutcome.preserved;
@@ -2567,6 +2658,26 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
       return OutgoingOrdinaryMutationOutcome.preserved;
     }
 
+    OutgoingOrdinaryMutationOutcome accepted(
+      OutgoingOrdinaryMutationOutcome outcome,
+    ) {
+      final uneditedInitialProjection =
+          mode == OutgoingOrdinarySettlementMode.receipt &&
+          status == 'delivered' && !isDeleteTombstone &&
+          current['edited_at'] == null &&
+          (current['direct_event_fanout_generation_id'] == null ||
+              current['direct_event_fanout_generation_id'] == messageId);
+      if (uneditedInitialProjection) {
+        final sender = _initialEnvelopeSender(current['wire_envelope'], messageId);
+        if (current['wire_envelope'] == null || sender != null) {
+          _stageOrdinaryInitialDecision(
+            OutgoingInitialAuthorityKind.receiptProjection, current,
+            envelopeSenderPeerId: sender);
+        }
+      }
+      return outcome;
+    }
+
     // Delivery is terminal. Its first result freezes every settlement field;
     // duplicate delivery is the one deliberate envelope-free idempotent case.
     if (current['status'] == 'delivered') {
@@ -2581,7 +2692,7 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
         return OutgoingOrdinaryMutationOutcome.preserved;
       }
       return validDeliveredShape
-          ? OutgoingOrdinaryMutationOutcome.idempotent
+          ? accepted(OutgoingOrdinaryMutationOutcome.idempotent)
           : OutgoingOrdinaryMutationOutcome.refused;
     }
     if (current['wire_envelope'] != expectedEnvelope) {
@@ -2658,7 +2769,7 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
       whereArgs: whereArguments,
     );
     return changed == 1
-        ? OutgoingOrdinaryMutationOutcome.applied
+        ? accepted(OutgoingOrdinaryMutationOutcome.applied)
         : OutgoingOrdinaryMutationOutcome.preserved;
   });
 }

@@ -17,6 +17,8 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -132,6 +134,34 @@ void main() {
       await h.expectNoWeeklyTuple();
     });
   }
+
+  test('B15SMW-008 actual strict final admission authorizes its application receipt', () async {
+    final original = h.capture();
+    final prepared = await h.prepare();
+    final sent = await h.send(prepared.attachments, original);
+    expect(sent.$1, SendChatMessageResult.nodeNotRunning);
+    await h.expectApplied(prepared.attachments, dailyMarks: 1);
+    final before = (await h.checkpoint())!;
+    expect((before['contacts'] as List).single['deliveredOutgoingSeen'], isFalse);
+    await _within(handleDeliveryReceipt(
+      message: ChatMessage(from: _contact, to: _account, timestamp: _authoredAt,
+        isIncoming: true, transport: 'direct', content: jsonEncode({
+          'type': 'delivery_receipt', 'version': '1',
+          'payload': {'messageIds': [_message], 'ts': _authoredAt},
+        })),
+      messageRepo: h.fixture.messageRepo, capturedActivity: original,
+    ));
+    await _within(h.reporter.flush());
+    final current = (await _within(h.fixture.messageRepo.getMessage(_message)))!;
+    expect(current.status, 'delivered');
+    expect(current.wireEnvelope, isNull);
+    final contact = ((await h.checkpoint())!['contacts'] as List).single as Map;
+    expect(contact['account'], _contact);
+    expect(contact['deliveredOutgoingSeen'], isTrue);
+    expect(contact['outgoing'], isEmpty);
+    expect(h.bridge.marks, hasLength(1));
+    h.expectNoEgress();
+  });
 }
 
 class _StrictMediaHarness {

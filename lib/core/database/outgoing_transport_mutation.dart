@@ -41,6 +41,40 @@ enum OutgoingOrdinaryMutationOutcome {
   refused,
 }
 
+/// Transaction decisions about a direct initial's runtime lineage. A decision
+/// is provisional until its true outer transaction has committed.
+enum OutgoingInitialAuthorityKind {
+  admission,
+  receiptProjection,
+  superseded,
+  envelopeReplaced,
+  contactRemoved,
+}
+
+final class OutgoingInitialAuthorityDecision {
+  const OutgoingInitialAuthorityDecision({
+    required this.kind,
+    required this.contactAccountPeerId,
+    this.messageId,
+    this.senderAccountPeerId,
+    this.envelopeSenderPeerId,
+  });
+
+  final OutgoingInitialAuthorityKind kind;
+  final String contactAccountPeerId;
+  final String? messageId;
+  final String? senderAccountPeerId;
+  final String? envelopeSenderPeerId;
+}
+
+/// Stages observation synchronously; the returned callback resolves only the
+/// owning outer transaction's commit or rollback. It never controls SQL.
+typedef OutgoingInitialAuthorityObserver =
+    void Function(bool committed)? Function(
+      OutgoingInitialAuthorityDecision decision,
+      Object sqlRealm,
+    );
+
 extension OutgoingOrdinaryMutationOutcomePolicy
     on OutgoingOrdinaryMutationOutcome {
   /// Only these outcomes authorize starting transport after attempt staging.

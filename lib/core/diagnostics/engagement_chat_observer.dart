@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../database/outgoing_transport_mutation.dart';
 import 'engagement_chat_checkpoint_store.dart';
 import 'engagement_chat_witness.dart';
 
@@ -49,7 +50,13 @@ final class EngagementChatObserverIntent {
   bool _admissionSubmitted = false;
   bool _cancelled = false;
   EngagementChatIntent? _witnessIntent;
+  _InitialLineage _lineage = _InitialLineage.reserved;
+  Object? _sqlRealm;
+  String? _initialEnvelopeSender;
+  bool _receiptSealed = false;
 }
+
+enum _InitialLineage { reserved, admitted, superseded }
 
 /// Producer callbacks capture facts synchronously and never join optional I/O.
 /// The trusted pure witness owns qualification and its private snapshot schema.
@@ -143,7 +150,9 @@ final class EngagementChatObserver {
     return capture;
   }
 
-  bool get _room => _facts.length + (_inFlight ? 1 : 0) < 64;
+  bool get _room =>
+      _facts.where((fact) => fact is! _SqlDecision).length +
+          (_inFlight ? 1 : 0) < 64;
 
   int? _observe(EngagementChatObserverCapture capture) {
     if (!_current(capture) || !_room) {
@@ -203,6 +212,16 @@ final class EngagementChatObserver {
         intent._cancelled || intent._admissionSubmitted) {
       return;
     }
+    final pendingAdmission = _facts.whereType<_SqlDecision>().any((fact) =>
+        !fact.authorityFinalized &&
+        fact.kind == OutgoingInitialAuthorityKind.admission &&
+        fact.intents.contains(intent));
+    if (pendingAdmission) {
+      if (!_facts.whereType<_Cancelled>().any((fact) => identical(fact.intent, intent))) {
+        _enqueue(_Cancelled(intent.owner, observed, intent));
+      }
+      return;
+    }
     intent._cancelled = true;
     _removeTuple(intent);
     _enqueue(_Cancelled(intent.owner, observed, intent));
@@ -222,6 +241,131 @@ final class EngagementChatObserver {
     _enqueue(_Delivered(capture, observed,
       (contact: contactAccount, message: messageId, generation: generationId)));
   }
+
+  /// Samples only known runtime intents. Nothing is published or revoked until
+  /// the true outer SQL owner resolves the returned callback after commit.
+  Set<EngagementChatObserverIntent> snapshotReceiptCandidates(
+    EngagementChatObserverCapture capture,
+    Set<String> messageIds,
+  ) => !_current(capture) ? <EngagementChatObserverIntent>{} : Set.unmodifiable(_intents.where((intent) =>
+      messageIds.contains(intent.messageId) && !intent._cancelled &&
+      intent._lineage != _InitialLineage.superseded));
+
+  void Function(bool)? stageSqlDecision(
+    EngagementChatObserverCapture capture,
+    OutgoingInitialAuthorityDecision decision,
+    Object sqlRealm, {
+    Set<EngagementChatObserverIntent>? receiptCandidates,
+  }) {
+    if (!_current(capture) ||
+        (decision.kind == OutgoingInitialAuthorityKind.admission &&
+            decision.envelopeSenderPeerId == null) ||
+        (decision.senderAccountPeerId != null &&
+            decision.senderAccountPeerId != capture.owner.accountPeerId)) {
+      return null;
+    }
+    final tupleIntent = _tuples[(contact: decision.contactAccountPeerId,
+        message: decision.messageId ?? '', generation: decision.messageId ?? '')];
+    final affected = decision.kind == OutgoingInitialAuthorityKind.contactRemoved
+        ? _intents.where((intent) =>
+            intent.contactAccount == decision.contactAccountPeerId &&
+            intent._lineage != _InitialLineage.superseded).toList()
+        : <EngagementChatObserverIntent>[
+            if (tupleIntent != null) tupleIntent,
+          ];
+    affected.removeWhere((intent) => intent._cancelled ||
+        intent._lineage == _InitialLineage.superseded ||
+        (decision.kind == OutgoingInitialAuthorityKind.admission &&
+            intent._lineage != _InitialLineage.reserved) ||
+        (decision.kind == OutgoingInitialAuthorityKind.receiptProjection &&
+            (intent._receiptSealed ||
+             (receiptCandidates != null && !receiptCandidates.contains(intent)))));
+    if (decision.kind == OutgoingInitialAuthorityKind.superseded ||
+        decision.kind == OutgoingInitialAuthorityKind.envelopeReplaced ||
+        decision.kind == OutgoingInitialAuthorityKind.contactRemoved) {
+      affected.removeWhere((intent) =>
+          !(intent._lineage == _InitialLineage.admitted &&
+              identical(intent._sqlRealm, sqlRealm)) &&
+          !_facts.whereType<_SqlDecision>().any((fact) =>
+              !fact.authorityFinalized &&
+              fact.kind == OutgoingInitialAuthorityKind.admission &&
+              identical(fact.sqlRealm, sqlRealm) &&
+              fact.intents.contains(intent)));
+    }
+    if (affected.isEmpty) {
+      return null;
+    }
+    int observed;
+    try { observed = nowMilliseconds(); } catch (_) { return null; }
+    final fact = _SqlDecision(capture, observed, decision.kind, affected, sqlRealm,
+        decision.envelopeSenderPeerId);
+    _facts.add(fact);
+    // No worker is started in the SQL Zone: its calendar/native work must
+    // remain outside both the transaction and the transaction's Zone marker.
+    return (committed) {
+      if (fact.committed != null) {
+        return;
+      }
+      fact.committed = committed;
+      _finalizeSqlPrefix();
+      _start();
+    };
+  }
+
+  void _finalizeSqlPrefix() {
+    for (final fact in _facts) {
+      if (fact is! _SqlDecision || fact.authorityFinalized) {
+        continue;
+      }
+      if (fact.committed == null) {
+        break;
+      }
+      fact.authorityFinalized = true;
+      if (fact.committed != true || !_current(fact.owner)) {
+        continue;
+      }
+      for (final intent in fact.intents) {
+        if (intent._cancelled) {
+          continue;
+        }
+        switch (fact.kind) {
+          case OutgoingInitialAuthorityKind.admission:
+            if (intent._lineage == _InitialLineage.reserved) {
+              intent._lineage = _InitialLineage.admitted;
+              intent._sqlRealm = fact.sqlRealm;
+              intent._initialEnvelopeSender = fact.envelopeSender;
+              intent._admissionSubmitted = true;
+              fact.admittedIntent = intent;
+            }
+          case OutgoingInitialAuthorityKind.receiptProjection:
+            if (intent._lineage == _InitialLineage.admitted &&
+                identical(intent._sqlRealm, fact.sqlRealm) &&
+                (fact.envelopeSender == null ||
+                    fact.envelopeSender == intent._initialEnvelopeSender) &&
+                !intent._receiptSealed) {
+              intent._receiptSealed = true;
+              fact.acceptedIntent = intent;
+            }
+          case OutgoingInitialAuthorityKind.superseded:
+          case OutgoingInitialAuthorityKind.contactRemoved:
+            if (intent._lineage == _InitialLineage.admitted &&
+                identical(intent._sqlRealm, fact.sqlRealm)) {
+              intent._lineage = _InitialLineage.superseded;
+            }
+          case OutgoingInitialAuthorityKind.envelopeReplaced:
+            if (intent._lineage == _InitialLineage.admitted &&
+                identical(intent._sqlRealm, fact.sqlRealm) &&
+                fact.envelopeSender != intent._initialEnvelopeSender) {
+              intent._lineage = _InitialLineage.superseded;
+            }
+        }
+      }
+    }
+  }
+
+  bool get _blockedBySql => _facts.isNotEmpty &&
+      _facts.first is _SqlDecision &&
+      !(_facts.first as _SqlDecision).authorityFinalized;
 
   void incoming(
     EngagementChatObserverCapture capture, {
@@ -255,7 +399,7 @@ final class EngagementChatObserver {
       } finally {
         _worker = null;
         if (_clearBlockedAtGeneration != _generation &&
-            (_clear || _initialize || _facts.isNotEmpty)) {
+            (_clear || _initialize || (_facts.isNotEmpty && !_blockedBySql))) {
           _start();
         }
       }
@@ -301,7 +445,14 @@ final class EngagementChatObserver {
         }
         break;
       }
+      if (_blockedBySql) {
+        return;
+      }
       final fact = _facts.removeFirst();
+      if (fact is _SqlDecision &&
+          fact.acceptedIntent == null && fact.admittedIntent == null) {
+        continue;
+      }
       _inFlight = true;
       try {
         if (await _prepare(fact.owner) &&
@@ -407,6 +558,10 @@ final class EngagementChatObserver {
           witness.admitted(reserved);
         }
       case _Cancelled(:final intent):
+        if (intent._admissionSubmitted) {
+          break;
+        }
+        intent._cancelled = true;
         final reserved = intent._witnessIntent;
         if (reserved != null) {
           witness.cancel(reserved);
@@ -417,6 +572,19 @@ final class EngagementChatObserver {
           messageId: tuple.message, generationId: tuple.generation);
       case _Incoming(:final contact):
         witness.incoming(capture, contactAccount: contact);
+      case _SqlDecision(:final acceptedIntent, :final admittedIntent):
+        final admitted = admittedIntent?._witnessIntent;
+        if (admitted != null) {
+          witness.admitted(admitted);
+        }
+        if (acceptedIntent != null) {
+          // Authorization was sealed at committed SQL acceptance, before any
+          // later mutation. Only the original profile/epoch can apply it.
+          witness.delivered(capture,
+            contactAccount: acceptedIntent.contactAccount,
+            messageId: acceptedIntent.messageId,
+            generationId: acceptedIntent.generationId);
+        }
     }
   }
 
@@ -583,4 +751,17 @@ final class _Delivered extends _ChatFact {
 final class _Incoming extends _ChatFact {
   const _Incoming(super.owner, super.observedMilliseconds, this.contact);
   final String contact;
+}
+
+final class _SqlDecision extends _ChatFact {
+  _SqlDecision(super.owner, super.observedMilliseconds, this.kind, this.intents,
+      this.sqlRealm, this.envelopeSender);
+  final OutgoingInitialAuthorityKind kind;
+  final List<EngagementChatObserverIntent> intents;
+  final Object sqlRealm;
+  final String? envelopeSender;
+  bool? committed;
+  bool authorityFinalized = false;
+  EngagementChatObserverIntent? acceptedIntent;
+  EngagementChatObserverIntent? admittedIntent;
 }
