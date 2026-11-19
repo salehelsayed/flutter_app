@@ -7564,6 +7564,36 @@
   ],
   "full_commands": [
     {
+      "id": "full.sqflite-fork-host",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "--concurrency=1",
+        "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "--concurrency=1",
+            "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart"
+          ],
+          "format": "flutter"
+        }
+      ],
+      "boundary": "Exact source-owned SQLCipher fork host open/version/password contract",
+      "timeout_seconds": 120,
+      "resources": [
+        "unknown"
+      ]
+    },
+    {
       "id": "full-sims-major",
       "kind": "sims",
       "capability": "*",
@@ -12509,6 +12539,12 @@
       "format": "classifications_tsv"
     },
     "obligations": [
+      {
+        "path": "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart",
+        "selector": "host",
+        "variant": "host",
+        "owner": "full.sqflite-fork-host"
+      },
       {
         "path": "integration_test/media_stable_id_smoke_test.dart",
         "selector": "ios",
