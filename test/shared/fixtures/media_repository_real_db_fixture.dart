@@ -89,6 +89,7 @@ class MediaRepositoryRealDbFixture {
     // deletion-lane selector genuinely unwired, so a capability-absence
     // counterexample uses production code rather than a hand-rolled stub.
     bool wireOutgoingDirectDeletionLaneSelection = true,
+    bool wireOutgoingDirectTextMutationInboxCustody = false,
     Future<bool> Function(
       Map<String, Object?> row, {
       required String messageId,
@@ -131,6 +132,8 @@ class MediaRepositoryRealDbFixture {
       beforeDirectTextCustodyStage: beforeDirectTextCustodyStage,
       afterDirectTextCustodyStage: afterDirectTextCustodyStage,
       beforeDirectInboxCustodyCompletion: beforeDirectInboxCustodyCompletion,
+      wireOutgoingDirectTextMutationInboxCustody:
+          wireOutgoingDirectTextMutationInboxCustody,
     );
     repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
@@ -1191,6 +1194,7 @@ MessageRepositoryImpl _buildMessageRepository(
   Future<void> Function()? beforeDirectTextCustodyStage,
   Future<void> Function()? afterDirectTextCustodyStage,
   Future<void> Function()? beforeDirectInboxCustodyCompletion,
+  required bool wireOutgoingDirectTextMutationInboxCustody,
 }) {
   return MessageRepositoryImpl(
     projectConversationRead: projectConversationRead,
@@ -1297,6 +1301,25 @@ MessageRepositoryImpl _buildMessageRepository(
           await afterDirectTextCustodyStage?.call();
           return result;
         },
+    dbStageOutgoingDirectTextMutationInboxCustody:
+        wireOutgoingDirectTextMutationInboxCustody
+        ? ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectTextMutationInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+          )
+        : null,
     dbLoadDirectTextMutationInboxCustodyForEvent:
         ({required recipientPeerId, required eventId}) =>
             dbLoadDirectReactionInboxCustodyOutboxForEvent(
