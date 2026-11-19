@@ -813,14 +813,14 @@ final class FlutterWebRtcVideoSession
       return;
     }
     if (video == null) return;
+    // Android also issues nonempty pre-MID ids whose cached native wrapper can
+    // be disposed. Reacquire this sender's current handle before any reuse.
+    await _rebindVideo(token);
+    video = _video!;
     if (_videoUnbound) {
-      await _rebindVideo(token);
-      video = _video!;
-      if (_videoUnbound) {
-        // Still no MID: only the creation direction is known to be true.
-        if (direction != _videoCreatedDirection) _reject();
-        return;
-      }
+      // Still no MID: only the creation direction is known to be true.
+      if (direction != _videoCreatedDirection) _reject();
+      return;
     }
     if (token.media == CallMediaKind.video) {
       _sendStream ??= await _videoStream();
