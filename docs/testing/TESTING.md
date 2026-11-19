@@ -13290,6 +13290,27 @@ visible and cannot become an ordinary first-attempt PASS.
   `connectedAt` displays **Call audio was interrupted**, including when the
   terminal projection is the first observed after returning to the app; only
   never-connected calls display **Call audio could not start**.
+  **B15 call-end detail:** a separate typed `terminal/snapshot` carries closed
+  `endCause`, `endCauseStage`, optional `recoveryCheck`, and duration in whole
+  seconds. The original `terminal/finish`, outcome, reason and duration remain
+  authoritative and unchanged. The first definitive production preflight,
+  audio/media, coordinator or recovery observation wins; provisional media
+  observations and later native echoes cannot replace it. Native lifecycle
+  fallback remains coarse when the existing event supplies no precise origin.
+  The original collector, trace and call bind the detail; OFF/ON or collector
+  replacement cannot lend a successor trace to an old admission. Diagnostic
+  observers cannot change checkpoint failures, call reduction or cleanup.
+  The frozen older-schema relay model rejects the detail but accepts the
+  original final through the existing per-record ACK contract; it is not a
+  test of a deployed old relay binary.
+  Linux source `8ad5d0d7a` passed eight focused producer/ownership/observer
+  cases. Its affected-calls row passed 2,832 cases; call-signaling passed
+  2,221 (504 freshly executed, 1,717 reused from that same run); diagnostics
+  passed 425 (335 fresh, 90 reused). Do not add these row totals as independent
+  executions. The [scoped receipt](../../.codex-test-logs/b15-call-end-detail-source/host-evidence-summary.json)
+  retains raw hashes, source identity and all required checks left unrun.
+  Native compilation, real-device/audio evidence, composed-candidate checks
+  and relay deployment remain separate obligations.
   The per-call diagnostics count and byte caps remain bounded. Under pressure,
   retain attempt start and terminal records ahead of lower-priority events,
   and prefer recent canonical transitions, media outcomes and native admission/
