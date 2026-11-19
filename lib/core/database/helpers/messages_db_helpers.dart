@@ -703,11 +703,24 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
               messageId: id,
               senderPeerId: existing['sender_peer_id'],
             );
+        // Live direct settlement clears the envelope but retains the edit stamp.
+        final settledDeliveredOutgoingEdit =
+            existingIsOutgoing &&
+            !existingUserTerminal &&
+            existingStatus == 'delivered' &&
+            existingTransport == 'direct' &&
+            _isSupportedOutgoingOrdinaryPolicy(existing) &&
+            _isNonBlankDatabaseString(existing['edited_at']) &&
+            DateTime.tryParse(existing['edited_at'] as String) != null &&
+            existing['wire_envelope'] == null &&
+            existing['relay_expires_at'] == null &&
+            existing['custody_checked_at'] == null;
 
         if (custody != null ||
             existingFanoutMarked ||
             settledOutgoingInitial ||
-            settledOutgoingEdit) {
+            settledOutgoingEdit ||
+            settledDeliveredOutgoingEdit) {
           // A combined direct-media commit consumes the v110 intent and
           // leaves its exact initial envelope owned by the independent v108
           // row. A delayed pre-commit whole-row save commonly carries a null
@@ -729,7 +742,7 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
             for (final column in _custodyOwnedParentTransportColumns) {
               merged[column] = existing[column];
             }
-            if (settledOutgoingEdit) {
+            if (settledOutgoingEdit || settledDeliveredOutgoingEdit) {
               merged['text'] = existing['text'];
               merged['edited_at'] = existing['edited_at'];
             }
