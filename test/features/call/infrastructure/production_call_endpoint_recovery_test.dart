@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/features/call/application/call_recovery_budget.dart';
 import 'package:flutter_app/features/call/diagnostics/call_end_detail.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/call_endpoint_recovery.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
@@ -17,6 +19,59 @@ const _account = 'remote-account';
 const _device = 'remote-device';
 
 void main() {
+  test('BL43 resolver rejection keeps the original first final and adds detail',
+      () async {
+    const bound = Duration(seconds: 3);
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final directory = await Directory.systemTemp
+        .createTemp('bl43-resolver-detail-').timeout(bound);
+    final diagnostics = await CallDiagnostics.installForTesting(
+      directory: directory,
+      upload: (batch) async => batch.map((event) =>
+          event['eventId']! as String).toSet(),
+    ).timeout(bound);
+    addTearDown(() async {
+      await diagnostics.dispose().timeout(bound);
+      await directory.delete(recursive: true).timeout(bound);
+    });
+    final trace = diagnostics.beginAttempt();
+    Object? failure;
+    fakeAsync((async) {
+      final rig = _RecoveryRig(async);
+      final resolver = CallEndpointResolver(
+        nowMs: () => _now + async.elapsed.inMilliseconds,
+        verifyEndpointSignature: (_, _) async => false,
+      );
+      var completed = false;
+      diagnostics.runWithTrace(trace, () => resolveProductionCallEndpoint(
+        contactAccountPeerId: _account,
+        resolver: resolver,
+        rosterProvider: rig.roster,
+        authorityClient: rig.authority,
+        receivedCallWakeHandleStore: rig.wake,
+      )).then<void>((_) => completed = true,
+          onError: (Object error) { failure = error; completed = true; });
+      async.flushMicrotasks();
+      expect(completed, isTrue);
+      expect(failure, isA<CallEndpointResolutionException>().having(
+        (error) => error.code, 'code', CallEndpointResolutionCode.invalidSignature));
+      expect(rig.authority.lookups, 1);
+    });
+    final events = await diagnostics.eventsForTesting().timeout(bound);
+    final finalEvent = events.singleWhere((event) =>
+        event['traceId'] == trace && event['stage'] == 'terminal' &&
+        event['action'] == 'finish');
+    expect(finalEvent['outcome'], 'preflight_failed');
+    expect(finalEvent['reason'], 'signature_invalid');
+    final detail = events.where((event) => event['traceId'] == trace &&
+        event['stage'] == 'terminal' && event['action'] == 'snapshot' &&
+        (event['values'] as Map).containsKey('endCause')).toList();
+    expect(detail, hasLength(1));
+    expect(detail.single['values'], containsPair('endCause', 'policy_rejected'));
+    expect(detail.single['values'], containsPair('endCauseStage', 'authority'));
+    expect(events.indexOf(finalEvent), lessThan(events.indexOf(detail.single)));
+  });
+
   test('BL43 renewed epoch rollback reports the exact declining check', () {
     fakeAsync((async) {
       final details = <CallEndDetail>[];

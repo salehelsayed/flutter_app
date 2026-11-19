@@ -2491,6 +2491,19 @@ void main() {
           ),
           isFalse,
         );
+        final finalEvent = events.singleWhere((event) =>
+            event['traceId'] == trace && event['stage'] == 'terminal' &&
+            event['action'] == 'finish');
+        final detail = events.where((event) => event['traceId'] == trace &&
+            event['stage'] == 'terminal' && event['action'] == 'snapshot' &&
+            (event['values'] as Map).containsKey('endCause')).toList();
+        expect(detail, hasLength(1));
+        expect(detail.single['values'], containsPair('endCause',
+            nativeAudioAccepted ? 'media_failed' : 'audio_session_failed'));
+        expect(detail.single['values'], containsPair('endCauseStage',
+            nativeAudioAccepted ? 'media' : 'audio'));
+        expect(events.indexOf(finalEvent), lessThan(events.indexOf(detail.single)));
+        expect(((detail.single['values'] as Map)['durationMs'] as int) % 1000, 0);
         expect(jsonEncode(events), isNot(contains('private-turn-secret')));
       },
     );
@@ -3074,6 +3087,17 @@ void main() {
       expect(result, OutgoingCallStartResult.microphoneDenied);
       expect(graph.outgoingPeerIds, isEmpty);
       final events = await diagnostics.eventsForTesting();
+      final finalEvent = events.singleWhere((event) =>
+          event['traceId'] == traceId && event['stage'] == 'terminal' &&
+          event['action'] == 'finish');
+      final detail = events.where((event) => event['traceId'] == traceId &&
+          event['stage'] == 'terminal' && event['action'] == 'snapshot' &&
+          (event['values'] as Map).containsKey('endCause')).toList();
+      expect(detail, hasLength(1));
+      expect(detail.single['values'], containsPair('endCause', 'permission_denied'));
+      expect(detail.single['values'], containsPair('endCauseStage', 'preflight'));
+      expect(events.indexOf(finalEvent), lessThan(events.indexOf(detail.single)));
+
       expect(
         events.where(
           (event) => event['stage'] == 'attempt' && event['action'] == 'start',
