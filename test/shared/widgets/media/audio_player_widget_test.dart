@@ -762,6 +762,7 @@ void main() {
       });
       fakePlatform.speedCalls.clear();
       load.complete();
+      await tester.pumpAndSettle();
       for (var i = 0; i < 5 && fakePlatform.speedCalls.isEmpty; i++) {
         await flushAsyncPlayerTasks(tester);
       }
