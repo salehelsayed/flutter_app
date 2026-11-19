@@ -1194,8 +1194,13 @@ class GoBridgeClient extends Bridge {
     if (week is! String ||
         week.length != 8 ||
         !RegExp(r'^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$').hasMatch(week) ||
-        start is! int || start.abs() > 9007199254740991 ||
-        end is! int || end.abs() > 9007199254740991 || end <= start ||
+        start is! int ||
+        start < -9007199254740991 ||
+        start > 9007199254740991 ||
+        end is! int ||
+        end < -9007199254740991 ||
+        end > 9007199254740991 ||
+        end <= start ||
         !_validActivityWeeklyKinds(value['kinds'], allowEmpty: true)) {
       return false;
     }

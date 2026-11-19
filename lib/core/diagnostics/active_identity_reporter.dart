@@ -351,7 +351,9 @@ final class ActiveIdentityReporter {
       RegExp(r'^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$').hasMatch(week);
 
   static bool _validMillis(Object? value) =>
-      value is int && value.abs() <= 9007199254740991;
+      value is int &&
+      value >= -9007199254740991 &&
+      value <= 9007199254740991;
 
   static bool _validWeeklyKinds(Object? kinds, {bool allowEmpty = false}) =>
       kinds is List &&
