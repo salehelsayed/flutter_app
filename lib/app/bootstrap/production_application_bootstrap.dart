@@ -7134,6 +7134,17 @@ final class ProductionApplicationBootstrap
     // 115 P2: consume incoming receipts — the only place 'inboxed' rows flip
     // to 'delivered' (G4 site a).
     final deliveryReceiptListener = DeliveryReceiptListener(
+      captureActivity: () {
+        final accountPeerId = activityBindingAccount;
+        return (
+          reporter: activeIdentityReporter,
+          capture: accountPeerId == null
+              ? null
+              : activeIdentityReporter.captureOwner(
+                  expectedAccountPeerId: accountPeerId,
+                ),
+        );
+      },
       transportAuthority: directTransportAuthority,
       receiptStream: messageRouter.deliveryReceiptStream,
       messageRepo: messageRepository,

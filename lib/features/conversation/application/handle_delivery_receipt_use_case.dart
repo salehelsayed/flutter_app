@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
@@ -41,6 +42,8 @@ Future<void> handleDeliveryReceipt({
   // 361: shared physical->logical reverse authority for receipts that arrive
   // from a linked origin transport. Null keeps incumbent strict equality.
   DirectTransportAuthorityResolver? transportAuthority,
+  ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})?
+      capturedActivity,
 }) async {
   if (!_trustedDeliveryReceiptTransports.contains(message.transport)) return;
 

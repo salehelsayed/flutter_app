@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
@@ -20,6 +21,8 @@ class DeliveryReceiptListener {
   /// 361: shared physical->logical reverse authority (null = incumbent).
   final DirectTransportAuthorityResolver? transportAuthority;
   final MediaAttachmentRepository? mediaAttachmentRepo;
+  final ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})
+      Function()? captureActivity;
   StreamSubscription<ChatMessage>? _subscription;
 
   DeliveryReceiptListener({
@@ -27,6 +30,7 @@ class DeliveryReceiptListener {
     required this.messageRepo,
     this.transportAuthority,
     this.mediaAttachmentRepo,
+    this.captureActivity,
   });
 
   void start() {
@@ -39,12 +43,20 @@ class DeliveryReceiptListener {
     _subscription = receiptStream.listen(
       (message) async {
         if (!message.isIncoming) return;
+        ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})?
+            capturedActivity;
+        try {
+          capturedActivity = captureActivity?.call();
+        } catch (_) {
+          capturedActivity = (reporter: null, capture: null);
+        }
         try {
           await handleDeliveryReceipt(
             message: message,
             messageRepo: messageRepo,
             transportAuthority: transportAuthority,
             mediaAttachmentRepo: mediaAttachmentRepo,
+            capturedActivity: capturedActivity,
           );
         } catch (e) {
           emitFlowEvent(
