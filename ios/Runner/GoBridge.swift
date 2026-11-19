@@ -308,7 +308,7 @@ class GoBridge: NSObject {
         return revision
     }
 
-    private static func activityAnswer(_ raw: String?, fence: MknoonActiveIdentityReporterFence, op: String) -> String {
+    internal static func activityAnswer(_ raw: String?, fence: MknoonActiveIdentityReporterFence, op: String) -> String {
         guard let raw, raw.utf8.count <= 16_384, let bytes = raw.data(using: .utf8),
               let answer = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return activityError("") }
         guard activityBool(answer["ok"]) == true else { return activityError(answer["errorCode"] as? String ?? "") }
