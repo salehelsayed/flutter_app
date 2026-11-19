@@ -5377,6 +5377,28 @@ serial diagnostic pass and held-lease reproduction are
 any native/device lease request while still executing its real Python child;
 production build/device ownership rules remain in force.
 
+The real `workflow` check can still require the shared native-build lease even
+with an isolated resource declaration: `check_resources` also scans command
+arguments for `flutter`, including `flutter_native_asset_lock_test.py`.
+Python checks do not qualify for `host_only_check`, so this path uses the native
+lease rather than a host-test slot. In the delegated Mac workflow at
+`90673302d087d4788a05855a0b6ecc6ae4ebd790`, a verified concurrent Swift lease
+blocked execution before any test started. Wait for that owner to finish; do not
+remove another owner's lease or treat wrapper wall time as measured lease wait.
+
+A fresh worktree also needs its locked Dart package configuration before the
+workflow's Dart contract and CLI fixtures run. Run `flutter pub get --offline
+--enforce-lockfile` with the pinned SDK, verify `flutter_app` and `crypto` are in
+`.dart_tool/package_config.json`, and recheck source/lockfile identity. Without
+that setup, the same Mac workflow ran 354 tests with six failures, two errors
+and one skipped binding probe. After setup, the unchanged source passed all
+354 with zero skips. The binding probe's package-config fallback does not make
+the initial skip an unavailable-platform result. Preserve the original lease
+block and test failure alongside the recovery; retained evidence is in
+`b15-group-mac-workflow-906733-20261119/{actual-first,actual-retry1,actual-retry2}`
+under the executor packet archive. The final raw log SHA-256 is
+`d08d80a0e9bbc04e9fbcaa29f09c93f3ecd6c1fef96e1c75769c12d9d68c247f`.
+
 XCTest adapters build into fresh private DerivedData and run each exact method,
 checking named passing test cases rather than accepting `TEST SUCCEEDED` alone.
 Exception since Batch 11 (unit 4): the simulator `build-for-testing` adapter builds into one shared
