@@ -2534,21 +2534,54 @@ _sendChatMessageDiagnosed({
         stagedAuthorizesTransport = staged.authorizesTransport;
         committedMutationCustody = staged.custody;
       } else if (ownsDirectMediaInboxCustody) {
-        final staged = await directMediaCustodyRepo!
-            .stageOutgoingDirectMediaInboxCustody(
-              expected: expectedAttempt,
-              staged: stagedAttempt,
-              attachments: normalizedAttachments!,
-              kind: attemptKind,
-              recipientPeerId: targetPeerId,
-              wireEnvelope: jsonString,
-              wireMediaBlobManifestHash: wireMediaBlobManifestHash,
-              wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+        EngagementChatObserverIntent? weeklyIntent;
+        // The prepared parent exists, but this stage owns its fresh INITIAL
+        // envelope. Retain the caller's original capture across preparation.
+        if (hasOriginalActivityObservation &&
+            effectiveHasCompleteStrictBlobManifest &&
+            effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary &&
+            activityCapture != null) {
+          try {
+            weeklyIntent = activityReporter?.reserveChatCaptured(
+              activityCapture,
+              contactAccountPeerId: targetPeerId,
+              messageId: resolvedMessageId,
+              generationId: resolvedMessageId,
             );
-        stagedOutcome = staged.outcome;
-        stagedMessage = staged.message;
-        stagedAuthorizesTransport = staged.authorizesTransport;
-        committedMediaCustody = staged.custody;
+          } catch (_) {
+            // Optional observation cannot prevent the real atomic stage.
+          }
+        }
+        try {
+          final staged = await directMediaCustodyRepo!
+              .stageOutgoingDirectMediaInboxCustody(
+                expected: expectedAttempt,
+                staged: stagedAttempt,
+                attachments: normalizedAttachments!,
+                kind: attemptKind,
+                recipientPeerId: targetPeerId,
+                wireEnvelope: jsonString,
+                wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+                wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+              );
+          stagedOutcome = staged.outcome;
+          stagedMessage = staged.message;
+          stagedAuthorizesTransport = staged.authorizesTransport;
+          committedMediaCustody = staged.custody;
+          if (staged.outcome == OutgoingOrdinaryMutationOutcome.applied &&
+              staged.authorizesTransport &&
+              activityCapture != null && weeklyIntent != null) {
+            try {
+              activityReporter?.admitChatCaptured(activityCapture, weeklyIntent);
+            } catch (_) {}
+          }
+        } finally {
+          if (activityCapture != null && weeklyIntent != null) {
+            try {
+              activityReporter?.cancelChatCaptured(activityCapture, weeklyIntent);
+            } catch (_) {}
+          }
+        }
       } else if (hasOrdinaryMedia) {
         final staged =
             await (mediaAttachmentRepo
