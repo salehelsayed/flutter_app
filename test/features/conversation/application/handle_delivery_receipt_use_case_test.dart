@@ -788,8 +788,21 @@ void main() {
         expect(settledTombstone.wireEnvelope, isNull);
         expect(settledTombstone.hiddenAt, settledTombstone.deletedAt);
 
+        final rowsBeforeDuplicates = <String, Map<String, dynamic>>{};
+        for (final id in const <String>[
+          'receipt-inboxed',
+          'receipt-tombstone',
+          'receipt-foreign',
+        ]) {
+          final row = await repo
+              .getMessage(id)
+              .timeout(const Duration(seconds: 3));
+          rowsBeforeDuplicates[id] = row!.toMap();
+        }
+        final normalCallsAfterFirst = repo.normalCalls.length;
+        final tombstoneCallsAfterFirst = repo.tombstoneCalls.length;
         final typedCallsAfterFirst =
-            repo.normalCalls.length + repo.tombstoneCalls.length;
+            normalCallsAfterFirst + tombstoneCallsAfterFirst;
         await handleDeliveryReceipt(
           message: buildReceipt(
             messageIds: const <String>['receipt-inboxed', 'receipt-tombstone'],
@@ -798,9 +811,32 @@ void main() {
         );
         expect(
           repo.normalCalls.length + repo.tombstoneCalls.length,
-          typedCallsAfterFirst,
-          reason: 'duplicate delivered receipts are field-freezing no-ops',
+          typedCallsAfterFirst + 2,
+          reason: 'duplicate receipts re-enter each atomic owner idempotently',
         );
+        expect(repo.normalCalls, hasLength(normalCallsAfterFirst + 1));
+        expect(repo.tombstoneCalls, hasLength(tombstoneCallsAfterFirst + 1));
+        expect(repo.normalCalls.last.messageId, 'receipt-inboxed');
+        expect(repo.tombstoneCalls.last.messageId, 'receipt-tombstone');
+        for (final call in [repo.normalCalls.last, repo.tombstoneCalls.last]) {
+          expect(call.expectedContactPeerId, 'peer-x');
+          expect(call.mode, OutgoingOrdinarySettlementMode.receipt);
+          expect(call.expectedEnvelope, isNull);
+          expect(call.status, 'delivered');
+        }
+        for (final entry in rowsBeforeDuplicates.entries) {
+          final row = await repo
+              .getMessage(entry.key)
+              .timeout(const Duration(seconds: 3));
+          expect(
+            row!.toMap(),
+            entry.value,
+            reason: '${entry.key}: duplicate receipts must freeze every field',
+          );
+        }
+        expect(repo.saveMessageCallCount, 0);
+        expect(repo.conditionalTransitionCallCount, 0);
+        expect(repo.wireEnvelopeUpdates, isEmpty);
       },
     );
 
