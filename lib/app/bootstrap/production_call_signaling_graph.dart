@@ -532,6 +532,7 @@ final class ProductionCallSignalingGraph
   final int Function() _nowMs;
 
   int? _advertisedPreferenceEpoch;
+  int? _advertisedEndpointExpiresAtMs;
   String? _routingHandle;
   Future<void> _advertisementTail = Future<void>.value();
   bool _callabilityInvalidated = false;
@@ -639,6 +640,7 @@ final class ProductionCallSignalingGraph
   Future<void> onResume() async {
     final activityGeneration = _activityObserver?.generation;
     _videoForegroundAllowed = true;
+    _completeCameraForegroundWait(true);
     await runtime.onResume();
     try {
       if (activityGeneration != null) {
@@ -716,6 +718,7 @@ final class ProductionCallSignalingGraph
 
   bool _cameraActionPending = false;
   bool _cameraPermissionPending = false;
+  Completer<bool>? _cameraForegroundWait;
   Future<void>? _cameraRelease;
   ({CallId callId, CallMediaKind media})? _publishedNativeMedia;
 
@@ -890,6 +893,14 @@ final class ProductionCallSignalingGraph
                         ? permissions.PermissionStatus.granted
                         : permissions.PermissionStatus.denied)
                   : await _requestCameraPermission();
+              if (permission.isGranted &&
+                  intent.action == CallVideoAction.turnCameraOn &&
+                  !await _waitForCameraForeground(epoch)) {
+                return report(
+                  ForegroundCallActionResult.unavailable,
+                  CallCameraTapReason.ownerChanged,
+                );
+              }
               if (!cameraCurrent()) {
                 return report(
                   ForegroundCallActionResult.unavailable,
@@ -1108,7 +1119,7 @@ final class ProductionCallSignalingGraph
         owner?.current != true ||
         !identical(owner?.negotiation, source.negotiation) ||
         machine?.videoGatesOpen != true ||
-        machine?.currentRequest != null ||
+        machine?.hasPendingSwitch == true ||
         machine?.settledMedia != CallMediaKind.video ||
         machine?.settledRevision != source.negotiation.mediaRevision ||
         session is! CallVideoPictureInPictureSource ||
@@ -1153,7 +1164,7 @@ final class ProductionCallSignalingGraph
         _videoGeneration == intent.generation &&
         _cameraEpoch == intent.epoch &&
         machine?.videoGatesOpen == true &&
-        machine?.currentRequest == null &&
+        machine?.hasPendingSwitch == false &&
         machine?.settledMedia == CallMediaKind.video &&
         machine?.settledRevision == intent.token.mediaRevision;
   }
@@ -1262,7 +1273,7 @@ final class ProductionCallSignalingGraph
         identical(owner.videoSession, session) &&
         identical(owner.negotiation, token) &&
         owner.mediaSwitch?.machine.videoGatesOpen == true &&
-        owner.mediaSwitch?.machine.currentRequest == null &&
+        owner.mediaSwitch?.machine.hasPendingSwitch == false &&
         (_videoForeground ||
             _pipCameraExecutionCurrent(token.callId, generation, owner));
     try {
@@ -1375,6 +1386,36 @@ final class ProductionCallSignalingGraph
       !_callabilityInvalidated &&
       _videoForegroundAllowed &&
       _isVideoForeground();
+
+  Future<bool> _waitForCameraForeground(int epoch) async {
+    if (epoch != _cameraEpoch ||
+        _shuttingDown ||
+        _callabilityInvalidated ||
+        !_videoForegroundAllowed) {
+      return false;
+    }
+    if (_videoForeground) return true;
+    // Permission can return before Flutter resumes. Keep only this explicit
+    // action pending; capture still requires all cameraCurrent guards afterward.
+    final resumed = Completer<bool>();
+    _cameraForegroundWait = resumed;
+    try {
+      return await resumed.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
+    } finally {
+      if (identical(_cameraForegroundWait, resumed)) {
+        _cameraForegroundWait = null;
+      }
+    }
+  }
+
+  void _completeCameraForegroundWait(bool resumed) {
+    final pending = _cameraForegroundWait;
+    _cameraForegroundWait = null;
+    if (pending != null && !pending.isCompleted) pending.complete(resumed);
+  }
 
   bool _videoActionCurrent(CallId callId, int generation) =>
       videoEnabled &&
@@ -1665,6 +1706,7 @@ final class ProductionCallSignalingGraph
   }) {
     if (!preservePipIntent) _pipCameraIntent = null;
     _cameraEpoch++;
+    _completeCameraForegroundWait(false);
     _pendingCameraRevocation = null;
     final token = _localCameraToken;
     _localCameraToken = null;
@@ -2898,6 +2940,19 @@ final class ProductionCallSignalingGraph
         return await _failCapabilityAdvertisement(stage: stage);
       }
       final now = _nowMs();
+      if (videoEnabled &&
+          _hasLiveSession &&
+          (_advertisedEndpointExpiresAtMs ?? 0) > now) {
+        // A routine refresh must not replace an established v2 call's signed
+        // authority. Token and wake reconciliation above still run; refresh the
+        // endpoint once the call ends instead of retiring its admitted epoch.
+        _advertisementDeferredForLiveCall = true;
+        _emitCapabilityAdvertisementResult(
+          stage: 'endpoint_publish',
+          outcome: 'deferred_live_call',
+        );
+        return true;
+      }
       final priorEpoch = _advertisedPreferenceEpoch;
       final preferenceEpoch = priorEpoch == null || now > priorEpoch
           ? now
@@ -2929,6 +2984,8 @@ final class ProductionCallSignalingGraph
       }
       if (!_canAdvertiseCapability) return false;
       _routingHandle = routingHandle;
+      _advertisedEndpointExpiresAtMs =
+          now + callBackgroundReachabilityLifetime.inMilliseconds;
       _emitCapabilityAdvertisementResult(stage: 'ready', outcome: 'ready');
       return true;
     } catch (_) {
@@ -3225,6 +3282,7 @@ final class ProductionCallSignalingGraph
       preferenceEpoch: preferenceEpoch,
     );
     _advertisedPreferenceEpoch = null;
+    _advertisedEndpointExpiresAtMs = null;
   }
 
   /// A native lifecycle adapter that failed closed never recovers on its

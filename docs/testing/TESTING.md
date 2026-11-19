@@ -12456,6 +12456,32 @@ visible and cannot become an ordinary first-attempt PASS.
   true capability do not certify native capture continuation, OS entry/rendering,
   device/RTP/lock-screen behavior, signed candidates or activation. Preview selected
   20 checks; the full selected wrapper set was not executed for this scoped result.
+  **Tester video controls and upgraded-call PiP (2026-11-19):** a routine
+  capability refresh previously published a new preference epoch during a live
+  video call. The strict v2 adapter then rejected control messages against the
+  original admitted authority. Retain the still-valid published endpoint during
+  the call and defer its refresh until terminal; network, token and wake
+  reconciliation and the strict recipient/authority checks remain active.
+  Camera permission may return before Flutter regains focus. A granted explicit
+  camera action waits at most two seconds for resume, then rechecks the existing
+  foreground, owner, media and intent epoch. Backgrounding or End retires it;
+  timeout cannot turn a camera on after a later resume.
+  A committed media switch retains its request for replay. PiP eligibility must
+  use actual pending transaction/reconciliation state, rather than request
+  presence, in source admission, paused-camera custody and camera execution.
+  The corrected Linux REDs fail on post-refresh control delivery, prompt-only
+  camera continuation and PiP arming after a real upgrade handshake. The combined
+  focused GREEN has 31 visible passes, including seven new regressions, with
+  zero failures/errors/skips. First fixture errors and corrected REDs remain
+  retained under `/srv/evidence/codex-astra-bl16-fixes-20261119/`; these host
+  results do not certify native PiP or the fixed physical-phone candidate.
+  Kayan decision `m-e0ef53d3` accepts the observed emulator VP8 decoder/texture
+  failure as a known limitation for build 132, with physical-phone video proof
+  required. Keep the original emulator failures; physical media success does
+  not prove their cause or erase them. No codec/plugin workaround is included.
+  Background camera continuation remains held: system PiP shows remote video
+  while the local camera pauses. Affected physical End, downgrade, peer camera
+  truth, permission and system PiP cases remain required before video acceptance.
   **OS PiP native unit and visible foreground camera:** scoped native evidence
   is closed at composition `754bae54319ef9e21dd5fab334f699790f3e67c4`.
   Android assemble and unit tasks exited 0 with 628 passing cases in 48 JUnit

@@ -202,6 +202,7 @@ final class CallMediaSwitchMachine {
   bool get requiresReconciliation =>
       _requiresReconciliation ||
       _current?.cancellation == _Cancellation.awaitingWitness;
+  bool get hasPendingSwitch => _current?.open == true || requiresReconciliation;
 
   bool cancellationSelected(String id) =>
       _transactions[id]?.cancellation == _Cancellation.accepted;
