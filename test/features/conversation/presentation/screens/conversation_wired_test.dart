@@ -27,6 +27,8 @@ import 'package:just_audio_platform_interface/just_audio_platform_interface.dart
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart' as reaction_custody_db;
+import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart' as reactions_db;
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
     show kDirectMediaBlobCustodyTable;
@@ -89,10 +91,12 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/conversation/presentation/controllers/reaction_optimistic_attempt_guard.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -134,6 +138,7 @@ import '../../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/in_memory_composer_draft_store.dart';
+import '../../../../shared/fakes/direct_reaction_custody_p2p_service.dart';
 import '../../../translate_preview/fake_model_delivery_controller.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -3982,6 +3987,290 @@ void main() {
       ),
     );
   }
+
+  group('BL29 B15 real direct UI admission', () {
+    const budget = Duration(seconds: 3);
+
+    Future<ActiveIdentityReporter> armReporter(
+      _B15RealSenderBridge bridge, {
+      required bool enabled,
+    }) async {
+      final reporter = ActiveIdentityReporter(statePath: '/unused/b15-direct-ui.json');
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(
+        accountPeerId: makeIdentity().peerId,
+        rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+        profileBinding: _uiCaptureBinding,
+      );
+      await reporter.observeConsent((enabled: enabled, consentEpoch: 7)).timeout(budget);
+      return reporter;
+    }
+
+    Future<void> changeOwner(ActiveIdentityReporter reporter, String scenario) async {
+      if (scenario == 'profile') {
+        reporter.observeIdentity(
+          accountPeerId: makeIdentity().peerId,
+          rootPrivateKeyBase64: base64Encode(List<int>.filled(64, 17)),
+          profileBinding: _uiCaptureOtherBinding,
+        );
+      }
+      if (scenario == 'off' || scenario == 'profile' || scenario == 'epoch') {
+        await reporter.observeConsent((
+          enabled: true,
+          consentEpoch: scenario == 'profile' ? 7 : 8,
+        )).timeout(budget);
+      }
+    }
+
+    for (final (scenario, review) in [
+      ('same', false), ('same', true), ('off', false),
+      ('profile', false), ('epoch', false), ('refused', false),
+    ]) {
+      testWidgets('B15UI voice ${review ? 'review' : 'manual'} real admission $scenario', (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
+        final root = Directory.systemTemp.createTempSync('b15-real-voice-');
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(root.path);
+        addTearDown(() {
+          PathProviderPlatform.instance = previousPathProvider;
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+        final fixture = (await tester.runAsync(
+          () => MediaRepositoryRealDbFixture.create().timeout(budget),
+        ))!;
+        addTearDown(() => fixture.dispose().timeout(budget));
+        final bridge = _B15RealSenderBridge('blob:keygen');
+        final reporter = await armReporter(bridge, enabled: scenario != 'off');
+        addTearDown(() => reporter.dispose().timeout(budget));
+        final authority = DirectConversationRouteAuthority(activityReporter: reporter);
+        final source = File('${root.path}/voice.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 9));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = review ? 300000 : 1200
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = source.path;
+        String? activeAttachmentId;
+        Future<(SendVoiceMessageResult, ConversationMessage?)>? voiceSending;
+        var voiceSendingFinished = false;
+        Future<(SendVoiceMessageResult, ConversationMessage?)> observeRealVoiceSend({
+          required P2PService p2pService, required MessageRepository messageRepo,
+          required String targetPeerId, required String senderPeerId, required String senderUsername,
+          required AudioRecording recording, required Bridge bridge,
+          String? recipientMlKemPublicKey, MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager, String? text, String? quotedMessageId,
+          List<double>? waveform, String? messageId, String? timestamp, String? blobId,
+          EncryptedMediaArtifact? preparedArtifact, DirectMediaFanoutAdmission? mediaAdmission,
+          bool preassignedMessageIdIsFresh = false,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        }) {
+          voiceSending = sendVoiceMessage(
+            p2pService: p2pService, messageRepo: messageRepo,
+            targetPeerId: targetPeerId, senderPeerId: senderPeerId, senderUsername: senderUsername,
+            recording: recording, bridge: bridge, recipientMlKemPublicKey: recipientMlKemPublicKey,
+            mediaAttachmentRepo: mediaAttachmentRepo, mediaFileManager: mediaFileManager,
+            text: text, quotedMessageId: quotedMessageId, waveform: waveform,
+            messageId: messageId, timestamp: timestamp, blobId: blobId,
+            preparedArtifact: preparedArtifact, mediaAdmission: mediaAdmission,
+            preassignedMessageIdIsFresh: preassignedMessageIdIsFresh, capturedActivity: capturedActivity,
+            directMediaBlobCustodyClientEnabled: true,
+          ).whenComplete(() => voiceSendingFinished = true);
+          return voiceSending!;
+        }
+        try {
+          await tester.runAsync(() => seedPersistedIncumbentContact(fixture).timeout(budget));
+          await pumpScreen(tester,
+            contact: makeContact().copyWith(mlKemPublicKey: 'contact-ml-kem-public-key'),
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: fixture.messageRepo,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: fixture.messageRepo, contactRepo: FakeContactRepository()),
+            sendFn: sendChatMessage,
+            bridge: bridge, activityReporter: authority.activityReporter,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: TrackingDurableConversationMediaFileManager(root),
+            audioRecorderService: recorder,
+            sendVoiceMessageFn: observeRealVoiceSend,
+            directMediaBlobCustodyClientEnabled: true,
+          ).timeout(budget);
+          await pumpUntilAsyncIo(tester,
+            () => tester.widget<ConversationScreen>(find.byType(ConversationScreen))
+                .initialLoadDone,
+            timeout: budget);
+          expect(bridge.marks, isEmpty, reason: 'opening a conversation is not communication');
+          await tester.tap(find.byIcon(Icons.mic_rounded)).timeout(budget);
+          await tester.pump(const Duration(milliseconds: 100)).timeout(budget);
+          await pumpUntilAsyncIo(tester,
+            () => recorder.isRecording && find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
+            timeout: budget);
+          if (review) {
+            await recorder.triggerAutoStop().timeout(budget);
+            await tester.pump().timeout(budget);
+            await pumpUntilAsyncIo(tester,
+              () => find.byKey(const ValueKey('voice-review-send')).evaluate().isNotEmpty,
+              timeout: budget);
+            await tester.runAsync(
+              () => tester.tap(find.byKey(const ValueKey('voice-review-send'))).timeout(budget),
+            );
+          } else {
+            await tester.runAsync(
+              () => tester.tap(find.byIcon(Icons.arrow_upward_rounded)).timeout(budget),
+            );
+          }
+          await tester.pump().timeout(budget);
+          await pumpUntilAsyncIo(tester, () => voiceSending != null, timeout: budget);
+          await pumpUntilAsyncIo(tester, () => bridge.cryptoRequested, timeout: budget);
+          expect(bridge.marks, isEmpty, reason: 'crypto preparation has not admitted durable communication');
+          expect((await tester.runAsync(() => fixture.db.query(kDirectMediaBlobCustodyTable).timeout(budget)))!, isEmpty);
+          final preparing = (await tester.runAsync(
+            () => fixture.db.query('media_attachments').timeout(budget),
+          ))!;
+          expect(preparing, hasLength(1));
+          activeAttachmentId = preparing.single['id'] as String;
+          expect(mediaUploadInFlightTracker.isInFlight(activeAttachmentId!), isTrue);
+          await changeOwner(reporter, scenario).timeout(budget);
+          if (scenario == 'refused') bridge.responses['blob:keygen'] = {'ok': false};
+          bridge.cryptoGate.complete();
+          await tester.runAsync(() => voiceSending!.timeout(budget));
+          expect(voiceSendingFinished, isTrue);
+          await voiceSending!.timeout(budget);
+          await pumpUntilAsyncIo(tester,
+            () => !tester.widget<ConversationScreen>(find.byType(ConversationScreen))
+                .composerStateListenable!.value.isUploading &&
+                !mediaUploadInFlightTracker.isInFlight(activeAttachmentId!),
+            timeout: budget);
+          final rows = (await tester.runAsync(
+            () => fixture.db.query(kDirectMediaBlobCustodyTable).timeout(budget),
+          ))!;
+          expect(rows, scenario == 'refused' ? isEmpty : hasLength(1));
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+          if (rows.isNotEmpty) {
+            expect(rows.single['state'], 'outgoing_prepared');
+            expect(rows.single['message_id'], isNotEmpty);
+            expect(rows.single['direction'], 'outgoing');
+          }
+          expect(tester.takeException(), isNull);
+        } finally {
+          if (!bridge.cryptoGate.isCompleted) bridge.cryptoGate.complete();
+          try {
+            if (voiceSending != null) {
+              await pumpUntilAsyncIo(tester, () => voiceSendingFinished, timeout: budget);
+              await voiceSending!.timeout(budget);
+            }
+            if (find.byType(ConversationScreen).evaluate().isNotEmpty) {
+              await pumpUntilAsyncIo(tester,
+                () => !tester.widget<ConversationScreen>(find.byType(ConversationScreen))
+                    .composerStateListenable!.value.isUploading &&
+                    (activeAttachmentId == null ||
+                      !mediaUploadInFlightTracker.isInFlight(activeAttachmentId!)),
+                timeout: budget);
+            }
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink()).timeout(budget);
+          }
+        }
+      });
+    }
+
+    for (final scenario in ['same', 'off', 'profile', 'epoch', 'refused']) {
+      testWidgets('B15UI ADD real database custody $scenario', (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        final fixture = (await tester.runAsync(
+          () => MediaRepositoryRealDbFixture.create().timeout(budget),
+        ))!;
+        addTearDown(() => fixture.dispose().timeout(budget));
+        final bridge = _B15RealSenderBridge('message.encrypt');
+        final reporter = await armReporter(bridge, enabled: scenario != 'off');
+        addTearDown(() => reporter.dispose().timeout(budget));
+        final authority = DirectConversationRouteAuthority(activityReporter: reporter);
+        final parent = ConversationMessage(
+          id: 'b15-real-add-parent', contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId, text: 'Real admitted reaction',
+          timestamp: '2026-11-18T00:00:00.000Z', status: 'delivered',
+          isIncoming: true, createdAt: '2026-11-18T00:00:00.000Z');
+        final reactionRepo = _b15RealReactionRepository(fixture,
+          capacity: scenario == 'refused' ? 0 : 512);
+        Future<(SendReactionResult, MessageReaction?)>? sending;
+        var sendingFinished = false;
+        Future<(SendReactionResult, MessageReaction?)> observeRealSend({
+          required P2PService p2pService, required Bridge bridge,
+          required ReactionRepository reactionRepo, required String targetPeerId,
+          required String messageId, required String emoji, required String senderPeerId,
+          required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
+          ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
+        }) {
+          sending = sendReaction(
+            p2pService: p2pService, bridge: bridge, reactionRepo: reactionRepo,
+            targetPeerId: targetPeerId, messageId: messageId, emoji: emoji,
+            senderPeerId: senderPeerId, recipientMlKemPublicKey: recipientMlKemPublicKey,
+            directEventFanout: directEventFanout, capturedActivity: capturedActivity,
+          ).whenComplete(() => sendingFinished = true);
+          return sending!;
+        }
+        try {
+          await tester.runAsync(() async {
+            await seedPersistedIncumbentContact(fixture).timeout(budget);
+            await fixture.messageRepo.saveMessage(parent).timeout(budget);
+          });
+          await pumpScreen(tester,
+            contact: makeContact().copyWith(mlKemPublicKey: 'contact-ml-kem-public-key'),
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: fixture.messageRepo,
+            chatListener: ChatMessageListener(chatMessageStream: const Stream.empty(),
+              messageRepo: fixture.messageRepo, contactRepo: FakeContactRepository()),
+            sendFn: sendChatMessage, initialMessages: [parent],
+            bridge: bridge, activityReporter: authority.activityReporter,
+            p2pService: DirectReactionCustodyP2PService(
+              initialState: NodeState(isStarted: false, peerId: makeIdentity().peerId)),
+            reactionRepo: reactionRepo, sendReactionFn: observeRealSend,
+          ).timeout(budget);
+          expect(bridge.marks, isEmpty);
+          await tester.longPress(find.text(parent.text)).timeout(budget);
+          await tester.pump(const Duration(milliseconds: 250)).timeout(budget);
+          await tester.tap(find.descendant(
+            of: find.byKey(MessageContextOverlay.reactionBarKey),
+            matching: find.text('👍'))).timeout(budget);
+          await pumpUntilAsyncIo(tester, () => bridge.cryptoRequested, timeout: budget);
+          expect(bridge.marks, isEmpty);
+          expect(sendingFinished, isFalse);
+          await changeOwner(reporter, scenario).timeout(budget);
+          bridge.cryptoGate.complete();
+          await pumpUntilAsyncIo(tester, () => sendingFinished, timeout: budget);
+          final result = await sending!.timeout(budget);
+          expect(result.$1, scenario == 'refused'
+            ? SendReactionResult.sendFailed : SendReactionResult.nodeNotRunning);
+          expect(result.$2, scenario == 'refused' ? isNull : isNotNull);
+          final custody = (await tester.runAsync(
+            () => reactionRepo.loadDirectReactionInboxCustody().timeout(budget),
+          ))!;
+          final reactions = (await tester.runAsync(
+            () => reactionRepo.getReactionsForMessage(parent.id).timeout(budget),
+          ))!;
+          expect(custody, scenario == 'refused' ? isEmpty : hasLength(1));
+          expect(reactions, scenario == 'refused' ? isEmpty : hasLength(1));
+          expect(bridge.marks, scenario == 'same' ? hasLength(1) : isEmpty);
+          if (custody.isNotEmpty) {
+            expect(custody.single.eventId, reactions.single.id);
+            expect(custody.single.recipientPeerId, makeContact().peerId);
+            expect(reactions.single.emoji, '👍');
+            expect(reactions.single.senderPeerId, makeIdentity().peerId);
+          }
+          expect(tester.takeException(), isNull);
+        } finally {
+          if (!bridge.cryptoGate.isCompleted) bridge.cryptoGate.complete();
+          try {
+            if (sending != null) {
+              await pumpUntilAsyncIo(tester, () => sendingFinished, timeout: budget);
+              await sending!.timeout(budget);
+            }
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink()).timeout(budget);
+          }
+        }
+      });
+    }
+  });
 
   group('BL29 B14 U2 original direct producer observations', () {
     const budget = Duration(seconds: 2);
@@ -21700,6 +21989,64 @@ class _UiCaptureBridge extends FakeBridge {
       if (request['op'] == 'flush') 'queued': true,
     }});
   }
+}
+
+class _B15RealSenderBridge extends _UiCaptureBridge {
+  _B15RealSenderBridge(this.cryptoCommand);
+
+  final String cryptoCommand;
+  final cryptoGate = Completer<void>();
+  bool cryptoRequested = false;
+
+  @override
+  Future<String> send(String message) async {
+    final envelope = jsonDecode(message) as Map<String, dynamic>;
+    if (envelope['cmd'] == cryptoCommand && !cryptoRequested) {
+      cryptoRequested = true;
+      await cryptoGate.future.timeout(const Duration(seconds: 3));
+    }
+    return super.send(message);
+  }
+}
+
+ReactionRepositoryImpl _b15RealReactionRepository(
+  MediaRepositoryRealDbFixture fixture, {
+  required int capacity,
+}) {
+  final db = fixture.db;
+  return ReactionRepositoryImpl(
+    dbInsertReaction: (row) => reactions_db.dbInsertReaction(db, row),
+    dbLoadReactionsForMessage: (id) => reactions_db.dbLoadReactionsForMessage(db, id),
+    dbLoadReactionsForMessages: (ids) => reactions_db.dbLoadReactionsForMessages(db, ids),
+    dbLoadActiveOrTombstonedReactionForSender: (id, sender) =>
+        reactions_db.dbLoadActiveOrTombstonedReactionForSender(db, id, sender),
+    dbDeleteReaction: (id, sender, {removedAtTimestamp}) =>
+        reactions_db.dbDeleteReaction(db, id, sender, removedAtTimestamp: removedAtTimestamp),
+    dbDeleteReactionsForMessage: (id) => reactions_db.dbDeleteReactionsForMessage(db, id),
+    dbDeleteReactionsForContact: (peer) => reactions_db.dbDeleteReactionsForContact(db, peer),
+    dbStageOutgoingDirectReactionInboxCustody: ({
+      required reactionRow, required recipientPeerId, required action, required wireEnvelope,
+    }) => reaction_custody_db.dbStageOutgoingDirectReactionInboxCustody(
+        db, reactionRow: reactionRow, recipientPeerId: recipientPeerId,
+        action: action, wireEnvelope: wireEnvelope, capacity: capacity,
+      ).timeout(const Duration(seconds: 3)),
+    dbLoadDirectReactionInboxCustodyOutbox: ({limit = 50}) =>
+        reaction_custody_db.dbLoadDirectReactionInboxCustodyOutbox(db, limit: limit),
+    dbLoadDirectReactionInboxCustodyOutboxForEvent: ({required recipientPeerId, required eventId}) =>
+        reaction_custody_db.dbLoadDirectReactionInboxCustodyOutboxForEvent(
+          db, recipientPeerId: recipientPeerId, eventId: eventId),
+    dbRecordDirectReactionInboxCustodyFailureIfExact: ({
+      required recipientPeerId, required eventId, required expectedWireEnvelope,
+      required errorCode, required attemptedAt,
+    }) => reaction_custody_db.dbRecordDirectReactionInboxCustodyFailureIfExact(
+      db, recipientPeerId: recipientPeerId, eventId: eventId,
+      expectedWireEnvelope: expectedWireEnvelope, errorCode: errorCode, attemptedAt: attemptedAt),
+    dbCompleteAcceptedDirectReactionInboxCustodyIfExact: ({
+      required recipientPeerId, required eventId, required expectedWireEnvelope,
+    }) => reaction_custody_db.dbCompleteAcceptedDirectReactionInboxCustodyIfExact(
+      db, recipientPeerId: recipientPeerId, eventId: eventId,
+      expectedWireEnvelope: expectedWireEnvelope),
+  );
 }
 
 /// The shared fake intentionally returns a nonexistent path; this route fixture
