@@ -1,5 +1,10 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import '../application/b6_daily_activity_test_support.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -189,6 +194,7 @@ void main() {
 
     Widget buildWidget({
       GroupType groupType = GroupType.chat,
+      ActiveIdentityReporter? activityReporter,
       InMemoryContactRepository? contactRepoOverride,
     }) {
       return MaterialApp(
@@ -197,6 +203,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         home: CreateGroupPickerWired(
           groupType: groupType,
+          activityReporter: activityReporter,
           groupRepo: groupRepo,
           msgRepo: msgRepo,
           groupMessageListener: FakeGroupMessageListener(
@@ -476,6 +483,102 @@ void main() {
       );
       expect(screen2.selectedPeerIds, contains('peer-alice'));
       expect(screen2.selectedPeerIds, contains('peer-bob'));
+    });
+
+    testWidgets('B15GDI real Picker group send keeps the original reporter', (
+      tester,
+    ) async {
+      const bound = Duration(seconds: 3);
+      tester.view.physicalSize = const Size(1100, 1700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const <GroupExitIntent>[],
+      );
+      addTearDown(() => setGroupExitIntentAccessSinks());
+      final activityBridge = B6ActivityBridge();
+      final reporter = await b6Reporter(activityBridge).timeout(bound);
+      reporter.observeIdentity(
+        accountPeerId: testIdentity.peerId,
+        rootPrivateKeyBase64: 'public-test-fixture',
+        profileBinding: b6Binding,
+      );
+      await reporter.observeConsent((enabled: true, consentEpoch: 7))
+          .timeout(bound);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+        await reporter.dispose().timeout(bound);
+      });
+      contactRepo.addTestContact(contactAlice);
+      bridge.responses['group:create']!['keyEpoch'] = 1;
+      bridge.responses['group:publish'] = {'ok': true};
+      await tester.pumpWidget(buildWidget(activityReporter: reporter))
+          .timeout(bound);
+      await pumpFrames(tester).timeout(bound);
+      expect(activityBridge.marks, isEmpty);
+      await tester.tap(find.text('Alice')).timeout(bound);
+      await pumpFrames(tester).timeout(bound);
+      await tester.runAsync(() => tester.tap(find.text('Start group chat'))
+          .timeout(bound)).timeout(bound);
+      Future<void> waitForCreatedRoute() async {
+        final clock = Stopwatch()..start();
+        while (clock.elapsed < bound) {
+          if (find.byType(CreateGroupPickerScreen).evaluate().isEmpty &&
+              find.descendant(
+            of: find.byType(GroupConversationWired),
+            matching: find.byType(TextField),
+          ).evaluate().isNotEmpty) return;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        throw TimeoutException('created group route did not become writable', bound);
+      }
+      await tester.runAsync(() => waitForCreatedRoute().timeout(bound))
+          .timeout(bound);
+      expect(find.byType(GroupConversationWired), findsOneWidget);
+      expect(find.byType(CreateGroupPickerScreen), findsNothing);
+      final group = await groupRepo.getGroup('new-group-id').timeout(bound);
+      expect(group, isNotNull);
+      expect(activityBridge.marks, isEmpty,
+          reason: 'creating and opening a group alone does not mark a post');
+      final publishesBefore = bridge.commandLog
+          .where((command) => command == 'group:publish').length;
+      await tester.enterText(find.descendant(
+        of: find.byType(GroupConversationWired), matching: find.byType(TextField),
+      ).last, 'B15 actual Picker group post').timeout(bound);
+      await tester.pump().timeout(bound);
+      expect(find.byIcon(Icons.arrow_upward_rounded).last.hitTestable(), findsOneWidget);
+      await tester.runAsync(() => tester
+          .tap(find.byIcon(Icons.arrow_upward_rounded).last).timeout(bound))
+          .timeout(bound);
+      await tester.runAsync(() async {
+        final clock = Stopwatch()..start();
+        while (clock.elapsed < bound) {
+          final sent = (await msgRepo.getMessagesPage(group!.id))
+              .where((message) => message.senderPeerId == testIdentity.peerId &&
+                  message.text == 'B15 actual Picker group post' &&
+                  message.status == 'sent');
+          if (sent.length == 1 && bridge.commandLog
+              .where((command) => command == 'group:publish').length >
+                  publishesBefore) return;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        throw TimeoutException('real Picker group send did not complete', bound);
+      }).timeout(bound);
+      await pumpFrames(tester).timeout(bound);
+      final sent = (await msgRepo.getMessagesPage(group!.id).timeout(bound))
+          .where((message) => message.senderPeerId == testIdentity.peerId &&
+              message.text == 'B15 actual Picker group post' &&
+              message.status == 'sent');
+      expect(sent, hasLength(1));
+      expect(bridge.commandLog.where((command) => command == 'group:publish')
+          .length, greaterThan(publishesBefore));
+      expect(activityBridge.marks, hasLength(1));
+      expect(tester.widget<GroupConversationWired>(find.byType(GroupConversationWired))
+          .activityReporter, same(reporter));
     });
 
     testWidgets('panel appears after selecting a contact', (tester) async {

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
+import '../../../groups/application/b6_daily_activity_test_support.dart';
 import '../../../translate_preview/fake_model_delivery_controller.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'dart:convert';
@@ -379,6 +381,7 @@ void main() {
     Locale locale = const Locale('en'),
     AudioRecorderService? audioRecorderService,
     ConversationCallTimelineSource? callTimelineSource,
+    DirectConversationRouteAuthority? directRouteAuthority,
     MicPermissionGateway? micPermissionGateway,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
@@ -409,11 +412,11 @@ void main() {
         _FakeGroupMessageListener(groupMessageStreamController.stream);
 
     final orbitWidget = OrbitWired(
-      directRouteAuthority: callTimelineSource == null
+      directRouteAuthority: directRouteAuthority ?? (callTimelineSource == null
           ? null
           : DirectConversationRouteAuthority(
               callTimelineSource: callTimelineSource,
-            ),
+            )),
       key: orbitKey,
       callActivitySource: callActivitySource,
       identityRepo: identityRepo,
@@ -11632,6 +11635,154 @@ void main() {
         await pumpOrbitFrames(tester);
       },
     );
+
+    testWidgets('B15GDI real Orbit create route keeps the original reporter', (
+      tester,
+    ) async {
+      const bound = Duration(seconds: 3);
+      final semantics = tester.ensureSemantics();
+      try {
+        tester.view.physicalSize = const Size(1100, 1700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        identityRepo.seed(testIdentity);
+        final activityBridge = B6ActivityBridge();
+        final reporter = await b6Reporter(activityBridge).timeout(bound);
+        reporter.observeIdentity(
+          accountPeerId: testIdentity.peerId,
+          rootPrivateKeyBase64: 'public-test-fixture', profileBinding: b6Binding,
+        );
+        await reporter.observeConsent((enabled: true, consentEpoch: 7))
+            .timeout(bound);
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await reporter.dispose().timeout(bound);
+        });
+        await tester.pumpWidget(buildOrbitWired(
+          directRouteAuthority: DirectConversationRouteAuthority(
+            activityReporter: reporter,
+          ),
+        )).timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        await switchToAllChats(tester).timeout(bound);
+        expect(activityBridge.marks, isEmpty);
+        await tester.tap(find.bySemanticsIdentifier('orbit_create_group_fab'))
+            .timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        await tester.tap(find.text(AppLocalizationsEn().orbit_new_group))
+            .timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        expect(find.byType(CreateGroupPickerWired), findsOneWidget);
+        expect(tester.widget<CreateGroupPickerWired>(
+          find.byType(CreateGroupPickerWired),
+        ).activityReporter, same(reporter));
+        expect(activityBridge.marks, isEmpty,
+            reason: 'opening creation UI alone is not a content post');
+      } finally {
+        semantics.dispose();
+      }
+    });
+
+    testWidgets('B15GDI real Orbit group send keeps the original reporter', (
+        tester,
+      ) async {
+        const bound = Duration(seconds: 3);
+        tester.view.physicalSize = const Size(1100, 1700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        identityRepo.seed(testIdentity);
+        final activityBridge = B6ActivityBridge();
+        final reporter = await b6Reporter(activityBridge).timeout(bound);
+        reporter.observeIdentity(
+          accountPeerId: testIdentity.peerId,
+          rootPrivateKeyBase64: 'public-test-fixture',
+          profileBinding: b6Binding,
+        );
+        await reporter.observeConsent((enabled: true, consentEpoch: 7))
+            .timeout(bound);
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await reporter.dispose().timeout(bound);
+        });
+        p2pService = FakeP2PService(initialState: const NodeState(
+          isStarted: true, peerId: 'public-route-device', relayState: 'online',
+        ));
+        bridge.responses['group:publish'] = {'ok': true, 'messageId': 'route-published'};
+        final groups = groupRepo;
+        final messages = groupMsgRepo;
+        final group = GroupModel(
+          id: 'b15-orbit-group', name: 'B15 Orbit group', type: GroupType.chat,
+          topicName: '/mknoon/group/b15-orbit-group',
+          createdAt: DateTime.utc(2026, 11, 19),
+          createdBy: testIdentity.peerId, myRole: GroupRole.admin,
+        );
+        await groups.saveGroup(group).timeout(bound);
+        await groups.saveMember(GroupMember(
+          groupId: group.id, peerId: testIdentity.peerId,
+          role: MemberRole.admin, joinedAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        await groups.saveMember(GroupMember(
+          groupId: group.id, peerId: 'public-other-account',
+          role: MemberRole.writer, joinedAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        await groups.saveKey(GroupKeyInfo(
+          groupId: group.id, keyGeneration: 1, encryptedKey: 'public-group-key',
+          createdAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        final receivedAt = DateTime.now().toUtc();
+        await messages.saveMessage(GroupMessage(
+          id: 'b15-orbit-existing-post', groupId: group.id,
+          senderPeerId: 'public-other-account', text: 'B15 existing group post',
+          timestamp: receivedAt, createdAt: receivedAt, isIncoming: true,
+        )).timeout(bound);
+        await tester.pumpWidget(buildOrbitWired(
+          groupRepository: groups, groupMessageRepository: messages,
+          directRouteAuthority: DirectConversationRouteAuthority(
+            activityReporter: reporter,
+          ),
+        )).timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        expect(activityBridge.marks, isEmpty);
+        await switchToAllChats(tester).timeout(bound);
+        await tester.tap(find.text('B15 Orbit group')).timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(activityBridge.marks, isEmpty,
+            reason: 'opening the real route does not qualify communication');
+        await tester.enterText(find.descendant(
+          of: find.byType(GroupConversationWired), matching: find.byType(TextField),
+        ).last, 'B15 actual Orbit group post').timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.runAsync(() => tester
+            .tap(find.byIcon(Icons.arrow_upward_rounded).last).timeout(bound))
+            .timeout(bound);
+        await tester.runAsync(() async {
+          final clock = Stopwatch()..start();
+          while (clock.elapsed < bound) {
+            final sent = (await messages.getMessagesPage(group.id))
+                .where((message) =>
+                    message.senderPeerId == testIdentity.peerId &&
+                    message.status == 'sent');
+            if (sent.length == 1 &&
+                bridge.commandLog.contains('group:publish')) return;
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          throw TimeoutException('real Orbit group send did not complete', bound);
+        }).timeout(bound);
+        await pumpOrbitFrames(tester, count: 6).timeout(bound);
+        final own = (await messages.getMessagesPage(group.id).timeout(bound))
+            .where((message) => message.senderPeerId == testIdentity.peerId);
+        expect(own.single.text, 'B15 actual Orbit group post');
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(activityBridge.marks, hasLength(1));
+        expect(tester.widget<GroupConversationWired>(
+          find.byType(GroupConversationWired),
+        ).activityReporter, same(reporter));
+      });
+
 
     testWidgets(
       'orbit entry keeps group long-press actions aligned with the shared conversation surface',

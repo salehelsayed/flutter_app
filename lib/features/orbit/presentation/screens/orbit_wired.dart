@@ -5214,6 +5214,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
+              activityReporter: widget.directRouteAuthority?.activityReporter,
               group: group,
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
@@ -5268,6 +5269,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           MaterialPageRoute(
             builder: (_) => CreateGroupPickerWired(
+              activityReporter: widget.directRouteAuthority?.activityReporter,
               groupType: type,
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,

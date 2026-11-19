@@ -55,6 +55,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -2125,6 +2126,270 @@ void main() {
               preparedGroupMediaBlobCustodyCoordinator,
         ),
       );
+    }
+
+    for (final strict in [false, true]) {
+    for (final kind in ['text', 'media', 'voice']) {
+      testWidgets('B15GR ${strict ? 'strict' : 'real'} composer $kind retains a group witness', (
+        tester,
+      ) async {
+        const bound = Duration(seconds: 3);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        final activity = (await tester.runAsync(() async {
+          final directory = await Directory.systemTemp
+              .createTemp('b15-real-group-').timeout(bound);
+          final store = await EngagementChatCheckpointStore
+              .open('${directory.path}/group').timeout(bound);
+          final bridge = B6ActivityBridge();
+          final reporter = await b6Reporter(bridge, groupWitnessStore: store)
+              .timeout(bound);
+          reporter.observeIdentity(
+            accountPeerId: testIdentity.peerId,
+            rootPrivateKeyBase64: 'public-test-fixture',
+            profileBinding: b6Binding,
+          );
+          await reporter.observeConsent((enabled: true, consentEpoch: 7))
+              .timeout(bound);
+          await reporter.flush().timeout(bound);
+          return (directory: directory, store: store,
+              reporter: reporter, bridge: bridge);
+        }).timeout(bound))!;
+        Future<void> framesUntil(bool Function() ready) async {
+          final clock = Stopwatch()..start();
+          for (var i = 0;
+              i < 25 && !ready() && clock.elapsed < bound;
+              i++) {
+            await tester.runAsync(() => Future<void>.delayed(
+              const Duration(milliseconds: 10),
+            )).timeout(bound);
+            await tester.pump(const Duration(milliseconds: 100)).timeout(bound);
+          }
+          expect(ready(), isTrue);
+        }
+        Future<void> settleActivity(Future<void> Function() action) async {
+          late Future<void> pending;
+          await tester.runAsync(() async {
+            pending = Future<void>.sync(action).timeout(bound);
+          }).timeout(bound);
+          var complete = false;
+          Object? completionError;
+          StackTrace? completionStack;
+          unawaited(pending.then<void>(
+            (_) { complete = true; },
+            onError: (Object error, StackTrace stack) {
+              completionError = error;
+              completionStack = stack;
+              complete = true;
+            },
+          ));
+          final clock = Stopwatch()..start();
+          var turns = 0;
+          while (!complete && turns < 300 && clock.elapsed < bound) {
+            await tester.runAsync(() => Future<void>.delayed(
+              const Duration(milliseconds: 10),
+            ));
+            await tester.idle();
+            turns++;
+          }
+          if (!complete) throw TimeoutException('group fixture I/O did not complete', bound);
+          if (completionError != null) {
+            Error.throwWithStackTrace(completionError!, completionStack!);
+          }
+        }
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await settleActivity(activity.reporter.dispose);
+          await settleActivity(activity.store.close);
+          await settleActivity(() => activity.directory
+              .delete(recursive: true).then<void>((_) {}));
+        });
+        final targetMessages = strict ? _StrictPreparedGroupMessageRepository() : msgRepo;
+        final targetMedia = strict ? _StrictStickerCustodyRepository() : mediaAttachmentRepo;
+        var strictUploads = 0;
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group).timeout(bound);
+        await saveActiveGroupMembers(groupRepo, group).timeout(bound);
+        if (strict) {
+          for (final member in await groupRepo.getMembers(group.id).timeout(bound)) {
+            final own = member.peerId == testIdentity.peerId;
+            final key = own ? testIdentity.publicKey : 'pk-${member.peerId}';
+            await groupRepo.saveMember(GroupMember(
+              groupId: group.id, peerId: member.peerId, username: member.username,
+              role: member.role, publicKey: key,
+              mlKemPublicKey: own ? testIdentity.mlKemPublicKey : 'mlkem-${member.peerId}',
+              devices: [GroupMemberDeviceIdentity(
+                deviceId: own ? 'me' : 'device-${member.peerId}',
+                transportPeerId: own ? 'me' : 'transport-${member.peerId}',
+                deviceSigningPublicKey: key,
+              )], joinedAt: member.joinedAt,
+            )).timeout(bound);
+          }
+          setGroupContentAuthoringResolver(groupRepo, ({
+            required groupId, required senderPeerId, required senderPublicKey,
+            senderDeviceId, senderTransportPeerId,
+          }) async => (
+            kind: GroupContentAuthoringResolutionKind.strict,
+            context: GroupContentAuthoringContext(
+              directLinkedDeviceSelector: const DirectLinkedDeviceSelector.enabled(),
+              multiDeviceSyncEnabled: true,
+              authorityVersion: GroupContentAuthorityVersion(
+                eventAt: DateTime.utc(2026, 5, 1, 10, 2),
+                eventId: 'authority-b15-composer', keyEpoch: 1,
+              ), inboxStore: _StoredStrictInbox(),
+            ),
+          ));
+          addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+        }
+        await targetMessages.saveMessage(makeMessage(
+          id: 'b15-real-other',
+          text: 'B15 painted other-account fixture',
+          senderPeerId: 'peer-alice',
+          timestamp: DateTime.fromMillisecondsSinceEpoch(
+            b15GroupWeekStart + 1000, isUtc: true),
+        )).timeout(bound);
+        final source = File('${activity.directory.path}/source.${kind == 'voice' ? 'm4a' : 'jpg'}')
+          ..writeAsBytesSync(kind == 'voice' ? [1, 2, 3, 4] : validJpegFixtureBytes);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3200
+          ..fakeSizeBytes = source.lengthSync()
+          ..fakeOutputPath = source.path;
+        final strictCoordinator = !strict ? null : PreparedGroupMediaBlobCustodyCoordinator(
+          artifactStore: GroupMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async => activity.directory,
+          ),
+          prepareArtifact: ({required bridge, required localFilePath}) async {
+            final plaintext = await File(localFilePath).readAsBytes().timeout(bound);
+            final ciphertext = <int>[...List<int>.filled(16, 0xa5), ...plaintext];
+            final encrypted = File('${activity.directory.path}/strict-$kind.bin')
+              ..writeAsBytesSync(ciphertext);
+            return EncryptedMediaArtifact(
+              encryptedPath: encrypted.path,
+              keyBase64: base64Encode(List<int>.filled(32, 7)),
+              nonce: base64Encode(List<int>.filled(12, 8)),
+              scheme: groupMediaBlobEncryptionScheme,
+              contentHash: sha256.convert(ciphertext).toString(),
+              plaintextSize: plaintext.length,
+            );
+          },
+          strictUpload: ({required bridge, required custodyBlobId,
+            required recipientPeerId, required ciphertextPath,
+            required contentHash, required ciphertextSize,
+          }) async {
+            strictUploads++;
+            return <String, dynamic>{
+              'ok': true, 'id': custodyBlobId, 'storeStatus': 'stored',
+              'custodyKind': groupMediaBlobCustodyKind,
+              'custodyContract': groupMediaBlobCustodyContract,
+              'contentHash': contentHash, 'size': ciphertextSize,
+              'mime': groupMediaBlobTransportMime,
+              'expiresAtMs': DateTime.now().add(const Duration(days: 7)).millisecondsSinceEpoch,
+              'custodyRelayPeerId': 'relay-$recipientPeerId',
+            };
+          },
+        );
+        await tester.pumpWidget(buildWidget(
+          group: group,
+          activityReporter: activity.reporter,
+          messageRepo: targetMessages,
+          mediaRepo: targetMedia,
+          preparedGroupMediaBlobCustodyCoordinator: strictCoordinator,
+          mediaFileManager: TrackingDurableMediaFileManager(activity.directory),
+          audioRecorderService: recorder,
+          initialText: kind == 'text' ? 'B15 real composer post' : null,
+          initialPendingMedia: kind == 'media' ? [PendingComposerMedia(
+            file: source, budgetBytes: source.lengthSync(),
+          )] : null,
+          uploadMediaFn: ({required bridge, required localFilePath,
+            required mime, required recipientPeerId, String? blobId,
+            mediaFileManager, width, height, durationMs, waveform,
+            allowedPeers, deleteSourceWhenDone = false, preparedArtifact,
+          }) async => successfulGroupUploadFixture(
+            blobId: blobId!, mime: mime, localFilePath: localFilePath),
+        )).timeout(bound);
+        await framesUntil(() => find.byWidgetPredicate(
+          (w) => w is LetterCard &&
+              w.text == 'B15 painted other-account fixture',
+        ).evaluate().isNotEmpty);
+        // Visibility needs its two post-frame callbacks before joining I/O.
+        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
+        await settleActivity(activity.reporter.flush);
+        expect(activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+            isEmpty, reason: 'painted content alone is not communication');
+        final initialCheckpoint = File(activity.store.checkpointPath);
+        expect(initialCheckpoint.existsSync(), isTrue,
+            reason: 'the actual painted other-account fact must be durable before authoring');
+        final initialSnapshot = jsonDecode(initialCheckpoint.readAsStringSync()) as Map;
+        expect(initialSnapshot['phase'], 'collecting');
+        expect(initialSnapshot['groups'], {group.id: 2});
+        if (kind == 'voice') {
+          await framesUntil(() => find.byType(VoiceRecordButton)
+              .evaluate().isNotEmpty);
+          await tester.tap(find.byType(VoiceRecordButton)).timeout(bound);
+          await framesUntil(() => tester.widget<VoiceRecordButton>(
+              find.byType(VoiceRecordButton)).isRecording);
+          recorder.emitAmplitude(0.3);
+          recorder.emitAmplitude(0.6);
+          await tester.tap(find.byType(VoiceRecordButton)).timeout(bound);
+        } else {
+          await framesUntil(() => find.byIcon(Icons.arrow_upward_rounded)
+              .evaluate().isNotEmpty);
+          if (kind == 'text') {
+            await tester.runAsync(() => tester
+                .tap(find.byIcon(Icons.arrow_upward_rounded).last)
+                .timeout(bound)).timeout(bound);
+          } else {
+            await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last)
+                .timeout(bound);
+          }
+        }
+        bool admissionReady() => !strict
+            ? groupPublishPayloads(bridge).isNotEmpty
+            : kind == 'text'
+                ? (targetMessages as _StrictPreparedGroupMessageRepository).preparedStages > 0
+                : (targetMedia as _StrictStickerCustodyRepository).rows.isNotEmpty &&
+                    strictUploads > 0 && mediaUploadInFlightTracker.inFlightCount == 0;
+        await settleActivity(() async {
+          final clock = Stopwatch()..start();
+          while (!admissionReady() && clock.elapsed < bound) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        });
+        expect(admissionReady(), isTrue);
+        await settleActivity(() async {
+          final clock = Stopwatch()..start();
+          while (clock.elapsed < bound) {
+            final sent = (await targetMessages.getMessagesPage(group.id))
+                .where((message) => message.senderPeerId == testIdentity.peerId &&
+                    (strict || message.status == 'sent'));
+            if (sent.length == 1) return;
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          throw TimeoutException('real group sender did not commit', bound);
+        });
+        await settleActivity(activity.reporter.flush);
+        expect(activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+            hasLength(1));
+        final own = (await targetMessages.getMessagesPage(group.id).timeout(bound))
+            .where((message) => message.senderPeerId == testIdentity.peerId);
+        expect(own, hasLength(1));
+        if (strict) {
+          expect(groupPublishPayloads(bridge), isEmpty,
+              reason: 'strict admission must not fall back to legacy publication');
+          if (kind == 'text') {
+            expect((targetMessages as _StrictPreparedGroupMessageRepository).preparedStages,
+                greaterThan(0));
+          } else {
+            final rows = (targetMedia as _StrictStickerCustodyRepository).rows;
+            expect(rows, isNotEmpty);
+            expect(rows.every((row) => row.messageId == own.single.id), isTrue);
+            expect(strictUploads, greaterThan(0));
+            expect(_sentMediaManifests(bridge), isNotEmpty);
+          }
+        }
+      });
+    }
+
     }
 
     for (final scenario in [
@@ -26018,6 +26283,7 @@ final class _StoredStrictInbox
 final class _StrictPreparedGroupMessageRepository
     extends CountingGroupMessageRepository
     implements GroupMessageStrictPreparedRepository {
+  int preparedStages = 0;
   @override
   Future<bool> stageStrictContentPrepared(
     GroupMessage message, {
@@ -26026,6 +26292,7 @@ final class _StrictPreparedGroupMessageRepository
     required String sourceTimestamp,
     required Map<String, Object?> preparedEventPayload,
   }) async {
+    preparedStages++;
     await saveMessage(message);
     return true;
   }

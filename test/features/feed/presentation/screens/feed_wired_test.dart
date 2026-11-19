@@ -21,6 +21,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
     show ConversationWired;
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -31,11 +32,17 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart'
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/letter_card_system.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_card_group.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -52,6 +59,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -75,6 +83,7 @@ import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
+import '../../../groups/application/b6_daily_activity_test_support.dart';
 
 void main() {
   late FakeIdentityRepository identityRepo;
@@ -202,6 +211,7 @@ void main() {
     IntroReviewSeenRepository? introReviewSeenRepository,
     InMemoryFeedClearedRepository? feedClearedRepository,
     List<NavigatorObserver>? navigatorObservers,
+    DirectConversationRouteAuthority? directRouteAuthority,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -230,6 +240,7 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
       home: FeedWired(
+        directRouteAuthority: directRouteAuthority,
         repository: identityRepository ?? identityRepo,
         contactRepository: effectiveContactRepo,
         contactRequestRepository: contactRequestRepo,
@@ -1964,6 +1975,119 @@ void main() {
     );
 
     group('161 group feed batched windowing', () {
+      testWidgets('B15GDI real Feed group send keeps the original reporter', (
+        tester,
+      ) async {
+        const bound = Duration(seconds: 3);
+        tester.view.physicalSize = const Size(1100, 1700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        setGroupExitIntentAccessSinks(
+          forGroup: (_) async => null,
+          all: () async => const <GroupExitIntent>[],
+        );
+        addTearDown(() => setGroupExitIntentAccessSinks());
+        identityRepo.seed(testIdentity);
+        final activityBridge = B6ActivityBridge();
+        final reporter = await b6Reporter(activityBridge).timeout(bound);
+        reporter.observeIdentity(
+          accountPeerId: testIdentity.peerId,
+          rootPrivateKeyBase64: 'public-test-fixture',
+          profileBinding: b6Binding,
+        );
+        await reporter.observeConsent((enabled: true, consentEpoch: 7))
+            .timeout(bound);
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await reporter.dispose().timeout(bound);
+        });
+        p2pService = FakeP2PService(initialState: const NodeState(
+          isStarted: true, peerId: 'public-route-device', relayState: 'online',
+        ));
+        bridge.responses['group:publish'] = {'ok': true, 'messageId': 'route-published'};
+        final groups = InMemoryGroupRepository();
+        final messages = InMemoryGroupMessageRepository();
+        final group = GroupModel(
+          id: 'b15-feed-group', name: 'B15 Feed group', type: GroupType.chat,
+          topicName: '/mknoon/group/b15-feed-group',
+          createdAt: DateTime.utc(2026, 11, 19),
+          createdBy: testIdentity.peerId, myRole: GroupRole.admin,
+        );
+        await groups.saveGroup(group).timeout(bound);
+        await groups.saveMember(GroupMember(
+          groupId: group.id, peerId: testIdentity.peerId,
+          role: MemberRole.admin, joinedAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        await groups.saveMember(GroupMember(
+          groupId: group.id, peerId: 'public-other-account',
+          role: MemberRole.writer, joinedAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        await groups.saveKey(GroupKeyInfo(
+          groupId: group.id, keyGeneration: 1, encryptedKey: 'public-group-key',
+          createdAt: DateTime.utc(2026, 11, 19),
+        )).timeout(bound);
+        final receivedAt = DateTime.now().toUtc();
+        await messages.saveMessage(GroupMessage(
+          id: 'b15-feed-existing-post', groupId: group.id,
+          senderPeerId: 'public-other-account', text: 'B15 existing group post',
+          timestamp: receivedAt, createdAt: receivedAt, isIncoming: true,
+        )).timeout(bound);
+        final listener = _FakeGroupMessageListener(
+          groupRepo: groups, msgRepo: messages,
+        );
+        await tester.pumpWidget(buildFeedWired(
+          groupRepository: groups, groupMessageRepository: messages,
+          groupMessageListener: listener,
+          directRouteAuthority: DirectConversationRouteAuthority(
+            activityReporter: reporter,
+          ),
+        )).timeout(bound);
+        await pumpFeedFrames(tester).timeout(bound);
+        expect(activityBridge.marks, isEmpty);
+        await tester.tap(find.byWidgetPredicate(
+          (widget) => widget is LetterCardGroup &&
+              widget.letter.groupName == 'B15 Feed group',
+        )).timeout(bound);
+        await pumpFeedFrames(tester).timeout(bound);
+        await tester.tap(find.byKey(const ValueKey('feed-open-full-conversation')))
+            .timeout(bound);
+        await pumpFeedFrames(tester).timeout(bound);
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(activityBridge.marks, isEmpty,
+            reason: 'opening the real route does not qualify communication');
+        await tester.enterText(find.descendant(
+          of: find.byType(GroupConversationWired), matching: find.byType(TextField),
+        ).last, 'B15 actual Feed group post').timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.runAsync(() => tester
+            .tap(find.byIcon(Icons.arrow_upward_rounded).last).timeout(bound))
+            .timeout(bound);
+        await tester.runAsync(() async {
+          final clock = Stopwatch()..start();
+          while (clock.elapsed < bound) {
+            final sent = (await messages.getMessagesPage(group.id))
+                .where((message) =>
+                    message.senderPeerId == testIdentity.peerId &&
+                    message.status == 'sent');
+            if (sent.length == 1 &&
+                bridge.commandLog.contains('group:publish')) return;
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          throw TimeoutException('real Feed group send did not complete', bound);
+        }).timeout(bound);
+        await pumpFeedFrames(tester).timeout(bound);
+        final own = (await messages.getMessagesPage(group.id).timeout(bound))
+            .where((message) => message.senderPeerId == testIdentity.peerId);
+        expect(own.single.text, 'B15 actual Feed group post');
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(activityBridge.marks, hasLength(1));
+        expect(tester.widget<GroupConversationWired>(
+          find.byType(GroupConversationWired),
+        ).activityReporter, same(reporter));
+      });
+
       GroupModel grp(String id, String name) => GroupModel(
         id: id,
         name: name,

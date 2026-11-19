@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -38,6 +39,7 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 /// (so back goes to group list).
 class CreateGroupPickerWired extends StatefulWidget {
   final GroupType groupType;
+  final ActiveIdentityReporter? activityReporter;
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
@@ -64,6 +66,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   const CreateGroupPickerWired({
     super.key,
     required this.groupType,
+    this.activityReporter,
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
@@ -226,6 +229,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) => GroupConversationWired(
+            activityReporter: widget.activityReporter,
             group: result.group,
             groupRepo: widget.groupRepo,
             msgRepo: widget.msgRepo,

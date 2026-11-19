@@ -1,4 +1,9 @@
 import 'dart:async';
+import '../features/groups/application/b6_daily_activity_test_support.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -15,6 +20,7 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/services/p2p_service.dart' show PresenceSetResult;
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -110,25 +116,38 @@ void main() {
   });
 
   for (final scenario in [
-    (isGroup: false, withReporter: false),
-    (isGroup: true, withReporter: false),
-    (isGroup: false, withReporter: true),
-    (isGroup: true, withReporter: true),
+    (isGroup: false, withReporter: false, withCommunication: false),
+    (isGroup: true, withReporter: false, withCommunication: false),
+    (isGroup: false, withReporter: true, withCommunication: false),
+    (isGroup: true, withReporter: true, withCommunication: false),
+    (isGroup: true, withReporter: true, withCommunication: true),
   ]) {
     final isGroup = scenario.isGroup;
     testWidgets(
-      scenario.withReporter
+      scenario.withCommunication
+          ? 'B15GDI real notification-root group send keeps the original reporter'
+          : scenario.withReporter
           ? 'B15GDI notification-root ${isGroup ? 'group' : 'direct'} carries original reporter'
           : 'notification-root ${isGroup ? 'group' : 'direct'} photo preparation honours stored quality',
       (tester) async {
         Future<T> waitForRoute<T>(Future<T> work) => scenario.withReporter
             ? work.timeout(const Duration(seconds: 3))
             : work;
+        final activityBridge = scenario.withCommunication ? B6ActivityBridge() : null;
         final reporter = scenario.withReporter
-            ? ActiveIdentityReporter(
-                statePath: '/unused/b15-notification-route.json',
-              )
+            ? activityBridge == null
+                ? ActiveIdentityReporter(
+                    statePath: '/unused/b15-notification-route.json',
+                  )
+                : await b6Reporter(activityBridge).timeout(const Duration(seconds: 3))
             : null;
+        if (scenario.withCommunication) {
+          setGroupExitIntentAccessSinks(
+            forGroup: (_) async => null,
+            all: () async => const <GroupExitIntent>[],
+          );
+          addTearDown(() => setGroupExitIntentAccessSinks());
+        }
         if (reporter != null) {
           addTearDown(
             () => reporter.dispose().timeout(const Duration(seconds: 3)),
@@ -179,9 +198,22 @@ void main() {
             ),
           ),
         );
+        if (scenario.withCommunication) {
+          await groups.saveMember(GroupMember(
+            groupId: 'group-photo', peerId: 'peer-photo',
+            role: MemberRole.writer, joinedAt: DateTime.utc(2026),
+          )).timeout(const Duration(seconds: 3));
+          await groups.saveKey(GroupKeyInfo(
+            groupId: 'group-photo', keyGeneration: 1,
+            encryptedKey: 'public-root-group-key', createdAt: DateTime.utc(2026),
+          )).timeout(const Duration(seconds: 3));
+        }
         final messages = _QualityMessages();
-        final bridge = FakeBridge();
-        final p2p = _QualityP2P();
+        final groupMessages = _QualityGroupMessages();
+        final bridge = activityBridge ?? FakeBridge();
+        final p2p = _QualityP2P(initialState: scenario.withCommunication
+            ? const NodeState(isStarted: true, peerId: 'public-root-device',
+                relayState: 'online') : null);
         final chat = ChatMessageListener(
           chatMessageStream: const Stream.empty(),
           messageRepo: messages,
@@ -265,7 +297,7 @@ void main() {
               pendingPostTargetStore: PendingPostTargetStore(),
               conversationTracker: ActiveConversationTracker(),
               groupRepository: groups,
-              groupMessageRepository: _QualityGroupMessages(),
+              groupMessageRepository: groupMessages,
               groupInviteDeliveryAttemptRepository:
                   _GroupInviteDeliveryAttemptRepositoryImpl(),
               groupPendingKeyRepairRepository:
@@ -316,6 +348,43 @@ void main() {
             );
             if (scenario.withReporter) {
               expect(route.activityReporter, same(reporter));
+            }
+            if (scenario.withCommunication) {
+              reporter!.observeIdentity(
+                accountPeerId: 'self', rootPrivateKeyBase64: 'public-test-fixture',
+                profileBinding: b6Binding,
+              );
+              await reporter.observeConsent((enabled: true, consentEpoch: 7))
+                  .timeout(const Duration(seconds: 3));
+              expect(activityBridge!.marks, isEmpty,
+                  reason: 'opening the actual notification route is not communication');
+              bridge.responses['group:publish'] = {'ok': true};
+              await tester.enterText(find.descendant(
+                of: find.byType(GroupConversationWired), matching: find.byType(TextField),
+              ).last, 'B15 actual Root group post').timeout(const Duration(seconds: 3));
+              await tester.pump().timeout(const Duration(seconds: 3));
+              await tester.runAsync(() => tester.tap(
+                find.byIcon(Icons.arrow_upward_rounded).last,
+              ).timeout(const Duration(seconds: 3))).timeout(const Duration(seconds: 3));
+              await tester.runAsync(() async {
+                final clock = Stopwatch()..start();
+                while (clock.elapsed < const Duration(seconds: 3)) {
+                  final sent = (await groupMessages.getMessagesPage('group-photo'))
+                      .where((message) => message.senderPeerId == 'self' &&
+                          message.text == 'B15 actual Root group post' &&
+                          message.status == 'sent');
+                  if (sent.length == 1 && bridge.commandLog.contains('group:publish')) return;
+                  await Future<void>.delayed(const Duration(milliseconds: 10));
+                }
+                throw TimeoutException('real Root group send did not complete');
+              }).timeout(const Duration(seconds: 3));
+              final sent = (await groupMessages.getMessagesPage('group-photo')
+                  .timeout(const Duration(seconds: 3)))
+                  .where((message) => message.senderPeerId == 'self' &&
+                      message.text == 'B15 actual Root group post' && message.status == 'sent');
+              expect(sent, hasLength(1));
+              expect(bridge.commandLog, contains('group:publish'));
+              expect(activityBridge.marks, hasLength(1));
             }
             expect(route.imageProcessor, same(processor));
             await waitForRoute(
@@ -570,6 +639,11 @@ class _QualityMedia extends InMemoryMediaAttachmentRepository
 }
 
 class _QualityP2P extends FakeP2PService implements P2PServiceImpl {
+  _QualityP2P({NodeState? initialState}) : super(initialState: initialState);
+  @override
+  Future<PresenceSetResult> setPresence(String state, int ttlMs) async =>
+      PresenceSetResult.published;
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

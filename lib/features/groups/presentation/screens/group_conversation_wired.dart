@@ -3463,6 +3463,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   senderTransportPeerId: sendLane.senderDeviceId,
                   inviteDeliveryAttemptRepository:
                       sendLane.inviteDeliveryAttemptRepository,
+                  capturedActivity: (
+                    reporter: originalActivity.reporter,
+                    capture: restoredContinuation == null ? originalActivity.capture : null,
+                  ),
                   parent: optimisticMessage.copyWith(
                     status: GroupMessage.statusQueuedOffline,
                   ),
@@ -3778,12 +3782,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           inviteDeliveryAttemptRepo: sendLane.inviteDeliveryAttemptRepository,
           capturedActivity: (
             reporter: originalActivity.reporter,
-            capture: !hasAttachments && restoredContinuation == null
+            capture: restoredContinuation == null
                 ? originalActivity.capture
                 : null,
           ),
-          preassignedMessageIdIsFresh:
-              !hasAttachments && restoredContinuation == null,
+          preassignedMessageIdIsFresh: restoredContinuation == null,
         );
         result = legacySend.$1;
         message = legacySend.$2;
@@ -5906,6 +5909,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     final voiceLane = _ownPeerId == null ? null : _captureSendLane();
+    final voiceActivityReporter = widget.activityReporter;
+    ActiveIdentityReporterCapture? voiceActivityCapture;
+    try {
+      if (voiceLane != null) {
+        voiceActivityCapture = voiceActivityReporter?.captureOwner(
+          expectedAccountPeerId: voiceLane.senderPeerId,
+        );
+      }
+    } catch (_) {}
+    final originalVoiceActivity = (
+      reporter: voiceActivityReporter,
+      capture: voiceActivityCapture,
+    );
 
     if (pendingOutcome == null &&
         _voiceCaptureController.state.phase ==
@@ -6177,6 +6193,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   senderTransportPeerId: voiceLane.senderDeviceId,
                   inviteDeliveryAttemptRepository:
                       voiceLane.inviteDeliveryAttemptRepository,
+                  capturedActivity: (
+                    reporter: originalVoiceActivity.reporter,
+                    capture: voiceContinuation == null ? originalVoiceActivity.capture : null,
+                  ),
                   parent: optimisticMessage.copyWith(
                     status: GroupMessage.statusQueuedOffline,
                   ),
@@ -6325,6 +6345,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             mediaAttachmentRepo: mediaAttachmentRepo,
             inviteDeliveryAttemptRepo:
                 voiceLane.inviteDeliveryAttemptRepository,
+            capturedActivity: (
+              reporter: originalVoiceActivity.reporter,
+              capture: voiceContinuation == null ? originalVoiceActivity.capture : null,
+            ),
+            preassignedMessageIdIsFresh: voiceContinuation == null,
           );
           result = legacySend.$1;
           message = legacySend.$2;

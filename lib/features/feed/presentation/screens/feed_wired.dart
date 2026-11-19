@@ -2068,6 +2068,7 @@ class _FeedWiredState extends State<FeedWired>
         .push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
+              activityReporter: widget.directRouteAuthority?.activityReporter,
               group: group,
               groupRepo: groupRepo,
               msgRepo: msgRepo,
