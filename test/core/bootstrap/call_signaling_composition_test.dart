@@ -2509,6 +2509,61 @@ void main() {
     );
   }
 
+  test('BL43 received remote permission denial preserves legacy final and detail cause', () async {
+    const bound = Duration(seconds: 3);
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final directory = await Directory.systemTemp.createTemp('bl43-remote-permission-').timeout(bound);
+    final diagnostics = await CallDiagnostics.installForTesting(directory: directory).timeout(bound);
+    addTearDown(() async {
+      await diagnostics.setEnabled(false).timeout(bound);
+      await diagnostics.dispose().timeout(bound);
+      await directory.delete(recursive: true).timeout(bound);
+    });
+    final fixture = await _createProductionIosFixture(cleanupTimeout: bound).timeout(bound);
+    await fixture.composition.start().timeout(bound);
+    final graph = fixture.graphs.single;
+    final admitted = await graph.coordinator.dispatch(CallEvent(
+      type: CallEventType.remoteInvite,
+      eventId: 'remote-permission-invite',
+      occurredAt: graph.coordinator.clock(),
+      callId: _callA,
+      contactPeerId: 'remote-account',
+      localAccountPeerId: 'local-account',
+      localDeviceId: 'local-account',
+      remoteAccountPeerId: 'remote-account',
+      remoteDeviceId: 'remote-device',
+      expiresAt: graph.coordinator.clock().add(const Duration(seconds: 45)),
+      transportRoute: CallRouteClass.direct,
+    )).timeout(bound);
+    expect(admitted.decision, CallEventDecision.applied);
+    final trace = diagnostics.traceForCall(callId: _callA.value);
+    expect(trace, isNotNull);
+    final terminal = await graph.coordinator.dispatch(CallEvent(
+      type: CallEventType.remoteTerminate,
+      eventId: 'received-remote-permission-denial',
+      occurredAt: graph.coordinator.clock(),
+      callId: _callA,
+      endReason: CallEndReason.permissionDenied,
+    )).timeout(bound);
+    expect(terminal.decision, CallEventDecision.applied);
+    expect(terminal.snapshot.endReason, CallEndReason.remotePermissionDenied);
+    final events = await diagnostics.eventsForTesting().timeout(bound);
+    final original = events.singleWhere((e) => e['traceId'] == trace &&
+        e['stage'] == 'terminal' && e['action'] == 'finish');
+    expect(original['outcome'], 'no_answer');
+    expect(original['reason'], 'no_answer');
+    expect(original['values'], isNot(contains('endCause')));
+    if (terminal.snapshot.startedAt != null && terminal.snapshot.endedAt != null) {
+      expect(original['values'], containsPair('durationMs', terminal.snapshot.endedAt!
+          .difference(terminal.snapshot.startedAt!).inMilliseconds));
+    }
+    final detail = events.singleWhere((e) => e['traceId'] == trace &&
+        e['stage'] == 'terminal' && e['action'] == 'snapshot' &&
+        (e['values'] as Map).containsKey('endCause'));
+    expect(events.indexOf(original), lessThan(events.indexOf(detail)));
+    expect(detail['values'], containsPair('endCause', 'permission_denied'));
+  });
+
   for (final ownership in ['same', 'off-on', 'collector']) {
     test('BL43 real graph terminal detail respects $ownership ownership', () async {
       const bound = Duration(seconds: 3);
