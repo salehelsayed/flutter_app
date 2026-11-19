@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../../core/utils/flow_event_emitter.dart';
 import '../application/call_endpoint_resolver.dart';
 import '../application/call_recovery_budget.dart';
+import '../diagnostics/call_end_detail.dart';
 import '../domain/call_wake_handle_grant.dart';
 import '../domain/received_call_wake_handle_store.dart';
 import 'call_authority_client.dart';
@@ -15,12 +16,14 @@ final class CallEndpointRecovery {
     required this.budget,
     required ResolvedCallEndpoint admitted,
     this.bindingCurrent,
+    this.onEndDetail,
   }) : admitted = ResolvedCallEndpoint.frozen(admitted),
        _preferenceEpochFloor = admitted.preferenceEpoch;
 
   final CallRecoveryBudget budget;
   final ResolvedCallEndpoint admitted;
   final bool Function()? bindingCurrent;
+  final void Function(CallEndDetail detail)? onEndDetail;
   int _preferenceEpochFloor;
   int _lookups = 0;
   ResolvedCallEndpoint? _verified;
@@ -35,7 +38,9 @@ final class CallEndpointRecovery {
   }
 
   void _check() {
-    if (bindingCurrent?.call() == false) _deny();
+    if (bindingCurrent?.call() == false) {
+      _deny(CallRecoveryCheck.bindingCurrent);
+    }
     if (budget.remaining <= Duration.zero) {
       _verified = null;
       _transient = false;
@@ -76,7 +81,7 @@ final class CallEndpointRecovery {
   }) async {
     _check();
     if (accountPeerId != admitted.accountPeerId) {
-      _deny();
+      _deny(CallRecoveryCheck.accountPeer);
     }
     late CallTrustedRosterSnapshot roster;
     CallWakeHandleGrant? grant;
@@ -174,7 +179,7 @@ final class CallEndpointRecovery {
       await local();
       if (!_sameAuthority(admitted, endpoint) ||
           endpoint.preferenceEpoch < _preferenceEpochFloor) {
-        _deny();
+        _deny(_decliningCheck(endpoint));
       }
       _verified = ResolvedCallEndpoint.frozen(endpoint);
       _preferenceEpochFloor = endpoint.preferenceEpoch;
@@ -185,21 +190,80 @@ final class CallEndpointRecovery {
     } on TimeoutException {
       _record('local', 'deadline');
       throw const CallEndpointRecoveryUnavailable();
-    } catch (_) {
-      _deny();
+    } catch (error) {
+      _deny(switch (error) {
+        CallEndpointResolutionException(
+          code: CallEndpointResolutionCode.invalidSignature,
+        ) => CallRecoveryCheck.signature,
+        CallEndpointResolutionException(
+          code: CallEndpointResolutionCode.blocked ||
+              CallEndpointResolutionCode.notAccepted,
+        ) => CallRecoveryCheck.trustedRoster,
+        _ => CallRecoveryCheck.endpointRecord,
+      });
     }
   }
 
-  Never _deny() {
+  Never _deny([CallRecoveryCheck check = CallRecoveryCheck.unknown]) {
+    final firstDenial = !_denied;
     _verified = null;
     _transient = false;
     _denied = true;
     _record('authorization', 'rejected');
+    if (firstDenial) {
+      try {
+        onEndDetail?.call(CallEndDetail(
+          cause: CallEndCause.recoveryDenied,
+          stage: CallEndCauseStage.authority,
+          recoveryCheck: check,
+        ));
+      } catch (_) {
+        // Cause observation cannot replace the original authority refusal.
+      }
+    }
     // Local unavailability must not be mistaken for a missing remote directory
     // record by legacy adapters, which otherwise try their own pinned endpoint.
     throw const CallEndpointResolutionException(
       CallEndpointResolutionCode.mismatched,
     );
+  }
+
+  CallRecoveryCheck _decliningCheck(ResolvedCallEndpoint endpoint) {
+    if (admitted.accountPeerId != endpoint.accountPeerId) {
+      return CallRecoveryCheck.accountPeer;
+    }
+    if (admitted.devicePeerId != endpoint.devicePeerId) {
+      return CallRecoveryCheck.devicePeer;
+    }
+    if (admitted.signingPublicKey != endpoint.signingPublicKey) {
+      return CallRecoveryCheck.signingKey;
+    }
+    if (admitted.mlKemPublicKey != endpoint.mlKemPublicKey) {
+      return CallRecoveryCheck.kemKey;
+    }
+    if (admitted.admissionAuthority != endpoint.admissionAuthority) {
+      return CallRecoveryCheck.admissionAuthority;
+    }
+    if (admitted.deviceKeyEpoch != endpoint.deviceKeyEpoch) {
+      return CallRecoveryCheck.deviceKeyEpoch;
+    }
+    if (admitted.platform != endpoint.platform) {
+      return CallRecoveryCheck.platform;
+    }
+    if (admitted.routingHandle != endpoint.routingHandle) {
+      return CallRecoveryCheck.routingHandle;
+    }
+    if (admitted.wakeHandle != endpoint.wakeHandle) {
+      return CallRecoveryCheck.wakeHandle;
+    }
+    if (admitted.capabilities.length != endpoint.capabilities.length ||
+        !admitted.capabilities.containsAll(endpoint.capabilities)) {
+      return CallRecoveryCheck.capabilities;
+    }
+    if (endpoint.preferenceEpoch < _preferenceEpochFloor) {
+      return CallRecoveryCheck.preferenceEpoch;
+    }
+    return CallRecoveryCheck.unknown;
   }
 
   static bool _sameAuthority(ResolvedCallEndpoint a, ResolvedCallEndpoint b) =>
