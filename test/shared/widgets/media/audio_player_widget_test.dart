@@ -738,10 +738,6 @@ void main() {
     ) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final store = VoicePlaybackSpeedStore();
-      final deferred = fakePlatform.deferNextSpeed();
-      addTearDown(() {
-        if (!deferred.isCompleted) deferred.complete();
-      });
       final load = fakePlatform.enqueueLoad(
         reportedDuration: const Duration(seconds: 8),
       );
@@ -760,6 +756,11 @@ void main() {
         await flushAsyncPlayerTasks(tester);
       }
       expect(load.hasStarted, isTrue);
+      final deferred = fakePlatform.deferNextSpeed();
+      addTearDown(() {
+        if (!deferred.isCompleted) deferred.complete();
+      });
+      fakePlatform.speedCalls.clear();
       load.complete();
       for (var i = 0; i < 5 && fakePlatform.speedCalls.isEmpty; i++) {
         await flushAsyncPlayerTasks(tester);
