@@ -764,7 +764,8 @@ void main() {
       }
       expect(fakePlatform.speedCalls, [1.0]);
 
-      await store.cycle();
+      await tester.runAsync(store.cycle);
+      await tester.pump();
       expect(find.text('1.5×'), findsOneWidget);
       deferred.complete();
       await settleCompletedLoad(tester);
