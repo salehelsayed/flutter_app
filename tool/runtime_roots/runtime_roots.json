@@ -433,6 +433,19 @@
       ]
     },
     {
+      "path": "integration_test/scripts/run_call_audio_soak.dart",
+      "owner": "call / QA reliability",
+      "reason": "Standalone call-audio soak CLI with focused resource-evidence and scenario-selection tests.",
+      "condition": "Remove or reclassify only with the owning call-audio soak proof and equivalent replacement coverage.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_call_audio_soak.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
@@ -2510,6 +2523,42 @@
           "origin": "test/integration"
         }
       ]
+    },
+    {
+      "path": "lib/core/diagnostics/engagement_chat_checkpoint_store.dart",
+      "rootKinds": [],
+      "disposition": "retained-unresolved",
+      "owner": "diagnostics / engagement evidence",
+      "reason": "The private engagement checkpoint slice has focused tests but no current production composition root.",
+      "condition": "Revisit when production composition is added or with equivalent replacement or removal proof.",
+      "evidence": []
+    },
+    {
+      "path": "lib/core/diagnostics/engagement_chat_observer.dart",
+      "rootKinds": [],
+      "disposition": "retained-unresolved",
+      "owner": "diagnostics / engagement evidence",
+      "reason": "The private engagement observer slice has focused tests but no current production composition root.",
+      "condition": "Revisit when production composition is added or with equivalent replacement or removal proof.",
+      "evidence": []
+    },
+    {
+      "path": "lib/core/diagnostics/engagement_chat_witness.dart",
+      "rootKinds": [],
+      "disposition": "retained-unresolved",
+      "owner": "diagnostics / engagement evidence",
+      "reason": "The private engagement witness slice has focused tests but no current production composition root.",
+      "condition": "Revisit when production composition is added or with equivalent replacement or removal proof.",
+      "evidence": []
+    },
+    {
+      "path": "lib/features/call/application/call_video_capability_admission.dart",
+      "rootKinds": [],
+      "disposition": "retained-unresolved",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off video admission slice has focused tests but no current production composition root.",
+      "condition": "Revisit when video-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": []
     },
     {
       "path": "lib/features/call/application/call_cleanup_coordinator.dart",
