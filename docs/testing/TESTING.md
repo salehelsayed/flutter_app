@@ -3786,6 +3786,16 @@ entry. The corrected scanner file passed on Linux in
 `/srv/evidence/kimi1-bl41-change-ce951-run-3/changed.456fd662bee6-1.raw.log`. This is fixture clock
 alignment, not a change to retry policy or delivery behavior.
 
+The BL-41 tail contracts are non-production corrections. The DTR-10 database-floor
+anchor follows schema version 132, while test-only engagement/call-admission sources
+remain explicitly retained-unresolved and the call-audio soak CLI is a declared
+external entrypoint. Locked `sqflite_common` 2.5.6 disables `singleInstance` for
+`:memory:`, omits null SQL arguments, and emits `transactionId: null` only for BEGIN;
+the SQLCipher mock calls must preserve that wire shape. The native shutdown source
+contract locates `canonicalWritableRuntimeSession.open(` inside the awaited conditional
+open helper. Linux proof passed 48/48 Dart tail tests and the exact 76-method native
+suite in `/srv/evidence/kimi1-bl41-tail-green4-d9b9/`.
+
 CR-013/017 decisions use one transaction on the existing contact/request tables.
 The displayed request's public key, signature and local `receivedAt` bind the
 stored row; `receivedAt` is not authenticated sender-time ordering. A new contact
