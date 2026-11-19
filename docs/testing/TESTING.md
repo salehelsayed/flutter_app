@@ -12555,8 +12555,37 @@ visible and cannot become an ordinary first-attempt PASS.
   and the full affected Android native gate passes 704 cases in 54 JUnit files.
   iOS registers the channel with the implicit engine's messenger and a lazy
   registrar-owned view provider. Claude's single Mac run compiles Runner and
-  passes all 21 Swift cases. These overlapping host/native results do not prove
-  corrected physical PiP or peer camera truth; a new guarded candidate is needed.
+  passes all 21 Swift cases. At that stage, these overlapping host/native
+  results did not prove corrected physical PiP or peer camera truth; a new
+  guarded candidate was still needed.
+  **Guarded corrective physical debug 290 (2026-11-19):**
+  Guarded diagnostic debug 290 at d0045dc6ded74e9f181a0c77838b5cb293a4f7e7
+  passes only the targeted corrective physical scope. An attributed
+  main-only iOS availability call returns supported:true, cameraInPip:false,
+  reason:ok, replacing the 289 MissingPluginException. Android API 35
+  captures pending lease 2 before accepted native entry; live remote PiP
+  remains pinned at t+15s with 24fps. The iOS controller reports
+  possible:true and accepted entry, with live remote PiP present at t+20s.
+  Local capture pauses in both PiP legs and peers show camera-paused truth
+  in both directions. Foreground return, video End/cleanup and next audio
+  calls in both caller roles pass. Pending-prompt cancellation was not rerun
+  on 290: its 289 result carries for the unchanged permission normalizer,
+  with 290 next-call preservation controls. Automatic local-camera ON after
+  foreground return follows the existing retained explicit-intent contract
+  after accepted PiP entry and silent
+  permission/current-call/profile/owner/session/generation/epoch/media/thermal
+  checks. The existing positive resume composition case and negative OFF,
+  permission-loss, thermal and no-consent cases already passed. Ordinary
+  unsupported/no-entry backgrounds do not acquire that resume intent. This
+  establishes no new negative-fence physical proof, background local-camera
+  continuation, final composed/signed-candidate certification or build 132
+  readiness. Reviewed DEBUG-only instrumentation remains through beta
+  verification; optional later removal does not block these fixes or expand
+  Release logging.
+  Provenance: `final-residual-evidence/testing-knowledge-290-update.json`
+  (`683e1b0f`), physical owner receipt `1fa00741`, and author classification
+  `a38c04e2`. Earlier 287/288/289 failures and the original 289 excerpt/full
+  logcat limitation remain retained; separate 290 captures own each moment.
   **Diagnostics quota retention fixture (2026-11-19):** protected admission
   retention does not require admission to remain the final event. Real elapsed
   time affects encoded record size; a later routine authority event may fit
