@@ -2481,6 +2481,7 @@ _sendChatMessageDiagnosed({
                 expectedAttempt.privateMediaClockHighWaterMs,
             media: normalizedAttachments ?? const [],
           );
+    EngagementChatObserverIntent? chatIntent;
     try {
       final custodyIncarnationId = ownsDirectTextInboxCustody
           ? _uuid.v4().replaceAll('-', '')
@@ -2491,6 +2492,16 @@ _sendChatMessageDiagnosed({
       DirectInboxCustodyOutboxEntry? committedMediaCustody;
       DirectReactionInboxCustodyOutboxEntry? committedMutationCustody;
       if (ownsDirectTextInboxCustody) {
+        if (activityCapture != null) {
+          try {
+            chatIntent = activityReporter?.reserveChatCaptured(
+              activityCapture,
+              contactAccountPeerId: targetPeerId,
+              messageId: resolvedMessageId,
+              generationId: resolvedMessageId,
+            );
+          } catch (_) {}
+        }
         final staged = await directTextCustodyRepo!
             .stageOutgoingDirectTextInboxCustody(
               authoredTextIntentToken: authoredTextIntentToken,
@@ -2504,6 +2515,12 @@ _sendChatMessageDiagnosed({
         stagedOutcome = staged.outcome;
         stagedMessage = staged.message;
         stagedAuthorizesTransport = staged.authorizesTransport;
+        if (stagedOutcome == OutgoingOrdinaryMutationOutcome.applied &&
+            chatIntent != null && activityCapture != null) {
+          try {
+            activityReporter?.admitChatCaptured(activityCapture, chatIntent);
+          } catch (_) {}
+        }
       } else if (ownsDirectTextMutationInboxCustody) {
         final staged = await directMutationCustodyRepo!
             .stageOutgoingDirectTextMutationInboxCustody(
@@ -2717,6 +2734,13 @@ _sendChatMessageDiagnosed({
       );
       emitSendTiming(outcome: 'attempt_stage_error');
       return (SendChatMessageResult.sendFailed, null);
+    } finally {
+      if (chatIntent != null && activityCapture != null) {
+        try {
+          // The observer preserves an already-admitted intent on cancellation.
+          activityReporter?.cancelChatCaptured(activityCapture, chatIntent);
+        } catch (_) {}
+      }
     }
   }
 
