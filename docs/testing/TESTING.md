@@ -13753,7 +13753,8 @@ retained in `.codex-test-logs/bridge-labels-20261101/`.
 `errorCode` key from `peer:ping` and `relay:presence_set` are best-effort misses,
 not failed bridge observations. Their return envelopes remain unchanged. A
 present code, including null, empty or unknown, retains the failure path and
-existing mapping; `PROFILE_ERROR` now uses existing `internal`. The exact
+existing mapping. The earlier `PROFILE_ERROR/internal` expectation is superseded
+by BL-39 below. The exact
 uncoded lifecycle exception above takes precedence over miss suppression.
 Presence lookup already returns a successful `unknown` hint; other uncoded
 command failures remain visible. No rejection vocabulary or schema copy changed.
@@ -13768,6 +13769,16 @@ receipts are retained in
 and `official-claude-dev/`. This proves the mock bridge and local diagnostics
 privacy/export/upload contract. It does not measure the inferred production
 volume reduction or establish native/device or aggregate candidate behavior.
+
+**BL-39 profile error attribution:** `PROFILE_ERROR` is a broad native wrapper
+for absent profiles, transport failures and local file errors; it does not
+establish an internal fault. Keep its rejection kind `unknown`, while explicit
+`INTERNAL_ERROR` remains `internal`. Three synthetic cases in
+`go_bridge_diagnostic_labels_test.dart` reproduced the overly specific label
+before the fix, with each new await bounded to three seconds. The cases preserve
+the unsuccessful native response and require the existing private-safe
+collection/export/upload contract. Uploaded profile failures do not reveal
+their underlying cause or establish avatar loss.
 
 Native `bgEnd` intentionally completes with a void result. The Dart bridge
 accepts that result only for `bg:end` and returns its normal success envelope;

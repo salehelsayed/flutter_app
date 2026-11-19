@@ -310,7 +310,35 @@ void main() {
     },
   );
 
-  test('BL24A causal profile rejection uses existing internal kind', () async {
+  for (final cause in const [
+    'profile download failed: not found',
+    'profile download request: transport unavailable',
+    'create output file: permission denied',
+  ]) {
+    test('BL39 broad profile error does not imply internal: $cause', () async {
+      final native = {
+        'ok': false,
+        'errorCode': 'PROFILE_ERROR',
+        'errorMessage': '$cause $_privateMarker',
+      };
+      expect(
+        jsonDecode(
+          await send(
+            'profile:download',
+            jsonEncode(native),
+          ).timeout(const Duration(seconds: 3)),
+        ),
+        native,
+      );
+      await expectLabels(
+        'profile:download',
+        'profile',
+        'unknown',
+      ).timeout(const Duration(seconds: 3));
+    });
+  }
+
+  test('broad profile rejection preserves an unknown cause', () async {
     final native = {
       'ok': false,
       'errorCode': 'PROFILE_ERROR',
@@ -320,7 +348,7 @@ void main() {
       jsonDecode(await send('profile:download', jsonEncode(native))),
       native,
     );
-    await expectLabels('profile:download', 'profile', 'internal');
+    await expectLabels('profile:download', 'profile', 'unknown');
   });
 
   test('BL24A causal exact node-stopped stays a not-ready failure', () async {
@@ -450,7 +478,7 @@ void main() {
           jsonDecode(await send(sample.command, jsonEncode(native))),
           native,
         );
-        await expectLabels(sample.command, sample.family, 'internal');
+        await expectLabels(sample.command, sample.family, 'unknown');
       },
     );
   }
