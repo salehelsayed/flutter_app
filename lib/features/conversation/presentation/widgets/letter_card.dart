@@ -149,6 +149,7 @@ class LetterCard extends StatelessWidget {
   /// Drawn under the body text, as wide as the text, such as a translation.
   /// The body text and its inline time stay as they are.
   final Widget? textFooter;
+  final Widget Function(Widget readyText)? activityTextBuilder;
 
   /// Privacy-safe presentation mounted inside the decorated message body.
   /// When present, ordinary media/audio renderers are suppressed so private
@@ -212,6 +213,7 @@ class LetterCard extends StatelessWidget {
     this.privateContentSlot,
     this.audioFooterBuilder,
     this.textFooter,
+    this.activityTextBuilder,
     this.decoratedBodyKey,
     this.messageUploadProgress,
   });
@@ -260,6 +262,9 @@ class LetterCard extends StatelessWidget {
       !isDeleted &&
       transport != 'system' &&
       transport != 'unknown';
+
+  Widget _withActivityText(Widget body) =>
+      activityTextBuilder?.call(body) ?? body;
 
   /// The footer shares the text's width, so its divider spans the text without
   /// stretching the hugging bubble.
@@ -589,35 +594,43 @@ class LetterCard extends StatelessWidget {
                       letterSpacing: 0.2,
                     ),
                   )
-                : LinkableText(
-                    text: text,
-                    textDirection: detectTextDirection(text),
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w400,
-                      color: isIncoming
-                          ? readableColors.textPrimary
-                          : readableColors.textSecondary,
-                      height: bodyLineHeight,
-                      letterSpacing: 0.2,
-                    ),
-                    suffixSpans: metaInlined
-                        ? [_buildInlineMetaSpan(context, readableColors, l10n)]
-                        : null,
-                    markQuery: searchQuery,
-                    markStyle: isCurrentSearchHit
-                        ? TextStyle(
-                            backgroundColor: readableColors.accent,
-                            color: readableColors.isLightSurface
-                                ? Colors.white
-                                : const Color(0xFF04130A),
-                          )
-                        : TextStyle(
-                            backgroundColor: readableColors.accent.withValues(
-                              alpha: 0.28,
+                : _withActivityText(
+                    LinkableText(
+                      text: text,
+                      textDirection: detectTextDirection(text),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        color: isIncoming
+                            ? readableColors.textPrimary
+                            : readableColors.textSecondary,
+                        height: bodyLineHeight,
+                        letterSpacing: 0.2,
+                      ),
+                      suffixSpans: metaInlined
+                          ? [
+                              _buildInlineMetaSpan(
+                                context,
+                                readableColors,
+                                l10n,
+                              ),
+                            ]
+                          : null,
+                      markQuery: searchQuery,
+                      markStyle: isCurrentSearchHit
+                          ? TextStyle(
+                              backgroundColor: readableColors.accent,
+                              color: readableColors.isLightSurface
+                                  ? Colors.white
+                                  : const Color(0xFF04130A),
+                            )
+                          : TextStyle(
+                              backgroundColor: readableColors.accent.withValues(
+                                alpha: 0.28,
+                              ),
+                              color: readableColors.textPrimary,
                             ),
-                            color: readableColors.textPrimary,
-                          ),
+                    ),
                   ),
           ),
         )

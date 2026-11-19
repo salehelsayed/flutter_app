@@ -2073,6 +2073,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         navigator.push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
+              activityReporter: widget.activityReporter,
               group: group,
               groupRepo: widget.groupRepository,
               msgRepo: widget.groupMessageRepository,

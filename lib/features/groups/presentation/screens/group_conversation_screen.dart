@@ -77,6 +77,8 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueChanged<String> onSend;
   final VoidCallback onBack;
   final VoidCallback? onInfo;
+  final Widget Function(GroupMessage message, Widget readyText)?
+  activityTextBuilder;
 
   /// In-chat search. While it is open its bar takes the header's place.
   final ChatSearchController? search;
@@ -192,6 +194,7 @@ class GroupConversationScreen extends StatelessWidget {
     required this.onSend,
     required this.onBack,
     this.onInfo,
+    this.activityTextBuilder,
     this.search,
     this.canWrite = true,
     this.isSending = false,
@@ -929,6 +932,7 @@ class GroupConversationScreen extends StatelessWidget {
         LetterCard buildLetterCard({
           VoidCallback? onLongPress,
           void Function(int index)? onMediaLongPress,
+          bool observeActivityText = false,
         }) => LetterCard(
           senderPeerId: message.senderPeerId,
           senderName: isSent
@@ -940,6 +944,10 @@ class GroupConversationScreen extends StatelessWidget {
                   preferMemberName: true,
                 ),
           text: displayText,
+          activityTextBuilder:
+              observeActivityText && activityTextBuilder != null
+              ? (child) => activityTextBuilder!(message, child)
+              : null,
           time: timeFormat.format(message.timestamp.toLocal()),
           isIncoming: !isSent,
           searchQuery: search?.markedQuery,
@@ -1027,6 +1035,7 @@ class GroupConversationScreen extends StatelessWidget {
           ),
           child: Builder(
             builder: (cardContext) => buildLetterCard(
+              observeActivityText: true,
               onLongPress: canOpenContextOverlay
                   ? () => unawaited(
                       _showMessageContextOverlay(

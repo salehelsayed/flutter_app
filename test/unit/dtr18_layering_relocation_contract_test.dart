@@ -276,7 +276,9 @@ const _applicationRootNormalizedSha256 =
     // BL-24 D1 passes the receipt drain into the existing lifecycle wiring at
     // this same app owner (3 lines); no owner or resume dispatch moves.
     // BL29 B4 disposal is composed with bb8 main's existing app owner.
-    '0ae29806f48ea10847f40252d32c8e3169d925bb9b5304d280c2ec556e81eab9';
+    // BL-29 notification group navigation forwards the existing reporter;
+    // the app retains composition ownership and all relocation URI rewrites.
+    '327fd88212e6599874095983241d66e50ad7c46849e2fea2439e37df9c56f42b';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

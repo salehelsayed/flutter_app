@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/core/diagnostics/engagement_chat_checkpoint_store.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -100,9 +101,41 @@ class B6ActivityBridge extends FakeBridge {
   }
 }
 
-Future<ActiveIdentityReporter> b6Reporter(B6ActivityBridge bridge) async {
+const b15GroupWeekStart = 1794783600000;
+
+Future<ActiveIdentityReporter> b6Reporter(
+  B6ActivityBridge bridge, {
+  EngagementChatCheckpointStore? groupWitnessStore,
+}) async {
+  if (groupWitnessStore != null) {
+    bridge.activityAnswer = (request, revision) async {
+      if (request['op'] != 'weeklyProjection' && request['op'] != 'markWeekly') {
+        return B6ActivityBridge.reply(request, revision);
+      }
+      return jsonEncode({
+        'ok': true,
+        'data': {
+          'revision': revision,
+          'consentEpoch': request['consentEpoch'],
+          if (request['op'] == 'markWeekly') 'accepted': true,
+          if (request['op'] == 'weeklyProjection')
+            'weekly': {
+              'week': '2026-W47',
+              'startUnixMillis': b15GroupWeekStart,
+              'endUnixMillis': b15GroupWeekStart + 7 * 24 * 60 * 60 * 1000,
+              'kinds': <String>[],
+              'acknowledged': <Object>[],
+            },
+        },
+      });
+    };
+  }
   final reporter = ActiveIdentityReporter(
     statePath: '/unused/b6-public-fixture.json',
+    groupWitnessStore: groupWitnessStore,
+    groupNowMilliseconds: groupWitnessStore == null
+        ? null
+        : () => b15GroupWeekStart + 10000,
   );
   reporter.attachBridge(bridge);
   reporter.observeIdentity(

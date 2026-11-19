@@ -22,6 +22,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/core/diagnostics/engagement_chat_checkpoint_store.dart';
+import '../application/b6_daily_activity_test_support.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -1695,13 +1698,14 @@ Future<void> pumpUntilAsyncWorkSettles(
   WidgetTester tester,
   bool Function() condition, {
   int maxPumps = 200,
+  Duration pumpDuration = const Duration(milliseconds: 50),
 }) async {
   var pumps = 0;
   while (!condition() && pumps < maxPumps) {
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(pumpDuration);
     pumps++;
   }
 }
@@ -1710,6 +1714,7 @@ Future<void> pumpUntilFuturesComplete(
   WidgetTester tester,
   Iterable<Future<void>> futures, {
   int maxPumps = 200,
+  Duration pumpDuration = const Duration(milliseconds: 50),
 }) async {
   var completed = false;
   Object? completionError;
@@ -1724,7 +1729,12 @@ Future<void> pumpUntilFuturesComplete(
       },
     ),
   );
-  await pumpUntilAsyncWorkSettles(tester, () => completed, maxPumps: maxPumps);
+  await pumpUntilAsyncWorkSettles(
+    tester,
+    () => completed,
+    maxPumps: maxPumps,
+    pumpDuration: pumpDuration,
+  );
   if (!completed) {
     throw TimeoutException('async test work did not complete');
   }
@@ -2006,6 +2016,7 @@ void main() {
 
     Widget buildWidget({
       GroupModel? group,
+      ActiveIdentityReporter? activityReporter,
       CountingMediaAttachmentRepository? mediaRepo,
       ImageProcessor? imageProcessor,
       FakeAudioRecorderService? audioRecorderService,
@@ -2074,6 +2085,7 @@ void main() {
           ),
           bridge: bridge,
           identityRepo: identityRepo,
+          activityReporter: activityReporter,
           contactRepo: contactRepo,
           p2pService: p2pService,
           mediaAttachmentRepo: mediaRepo,
@@ -2113,6 +2125,519 @@ void main() {
               preparedGroupMediaBlobCustodyCoordinator,
         ),
       );
+    }
+
+    for (final scenario in [
+      (
+        name: 'other current content',
+        author: 'peer-alice',
+        expired: false,
+        enabled: true,
+        marks: 1,
+        mode: 'normal',
+      ),
+      (
+        name: 'other live stream content',
+        author: 'peer-alice',
+        expired: false,
+        enabled: true,
+        marks: 1,
+        mode: 'liveOther',
+      ),
+      (
+        name: 'own content',
+        author: 'peer-admin',
+        expired: false,
+        enabled: true,
+        marks: 0,
+        mode: 'normal',
+      ),
+      (
+        name: 'closed-week content',
+        author: 'peer-alice',
+        expired: true,
+        enabled: true,
+        marks: 0,
+        mode: 'normal',
+      ),
+      (
+        name: 'diagnostics disabled',
+        author: 'peer-alice',
+        expired: false,
+        enabled: false,
+        marks: 0,
+        mode: 'normal',
+      ),
+      (
+        name: 'same profile OFF then ON',
+        author: 'peer-alice',
+        expired: false,
+        enabled: false,
+        marks: 1,
+        mode: 'reenable',
+      ),
+      (
+        name: 'replacement repository after OFF',
+        author: 'peer-alice',
+        expired: false,
+        enabled: false,
+        marks: 0,
+        mode: 'replaceRepository',
+      ),
+      (
+        name: 'retained profile A to B to A',
+        author: 'peer-alice',
+        expired: false,
+        enabled: true,
+        marks: 0,
+        mode: 'profileABA',
+      ),
+      (
+        name: 'old identity finishes after profile A to B to A',
+        author: 'peer-alice',
+        expired: false,
+        enabled: true,
+        marks: 0,
+        mode: 'delayedIdentity',
+      ),
+    ]) {
+      testWidgets('B15GV actual painted text ${scenario.name}', (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final fixture = await tester
+            .runAsync(() async {
+              final directory = await b6Bound(
+                Directory.systemTemp.createTemp('b15-route-'),
+              );
+              final store = await b6Bound(
+                EngagementChatCheckpointStore.open('${directory.path}/group'),
+              );
+              final activityBridge = B6ActivityBridge();
+              final reporter = await b6Reporter(
+                activityBridge,
+                groupWitnessStore: store,
+              );
+              reporter.observeIdentity(
+                accountPeerId: testIdentity.peerId,
+                rootPrivateKeyBase64: 'public-test-fixture',
+                profileBinding: b6Binding,
+              );
+              await b6Bound(
+                reporter.observeConsent((
+                  enabled: scenario.enabled,
+                  consentEpoch: 7,
+                )),
+              );
+              return (
+                directory: directory,
+                store: store,
+                reporter: reporter,
+                bridge: activityBridge,
+              );
+            })
+            .timeout(const Duration(seconds: 3));
+        final activity = fixture!;
+        Future<void> settleActivity(Future<void> Function() action) async {
+          late Future<void> pending;
+          await tester.runAsync(() async {
+            pending = b6Bound(action());
+          }).timeout(const Duration(seconds: 3));
+          await pumpUntilFuturesComplete(
+            tester,
+            [pending],
+            maxPumps: 100,
+            pumpDuration: Duration.zero,
+          ).timeout(const Duration(seconds: 3));
+        }
+        addTearDown(() async {
+          await settleActivity(activity.reporter.dispose);
+          await settleActivity(activity.store.close);
+          await settleActivity(
+            () => activity.directory.delete(recursive: true).then<void>((_) {}),
+          );
+        });
+        final capture = activity.reporter.captureOwner(
+          expectedAccountPeerId: testIdentity.peerId,
+        );
+        final startsWithOwn =
+            scenario.mode == 'normal' || scenario.mode == 'liveOther';
+        if (capture != null && startsWithOwn) {
+          activity.reporter.groupPostCommittedCaptured(
+            capture,
+            groupId: 'group-1',
+          );
+        }
+        await settleActivity(activity.reporter.flush);
+        expect(
+          activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+          isEmpty,
+        );
+        await b6Bound(groupRepo.saveGroup(makeChatGroup()));
+        final visibleMessage = makeMessage(
+          id: 'b15-visible',
+          text: 'B15 visible fixture',
+          senderPeerId: scenario.author,
+          isIncoming: scenario.author != testIdentity.peerId,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(
+            b15GroupWeekStart + (scenario.expired ? -1 : 1000),
+            isUtc: true,
+          ),
+        );
+        if (scenario.mode != 'liveOther') {
+          await b6Bound(msgRepo.saveMessage(visibleMessage));
+        }
+        final identityGate = scenario.mode == 'delayedIdentity'
+            ? Completer<IdentityModel?>()
+            : null;
+        if (identityGate != null) {
+          identityRepo.loadIdentityCompleter = identityGate;
+          addTearDown(() {
+            if (!identityGate.isCompleted) identityGate.complete(testIdentity);
+          });
+        }
+        await tester
+            .pumpWidget(buildWidget(activityReporter: activity.reporter))
+            .timeout(const Duration(seconds: 3));
+        if (scenario.mode == 'liveOther') {
+          await b6Bound(msgRepo.saveMessage(visibleMessage));
+          messageStreamController.add(visibleMessage);
+        }
+        Object? frameError;
+        StackTrace? frameStack;
+        await tester
+            .runAsync(() async {
+              try {
+                await pumpFrames(
+                  tester,
+                  count: 8,
+                ).timeout(const Duration(seconds: 3));
+              } on Object catch (error, stack) {
+                frameError = error;
+                frameStack = stack;
+              }
+            })
+            .timeout(const Duration(seconds: 3));
+        if (frameError != null) {
+          Error.throwWithStackTrace(frameError!, frameStack!);
+        }
+        expect(
+          find.byWidgetPredicate(
+            (w) => w is LetterCard && w.text == 'B15 visible fixture',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('B15 visible fixture'), findsOneWidget);
+        await settleActivity(activity.reporter.flush);
+        if (scenario.name == 'other current content') {
+          final checkpoint = jsonDecode(
+            File(activity.store.checkpointPath).readAsStringSync(),
+          ) as Map;
+          expect(checkpoint['phase'], 'retained');
+        }
+        if (!startsWithOwn) {
+          expect(
+            activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+            isEmpty,
+          );
+          final replacement = scenario.mode == 'replaceRepository'
+              ? CountingGroupMessageRepository()
+              : null;
+          if (replacement != null) {
+            await tester
+                .pumpWidget(
+                  buildWidget(
+                    activityReporter: activity.reporter,
+                    messageRepo: replacement,
+                  ),
+                )
+                .timeout(const Duration(seconds: 3));
+            await pumpFrames(
+              tester,
+              count: 2,
+            ).timeout(const Duration(seconds: 3));
+          }
+          await tester
+              .runAsync(() async {
+                final profileABA =
+                    scenario.mode == 'profileABA' ||
+                    scenario.mode == 'delayedIdentity';
+                if (profileABA) {
+                  activity.reporter.observeIdentity(
+                    accountPeerId: testIdentity.peerId,
+                    rootPrivateKeyBase64: 'public-other-profile',
+                    profileBinding: b6OtherBinding,
+                  );
+                  await b6Bound(
+                    activity.reporter.observeConsent((
+                      enabled: true,
+                      consentEpoch: 7,
+                    )),
+                  );
+                  activity.reporter.observeIdentity(
+                    accountPeerId: testIdentity.peerId,
+                    rootPrivateKeyBase64: 'public-test-fixture',
+                    profileBinding: b6Binding,
+                  );
+                }
+                await b6Bound(
+                  activity.reporter.observeConsent((
+                    enabled: true,
+                    consentEpoch: profileABA ? 7 : 8,
+                  )),
+                );
+                if (identityGate != null && !identityGate.isCompleted) {
+                  identityGate.complete(testIdentity);
+                }
+                final fresh = activity.reporter.captureOwner(
+                  expectedAccountPeerId: testIdentity.peerId,
+                );
+                expect(fresh, isNotNull);
+                activity.reporter.groupPostCommittedCaptured(
+                  fresh!,
+                  groupId: 'group-1',
+                );
+                await b6Bound(activity.reporter.flush());
+              })
+              .timeout(const Duration(seconds: 3));
+          await tester
+              .pumpWidget(
+                buildWidget(
+                  activityReporter: activity.reporter,
+                  messageRepo: replacement,
+                ),
+              )
+              .timeout(const Duration(seconds: 3));
+          Object? frameError;
+          StackTrace? frameStack;
+          await tester
+              .runAsync(() async {
+                try {
+                  await pumpFrames(
+                    tester,
+                    count: 8,
+                  ).timeout(const Duration(seconds: 3));
+                } on Object catch (error, stack) {
+                  frameError = error;
+                  frameStack = stack;
+                }
+              })
+              .timeout(const Duration(seconds: 3));
+          if (frameError != null) {
+            Error.throwWithStackTrace(frameError!, frameStack!);
+          }
+          await settleActivity(activity.reporter.flush);
+          if (scenario.mode == 'reenable') {
+            final checkpoint = jsonDecode(
+              File(activity.store.checkpointPath).readAsStringSync(),
+            ) as Map;
+            expect(checkpoint['phase'], 'retained');
+          }
+        }
+        expect(
+          activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+          hasLength(scenario.marks),
+        );
+        expect(
+          activity.bridge.marks,
+          isEmpty,
+          reason: 'Viewing content alone never creates a daily mark',
+        );
+        await tester
+            .pumpWidget(const SizedBox.shrink())
+            .timeout(const Duration(seconds: 3));
+      });
+    }
+
+    for (final scenario in [
+      (name: 'fresh owner', mode: 'fresh', enabled: true, marks: 1),
+      (
+        name: 'OFF then ON during preflight',
+        mode: 'reenable',
+        enabled: true,
+        marks: 0,
+      ),
+      (
+        name: 'disabled owner enabled during preflight',
+        mode: 'enable',
+        enabled: false,
+        marks: 0,
+      ),
+      (
+        name: 'reporter introduced during preflight',
+        mode: 'lateReporter',
+        enabled: true,
+        marks: 0,
+      ),
+    ]) {
+      testWidgets('B15GC ordinary text caller ${scenario.name}', (
+        tester,
+      ) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final fixture = await tester
+            .runAsync(() async {
+              final directory = await b6Bound(
+                Directory.systemTemp.createTemp('b15-caller-'),
+              );
+              final store = await b6Bound(
+                EngagementChatCheckpointStore.open('${directory.path}/group'),
+              );
+              final activityBridge = B6ActivityBridge();
+              final reporter = await b6Reporter(
+                activityBridge,
+                groupWitnessStore: store,
+              );
+              reporter.observeIdentity(
+                accountPeerId: testIdentity.peerId,
+                rootPrivateKeyBase64: 'public-test-fixture',
+                profileBinding: b6Binding,
+              );
+              await b6Bound(
+                reporter.observeConsent((
+                  enabled: scenario.enabled,
+                  consentEpoch: 7,
+                )),
+              );
+              return (
+                directory: directory,
+                store: store,
+                reporter: reporter,
+                bridge: activityBridge,
+              );
+            })
+            .timeout(const Duration(seconds: 3));
+        final activity = fixture!;
+        addTearDown(() async {
+          await b6Bound(activity.reporter.dispose());
+          await b6Bound(activity.store.close());
+          await b6Bound(activity.directory.delete(recursive: true));
+        });
+        final group = makeChatGroup();
+        final gated = _GatedMembersGroupRepository();
+        final key = await b6Bound(groupRepo.getLatestKey(group.id));
+        await b6Bound(gated.saveKey(key!));
+        await b6Bound(gated.saveGroup(group));
+        await b6Bound(saveActiveGroupMembers(gated, group));
+        groupRepo = gated;
+        addTearDown(gated.releaseMembersLookup);
+        await tester
+            .pumpWidget(
+              buildWidget(
+                group: group,
+                activityReporter: scenario.mode == 'lateReporter'
+                    ? null
+                    : activity.reporter,
+              ),
+            )
+            .timeout(const Duration(seconds: 3));
+        await pumpFrames(tester, count: 8).timeout(const Duration(seconds: 3));
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .canWrite,
+          isTrue,
+        );
+        await tester
+            .runAsync(() async {
+              final capture = activity.reporter.captureOwner(
+                expectedAccountPeerId: testIdentity.peerId,
+              );
+              if (capture != null) {
+                activity.reporter.groupOtherPostVisibleCaptured(
+                  capture,
+                  groupId: group.id,
+                  authorAccountPeerId: 'peer-other',
+                  postOccurredAtUnixMillis: b15GroupWeekStart + 1000,
+                );
+              }
+              await b6Bound(activity.reporter.flush());
+            })
+            .timeout(const Duration(seconds: 3));
+        expect(
+          activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+          isEmpty,
+        );
+        expect(activity.bridge.marks, isEmpty);
+        gated.holdNextMembersLookup(group.id);
+        const text = 'B15 ordinary caller fixture';
+        final send = await startScreenSend(
+          tester,
+          text,
+          delay: const Duration(milliseconds: 20),
+        ).timeout(const Duration(seconds: 3));
+        expect(gated.membersLookupCaptured, isTrue);
+        expect(groupPublishPayloads(bridge), isEmpty);
+        if (scenario.mode == 'reenable' || scenario.mode == 'enable') {
+          await tester
+              .runAsync(() async {
+                if (scenario.mode == 'reenable') {
+                  await b6Bound(
+                    activity.reporter.observeConsent((
+                      enabled: false,
+                      consentEpoch: 8,
+                    )),
+                  );
+                }
+                await b6Bound(
+                  activity.reporter.observeConsent((
+                    enabled: true,
+                    consentEpoch: 9,
+                  )),
+                );
+                final fresh = activity.reporter.captureOwner(
+                  expectedAccountPeerId: testIdentity.peerId,
+                );
+                expect(fresh, isNotNull);
+                activity.reporter.groupOtherPostVisibleCaptured(
+                  fresh!,
+                  groupId: group.id,
+                  authorAccountPeerId: 'peer-other',
+                  postOccurredAtUnixMillis: b15GroupWeekStart + 1000,
+                );
+                await b6Bound(activity.reporter.flush());
+              })
+              .timeout(const Duration(seconds: 3));
+        }
+        if (scenario.mode == 'lateReporter') {
+          await tester
+              .pumpWidget(
+                buildWidget(group: group, activityReporter: activity.reporter),
+              )
+              .timeout(const Duration(seconds: 3));
+          await pumpFrames(
+            tester,
+            count: 2,
+          ).timeout(const Duration(seconds: 3));
+        }
+        gated.releaseMembersLookup();
+        await pumpUntilFuturesComplete(tester, [
+          send.future,
+        ], maxPumps: 40).timeout(const Duration(seconds: 3));
+        final messages = await b6Bound(msgRepo.getMessagesPage(group.id));
+        expect(
+          messages.where(
+            (m) => m.text == text && m.senderPeerId == testIdentity.peerId,
+          ),
+          hasLength(1),
+        );
+        expect(groupPublishPayloads(bridge), hasLength(1));
+        expect(find.text(text), findsOneWidget);
+        await tester
+            .runAsync(() => b6Bound(activity.reporter.flush()))
+            .timeout(const Duration(seconds: 3));
+        expect(
+          activity.bridge.requests.where((r) => r['op'] == 'markWeekly'),
+          hasLength(scenario.marks),
+        );
+        expect(activity.bridge.marks, hasLength(scenario.marks));
+        await tester
+            .pumpWidget(const SizedBox.shrink())
+            .timeout(const Duration(seconds: 3));
+      });
     }
 
     testWidgets('in-chat search: the magnifier opens the bar, matches step '

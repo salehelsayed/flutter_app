@@ -8,6 +8,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import '../features/update_check/support/fake_update_check_service.dart';
 import 'package:flutter_app/app/application_root.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -108,10 +109,31 @@ void main() {
     );
   });
 
-  for (final isGroup in [false, true]) {
+  for (final scenario in [
+    (isGroup: false, withReporter: false),
+    (isGroup: true, withReporter: false),
+    (isGroup: false, withReporter: true),
+    (isGroup: true, withReporter: true),
+  ]) {
+    final isGroup = scenario.isGroup;
     testWidgets(
-      'notification-root ${isGroup ? 'group' : 'direct'} photo preparation honours stored quality',
+      scenario.withReporter
+          ? 'B15GDI notification-root ${isGroup ? 'group' : 'direct'} carries original reporter'
+          : 'notification-root ${isGroup ? 'group' : 'direct'} photo preparation honours stored quality',
       (tester) async {
+        Future<T> waitForRoute<T>(Future<T> work) => scenario.withReporter
+            ? work.timeout(const Duration(seconds: 3))
+            : work;
+        final reporter = scenario.withReporter
+            ? ActiveIdentityReporter(
+                statePath: '/unused/b15-notification-route.json',
+              )
+            : null;
+        if (reporter != null) {
+          addTearDown(
+            () => reporter.dispose().timeout(const Duration(seconds: 3)),
+          );
+        }
         tester.view.physicalSize = const Size(1100, 1700);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
@@ -134,23 +156,27 @@ void main() {
             ),
           ]);
         final groups = _QualityGroups();
-        await groups.saveGroup(
-          GroupModel(
-            id: 'group-photo',
-            name: 'Photo group',
-            type: GroupType.chat,
-            topicName: 'photo-topic',
-            createdAt: DateTime.utc(2026),
-            createdBy: 'self',
-            myRole: GroupRole.admin,
+        await waitForRoute(
+          groups.saveGroup(
+            GroupModel(
+              id: 'group-photo',
+              name: 'Photo group',
+              type: GroupType.chat,
+              topicName: 'photo-topic',
+              createdAt: DateTime.utc(2026),
+              createdBy: 'self',
+              myRole: GroupRole.admin,
+            ),
           ),
         );
-        await groups.saveMember(
-          GroupMember(
-            groupId: 'group-photo',
-            peerId: 'self',
-            role: MemberRole.admin,
-            joinedAt: DateTime.utc(2026),
+        await waitForRoute(
+          groups.saveMember(
+            GroupMember(
+              groupId: 'group-photo',
+              peerId: 'self',
+              role: MemberRole.admin,
+              joinedAt: DateTime.utc(2026),
+            ),
           ),
         );
         final messages = _QualityMessages();
@@ -163,9 +189,11 @@ void main() {
           bridge: bridge,
         );
         final store = FakeSecureKeyStore();
-        await saveImageQualityPreference(
-          secureKeyStore: store,
-          preference: ImageQualityPreference.original,
+        await waitForRoute(
+          saveImageQualityPreference(
+            secureKeyStore: store,
+            preference: ImageQualityPreference.original,
+          ),
         );
         final requested = <int>[];
         final processor = ImageProcessor(
@@ -187,87 +215,91 @@ void main() {
           service: FakeUpdateCheckService(),
         );
         addTearDown(updates.dispose);
-        await tester.pumpWidget(
-          MyApp(
-            repository: identity,
-            contactRepository: contacts,
-            contactRequestRepository: _ContactRequestRepositoryImpl(),
-            contactRequestListener: _ContactRequestListener(),
-            contactRequestPresentationGate: ContactRequestPresentationGate(),
-            messageRepository: messages,
-            postRepository: _PostRepositoryImpl(),
-            postsPrivacySettingsRepository:
-                _PostsPrivacySettingsRepositoryImpl(),
-            feedClearedRepository: _FeedClearedRepository(),
-            contactPresenceSnapshotRepository:
-                _ContactPresenceSnapshotRepositoryImpl(),
-            nearbyLocationService: _NearbyLocationService(),
-            mediaAttachmentRepository: _QualityMedia(),
-            groupMediaDeleteForMeCoordinator:
-                _GroupMediaDeleteForMeCoordinator(),
-            groupMediaDeletionCleanup: () async {},
-            chatMessageListener: chat,
-            postListener: _PostListener(),
-            postCommentListener: _PostCommentListener(),
-            postReactionListener: _PostReactionListener(),
-            postPresenceListener: _PostPresenceListener(),
-            postPassListener: _PostPassListener(),
-            postPinListener: _PostPinListener(),
-            reactionListener: _ReactionListener(),
-            messageDeletionListener: _MessageDeletionListener(),
-            profileUpdateListener: _ProfileUpdateListener(),
-            messageRouter: _IncomingMessageRouter(),
-            pendingMessageRetrier: _PendingMessageRetrier(),
-            pendingPostMediaUploadRetrier: _PendingPostMediaUploadRetrier(),
-            pendingPostDeliveryRetrier: _PendingPostDeliveryRetrier(),
-            pendingPostFollowOnRetrier: _PendingPostFollowOnRetrier(),
-            keyExchangeRetrier: _KeyExchangeRetrier(),
-            bridge: bridge,
-            p2pService: p2p,
-            mediaFileManager: FakeMediaFileManager(),
-            secureKeyStore: store,
-            imageProcessor: processor,
-            audioRecorderService: _AudioRecorderService(),
-            reactionRepository: _ReactionRepositoryImpl(),
-            isDesktop: false,
-            notificationService: notifications,
-            appShellController: AppShellController(),
-            pendingPostTargetStore: PendingPostTargetStore(),
-            conversationTracker: ActiveConversationTracker(),
-            groupRepository: groups,
-            groupMessageRepository: _QualityGroupMessages(),
-            groupInviteDeliveryAttemptRepository:
-                _GroupInviteDeliveryAttemptRepositoryImpl(),
-            groupPendingKeyRepairRepository:
-                _GroupPendingKeyRepairRepositoryImpl(),
-            groupPendingReactionRepository: _GroupPendingReactionRepository(),
-            groupPendingKeyRepairRunner: _GroupPendingKeyRepairRunner(),
-            groupPendingKeyRepairBackoffTimer:
-                _GroupPendingKeyRepairBackoffTimer(),
-            groupPendingKeyDistributionRunner:
-                _GroupPendingKeyDistributionRunner(),
-            groupHistoryGapRepairRepository:
-                _GroupHistoryGapRepairRepositoryImpl(),
-            groupReactionReplayOutboxRepository:
-                _GroupReactionReplayOutboxRepositoryImpl(),
-            groupMessageListener: _GroupMessageListener(),
-            groupInviteListener: _GroupInviteListener(),
-            groupKeyUpdateListener: _GroupKeyUpdateListener(),
-            groupKeyRepairResponderListener: _GroupKeyRepairResponderListener(),
-            requestGroupKeyRepair: (_) async {},
-            groupMembershipUpdateListener: _GroupMembershipUpdateListener(),
-            groupConversationTracker: ActiveConversationTracker(),
-            introductionRepository: _IntroductionRepositoryImpl(),
-            introReviewSeenRepository: _IntroReviewSeenRepositoryImpl(),
-            introductionListener: _IntroductionListener(),
-            shareIntentService: _Shares(),
-            updateCheckController: updates,
+        await waitForRoute(
+          tester.pumpWidget(
+            MyApp(
+              activityReporter: reporter,
+              repository: identity,
+              contactRepository: contacts,
+              contactRequestRepository: _ContactRequestRepositoryImpl(),
+              contactRequestListener: _ContactRequestListener(),
+              contactRequestPresentationGate: ContactRequestPresentationGate(),
+              messageRepository: messages,
+              postRepository: _PostRepositoryImpl(),
+              postsPrivacySettingsRepository:
+                  _PostsPrivacySettingsRepositoryImpl(),
+              feedClearedRepository: _FeedClearedRepository(),
+              contactPresenceSnapshotRepository:
+                  _ContactPresenceSnapshotRepositoryImpl(),
+              nearbyLocationService: _NearbyLocationService(),
+              mediaAttachmentRepository: _QualityMedia(),
+              groupMediaDeleteForMeCoordinator:
+                  _GroupMediaDeleteForMeCoordinator(),
+              groupMediaDeletionCleanup: () async {},
+              chatMessageListener: chat,
+              postListener: _PostListener(),
+              postCommentListener: _PostCommentListener(),
+              postReactionListener: _PostReactionListener(),
+              postPresenceListener: _PostPresenceListener(),
+              postPassListener: _PostPassListener(),
+              postPinListener: _PostPinListener(),
+              reactionListener: _ReactionListener(),
+              messageDeletionListener: _MessageDeletionListener(),
+              profileUpdateListener: _ProfileUpdateListener(),
+              messageRouter: _IncomingMessageRouter(),
+              pendingMessageRetrier: _PendingMessageRetrier(),
+              pendingPostMediaUploadRetrier: _PendingPostMediaUploadRetrier(),
+              pendingPostDeliveryRetrier: _PendingPostDeliveryRetrier(),
+              pendingPostFollowOnRetrier: _PendingPostFollowOnRetrier(),
+              keyExchangeRetrier: _KeyExchangeRetrier(),
+              bridge: bridge,
+              p2pService: p2p,
+              mediaFileManager: FakeMediaFileManager(),
+              secureKeyStore: store,
+              imageProcessor: processor,
+              audioRecorderService: _AudioRecorderService(),
+              reactionRepository: _ReactionRepositoryImpl(),
+              isDesktop: false,
+              notificationService: notifications,
+              appShellController: AppShellController(),
+              pendingPostTargetStore: PendingPostTargetStore(),
+              conversationTracker: ActiveConversationTracker(),
+              groupRepository: groups,
+              groupMessageRepository: _QualityGroupMessages(),
+              groupInviteDeliveryAttemptRepository:
+                  _GroupInviteDeliveryAttemptRepositoryImpl(),
+              groupPendingKeyRepairRepository:
+                  _GroupPendingKeyRepairRepositoryImpl(),
+              groupPendingReactionRepository: _GroupPendingReactionRepository(),
+              groupPendingKeyRepairRunner: _GroupPendingKeyRepairRunner(),
+              groupPendingKeyRepairBackoffTimer:
+                  _GroupPendingKeyRepairBackoffTimer(),
+              groupPendingKeyDistributionRunner:
+                  _GroupPendingKeyDistributionRunner(),
+              groupHistoryGapRepairRepository:
+                  _GroupHistoryGapRepairRepositoryImpl(),
+              groupReactionReplayOutboxRepository:
+                  _GroupReactionReplayOutboxRepositoryImpl(),
+              groupMessageListener: _GroupMessageListener(),
+              groupInviteListener: _GroupInviteListener(),
+              groupKeyUpdateListener: _GroupKeyUpdateListener(),
+              groupKeyRepairResponderListener:
+                  _GroupKeyRepairResponderListener(),
+              requestGroupKeyRepair: (_) async {},
+              groupMembershipUpdateListener: _GroupMembershipUpdateListener(),
+              groupConversationTracker: ActiveConversationTracker(),
+              introductionRepository: _IntroductionRepositoryImpl(),
+              introReviewSeenRepository: _IntroReviewSeenRepositoryImpl(),
+              introductionListener: _IntroductionListener(),
+              shareIntentService: _Shares(),
+              updateCheckController: updates,
+            ),
           ),
         );
 
         try {
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
+          await waitForRoute(tester.pump());
+          await waitForRoute(tester.pump(const Duration(milliseconds: 300)));
           final startup = tester.widget<StartupRouter>(
             find.byType(StartupRouter),
           );
@@ -276,35 +308,51 @@ void main() {
             isGroup ? 'group:group-photo' : 'peer-photo',
           );
           for (var i = 0; i < 12; i++) {
-            await tester.pump(const Duration(milliseconds: 100));
+            await waitForRoute(tester.pump(const Duration(milliseconds: 100)));
           }
           if (isGroup) {
             final route = tester.widget<GroupConversationWired>(
               find.byType(GroupConversationWired),
             );
+            if (scenario.withReporter) {
+              expect(route.activityReporter, same(reporter));
+            }
             expect(route.imageProcessor, same(processor));
-            await tester.runAsync(
-              () => route.imageProcessor!.processImage(
-                inputPath: '/tmp/notification.png',
-                quality: route.qualityPreference,
+            await waitForRoute(
+              tester.runAsync(
+                () => route.imageProcessor!.processImage(
+                  inputPath: '/tmp/notification.png',
+                  quality: route.qualityPreference,
+                ),
               ),
             );
           } else {
             final route = tester.widget<ConversationWired>(
               find.byType(ConversationWired),
             );
+            if (scenario.withReporter) {
+              expect(route.activityReporter, same(reporter));
+            }
             expect(route.imageProcessor, same(processor));
-            await tester.runAsync(
-              () => route.imageProcessor!.processImage(
-                inputPath: '/tmp/notification.png',
-                quality: route.qualityPreference,
+            await waitForRoute(
+              tester.runAsync(
+                () => route.imageProcessor!.processImage(
+                  inputPath: '/tmp/notification.png',
+                  quality: route.qualityPreference,
+                ),
               ),
             );
           }
           expect(requested, [100]);
         } finally {
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump(const Duration(seconds: 10));
+          await waitForRoute(tester.pumpWidget(const SizedBox.shrink()));
+          if (scenario.withReporter) {
+            for (var i = 0; i < 20; i++) {
+              await waitForRoute(tester.pump(const Duration(milliseconds: 500)));
+            }
+          } else {
+            await tester.pump(const Duration(seconds: 10));
+          }
         }
       },
     );

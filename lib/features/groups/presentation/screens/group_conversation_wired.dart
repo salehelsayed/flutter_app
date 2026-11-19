@@ -8,6 +8,8 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/features/groups/application/group_chat_search.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_engagement_visibility_probe.dart';
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
 import 'package:flutter_app/core/media/composer_draft_store.dart';
@@ -277,6 +279,24 @@ Stream<void> groupPictureInPictureAuthorizationChanges(
       .map<void>((_) {}),
 ]);
 
+typedef _GroupActivityOrigin = ({
+  ActiveIdentityReporter reporter,
+  Object profileMarker,
+  IdentityRepository identityRepo,
+  GroupRepository groupRepo,
+  GroupMessageRepository messageRepo,
+  MediaAttachmentRepository? mediaRepo,
+  String groupId,
+  int routeGeneration,
+  GroupMessageListener? eventListener,
+});
+
+typedef _GroupVisibleText = ({
+  GroupMessage source,
+  _GroupActivityOrigin origin,
+  GroupEngagementFrameObservation? Function() observeFrame,
+});
+
 /// Immutable dependencies and sender identity for one group send attempt.
 ///
 /// A [GroupConversationWired] State can be retained while its widget is
@@ -359,6 +379,7 @@ class GroupConversationWired extends StatefulWidget {
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final Bridge bridge;
   final IdentityRepository identityRepo;
+  final ActiveIdentityReporter? activityReporter;
   final ContactRepository contactRepo;
   final P2PService p2pService;
   final MediaAttachmentRepository? mediaAttachmentRepo;
@@ -472,6 +493,7 @@ class GroupConversationWired extends StatefulWidget {
     this.inviteDeliveryAttemptRepo,
     required this.bridge,
     required this.identityRepo,
+    this.activityReporter,
     required this.contactRepo,
     required this.p2pService,
     this.mediaAttachmentRepo,
@@ -535,6 +557,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   late GroupModel _group;
   List<GroupMessage> _messages = [];
+  _GroupActivityOrigin? _activityIdentityOrigin;
+  final _activityTextOrigins = <String, _GroupVisibleText>{};
   AnnouncementPrivateReplyResolver? _announcementPrivateReplyResolver;
   bool _announcementPrivateReplyDispatchInFlight = false;
   final Map<String, AnnouncementPrivateReplyRequest>
@@ -1320,6 +1344,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _retiredReactionMessageIds.addAll(_messages.map((message) => message.id));
     _group = widget.group;
     _messages = [];
+    _activityTextOrigins.clear();
+    _activityIdentityOrigin = null;
     _mediaMap = {};
     _uploadActivityController.rebind(
       scopeId: widget.group.id,
@@ -1904,11 +1930,159 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
+  _GroupActivityOrigin? _captureActivityOrigin({
+    GroupMessageListener? eventListener,
+  }) {
+    final reporter = widget.activityReporter;
+    final marker = reporter?.logicalProfileMarker;
+    if (reporter == null || marker == null) return null;
+    return (
+      reporter: reporter,
+      profileMarker: marker,
+      identityRepo: widget.identityRepo,
+      groupRepo: widget.groupRepo,
+      messageRepo: widget.msgRepo,
+      mediaRepo: widget.mediaAttachmentRepo,
+      groupId: widget.group.id,
+      routeGeneration: _sendLaneBindingGeneration,
+      eventListener: eventListener,
+    );
+  }
+
+  bool _activityOriginCurrent(_GroupActivityOrigin origin) =>
+      mounted &&
+      origin.groupId == widget.group.id &&
+      origin.groupId == _group.id &&
+      origin.routeGeneration == _sendLaneBindingGeneration &&
+      identical(origin.reporter, widget.activityReporter) &&
+      identical(origin.profileMarker, origin.reporter.logicalProfileMarker) &&
+      identical(origin.identityRepo, widget.identityRepo) &&
+      identical(origin.groupRepo, widget.groupRepo) &&
+      identical(origin.messageRepo, widget.msgRepo) &&
+      identical(origin.mediaRepo, widget.mediaAttachmentRepo) &&
+      (origin.eventListener == null ||
+          identical(origin.eventListener, widget.groupMessageListener));
+
+  bool _sameTextSource(GroupMessage a, GroupMessage b) =>
+      a.id == b.id &&
+      a.groupId == b.groupId &&
+      a.senderPeerId == b.senderPeerId &&
+      a.timestamp == b.timestamp &&
+      a.text == b.text &&
+      a.privateMediaPolicy.requiresRedaction ==
+          b.privateMediaPolicy.requiresRedaction;
+
+  bool _sameActivityOrigin(_GroupActivityOrigin a, _GroupActivityOrigin b) =>
+      a.groupId == b.groupId &&
+      a.routeGeneration == b.routeGeneration &&
+      identical(a.reporter, b.reporter) &&
+      identical(a.profileMarker, b.profileMarker) &&
+      identical(a.identityRepo, b.identityRepo) &&
+      identical(a.groupRepo, b.groupRepo) &&
+      identical(a.messageRepo, b.messageRepo) &&
+      identical(a.mediaRepo, b.mediaRepo) &&
+      identical(a.eventListener, b.eventListener);
+
+  ActiveIdentityReporterCapture? _captureVisibleText(
+    GroupMessage message,
+    _GroupActivityOrigin origin,
+  ) {
+    final identity = _activityIdentityOrigin;
+    final account = _ownPeerId;
+    if (!_activityOriginCurrent(origin) ||
+        identity == null ||
+        account == null ||
+        !identical(identity.reporter, origin.reporter) ||
+        !identical(identity.profileMarker, origin.profileMarker) ||
+        !identical(identity.identityRepo, origin.identityRepo) ||
+        identity.groupId != origin.groupId ||
+        identity.routeGeneration != origin.routeGeneration ||
+        message.groupId != origin.groupId ||
+        message.senderPeerId == account ||
+        message.id.startsWith('sys-') ||
+        message.text.trim().isEmpty ||
+        message.privateMediaPolicy.requiresRedaction)
+      return null;
+    return origin.reporter.captureForLoadedProfile(
+      originalProfileMarker: origin.profileMarker,
+      expectedAccountPeerId: account,
+    );
+  }
+
+  void _rememberActivityText(
+    GroupMessage message,
+    _GroupActivityOrigin? origin,
+  ) {
+    if (origin == null || !_activityOriginCurrent(origin)) {
+      _activityTextOrigins.remove(message.id);
+      return;
+    }
+    final previous = _activityTextOrigins[message.id];
+    if (previous != null &&
+        _sameTextSource(previous.source, message) &&
+        _sameActivityOrigin(previous.origin, origin))
+      return;
+    GroupEngagementFrameObservation? observeFrame() {
+      final current = _activityTextOrigins[message.id];
+      if (current == null ||
+          !_sameTextSource(current.source, message) ||
+          !_sameActivityOrigin(current.origin, origin))
+        return null;
+      final capture = _captureVisibleText(message, origin);
+      if (capture == null) return null;
+      final binding = origin.reporter.observationMarker;
+      void onVisible() {
+        final current = _activityTextOrigins[message.id];
+        if (origin.reporter.observationMarker != binding ||
+            !_activityOriginCurrent(origin) ||
+            current == null ||
+            !_sameTextSource(current.source, message) ||
+            !_sameActivityOrigin(current.origin, origin) ||
+            !_messages.any((row) => _sameTextSource(row, message)))
+          return;
+        origin.reporter.groupOtherPostVisibleCaptured(
+          capture,
+          groupId: message.groupId,
+          authorAccountPeerId: message.senderPeerId,
+          postOccurredAtUnixMillis: message.timestamp.millisecondsSinceEpoch,
+        );
+      }
+
+      return (binding: binding, onVisible: onVisible);
+    }
+
+    _activityTextOrigins[message.id] = (
+      source: message,
+      origin: origin,
+      observeFrame: observeFrame,
+    );
+  }
+
+  void _pruneActivityTextOrigins() {
+    final ids = _messages.map((row) => row.id).toSet();
+    _activityTextOrigins.removeWhere((id, _) => !ids.contains(id));
+  }
+
+  Widget _buildActivityText(GroupMessage message, Widget readyText) {
+    final observation = _activityTextOrigins[message.id];
+    if (observation == null || !_sameTextSource(observation.source, message)) {
+      return readyText;
+    }
+    return GroupEngagementVisibilityProbe(
+      key: ValueKey(observation.observeFrame),
+      eligible: true,
+      frameObservation: observation.observeFrame,
+      child: readyText,
+    );
+  }
+
   Future<void> _loadIdentity() async {
+    final activityOrigin = _captureActivityOrigin();
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity != null && mounted) {
         setState(() {
+          _activityIdentityOrigin = activityOrigin;
           _ownPeerId = identity.peerId;
           _senderUsername = identity.username;
           _senderPublicKey = identity.publicKey;
@@ -2016,6 +2190,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       (_messageMutationGenerations[messageId] ?? 0) > generation;
 
   Future<void> _loadMessages() async {
+    final activityOrigin = _captureActivityOrigin();
     final loadGeneration = ++_messageLoadGeneration;
     final loadGroupId = widget.group.id;
     final mutationGenerationAtStart = _messageMutationGeneration;
@@ -2111,6 +2286,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         // the initial render order matches every subsequent in-place update and
         // no row reshuffles on the first send/receive. (The repository already
         // orders today; this keeps the two paths in lockstep defensively.)
+        final pageById = {for (final row in pageMessages) row.id: row};
+        final committedIds = committedMessages.map((row) => row.id).toSet();
+        _activityTextOrigins.removeWhere((id, _) => !committedIds.contains(id));
+        for (final row in committedMessages) {
+          // Page provenance applies only to that page's actual row. Replay and
+          // LIVE/local overlays retain their own earlier admission origin.
+          if (identical(row, pageById[row.id])) {
+            _rememberActivityText(row, activityOrigin);
+          } else {
+            final prior = _activityTextOrigins[row.id];
+            if (prior == null || !_sameTextSource(prior.source, row)) {
+              _activityTextOrigins.remove(row.id);
+            }
+          }
+        }
         _messages = committedMessages;
         _mediaMap = appliedMediaMap;
         if (replayAnchor) {
@@ -2405,10 +2595,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _startListening() {
+    final activityOrigin = _captureActivityOrigin(
+      eventListener: widget.groupMessageListener,
+    );
     _messageSubscription = widget.groupMessageListener.groupMessageStream.listen(
       (message) {
         if (message.groupId == widget.group.id) {
-          unawaited(_applyMessageUpdate(message));
+          unawaited(
+            _applyMessageUpdate(message, activityOrigin: activityOrigin),
+          );
           if (message.id.startsWith('sys-group_metadata_updated:') ||
               message.id.startsWith('sys-group_dissolved:') ||
               message.id.startsWith('sys-member_role_updated:')) {
@@ -2985,9 +3180,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     VoidCallback? onStickerMediaAdopted,
   }) async {
     if (!_canWrite) return;
+    final activityWidget = widget;
+    final activityBindingGeneration = _sendLaneBindingGeneration;
+    final activitySenderPeerId = _ownPeerId;
+    final activityReporter = activityWidget.activityReporter;
+    ActiveIdentityReporterCapture? activityCapture;
+    try {
+      if (activitySenderPeerId != null) {
+        activityCapture = activityReporter?.captureOwner(
+          expectedAccountPeerId: activitySenderPeerId,
+        );
+      }
+    } catch (_) {}
     if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (!_hasCompleteSenderIdentity) return;
     final sendLane = _captureSendLane();
+    final activityMatchesSendLane =
+        activityBindingGeneration == sendLane.bindingGeneration &&
+        activityWidget.group.id == sendLane.groupId &&
+        activitySenderPeerId == sendLane.senderPeerId &&
+        identical(activityReporter, widget.activityReporter) &&
+        identical(activityWidget.identityRepo, widget.identityRepo) &&
+        identical(activityWidget.groupRepo, sendLane.groupRepository) &&
+        identical(activityWidget.msgRepo, sendLane.messageRepository) &&
+        identical(activityWidget.bridge, sendLane.bridge);
+    final originalActivity = (
+      reporter: activityReporter,
+      capture: activityMatchesSendLane ? activityCapture : null,
+    );
     final sendGroupId = sendLane.groupId;
     if (sticker != null &&
         sticker.bindingGeneration != sendLane.bindingGeneration) {
@@ -3556,6 +3776,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           mediaAttachments: uploadedAttachments,
           mediaAttachmentRepo: sendLane.mediaAttachmentRepository,
           inviteDeliveryAttemptRepo: sendLane.inviteDeliveryAttemptRepository,
+          capturedActivity: (
+            reporter: originalActivity.reporter,
+            capture: !hasAttachments && restoredContinuation == null
+                ? originalActivity.capture
+                : null,
+          ),
+          preassignedMessageIdIsFresh:
+              !hasAttachments && restoredContinuation == null,
         );
         result = legacySend.$1;
         message = legacySend.$2;
@@ -4782,6 +5010,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _applyMessageUpdate(
     GroupMessage message, {
+    _GroupActivityOrigin? activityOrigin,
     bool markAsRead = true,
     int? expectedMutationGeneration,
   }) async {
@@ -4833,6 +5062,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // 159: queue for the per-frame flush instead of a direct per-event setState.
     _enqueueGroupMessageUpdate(
       latestMessage,
+      activityOrigin: activityOrigin,
       media: media,
       markAsRead: markAsRead,
     );
@@ -4844,6 +5074,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// setState + the scroll-capture/restore + markAsRead to ONE per-frame flush.
   void _enqueueGroupMessageUpdate(
     GroupMessage message, {
+    _GroupActivityOrigin? activityOrigin,
     required List<MediaAttachment> media,
     required bool markAsRead,
   }) {
@@ -4851,6 +5082,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         message.groupId != _group.id ||
         _locallyRemovedMessageIds.contains(message.id)) {
       return;
+    }
+    if (activityOrigin != null) {
+      _rememberActivityText(message, activityOrigin);
     }
     _upsertIntoGroupMessagesUnsorted(message);
     _updateMediaForMessage(message.id, media);
@@ -4909,6 +5143,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _messages = trimToNewestInMemoryCap(
         orderGroupMessagesForTimeline(_messages),
       );
+      _pruneActivityTextOrigins();
     });
 
     // Restore the scroll offset ONCE after the whole batch.
@@ -5342,6 +5577,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // has no incremental older-page pagination, so the self-heal for an evicted
     // row is a full `_loadMessages` re-fetch (no flag to set).
     _messages = trimToNewestInMemoryCap(orderGroupMessagesForTimeline(updated));
+    _pruneActivityTextOrigins();
   }
 
   void _updateMediaForMessage(
@@ -8775,6 +9011,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             precomputedDisplayItems: _memoizedGroupDisplayItems(context),
             membersByPeerId: _membersByPeerId,
             ownPeerId: _ownPeerId,
+            activityTextBuilder: widget.activityReporter == null
+                ? null
+                : _buildActivityText,
             onSend: _onSend,
             onBack: _onBack,
             onInfo: _onInfo,
