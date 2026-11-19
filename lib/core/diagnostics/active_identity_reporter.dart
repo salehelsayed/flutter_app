@@ -143,7 +143,9 @@ final class ActiveIdentityReporter {
     final consent = _consent;
     if (_disposed || _retired || bridge == null || identity == null ||
         identity.account != accountPeerId || consent == null ||
-        !consent.enabled) return;
+        !consent.enabled) {
+      return;
+    }
     final capture = ActiveIdentityReporterCapture._(
       reporter: this,
       bridge: bridge,
@@ -413,8 +415,7 @@ final class ActiveIdentityReporter {
     unawaited(_send(capture._bridge, {
       ...owner,
       'op': 'mark',
-      if (occurredAtUnixMillis != null)
-        'occurredAtUnixMillis': occurredAtUnixMillis,
+      'occurredAtUnixMillis': ?occurredAtUnixMillis,
     }));
   }
 
@@ -455,8 +456,9 @@ final class ActiveIdentityReporter {
     ActiveIdentityReporterCapture capture,
   ) async {
     final owner = await _weeklyOwner(capture);
-    if (owner == null || !_captureCurrent(capture) || !identical(owner, _owner))
+    if (owner == null || !_captureCurrent(capture) || !identical(owner, _owner)) {
       return null;
+    }
     final response = await _send(capture._bridge, {
       ...owner,
       'op': 'weeklyProjection',
@@ -479,8 +481,9 @@ final class ActiveIdentityReporter {
           ack.length != 2 ||
           ack['relayPeerId'] is! String ||
           (ack['relayPeerId'] as String).isEmpty ||
-          !_validWeeklyKinds(ack['kinds']))
+          !_validWeeklyKinds(ack['kinds'])) {
         return null;
+      }
     }
     return (
       week: value['week'] as String,
@@ -499,8 +502,9 @@ final class ActiveIdentityReporter {
     final ownedKinds = List<String>.of(kinds);
     if (!_validWeek(week) || !_validWeeklyKinds(ownedKinds)) return false;
     final owner = await _weeklyOwner(capture);
-    if (owner == null || !_captureCurrent(capture) || !identical(owner, _owner))
+    if (owner == null || !_captureCurrent(capture) || !identical(owner, _owner)) {
       return false;
+    }
     final response = await _send(capture._bridge, {
       ...owner,
       'op': 'markWeekly',
@@ -537,7 +541,9 @@ final class ActiveIdentityReporter {
         !identical(
           _chat?.captureOwner(expectedAccountPeerId: capture._account),
           owner,
-        )) return null;
+        )) {
+      return null;
+    }
     return capture;
   }
 
@@ -641,7 +647,9 @@ final class ActiveIdentityReporter {
     EngagementChatObserverIntent intent,
   ) {
     if (_chatCaptureCurrent(capture) &&
-        identical(capture._chatOwner, intent.owner)) _chat?.admitted(intent);
+        identical(capture._chatOwner, intent.owner)) {
+      _chat?.admitted(intent);
+    }
   }
 
   void cancelChatCaptured(
@@ -649,7 +657,9 @@ final class ActiveIdentityReporter {
     EngagementChatObserverIntent intent,
   ) {
     if (_chatCaptureCurrent(capture) &&
-        identical(capture._chatOwner, intent.owner)) _chat?.cancel(intent);
+        identical(capture._chatOwner, intent.owner)) {
+      _chat?.cancel(intent);
+    }
   }
 
   /// A trusted authenticated delivery must have newly committed locally.
@@ -694,8 +704,9 @@ final class ActiveIdentityReporter {
   }) {
     if (!_captureCurrent(capture) ||
         !GroupEngagementObserver.validIdentifier(authorAccountPeerId) ||
-        authorAccountPeerId == capture._account)
+        authorAccountPeerId == capture._account) {
       return;
+    }
     _groups?.observe(
       groupId: groupId,
       own: false,

@@ -511,7 +511,7 @@ void main() {
       release.complete();
       final applied = await _bounded(pending);
       expect(applied.outcome, OutgoingOrdinaryMutationOutcome.applied);
-      held.reporter.admitChatCaptured(original.capture!, intent!);
+      held.reporter.admitChatCaptured(original.capture!, intent);
       await _bounded(held.receipt(capturedActivity: original));
       await _bounded(held.expectDelivered(true));
     } finally {

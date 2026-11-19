@@ -273,7 +273,7 @@ final class EngagementChatObserver {
             intent.contactAccount == decision.contactAccountPeerId &&
             intent._lineage != _InitialLineage.superseded).toList()
         : <EngagementChatObserverIntent>[
-            if (tupleIntent != null) tupleIntent,
+            ?tupleIntent,
           ];
     affected.removeWhere((intent) => intent._cancelled ||
         intent._lineage == _InitialLineage.superseded ||

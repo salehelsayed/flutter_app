@@ -46,7 +46,7 @@ Future<void> handleDeliveryReceipt({
   ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})?
       capturedActivity,
 }) => runWithOutgoingInitialAuthorityObserver(
-  capturedActivity?.reporter?.captureChatSqlObserver(capturedActivity?.capture),
+  capturedActivity?.reporter?.captureChatSqlObserver(capturedActivity.capture),
   () async {
   if (!_trustedDeliveryReceiptTransports.contains(message.transport)) return;
 
@@ -87,7 +87,7 @@ Future<void> handleDeliveryReceipt({
 
   return runWithOutgoingInitialAuthorityObserver(
     capturedActivity?.reporter?.captureChatSqlObserver(
-      capturedActivity?.capture, receiptMessageIds: messageIds.toSet()),
+      capturedActivity.capture, receiptMessageIds: messageIds.toSet()),
     () async {
   for (final messageId in messageIds) {
     final idPreview = messageId.length > 8
