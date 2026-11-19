@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../../core/utils/flow_event_emitter.dart';
 import '../diagnostics/call_diagnostics.dart';
+import '../diagnostics/call_end_detail.dart';
 import '../application/call_endpoint_resolver.dart';
 import '../application/outgoing_call_capability.dart';
 import '../domain/received_call_wake_handle_store.dart';
@@ -235,6 +236,16 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
         traceId: traceId,
         outcome: 'preflight_failed',
         reason: reason,
+        detail: CallEndDetail(
+          cause: switch (error.code) {
+            CallEndpointResolutionCode.blocked ||
+            CallEndpointResolutionCode.notAccepted ||
+            CallEndpointResolutionCode.invalidSignature =>
+              CallEndCause.policyRejected,
+            _ => CallEndCause.endpointUnavailable,
+          },
+          stage: CallEndCauseStage.authority,
+        ),
       );
     }
     emitCallEndpointResolutionResult(

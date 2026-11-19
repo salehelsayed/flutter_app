@@ -23,6 +23,7 @@ import '../../features/call/application/call_network_path_binding.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/diagnostics/call_end_detail.dart';
 import '../../features/call/diagnostics/call_setup_failure.dart';
 import '../../features/call/diagnostics/routine_authority_publication.dart';
 import '../../features/call/infrastructure/call_stats_sampler.dart';
@@ -99,7 +100,8 @@ import 'call_signaling_composition.dart';
 typedef LoadCallSignalingIdentity = Future<IdentityModel?> Function();
 typedef CallActivityMark = void Function();
 typedef CaptureCallActivityMark =
-    CallActivityMark? Function(String expectedOwnAccountPeerId);
+    CallActivityMark? Function(String expectedOwnAccountPeerId,
+);
 typedef AndroidCallLifecycleAdapterFactory =
     AndroidCallLifecycleAdapter Function({
       required CallCoordinator coordinator,
@@ -125,7 +127,8 @@ typedef IosVoipTokenCoordinatorFactory =
       required IosVoipTokenPublicationAllowed publicationAllowed,
     });
 typedef ProductionCallSignalingGraphObserver =
-    void Function(ProductionCallSignalingGraph graph);
+    void Function(ProductionCallSignalingGraph graph,
+);
 typedef LoadCallWakeEligibleContacts =
     Future<List<CallWakeEligibleContact>> Function();
 
@@ -346,6 +349,15 @@ final class PreparedOutgoingCall {
   final CallReduction reduction;
 }
 
+final class _CallEndObservation {
+  _CallEndObservation(this.callId, this.diagnostics, this.traceId);
+  final CallId callId;
+  final CallDiagnostics diagnostics;
+  final String traceId;
+  CallEndDetail? detail;
+  bool finished = false;
+}
+
 /// The concrete graph behind the default-off composition latch. Every
 /// dependency is call-specific except read-only shared bridge/P2P/router/DB
 /// handles, none of which this graph disposes.
@@ -541,6 +553,8 @@ final class ProductionCallSignalingGraph
   @override
   String? invalidationDiagnosticOperationId;
   String? _outgoingDiagnosticTraceId;
+  CallId? _endObservationCallId;
+  _CallEndObservation? _endObservation;
   CallId? _diagnosticMediaVerifiedCallId;
   Timer? _diagnosticSampleTimer;
   bool _diagnosticSampleInFlight = false;
@@ -692,7 +706,8 @@ final class ProductionCallSignalingGraph
   int _cameraEpoch = 0;
   CallVideoNegotiation? _localCameraToken;
   ({CallId callId, int epoch, CallCameraState state,
-    CallV2NegotiationEffectExecutor owner})? _pendingCameraRevocation;
+    CallV2NegotiationEffectExecutor owner,
+  })? _pendingCameraRevocation;
   CallVideoSession? _observedVideoSession;
   StreamSubscription<CallVideoPresentationState>? _videoSubscription;
   CallVideoNegotiation? _rendererToken;
@@ -837,8 +852,11 @@ final class ProductionCallSignalingGraph
           bool cameraCurrent() =>
               (cameraStarted
                   ? (_videoActionCurrent(callId, generation) ||
-                        _pipCameraExecutionCurrent(callId, generation, owner)) &&
-                      owner.cameraIntentBinding(_localCameraToken ?? token!) != null
+                        _pipCameraExecutionCurrent(callId, generation, owner,
+                            )) &&
+                        owner.cameraIntentBinding(
+                              _localCameraToken ?? token!,
+                            ) != null
                   : current() && identical(owner.negotiation, token)) &&
               epoch == _cameraEpoch &&
               identical(videoOwners?[callId], owner) &&
@@ -1706,7 +1724,8 @@ final class ProductionCallSignalingGraph
           coordinator.activeSession?.isTerminal == false &&
           identical(videoOwners?[pending.callId], pending.owner) &&
           identical(pending.owner.negotiation, token),
-    ));
+    ),
+    );
   }
 
   @override
@@ -2361,6 +2380,127 @@ final class ProductionCallSignalingGraph
     }
   }
 
+  void _bindEndObservation(CallSessionSnapshot session) {
+    try {
+      final id = session.callId;
+      if (id == null ||
+          coordinator.activeSession?.callId != id ||
+          _endObservationCallId == id)
+        return;
+      _endObservationCallId = id;
+      _endObservation = null;
+      final diagnostics = CallDiagnostics.instance;
+      if (!diagnostics.enabled) return;
+      final role = session.direction == CallDirection.outgoing
+          ? 'caller'
+          : 'callee';
+      final trace =
+          diagnostics.traceForCall(callId: id.value) ??
+          (session.direction == CallDirection.outgoing
+              ? _outgoingDiagnosticTraceId
+              : null) ??
+          diagnostics.beginAttempt(role: role);
+      if (trace == null) return;
+      diagnostics.bindCall(callId: id.value, traceId: trace, role: role);
+      _endObservation = _CallEndObservation(id, diagnostics, trace);
+    } catch (_) {
+      // Optional detail never owns admission or diagnostics availability.
+    }
+  }
+
+  bool _endObservationCurrent(_CallEndObservation owner) =>
+      identical(owner, _endObservation) &&
+      !owner.finished &&
+      identical(owner.diagnostics, CallDiagnostics.instance) &&
+      owner.diagnostics.enabled &&
+      owner.diagnostics.traceForCall(callId: owner.callId.value) ==
+          owner.traceId &&
+      coordinator.activeSession?.callId == owner.callId;
+
+  void _observeCallEnd(CallId callId, CallEndDetail detail) {
+    try {
+      final owner = _endObservation;
+      if (_shuttingDown ||
+          owner == null ||
+          owner.callId != callId ||
+          !_endObservationCurrent(owner))
+        return;
+      owner.detail ??= detail;
+    } catch (_) {
+      // An observation failure cannot alter the call.
+    }
+  }
+
+  static CallEndDetail _setupEndDetail(CallSetupFailure failure) =>
+      CallEndDetail(
+        cause: switch (failure) {
+          CallSetupFailure.ice => CallEndCause.iceFailed,
+          CallSetupFailure.configuration => CallEndCause.mediaConfiguration,
+          CallSetupFailure.mediaNotReady ||
+          CallSetupFailure.mediaClosed ||
+          CallSetupFailure.turn => CallEndCause.mediaUnavailable,
+          CallSetupFailure.mediaTransport ||
+          CallSetupFailure.mediaStart => CallEndCause.mediaFailed,
+          CallSetupFailure.permission => CallEndCause.permissionDenied,
+          CallSetupFailure.checkpoint => CallEndCause.checkpointFailed,
+          CallSetupFailure.mediaTimeout => CallEndCause.mediaTimeout,
+          CallSetupFailure.signalingTimeout => CallEndCause.signalingTimeout,
+          CallSetupFailure.signaling => CallEndCause.signalingFailed,
+          CallSetupFailure.runtime ||
+          CallSetupFailure.runtimeTimeout => CallEndCause.unknown,
+        },
+        stage: switch (failure.stage) {
+          'media' || 'turn' => CallEndCauseStage.media,
+          'signaling' => CallEndCauseStage.signaling,
+          'preflight' => CallEndCauseStage.preflight,
+          _ => CallEndCauseStage.runtime,
+        },
+      );
+
+  CallEndDetail? _terminalEndDetail(
+    CallSessionSnapshot session,
+    String traceId,
+  ) {
+    final owner = _endObservation;
+    if (owner == null ||
+        owner.callId != session.callId ||
+        owner.traceId != traceId ||
+        !_endObservationCurrent(owner))
+      return null;
+    final detail =
+        owner.detail ??
+        CallEndDetail(
+          cause: switch (session.endReason) {
+            CallEndReason.localHangup => CallEndCause.localHangup,
+            CallEndReason.remoteHangup => CallEndCause.remoteTerminate,
+            CallEndReason.callerCancelled => CallEndCause.canceled,
+            CallEndReason.declined => CallEndCause.declined,
+            CallEndReason.busy => CallEndCause.busy,
+            CallEndReason.noAnswer ||
+            CallEndReason.expired ||
+            CallEndReason.remotePermissionDenied => CallEndCause.noAnswer,
+            CallEndReason.permissionDenied => CallEndCause.permissionDenied,
+            CallEndReason.unsupported => CallEndCause.unsupported,
+            CallEndReason.signalingFailed => CallEndCause.signalingFailed,
+            CallEndReason.mediaFailed ||
+            CallEndReason.reconnectFailed => CallEndCause.mediaFailed,
+            CallEndReason.appShutdown => CallEndCause.appLifecycle,
+            CallEndReason.policyRejected => CallEndCause.policyRejected,
+            null => CallEndCause.unknown,
+          },
+          stage: CallEndCauseStage.runtime,
+        );
+    owner.finished = true;
+    return CallEndDetail(
+      cause: detail.cause,
+      stage: detail.stage,
+      recoveryCheck: detail.recoveryCheck,
+      elapsed: session.startedAt != null && session.endedAt != null
+          ? session.endedAt!.difference(session.startedAt!)
+          : Duration.zero,
+    );
+  }
+
   void _recordDiagnosticSession(CallSessionSnapshot session) {
     final diagnostics = CallDiagnostics.instance;
     final callId = session.callId;
@@ -2447,6 +2587,7 @@ final class ProductionCallSignalingGraph
         traceId: traceId,
         outcome: outcome,
         reason: _diagnosticEndReason(session.endReason),
+        detail: _terminalEndDetail(session, traceId),
         values: <String, Object?>{
           'connected': session.connectedAt != null,
           'accepted': session.acceptedAt != null,
@@ -3360,6 +3501,12 @@ CallSignalingComposition createProductionCallSignalingComposition({
             endpointRecovery = CallEndpointRecovery(
               budget: budget,
               admitted: admitted,
+              onEndDetail: (detail) {
+                if (identical(endpointRecovery?.budget, budget) &&
+                    identical(coordinator.recoveryBudgetFor(callId), budget)) {
+                  diagnosticGraph?._observeCallEnd(callId, detail);
+                }
+              },
               bindingCurrent: () {
                 final current = signalingContextStore.read(callId);
                 return diagnosticGraph?._shuttingDown != true &&
@@ -3461,11 +3608,46 @@ CallSignalingComposition createProductionCallSignalingComposition({
             : onCallTimerScheduled,
         terminalEffectTimeout: const Duration(milliseconds: 500),
         terminalHistoryTimeout: const Duration(milliseconds: 250),
+        onSetupFailure: (snapshot, failure) {
+          diagnosticGraph?._bindEndObservation(snapshot);
+          final id = snapshot.callId;
+          if (id != null)
+            diagnosticGraph?._observeCallEnd(
+              id,
+              ProductionCallSignalingGraph._setupEndDetail(failure),
+            );
+        },
         onAppliedStateTransition: (trigger, resultingState, endReason) {
           // Capture at admission, before ringing/acceptance and before any
           // native wake/adoption effects. A settings change during ringing
           // must apply to the next call too, not just after media starts.
           final session = coordinator.activeSession;
+          if (session != null) {
+            diagnosticGraph?._bindEndObservation(session);
+            final id = session.callId;
+            if (id != null &&
+                trigger == CallEventType.timeout &&
+                endReason == CallEndReason.reconnectFailed) {
+              diagnosticGraph?._observeCallEnd(
+                id,
+                const CallEndDetail(
+                  cause: CallEndCause.recoveryTimeout,
+                  stage: CallEndCauseStage.signaling,
+                  recoveryCheck: CallRecoveryCheck.budget,
+                ),
+              );
+            } else if (id != null &&
+                trigger == CallEventType.nativeAction &&
+                endReason == CallEndReason.mediaFailed) {
+              diagnosticGraph?._observeCallEnd(
+                id,
+                const CallEndDetail(
+                  cause: CallEndCause.nativeLifecycle,
+                  stage: CallEndCauseStage.runtime,
+                ),
+              );
+            }
+          }
           if (videoEnabled &&
               session?.state == CallState.accepted &&
               session?.direction == CallDirection.incoming &&
@@ -3807,6 +3989,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
             ),
             audioSession: audioSession,
             onEngineStartFailure: (stage) {
+              diagnosticGraph?._observeCallEnd(
+                callId,
+                CallEndDetail(
+                  cause:
+                      stage == CallAudioEngineStartStage.setAudioSessionActive
+                      ? CallEndCause.audioSessionFailed
+                      : CallEndCause.mediaFailed,
+                  stage:
+                      stage == CallAudioEngineStartStage.setAudioSessionActive
+                      ? CallEndCauseStage.audio
+                      : CallEndCauseStage.media,
+                ),
+              );
               CallDiagnostics.instance.record(
                 stage: 'audio',
                 action: 'activate',
@@ -3838,6 +4033,30 @@ CallSignalingComposition createProductionCallSignalingComposition({
             readInitialIceServers: iceServerProvider.read,
             clock: callClock,
             onStartResult: (status) {
+              if (status != CallAudioStartStatus.started &&
+                  status != CallAudioStartStatus.notLocallyAccepted &&
+                  status != CallAudioStartStatus.closed) {
+                diagnosticGraph?._observeCallEnd(
+                  callId,
+                  CallEndDetail(
+                    cause: switch (status) {
+                      CallAudioStartStatus.audioSessionFailed =>
+                        CallEndCause.audioSessionFailed,
+                      CallAudioStartStatus.permissionDenied ||
+                      CallAudioStartStatus.permissionFailed =>
+                        CallEndCause.permissionDenied,
+                      CallAudioStartStatus.invalidConfiguration =>
+                        CallEndCause.mediaConfiguration,
+                      CallAudioStartStatus.mediaConflict =>
+                        CallEndCause.mediaUnavailable,
+                      _ => CallEndCause.mediaFailed,
+                    },
+                    stage: status == CallAudioStartStatus.engineFailed
+                        ? CallEndCauseStage.media
+                        : CallEndCauseStage.audio,
+                  ),
+                );
+              }
               CallDiagnostics.instance.record(
                 stage: 'audio',
                 action: 'activate',
@@ -3876,6 +4095,12 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 : null,
             onFailureObservation: (id, reason, disposition) {
               final failure = CallSetupFailure.fromObservation(reason);
+              if (disposition == CallFailureDisposition.terminal) {
+                diagnosticGraph?._observeCallEnd(
+                  id,
+                  ProductionCallSignalingGraph._setupEndDetail(failure),
+                );
+              }
               CallDiagnostics.instance.record(
                 stage: failure.stage,
                 action: 'check',
@@ -3931,8 +4156,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
                       canApply: canApply,
                     );
                     return (await prepared.transmit(
-                      canApply: canApply,
-                    )).delivered;
+                      canApply: canApply)).delivered;
                   },
               canApply: () =>
                   diagnosticGraph?._shuttingDown != true &&

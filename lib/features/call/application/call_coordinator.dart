@@ -124,6 +124,7 @@ final class CallCoordinator {
     this.shutdownTerminalEffectTimeout = defaultShutdownTerminalEffectTimeout,
     this.terminalHistoryTimeout = const Duration(seconds: 5),
     this.onInternalFailure,
+    this.onSetupFailure,
     this.onAppliedStateTransition,
     this.onTimerScheduled,
     this.persistActiveCall,
@@ -176,6 +177,8 @@ final class CallCoordinator {
   final Duration terminalHistoryTimeout;
   final void Function(CallCoordinatorInternalFailure failure)?
   onInternalFailure;
+  final void Function(CallSessionSnapshot snapshot, CallSetupFailure failure)?
+  onSetupFailure;
   final CallAppliedStateTransitionObserver? onAppliedStateTransition;
   final CallScheduledTimerObserver? onTimerScheduled;
   final Future<void> Function(CallSessionSnapshot snapshot)? persistActiveCall;
@@ -743,6 +746,11 @@ final class CallCoordinator {
           : effect != null
           ? CallSetupFailure.signaling
           : CallSetupFailure.runtime;
+      try {
+        onSetupFailure?.call(snapshot, failure);
+      } catch (_) {
+        // Observation cannot suppress the existing failure record.
+      }
       diagnostics.record(
         stage: failure.stage,
         action: 'finish',

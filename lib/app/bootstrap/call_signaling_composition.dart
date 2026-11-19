@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/permissions/mic_permission_gateway.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/diagnostics/call_end_detail.dart';
 import '../../features/call/application/foreground_call_capability.dart';
 import '../../features/call/application/ringing_call_mailbox_poller.dart';
 import '../../features/call/application/handle_incoming_call_signal.dart';
@@ -25,7 +26,8 @@ typedef AwaitCallSignalingReadiness = Future<void> Function();
 typedef RequestOutgoingMicrophonePermission =
     Future<MicPermissionStatus> Function();
 typedef EnsureOutgoingCallWakeAuthority =
-    Future<bool> Function(String contactAccountPeerId);
+    Future<bool> Function(String contactAccountPeerId,
+);
 typedef BuildCallSignalingGraph =
     Future<CallSignalingGraphLifecycle> Function();
 
@@ -353,8 +355,7 @@ final class CallSignalingComposition
     try {
       await Future.any(<Future<void>>[
         start(),
-        _terminalSignal.future,
-      ]).timeout(const Duration(seconds: 10));
+        _terminalSignal.future]).timeout(const Duration(seconds: 10));
     } catch (_) {
       return false;
     }
@@ -484,6 +485,17 @@ final class CallSignalingComposition
         traceId: traceId,
         outcome: 'preflight_failed',
         reason: reason,
+        detail: CallEndDetail(
+          cause: switch (reason) {
+            'microphone_denied' => CallEndCause.permissionDenied,
+            'graph_shutdown' || 'graph_replaced' => CallEndCause.appLifecycle,
+            'wake_authority_missing' => CallEndCause.policyRejected,
+            'capability_publish_failed' => CallEndCause.signalingFailed,
+            'capability_unavailable' => CallEndCause.unsupported,
+            _ => CallEndCause.endpointUnavailable,
+          },
+          stage: CallEndCauseStage.preflight,
+        ),
       );
       return result;
     }
