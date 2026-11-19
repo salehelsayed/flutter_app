@@ -208,7 +208,7 @@ class GoBridge: NSObject {
         return "{\"ok\":false,\"errorCode\":\"\(fixed)\"}"
     }
 
-    // The local operation is a bounded flat JSON object. Decode names before
+    // The local operation is bounded JSON; only kinds may be a string array. Decode names before
     // duplicate checks so escaped aliases cannot disappear during re-encoding.
     internal static func activityFields(_ raw: String?) -> [String: Any]? {
         guard let raw, raw.utf8.count <= 16_384, let data = raw.data(using: .utf8),
@@ -246,6 +246,26 @@ class GoBridge: NSObject {
             if position < bytes.count && bytes[position] == 34 {
                 guard let value = string() else { return nil }
                 fields[key] = value
+            } else if position < bytes.count && bytes[position] == 91 {
+                guard key == "kinds" else { return nil }
+                position += 1
+                space()
+                var kinds: [String] = []
+                if position < bytes.count && bytes[position] == 93 {
+                    position += 1
+                } else {
+                    while true {
+                        guard kinds.count < 4, let value = string() else { return nil }
+                        kinds.append(value)
+                        space()
+                        guard position < bytes.count else { return nil }
+                        if bytes[position] == 93 { position += 1; break }
+                        guard bytes[position] == 44 else { return nil }
+                        position += 1
+                        space()
+                    }
+                }
+                fields[key] = kinds
             } else {
                 let start = position
                 while position < bytes.count && bytes[position] != 44 && bytes[position] != 125 { position += 1 }
@@ -270,6 +290,14 @@ class GoBridge: NSObject {
 
     internal static func activityMarkRevision(_ fields: [String: Any]) -> Int64? {
         var keys: Set<String> = ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"]
+        if fields["op"] as? String == "markWeekly" {
+            guard let week = fields["week"] as? String, week.utf8.count == 8,
+                  week.range(of: #"^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$"#, options: .regularExpression) != nil,
+                  let kinds = fields["kinds"] as? [String], !kinds.isEmpty, kinds.count <= 4,
+                  Set(kinds).count == kinds.count,
+                  kinds.allSatisfy({ ["active", "chat", "call", "group"].contains($0) }) else { return nil }
+            keys.formUnion(["week", "kinds"])
+        }
         if let occurrence = fields["occurredAtUnixMillis"] {
             guard fields["op"] as? String == "mark", type(of: occurrence) == Int64.self,
                   let timestamp = occurrence as? Int64, timestamp >= 0 else { return nil }

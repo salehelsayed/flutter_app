@@ -10,6 +10,7 @@ import android.util.JsonToken
 import com.mknoon.app.diagnostics.MknoonActiveIdentityReporterAdmission
 import com.mknoon.app.diagnostics.MknoonActiveIdentityReporterFence
 import java.io.StringReader
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -76,6 +77,17 @@ class GoBridge internal constructor(
                                 if (!Regex("0|[1-9][0-9]*").matches(number)) return null
                                 number.toLongOrNull() ?: return null
                             }
+                            JsonToken.BEGIN_ARRAY -> {
+                                if (key != "kinds") return null
+                                val kinds = mutableListOf<String>()
+                                reader.beginArray()
+                                while (reader.hasNext()) {
+                                    if (kinds.size >= 4 || reader.peek() != JsonToken.STRING) return null
+                                    kinds.add(reader.nextString())
+                                }
+                                reader.endArray()
+                                kinds
+                            }
                             else -> return null
                         }
                         fields[key] = value
@@ -87,8 +99,19 @@ class GoBridge internal constructor(
             } catch (_: Throwable) { null }
         }
 
+        internal fun activityNonConfigurationOperation(op: String?): Boolean =
+            op == "mark" || op == "flush" || op == "weeklyProjection" || op == "markWeekly"
+
         internal fun activityMarkRevision(fields: Map<String, Any>): Long? {
             var keys = setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId")
+            if (fields["op"] == "markWeekly") {
+                val week = fields["week"] as? String ?: return null
+                val kinds = fields["kinds"] as? List<*> ?: return null
+                if (!Regex("[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])").matches(week) ||
+                    kinds.isEmpty() || kinds.size > 4 || kinds.toSet().size != kinds.size ||
+                    kinds.any { it !in setOf("active", "chat", "call", "group") }) return null
+                keys = keys + setOf("week", "kinds")
+            }
             if (fields.containsKey("occurredAtUnixMillis")) {
                 val occurrence = fields["occurredAtUnixMillis"]
                 if (fields["op"] != "mark" || occurrence !is Long || occurrence < 0) return null
@@ -100,20 +123,53 @@ class GoBridge internal constructor(
             return revision
         }
 
-        private fun activityAnswer(raw: String?, fence: MknoonActiveIdentityReporterFence, op: String): String {
+        private fun activityWeeklyProjection(value: Any?): Boolean {
+            val weekly = value as? JSONObject ?: return false
+            if (weekly.keys().asSequence().toSet() != setOf(
+                    "week", "startUnixMillis", "endUnixMillis", "kinds", "acknowledged")) return false
+            val week = weekly.opt("week") as? String ?: return false
+            val start = activityInteger(weekly.opt("startUnixMillis")) ?: return false
+            val end = activityInteger(weekly.opt("endUnixMillis")) ?: return false
+            if (!Regex("[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])").matches(week) ||
+                start < -9_007_199_254_740_991L || start > 9_007_199_254_740_991L ||
+                end < -9_007_199_254_740_991L || end > 9_007_199_254_740_991L || end <= start) return false
+            fun validKinds(value: Any?, nonempty: Boolean): Boolean {
+                val kinds = value as? JSONArray ?: return false
+                if (kinds.length() > 4 || (nonempty && kinds.length() == 0)) return false
+                val seen = mutableSetOf<String>()
+                for (index in 0 until kinds.length()) {
+                    val kind = kinds.opt(index) as? String ?: return false
+                    if (kind !in setOf("active", "chat", "call", "group") || !seen.add(kind)) return false
+                }
+                return true
+            }
+            if (!validKinds(weekly.opt("kinds"), false)) return false
+            val acknowledged = weekly.opt("acknowledged") as? JSONArray ?: return false
+            if (acknowledged.length() > 64) return false
+            for (index in 0 until acknowledged.length()) {
+                val ack = acknowledged.opt(index) as? JSONObject ?: return false
+                if (ack.keys().asSequence().toSet() != setOf("relayPeerId", "kinds") ||
+                    (ack.opt("relayPeerId") as? String).isNullOrEmpty() ||
+                    !validKinds(ack.opt("kinds"), true)) return false
+            }
+            return true
+        }
+
+        internal fun activityAnswer(raw: String?, fence: MknoonActiveIdentityReporterFence, op: String): String {
             return try {
                 if (raw == null || raw.toByteArray(Charsets.UTF_8).size > 16_384) return activityError("")
                 val answer = JSONObject(raw)
                 if (answer.opt("ok") != true) return activityError(answer.optString("errorCode"))
-                val field = when (op) { "configure" -> "configured"; "mark" -> "accepted"; else -> "queued" }
+                val field = when (op) { "configure" -> "configured"; "mark", "markWeekly" -> "accepted"; "weeklyProjection" -> "weekly"; else -> "queued" }
                 val data = answer.optJSONObject("data") ?: return activityError("")
                 if (answer.keys().asSequence().toSet() != setOf("ok", "data") ||
                     data.keys().asSequence().toSet() != setOf(field, "revision", "consentEpoch") ||
                     activityInteger(data.opt("revision")) != fence.revision ||
-                    activityInteger(data.opt("consentEpoch")) != fence.consentEpoch || data.opt(field) !is Boolean) {
+                    activityInteger(data.opt("consentEpoch")) != fence.consentEpoch ||
+                    (if (op == "weeklyProjection") !activityWeeklyProjection(data.opt(field)) else data.opt(field) !is Boolean)) {
                     return activityError("")
                 }
-                JSONObject().put("ok", true).put("data", JSONObject().put(field, data.getBoolean(field))
+                JSONObject().put("ok", true).put("data", JSONObject().put(field, data.get(field))
                     .put("revision", fence.revision).put("consentEpoch", fence.consentEpoch)).toString()
             } catch (_: Throwable) { activityError("") }
         }
@@ -304,7 +360,7 @@ class GoBridge internal constructor(
             }
             fence = admitted
             fields["revision"] = fence.revision
-        } else if (op == "mark" || op == "flush") {
+        } else if (activityNonConfigurationOperation(op)) {
             val revision = activityMarkRevision(fields)
             if (revision == null) {
                 result.success(activityError("INVALID_INPUT")); return

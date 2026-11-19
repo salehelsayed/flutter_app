@@ -4,6 +4,31 @@ import XCTest
 @testable import Runner
 
 final class GoBridgeActivityReporterContractTests: XCTestCase {
+    func testWeeklyMarkKindsCrossTheRealRequestCodecUnchanged() throws {
+        for kinds in [["group"], ["active", "chat", "call", "group"]] {
+            let encodedKinds = try JSONSerialization.data(withJSONObject: kinds)
+            let raw = String(request(op: "markWeekly").dropLast()) +
+                ",\"week\":\"2026-W47\",\"kinds\":" +
+                String(decoding: encodedKinds, as: UTF8.self) + "}"
+            let fields = try decoded(raw)
+            XCTAssertEqual(fields["week"] as? String, "2026-W47")
+            XCTAssertEqual(fields["kinds"] as? [String], kinds)
+            XCTAssertEqual(Set(fields.keys), requiredKeys.union(["week", "kinds"]))
+            let forwarded = try JSONSerialization.data(withJSONObject: fields)
+            let reparsed = try decoded(String(decoding: forwarded, as: UTF8.self))
+            XCTAssertEqual(fields as NSDictionary, reparsed as NSDictionary)
+        }
+    }
+
+    func testWeeklyMarkUsesTheExistingOwnerRevisionShapeGuard() throws {
+        var fields = try decoded(request(op: "markWeekly"))
+        fields["week"] = "2026-W47"
+        fields["kinds"] = ["group"]
+        let original = fields as NSDictionary
+        XCTAssertEqual(GoBridge.activityMarkRevision(fields), 1)
+        XCTAssertEqual(fields as NSDictionary, original)
+    }
+
     func testMarkAcceptsZeroOccurrenceUnchanged() throws {
         try assertOccurrenceUnchanged(0)
     }
@@ -81,6 +106,28 @@ final class GoBridgeActivityReporterContractTests: XCTestCase {
     func testDuplicateRequiredNamesAndDecodedAliasesRemainRejected() {
         for duplicate in ["revision", #"\u0072evision"#] {
             XCTAssertNil(GoBridge.activityFields(String(request().dropLast()) + ",\"\(duplicate)\":1}"))
+        }
+    }
+
+    func testWeeklyMarkRejectsInvalidWeekAndKinds() {
+        let rejected: [(week: String, kinds: String, codecRejects: Bool)] = [
+            ("2026-W00", #"["group"]"#, false),
+            ("2026-W54", #"["group"]"#, false),
+            ("2026-W47", "[]", false),
+            ("2026-W47", #"["group","group"]"#, false),
+            ("2026-W47", #"["unknown"]"#, false),
+            ("2026-W47", "[1]", true),
+            ("2026-W47", #"[["group"]]"#, true),
+            ("2026-W47", #"["active","chat","call","group","group"]"#, true),
+        ]
+        for sample in rejected {
+            let raw = String(request(op: "markWeekly").dropLast()) +
+                ",\"week\":\"\(sample.week)\",\"kinds\":\(sample.kinds)}"
+            if sample.codecRejects {
+                XCTAssertNil(GoBridge.activityFields(raw))
+            } else {
+                assertRejected(raw)
+            }
         }
     }
 
