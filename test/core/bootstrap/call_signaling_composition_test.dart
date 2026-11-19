@@ -564,6 +564,122 @@ void main() {
   });
 
   test(
+    'BL16 PiP arms after a completed audio-to-video upgrade retains its request',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final pip = FakeCallPictureInPictureBridge();
+      final (caller, callerEngine) = await _connectedOutgoingGraphAudio()
+          .timeout(deadline);
+      final id = caller.graphs.single.coordinator.activeSession!.callId!;
+      final (callee, calleeEngine) = await _connectedGraphVideo(
+        acceptedMedia: CallMediaKind.audio,
+        callId: id,
+        pictureInPictureBridgeFactory: () => pip,
+      ).timeout(deadline);
+      final callerGraph = caller.graphs.single;
+      final calleeGraph = callee.graphs.single;
+      final machine = calleeGraph.videoOwners![id]!.mediaSwitch!.machine;
+      final initialOffers = _upgradeSignals(caller, 'offer').length;
+      final initialAnswers = _upgradeSignals(callee, 'answer').length;
+
+      Future<Map<String, dynamic>> nextSignal(
+        _ProductionIosFixture sender,
+        String event, {
+        int previous = 0,
+      }) async {
+        await _untilGraphVideo(
+          () => _upgradeSignals(sender, event).length > previous,
+        ).timeout(deadline);
+        return _upgradeSignals(sender, event).last;
+      }
+
+      Future<void> noEntryWhilePending() async {
+        await flushPip().timeout(deadline);
+        expect(pip.arms, isEmpty);
+        expect(pip.enters, isEmpty);
+      }
+
+      expect(
+        await (caller.composition as ForegroundCallVideoCapability)
+            .applyVideoIntent(
+              id,
+              generation: callerGraph.current!.video!.generation,
+              intent: const CallVideoIntent(CallVideoAction.requestVideo),
+            )
+            .timeout(deadline),
+        ForegroundCallActionResult.applied,
+      );
+      final request = await nextSignal(caller, 'media_request')
+          .timeout(deadline);
+      await _deliverUpgradeSignal(callee, request).timeout(deadline);
+      await _untilGraphVideo(
+        () => machine.phase == MediaSwitchPhase.decision,
+      ).timeout(deadline);
+      calleeEngine.video!.replaceRemoteTrack();
+      await noEntryWhilePending().timeout(deadline);
+      expect(
+        await (callee.composition as ForegroundCallVideoCapability)
+            .applyVideoIntent(
+              id,
+              generation: calleeGraph.current!.video!.generation,
+              intent: CallVideoIntent(
+                CallVideoAction.acceptUpgrade,
+                upgradeId: machine.currentRequest!.id,
+              ),
+            )
+            .timeout(deadline),
+        ForegroundCallActionResult.applied,
+      );
+      final response = await nextSignal(callee, 'media_response')
+          .timeout(deadline);
+      await _deliverUpgradeSignal(caller, response).timeout(deadline);
+      final offer = await nextSignal(
+        caller,
+        'offer',
+        previous: initialOffers,
+      ).timeout(deadline);
+      await _deliverUpgradeSignal(callee, offer).timeout(deadline);
+      final answer = await nextSignal(
+        callee,
+        'answer',
+        previous: initialAnswers,
+      ).timeout(deadline);
+      await _untilGraphVideo(
+        () => machine.phase == MediaSwitchPhase.commit,
+      ).timeout(deadline);
+      calleeEngine.video!.replaceRemoteTrack();
+      await noEntryWhilePending().timeout(deadline);
+      await _deliverUpgradeSignal(caller, answer).timeout(deadline);
+      final commit = await nextSignal(caller, 'media_commit')
+          .timeout(deadline);
+      await _deliverUpgradeSignal(callee, commit).timeout(deadline);
+      final acknowledgement = await nextSignal(callee, 'media_commit_ack')
+          .timeout(deadline);
+      await _deliverUpgradeSignal(caller, acknowledgement).timeout(deadline);
+      await _untilGraphVideo(
+        () =>
+            machine.phase == MediaSwitchPhase.committed &&
+            callerGraph.videoOwners![id]!.mediaSwitch!.machine.phase ==
+                MediaSwitchPhase.committed &&
+            callerEngine.video!.commits == 2 &&
+            calleeEngine.video!.commits == 2,
+      ).timeout(deadline);
+      expect(machine.currentRequest, isNotNull);
+      expect(machine.settledMedia, CallMediaKind.video);
+      expect(machine.videoGatesOpen, isTrue);
+      await flushPip().timeout(deadline);
+      expect(pip.arms, hasLength(1));
+
+      await callee.composition.onBackgrounded().timeout(deadline);
+      await flushPip().timeout(deadline);
+      expect(pip.enters, [pip.arms.single]);
+      expect(calleeGraph.coordinator.activeSession!.state, CallState.connected);
+      expect(callerEngine.video!.cameraStarts, 0);
+      expect(calleeEngine.video!.cameraStarts, 0);
+    },
+  );
+
+  test(
     'PiP graph OS-paused user camera resumes without a permission prompt',
     () async {
       final pip = FakeCallPictureInPictureBridge();
@@ -12658,7 +12774,9 @@ Future<ForegroundCallProjection> _vui7EndProjection(
   final terminal = Completer<ForegroundCallProjection>();
   final sub = (fixture.composition as ForegroundCallCapability).changes.listen((p) {
     if (p != null && p.session.callId == id && p.session.isTerminal &&
-        !terminal.isCompleted) terminal.complete(p);
+        !terminal.isCompleted) {
+      terminal.complete(p);
+    }
   });
   try {
     if (event == null) {

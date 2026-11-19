@@ -14,6 +14,14 @@ import 'package:flutter_app/features/call/application/call_endpoint_resolver.dar
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
+import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
+import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
+import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_v2_signaling_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/platform_call_picture_in_picture_bridge.dart';
+import 'package:flutter_app/features/call/infrastructure/platform_call_video_quality_environment_source.dart';
+import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
@@ -43,6 +51,43 @@ final _callA = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  for (final event in ['terminate', 'media_request', 'camera_state']) {
+    test(
+      'BL16 live resume preserves admitted authority for $event transport',
+      () async {
+        const deadline = Duration(seconds: 3);
+        var nowMs = 2_000_000;
+        final fixture = await _createFixture(
+          nowMs: () => nowMs,
+          videoEnabled: true,
+        ).timeout(deadline);
+        await fixture.composition.start().timeout(deadline);
+        final graph = fixture.graphs.single;
+        final transport = _LiveVideoTransport(
+          bridge: fixture.bridge,
+          nowMs: () => nowMs,
+        );
+        addTearDown(transport.close);
+        // The remote caller binds the actual published endpoint at admission.
+        // A successful first write excludes a broken crypto/transport fixture.
+        await transport.send('camera_state', sequence: 2).timeout(deadline);
+        expect(transport.direct.envelopes, hasLength(1));
+        expect(transport.mailbox.requests, hasLength(1));
+
+        await _ringIncoming(graph).timeout(deadline);
+        nowMs += 1000;
+        await fixture.composition.onResume().timeout(deadline);
+        expect(graph.coordinator.activeSession?.isTerminal, isFalse);
+
+        // Resume must not invalidate an otherwise unchanged, still-live call.
+        // This exercises the strict production adapter, not an epoch assertion.
+        await transport.send(event, sequence: 3).timeout(deadline);
+        expect(transport.direct.envelopes, hasLength(2));
+        expect(transport.mailbox.requests, hasLength(2));
+      },
+    );
+  }
   for (final progress in [
     'no-ack',
     'ringing',
@@ -1045,6 +1090,7 @@ final class _Fixture {
 
 Future<_Fixture> _createFixture({
   int Function()? nowMs,
+  bool videoEnabled = false,
   Set<String> failingLifecycleMethods = const <String>{},
 }) async {
   databaseFactory = databaseFactoryFfi;
@@ -1108,6 +1154,7 @@ Future<_Fixture> _createFixture({
     secureKeyStore: FakeSecureKeyStore(),
     featureFlags: <String, bool>{
       ...defaultVoiceCallFeatureFlags(),
+      'video_call_v2_enabled': videoEnabled,
       'voice_call_capability_v1': true,
       'voice_call_outgoing_enabled': true,
       'voice_call_incoming_enabled': true,
@@ -1185,6 +1232,11 @@ Future<_Fixture> _createFixture({
           clock: clock,
           publicationAllowed: publicationAllowed,
         ),
+    // These optional native sources are outside this signaling-only proof.
+    qualityEnvironmentSourceFactory: () =>
+        PlatformCallVideoQualityEnvironmentSource(),
+    pictureInPictureBridgeFactory: () =>
+        PlatformCallPictureInPictureBridge(),
     isForeground: () => true,
     nowMs: nowMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
@@ -1286,4 +1338,180 @@ final class _P2P implements P2PService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+
+// A caller observes the peer graph's actual signed endpoint publications, while
+// fake crypto and transports keep this proof independent of network/native I/O.
+final class _LiveVideoTransport {
+  _LiveVideoTransport({required this.bridge, required this.nowMs}) {
+    admitted = endpoint;
+    contexts.storeOutgoingV2(
+      invite: signal('invite', sequence: 1),
+      callHandle: _handle,
+      admittedEndpoint: admitted,
+    );
+  }
+
+  static const _handle = '66666666-6666-4666-8666-666666666666';
+  final _Bridge bridge;
+  final int Function() nowMs;
+  final contexts = CallSignalingContextStore(videoEnabled: true);
+  final direct = _LiveVideoDirect();
+  final mailbox = _LiveVideoMailbox();
+  late final ResolvedCallEndpoint admitted;
+  late final service = CallSignalingService(
+    codec: SecureCallEnvelopeCodec(
+      crypto: _LiveVideoCrypto(),
+      nowMs: nowMs,
+      videoEnabled: true,
+    ),
+    directTransport: direct,
+    mailboxClient: mailbox,
+    networkEffectsAllowed: () => true,
+    nowMs: nowMs,
+  );
+  late final adapter = ProductionCallV2SignalingAdapter(
+    signalingService: service,
+    contextStore: contexts,
+    resolveCurrentEndpoint: (_) async => endpoint,
+    loadSenderSigningPrivateKey: () async => 'remote-private-key',
+    nowMs: nowMs,
+    videoEnabled: true,
+  );
+
+  ResolvedCallEndpoint get endpoint {
+    final request = bridge.requests.lastWhere(
+      (request) => request['cmd'] == 'call_endpoint_set_v1',
+    );
+    final record = request['payload']! as Map<String, dynamic>;
+    return ResolvedCallEndpoint(
+      accountPeerId: record['accountPeerId']! as String,
+      devicePeerId: record['devicePeerId']! as String,
+      signingPublicKey: 'local-public-key',
+      mlKemPublicKey: 'local-mlkem-public-key',
+      deviceKeyEpoch: record['deviceKeyEpoch']! as int,
+      preferenceEpoch: record['preferenceEpoch']! as int,
+      platform: CallEndpointPlatform.parse(record['platform']! as String),
+      expiresAtMs: record['expiresAtMs']! as int,
+      routingHandle: record['routingHandle']! as String,
+      wakeHandle: '0123456789abcdef0123456789abcdef',
+      capabilities: Set<String>.from(record['capabilities']! as List),
+    );
+  }
+
+  CallSignalV2 signal(String event, {required int sequence}) =>
+      CallSignalV2.fromMap({
+        'schema': CallSignalV2.schema,
+        'call_id': _callA.value,
+        'message_id':
+            '33333333-3333-4333-8333-${sequence.toString().padLeft(12, '0')}',
+        'event': event,
+        'sender_account_peer_id': 'remote-account',
+        'sender_device_peer_id': 'remote-device',
+        'recipient_account_peer_id': 'local-account',
+        'recipient_device_peer_id': 'local-account',
+        'sender_sequence': sequence,
+        'ice_generation': 0,
+        'created_at_ms': nowMs(),
+        'expires_at_ms': nowMs() + 45000,
+        'payload': switch (event) {
+          'invite' => {
+            'media': 'video',
+            'camera': 'off',
+            'capabilities': ['audio', 'video'],
+          },
+          'terminate' => {'reason': 'local_hangup'},
+          'media_request' => {
+            'switch_id': '55555555-5555-4555-8555-555555555555',
+            'base_revision': 0,
+            'target_media': 'audio',
+            'camera': 'off',
+          },
+          _ => {'media_revision': 0, 'state': 'paused'},
+        },
+      }, videoEnabled: true);
+
+  Future<void> send(String event, {required int sequence}) async {
+    final prepared = await adapter.prepare(
+      signal: signal(event, sequence: sequence),
+      callHandle: _handle,
+      admittedEndpoint: admitted,
+      canApply: () => true,
+    );
+    expect((await prepared.transmit(canApply: () => true)).delivered, isTrue);
+  }
+
+  void close() {
+    adapter.close();
+    service.close();
+  }
+}
+
+final class _LiveVideoDirect implements CallDirectTransport {
+  final envelopes = <String>[];
+
+  @override
+  Future<CallDirectSendResult> send({
+    required String recipientDevicePeerId,
+    required String envelopeJson,
+  }) async {
+    envelopes.add(envelopeJson);
+    return const CallDirectSendResult(
+      outcome: CallDirectTransportOutcome.acceptedBytes,
+      transportAcknowledged: true,
+      route: CallDirectRoute.direct,
+    );
+  }
+}
+
+final class _LiveVideoMailbox implements CallMailboxClient {
+  final requests = <CallMailboxStoreRequest>[];
+
+  @override
+  Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) async {
+    requests.add(request);
+    return CallMailboxStoreResult(
+      status: CallMailboxStoreStatus.stored,
+      receiptAtMs: 2_000_000,
+      expiresAtMs: request.expiresAtMs,
+      eventCount: 1,
+      totalBytes: 100,
+      pendingHandles: 1,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _LiveVideoCrypto implements CallEnvelopeCrypto {
+  @override
+  Future<CallCiphertext> encrypt({
+    required String recipientMlKemPublicKey,
+    required String plaintext,
+  }) async => CallCiphertext(
+    kem: base64Encode(utf8.encode('fixture-kem')),
+    ciphertext: base64Encode(utf8.encode(plaintext)),
+    nonce: base64Encode(utf8.encode('fixture-nonce')),
+  );
+
+  @override
+  Future<String> sign({
+    required String senderSigningPrivateKey,
+    required String canonicalData,
+  }) async => base64Encode(utf8.encode(canonicalData));
+
+  @override
+  Future<String> decrypt({
+    required String ownMlKemSecretKey,
+    required CallCiphertext ciphertext,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<bool> verify({
+    required String senderSigningPublicKey,
+    required String canonicalData,
+    required String signature,
+  }) async => true;
 }

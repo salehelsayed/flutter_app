@@ -98,6 +98,101 @@ void main() {
       expect(result.cameraFailure, ForegroundCallCameraFailure.unavailable);
     },
   );
+  test(
+    'BL16 camera permission grant waits for resumed foreground without another tap',
+    () async {
+      var foreground = true;
+      final entered = Completer<void>();
+      final permission = Completer<permissions.PermissionStatus>();
+      final rig = await _CameraRig.create(
+        isForeground: () => foreground,
+        permission: () {
+          entered.complete();
+          return permission.future.timeout(_redDeadline);
+        },
+      ).timeout(_redDeadline);
+      var settled = false;
+      final operation = rig.turnOn().then((result) {
+        settled = true;
+        return result;
+      });
+      addTearDown(() async {
+        if (!permission.isCompleted) {
+          permission.complete(permissions.PermissionStatus.granted);
+        }
+        foreground = true;
+        await rig.graph.onResume().timeout(_redDeadline);
+        await operation.timeout(_redDeadline);
+      });
+      await entered.future.timeout(_redDeadline);
+
+      // A permission dialog may return before Flutter regains focus, without
+      // the app having entered the hidden/paused background lifecycle.
+      foreground = false;
+      permission.complete(permissions.PermissionStatus.granted);
+      await _redTurn().timeout(_redDeadline);
+      expect(rig.engine.video.cameraStarts, 0);
+      expect(
+        settled,
+        isFalse,
+        reason: 'The explicit Camera intent must survive prompt-only inactivity',
+      );
+
+      foreground = true;
+      await rig.graph.onResume().timeout(_redDeadline);
+      final result = await operation.timeout(_redDeadline);
+      expect(result.status, ForegroundCallActionStatus.applied);
+      expect(rig.permissionCalls, 1);
+      expect(rig.engine.video.cameraStarts, 1);
+      expect(
+        rig.graph.current!.video!.presentation.localCamera,
+        CallCameraState.on,
+      );
+    },
+  );
+  for (final boundary in ['background', 'end']) {
+    test(
+      'BL16 $boundary retires a camera permission intent before resume',
+      () async {
+        var foreground = true;
+        final entered = Completer<void>();
+        final permission = Completer<permissions.PermissionStatus>();
+        final rig = await _CameraRig.create(
+          isForeground: () => foreground,
+          recovery: boundary == 'background',
+          permission: () {
+            entered.complete();
+            return permission.future.timeout(_redDeadline);
+          },
+        ).timeout(_redDeadline);
+        final operation = rig.turnOn();
+        addTearDown(() async {
+          if (!permission.isCompleted) {
+            permission.complete(permissions.PermissionStatus.granted);
+          }
+          foreground = true;
+          await rig.graph.onResume().timeout(_redDeadline);
+          await operation.timeout(_redDeadline);
+        });
+        await entered.future.timeout(_redDeadline);
+        foreground = false;
+        await (boundary == 'background'
+                ? rig.graph.onBackgrounded()
+                : rig.end())
+            .timeout(_redDeadline);
+        permission.complete(permissions.PermissionStatus.granted);
+        await _redTurn().timeout(_redDeadline);
+        expect(rig.engine.video.cameraStarts, 0);
+
+        foreground = true;
+        await rig.graph.onResume().timeout(_redDeadline);
+        final result = await operation.timeout(_redDeadline);
+        expect(result.status, ForegroundCallActionStatus.unavailable);
+        expect(rig.permissionCalls, 1);
+        expect(rig.engine.video.cameraStarts, 0);
+      },
+    );
+  }
   test('VUI4 graph native lease refusal never starts capture', () async {
     final rig = await _CameraRig.create(nativeRefusal: true);
     final result = await rig.turnOn();
@@ -446,6 +541,7 @@ final class _CameraRig {
 
   static Future<_CameraRig> create({
     Future<permissions.PermissionStatus> Function()? permission,
+    bool Function()? isForeground,
     bool nativeRefusal = false,
     Future<bool> Function()? releaseCamera,
     bool recovery = false,
@@ -459,6 +555,7 @@ final class _CameraRig {
       releaseCamera,
       recovery,
       persistActiveCall,
+      isForeground,
     );
     return rig;
   }
@@ -485,6 +582,7 @@ final class _CameraRig {
     Future<bool> Function()? releaseCamera,
     bool recovery,
     Future<void> Function(CallSessionSnapshot)? persistActiveCall,
+    bool Function()? isForeground,
   ) async {
     engine.mediaReady = true;
     coordinator = CallCoordinator(
@@ -498,7 +596,7 @@ final class _CameraRig {
         if (!_driveRecoveryEffects) return null;
         return owner.execute(effect, snapshot);
       }),
-      onTimerScheduled: (callId, kind, _, __, effectiveDelay) {
+      onTimerScheduled: (callId, kind, _, _, effectiveDelay) {
         if (_driveRecoveryEffects && kind == CallTimeoutKind.reconnect) {
           owner.observeReconnectTimer(
             coordinator.activeSession!,
@@ -732,6 +830,7 @@ final class _CameraRig {
       videoOwners: {_call: owner},
       networkEffectsAllowed: () => true,
       nowMs: () => 10000,
+      isForeground: isForeground,
       requestCameraPermissionStatus: () {
         permissionCalls++;
         return permission();
