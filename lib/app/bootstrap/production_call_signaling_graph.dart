@@ -2463,8 +2463,9 @@ final class ProductionCallSignalingGraph
       final id = session.callId;
       if (id == null ||
           coordinator.activeSession?.callId != id ||
-          _endObservationCallId == id)
+          _endObservationCallId == id) {
         return;
+      }
       _endObservationCallId = id;
       _endObservation = null;
       final diagnostics = CallDiagnostics.instance;
@@ -2501,8 +2502,9 @@ final class ProductionCallSignalingGraph
       if (_shuttingDown ||
           owner == null ||
           owner.callId != callId ||
-          !_endObservationCurrent(owner))
+          !_endObservationCurrent(owner)) {
         return;
+      }
       owner.detail ??= detail;
     } catch (_) {
       // An observation failure cannot alter the call.
@@ -2543,8 +2545,9 @@ final class ProductionCallSignalingGraph
     if (owner == null ||
         owner.callId != session.callId ||
         owner.traceId != traceId ||
-        !_endObservationCurrent(owner))
+        !_endObservationCurrent(owner)) {
       return null;
+    }
     final detail =
         owner.detail ??
         CallEndDetail(
@@ -3705,11 +3708,12 @@ CallSignalingComposition createProductionCallSignalingComposition({
         onSetupFailure: (snapshot, failure) {
           diagnosticGraph?._bindEndObservation(snapshot);
           final id = snapshot.callId;
-          if (id != null)
+          if (id != null) {
             diagnosticGraph?._observeCallEnd(
               id,
               ProductionCallSignalingGraph._setupEndDetail(failure),
             );
+          }
         },
         onAppliedStateTransition: (trigger, resultingState, endReason) {
           // Capture at admission, before ringing/acceptance and before any
