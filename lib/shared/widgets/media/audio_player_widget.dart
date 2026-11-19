@@ -401,7 +401,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
     try {
       await _player.setFilePath(path);
-      await _player.setSpeed(_speedStore.value.value);
+      final initialSpeed = _speedStore.value.value;
+      await _player.setSpeed(initialSpeed);
       if (!mounted || loadVersion != _loadVersion) return;
       if (mounted) {
         setState(() {
@@ -409,6 +410,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           _loadedPath = path;
           _position = Duration.zero;
         });
+      }
+      final latestSpeed = _speedStore.value.value;
+      if (latestSpeed != initialSpeed) {
+        await _player.setSpeed(latestSpeed);
       }
     } catch (error) {
       // File may be corrupted or missing — stay in disabled state
