@@ -13930,6 +13930,8 @@ This closes text fanout only; first preparation/later-finalization suppression,
 voice/sticker, ADD reactions, weekly wiring, native/device and overall B5/BL29
 proof remain separate. This testing note requires no new execution.
 
+Fresh blob-free text fanout reserves the original owner's logical contact/message tuple before the atomic stage, admits it only for a fresh typed APPLIED initial, and cancels unsubmitted reservations. The message ID is also the generation ID; two physical custody siblings still create one daily mark and one logical outgoing weekly checkpoint. At 942e040c1268, unchanged B15TFW-001 through 006 passed once with real SQLite, after the same tests on 4d7768642 produced the intended missing-checkpoint RED plus five passing controls. SQL refusal, authoritative present-null, profile/epoch turnover and OFF-created survivor retry remain fenced. Parent FIRST GREEN adoption is 95622bae607cddbc8a20c7e52bbeb52c23591554905873305bb83ea759517586, raw b0569aefeaab6045d8657cd37eb9a106f961c8d6495b4d09d3cbcb6bc5ea5822. The original pretest layout failure and genuine RED remain retained. The nine broader checks, combined candidate, bootstrap DI, full weekly qualification, headless, native and device proof remain separate.
+
 Batch13's historical daily-active slice retained the original owner for normal
 composer final-media handoffs, but excluded voice, sticker observations and
 first-preparation admission. Batch14 U2 at `1197dd9a5` verifies the direct voice,
