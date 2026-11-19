@@ -7570,6 +7570,60 @@
   ],
   "full_commands": [
     {
+      "kind": "command",
+      "command": [
+        "bash",
+        "docker-ws/test_derived_data_test.sh"
+      ],
+      "paths": [
+        "docker-ws/test_derived_data_test.sh"
+      ],
+      "success_marker": "TEST_DERIVED_DATA_CONTRACT_PASS",
+      "boundary": "Hetzner test iOS builds keep a dd-hetzner-test-* DerivedData while Xcode and Flutter stay the same, start it empty after a change, and refuse any other folder",
+      "limitations": "Fake xcodebuild and flutter; real warm-build timing is measured by flutter on the next device build",
+      "timeout_seconds": 120,
+      "requirements": [
+        "bash"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "docker-ws/test_derived_data.sh",
+        "docker-ws/test_derived_data_test.sh",
+        "docker-ws/ios_device_build_internal.sh",
+        "docker-ws/bootstrap_ios_receiver.sh"
+      ],
+      "id": "full.test-derived-data-contract"
+    },
+    {
+      "kind": "command",
+      "command": [
+        "bash",
+        "go-mknoon/gomobile_tools_test.sh"
+      ],
+      "paths": [
+        "go-mknoon/gomobile_tools_test.sh"
+      ],
+      "success_marker": "GOMOBILE_TOOLS_SKIP_PASS",
+      "boundary": "make gomobile-tools installs gomobile and gobind once per pinned golang.org/x/mobile version and Go toolchain, and again only when a tool is missing or the pin changes",
+      "limitations": "Fake go records installs; the real install and bind stay with the ensure scripts and device builds",
+      "timeout_seconds": 120,
+      "requirements": [
+        "bash",
+        "make"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "go-mknoon/Makefile",
+        "go-mknoon/gomobile_tools_test.sh",
+        "scripts/ensure_go_ios_bindings.sh"
+      ],
+      "id": "full.gomobile-tools-skip"
+    },
+    {
       "id": "full.sqflite-fork-host",
       "kind": "full_adapter",
       "command": [
@@ -10704,6 +10758,140 @@
       }
     ],
     "mappings": [
+      {
+        "owner": "full.test-derived-data-contract",
+        "patterns": [
+          "docker-ws/test_derived_data_test.sh"
+        ],
+        "reason": "Existing exact curated shell contract; full registration preserves its original 120-second deadline and completion marker."
+      },
+      {
+        "owner": "full.gomobile-tools-skip",
+        "patterns": [
+          "go-mknoon/gomobile_tools_test.sh"
+        ],
+        "reason": "Existing exact curated shell contract; full registration preserves its original 120-second deadline and completion marker."
+      },
+      {
+        "owner": "full-device-audio",
+        "capability": "kx0008",
+        "patterns": [
+          "integration_test/maestro/production_call_microphone_denial.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-device-audio",
+        "capability": "kx0002",
+        "patterns": [
+          "integration_test/maestro/production_call_minimize.yaml",
+          "integration_test/maestro/production_call_return.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-device-audio",
+        "capability": "kx0030",
+        "patterns": [
+          "integration_test/maestro/production_call_privacy_open.yaml",
+          "integration_test/maestro/production_call_privacy_toggle.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.received_media_local_delete",
+        "patterns": [
+          "integration_test/maestro/production_catalog_media_assert_local_absent.yaml",
+          "integration_test/maestro/production_catalog_media_delete_above_marker.yaml",
+          "integration_test/maestro/production_catalog_media_open_above_marker.yaml",
+          "integration_test/maestro/production_catalog_media_open_below_marker.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "kx0012",
+        "patterns": [
+          "integration_test/maestro/production_contact_cancel.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "kx0010",
+        "patterns": [
+          "integration_test/maestro/production_contact_confirm.yaml",
+          "integration_test/maestro/production_contact_conversation_dialog.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "kx0011",
+        "patterns": [
+          "integration_test/maestro/production_contact_orbit_dialog.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.actions_convergence",
+        "patterns": [
+          "integration_test/maestro/production_direct_assert_action.yaml",
+          "integration_test/maestro/production_direct_assert_reaction_absent.yaml",
+          "integration_test/maestro/production_direct_assert_reaction_present.yaml",
+          "integration_test/maestro/production_direct_edit.yaml",
+          "integration_test/maestro/production_direct_reaction_toggle.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.sender_offline_recovery",
+        "patterns": [
+          "integration_test/maestro/production_direct_send_checkpoint.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.introduction_catalog.mutual_accept_direct_chat",
+        "patterns": [
+          "integration_test/maestro/production_intro_decide.yaml",
+          "integration_test/maestro/production_intro_open_chat.yaml",
+          "integration_test/maestro/production_intro_read_chat.yaml",
+          "integration_test/maestro/production_intro_ready_chat.yaml",
+          "integration_test/maestro/production_intro_review_pending.yaml",
+          "integration_test/maestro/production_intro_send_one.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-device-audio",
+        "capability": "kx0021",
+        "patterns": [
+          "integration_test/maestro/production_update_hard.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "kx0028",
+        "patterns": [
+          "integration_test/maestro/production_update_open_store.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
+      {
+        "owner": "full-device-audio",
+        "capability": "kx0020",
+        "patterns": [
+          "integration_test/maestro/production_update_soft.yaml",
+          "integration_test/maestro/production_update_soft_navigation.yaml"
+        ],
+        "reason": "Existing production journey executes these exact Maestro flows and validates their receipts; ownership registration alone grants no device or signed-candidate proof."
+      },
       {
         "owner": "full-sims-major",
         "patterns": [
