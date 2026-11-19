@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import '../bridge/bridge.dart';
 import 'app_diagnostics.dart';
+import 'engagement_chat_checkpoint_store.dart';
+import 'group_engagement_observer.dart';
 
 /// Calendar boundaries supplied by Go's Berlin calendar, never inferred in Dart.
 typedef ActiveIdentityReporterWeek = ({
@@ -37,10 +39,23 @@ final class ActiveIdentityReporterCapture {
 
 /// Coordinates the current local owner; Go owns daily state and relay work.
 final class ActiveIdentityReporter {
-  ActiveIdentityReporter({required String statePath}) : _statePath = statePath;
+  ActiveIdentityReporter({
+    required String statePath,
+    EngagementChatCheckpointStore? groupWitnessStore,
+    int Function()? groupNowMilliseconds,
+  }) : _statePath = statePath {
+    if (groupWitnessStore != null) {
+      _groups = GroupEngagementObserver(
+        store: groupWitnessStore,
+        nowMilliseconds:
+            groupNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+  }
 
   static const _budget = Duration(seconds: 2);
   final String _statePath;
+  GroupEngagementObserver? _groups;
   Bridge? _bridge;
   LocalDiagnosticConsent? _consent;
   LocalDiagnosticConsent? _lastConsent;
@@ -105,6 +120,33 @@ final class ActiveIdentityReporter {
   Future<void> _configure({bool preserve = false, bool empty = false}) {
     final pending = _configureNow(preserve: preserve, empty: empty);
     _configuration = pending;
+    final groups = _groups;
+    if (groups != null) {
+      if (!preserve && (_retired || _consent?.enabled == false)) {
+        groups.revoke();
+      } else {
+        final account = _identity?.account;
+        final capture = account == null || preserve
+            ? null
+            : captureOwner(expectedAccountPeerId: account);
+        groups.replaceOwner(
+          capture == null
+              ? null
+              : (
+                  accountPeerId: capture._account,
+                  profileBinding: capture._binding,
+                  consentEpoch: capture._epoch,
+                  isCurrent: () => _captureCurrent(capture),
+                  lookupWeek: () => weeklyProjectionCaptured(capture),
+                  retain: (String week) => markWeeklyCaptured(
+                    capture,
+                    week: week,
+                    kinds: const ['group'],
+                  ),
+                ),
+        );
+      }
+    }
     return pending;
   }
 
@@ -364,6 +406,32 @@ final class ActiveIdentityReporter {
       ) &&
       kinds.toSet().length == kinds.length;
 
+  /// Call only for a fresh, durably committed own content post.
+  void groupPostCommittedCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required String groupId,
+  }) {
+    if (_captureCurrent(capture)) _groups?.observe(groupId: groupId, own: true);
+  }
+
+  /// Call only after eligible other-account content was painted in active UI.
+  void groupOtherPostVisibleCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required String groupId,
+    required String authorAccountPeerId,
+    required int postOccurredAtUnixMillis,
+  }) {
+    if (!_captureCurrent(capture) ||
+        !GroupEngagementObserver.validIdentifier(authorAccountPeerId) ||
+        authorAccountPeerId == capture._account)
+      return;
+    _groups?.observe(
+      groupId: groupId,
+      own: false,
+      postMilliseconds: postOccurredAtUnixMillis,
+    );
+  }
+
   /// Called only after a qualifying communication, never by configuration.
   void mark() {
     final owner = _owner;
@@ -396,6 +464,7 @@ final class ActiveIdentityReporter {
   }
 
   Future<void> flush() async {
+    await _groups?.flush();
     final owner = _owner;
     final bridge = _bridge;
     if (_disposed || owner == null || bridge == null || !bridge.isInitialized) {
@@ -409,6 +478,7 @@ final class ActiveIdentityReporter {
     _disposed = true;
     _identity = null;
     await _configure(preserve: true, empty: true);
+    await _groups?.dispose();
     _bridge = null;
     _consent = null;
     _lastConsent = null;
