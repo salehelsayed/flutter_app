@@ -72,6 +72,10 @@ final class ActiveIdentityReporter {
   /// Pins loaded content to its logical profile, including while unarmed.
   Object? get logicalProfileMarker => _logicalProfileMarker;
 
+  /// Resets a mounted visibility probe when its captured owner changes.
+  /// The marker carries no account identifiers and adds no independent state.
+  Object get observationMarker => (this, _generation);
+
   void attachBridge(Bridge bridge) {
     if (_disposed) return;
     if (identical(_bridge, bridge) && _owner != null) return;
