@@ -14039,6 +14039,32 @@ proof remain separate. This testing note requires no new execution.
 
 Fresh blob-free text fanout reserves the original owner's logical contact/message tuple before the atomic stage, admits it only for a fresh typed APPLIED initial, and cancels unsubmitted reservations. The message ID is also the generation ID; two physical custody siblings still create one daily mark and one logical outgoing weekly checkpoint. At 942e040c1268, unchanged B15TFW-001 through 006 passed once with real SQLite, after the same tests on 4d7768642 produced the intended missing-checkpoint RED plus five passing controls. SQL refusal, authoritative present-null, profile/epoch turnover and OFF-created survivor retry remain fenced. Parent FIRST GREEN adoption is 95622bae607cddbc8a20c7e52bbeb52c23591554905873305bb83ea759517586, raw b0569aefeaab6045d8657cd37eb9a106f961c8d6495b4d09d3cbcb6bc5ea5822. The original pretest layout failure and genuine RED remain retained. The nine broader checks, combined candidate, bootstrap DI, full weekly qualification, headless, native and device proof remain separate.
 
+Receipt tests using `media_repository_real_db_fixture.dart` must explicitly opt
+into its real text-fanout settlement delegate when they exercise that capability;
+the shared fixture keeps it disabled by default. Without that opt-in, a staged
+fanout parent can remain `sending` because its fixture repository refuses receipt
+settlement. The corrected fixture at `5c1b30896` preserves the production owner and
+the original assertions: all 56 focused receipt/ordering/authority/strict-fanout
+cases passed. Parent adoption SHA-256 is
+`6948de40cd85ee9dd88a90240815cf5c36ab4506dd2d696da243af23f27722e2`.
+
+Repeated authenticated ordinary and tombstone receipts still enter their typed
+atomic settlement owners; an idempotent result preserves the existing row.
+The receipt preservation fixture therefore expects one additional ordinary and
+one tombstone owner entry, while comparing complete `toMap()` snapshots of the
+ordinary, tombstone and foreign rows and retaining zero save, conditional-update
+and wire-fallback assertions. At `33a863f7f`, the original 25 receipt cases and
+the previously unrun message, contact and inbox database commands passed once:
+25 + 86 + 25 + 81 = 217 visible cases, with four successful lifecycle records and
+six loaders recorded separately. Parent adoption SHA-256 is
+`12253171926807475e1aff3ee620609ffe9ed25a90d6af3b62ad382dda1444d2`;
+raw results and source/SDK/metadata/cleanup evidence are in
+`/Users/I560101/.codex/investigations/b15-receipt-preservation-continuation-33a863f7facd-20261119/`.
+The original fanout capability failure and duplicate-owner count failure remain
+retained. Earlier passing components retain their original execution identities;
+these focused receipts do not establish full-host, native, device or signed-build
+acceptance.
+
 Batch13's historical daily-active slice retained the original owner for normal
 composer final-media handoffs, but excluded voice, sticker observations and
 first-preparation admission. Batch14 U2 at `1197dd9a5` verifies the direct voice,
