@@ -95,6 +95,8 @@ final class EngagementChatObserver {
   EngagementChatPhase get phase =>
       _witness?.phase ?? EngagementChatPhase.collecting;
 
+  int get pendingFactCountForTesting => _facts.length;
+
   /// Null temporarily unarms observation without clearing the private checkpoint.
   void replaceOwner(EngagementChatObserverOwner? owner) {
     if (_disposed) {
@@ -361,6 +363,9 @@ final class EngagementChatObserver {
         }
       }
     }
+    _facts.removeWhere((fact) => fact is _SqlDecision &&
+        fact.authorityFinalized &&
+        fact.admittedIntent == null && fact.acceptedIntent == null);
   }
 
   bool get _blockedBySql => _facts.isNotEmpty &&

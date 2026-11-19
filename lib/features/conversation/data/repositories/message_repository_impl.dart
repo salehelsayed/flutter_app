@@ -2251,7 +2251,7 @@ class MessageRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
 
   /// Launch-time self-healing backfill for locally-authored reaction targets.
   Future<void> mirrorAllDirectReactionAuthoredTargets() async {
@@ -2270,7 +2270,7 @@ class MessageRepositoryImpl
         details: {'error': error.toString()},
       );
     }
-  });
+  }
 
   @override
   Future<bool> isAutoRetryTerminal(String messageId) async =>

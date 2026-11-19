@@ -579,6 +579,43 @@ void main() {
       await _bounded(h.expectDelivered(sameSender));
     });
   }
+  test('B15RA-023 finalized same-sender SQL controls stay bounded while checkpoint is held', () async {
+    h.holdCheckpoint();
+    await _bounded(h.admitInitial(flush: false));
+    await _bounded(h.checkpointHold['entered']!.future);
+    final baseline = h.reporter.pendingChatFactCountForTesting;
+    expect(baseline, greaterThan(0), reason: 'The real admission is still queued behind held optional I/O');
+    var lastEnvelope = '';
+    try {
+      await _bounded(() async {
+        for (var index = 0; index < 16; index++) {
+          lastEnvelope = MessagePayload.buildEncryptedEnvelope(
+            id: _message, senderPeerId: _account, senderUsername: 'Local',
+            kem: 'public-retry-kem', ciphertext: 'public-retry-ciphertext-$index',
+            nonce: 'public-retry-nonce',
+          );
+          await _bounded(h.sql(() =>
+              h.fixture.messageRepo.updateWireEnvelope(_message, lastEnvelope)));
+          expect(h.reporter.pendingChatFactCountForTesting, baseline,
+            reason: 'Each committed same-sender control retires without waiting for the checkpoint');
+        }
+      }());
+      final durable = (await _bounded(h.fixture.db.query('messages',
+        where: 'id = ?', whereArgs: [_message]))).single;
+      expect(durable['wire_envelope'], lastEnvelope);
+      await _bounded(h.receipt(capturedActivity: h.capture()));
+      final accepted = h.reporter.pendingChatFactCountForTesting;
+      expect(accepted, baseline + 1,
+        reason: 'The sealed receipt still has its real worker effect queued');
+      await _bounded(h.remove('message'));
+      expect(await _bounded(h.fixture.messageRepo.getMessage(_message)), isNull);
+      expect(h.reporter.pendingChatFactCountForTesting, accepted,
+        reason: 'Committed removal retires its control without discarding accepted credit');
+    } finally {
+      h.releaseCheckpoint();
+    }
+    await _bounded(h.expectDelivered(true));
+  });
 }
 
 String _envelope(String id, {String? eventId}) => MessagePayload.buildEncryptedEnvelope(

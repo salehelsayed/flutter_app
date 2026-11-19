@@ -105,6 +105,9 @@ final class ActiveIdentityReporter {
   /// The marker carries no account identifiers and adds no independent state.
   Object get observationMarker => (this, _generation);
 
+  int get pendingChatFactCountForTesting =>
+      _chat?.pendingFactCountForTesting ?? 0;
+
   void attachBridge(Bridge bridge) {
     if (_disposed) return;
     if (identical(_bridge, bridge) && _owner != null) return;
