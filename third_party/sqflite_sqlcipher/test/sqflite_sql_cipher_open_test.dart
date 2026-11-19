@@ -92,7 +92,7 @@ void main() {
         ],
         [
           'query',
-          {'sql': 'PRAGMA user_version', 'arguments': null, 'id': 1},
+          {'sql': 'PRAGMA user_version', 'id': 1},
           {}
         ],
         [
