@@ -6627,8 +6627,18 @@ visible and cannot become an ordinary first-attempt PASS.
   source cause. Preserve paired raws `f93d1786` and `04b1e19f` and the original
   main failure `808d7a8d`; the full classification and source hashes are in
   `/Users/I560101/.codex/investigations/post-listener-comparison-20261119/`.
-  This evidence does not justify a production change, test exclusion, longer
-  deadline or another run.
+  This evidence does not justify a production change, test exclusion or longer
+  deadline. The owner's later explicit end-of-run quiet check (Kayan
+  `m-a97c32f3`) ran the original four timeout-affected files once at the same
+  `15fd3c77` source, locked Linux SDK, concurrency one and original deadlines:
+  forwarded-media retry 1 PASS, PostListener 28 PASS, profile download 18 PASS
+  and received-sticker saver 30 PASS. All 81 starts ended with no errors,
+  skips or unfinished tests. Record these as timing/flake baseline observations;
+  preserve the first run's FAIL and do not suppress future assertion failures.
+  The full quiet receipt and raw hashes are in
+  `/Users/I560101/.codex/investigations/standing-main-15fd3c-quiet-timeout-files-20261119/actual-first/quiet-baseline-receipt.json`
+  (SHA-256 `267a0f5ee3214f51d69f597245020d6395fa9b794662954056c1c68ef462024a`).
+  This is quiet non-reproduction, not proof of the exact filesystem stall cause.
 - **Thought relay replay before persistence:** the composed `Thought reconnect`
   cases in `test/core/services/p2p_service_inbox_ack_ordering_test.dart` use
   real P2PServiceImpl, IncomingMessageRouter and PostListener with a gated
