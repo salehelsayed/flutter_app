@@ -5,6 +5,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
+import 'package:flutter_app/features/call/diagnostics/call_setup_failure.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
@@ -180,6 +181,7 @@ CallCoordinator _coordinator({
   Duration mediaPreparationTimeout = const Duration(seconds: 45),
   Duration terminalEffectTimeout = const Duration(seconds: 5),
   void Function(CallCoordinatorInternalFailure failure)? onInternalFailure,
+  void Function(CallSessionSnapshot, CallSetupFailure)? onSetupFailure,
   void Function(
     CallEventType trigger,
     CallState resultingState,
@@ -203,6 +205,7 @@ CallCoordinator _coordinator({
   effectTimeout: effectTimeout,
   terminalEffectTimeout: terminalEffectTimeout,
   onInternalFailure: onInternalFailure,
+  onSetupFailure: onSetupFailure,
   onAppliedStateTransition: onAppliedStateTransition,
   onTimerScheduled: onTimerScheduled,
   persistActiveCall: persistActiveCall,
@@ -262,6 +265,38 @@ final class _DiagnosticFailureExecutor implements CallEffectExecutor {
 }
 
 void main() {
+  test('BL43 throwing setup observer preserves the original checkpoint failure', () {
+    fakeAsync((time) {
+      final original = StateError('public checkpoint fixture failure');
+      final observations = <CallSetupFailure>[];
+      final coordinator = _coordinator(
+        history: _MemoryHistoryRepository(),
+        persistActiveCall: (_) async => throw original,
+        onSetupFailure: (snapshot, failure) {
+          expect(snapshot.callId, _callId);
+          observations.add(failure);
+          throw StateError('public observer fixture failure');
+        },
+      );
+      Object? observedError;
+      var finished = false;
+      unawaited(coordinator.placeCall(contactPeerId: 'contact-a',
+        localAccountPeerId: 'local-account', localDeviceId: 'local-device',
+      ).then<void>((_) => finished = true, onError: (Object error, StackTrace stack) {
+        observedError = error;
+        finished = true;
+      }));
+      time.flushMicrotasks();
+      expect(finished, isTrue);
+      expect(identical(observedError, original), isTrue);
+      expect(observations, [CallSetupFailure.checkpoint]);
+      expect(coordinator.lastSnapshot?.endReason, CallEndReason.mediaFailed);
+      var disposed = false;
+      unawaited(coordinator.dispose().then((_) => disposed = true));
+      time.flushMicrotasks();
+      expect(disposed, isTrue);
+    });
+  });
   for (final failure in [
     (
       name: 'ICE',

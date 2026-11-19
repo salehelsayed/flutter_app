@@ -1869,6 +1869,8 @@ final class ProductionCallSignalingGraph
             diagnostics.finishAttempt(
               outcome: 'preflight_failed',
               reason: 'busy',
+              detail: const CallEndDetail(cause: CallEndCause.busy,
+                  stage: CallEndCauseStage.preflight),
             );
           }
           return PreparedOutgoingCall(endpoint: endpoint, reduction: reduction);
@@ -1883,7 +1885,19 @@ final class ProductionCallSignalingGraph
         outcome: 'failed',
         reason: reason,
       );
-      diagnostics.finishAttempt(outcome: 'preflight_failed', reason: reason);
+      diagnostics.finishAttempt(
+        outcome: 'preflight_failed',
+        reason: reason,
+        detail: CallEndDetail(
+          cause: switch (reason) {
+            'graph_shutdown' => CallEndCause.appLifecycle,
+            'wake_authority_missing' => CallEndCause.policyRejected,
+            'busy' => CallEndCause.busy,
+            _ => CallEndCause.endpointUnavailable,
+          },
+          stage: CallEndCauseStage.preflight,
+        ),
+      );
       rethrow;
     }
   }

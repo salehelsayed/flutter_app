@@ -2509,6 +2509,73 @@ void main() {
     );
   }
 
+  for (final ownership in ['same', 'off-on', 'collector']) {
+    test('BL43 real graph terminal detail respects $ownership ownership', () async {
+      const bound = Duration(seconds: 3);
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final directory = await Directory.systemTemp.createTemp('bl43-owner-').timeout(bound);
+      var diagnostics = await CallDiagnostics.installForTesting(
+        directory: Directory('${directory.path}/original'),
+      ).timeout(bound);
+      addTearDown(() async {
+        await diagnostics.setEnabled(false).timeout(bound);
+        await diagnostics.dispose().timeout(bound);
+        await directory.delete(recursive: true).timeout(bound);
+      });
+      final fixture = await _createProductionIosFixture(cleanupTimeout: bound).timeout(bound);
+      await fixture.composition.start().timeout(bound);
+      final graph = fixture.graphs.single;
+      final admitted = await graph.coordinator.dispatch(CallEvent(
+        type: CallEventType.remoteInvite,
+        eventId: 'detail-owner-invite',
+        occurredAt: graph.coordinator.clock(),
+        callId: _callA,
+        contactPeerId: 'remote-account',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-account',
+        remoteAccountPeerId: 'remote-account',
+        remoteDeviceId: 'remote-device',
+        expiresAt: graph.coordinator.clock().add(const Duration(seconds: 45)),
+        transportRoute: CallRouteClass.direct,
+      )).timeout(bound);
+      expect(admitted.decision, CallEventDecision.applied);
+      final originalTrace = diagnostics.traceForCall(callId: _callA.value);
+      expect(originalTrace, isNotNull);
+      if (ownership == 'off-on') {
+        await diagnostics.setEnabled(false).timeout(bound);
+        await diagnostics.setEnabled(true).timeout(bound);
+      } else if (ownership == 'collector') {
+        diagnostics = await CallDiagnostics.installForTesting(
+          directory: Directory('${directory.path}/replacement'),
+        ).timeout(bound);
+      }
+      final terminal = await graph.coordinator.dispatch(CallEvent(
+        type: CallEventType.decline,
+        eventId: 'detail-owner-decline',
+        occurredAt: graph.coordinator.clock(),
+        callId: _callA,
+      )).timeout(bound);
+      expect(terminal.decision, CallEventDecision.applied);
+      expect(terminal.snapshot.endReason, CallEndReason.declined);
+      final events = await diagnostics.eventsForTesting().timeout(bound);
+      final finals = events.where((e) => e['stage'] == 'terminal' &&
+          e['action'] == 'finish').toList();
+      final details = events.where((e) => e['stage'] == 'terminal' &&
+          e['action'] == 'snapshot' && (e['values'] as Map).containsKey('endCause')).toList();
+      expect(finals, hasLength(1));
+      expect(finals.single['outcome'], 'declined');
+      if (ownership == 'same') {
+        expect(finals.single['traceId'], originalTrace);
+        expect(details, hasLength(1));
+        expect(details.single['traceId'], originalTrace);
+        expect(details.single['values'], containsPair('endCause', 'declined'));
+      } else {
+        expect(details, isEmpty, reason: 'A retired admission cannot borrow a successor collector or trace');
+        expect(finals.single['traceId'], isNot(originalTrace));
+      }
+    });
+  }
+
   for (final accepted in [false, true]) {
     test(
       'terminal diagnostics preserve ${accepted ? 'connected without RTP' : 'user decline'} through late shutdown',
