@@ -702,8 +702,9 @@ final class _B6GroupBlobRepository extends _StrictGroupUploadRetryRepository {
           jsonEncode(current.toMap()) != jsonEncode(parent.toMap()) ||
           jsonEncode(stored.map((a) => a.toMap()).toList()) !=
               jsonEncode(attachments.map((a) => a.toMap()).toList()) ||
-          !exactRows)
+          !exactRows) {
         return GroupMediaBlobCustodyStageOutcome.refused;
+      }
       idempotentCalls++;
       return GroupMediaBlobCustodyStageOutcome.idempotent;
     }
@@ -5020,8 +5021,9 @@ void main() {
     });
     tearDown(() async {
       await b6Bound(reporter.dispose());
-      if (await b6Bound(root.exists()))
+      if (await b6Bound(root.exists())) {
         await b6Bound(root.delete(recursive: true));
+      }
     });
 
     Future<PreparedGroupMediaBlobResult> prepare({

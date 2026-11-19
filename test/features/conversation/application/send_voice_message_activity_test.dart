@@ -3,14 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
-import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -452,14 +450,16 @@ class _VoiceActivityHarness {
       mediaFileManager, width, height, durationMs, waveform, allowedPeers, blobId,
       deleteSourceWhenDone = false, preparedArtifact}) async {
       await beforeLegacyUpload?.call();
-      if (!uploadCompletes) return UploadMediaFailed(stage: failureStage,
-        disposition: failureDisposition, errorCode: 'U2_TEST_FAILURE');
+      if (!uploadCompletes) {
+        return UploadMediaFailed(stage: failureStage,
+          disposition: failureDisposition, errorCode: 'U2_TEST_FAILURE');
+      }
       final completedRelativePath = MediaFilePathConvention.relativePathForAttachment(
         contactPeerId: recipientPeerId, blobId: blobId!, mime: mime);
       final completedFile = File('${root.path}/$completedRelativePath');
       await completedFile.parent.create(recursive: true).timeout(_budget);
       await File(localFilePath).copy(completedFile.path).timeout(_budget);
-      return UploadMediaSucceeded(MediaAttachment(id: blobId!, messageId: '', mime: mime,
+      return UploadMediaSucceeded(MediaAttachment(id: blobId, messageId: '', mime: mime,
         size: recording.sizeBytes, mediaType: 'audio', durationMs: recording.durationMs,
         localPath: completedRelativePath, downloadStatus: 'done', createdAt: _authoredAt,
         contentHash: 'a' * 64, encryptionKeyBase64: base64Encode(List<int>.filled(32, 1)),

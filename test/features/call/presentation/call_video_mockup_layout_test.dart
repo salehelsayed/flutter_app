@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/call_video_presentation.dart';
@@ -302,9 +301,7 @@ void main() {
 }
 
 class _VUI5aCapability extends _Capability {
-  _VUI5aCapability(ForegroundCallProjection initial)
-    : _latest = initial,
-      super(initial);
+  _VUI5aCapability(super.initial) : _latest = initial;
 
   ForegroundCallProjection _latest;
   @override
@@ -491,8 +488,8 @@ Finder _vui5aExpectFallback(WidgetTester tester) {
       .getSemantics(_control('call_video_status'))
       .getSemanticsData();
   expect(status.label, reconnect);
-  expect(status.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
-  expect(status.hasFlag(SemanticsFlag.isButton), isFalse);
+  expect(status.flagsCollection.isLiveRegion, isTrue);
+  expect(status.flagsCollection.isButton, isFalse);
   expect(status.hasAction(SemanticsAction.tap), isFalse);
   return pill;
 }

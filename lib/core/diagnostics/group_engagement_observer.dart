@@ -93,14 +93,16 @@ final class GroupEngagementObserver {
     if (owner == null ||
         !_live(owner) ||
         !validIdentifier(groupId) ||
-        _facts.length + (_inFlight ? 1 : 0) >= _bound)
+        _facts.length + (_inFlight ? 1 : 0) >= _bound) {
       return;
+    }
     final observed = nowMilliseconds();
     if (!own &&
         (postMilliseconds == null ||
             postMilliseconds > observed ||
-            postMilliseconds.abs() > 9007199254740991))
+            postMilliseconds.abs() > 9007199254740991)) {
       return;
+    }
     _facts.add((
       group: groupId,
       bit: own ? 1 : 2,
@@ -160,11 +162,13 @@ final class GroupEngagementObserver {
       try {
         if (!_context(owner, week) ||
             !_contains(week, fact.observed) ||
-            (fact.post != null && !_contains(week, fact.post!)))
+            (fact.post != null && !_contains(week, fact.post!))) {
           continue;
+        }
         if (_phase != _Phase.collecting) continue;
-        if (!_groups.containsKey(fact.group) && _groups.length >= _bound)
+        if (!_groups.containsKey(fact.group) && _groups.length >= _bound) {
           continue;
+        }
         final bits = (_groups[fact.group] ?? 0) | fact.bit;
         _groups[fact.group] = bits;
         _dirty = true;
@@ -244,23 +248,26 @@ final class GroupEngagementObserver {
     final expected = _scope(owner, week);
     if (scope is! Map ||
         scope.length != expected.length ||
-        expected.entries.any((e) => scope[e.key] != e.value))
+        expected.entries.any((e) => scope[e.key] != e.value)) {
       return;
+    }
     final phases = _Phase.values.where((p) => p.name == root['phase']);
     if (phases.length != 1) return;
     final phase = phases.single;
     final groups = root['groups'];
     if (groups is! Map ||
         groups.length > _bound ||
-        (phase != _Phase.collecting && groups.isNotEmpty))
+        (phase != _Phase.collecting && groups.isNotEmpty)) {
       return;
+    }
     final restored = <String, int>{};
     for (final entry in groups.entries) {
       if (entry.key is! String ||
           !validIdentifier(entry.key as String) ||
           entry.value is! int ||
-          (entry.value != 1 && entry.value != 2))
+          (entry.value != 1 && entry.value != 2)) {
         return;
+      }
       restored[entry.key as String] = entry.value as int;
     }
     _phase = phase;
@@ -271,8 +278,9 @@ final class GroupEngagementObserver {
   Future<void> _checkpoint(GroupEngagementOwner owner, _Week week) async {
     if (!_context(owner, week) ||
         _storageFailed ||
-        (_phase == _Phase.pending && _attempted))
+        (_phase == _Phase.pending && _attempted)) {
       return;
+    }
     final pending = _phase == _Phase.pending;
     if (pending) _attempted = true;
     final saved = await _storeCall(

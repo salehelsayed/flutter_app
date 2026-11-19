@@ -708,7 +708,9 @@ final class CallV2NegotiationEffectExecutor
     }
     if (current &&
         identical(intent, _currentCameraToken) &&
-        _switch?.machine.videoGatesOpen == true) return intent;
+        _switch?.machine.videoGatesOpen == true) {
+      return intent;
+    }
     final adopted = recovery != null &&
         snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration;
     return !adopted && identical(intent, _token) && _canRetainVideo(snapshot)
@@ -1340,7 +1342,9 @@ final class CallV2NegotiationEffectExecutor
         token?.media != recovery.media ||
         token?.mediaRevision != recovery.revision ||
         _hasPendingRecoveryMedia() ||
-        snapshot == null) return false;
+        snapshot == null) {
+      return false;
+    }
     return (snapshot.state == CallState.connected &&
             snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration) ||
         (snapshot.reconnectGeneration == recovery.snapshot.reconnectGeneration + 1 &&

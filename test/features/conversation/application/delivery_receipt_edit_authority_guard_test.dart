@@ -44,7 +44,7 @@ void main() {
       lookupWeek: (_) async => (
         week: '2026-W47', startMilliseconds: 0, endMilliseconds: 2000000,
       ),
-      retainChat: (_, __) async => true,
+      retainChat: (_, _) async => true,
       nowMilliseconds: () => 10000,
     );
     try {

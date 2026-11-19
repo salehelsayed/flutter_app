@@ -2339,8 +2339,9 @@ void _vui7Tests() {
               ));
               again(); // Detect the latest owner before stream delivery.
               expect(retry.calls, isEmpty);
-              if (invalidation == 'successor then null')
+              if (invalidation == 'successor then null') {
                 cap.setWithoutStream(null);
+              }
             case 'withdrawal':
               cap.emit(null);
               await _vui7Draw(tester);
@@ -2481,7 +2482,7 @@ void _vui7Tests() {
           final reasonData = tester
               .getSemantics(find.text(l10n.call_end_audio_interrupted))
               .getSemanticsData();
-          expect(reasonData.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
+          expect(reasonData.flagsCollection.isLiveRegion, isTrue);
           expect(find.byType(Texture), findsNothing);
         },
         language: language,

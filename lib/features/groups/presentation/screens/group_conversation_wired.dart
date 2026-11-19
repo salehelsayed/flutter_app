@@ -2001,8 +2001,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         message.senderPeerId == account ||
         message.id.startsWith('sys-') ||
         message.text.trim().isEmpty ||
-        message.privateMediaPolicy.requiresRedaction)
+        message.privateMediaPolicy.requiresRedaction) {
       return null;
+    }
     return origin.reporter.captureForLoadedProfile(
       originalProfileMarker: origin.profileMarker,
       expectedAccountPeerId: account,
@@ -2020,14 +2021,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final previous = _activityTextOrigins[message.id];
     if (previous != null &&
         _sameTextSource(previous.source, message) &&
-        _sameActivityOrigin(previous.origin, origin))
+        _sameActivityOrigin(previous.origin, origin)) {
       return;
+    }
     GroupEngagementFrameObservation? observeFrame() {
       final current = _activityTextOrigins[message.id];
       if (current == null ||
           !_sameTextSource(current.source, message) ||
-          !_sameActivityOrigin(current.origin, origin))
+          !_sameActivityOrigin(current.origin, origin)) {
         return null;
+      }
       final capture = _captureVisibleText(message, origin);
       if (capture == null) return null;
       final binding = origin.reporter.observationMarker;
@@ -2038,8 +2041,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             current == null ||
             !_sameTextSource(current.source, message) ||
             !_sameActivityOrigin(current.origin, origin) ||
-            !_messages.any((row) => _sameTextSource(row, message)))
+            !_messages.any((row) => _sameTextSource(row, message))) {
           return;
+        }
         origin.reporter.groupOtherPostVisibleCaptured(
           capture,
           groupId: message.groupId,

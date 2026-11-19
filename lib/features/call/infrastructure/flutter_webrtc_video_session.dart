@@ -1141,7 +1141,9 @@ final class FlutterWebRtcVideoSession
     CallLocalCameraGrant grant,
   ) async {
     if (_iceRetention != null &&
-        _currentGrant(_iceRetention!.canApply)) return false;
+        _currentGrant(_iceRetention!.canApply)) {
+      return false;
+    }
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) {
       if (identical(_current, raw)) await stopLocalCamera();
       return false;
@@ -1436,7 +1438,9 @@ final class FlutterWebRtcVideoSession
     CallLocalCameraGrant grant,
   ) async {
     if (_iceRetention != null &&
-        _currentGrant(_iceRetention!.canApply)) return false;
+        _currentGrant(_iceRetention!.canApply)) {
+      return false;
+    }
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) return false;
     final intent = _captureIntent;
     if (intent == null) return false;

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
@@ -210,7 +209,7 @@ void main() {
               tester
                   .getSemantics(finder)
                   .getSemanticsData()
-                  .hasFlag(SemanticsFlag.isLiveRegion),
+                  .flagsCollection.isLiveRegion,
               isTrue,
             );
             expect(capability.audioCalls, isEmpty);

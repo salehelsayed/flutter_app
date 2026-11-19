@@ -1264,8 +1264,9 @@ class GoBridgeClient extends Bridge {
         );
         if (_disposed || !_initialized || result == null) return unavailable;
         final decoded = jsonDecode(result);
-        if (decoded is! Map || decoded['ok'] != true || decoded['data'] is! Map)
+        if (decoded is! Map || decoded['ok'] != true || decoded['data'] is! Map) {
           return unavailable;
+        }
         final data = decoded['data'] as Map;
         final op = payload['op'];
         final valueKey = switch (op) {
@@ -1282,8 +1283,9 @@ class GoBridgeClient extends Bridge {
             data['consentEpoch'] is! int ||
             (op == 'weeklyProjection'
                 ? !_validActivityWeeklyProjection(data[valueKey])
-                : data[valueKey] is! bool))
+                : data[valueKey] is! bool)) {
           return unavailable;
+        }
         return jsonEncode({
           'ok': true,
           'data': {

@@ -166,7 +166,7 @@ final class EngagementChatCheckpointStore {
 
 final class _CheckpointWriter {
   _CheckpointWriter(this.path)
-    : _nonce = '${pid}-${Random.secure().nextInt(1 << 32)}';
+    : _nonce = '$pid-${Random.secure().nextInt(1 << 32)}';
 
   final String path;
   final String _nonce;
