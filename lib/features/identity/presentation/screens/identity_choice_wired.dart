@@ -32,6 +32,7 @@ class IdentityChoiceWired extends StatefulWidget {
   /// 360: injectable host seam over the build-time direct selector.
   final DirectLinkedDeviceSelector directLinkedDeviceSelector;
   final VoidCallback? onProgressRouteFirstFrame;
+  final void Function(String accountPeerId)? onFreshIdentityCommitted;
   final BackgroundPreference backgroundPreference;
   final SecureKeyStore? secureKeyStore;
   final ContactRepository? contactRepo;
@@ -51,6 +52,7 @@ class IdentityChoiceWired extends StatefulWidget {
     this.linkedDeviceSetupBuilder,
     this.directLinkedDeviceSelector = const DirectLinkedDeviceSelector(),
     this.onProgressRouteFirstFrame,
+    this.onFreshIdentityCommitted,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.secureKeyStore,
     this.contactRepo,
@@ -109,6 +111,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
         onProgress: (stage) {
           _progressStage.value = stage;
         },
+        onFreshIdentityCommitted: widget.onFreshIdentityCommitted,
       );
 
       if (!mounted) return;

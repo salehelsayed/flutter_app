@@ -27,6 +27,7 @@ Future<GenerateIdentityResult> generateNewIdentity({
   required Future<Map<String, dynamic>> Function() callMlKemKeygen,
   required IdentityRepository repo,
   void Function(String stage)? onProgress,
+  void Function(String accountPeerId)? onFreshIdentityCommitted,
 }) async {
   // Emit start event
   emitFlowEvent(
@@ -165,7 +166,6 @@ Future<GenerateIdentityResult> generateNewIdentity({
       event: 'ID_M1_DB_SAVE_SUCCESS',
       details: {'source': 'generate'},
     );
-    return GenerateIdentityResult.success;
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -174,4 +174,15 @@ Future<GenerateIdentityResult> generateNewIdentity({
     );
     return GenerateIdentityResult.dbError;
   }
+
+  // This event belongs only to fresh local generation, after the repository's
+  // identity and canonical binding commit. Restore/load/migration never use it.
+  // Only the public account ID leaves this boundary; optional observation must
+  // not change the already committed creation outcome or expose error text.
+  try {
+    onFreshIdentityCommitted?.call(identity.peerId);
+  } catch (_) {
+    // Identity creation succeeded independently of optional activity reporting.
+  }
+  return GenerateIdentityResult.success;
 }

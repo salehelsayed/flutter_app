@@ -34,8 +34,7 @@ const _fakeIdentityJson = {
   'peerId': '12D3KooWTestPeerId',
   'publicKey': 'publicKeyBase64',
   'privateKey': 'privateKeyBase64',
-  'mnemonic12':
-      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  'mnemonic12': 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
   'createdAt': '2024-01-01T00:00:00Z',
   'updatedAt': '2024-01-01T00:00:00Z',
 };
@@ -67,6 +66,86 @@ void main() {
   }
 
   group('IdentityChoiceWired', () {
+    testWidgets('B15R-010 fresh creation observer follows the completed save', (
+      tester,
+    ) async {
+      const limit = Duration(seconds: 3);
+      final repo = _FakeIdentityRepo()..saveCompleter = Completer<void>();
+      final accounts = <String>[];
+      var navigated = false;
+      addTearDown(() {
+        if (!repo.saveCompleter!.isCompleted) repo.saveCompleter!.complete();
+      });
+      await tester
+          .pumpWidget(
+            wrap(
+              IdentityChoiceWired(
+                repository: repo,
+                callIdentityGenerate: () async => {
+                  'ok': true,
+                  'identity': _fakeIdentityJson,
+                },
+                callIdentityRestore: (_) async => {'ok': false},
+                callMlKemKeygen: () async => _fakeMlKemResponse,
+                onNavigateToMain: (_) async {
+                  navigated = true;
+                },
+                onFreshIdentityCommitted: accounts.add,
+              ),
+            ),
+          )
+          .timeout(limit);
+      await pumpPastAnimations(tester).timeout(limit);
+      await tester.tap(find.text("I'm new here")).timeout(limit);
+      for (var i = 0; i < 10 && repo.savedIdentity == null; i++) {
+        await tester.pump(const Duration(milliseconds: 50)).timeout(limit);
+      }
+      expect(
+        repo.savedIdentity,
+        isNotNull,
+        reason: 'fixture must reach the held save',
+      );
+      expect(accounts, isEmpty);
+      expect(navigated, isFalse);
+      repo.saveCompleter!.complete();
+      for (var i = 0; i < 10 && !navigated; i++) {
+        await tester.pump(const Duration(milliseconds: 50)).timeout(limit);
+      }
+      expect(navigated, isTrue);
+      expect(accounts, ['12D3KooWTestPeerId']);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(limit);
+    });
+
+    testWidgets(
+      'B15R-011 opening identity choice never notifies fresh creation',
+      (tester) async {
+        const limit = Duration(seconds: 3);
+        final accounts = <String>[];
+        var generates = 0;
+        await tester
+            .pumpWidget(
+              wrap(
+                IdentityChoiceWired(
+                  repository: _FakeIdentityRepo(),
+                  callIdentityGenerate: () async {
+                    generates++;
+                    return {'ok': true, 'identity': _fakeIdentityJson};
+                  },
+                  callIdentityRestore: (_) async => {'ok': false},
+                  callMlKemKeygen: () async => _fakeMlKemResponse,
+                  onNavigateToMain: (_) async {},
+                  onFreshIdentityCommitted: accounts.add,
+                ),
+              ),
+            )
+            .timeout(limit);
+        await pumpPastAnimations(tester).timeout(limit);
+        expect(generates, 0);
+        expect(accounts, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(limit);
+      },
+    );
+
     testWidgets(
       'tap on "I\'m new here" pushes progress route before generation completes',
       (tester) async {

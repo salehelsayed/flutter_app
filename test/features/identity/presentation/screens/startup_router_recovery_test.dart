@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/erase_account_media.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
@@ -29,6 +31,7 @@ import 'package:flutter_app/features/account_migration/presentation/screens/acco
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -292,6 +295,7 @@ void main() {
   }
 
   Widget buildRouterApp({
+    DirectConversationRouteAuthority? directRouteAuthority,
     IdentityRepository? repository,
     FakeSecureKeyStore? sharedSecureKeyStore,
     Future<void>? initialShareIntentCapture,
@@ -338,6 +342,7 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers,
       home: StartupRouter(
+        directRouteAuthority: directRouteAuthority,
         initialShareIntentCapture: initialShareIntentCapture,
         ensureRuntimeServicesReady: ensureRuntimeServicesReady,
         afterP2PNodeStarted: afterP2PNodeStarted,
@@ -430,6 +435,118 @@ void main() {
       accountPeerId: peerId,
     );
   }
+
+  group('B15RW registration route wiring', () {
+    const limit = Duration(seconds: 3);
+    const binding =
+        'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    List<Map<String, dynamic>> marks() => [
+      for (final raw in bridge.sentMessages)
+        if (jsonDecode(raw) case {
+          'cmd': 'active_identity_reporter_v1',
+          'payload': Map<String, dynamic> payload,
+        })
+          if (payload['op'] == 'mark') payload,
+    ];
+
+    Future<ActiveIdentityReporter> mountReporterRoute(
+      WidgetTester tester, {
+      bool enabled = true,
+    }) async {
+      final reporter = ActiveIdentityReporter(
+        statePath: '/unused-b15-registration-route.json',
+      );
+      reporter.attachBridge(bridge);
+      addTearDown(() => reporter.dispose().timeout(limit));
+      addTearDown(
+        () => tester.pumpWidget(const SizedBox.shrink()).timeout(limit),
+      );
+      await reporter
+          .observeConsent((enabled: enabled, consentEpoch: 91))
+          .timeout(limit);
+      await tester
+          .pumpWidget(buildRouterApp(
+            directRouteAuthority: DirectConversationRouteAuthority(
+              activityReporter: reporter,
+            ),
+          ))
+          .timeout(limit);
+      await pumpFrames(tester).timeout(limit);
+      expect(find.byType(IdentityChoiceWired), findsOneWidget);
+      return reporter;
+    }
+
+    void allowConfiguration(int epoch) {
+      bridge.responseSequences['active_identity_reporter_v1'] = [
+        {
+          'ok': true,
+          'data': {'configured': true, 'revision': 1, 'consentEpoch': epoch},
+        },
+        {
+          'ok': true,
+          'data': {'accepted': true, 'revision': 1, 'consentEpoch': epoch},
+        },
+      ];
+    }
+
+    testWidgets('real onboarding entry forwards its committed account', (tester) async {
+      final reporter = await mountReporterRoute(tester).timeout(limit);
+      final choice = tester.widget<IdentityChoiceWired>(find.byType(IdentityChoiceWired));
+      expect(choice.onFreshIdentityCommitted, isNotNull,
+          reason: 'The real StartupRouter must connect the existing post-save hook');
+      final created = FakeIdentityRepository.makeIdentity(peerId: '12D3KooWRegistrationRoute');
+      await identityRepository.saveIdentity(created).timeout(limit);
+      reporter.observeIdentity(
+        accountPeerId: created.peerId,
+        rootPrivateKeyBase64: created.privateKey,
+        profileBinding: binding,
+      );
+      expect(bridge.isInitialized, isFalse);
+      final before = DateTime.now().millisecondsSinceEpoch;
+      choice.onFreshIdentityCommitted!(created.peerId);
+      final after = DateTime.now().millisecondsSinceEpoch;
+      expect(marks(), isEmpty);
+      allowConfiguration(91);
+      await bridge.initialize().timeout(limit);
+      reporter.attachBridge(bridge);
+      await pumpFrames(tester, count: 2).timeout(limit);
+      expect(marks(), hasLength(1));
+      final mark = marks().single;
+      expect(mark['accountPeerId'], created.peerId);
+      expect(mark['profileBinding'], binding);
+      expect(mark['consentEpoch'], 91);
+      expect(mark['occurredAtUnixMillis'], inInclusiveRange(before, after));
+    });
+
+    testWidgets('opening onboarding and initializing never creates a mark', (tester) async {
+      final reporter = await mountReporterRoute(tester).timeout(limit);
+      await bridge.initialize().timeout(limit);
+      reporter.attachBridge(bridge);
+      await pumpFrames(tester, count: 2).timeout(limit);
+      expect(marks(), isEmpty);
+      expect(identityRepository.saveIdentityCallCount, 0);
+    });
+
+    testWidgets('disabled creation cannot spend a later enabled epoch', (tester) async {
+      final reporter = await mountReporterRoute(tester, enabled: false).timeout(limit);
+      final created = FakeIdentityRepository.makeIdentity(peerId: '12D3KooWRegistrationOff');
+      await identityRepository.saveIdentity(created).timeout(limit);
+      reporter.observeIdentity(
+        accountPeerId: created.peerId,
+        rootPrivateKeyBase64: created.privateKey,
+        profileBinding: binding,
+      );
+      tester.widget<IdentityChoiceWired>(find.byType(IdentityChoiceWired))
+          .onFreshIdentityCommitted?.call(created.peerId);
+      await reporter.observeConsent((enabled: true, consentEpoch: 92)).timeout(limit);
+      allowConfiguration(92);
+      await bridge.initialize().timeout(limit);
+      reporter.attachBridge(bridge);
+      await pumpFrames(tester, count: 2).timeout(limit);
+      expect(marks(), isEmpty);
+    });
+  });
 
   for (final storageThrows in [false, true]) {
     testWidgets(
