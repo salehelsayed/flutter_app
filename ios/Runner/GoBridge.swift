@@ -308,16 +308,65 @@ class GoBridge: NSObject {
         return revision
     }
 
+    private static func activityWeeklyInteger(_ value: Any?) -> Int64? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !["f", "d"].contains(String(cString: number.objCType)),
+              number.doubleValue >= -9_007_199_254_740_991,
+              number.doubleValue <= 9_007_199_254_740_991,
+              number.doubleValue.rounded() == number.doubleValue else { return nil }
+        return number.int64Value
+    }
+
+    private static func activityWeeklyKinds(_ value: Any?, allowEmpty: Bool) -> Bool {
+        guard let kinds = value as? [String], kinds.count <= 4,
+              allowEmpty || !kinds.isEmpty, Set(kinds).count == kinds.count else { return false }
+        return kinds.allSatisfy { ["active", "chat", "call", "group"].contains($0) }
+    }
+
+    private static func activityWeeklyProjection(_ value: Any?) -> [String: Any]? {
+        guard let weekly = value as? [String: Any],
+              Set(weekly.keys) == ["week", "startUnixMillis", "endUnixMillis", "kinds", "acknowledged"],
+              let week = weekly["week"] as? String, week.utf8.count == 8,
+              week.range(of: #"^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$"#, options: .regularExpression) != nil,
+              let start = activityWeeklyInteger(weekly["startUnixMillis"]),
+              let end = activityWeeklyInteger(weekly["endUnixMillis"]), end > start,
+              activityWeeklyKinds(weekly["kinds"], allowEmpty: true),
+              let acknowledgements = weekly["acknowledged"] as? [[String: Any]],
+              acknowledgements.count <= 64 else { return nil }
+        for acknowledgement in acknowledgements {
+            guard Set(acknowledgement.keys) == ["relayPeerId", "kinds"],
+                  let relay = acknowledgement["relayPeerId"] as? String, !relay.isEmpty,
+                  activityWeeklyKinds(acknowledgement["kinds"], allowEmpty: false) else { return nil }
+        }
+        return weekly
+    }
+
     internal static func activityAnswer(_ raw: String?, fence: MknoonActiveIdentityReporterFence, op: String) -> String {
         guard let raw, raw.utf8.count <= 16_384, let bytes = raw.data(using: .utf8),
               let answer = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return activityError("") }
         guard activityBool(answer["ok"]) == true else { return activityError(answer["errorCode"] as? String ?? "") }
-        let field = op == "configure" ? "configured" : op == "mark" ? "accepted" : "queued"
+        let field: String
+        switch op {
+        case "configure": field = "configured"
+        case "mark", "markWeekly": field = "accepted"
+        case "weeklyProjection": field = "weekly"
+        default: field = "queued"
+        }
         guard Set(answer.keys) == ["ok", "data"], let data = answer["data"] as? [String: Any],
-              Set(data.keys) == Set([field, "revision", "consentEpoch"]),
-              activityInteger(data["revision"]) == fence.revision,
-              activityInteger(data["consentEpoch"]) == fence.consentEpoch,
-              let value = activityBool(data[field]) else { return activityError("") }
+              Set(data.keys) == Set([field, "revision", "consentEpoch"]) else { return activityError("") }
+        let weekly = op == "markWeekly" || op == "weeklyProjection"
+        let revision = weekly ? activityWeeklyInteger(data["revision"]) : activityInteger(data["revision"])
+        let epoch = weekly ? activityWeeklyInteger(data["consentEpoch"]) : activityInteger(data["consentEpoch"])
+        guard let revision, revision > 0, revision == fence.revision,
+              let epoch, epoch > 0, epoch == fence.consentEpoch else { return activityError("") }
+        let value: Any
+        if op == "weeklyProjection" {
+            guard let projection = activityWeeklyProjection(data[field]) else { return activityError("") }
+            value = projection
+        } else {
+            guard let boolean = activityBool(data[field]) else { return activityError("") }
+            value = boolean
+        }
         let receipt: [String: Any] = [field: value, "revision": fence.revision, "consentEpoch": fence.consentEpoch]
         let result: [String: Any] = ["ok": true, "data": receipt]
         guard let encoded = try? JSONSerialization.data(withJSONObject: result),
@@ -403,7 +452,7 @@ class GoBridge: NSObject {
             }
             fence = admitted
             fields["revision"] = fence.revision
-        } else if op == "mark" || op == "flush" {
+        } else if op == "mark" || op == "flush" || op == "markWeekly" || op == "weeklyProjection" {
             guard let revision = Self.activityMarkRevision(fields) else {
                 result(Self.activityError("INVALID_INPUT")); return
             }

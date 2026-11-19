@@ -201,6 +201,19 @@ final class GoBridgeActivityReporterContractTests: XCTestCase {
         }
     }
 
+    func testWeeklyProjectionPreservesSignedSafeCalendarBoundaries() throws {
+        let maximum: Int64 = 9_007_199_254_740_991
+        let ranges: [(Int64, Int64)] = [(-maximum, -maximum + 1000), (-1000, 0), (0, 1000), (maximum - 1000, maximum)]
+        for (start, end) in ranges {
+            var weekly = weeklyReceipt()
+            weekly["startUnixMillis"] = start
+            weekly["endUnixMillis"] = end
+            let answer = try validatedAnswer(op: "weeklyProjection", field: "weekly", value: weekly)
+            XCTAssertEqual(answer["ok"] as? Bool, true)
+            XCTAssertEqual((answer["data"] as? NSDictionary)?["weekly"] as? NSDictionary, weekly as NSDictionary)
+        }
+    }
+
     private func weeklyReceipt() -> [String: Any] {
         ["week": "2026-W47", "startUnixMillis": Int64(1_794_902_400_000),
          "endUnixMillis": Int64(1_795_507_200_000), "kinds": [String](),
