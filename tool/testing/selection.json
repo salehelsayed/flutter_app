@@ -371,6 +371,7 @@
         "test/features/call/infrastructure/call_signaling_runtime_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart",
     "test/features/call/infrastructure/flutter_webrtc_video_session_test.dart",
+    "test/features/call/infrastructure/flutter_webrtc_transceiver_rebind_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_video_quality_test.dart",
         "test/features/call/infrastructure/call_video_quality_stats_sampler_test.dart",
         "test/features/call/infrastructure/platform_call_video_quality_environment_source_test.dart",
