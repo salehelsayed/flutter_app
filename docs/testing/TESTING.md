@@ -12514,6 +12514,62 @@ visible and cannot become an ordinary first-attempt PASS.
   Background camera continuation remains held: system PiP shows remote video
   while the local camera pauses. Affected physical End, downgrade, peer camera
   truth, permission and system PiP cases remain required before video acceptance.
+  **Interrupted permission and duplicate background regressions (2026-11-19):**
+  `permission_handler_android` 12.1.0 leaves its native pending request count
+  occupied when Android returns an empty cancellation callback. A later
+  microphone request can then fail before checking its existing grant. The
+  app captures the exact owned request through the chained ActivityCompat
+  delegate and converts only its empty cancellation into denied results;
+  normal/unowned callbacks and live delegate ownership remain unchanged.
+  Linux Robolectric exercises the actual pinned plugin: RED retained two
+  cancellation failures and one disposed-predecessor ownership failure, with
+  five controls passing. GREEN passed all eight regressions and 31 existing
+  PiP/MainActivity cases (39 total, no failures/errors/skips). Google services
+  was explicitly disabled for this disposable JVM proof; no Firebase
+  configuration was handled. This does not certify a packaged phone candidate.
+  Flutter can report both hidden and paused for one Home transition. Camera
+  revocation now runs once per foreground-to-background edge so the duplicate
+  cannot invalidate the authenticated paused publication. The causal RED saw
+  only `on`, where `on, paused` was required. Camera/PiP preservation GREEN
+  passed 34 named cases (36 including two file-loading events), with zero
+  errors/skips. The first GREEN's stale local projection assertion remains
+  recorded: its fake session omitted the presentation event emitted by real
+  camera retirement; the corrected fixture emits that event and preserves all
+  assertions. Evidence remains under
+  `/srv/evidence/codex-astra-bl16-fixes-20261119/residual-*`.
+  Physical debug 289 closes the interrupted-permission finding: cancellation,
+  regrant and subsequent microphone calls passed in both caller roles. The
+  candidate remains NOT ALL PASS: Pixel Home still left stale peer camera truth,
+  Android auto-entry had no captured pending lease, and a main-isolate channel
+  probe reported `MissingPluginException` for iOS PiP availability. The first
+  untagged iOS probe is inconclusive; the later nonce-matched main-only probe
+  supplies attribution. The original Android refusal excerpt survives as an
+  operator tool-output receipt; its full original logcat was overwritten and
+  must not be claimed as retained raw capture.
+  Inactive-only presentation now pauses an already-owned camera without
+  retiring a pending first-permission action. Two causal host REDs reproduce
+  stale `on`; preservation GREEN passes 36 named cases (38 including loading).
+  Android API 35's transitioning-to-PiP callback captures entry through the
+  existing fenced `beginEntry`; completion still cannot adopt an uncaptured
+  current lease. Its RED has two failures among 30 cases; GREEN passes all 30,
+  and the full affected Android native gate passes 704 cases in 54 JUnit files.
+  iOS registers the channel with the implicit engine's messenger and a lazy
+  registrar-owned view provider. Claude's single Mac run compiles Runner and
+  passes all 21 Swift cases. These overlapping host/native results do not prove
+  corrected physical PiP or peer camera truth; a new guarded candidate is needed.
+  **Diagnostics quota retention fixture (2026-11-19):** protected admission
+  retention does not require admission to remain the final event. Real elapsed
+  time affects encoded record size; a later routine authority event may fit
+  spare byte headroom. The first affected-calls failure is retained. A Linux
+  public-API probe with the original payload retained attempt, terminal and
+  admission plus one later authority event at 150 events / 65,309 bytes, and
+  preserved the exact event-ID set after restart. All 16 valid payload-width
+  variants retained protected milestones within 256 events / 64 KiB. The
+  fixture now checks the unique admission and its values/truncation directly,
+  retaining quota and restart assertions with two-second await bounds. The
+  diagnostics file passes all 63 named cases (64 including loading). Production
+  quota behavior is unchanged. Evidence is under
+  `/srv/evidence/codex-astra-bl16-fixes-20261119/diagnostics-*`.
   **OS PiP native unit and visible foreground camera:** scoped native evidence
   is closed at composition `754bae54319ef9e21dd5fab334f699790f3e67c4`.
   Android assemble and unit tasks exited 0 with 628 passing cases in 48 JUnit

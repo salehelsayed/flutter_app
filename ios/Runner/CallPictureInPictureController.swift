@@ -29,7 +29,14 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   private let events: FlutterEventChannel
   private let sourceView: () -> UIView?
   private var eventSink: FlutterEventSink?
-  private lazy var core = CallPipLeaseCore(platform: self) { [weak self] in self?.eventSink?($0) }
+  private lazy var core = CallPipLeaseCore(
+    platform: self,
+    debugTrace: { message in
+      #if DEBUG
+      NSLog("[CallPipNative] %@", message as NSString)
+      #endif
+    }
+  ) { [weak self] in self?.eventSink?($0) }
   private var pip: AVPictureInPictureController?
   private var content: AVPictureInPictureVideoCallViewController?
   private var restoring = false
@@ -62,6 +69,7 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
         // Keep the capture: on restore this can arrive before didStop, and the core
         // ignores it for an entered lease.
         guard let self, self.pip?.isPictureInPictureActive != true else { return }
+        self.core.traceState("callback didBecomeActive")
         self.core.osReturnedWithoutEntry(settled: false)
       })
   }
@@ -79,7 +87,10 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
     case "arm":
       guard let id, let args, let source = CallPipSource.parse(args),
         let controls = CallPipControls.parse(args)
-      else { return result(["armed": false, "reason": "invalid"]) }
+      else {
+        core.traceState("arm response armed=false reason=invalid")
+        return result(["armed": false, "reason": "invalid"])
+      }
       result(core.arm(id, source: source, controls: controls))
     case "update":
       guard let id, let args, let controls = CallPipControls.parse(args) else { return result(false) }
@@ -135,6 +146,7 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   }
 
   func setAutoEnter(_ lease: CallPipIdentity?, _ controls: CallPipControls?) throws {
+    core.traceState("setAutoEnter enabled=\(controls != nil) requested=\(lease?.leaseId ?? 0)")
     guard controls != nil else {
       pip?.canStartPictureInPictureAutomaticallyFromInline = false
       return
@@ -144,17 +156,23 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
   }
 
   func requestEnter() -> Bool {
-    guard let pip, pip.isPictureInPicturePossible else { return false }
+    let possible = pip?.isPictureInPicturePossible == true
+    core.traceState("requestEnter controller=\(pip != nil) possible=\(possible)")
+    guard let pip, possible else { return false }
     pip.startPictureInPicture()
     return true
   }
 
   func leavePip() {
+    core.traceState("leavePip active=\(pip?.isPictureInPictureActive == true)")
     pip?.stopPictureInPicture()
   }
 
   private func ensureController() {
-    guard pip == nil, let source = sourceView() else { return }
+    guard pip == nil else { return }
+    let source = sourceView()
+    core.traceState("ensureController sourceView=\(source != nil)")
+    guard let source else { return }
     let call = AVPictureInPictureVideoCallViewController()
     call.preferredContentSize = CGSize(width: 1080, height: 1920)
     let controller = AVPictureInPictureController(
@@ -162,21 +180,29 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
     controller.delegate = self
     pip = controller
     content = call
+    core.traceState("ensureController created=true possible=\(controller.isPictureInPicturePossible)")
   }
 
   // AVPictureInPictureControllerDelegate.
   func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+    core.traceState("callback willStart")
     _ = core.beginEntry()
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
     // Never attribute a completion to whatever lease is current now.
-    if !core.osEntered() { controller.stopPictureInPicture() }
+    core.traceState("callback didStart")
+    if !core.osEntered() {
+      core.traceState("leave reason=osEnteredRefused")
+      controller.stopPictureInPicture()
+    }
   }
 
   func pictureInPictureController(
     _ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error
   ) {
+    let nativeError = error as NSError
+    core.traceState("callback failedStart domain=\(nativeError.domain) code=\(nativeError.code)")
     // Async start rejection: report it and retire that lease (PIP-NATIVE-6).
     core.osEntryFailed()
   }
@@ -185,11 +211,13 @@ final class CallPictureInPictureController: NSObject, CallPipPlatform, FlutterSt
     _ controller: AVPictureInPictureController,
     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
   ) {
+    core.traceState("callback restoreUI")
     restoring = true
     completionHandler(true)
   }
 
   func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+    core.traceState("callback didStop")
     let restored = restoring
     restoring = false
     core.osExited(restored: restored)

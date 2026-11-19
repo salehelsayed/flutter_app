@@ -20,6 +20,7 @@ set +e
   --tests 'com.mknoon.app.call.*' \
   --tests 'com.mknoon.app.MainActivityOnNewIntentTest' \
   --tests 'com.mknoon.app.MainActivityAppVisibilityTest' \
+  --tests 'com.mknoon.app.PermissionCancellationNativeTest' \
   --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' \
   --tests 'com.mknoon.app.AndroidCallWakeBridgeTest' \
   --tests 'com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest' \

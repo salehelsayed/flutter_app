@@ -124,6 +124,51 @@ class CallPipLeaseCoreTest {
     }
 
     @Test
+    fun `auto-enter transition captures the armed lease before OS completion`() {
+        core.arm(id(1), source, controls)
+        core.onAutoEnterTransition(true)
+        assertTrue(core.osEntered())
+        assertEquals(listOf("1:1:entered"), types())
+        assertEquals(listOf("sink-1:pc-1"), platform.live)
+        assertFalse(platform.log.contains("enter"))
+    }
+
+    @Test
+    fun `false or stashed-only auto-enter UI state never captures an entry`() {
+        core.arm(id(1), source, controls)
+        core.onAutoEnterTransition(false)
+        assertFalse(core.osEntered())
+        assertEquals(emptyList<Any>(), platform.live)
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        assertFalse(platform.log.any { it.startsWith("attach ") })
+    }
+
+    @Test
+    fun `duplicate auto-enter transition attaches one sink and enters once`() {
+        core.arm(id(1), source, controls)
+        core.onAutoEnterTransition(true)
+        core.onAutoEnterTransition(true)
+        assertTrue(core.osEntered())
+        assertTrue(core.osEntered())
+        assertEquals(listOf("1:1:entered"), types())
+        assertEquals(1, platform.log.count { it.startsWith("attach ") })
+        assertEquals(listOf("sink-1:pc-1"), platform.live)
+    }
+
+    @Test
+    fun `auto-enter transition cannot credit a successor for an outstanding old entry`() {
+        core.arm(id(1), source, controls)
+        assertEquals(id(1), core.beginEntry())
+        core.arm(id(2), source, controls)
+        core.onAutoEnterTransition(true)
+        assertFalse(core.osEntered())
+        assertEquals(emptyList<Map<String, Any>>(), events)
+        assertEquals(emptyList<Any>(), platform.live)
+        assertEquals(id(2), platform.autoLease)
+        assertTrue(core.update(id(2), controls))
+    }
+
+    @Test
     fun `one entry and one exit per lease, then the lease is retired`() {
         core.arm(id(1), source, controls)
         core.onAction(id(1), "mute") // before entered: dropped

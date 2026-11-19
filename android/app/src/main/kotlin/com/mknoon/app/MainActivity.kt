@@ -1,6 +1,7 @@
 package com.mknoon.app
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -36,6 +37,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var goBridge: GoBridge? = null
+    private var permissionResultNormalizer: PermissionResultNormalizer? = null
     private var receivedMediaEgressHandler: ReceivedMediaEgressHandler? = null
     private var stickerClipFrameBridge: StickerClipFrameBridge? = null
     private var stickerCutoutBridge: StickerCutoutBridge? = null
@@ -87,6 +89,7 @@ class MainActivity : FlutterActivity() {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
         }
         super.onCreate(savedInstanceState)
+        setupPermissionResultNormalizer()
         // This exported entry only displays the exact call. Notification Answer
         // consent is consumed by the private MknoonCallAnswerActivity.
         incomingCallPresentation = MknoonIncomingCallPresentation(this).also {
@@ -376,6 +379,14 @@ class MainActivity : FlutterActivity() {
         callPictureInPictureHandler?.onUserLeaveHint()
     }
 
+    @android.annotation.TargetApi(Build.VERSION_CODES.S)
+    override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
+        super.onPictureInPictureUiStateChanged(pipState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            callPictureInPictureHandler?.onAutoEnterTransition(pipState.isTransitioningToPip)
+        }
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: android.content.res.Configuration,
@@ -653,6 +664,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        closePermissionResultNormalizer()
         androidCallWakeBridge?.dispose()
         androidCallWakeBridge = null
         incomingCallPresentation?.dispose()
@@ -687,7 +699,22 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         if (receivedMediaEgressHandler?.onRequestPermissionsResult(requestCode, grantResults) == true) return
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val normalized = permissionResultNormalizer?.normalize(requestCode, permissions, grantResults)
+        super.onRequestPermissionsResult(
+            requestCode,
+            normalized?.permissions ?: permissions,
+            normalized?.grantResults ?: grantResults,
+        )
+    }
+
+    private fun setupPermissionResultNormalizer() {
+        closePermissionResultNormalizer()
+        permissionResultNormalizer = PermissionResultNormalizer(this).also { it.install() }
+    }
+
+    private fun closePermissionResultNormalizer() {
+        permissionResultNormalizer?.dispose()
+        permissionResultNormalizer = null
     }
 
     private fun visibilitySnapshotStore(): AppVisibilitySnapshotStore =

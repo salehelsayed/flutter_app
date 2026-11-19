@@ -1975,7 +1975,8 @@ void main() {
   test(
     'repeated late milestones cannot displace attempt or terminal and remain bounded after restart',
     () async {
-      var diagnostics = await install();
+      const deadline = Duration(seconds: 2);
+      var diagnostics = await install().timeout(deadline);
       final trace = diagnostics.beginAttempt()!;
       diagnostics.finishAttempt(
         traceId: trace,
@@ -2006,21 +2007,30 @@ void main() {
           outcome: 'ok',
         );
       }
-      final before = await diagnostics.eventsForTesting();
+      final before = await diagnostics.eventsForTesting().timeout(deadline);
       expect(before.where((e) => e['stage'] == 'attempt'), hasLength(1));
       expect(
         before.where((e) => e['stage'] == 'terminal').single['outcome'],
         'dropped_after_media',
       );
       expect(before.where((e) => e['stage'] == 'admission'), hasLength(1));
+      // Lower-priority events can use remaining byte headroom after admission.
+      // Retention protects the milestone without requiring it to remain last.
+      final admission = before.singleWhere(
+        (e) => e['stage'] == 'admission' && e['action'] == 'stop',
+      );
+      expect(admission['values'], containsPair('foreground', false));
+      expect(admission['values'], containsPair('ownerMatched', true));
+      expect(admission['values'], containsPair('terminal', true));
+      expect(admission['values'], containsPair('completeness', 'truncated'));
       expect(before.length, lessThanOrEqualTo(256));
       expect(
         before.fold<int>(0, (n, e) => n + utf8.encode(jsonEncode(e)).length),
         lessThanOrEqualTo(64 * 1024),
       );
-      await diagnostics.dispose();
-      diagnostics = await install(enabled: null);
-      final after = await diagnostics.eventsForTesting();
+      await diagnostics.dispose().timeout(deadline);
+      diagnostics = await install(enabled: null).timeout(deadline);
+      final after = await diagnostics.eventsForTesting().timeout(deadline);
       expect(
         after.map((e) => e['eventId']).toSet(),
         before.map((e) => e['eventId']).toSet(),

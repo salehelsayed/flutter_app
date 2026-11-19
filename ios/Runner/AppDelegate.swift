@@ -1272,6 +1272,13 @@ final class IosSetupReadinessEntryCoordinator {
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
     setupCallVideoQualityBridge(messenger: messenger)
+    if callPictureInPictureController == nil,
+      let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "MknoonCallPictureInPicture")
+    {
+      setupCallPictureInPictureBridge(messenger: messenger) {
+        registrar.viewController?.viewIfLoaded
+      }
+    }
     setupIosCallLifecycleBridges(messenger: messenger)
     updateCheckBackground.attach(messenger: messenger)
 
@@ -1978,16 +1985,22 @@ final class IosSetupReadinessEntryCoordinator {
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
     setupCallVideoQualityBridge(messenger: controller.binaryMessenger)
-    setupCallPictureInPictureBridge(controller: controller)
+    setupCallPictureInPictureBridge(messenger: controller.binaryMessenger) {
+      [weak controller] in controller?.view
+    }
     setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
   }
 
   /// BL-16 live-call PiP bridge (contract v1). Inert until Dart arms a lease.
-  private func setupCallPictureInPictureBridge(controller: FlutterViewController) {
+  private func setupCallPictureInPictureBridge(
+    messenger: FlutterBinaryMessenger,
+    sourceView: @escaping () -> UIView?
+  ) {
     guard callPictureInPictureController == nil else { return }
     callPictureInPictureController = CallPictureInPictureController(
-      messenger: controller.binaryMessenger
-    ) { [weak controller] in controller?.view }
+      messenger: messenger,
+      sourceView: sourceView
+    )
   }
 
   private func setupIosCallLifecycleBridges(

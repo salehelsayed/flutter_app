@@ -16,7 +16,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.util.Log
 import android.util.Rational
+import com.mknoon.app.BuildConfig
 import com.mknoon.app.PictureInPictureExitClassifier
 import com.mknoon.app.R
 import io.flutter.plugin.common.BinaryMessenger
@@ -36,7 +38,15 @@ internal class CallPictureInPictureHandler(
     private val methods = MethodChannel(messenger, METHOD_CHANNEL)
     private val events = EventChannel(messenger, EVENT_CHANNEL)
     private var eventSink: EventChannel.EventSink? = null
-    private val core = CallPipLeaseCore(this) { eventSink?.success(it) }
+    private val core = CallPipLeaseCore(
+        this,
+        debugTrace = if (BuildConfig.DEBUG) {
+            { message: String ->
+                Log.d("CallPipNative", message)
+                Unit
+            }
+        } else null,
+    ) { eventSink?.success(it) }
     private val main = Handler(Looper.getMainLooper())
     private val liveSinks = mutableSetOf<CallPipRemoteSink>()
     private var controls: CallPipControls? = null
@@ -90,6 +100,7 @@ internal class CallPictureInPictureHandler(
                 val wanted = args?.let { CallPipControls.parse(it) }
                 result.success(
                     if (id == null || source == null || wanted == null) {
+                        core.traceState("arm response armed=false reason=invalid")
                         mapOf("armed" to false, "reason" to "invalid")
                     } else {
                         core.arm(id, source, wanted)
@@ -115,7 +126,13 @@ internal class CallPictureInPictureHandler(
     }
 
     // MainActivity lifecycle forwarding.
+    fun onAutoEnterTransition(transitioningToPip: Boolean) {
+        core.traceState("callback onAutoEnterTransition value=$transitioningToPip")
+        core.onAutoEnterTransition(transitioningToPip)
+    }
+
     fun onUserLeaveHint() {
+        core.traceState("callback onUserLeaveHint")
         core.beginEntry() ?: return
         val wanted = controls ?: return
         if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S && !enter(wanted)) {
@@ -124,10 +141,14 @@ internal class CallPictureInPictureHandler(
     }
 
     fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) {
+        core.traceState("callback onPictureInPictureModeChanged value=$inPictureInPicture")
         if (inPictureInPicture) {
             exit = PictureInPictureExitClassifier().also { it.onPictureInPictureModeChanged(true) }
             // Never attribute a completion to whatever lease is current now.
-            if (!core.osEntered()) leavePip()
+            if (!core.osEntered()) {
+                core.traceState("leave reason=osEnteredRefused")
+                leavePip()
+            }
             return
         }
         val classifier = exit ?: return
@@ -136,6 +157,7 @@ internal class CallPictureInPictureHandler(
     }
 
     fun onResume() {
+        core.traceState("callback onResume")
         val classifier = exit
         if (classifier != null) {
             settle(classifier.onResume())
@@ -146,14 +168,17 @@ internal class CallPictureInPictureHandler(
     }
 
     fun onPause() {
+        core.traceState("callback onPause")
         exit?.onPause()
     }
 
     fun onWindowFocusChanged(hasFocus: Boolean) {
+        core.traceState("callback onWindowFocusChanged value=$hasFocus")
         exit?.let { settle(it.onWindowFocusChanged(hasFocus)) }
     }
 
     fun onStop() {
+        core.traceState("callback onStop")
         exit?.let { settle(it.onStop()) }
     }
 
@@ -185,6 +210,7 @@ internal class CallPictureInPictureHandler(
     }
 
     override fun setAutoEnter(lease: CallPipIdentity?, controls: CallPipControls?) {
+        core.traceState("setAutoEnter enabled=${controls != null} requested=${lease?.leaseId ?: 0}")
         this.controls = controls
         armedLease = lease
         setReceiver(controls != null)
@@ -199,6 +225,7 @@ internal class CallPictureInPictureHandler(
     }
 
     override fun leavePip() {
+        core.traceState("leavePip inPip=${inPip()}")
         // Closing the PiP window keeps the call; the task just goes to the background.
         if (inPip()) activity.moveTaskToBack(false)
     }

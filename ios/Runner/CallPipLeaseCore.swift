@@ -92,6 +92,7 @@ final class CallPipLeaseCore {
 
   private unowned let platform: CallPipPlatform
   private let emit: ([String: Any]) -> Void
+  private let debugTrace: ((String) -> Void)?
   private var lease: Lease?
   private var instance: String?
   private var highestLease: Int64 = 0
@@ -102,9 +103,21 @@ final class CallPipLeaseCore {
   // resolved from the current lease at completion time.
   private var pendingEntry: CallPipIdentity?
 
-  init(platform: CallPipPlatform, emit: @escaping ([String: Any]) -> Void) {
+  init(
+    platform: CallPipPlatform, debugTrace: ((String) -> Void)? = nil,
+    emit: @escaping ([String: Any]) -> Void
+  ) {
     self.platform = platform
+    self.debugTrace = debugTrace
     self.emit = emit
+  }
+
+  func traceState(_ event: String) {
+    #if DEBUG
+    debugTrace?(
+      "\(event) current=\(lease?.id.leaseId ?? 0) pending=\(pendingEntry?.leaseId ?? 0)"
+        + " entered=\(lease?.entered == true) sink=\(lease?.sink != nil)")
+    #endif
   }
 
   func availability() -> [String: Any] {
@@ -114,21 +127,33 @@ final class CallPipLeaseCore {
   }
 
   func arm(_ id: CallPipIdentity, source: CallPipSource, controls: CallPipControls) -> [String: Any] {
-    guard accepts(id) else { return ["armed": false, "reason": "stale"] }
+    traceState("arm requested=\(id.leaseId)")
+    guard accepts(id) else {
+      traceState("arm response armed=false reason=stale")
+      return ["armed": false, "reason": "stale"]
+    }
     if id.instanceId != instance {
       if let old = instance { retiredInstances.insert(old) }
       instance = id.instanceId
     }
     highestLease = id.leaseId
     retire(reason: "disarmed")
-    guard platform.supported() else { return ["armed": false, "reason": "unsupported"] }
-    guard platform.hasVideoTrack(source) else { return ["armed": false, "reason": "trackNotFound"] }
+    guard platform.supported() else {
+      traceState("arm response armed=false reason=unsupported")
+      return ["armed": false, "reason": "unsupported"]
+    }
+    guard platform.hasVideoTrack(source) else {
+      traceState("arm response armed=false reason=trackNotFound")
+      return ["armed": false, "reason": "trackNotFound"]
+    }
     lease = Lease(id: id, source: source)
     guard (try? platform.setAutoEnter(id, controls)) != nil else {
       lease = nil
+      traceState("arm response armed=false reason=unsupported")
       return ["armed": false, "reason": "unsupported"]
     }
     pendingAutoOff = nil
+    traceState("arm response armed=true reason=ok")
     return ["armed": true, "reason": "ok"]
   }
 
@@ -138,6 +163,7 @@ final class CallPipLeaseCore {
   }
 
   func enter(_ id: CallPipIdentity) -> Bool {
+    traceState("enter requested=\(id.leaseId)")
     guard let target = current(id) else { return false }
     if target.entered { return true }
     // A retired lease's OS start is still outstanding: refuse, never overwrite.
@@ -152,6 +178,7 @@ final class CallPipLeaseCore {
   /// Retires a current triple, then retries any cleanup it still owns. True once
   /// nothing of that lease is left; never touches a successor.
   func disarm(_ id: CallPipIdentity) -> Bool {
+    traceState("disarm requested=\(id.leaseId)")
     if lease?.id == id { retire(reason: "disarmed") }
     return retryCleanup(id)
   }
@@ -159,6 +186,7 @@ final class CallPipLeaseCore {
   /// OS entry is starting: attach the sink early and return the triple the
   /// adapter must pass to every later entry/exit callback.
   func beginEntry() -> CallPipIdentity? {
+    traceState("beginEntry before")
     guard let target = lease else { return nil }
     // An outstanding capture keeps its identity; a retired lease's capture
     // blocks the successor until its own terminal callback settles it.
@@ -166,6 +194,7 @@ final class CallPipLeaseCore {
     guard owner == target.id else { return nil }
     pendingEntry = owner
     if target.sink == nil { target.sink = platform.attachSink(target.source) }
+    traceState("beginEntry accepted=\(owner.leaseId)")
     return owner
   }
 
@@ -174,18 +203,29 @@ final class CallPipLeaseCore {
   /// False when the completion has no captured entry or a stale one; the
   /// adapter must then leave PiP.
   func osEntered() -> Bool {
-    guard let owner = pendingEntry else { return false }
+    traceState("osEntered before")
+    guard let owner = pendingEntry else {
+      traceState("osEntered accepted=false reason=noPendingEntry")
+      return false
+    }
     onEntered(owner)
-    guard let target = lease else { return false }
-    return target.id == owner && target.entered
+    guard let target = lease else {
+      traceState("osEntered accepted=false reason=noLease")
+      return false
+    }
+    let accepted = target.id == owner && target.entered
+    traceState("osEntered accepted=\(accepted)")
+    return accepted
   }
 
   func osExited(restored: Bool) {
+    traceState("osExited restored=\(restored)")
     if let owner = pendingEntry { onExited(owner, restored: restored) }
     pendingEntry = nil
   }
 
   func osEntryFailed() {
+    traceState("osEntryFailed")
     if let owner = pendingEntry { onEntryFailed(owner) }
     pendingEntry = nil
   }
@@ -193,6 +233,7 @@ final class CallPipLeaseCore {
   /// `settled` false keeps a current capture (iOS can report active before
   /// stop); a retired lease's capture is always settled here.
   func osReturnedWithoutEntry(settled: Bool) {
+    traceState("osReturnedWithoutEntry settled=\(settled)")
     guard let owner = pendingEntry else { return }
     onReturnedWithoutEntry(owner)
     if settled || lease?.id != owner { pendingEntry = nil }
@@ -204,6 +245,7 @@ final class CallPipLeaseCore {
     guard target.sink != nil else {
       send(target, "failed", ["code": "trackLost"])
       drop(target)
+      traceState("leave reason=trackLost")
       platform.leavePip()
       return
     }
@@ -237,6 +279,7 @@ final class CallPipLeaseCore {
 
   /// Lock or user-disabled: retires the current lease even before entry.
   func onBlocked(_ reason: String) {
+    traceState("onBlocked")
     guard let target = lease, Self.blocked.contains(reason) else { return }
     let wasEntered = target.entered
     drop(target)
@@ -246,6 +289,7 @@ final class CallPipLeaseCore {
 
   /// Host going away: retire without events.
   func shutdown() {
+    traceState("shutdown")
     guard let target = lease else { return }
     let wasEntered = target.entered
     drop(target)
@@ -263,6 +307,7 @@ final class CallPipLeaseCore {
   }
 
   private func retire(reason: String) {
+    traceState("retire reason=\(reason)")
     guard let target = lease else { return }
     let wasEntered = target.entered
     drop(target)

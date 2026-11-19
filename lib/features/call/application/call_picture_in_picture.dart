@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:uuid/uuid.dart';
 
 import '../domain/call_engine.dart';
@@ -332,6 +333,9 @@ final class CallPictureInPictureController {
     _current = null;
     _entryRequested = false;
     if (lease == null) return;
+    if (kDebugMode) {
+      debugPrint('CallPipDart invalidate reason=$reason lease=${lease.identity.leaseId} phase=${lease.phase.name}');
+    }
     _cleanup[lease.identity] = reason;
     _cleanupVersions[lease.identity] = ++_cleanupVersion;
     unawaited(_disarm(lease.identity));

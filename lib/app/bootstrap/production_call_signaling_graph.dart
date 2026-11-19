@@ -3,6 +3,7 @@ import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
@@ -1124,10 +1125,16 @@ final class ProductionCallSignalingGraph
         machine?.settledRevision != source.negotiation.mediaRevision ||
         session is! CallVideoPictureInPictureSource ||
         !source.isCurrent()) {
+      if (kDebugMode) {
+        debugPrint('CallPipGraph sourceRefused video=$videoEnabled shutdown=$_shuttingDown invalid=$_callabilityInvalidated permission=$_cameraPermissionPending call=${snapshot?.callId == source.negotiation.callId} connected=${snapshot?.state == CallState.connected} owner=${owner?.current} negotiation=${identical(owner?.negotiation, source.negotiation)} gates=${machine?.videoGatesOpen} pending=${machine?.hasPendingSwitch} media=${machine?.settledMedia.name} revision=${machine?.settledRevision == source.negotiation.mediaRevision} source=${session is CallVideoPictureInPictureSource} current=${source.isCurrent()}');
+      }
       return false;
     }
     final actual =
         (session as CallVideoPictureInPictureSource).pictureInPictureSource;
+    if (kDebugMode && (actual == null || !actual.sameBinding(source))) {
+      debugPrint('CallPipGraph bindingRefused actual=${actual != null}');
+    }
     return actual != null && actual.sameBinding(source);
   }
 
@@ -1171,6 +1178,11 @@ final class ProductionCallSignalingGraph
 
   void _pausePipCamera(CallPipLease? lease) {
     final token = _localCameraToken;
+    if (token == null && !_cameraActionPending && _pipCameraIntent == null) {
+      // No capture or explicit action remains to retire. Preserve the existing
+      // pause publication when inactive, hidden and paused arrive together.
+      return;
+    }
     final owner = token == null ? null : videoOwners?[token.callId];
     final session = owner?.videoSession;
     final retain =
@@ -1616,6 +1628,14 @@ final class ProductionCallSignalingGraph
         unawaited(_revokeLocalCamera());
       } else {
         _localCameraToken = binding;
+        final lease = _pip?.current;
+        if (!_videoForeground &&
+            (lease == null ||
+                lease.phase == CallPipPhase.preparing ||
+                !lease.cameraInPip ||
+                !_pipSourceCurrent(lease.source))) {
+          _pausePipCamera(lease);
+        }
       }
     }
     final session = owner?.videoSession;
@@ -2304,13 +2324,15 @@ final class ProductionCallSignalingGraph
     } catch (_) {
       // Activity timer cleanup cannot block call background handling.
     }
+    final wasForegroundAllowed = _videoForegroundAllowed;
     _videoForegroundAllowed = false;
     _stagedAnswerMedia = null;
     final lease = _pip?.current;
-    if (lease == null ||
-        lease.phase == CallPipPhase.preparing ||
-        !lease.cameraInPip ||
-        !_pipSourceCurrent(lease.source)) {
+    if (wasForegroundAllowed &&
+        (lease == null ||
+            lease.phase == CallPipPhase.preparing ||
+            !lease.cameraInPip ||
+            !_pipSourceCurrent(lease.source))) {
       _pausePipCamera(lease);
     }
     _pip?.background();

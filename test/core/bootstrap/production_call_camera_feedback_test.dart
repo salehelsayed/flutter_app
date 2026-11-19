@@ -443,6 +443,133 @@ void main() {
     expect(await completed.timeout(_redDeadline), isNull);
   });
 
+  test(
+    'BL16 hidden then paused preserves the camera-paused publication',
+    () async {
+      var foreground = true;
+      final entered = Completer<void>();
+      final release = Completer<bool>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete(true);
+      });
+      final rig = await _CameraRig.create(
+        recovery: true,
+        isForeground: () => foreground,
+        releaseCamera: () {
+          if (!entered.isCompleted) entered.complete();
+          return release.future.timeout(_redDeadline);
+        },
+      ).timeout(_redDeadline);
+      expect(
+        (await rig.turnOn().timeout(_redDeadline)).status,
+        ForegroundCallActionStatus.applied,
+      );
+      await rig.owner.workSettled.timeout(_redDeadline);
+      expect(rig.outgoingCameraStates, ['on']);
+
+      // Flutter delivers both hidden and paused for one trip to Home. Hold
+      // the native release so the second notification overlaps the first.
+      foreground = false;
+      final hidden = rig.graph.onBackgrounded().timeout(_redDeadline);
+      await entered.future.timeout(_redDeadline);
+      final paused = rig.graph.onBackgrounded().timeout(_redDeadline);
+      release.complete(true);
+      await Future.wait([hidden, paused]).timeout(_redDeadline);
+      await _redTurn().timeout(_redDeadline);
+      await rig.owner.workSettled.timeout(_redDeadline);
+
+      expect(rig.outgoingCameraStates, ['on', 'paused']);
+      rig.engine.video.notifyPresentationChanged();
+      expect(rig.engine.video.cameraStarts, 1);
+      expect(rig.engine.video.cameraStops, greaterThan(0));
+      expect(rig.nativeCameraCommands.first, isTrue);
+      expect(rig.nativeCameraCommands.last, isFalse);
+      expect(rig.coordinator.activeSession?.state, CallState.connected);
+      expect(
+        rig.graph.current!.video!.presentation.localCamera,
+        isNot(CallCameraState.on),
+      );
+      foreground = true;
+      await rig.graph.onResume().timeout(_redDeadline);
+      await _redTurn().timeout(_redDeadline);
+      expect(rig.engine.video.cameraStarts, 1);
+      expect(rig.permissionCalls, 1);
+      expect(
+        rig.graph.current!.video!.presentation.localCamera,
+        isNot(CallCameraState.on),
+      );
+      expect(rig.outgoingCameraStates, ['on', 'paused']);
+    },
+  );
+
+  for (final followsWithBackground in [false, true]) {
+    test(
+      'BL16 inactive local presentation pauses camera before background=$followsWithBackground',
+      () async {
+        var foreground = true;
+        final release = Completer<bool>();
+        addTearDown(() {
+          if (!release.isCompleted) release.complete(true);
+        });
+        final rig = await _CameraRig.create(
+          recovery: true,
+          isForeground: () => foreground,
+          releaseCamera: followsWithBackground
+              ? () => release.future.timeout(_redDeadline)
+              : null,
+        ).timeout(_redDeadline);
+        expect(
+          (await rig.turnOn().timeout(_redDeadline)).status,
+          ForegroundCallActionStatus.applied,
+        );
+        await rig.owner.workSettled.timeout(_redDeadline);
+        expect(rig.outgoingCameraStates, ['on']);
+        expect(
+          rig.graph.current!.video!.presentation.localCamera,
+          CallCameraState.on,
+        );
+        final stops = rig.engine.video.cameraStops;
+
+        // Model the local presentation notification from the plugin boundary.
+        // This proves the graph response, not native quality-driven retirement.
+        foreground = false;
+        rig.engine.video.notifyPresentationChanged(
+          slot: CallVideoRendererSlot.local,
+        );
+        await _redTurn().timeout(_redDeadline);
+        if (followsWithBackground) {
+          expect(
+            rig.nativeCameraCommands,
+            [true, false],
+            reason: 'Inactive presentation must release before hidden/paused',
+          );
+          final hidden = rig.graph.onBackgrounded().timeout(_redDeadline);
+          final paused = rig.graph.onBackgrounded().timeout(_redDeadline);
+          release.complete(true);
+          await Future.wait([hidden, paused]).timeout(_redDeadline);
+          await _redTurn().timeout(_redDeadline);
+        }
+        await rig.owner.workSettled.timeout(_redDeadline);
+        expect(rig.outgoingCameraStates, ['on', 'paused']);
+        expect(rig.nativeCameraCommands.first, isTrue);
+        expect(rig.nativeCameraCommands.last, isFalse);
+        expect(rig.engine.video.cameraStops, greaterThan(stops));
+        expect(rig.coordinator.activeSession?.state, CallState.connected);
+
+        foreground = true;
+        await rig.graph.onResume().timeout(_redDeadline);
+        await _redTurn().timeout(_redDeadline);
+        expect(rig.engine.video.cameraStarts, 1);
+        expect(rig.permissionCalls, 1);
+        expect(rig.outgoingCameraStates, ['on', 'paused']);
+        expect(
+          rig.graph.current!.video!.presentation.localCamera,
+          isNot(CallCameraState.on),
+        );
+      },
+    );
+  }
+
   for (final boundary in ['off', 'background', 'end']) {
     test('BL26 $boundary during recovery commit cannot resurrect camera', () async {
       final rig = await _CameraRig.create(recovery: true).timeout(_redDeadline);
@@ -1110,9 +1237,11 @@ final class _Video
         hasTrack: false,
         view: null,
       );
-  void notifyPresentationChanged() {
+  void notifyPresentationChanged({
+    CallVideoRendererSlot slot = CallVideoRendererSlot.remote,
+  }) {
     if (!_presentation.isClosed) {
-      _presentation.add(presentationFor(CallVideoRendererSlot.remote));
+      _presentation.add(presentationFor(slot));
     }
   }
 

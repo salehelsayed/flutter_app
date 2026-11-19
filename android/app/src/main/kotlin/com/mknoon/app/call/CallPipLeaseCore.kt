@@ -81,6 +81,7 @@ interface CallPipPlatform {
  */
 class CallPipLeaseCore(
     private val platform: CallPipPlatform,
+    private val debugTrace: ((String) -> Unit)? = null,
     private val emit: (Map<String, Any>) -> Unit,
 ) {
     private class Lease(val id: CallPipIdentity, val source: CallPipSource) {
@@ -100,6 +101,13 @@ class CallPipLeaseCore(
     // at completion time.
     private var pendingEntry: CallPipIdentity? = null
 
+    internal fun traceState(event: String) {
+        debugTrace?.invoke(
+            "$event current=${lease?.id?.leaseId ?: 0} pending=${pendingEntry?.leaseId ?: 0}" +
+                " entered=${lease?.entered == true} sink=${lease?.sink != null}",
+        )
+    }
+
     fun availability(): Map<String, Any> {
         val supported = platform.supported()
         // Unit 3 never enables same-session background capture.
@@ -107,18 +115,29 @@ class CallPipLeaseCore(
     }
 
     fun arm(id: CallPipIdentity, source: CallPipSource, controls: CallPipControls): Map<String, Any> {
-        if (!accepts(id)) return mapOf("armed" to false, "reason" to "stale")
+        traceState("arm requested=${id.leaseId}")
+        if (!accepts(id)) {
+            traceState("arm response armed=false reason=stale")
+            return mapOf("armed" to false, "reason" to "stale")
+        }
         if (id.instanceId != instance) {
             instance?.let { retiredInstances += it }
             instance = id.instanceId
         }
         highestLease = id.leaseId
         retire("disarmed")
-        if (!platform.supported()) return mapOf("armed" to false, "reason" to "unsupported")
-        if (!platform.hasVideoTrack(source)) return mapOf("armed" to false, "reason" to "trackNotFound")
+        if (!platform.supported()) {
+            traceState("arm response armed=false reason=unsupported")
+            return mapOf("armed" to false, "reason" to "unsupported")
+        }
+        if (!platform.hasVideoTrack(source)) {
+            traceState("arm response armed=false reason=trackNotFound")
+            return mapOf("armed" to false, "reason" to "trackNotFound")
+        }
         lease = Lease(id, source)
         platform.setAutoEnter(id, controls)
         pendingAutoOff = null
+        traceState("arm response armed=true reason=ok")
         return mapOf("armed" to true, "reason" to "ok")
     }
 
@@ -129,6 +148,7 @@ class CallPipLeaseCore(
     }
 
     fun enter(id: CallPipIdentity): Boolean {
+        traceState("enter requested=${id.leaseId}")
         val target = current(id) ?: return false
         if (target.entered) return true
         // A retired lease's OS start is still outstanding: refuse, never overwrite.
@@ -143,13 +163,21 @@ class CallPipLeaseCore(
     /** Retires a current triple, then retries any cleanup it still owns. True
      * once nothing of that lease is left; never touches a successor. */
     fun disarm(id: CallPipIdentity): Boolean {
+        traceState("disarm requested=${id.leaseId}")
         if (lease?.id == id) retire("disarmed")
         return retryCleanup(id)
+    }
+
+    /** OS pre-entry UI notification, distinct from its eventual completion. */
+    fun onAutoEnterTransition(transitioningToPip: Boolean) {
+        traceState("onAutoEnterTransition value=$transitioningToPip")
+        if (transitioningToPip) beginEntry()
     }
 
     /** OS entry is starting: attach the remote sink early and return the triple
      * the adapter must pass to every later entry/exit callback. */
     fun beginEntry(): CallPipIdentity? {
+        traceState("beginEntry before")
         val target = lease ?: return null
         // An outstanding capture keeps its identity; a retired lease's capture
         // blocks the successor until its own terminal callback settles it.
@@ -157,6 +185,7 @@ class CallPipLeaseCore(
         if (owner != target.id) return null
         pendingEntry = owner
         if (target.sink == null) target.sink = platform.attachSink(target.source)
+        traceState("beginEntry accepted=${owner.leaseId}")
         return owner
     }
 
@@ -165,17 +194,25 @@ class CallPipLeaseCore(
     /** False when the completion has no captured entry or a stale one; the
      * adapter must then leave PiP so no unbound window stays visible. */
     fun osEntered(): Boolean {
-        val owner = pendingEntry ?: return false
+        traceState("osEntered before")
+        val owner = pendingEntry ?: run {
+            traceState("osEntered accepted=false reason=noPendingEntry")
+            return false
+        }
         onEntered(owner)
-        return lease?.let { it.id == owner && it.entered } == true
+        return (lease?.let { it.id == owner && it.entered } == true).also {
+            traceState("osEntered accepted=$it")
+        }
     }
 
     fun osExited(restored: Boolean) {
+        traceState("osExited restored=$restored")
         pendingEntry?.let { onExited(it, restored) }
         pendingEntry = null
     }
 
     fun osEntryFailed() {
+        traceState("osEntryFailed")
         pendingEntry?.let(::onEntryFailed)
         pendingEntry = null
     }
@@ -183,6 +220,7 @@ class CallPipLeaseCore(
     /** [settled] false keeps a current capture (iOS can report active before
      * stop); a retired lease's capture is always settled here. */
     fun osReturnedWithoutEntry(settled: Boolean) {
+        traceState("osReturnedWithoutEntry settled=$settled")
         val owner = pendingEntry ?: return
         onReturnedWithoutEntry(owner)
         if (settled || lease?.id != owner) pendingEntry = null
@@ -195,6 +233,7 @@ class CallPipLeaseCore(
         if (target.sink == null) {
             send(target, "failed", "code" to "trackLost")
             drop(target)
+            traceState("leave reason=trackLost")
             platform.leavePip()
             return
         }
@@ -233,6 +272,7 @@ class CallPipLeaseCore(
 
     /** Lock or user-disabled: retires the current lease even before entry. */
     fun onBlocked(reason: String) {
+        traceState("onBlocked")
         val target = lease ?: return
         if (reason !in BLOCKED) return
         val wasEntered = target.entered
@@ -243,6 +283,7 @@ class CallPipLeaseCore(
 
     /** Host going away (engine detach): retire without events. */
     fun shutdown() {
+        traceState("shutdown")
         val target = lease ?: return
         val wasEntered = target.entered
         drop(target)
@@ -257,6 +298,7 @@ class CallPipLeaseCore(
     }
 
     private fun retire(reason: String) {
+        traceState("retire reason=$reason")
         val target = lease ?: return
         val wasEntered = target.entered
         drop(target)

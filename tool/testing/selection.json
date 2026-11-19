@@ -1724,6 +1724,8 @@
       ],
       "references": [
         "scripts/test/run_call_native_unit_tests.sh",
+        "android/app/src/test/kotlin/com/mknoon/app/PermissionCancellationNativeTest.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/PermissionResultNormalizer.kt",
         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt",
         "android/app/src/testDebug/kotlin/com/mknoon/app/call/DebugCallAudioSignalTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt",
@@ -6652,6 +6654,8 @@
         "android/app/src/testDebug/kotlin/com/mknoon/app/call/*",
         "android/app/src/debug/AndroidManifest.xml",
         "android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/PermissionResultNormalizer.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/PermissionCancellationNativeTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
         "android/app/src/main/AndroidManifest.xml",
         "android/app/src/main/res/values*/strings.xml",
