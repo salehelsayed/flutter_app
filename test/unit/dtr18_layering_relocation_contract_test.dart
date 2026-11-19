@@ -503,7 +503,7 @@ const _productionBootstrapNormalizedSha256 =
     // now samples UTC only when the mark closure runs; reversing this caller
     // delta restores baseline bytes and both pins under the same 25 URI
     // rewrites. Historical callback 843fb41c stays unique and exact.
-    '282170d2306ae27d7b54e24ec511506aeaed17a3105d48222c24816ea78476e3';
+    '73b5194e92c34af876e79bd1b3b25b79124cbf23fe3475e9bb44699be36b9471';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -551,7 +551,7 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'b0183e2238691a7b27eaa251a8374a2806dcddd33f79459a0af1ebe1930f89f8';
+    '0907b2df14807389346188f0e740ce948ad24ded87e3770913c4277172d798e6';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

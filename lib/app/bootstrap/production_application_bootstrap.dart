@@ -1,7 +1,7 @@
 import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
-import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
+import 'package:flutter_app/app/bootstrap/active_identity_reporter_bootstrap.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -1012,10 +1012,18 @@ final class ProductionApplicationBootstrap
       loadForAction: groupExitDiagnosticRepository.loadForAction,
     );
 
-    final activeIdentityReporter = ActiveIdentityReporter(
-      statePath: '${appDocDir.path}/active_identity/state.json',
+    final activityReporterBootstrap = prepareProductionActiveIdentityReporter(
+      documentsPath: appDocDir.path,
     );
-    disposeActiveIdentityReporter = activeIdentityReporter.dispose;
+    disposeActiveIdentityReporter = activityReporterBootstrap.dispose;
+    final activeIdentityReporter = await activityReporterBootstrap.reporter;
+    if (activeIdentityReporter == null) {
+      await activityReporterBootstrap.dispose();
+      return _CallbackPreparedApplication(
+        buildRootWidget: _buildInertRootWidget,
+        afterRunApp: _noopAfterRunApp,
+      );
+    }
     await AppDiagnostics.instance.setLocalConsentObserver(
       activeIdentityReporter.observeConsent,
     );
@@ -10985,9 +10993,9 @@ final class ProductionApplicationBootstrap
           }
         },
         activityReporter: activeIdentityReporter,
-        disposeActiveIdentityReporter: activeIdentityReporter.dispose,
+        disposeActiveIdentityReporter: activityReporterBootstrap.dispose,
         onAppDetached: () async {
-          await activeIdentityReporter.dispose();
+          await activityReporterBootstrap.dispose();
           disposeThoughtExpiry?.call();
           if (kDebugMode && Platform.isAndroid) {
             DebugCallEvidenceObserver.uninstall(debugCallEvidenceObserver);
