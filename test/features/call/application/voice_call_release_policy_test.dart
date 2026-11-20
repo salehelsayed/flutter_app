@@ -113,4 +113,28 @@ void main() {
           'and STUN define.',
     );
   });
+
+  test('TEST ICE profile selects the approved TEST STUN service', () {
+    final file = File('tool/build/voice_call_test_ice_defines.json');
+    final defines = jsonDecode(file.readAsStringSync()) as Map;
+    expect(
+      defines['VOICE_CALL_STUN_URLS'],
+      'stun:2-29-62-121.sslip.io:3478',
+      reason: 'A TEST P2P relay override does not replace call ICE inputs.',
+    );
+  });
+
+  test('TEST ICE profile preserves every other tester feature gate', () {
+    final testFile = File('tool/build/voice_call_test_ice_defines.json');
+    final testerFile = File('tool/build/voice_call_tester_defines.json');
+    final testDefines = jsonDecode(testFile.readAsStringSync()) as Map;
+    final testerDefines = jsonDecode(testerFile.readAsStringSync()) as Map;
+    expect(
+      Map<Object?, Object?>.of(testDefines)..remove('VOICE_CALL_STUN_URLS'),
+      Map<Object?, Object?>.of(testerDefines)..remove('VOICE_CALL_STUN_URLS'),
+      reason:
+          'TEST ICE selection preserves voice, native, privacy, TURN and '
+          'tester video gates without changing the shared tester profile.',
+    );
+  });
 }

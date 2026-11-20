@@ -146,7 +146,9 @@ void main() {
       final last = await firstPixel(frames.last);
       expect(last, isNot(orderedEquals(first)));
     } finally {
-      for (final frame in frames) frame.dispose();
+      for (final frame in frames) {
+        frame.dispose();
+      }
       codec.dispose();
     }
   }, timeout: const Timeout(Duration(seconds: 10)));

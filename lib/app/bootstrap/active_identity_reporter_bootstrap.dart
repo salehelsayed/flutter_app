@@ -33,7 +33,7 @@ prepareProductionActiveIdentityReporter({
         opening
             .then<void>(
               (store) => store.close(),
-              onError: (Object _, StackTrace __) {},
+              onError: (Object _, StackTrace _) {},
             )
             .catchError((Object _) {}),
       );

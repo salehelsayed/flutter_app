@@ -813,14 +813,14 @@ final class FlutterWebRtcVideoSession
       return;
     }
     if (video == null) return;
+    // Android also issues nonempty pre-MID ids whose cached native wrapper can
+    // be disposed. Reacquire this sender's current handle before any reuse.
+    await _rebindVideo(token);
+    video = _video!;
     if (_videoUnbound) {
-      await _rebindVideo(token);
-      video = _video!;
-      if (_videoUnbound) {
-        // Still no MID: only the creation direction is known to be true.
-        if (direction != _videoCreatedDirection) _reject();
-        return;
-      }
+      // Still no MID: only the creation direction is known to be true.
+      if (direction != _videoCreatedDirection) _reject();
+      return;
     }
     if (token.media == CallMediaKind.video) {
       _sendStream ??= await _videoStream();
@@ -1141,7 +1141,9 @@ final class FlutterWebRtcVideoSession
     CallLocalCameraGrant grant,
   ) async {
     if (_iceRetention != null &&
-        _currentGrant(_iceRetention!.canApply)) return false;
+        _currentGrant(_iceRetention!.canApply)) {
+      return false;
+    }
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) {
       if (identical(_current, raw)) await stopLocalCamera();
       return false;
@@ -1436,7 +1438,9 @@ final class FlutterWebRtcVideoSession
     CallLocalCameraGrant grant,
   ) async {
     if (_iceRetention != null &&
-        _currentGrant(_iceRetention!.canApply)) return false;
+        _currentGrant(_iceRetention!.canApply)) {
+      return false;
+    }
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) return false;
     final intent = _captureIntent;
     if (intent == null) return false;

@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/constants/network_constants.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart'
+    show defaultRelayAddresses;
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -425,7 +426,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
     if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
-    'rv': rendezvousAddress,
+    'rv': defaultRelayAddresses().first,
     'ts': timestamp,
     'un': sanitizedUsername,
     if (callWakeHandle != null) 'cwh': callWakeHandle.toCanonicalMap(),

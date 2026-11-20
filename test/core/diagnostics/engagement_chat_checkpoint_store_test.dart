@@ -120,7 +120,7 @@ void main() {
       },
     );
     final checkpoint = File(store.checkpointPath);
-    final foreign = File(store.checkpointPath + '.foreign.tmp');
+    final foreign = File('${store.checkpointPath}.foreign.tmp');
     await _within(checkpoint.writeAsBytes([11], flush: true));
     await _within(foreign.writeAsBytes([97], flush: true));
     final replacing = store.replace(
@@ -158,7 +158,7 @@ void main() {
     await _entered(gate);
     oldCurrent = false;
     final closing = oldStore.close();
-    final opening = open(path: directory.path + '/.');
+    final opening = open(path: '${directory.path}/.');
     var successorFinished = false;
     final successorWrite = opening
         .then(

@@ -178,6 +178,10 @@ class Transceiver implements rtc.RTCRtpTransceiver {
   // `mid ?? ''` equals this wrapper's id (FlutterWebRTCPlugin.m:2456-2463).
   Transceiver get _resolved {
     final owner = peer;
+    if (owner?.androidOpaqueIds == true &&
+        native.nativeMid != null && id != native.nativeMid) {
+      throw StateError('RtpTransceiver has been disposed');
+    }
     if (owner == null || !owner.iosEmptyIds) return native;
     return owner.nativeTransceivers.firstWhere(
       (t) => (t.nativeMid ?? '') == id,
@@ -206,6 +210,9 @@ class Peer implements rtc.RTCPeerConnection {
   /// OfferToReceiveVideo adds a recvonly video section when no video
   /// transceiver can receive.
   bool iosEmptyIds = false;
+  // Android creates a nonempty opaque id before SDP. Later native enumeration
+  // returns current MID handles; the retained opaque native wrapper can die.
+  bool androidOpaqueIds = false;
   int _transceivers = 0;
   Transceiver adopt(Transceiver t) {
     t.peer = this;
@@ -357,10 +364,12 @@ class Peer implements rtc.RTCPeerConnection {
     return transceiversOverride?.call() ?? await _transceiverViews();
   }
 
-  Future<List<rtc.RTCRtpTransceiver>> _transceiverViews() async => iosEmptyIds
+  Future<List<rtc.RTCRtpTransceiver>> _transceiverViews() async =>
+      iosEmptyIds || androidOpaqueIds
       ? [
           for (final t in nativeTransceivers)
-            Transceiver._view(t, t.nativeMid ?? ''),
+            Transceiver._view(t,
+              t.nativeMid ?? (iosEmptyIds ? '' : t.id)),
         ]
       : nativeTransceivers;
 

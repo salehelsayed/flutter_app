@@ -477,7 +477,9 @@ void main() {
 
   test('B15G-017 bounded groups refuse overflow without destroying an admitted group', () async {
     final owner = capture();
-    for (var i = 0; i < 64; i++) _post(reporter, owner, group: 'bounded-$i');
+    for (var i = 0; i < 64; i++) {
+      _post(reporter, owner, group: 'bounded-$i');
+    }
     await flush();
     final snapshot = jsonDecode(
       await _bounded(File(store.checkpointPath).readAsString()),

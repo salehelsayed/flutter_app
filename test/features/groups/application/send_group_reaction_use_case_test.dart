@@ -3119,8 +3119,9 @@ void main() {
       'B6R-012 optional reporter failure cannot change admitted ADD result',
       () async {
         activityBridge.activityAnswer = (request, revision) async {
-          if (request['op'] == 'mark')
+          if (request['op'] == 'mark') {
             throw StateError('public injected optional failure');
+          }
           return B6ActivityBridge.reply(request, revision);
         };
         final result = await submit();

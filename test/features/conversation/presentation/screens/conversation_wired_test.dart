@@ -4127,7 +4127,7 @@ void main() {
           ))!;
           expect(preparing, hasLength(1));
           activeAttachmentId = preparing.single['id'] as String;
-          expect(mediaUploadInFlightTracker.isInFlight(activeAttachmentId!), isTrue);
+          expect(mediaUploadInFlightTracker.isInFlight(activeAttachmentId), isTrue);
           await changeOwner(reporter, scenario).timeout(budget);
           if (scenario == 'refused') bridge.responses['blob:keygen'] = {'ok': false};
           bridge.cryptoGate.complete();
@@ -4162,7 +4162,7 @@ void main() {
                 () => !tester.widget<ConversationScreen>(find.byType(ConversationScreen))
                     .composerStateListenable!.value.isUploading &&
                     (activeAttachmentId == null ||
-                      !mediaUploadInFlightTracker.isInFlight(activeAttachmentId!)),
+                      !mediaUploadInFlightTracker.isInFlight(activeAttachmentId)),
                 timeout: budget);
             }
           } finally {
@@ -4829,7 +4829,7 @@ void main() {
               final destination = await files.localPathForAttachment(
                 contactPeerId: recipientPeerId, blobId: blobId, mime: mime).timeout(budget);
               await File(localFilePath).copy(destination).timeout(budget);
-              return MediaAttachment(id: blobId!, messageId: '', mime: mime,
+              return MediaAttachment(id: blobId, messageId: '', mime: mime,
                 size: uploaded.last.length, mediaType: 'image', width: width, height: height,
                 localPath: canonicalPath, downloadStatus: 'done', createdAt: '2026-11-17T00:00:00.000Z',
                 contentHash: 'exclusion-test-hash', encryptionKeyBase64: 'exclusion-test-key',
@@ -22054,7 +22054,11 @@ ReactionRepositoryImpl _b15RealReactionRepository(
 class _ExclusionStickerLibrary extends FakeCustomStickerLibrary {
   _ExclusionStickerLibrary(this.file);
   final File file;
-  Completer<void>? prepareGate;
+  Completer<void>? _prepareGate;
+  @override
+  Completer<void>? get prepareGate => _prepareGate;
+  @override
+  set prepareGate(Completer<void>? value) => _prepareGate = value;
   bool prepareStarted = false;
   @override
   Future<PendingComposerMedia> prepareSend(String id, {required CustomStickerSendRepresentation representation}) async {

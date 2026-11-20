@@ -1147,8 +1147,9 @@ Future<void> _vui7RootWith(
     await body(calls, contacts, app);
     expect(tester.takeException(), isNull);
   } finally {
-    if (contacts.gate != null && !contacts.gate!.isCompleted)
+    if (contacts.gate != null && !contacts.gate!.isCompleted) {
       contacts.gate!.complete();
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     await _vui7RootDraw(tester);
     await tester.runAsync(

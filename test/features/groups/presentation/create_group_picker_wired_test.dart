@@ -530,7 +530,9 @@ void main() {
               find.descendant(
             of: find.byType(GroupConversationWired),
             matching: find.byType(TextField),
-          ).evaluate().isNotEmpty) return;
+          ).evaluate().isNotEmpty) {
+            return;
+          }
           await Future<void>.delayed(const Duration(milliseconds: 10));
           await tester.pump(const Duration(milliseconds: 50));
         }
@@ -563,7 +565,9 @@ void main() {
                   message.status == 'sent');
           if (sent.length == 1 && bridge.commandLog
               .where((command) => command == 'group:publish').length >
-                  publishesBefore) return;
+                  publishesBefore) {
+            return;
+          }
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
         throw TimeoutException('real Picker group send did not complete', bound);

@@ -130,15 +130,16 @@ void main() {
     events.add('fresh-creation');
     creations.add(account);
     final capture = reporter.captureOwner(expectedAccountPeerId: account);
-    if (capture != null)
+    if (capture != null) {
       reporter.markCaptured(capture, occurredAtUnixMillis: _occurredAt);
+    }
   }
 
   Future<GenerateIdentityResult> generate({
     void Function(String)? observe,
     Future<Map<String, dynamic>> Function()? keygen,
   }) async {
-    final generate = () async => <String, dynamic>{
+    Future<Map<String, dynamic>> generate() async => <String, dynamic>{
       'ok': true,
       'identity': _identity,
     };

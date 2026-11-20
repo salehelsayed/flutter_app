@@ -639,7 +639,7 @@ class _QualityMedia extends InMemoryMediaAttachmentRepository
 }
 
 class _QualityP2P extends FakeP2PService implements P2PServiceImpl {
-  _QualityP2P({NodeState? initialState}) : super(initialState: initialState);
+  _QualityP2P({super.initialState});
   @override
   Future<PresenceSetResult> setPresence(String state, int ttlMs) async =>
       PresenceSetResult.published;

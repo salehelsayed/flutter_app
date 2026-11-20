@@ -1,5 +1,6 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_video_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
@@ -166,7 +167,7 @@ void main() {
             for (final id in ['call_accept_audio', 'call_accept_video']) {
               final target = find.bySemanticsIdentifier(id);
               expect(
-                tester.getSemantics(target).hasFlag(SemanticsFlag.isEnabled),
+                tester.getSemantics(target).flagsCollection.isEnabled == Tristate.isTrue,
                 isFalse,
               );
               await _tap(tester, id);

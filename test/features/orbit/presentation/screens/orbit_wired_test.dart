@@ -11767,7 +11767,9 @@ void main() {
                     message.senderPeerId == testIdentity.peerId &&
                     message.status == 'sent');
             if (sent.length == 1 &&
-                bridge.commandLog.contains('group:publish')) return;
+                bridge.commandLog.contains('group:publish')) {
+              return;
+            }
             await Future<void>.delayed(const Duration(milliseconds: 10));
           }
           throw TimeoutException('real Orbit group send did not complete', bound);

@@ -371,6 +371,7 @@
         "test/features/call/infrastructure/call_signaling_runtime_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart",
     "test/features/call/infrastructure/flutter_webrtc_video_session_test.dart",
+    "test/features/call/infrastructure/flutter_webrtc_transceiver_rebind_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_video_quality_test.dart",
         "test/features/call/infrastructure/call_video_quality_stats_sampler_test.dart",
         "test/features/call/infrastructure/platform_call_video_quality_environment_source_test.dart",
@@ -6428,7 +6429,8 @@
         "test/features/settings/presentation/widgets/call_privacy_settings_control_test.dart",
         "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
         "tool/build/voice_call_release_defines.json",
-        "tool/build/voice_call_tester_defines.json"
+        "tool/build/voice_call_tester_defines.json",
+        "tool/build/voice_call_test_ice_defines.json"
       ],
       "checks": [
         "call-signaling",
