@@ -12488,6 +12488,29 @@ visible and cannot become an ordinary first-attempt PASS.
   true capability do not certify native capture continuation, OS entry/rendering,
   device/RTP/lock-screen behavior, signed candidates or activation. Preview selected
   20 checks; the full selected wrapper set was not executed for this scoped result.
+  **Android PiP engine ownership (2026-11-20):** resolve the exact remote
+  peer/track through the WebRTC plugin registered to the foreground channel's
+  engine. A later plugin constructor replaces the process singleton, so using
+  that singleton can query another engine's empty registry. Both arm lookup
+  and sink attachment retain the explicit engine owner; an absent owner fails
+  closed. Exact-peer lookup and local-track collision rejection remain intact.
+  Flutter-run causal RED had four ownership failures and two passing controls;
+  focused GREEN passed all six. The affected native gate passed 710 cases in
+  55 fresh JUnit reports, including those six, with no failures/errors/skips.
+  The two Dart PiP policy/bridge files passed 15 cases, with child exit 0 and
+  reporter completion. Their first run had successful reporter events but lost
+  process-exit evidence when its controller parsed a JSON array as an object;
+  retain that failure and raw output alongside the single corrected-controller
+  repeat. Check validation/preview passed; the native subset passed while the
+  wrapper returned NOT RUN/exit 3 for 36 omitted selected checks. This is scoped
+  host evidence, not overall candidate or physical PiP acceptance. The retained
+  fifth-call log has two `trackNotFound` arm failures before HOME, but does not
+  establish plugin ownership at those failures. Evidence on composed base
+  `a49a6179e0250c5174cf5dbab34bb1a3e2d5054d` is in the engine-owner worktree's
+  `.codex-test-logs/pip-engine-owner-red-20261120/` and
+  `.codex-test-logs/pip-engine-owner-green-20261120/`; packet/source pins and the
+  constructor-only RED/GREEN test delta are retained in
+  `/Users/I560101/.codex/investigations/b15-pip-engine-owner-20261120/`.
   **Tester video controls and upgraded-call PiP (2026-11-19):** a routine
   capability refresh previously published a new preference epoch during a live
   video call. The strict v2 adapter then rejected control messages against the

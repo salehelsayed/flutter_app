@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.util.Log
+import com.cloudwebrtc.webrtc.FlutterWebRTCPlugin
 import com.mknoon.app.call.FullScreenCallAccess
 import com.mknoon.app.call.MknoonCallBridgeTeardown
 import com.mknoon.app.call.MknoonCallNativeBridge
@@ -141,6 +142,8 @@ class MainActivity : FlutterActivity() {
         callPictureInPictureHandler = com.mknoon.app.call.CallPictureInPictureHandler(
             activity = this,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
+            webRtcPlugin = flutterEngine.plugins.get(FlutterWebRTCPlugin::class.java)
+                as? FlutterWebRTCPlugin,
         )
         callVideoQualityEnvironment?.dispose()
         callVideoQualityEnvironment = MknoonCallVideoQualityEnvironment(
