@@ -10322,6 +10322,42 @@ visible and cannot become an ordinary first-attempt PASS.
   These host tests model selected direct/TURN routes; they do not prove live
   Wi-Fi calling, TURN allocation or audible device media. Red/green evidence is
   retained under `.codex-test-logs/turn-policy/`.
+  A TEST libp2p relay profile does not attest call ICE isolation. The shared
+  `tool/build/voice_call_tester_defines.json` intentionally preserves the
+  release STUN setting; `MKNOON_RELAY_ADDRESSES` does not override
+  `VOICE_CALL_STUN_URLS` or the URL hosts returned by the TURN provider.
+  The current graph wires that reader independently, so a false TURN feature
+  flag alone is not proof of no credential request. An isolated TEST call needs
+  approved STUN inputs and public TURN URL-host provenance separately from its
+  P2P relay binding. The dedicated
+  `tool/build/voice_call_test_ice_defines.json` preserves every shared tester
+  gate, including TURN, and selects the approved TEST STUN URL
+  `stun:2-29-62-121.sslip.io:3478`. Use that same file for both native build and
+  resident run/attach effective inputs. The TEST issuer public receipt pins
+  `turn:2-29-62-121.sslip.io:3478?transport=udp` and the corresponding TCP URL;
+  only server-local STUN Binding was probed. This is not external phone ingress,
+  authenticated TURN allocation or media proof. Public input provenance is
+  `/Users/I560101/.codex/investigations/b15-test-ice-config-public-20261120/test-ice-public-inputs-and-provenance.json`,
+  SHA-256 `8b263396d887880da6a9802f6a5e4f0e5cd36d322d53c6098c4524a18ed5d7f4`.
+  The dedicated profile contract at `e9e28588d` retained six passing controls
+  and one expected endpoint assertion failure, selecting the original
+  production STUN URL. Raw Linux output SHA-256
+  `70effaeeba3051be8c8b06ae0fd5c38de3e94d2f4f7e5b3668356b49fe1f7f17`
+  is retained in the sibling video investigation's
+  `test-ice-red-e9e285-repair2/test-ice-causal-red.raw.log`. Source and SDK pins
+  match across setup and execution; the owned controller and children exited.
+  Earlier transport and Git materialization failures remain infrastructure
+  failures, with no SDK test execution. Do not infer ICE service availability
+  from a relay address
+  or weaken the existing release/tester parity sentinel. The retained debug 292
+  call window contains production-host path/tracker checks from its new iOS
+  process. This proves hostname references, not successful DNS, a remote
+  connection, or unique STUN/TURN attribution; earlier traffic is not measured
+  by that observation. Source/configuration evidence is indexed in
+  `/Users/I560101/.codex/investigations/b15rv292-call-production-host-attribution-20261119/root-call-ice-public-source-and-host-window-assessment.json`.
+  Hash immutable capture-window copies or explicit checkpoints rather than
+  growing resident logs. Keep an original claimed hash and a later checkpoint
+  distinct when the live file has changed; a new hash does not verify the old one.
   The integration suite also feeds typed `NetworkPathSource` outcomes through
   `CallNetworkPathBinding` into the real coordinator/executor/WebRTC wrapper.
   Path preparation retains connected media until readiness opens recovery;
@@ -12250,6 +12286,17 @@ visible and cannot become an ordinary first-attempt PASS.
   host callback succeed. This also holds when the ordinary replay ledger is
   full. Camera authority still requires the current committed consent; abort
   and repair close capture, and repair requires positive native reconciliation.
+  Live automation must preserve the existing 15-second video-request acceptance
+  deadline. Preload the registered MCP tool schema and use immediate find-to-tap
+  acceptance; an extra attribute or page-source read on that critical path can
+  consume the window. The retained debug 292 first call expired after such an
+  operator delay. Video was not established; the 90-second media observation,
+  VM snapshots and OS PiP were not run. That audio-only outcome is not a new
+  app/PiP failure.
+  Preserve first tool/UTC and MCP-versus-HTTP provenance in
+  `.codex-test-logs/b15rv292/phase/terminal-chronology.txt`; review terminal
+  cleanup before a separately released attempt, without extending the app
+  deadline or silently repeating the call.
   Original RED `a8813fcd8b760e0836ad31917401bc5adfb8782c` recorded 61 passes,
   30 assertion failures and four null-assertion errors in the named missing
   switch paths, with exit 1 and no hidden/loader failure. Correction RED
@@ -12867,6 +12914,31 @@ visible and cannot become an ordinary first-attempt PASS.
   setup exit 0. Host evidence only: one active sendrecv video section and
   bidirectional decoded RTP in an initial video call, in both caller roles and
   after an upgrade, need the build 268 device run.
+  **Android transceiver lifetime on guarded 291:** the first downgrade failure
+  is a native `RtpTransceiver has been disposed` exception at `setDirection`,
+  before the local abort, remote `video_media_rejected` and requester timeout.
+  A nonempty pre-MID identifier does not establish that its cached wrapper is
+  still usable. `_prepare` now reuses the existing exact-sender enumeration and
+  token fence before any cached video-transceiver reuse. Initial creation still
+  sets direction in `addTransceiver`; an iOS wrapper without a MID retains the
+  creation-direction restriction. Missing or multiple matching senders and a
+  retired token refuse before direction mutation; no positional fallback,
+  plugin fork, protocol change or blind retry is introduced.
+  The opt-in Android fixture models an opaque pre-MID wrapper replaced by a
+  current MID-bearing view for the same sender. Test-only `bd0fbe311` retained
+  one simulated disposed-handle error, three ownership assertion failures and
+  one stable-ID passing control. Identical tests at `09c81e1a3` pass all five
+  cases within 287 passing cases across six full session/initial-video/quality/
+  executor files; changed-path analysis also passes, without skips, errors or
+  unfinished cases. Source pins and clean Git identity match before and after,
+  and owned test processes are absent. Exact commands, raw output, source and
+  cleanup are indexed by
+  `/Users/I560101/.codex/investigations/b15-video291-two-fixes-20261119/opaque-transceiver-red-green-verdict.json`,
+  SHA-256 `1feebbbf5bfe95f21d879245161f28d2ef7da25eb26b25fa15916ca6872341e8`.
+  This proves the host session/SDP and ownership boundary. It does not measure
+  the native wrapper's full disposal history or certify physical downgrade,
+  Android PiP, a composed artifact or signed-candidate acceptance; the original
+  two guarded-291 physical failures remain open pending that proof.
   **Concrete v2 WebRTC video adapter:** host tests exercise camera grant and
   committed-media checks, stale asynchronous capture/SDP/rendering completion,
   local-off versus remote reception, caller/callee offer rollback boundaries,

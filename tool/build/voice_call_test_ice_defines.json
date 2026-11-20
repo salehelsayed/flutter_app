@@ -8,5 +8,5 @@
   "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
   "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
   "VOICE_CALL_FORCE_RELAY_ENABLED": "false",
-  "VOICE_CALL_STUN_URLS": "stun:mknoun.xyz:3478"
+  "VOICE_CALL_STUN_URLS": "stun:2-29-62-121.sslip.io:3478"
 }
