@@ -30,9 +30,9 @@ internal class CallPipRemoteSink private constructor(
     }
 
     companion object {
-        /** Exact peer + track lookup through the plugin's public API; never first match. */
-        fun videoTrack(source: CallPipSource): VideoTrack? {
-            val plugin = FlutterWebRTCPlugin.sharedSingleton ?: return null
+        /** Exact peer + track in the channel's engine; another engine must never supply it. */
+        fun videoTrack(source: CallPipSource, plugin: FlutterWebRTCPlugin?): VideoTrack? {
+            plugin ?: return null
             return resolveExactRemoteTrack(
                 source,
                 localTrack = { plugin.getLocalTrack(it) },
@@ -40,8 +40,12 @@ internal class CallPipRemoteSink private constructor(
             ) as? VideoTrack
         }
 
-        fun attach(activity: Activity, source: CallPipSource): CallPipRemoteSink? {
-            val track = videoTrack(source) ?: return null
+        fun attach(
+            activity: Activity,
+            source: CallPipSource,
+            plugin: FlutterWebRTCPlugin?,
+        ): CallPipRemoteSink? {
+            val track = videoTrack(source, plugin) ?: return null
             val renderer = SurfaceViewRenderer(activity)
             return try {
                 renderer.init(EglUtils.getRootEglBaseContext(), null)

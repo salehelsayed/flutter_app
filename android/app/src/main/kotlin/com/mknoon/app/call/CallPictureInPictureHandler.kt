@@ -18,6 +18,7 @@ import android.os.Looper
 import android.os.Process
 import android.util.Log
 import android.util.Rational
+import com.cloudwebrtc.webrtc.FlutterWebRTCPlugin
 import com.mknoon.app.BuildConfig
 import com.mknoon.app.PictureInPictureExitClassifier
 import com.mknoon.app.R
@@ -34,6 +35,7 @@ import io.flutter.plugin.common.MethodChannel
 internal class CallPictureInPictureHandler(
     private val activity: Activity,
     messenger: BinaryMessenger,
+    private val webRtcPlugin: FlutterWebRTCPlugin?,
 ) : CallPipPlatform, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private val methods = MethodChannel(messenger, METHOD_CHANNEL)
     private val events = EventChannel(messenger, EVENT_CHANNEL)
@@ -198,10 +200,10 @@ internal class CallPictureInPictureHandler(
             pipAllowed()
 
     override fun hasVideoTrack(source: CallPipSource): Boolean =
-        CallPipRemoteSink.videoTrack(source) != null
+        CallPipRemoteSink.videoTrack(source, webRtcPlugin) != null
 
     override fun attachSink(source: CallPipSource): Any? =
-        CallPipRemoteSink.attach(activity, source)?.also { liveSinks += it }
+        CallPipRemoteSink.attach(activity, source, webRtcPlugin)?.also { liveSinks += it }
 
     override fun releaseSink(sink: Any) {
         val remote = sink as? CallPipRemoteSink ?: return

@@ -61,7 +61,7 @@ class CallPictureInPictureHandlerTest {
     fun `no arm means no PiP params, no entry and no events`() {
         val activity = Robolectric.buildActivity(RecordingActivity::class.java).setup().get()
         val messenger = Messenger()
-        val handler = CallPictureInPictureHandler(activity, messenger)
+        val handler = CallPictureInPictureHandler(activity, messenger, null)
         handler.onUserLeaveHint()
         handler.onPictureInPictureModeChanged(true)
         handler.onPictureInPictureModeChanged(false)
@@ -77,7 +77,7 @@ class CallPictureInPictureHandlerTest {
     @Test
     fun `an OS PiP completion with no captured lease entry leaves PiP at once`() {
         val activity = Robolectric.buildActivity(RecordingActivity::class.java).setup().get()
-        val handler = CallPictureInPictureHandler(activity, Messenger())
+        val handler = CallPictureInPictureHandler(activity, Messenger(), null)
         activity.inPip = true
         handler.onPictureInPictureModeChanged(true) // late or foreign completion
         assertEquals(1, activity.movedBack) // no unbound window stays visible
@@ -89,7 +89,7 @@ class CallPictureInPictureHandlerTest {
     fun `malformed calls fail closed without touching PiP`() {
         val activity = Robolectric.buildActivity(RecordingActivity::class.java).setup().get()
         val messenger = Messenger()
-        val handler = CallPictureInPictureHandler(activity, messenger)
+        val handler = CallPictureInPictureHandler(activity, messenger, null)
         val identity = mapOf("version" to 1, "instanceId" to "graph-a", "callId" to "call-1", "leaseId" to 1)
         assertEquals(
             mapOf("supported" to false, "cameraInPip" to false, "reason" to "invalid"),
