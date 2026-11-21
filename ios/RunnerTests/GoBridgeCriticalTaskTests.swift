@@ -794,6 +794,128 @@ final class SqlCipherSuspensionTests: XCTestCase {
         XCTAssertEqual(try markers(on: peer), [1, 4])
     }
 
+    @MainActor
+    func testCancelledCommitReleasesTheWriteBeforeEndingTheGrant() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("contention.db").path
+        let password = "x'\(String(repeating: "cd", count: 32))'"
+
+        let grants = try SqlCipherTestGrants()
+        defer { grants.restore() }
+        let plugin = SqfliteSqlCipherPlugin()
+        let opened = try success(plugin, grants, "openDatabase", [
+            "path": path, "password": password, "singleInstance": false,
+        ])
+        let id = try XCTUnwrap((opened as? [String: Any])?["id"] as? Int)
+        defer { _ = try? success(plugin, grants, "closeDatabase", ["id": id]) }
+        _ = try success(plugin, grants, "query", [
+            "id": id, "sql": "PRAGMA journal_mode = DELETE",
+        ])
+        _ = try success(plugin, grants, "query", [
+            "id": id, "sql": "PRAGMA busy_timeout = 5000",
+        ])
+        _ = try success(plugin, grants, "execute", [
+            "id": id, "sql": "CREATE TABLE marker (id INTEGER PRIMARY KEY)",
+        ])
+        _ = try success(plugin, grants, "insert", [
+            "id": id, "sql": "INSERT INTO marker VALUES (1)",
+        ])
+
+        let reader = try openFixtureConnection(path: path, password: password)
+        defer { SQLCipher.sqlite3_close(reader) }
+        let probe = try openFixtureConnection(path: path, password: password)
+        defer { SQLCipher.sqlite3_close(probe) }
+
+        let began = try success(plugin, grants, "execute", [
+            "id": id, "sql": "BEGIN IMMEDIATE", "inTransaction": true, "transactionId": NSNull(),
+        ])
+        let token = try XCTUnwrap((began as? [String: Any])?["transactionId"] as? Int)
+        _ = try success(plugin, grants, "insert", [
+            "id": id, "sql": "INSERT INTO marker VALUES (2)", "transactionId": token,
+        ])
+        XCTAssertEqual(SQLCipher.sqlite3_exec(reader, "BEGIN", nil, nil, nil), SQLCipher.SQLITE_OK)
+        defer { _ = SQLCipher.sqlite3_exec(reader, "ROLLBACK", nil, nil, nil) }
+        XCTAssertEqual(try markers(on: reader), [1])
+        XCTAssertEqual(try markers(on: probe), [1])
+        let (grant, expire) = try XCTUnwrap(grants.pending.first)
+
+        let commitDone = expectation(description: "the pending COMMIT replies")
+        var commitReply: Any?
+        grants.capture {
+            plugin.handle(FlutterMethodCall(methodName: "execute", arguments: [
+                "id": id, "sql": "COMMIT", "inTransaction": false, "transactionId": token,
+            ]), result: {
+                commitReply = $0
+                commitDone.fulfill()
+            })
+        }
+        defer {
+            // Release the independent reader before waiting, even on a failed
+            // assertion. The plugin handle stays open until its call returns.
+            _ = SQLCipher.sqlite3_exec(reader, "ROLLBACK", nil, nil, nil)
+            wait(for: [commitDone], timeout: 3)
+        }
+
+        let blocked = DispatchTime.now() + .seconds(2)
+        var probeStatus = SQLCipher.SQLITE_OK
+        while DispatchTime.now() < blocked {
+            probeStatus = SQLCipher.sqlite3_exec(probe, "SELECT id FROM marker", nil, nil, nil)
+            if probeStatus != SQLCipher.SQLITE_OK { break }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.005))
+        }
+        XCTAssertEqual(probeStatus, SQLCipher.SQLITE_BUSY)
+        guard probeStatus == SQLCipher.SQLITE_BUSY else { return }
+
+        let ended = expectation(description: "the UIKit assertion ends")
+        var statusAtEnd: Int32?
+        grants.didEnd = { identifier in
+            guard identifier == grant else { return }
+            statusAtEnd = self.writeLockStatus(on: probe)
+            ended.fulfill()
+        }
+        defer { grants.didEnd = nil }
+        expire()
+        wait(for: [ended], timeout: 3)
+
+        XCTAssertEqual(
+            statusAtEnd, SQLCipher.SQLITE_OK,
+            "Ending the assertion must wait for the contended write lock to be released"
+        )
+        guard statusAtEnd == SQLCipher.SQLITE_OK else { return }
+        XCTAssertEqual(try markers(on: probe), [1])
+        // The wrapper schedules the COMMIT reply on main after native cleanup.
+        // Release the read snapshot and let defer await the already-pending reply.
+        _ = SQLCipher.sqlite3_exec(reader, "ROLLBACK", nil, nil, nil)
+        let replyDeadline = DispatchTime.now() + .seconds(2)
+        while commitReply == nil && DispatchTime.now() < replyDeadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.005))
+        }
+        XCTAssertEqual((commitReply as? FlutterError)?.code, "sqlite_error")
+    }
+
+    private func openFixtureConnection(path: String, password: String) throws -> OpaquePointer {
+        var connection: OpaquePointer?
+        let opened = SQLCipher.sqlite3_open_v2(
+            path, &connection, SQLCipher.SQLITE_OPEN_READWRITE, nil
+        )
+        guard opened == SQLCipher.SQLITE_OK, let connection else {
+            SQLCipher.sqlite3_close(connection)
+            throw ProbeFailure.statement
+        }
+        let keyed = SQLCipher.sqlite3_exec(
+            connection, "PRAGMA key = \"\(password)\"", nil, nil, nil
+        )
+        guard keyed == SQLCipher.SQLITE_OK else {
+            SQLCipher.sqlite3_close(connection)
+            throw ProbeFailure.statement
+        }
+        return connection
+    }
+
     private func writeLockStatus(on peer: OpaquePointer) -> Int32 {
         let status = SQLCipher.sqlite3_exec(peer, "BEGIN IMMEDIATE", nil, nil, nil)
         guard status == SQLCipher.SQLITE_OK else { return status }
