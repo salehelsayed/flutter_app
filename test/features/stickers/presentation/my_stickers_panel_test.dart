@@ -295,7 +295,7 @@ void main() {
     await tester.pump().timeout(bound);
     expect(tile.hitTestable(), findsNothing);
     expect(
-      tile,
+      find.byKey(ValueKey('my-sticker-${sticker.id}'), skipOffstage: false),
       findsNothing,
       reason: 'the hidden tile leaves the widget tree',
     );
