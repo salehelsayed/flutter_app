@@ -53,13 +53,16 @@ final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  for (final (inviteDuringSigning, coldBackground) in [
-    (false, false),
-    (true, false),
-    (false, true),
+  for (final (inviteDuringSigning, coldBackground, resumeWhileRinging) in [
+    (false, false, false),
+    (true, false, false),
+    (false, true, false),
+    (false, true, true),
   ]) {
     test(
-      coldBackground
+      resumeWhileRinging
+          ? 'BL54 cold background wake stays receive-only until endpoint publication'
+          : coldBackground
           ? 'BL54 cold background wake receives a terminal before initial advertisement'
           : 'BL54 cold iOS wake preserves the endpoint until the admitted call ends '
                 '(invite during signing: $inviteDuringSigning)',
@@ -143,7 +146,8 @@ void main() {
         };
 
         var inviteAvailable = !inviteDuringSigning;
-        var terminalPending = coldBackground;
+        final terminalDuringStartup = coldBackground && !resumeWhileRinging;
+        var terminalPending = terminalDuringStartup;
         responses['call_retrieve_v1'] = (_) async {
           final events = <Map<String, Object?>>[];
           if (inviteAvailable) {
@@ -206,7 +210,7 @@ void main() {
             'events': events,
             'receiptAtMs': nowMs,
             'expiresAtMs': invite.expiresAtMs,
-            'hasMore': coldBackground && events.isNotEmpty,
+            'hasMore': terminalDuringStartup && events.isNotEmpty,
           };
         };
         if (inviteDuringSigning) {
@@ -229,7 +233,12 @@ void main() {
         expect(graph.runtime.isStarted, isTrue);
         if (coldBackground) {
           expect(terminalPending, isFalse);
-          expect(graph.coordinator.lastSnapshot?.isTerminal, isTrue);
+          if (resumeWhileRinging) {
+            expect(graph.coordinator.activeSession?.state, CallState.ringing);
+            expect(graph.videoContexts?.admittedV2Endpoint(_callA), isNotNull);
+          } else {
+            expect(graph.coordinator.lastSnapshot?.isTerminal, isTrue);
+          }
           expect(fixture.composition.isOutgoingCallAvailable, isFalse);
           expect(fixture.tokenSet.calls, 0);
           expect(
@@ -248,8 +257,29 @@ void main() {
             await fixture.composition.onResume().timeout(deadline),
             isTrue,
           );
-          expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+          expect(
+            fixture.composition.isOutgoingCallAvailable,
+            !resumeWhileRinging,
+          );
           expect(fixture.tokenSet.calls, 1);
+          if (resumeWhileRinging) {
+            await fixture.composition.onContactEligibilityChanged().timeout(
+              deadline,
+            );
+            expect(fixture.composition.isOutgoingCallAvailable, isFalse);
+            expect(relayEndpoint, same(previousEndpoint));
+            expect(
+              fixture.bridge.commands,
+              isNot(contains('call_endpoint_set_v1')),
+            );
+
+            final outgoingAvailable = fixture
+                .composition
+                .outgoingCallAvailabilityChanges
+                .firstWhere((available) => available);
+            await _endCall(graph).timeout(deadline);
+            await outgoingAvailable.timeout(deadline);
+          }
         } else {
           expect(graph.coordinator.activeSession?.callId, _callA);
           expect(graph.coordinator.activeSession?.state, CallState.ringing);
