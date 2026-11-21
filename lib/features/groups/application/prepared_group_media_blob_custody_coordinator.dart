@@ -321,6 +321,10 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
             if (capture == null) return;
             try {
               capturedReporter?.markCaptured(capture);
+              capturedReporter?.groupPostCommittedCaptured(
+                capture,
+                groupId: parent.groupId,
+              );
             } catch (_) {}
           },
         );

@@ -2709,6 +2709,10 @@ _sendGroupMessageWithAuthorityRecheck({
     if (!freshAdmission || capture == null) return;
     try {
       capturedActivity.reporter?.markCaptured(capture);
+      capturedActivity.reporter?.groupPostCommittedCaptured(
+        capture,
+        groupId: groupId,
+      );
     } catch (_) {}
   }
   var strictDurableOwnerCommitted = false;
