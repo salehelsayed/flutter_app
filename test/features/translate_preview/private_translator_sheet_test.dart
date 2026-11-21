@@ -136,7 +136,7 @@ void _testDownloadProgress(
       Color.alphaBlend(threeQuarters.tail, theme.colorScheme.surface),
       reason: 'the growing fill must be distinguishable from the track',
     );
-  });
+  }, timeout: const Timeout(Duration(seconds: 3)));
 
   testWidgets('BL-46 $surface shows indeterminate progress without a total', (
     tester,
@@ -149,7 +149,7 @@ void _testDownloadProgress(
       find.byType(LinearProgressIndicator),
     );
     expect(bar.value, isNull);
-  });
+  }, timeout: const Timeout(Duration(seconds: 3)));
 }
 
 void main() {
