@@ -78,12 +78,15 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     if (!identical(_current, generation)) return;
     _current = null;
     _blocked = !allowInitialRetry;
+    unawaited(generation.retired.close());
   }
 
   Future<T> _run<T>(
-    Future<T> Function(SqliteCustomStickerLibrary library) action,
-  ) async {
-    final generation = _captureGeneration();
+    Future<T> Function(SqliteCustomStickerLibrary library) action, {
+    _StickerLibraryGeneration? captured,
+  }) async {
+    final generation = captured ?? _captureGeneration();
+    if (!_isCurrent(generation)) _unavailable();
     final library = await _start(generation, _retirement);
     if (library == null || !_isCurrent(generation)) _unavailable();
     return action(library);
@@ -95,6 +98,22 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     }
     if (_blocked) _unavailable();
     return _current ??= _StickerLibraryGeneration(retryIfNoIdentity: true);
+  }
+
+  /// Binds a clip editor's later admission to the account that opened it.
+  ({
+    Future<CustomSticker> Function(NormalizedStickerAsset) admit,
+    Stream<void> onRetired,
+    bool Function() isCurrent,
+  })
+  captureClipAdmission() {
+    final generation = _captureGeneration();
+    return (
+      admit: (asset) =>
+          _run((library) => library.admit(asset), captured: generation),
+      onRetired: generation.retired.stream,
+      isCurrent: () => _isCurrent(generation),
+    );
   }
 
   /// Binds received-media preparation to the account that began the action.
@@ -169,6 +188,8 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     final generation = _current;
     _current = null;
     if (generation == null) return _retirement;
+    generation.retired.add(null);
+    unawaited(generation.retired.close());
     return _retirement = Future.wait<void>([
       _retirement,
       _retireGeneration(generation),
@@ -244,6 +265,7 @@ final class _StickerLibraryGeneration {
   _StickerLibraryGeneration({required this.retryIfNoIdentity});
 
   final bool retryIfNoIdentity;
+  final retired = StreamController<void>.broadcast(sync: true);
   Future<SqliteCustomStickerLibrary?>? initialization;
   StreamSubscription<void>? subscription;
 }

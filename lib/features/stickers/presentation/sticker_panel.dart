@@ -13,6 +13,7 @@ import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_selection.dart';
 import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_clip_saves.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -25,6 +26,7 @@ class MyStickersSource {
     required this.library,
     required this.onSend,
     required this.onCreate,
+    this.clipSaves,
   });
 
   final CustomStickerLibrary library;
@@ -32,6 +34,7 @@ class MyStickersSource {
   /// Called with the id of the custom sticker the user tapped.
   final ValueChanged<String> onSend;
   final VoidCallback onCreate;
+  final StickerClipSaves? clipSaves;
 }
 
 /// The sticker picker that takes the keyboard's place under the composer.
@@ -68,12 +71,22 @@ class _StickerPanelState extends State<StickerPanel> {
   @override
   void initState() {
     super.initState();
+    widget.myStickers?.clipSaves?.addListener(_clipSavesChanged);
     _watchCustom();
   }
 
   @override
   void didUpdateWidget(StickerPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final previousSaves = oldWidget.myStickers?.clipSaves;
+    final saves = widget.myStickers?.clipSaves;
+    if (previousSaves != saves) {
+      previousSaves?.removeListener(_clipSavesChanged);
+      saves?.addListener(_clipSavesChanged);
+      if (!_pickedTab && saves?.isSaving == true) {
+        _selection = const MyStickersSelection();
+      }
+    }
     if (oldWidget.myStickers?.library == widget.myStickers?.library) return;
     _customLoads++;
     unawaited(_customChanges?.cancel());
@@ -88,8 +101,22 @@ class _StickerPanelState extends State<StickerPanel> {
 
   @override
   void dispose() {
+    widget.myStickers?.clipSaves?.removeListener(_clipSavesChanged);
     unawaited(_customChanges?.cancel());
     super.dispose();
+  }
+
+  void _clipSavesChanged() {
+    final saves = widget.myStickers!.clipSaves!;
+    final saved = saves.saved;
+    final inserted = saved != null && _custom.every((s) => s.id != saved.id);
+    setState(() {
+      if (inserted) _custom = [saved, ..._custom];
+      if (!_pickedTab && (saves.isSaving || saved != null)) {
+        _selection = const MyStickersSelection();
+      }
+    });
+    if (inserted) unawaited(_reloadCustom());
   }
 
   void _watchCustom() {
@@ -156,10 +183,14 @@ class _StickerPanelState extends State<StickerPanel> {
     for (final id in widget.recentIds) ?widget.catalog.byId(id),
   ];
 
-  StickerPanelSelection _initialSelection() =>
-      _recent.isNotEmpty || widget.catalog.packs.isEmpty
-      ? const RecentStickersSelection()
-      : PackGroupSelection.first(widget.catalog.packs.first);
+  StickerPanelSelection _initialSelection() {
+    if (widget.myStickers?.clipSaves?.isSaving == true) {
+      return const MyStickersSelection();
+    }
+    return _recent.isNotEmpty || widget.catalog.packs.isEmpty
+        ? const RecentStickersSelection()
+        : PackGroupSelection.first(widget.catalog.packs.first);
+  }
 
   int get _tabIndex => switch (_selection) {
     PackGroupSelection(:final pack) => _tabs.indexWhere(
@@ -261,6 +292,8 @@ class _StickerPanelState extends State<StickerPanel> {
           colors: colors,
           onTap: source.onCreate,
         ),
+      if (source.clipSaves?.isSaving == true)
+        _PendingStickerCell(label: l10n.stickers_creating, colors: colors),
       for (final (index, sticker) in stickers.indexed)
         _CustomStickerCell(
           key: ValueKey('my-sticker-${sticker.id}'),
@@ -489,6 +522,36 @@ class _StickerCell extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PendingStickerCell extends StatelessWidget {
+  const _PendingStickerCell({required this.label, required this.colors});
+
+  final String label;
+  final BackgroundReadableColors colors;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    key: const ValueKey('my-sticker-pending'),
+    label: label,
+    excludeSemantics: true,
+    child: Center(
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox.square(
+            dimension: 44,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.accent,
+              backgroundColor: colors.divider,
+            ),
+          ),
+          Icon(Icons.emoji_emotions_outlined, color: colors.iconPrimary),
+        ],
+      ),
+    ),
+  );
 }
 
 class _CreateTile extends StatelessWidget {

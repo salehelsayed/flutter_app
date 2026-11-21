@@ -7489,6 +7489,8 @@
         "lib/features/stickers/custom/editor/sticker_text_editor_screen.dart",
         "lib/features/stickers/custom/editor/sticker_overlay_editor_result.dart",
         "lib/features/stickers/presentation/custom_sticker_scope.dart",
+        "lib/features/stickers/presentation/sticker_clip_saves.dart",
+        "lib/features/stickers/presentation/sticker_panel.dart",
         "test/features/stickers/custom/create/sticker_create_flow_test.dart",
         "test/features/stickers/custom/create/sticker_create_screens_test.dart",
         "test/features/stickers/custom/editor/sticker_text_editor_screen_test.dart",
@@ -7499,7 +7501,7 @@
         "custom-stickers-creation-enabled",
         "affected-stickers"
       ],
-      "why": "The production create and received-photo routes must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lanes; default-off tests cannot prove native cutout composition or the accepted-Back interval of an enabled received-sticker action. Clip creation and shared text-editor changes also select the enabled overlay approval, cancellation and preview checks."
+      "why": "The production create and received-photo routes must execute with CUSTOM_STICKERS_ENABLED=true as well as the default-off lanes; default-off tests cannot prove native cutout composition or the accepted-Back interval of an enabled received-sticker action. Clip creation, the My stickers tray and shared text-editor changes also select enabled overlay approval, cancellation, preview and pending-save checks."
     }
   ],
   "documentation_only": [

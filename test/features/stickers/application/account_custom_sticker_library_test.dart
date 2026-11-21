@@ -612,6 +612,41 @@ void main() {
       },
     );
 
+    test(
+      'clip admission captured before retirement cannot write to a replacement account',
+      () async {
+        const bound = Duration(seconds: 3);
+        final value = files.facade(
+          (isCurrent) async => files.library(isCurrent),
+        );
+        final stale = value.captureClipAdmission();
+        final retirementEvents = files.observe(stale.onRetired);
+        final source = await files.input(1).timeout(bound);
+        expect(stale.isCurrent(), isTrue);
+        final retired = value.retire();
+        expect(stale.isCurrent(), isFalse);
+        expect(retirementEvents, [0]);
+        await retired.timeout(bound);
+
+        files.peer = 'logical-account-B';
+        files.binding = 'opaque-account-B';
+        files.setAuthority(AccountMigrationAuthorityState.active);
+        await value.activate().timeout(bound);
+        await expectLater(
+          stale.admit(source),
+          throwsA(_error(CustomStickerErrorCode.unavailable)),
+        ).timeout(bound);
+        expect(await value.list().timeout(bound), isEmpty);
+
+        final current = value.captureClipAdmission();
+        final saved = await current.admit(source).timeout(bound);
+        expect(
+          (await value.list().timeout(bound)).map((sticker) => sticker.id),
+          [saved.id],
+        );
+      },
+    );
+
     test('activation after late initialization cannot publish the retired generation', () async {
       final gate = files.gate();
       final tokens = <bool Function()>[];

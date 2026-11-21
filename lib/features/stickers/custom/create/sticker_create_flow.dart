@@ -53,6 +53,7 @@ final class StickerCreateFlow {
     required this.exportClip,
     required this.showNoSubject,
     required this.editClipText,
+    this.admitClip,
   });
 
   final CustomStickerLibrary library;
@@ -81,6 +82,7 @@ final class StickerCreateFlow {
     Uint8List? textOverlay,
   )
   exportClip;
+  final Future<CustomSticker?> Function(NormalizedStickerAsset)? admitClip;
   final void Function() showNoSubject;
 
   bool _cancelled = false;
@@ -94,7 +96,13 @@ final class StickerCreateFlow {
     try {
       asset = clip ? await _clip(input) : await _still(input);
       if (asset == null || _cancelled) return const StickerCreateCancelled();
-      return StickerCreateSaved(await library.admit(asset));
+      final admit = clip ? admitClip : null;
+      final sticker = admit == null
+          ? await library.admit(asset)
+          : await admit(asset);
+      return sticker == null
+          ? const StickerCreateCancelled()
+          : StickerCreateSaved(sticker);
     } on CustomStickerException catch (error) {
       return StickerCreateFailed(error.code);
     } finally {
