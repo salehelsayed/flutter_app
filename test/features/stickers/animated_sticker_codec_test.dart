@@ -166,35 +166,31 @@ void main() {
 
   test('Flutter engine decodes distinct animated WebP frames', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
-    final animation = img.Image(width: 16, height: 16)..loopCount = 0;
-    animation.addFrame();
-    for (var index = 0; index < 2; index++) {
-      final frame = animation.frames[index];
-      frame.frameDuration = 100;
-      for (var y = 0; y < 16; y++) {
-        for (var x = 0; x < 16; x++) {
-          final colour = index == 0
-              ? img.ColorRgb8(240, 20, 20)
-              : img.ColorRgb8(20, 240, 20);
-          frame.setPixel(x, y, colour);
-        }
-      }
-    }
-    final bytes = img.encodeWebP(animation, lossless: true);
-    final codec = await ui.instantiateImageCodec(bytes);
+    final encoded = encodeStickerAnimation(
+      croppedFrames: [_frame(0), _frame(5)],
+      durationMs: 160,
+      circle: true,
+    );
+    const deadline = Duration(seconds: 3);
+    final codec = await ui
+        .instantiateImageCodec(encoded.webp)
+        .timeout(deadline);
     final frames = <ui.Image>[];
     try {
       expect(codec.frameCount, 2);
-      frames.add((await codec.getNextFrame()).image);
-      frames.add((await codec.getNextFrame()).image);
-      Future<List<int>> firstPixel(ui.Image image) async {
-        final data = await image.toByteData();
-        return data!.buffer.asUint8List().take(4).toList();
+      for (var index = 0; index < 2; index++) {
+        final frame = await codec.getNextFrame().timeout(deadline);
+        frames.add(frame.image);
+        expect(frame.duration, const Duration(milliseconds: 80));
       }
 
-      final first = await firstPixel(frames.first);
-      final last = await firstPixel(frames.last);
-      expect(last, isNot(orderedEquals(first)));
+      const interiorOffset = 4 * (200 * _side + 80);
+      final first = (await frames[0].toByteData().timeout(deadline))!;
+      final last = (await frames[1].toByteData().timeout(deadline))!;
+      expect(first.getUint32(interiorOffset), 0xe65a2aff);
+      expect(last.getUint32(interiorOffset), 0x1840b4ff);
+      expect(first.getUint32(0), 0);
+      expect(last.getUint32(0), 0);
     } finally {
       for (final frame in frames) {
         frame.dispose();
