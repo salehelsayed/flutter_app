@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../fake_custom_sticker_library.dart';
@@ -207,6 +209,107 @@ void main() {
     await tester.pump();
 
     expect(_myGrid(tester), ['create', 'custom-2', 'a']);
+  });
+
+  testWidgets('a custom WebP animates only in the visible grid', (
+    tester,
+  ) async {
+    const bound = Duration(seconds: 3);
+    final root = Directory.systemTemp.createTempSync('my-stickers-animation-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final frame = img.Image(width: 8, height: 8, frameDuration: 80)
+      ..clear(img.ColorRgb8(255, 0, 0))
+      ..addFrame(
+        img.Image(width: 8, height: 8, frameDuration: 80)
+          ..clear(img.ColorRgb8(0, 0, 255)),
+      );
+    final webp = img.WebPEncoder().encode(frame);
+    final animation = File('${root.path}/sticker.webp')..writeAsBytesSync(webp);
+    final library = FakeCustomStickerLibrary(
+      ids: List.generate(8, (i) => 'filler-$i'),
+    );
+    final sticker = await library
+        .admit(
+          NormalizedStickerAsset(
+            filePath: animation.path,
+            sha256Hex: 'animation',
+            mime: 'image/webp',
+            byteLength: webp.length,
+            width: 8,
+            height: 8,
+            frameCount: 2,
+            durationMs: 160,
+          ),
+        )
+        .timeout(bound);
+    final harness = await _pump(tester, library).timeout(bound);
+    final tile = _sticker(sticker.id);
+    expect(tile.hitTestable(), findsOneWidget);
+
+    final provider = tester
+        .widget<Image>(find.descendant(of: tile, matching: find.byType(Image)))
+        .image;
+    final key = await provider
+        .obtainKey(ImageConfiguration.empty)
+        .timeout(bound);
+    final cache = PaintingBinding.instance.imageCache;
+    final raw = find.descendant(of: tile, matching: find.byType(RawImage));
+    RawImage? renderedImage() => tester.widgetList<RawImage>(raw).firstOrNull;
+
+    Future<void> pumpUntil(bool Function() condition) async {
+      final elapsed = Stopwatch()..start();
+      while (!condition() && elapsed.elapsed < bound) {
+        await tester
+            .runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 10)),
+            )
+            .timeout(bound);
+        await tester.pump(const Duration(milliseconds: 20)).timeout(bound);
+      }
+      expect(condition(), isTrue);
+    }
+
+    Future<void> expectAnimation() async {
+      await pumpUntil(() => renderedImage()?.image != null);
+      final firstFrame = renderedImage()!.image;
+      await pumpUntil(() {
+        final image = renderedImage()?.image;
+        return image != null && !identical(image, firstFrame);
+      });
+      expect(cache.statusForKey(key).live, isTrue);
+    }
+
+    await expectAnimation();
+    final thumbnail = find.descendant(
+      of: find.byKey(const ValueKey('sticker-tab-mine')),
+      matching: find.byType(RawImage),
+    );
+    final thumbnailFrame = tester.widget<RawImage>(thumbnail).image;
+    expect(thumbnailFrame, isNotNull);
+
+    final grid = find.byType(GridView);
+    final scroller = tester.state<ScrollableState>(
+      find.descendant(of: grid, matching: find.byType(Scrollable)),
+    );
+    scroller.position.jumpTo(tester.getSize(tile).height + 12);
+    await tester.pump().timeout(bound);
+    expect(tile.hitTestable(), findsNothing);
+    expect(
+      tile,
+      findsNothing,
+      reason: 'the hidden tile leaves the widget tree',
+    );
+    expect(cache.statusForKey(key).live, isFalse);
+    expect(tester.widget<RawImage>(thumbnail).image, same(thumbnailFrame));
+
+    scroller.position.jumpTo(0);
+    await tester.pump().timeout(bound);
+    expect(tile.hitTestable(), findsOneWidget);
+    await expectAnimation();
+    expect(tester.widget<RawImage>(thumbnail).image, same(thumbnailFrame));
+    await tester.tap(tile).timeout(bound);
+    expect(harness.sent, [sticker.id]);
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
   });
 
   testWidgets('long-press enters manage mode; delete removes the sticker', (
