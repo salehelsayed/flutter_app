@@ -359,6 +359,8 @@ final class _CallEndObservation {
   bool finished = false;
 }
 
+enum _DeferredCallAdvertisement { endpointRefresh, authorityRecovery }
+
 /// The concrete graph behind the default-off composition latch. Every
 /// dependency is call-specific except read-only shared bridge/P2P/router/DB
 /// handles, none of which this graph disposes.
@@ -376,6 +378,7 @@ final class ProductionCallSignalingGraph
         CallSignalingDiagnosticInvalidations,
         CallSignalingDeferredAdvertisementRetries,
         CallSignalingWakeDrain,
+        CallSignalingNativeWakeStartup,
         OutgoingCallContactReadinessRecovery,
         CallWakeHandleDistributionLifecycle {
   ProductionCallSignalingGraph({
@@ -568,7 +571,7 @@ final class ProductionCallSignalingGraph
   Future<void>? _iosNativeRollback;
   Future<void>? _iosTokenRollback;
   Future<void>? _iosEndpointRollback;
-  bool _advertisementDeferredForLiveCall = false;
+  _DeferredCallAdvertisement? _deferredAdvertisement;
   final StreamController<void> _deferredAdvertisementRetries =
       StreamController<void>.broadcast(sync: true);
 
@@ -587,6 +590,10 @@ final class ProductionCallSignalingGraph
   @override
   Stream<void> get deferredAdvertisementRetries =>
       _deferredAdvertisementRetries.stream;
+
+  @override
+  bool get canListenBeforeAdvertising =>
+      iosCallLifecycleAdapter != null && _canAdvertiseCapability;
 
   /// A live (non-terminal) session must never be torn down over relay
   /// capability authority; a terminal-but-still-present session counts as idle.
@@ -3000,6 +3007,7 @@ final class ProductionCallSignalingGraph
       _routingHandle = routingHandle;
       _advertisedEndpointExpiresAtMs =
           now + callBackgroundReachabilityLifetime.inMilliseconds;
+      _deferredAdvertisement = null;
       _emitCapabilityAdvertisementResult(stage: 'ready', outcome: 'ready');
       return true;
     } catch (_) {
@@ -3023,7 +3031,7 @@ final class ProductionCallSignalingGraph
     } else if (expiresAtMs <= now) {
       return false;
     }
-    _advertisementDeferredForLiveCall = true;
+    _deferredAdvertisement ??= _DeferredCallAdvertisement.endpointRefresh;
     _emitCapabilityAdvertisementResult(
       stage: 'endpoint_publish',
       outcome: 'deferred_live_call',
@@ -3042,7 +3050,7 @@ final class ProductionCallSignalingGraph
     if (_hasLiveSession) {
       // A failed re-advertisement during a live call defers: nothing is
       // revoked and no native call ends. The terminal snapshot retries once.
-      _advertisementDeferredForLiveCall = true;
+      _deferredAdvertisement = _DeferredCallAdvertisement.authorityRecovery;
       _emitCapabilityAdvertisementResult(
         stage: stage,
         outcome: 'deferred_live_call',
@@ -3054,8 +3062,16 @@ final class ProductionCallSignalingGraph
   }
 
   void _retryDeferredAdvertisement() {
-    if (!_advertisementDeferredForLiveCall) return;
-    _advertisementDeferredForLiveCall = false;
+    final deferred = _deferredAdvertisement;
+    if (deferred == null) return;
+    if (deferred == _DeferredCallAdvertisement.endpointRefresh &&
+        iosCallLifecycleAdapter != null &&
+        (!_videoForegroundAllowed || !_isVideoForeground())) {
+      // A background terminal may end the native execution window. The
+      // existing endpoint stays valid under its original authority and expiry.
+      return;
+    }
+    _deferredAdvertisement = null;
     if (!_deferredAdvertisementRetries.isClosed) {
       _deferredAdvertisementRetries.add(null);
     }
@@ -3367,7 +3383,7 @@ final class ProductionCallSignalingGraph
       // re-publishes the token; a failed retry then performs the idle rollback
       // and withdraws the graph. A native-lifecycle invalidation is never
       // deferred (that call is already dead).
-      _advertisementDeferredForLiveCall = true;
+      _deferredAdvertisement = _DeferredCallAdvertisement.authorityRecovery;
       return;
     }
     // Withdraw composition/outgoing entry synchronously. Graph shutdown then

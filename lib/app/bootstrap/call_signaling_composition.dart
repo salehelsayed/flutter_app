@@ -128,6 +128,12 @@ abstract interface class CallSignalingWakeDrain {
   Future<void> drainCallMailbox();
 }
 
+/// A native iOS wake can drain with existing receive authority while initial
+/// publication waits for the foreground.
+abstract interface class CallSignalingNativeWakeStartup {
+  bool get canListenBeforeAdvertising;
+}
+
 /// Optional graph boundary used by encrypted contact-request distribution.
 /// The stable composition prevents retained UI owners from holding a graph-
 /// lifetime coordinator after callability has been withdrawn.
@@ -236,6 +242,7 @@ final class CallSignalingComposition
   Future<void>? _shutdownInFlight;
   Future<void> _contactReconciliationTail = Future<void>.value();
   bool _started = false;
+  bool _initialAdvertisementPending = false;
   bool _terminal = false;
   bool _foregroundAllowed = true;
   bool _callWakeDistributionRearmed = false;
@@ -281,6 +288,7 @@ final class CallSignalingComposition
       _hasForegroundCapability &&
       _featureFlags['voice_call_outgoing_enabled'] == true &&
       isStarted &&
+      !_initialAdvertisementPending &&
       _graph != null;
 
   @override
@@ -726,6 +734,7 @@ final class CallSignalingComposition
         return;
       }
       if (!_terminal && identical(_graph, graph)) {
+        _initialAdvertisementPending = false;
         _publishOutgoingCallAvailability();
         outcome = 'ready';
         return;
@@ -752,14 +761,16 @@ final class CallSignalingComposition
     }
   }
 
-  Future<void> start() {
+  Future<void> start() => _start();
+
+  Future<void> _start({bool fromCallWake = false}) {
     if (!isEnabled || _terminal || _started || _withdrawalFailed) {
       return Future<void>.value();
     }
     final inFlight = _startInFlight;
     if (inFlight != null) return inFlight;
     late final Future<void> attempt;
-    attempt = _startInternal().whenComplete(() {
+    attempt = _startInternal(fromCallWake: fromCallWake).whenComplete(() {
       if (identical(_startInFlight, attempt)) _startInFlight = null;
     });
     _startInFlight = attempt;
@@ -799,7 +810,7 @@ final class CallSignalingComposition
     _foregroundStartRetryAttempt = 0;
   }
 
-  Future<void> _startInternal() async {
+  Future<void> _startInternal({required bool fromCallWake}) async {
     CallSignalingGraphLifecycle? graph;
     var outcome = 'failed';
     String? diagnosticOutcome;
@@ -856,7 +867,12 @@ final class CallSignalingComposition
         return;
       }
       stage = _CallSignalingStartStage.capabilityAdvertisement;
-      if (!await graph.advertiseCapability()) {
+      final deferInitialAdvertisement =
+          fromCallWake &&
+          !_isForeground() &&
+          graph is CallSignalingNativeWakeStartup &&
+          (graph as CallSignalingNativeWakeStartup).canListenBeforeAdvertising;
+      if (!deferInitialAdvertisement && !await graph.advertiseCapability()) {
         await _withdrawGraph(graph);
         outcome = 'advertisement_unavailable';
         return;
@@ -866,6 +882,7 @@ final class CallSignalingComposition
         outcome = _terminal ? 'terminal' : 'graph_withdrawn';
         return;
       }
+      _initialAdvertisementPending = deferInitialAdvertisement;
       _started = true;
       _foregroundStartRetryInvalidated = false;
       _cancelForegroundStartRetry();
@@ -922,7 +939,7 @@ final class CallSignalingComposition
         outcome = 'terminal';
         return;
       }
-      await start();
+      await _start(fromCallWake: true);
       final graph = _graph;
       if (!_started || graph == null || _terminal) {
         outcome = _terminal ? 'terminal' : 'start_unavailable';
@@ -987,8 +1004,15 @@ final class CallSignalingComposition
           _foregroundGraph?.current,
           _foregroundGeneration,
         );
-        // A graph started by this resume has already advertised successfully.
-        if (identical(graph, priorStartedGraph) &&
+        if (_initialAdvertisementPending &&
+            (!_foregroundAllowed || !_isForeground())) {
+          outcome = 'advertisement_deferred';
+          return false;
+        }
+        // A graph started by this resume has already advertised successfully
+        // unless it joined a background wake's listener startup.
+        if ((identical(graph, priorStartedGraph) ||
+                _initialAdvertisementPending) &&
             !await graph.advertiseCapability()) {
           if (_hasLiveForegroundCall) {
             // Never tear down a live call over a failed advertisement; the
@@ -1012,6 +1036,7 @@ final class CallSignalingComposition
           }
         }
         if (!_terminal && identical(_graph, graph)) {
+          _initialAdvertisementPending = false;
           _acceptForegroundProjection(
             graph,
             _foregroundGraph?.current,
@@ -1161,6 +1186,7 @@ final class CallSignalingComposition
       if (identical(_graph, graph)) {
         _graph = null;
         _started = false;
+        _initialAdvertisementPending = false;
         _publishOutgoingCallAvailability();
       }
       await _unbindForegroundGraph(graph);
