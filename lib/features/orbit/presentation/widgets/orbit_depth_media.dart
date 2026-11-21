@@ -55,6 +55,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   int _readVersion = 0;
   int _appliedVersion = 0;
   final _attempts = <String, int>{};
+  final _pendingWaits = <Completer<void>>{};
   StreamSubscription<String>? _postSubscription;
   Timer? _retryTimer;
 
@@ -88,10 +89,11 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     final generation = _generation;
     final version = ++_readVersion;
     try {
-      final media = await widget
-          .load(postId)
-          .timeout(const Duration(seconds: 30));
-      if (!mounted || generation != _generation || version < _appliedVersion) {
+      final media = await _waitForMedia(widget.load(postId));
+      if (media == null ||
+          !mounted ||
+          generation != _generation ||
+          version < _appliedVersion) {
         return;
       }
       // A commit may arrive while the foreground download is still waiting.
@@ -131,8 +133,29 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     _retryTimer = null;
   }
 
+  Future<T?> _waitForMedia<T>(Future<T> operation) async {
+    final closed = Completer<void>();
+    _pendingWaits.add(closed);
+    try {
+      return await Future.any<T?>([
+        operation,
+        closed.future.then<T?>((_) => null),
+      ]).timeout(const Duration(seconds: 30));
+    } finally {
+      _pendingWaits.remove(closed);
+    }
+  }
+
+  void _cancelMediaWaits() {
+    for (final wait in _pendingWaits) {
+      wait.complete();
+    }
+    _pendingWaits.clear();
+  }
+
   Future<void> _load({bool transientOnly = false}) async {
     _cancelRetry();
+    _cancelMediaWaits();
     final generation = ++_generation;
     final postId = widget.postId;
     setState(() {
@@ -143,10 +166,8 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
         mounted && generation == _generation && widget.postId == postId;
     try {
       final initialVersion = ++_readVersion;
-      final initialMedia = await widget
-          .load(postId)
-          .timeout(const Duration(seconds: 30));
-      if (!current()) return;
+      final initialMedia = await _waitForMedia(widget.load(postId));
+      if (initialMedia == null || !current()) return;
       setState(() => _applySnapshot(initialMedia, initialVersion));
       for (final attachment in _media) {
         if (!current()) return;
@@ -163,19 +184,15 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
           ifAbsent: () => 1,
         );
         try {
-          await widget
-              .download(attachment, attempt)
-              .timeout(const Duration(seconds: 30));
+          await _waitForMedia(widget.download(attachment, attempt));
         } catch (_) {
           if (!current()) return;
         }
       }
       if (!current()) return;
       final finalVersion = ++_readVersion;
-      final media = await widget
-          .load(postId)
-          .timeout(const Duration(seconds: 30));
-      if (!current()) return;
+      final media = await _waitForMedia(widget.load(postId));
+      if (media == null || !current()) return;
       setState(() {
         _applySnapshot(media, finalVersion);
         _loading = false;
@@ -202,6 +219,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   void dispose() {
     ++_generation;
     _cancelRetry();
+    _cancelMediaWaits();
     unawaited(_postSubscription?.cancel());
     super.dispose();
   }
