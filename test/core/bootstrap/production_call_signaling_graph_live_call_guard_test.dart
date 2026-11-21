@@ -29,6 +29,7 @@ import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_voip_token_coordinator.dart';
@@ -52,6 +53,190 @@ final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final inviteDuringSigning in [false, true]) {
+    test(
+      'BL54 cold iOS wake preserves the endpoint until the admitted call ends '
+      '(invite during signing: $inviteDuringSigning)',
+      () async {
+        const deadline = Duration(seconds: 3);
+        const nowMs = 2_000_000;
+        const remote = 'remote-account';
+        const local = 'local-account';
+        const handle = '66666666-6666-4666-8666-666666666666';
+        const wakeHandle = 'fedcba9876543210fedcba9876543210';
+        const previousEndpoint = <String, Object?>{
+          'preferenceEpoch': nowMs - 1000,
+          'routingHandle': '0123456789abcdef0123456789abcdef',
+        };
+        var relayEndpoint = previousEndpoint;
+        final firstPublication = Completer<void>();
+        final fixture = await _createFixture(videoEnabled: true)
+            .timeout(deadline);
+        final invite = CallSignalV2.fromMap({
+          'schema': CallSignalV2.schema,
+          'call_id': _callA.value,
+          'message_id': '33333333-3333-4333-8333-000000000001',
+          'event': 'invite',
+          'sender_account_peer_id': remote,
+          'sender_device_peer_id': remote,
+          'recipient_account_peer_id': local,
+          'recipient_device_peer_id': local,
+          'sender_sequence': 1,
+          'ice_generation': 0,
+          'created_at_ms': nowMs,
+          'expires_at_ms': nowMs + 45000,
+          'payload': {
+            'media': 'video',
+            'camera': 'off',
+            'capabilities': ['audio', 'video'],
+          },
+        }, videoEnabled: true);
+        final crypto = _LiveVideoCrypto();
+        final envelope =
+            await SecureCallEnvelopeCodec(
+                  crypto: crypto,
+                  nowMs: () => nowMs,
+                  videoEnabled: true,
+                )
+                .encodeV2(
+                  signal: invite,
+                  callHandle: handle,
+                  recipientMlKemPublicKey: 'local-mlkem-public-key',
+                  senderSigningPrivateKey: 'remote-private-key',
+                )
+                .timeout(deadline);
+        final responses = fixture.bridge.responseHandlers;
+        responses['payload.verify'] = (_) async => {'ok': true, 'valid': true};
+        responses['message.decrypt'] = (_) async => {
+          'ok': true,
+          'plaintext': jsonEncode(invite.toMap()),
+        };
+        responses['message.encrypt'] = (_) async => {
+          'ok': true,
+          'kem': 'a2Vt',
+          'ciphertext': 'Y2lwaGVy',
+          'nonce': 'bm9uY2U=',
+        };
+        responses['call_store_v1'] = (request) async => {
+          'ok': true,
+          'storeStatus': 'stored',
+          'receiptAtMs': nowMs,
+          'expiresAtMs': (request['payload'] as Map)['expiresAtMs'],
+          'eventCount': 1,
+          'totalBytes': 100,
+          'pendingHandles': 1,
+        };
+        responses['call_ack_v1'] = (_) async => {'ok': true, 'acked': 1};
+        responses['call_endpoint_set_v1'] = (request) async {
+          relayEndpoint = Map<String, Object?>.from(request['payload'] as Map);
+          if (!firstPublication.isCompleted) firstPublication.complete();
+          return {'ok': true};
+        };
+
+        var inviteAvailable = !inviteDuringSigning;
+        responses['call_retrieve_v1'] = (_) async {
+          final events = <Map<String, Object?>>[];
+          if (inviteAvailable) {
+            inviteAvailable = false;
+            final graph = fixture.graphs.single;
+            final roster = await graph.trustedRosterProvider.loadForContact(
+              remote,
+            );
+            final device = roster.devices.single;
+            await graph.receivedCallWakeHandleStore.storeIfStrictlyNewer(
+              issuerAccountPeerId: remote,
+              grant: CallWakeHandleGrant(
+                handle: wakeHandle,
+                recipientDevicePeerId: device.devicePeerId,
+                deviceKeyEpoch: device.deviceKeyEpoch,
+                generation: 1,
+                issuedAtMs: nowMs - 1000,
+                expiresAtMs: nowMs + 60000,
+              ),
+              nowMs: nowMs,
+            );
+            final endpoint = CallEndpointRecord(
+              accountPeerId: remote,
+              devicePeerId: device.devicePeerId,
+              capabilities: const {'voice_call_v1', 'video_call_v2'},
+              platform: CallEndpointPlatform.android,
+              expiresAtMs: nowMs + 60000,
+              preferenceEpoch: 1,
+              deviceKeyEpoch: device.deviceKeyEpoch,
+              routingHandle: wakeHandle,
+            );
+            responses['call_endpoint_get_v1'] = (_) async => {
+              'ok': true,
+              'found': true,
+              'canonicalRecord': base64Encode(
+                utf8.encode(endpoint.canonicalRecordJson),
+              ),
+              'endpoint': {
+                ...endpoint.toCanonicalMap(),
+                'signature': 'c2lnbmF0dXJl',
+              },
+            };
+            events.add({
+              'callHandle': handle,
+              'messageId': invite.messageId,
+              'senderPeerId': device.devicePeerId,
+              'recipientDevicePeerId': local,
+              'envelope': envelope,
+              'receiptAtMs': nowMs,
+              'expiresAtMs': invite.expiresAtMs,
+            });
+          }
+          return {
+            'ok': true,
+            'events': events,
+            'receiptAtMs': nowMs,
+            'expiresAtMs': invite.expiresAtMs,
+            'hasMore': false,
+          };
+        };
+        if (inviteDuringSigning) {
+          var releaseInviteOnSign = true;
+          responses['payload.sign'] = (request) async {
+            final data = (request['payload'] as Map)['data'] as String;
+            if (releaseInviteOnSign &&
+                data.startsWith('{"schema":"${CallEndpointRecord.schema}"')) {
+              releaseInviteOnSign = false;
+              inviteAvailable = true;
+              await fixture.graphs.single.runtime.onResume().timeout(deadline);
+            }
+            return {'ok': true, 'signature': 'c2lnbmF0dXJl'};
+          };
+        }
+
+        await fixture.composition.onCallWake().timeout(deadline);
+        final graph = fixture.graphs.single;
+        expect(fixture.composition.isStarted, isTrue);
+        expect(graph.coordinator.activeSession?.callId, _callA);
+        expect(graph.coordinator.activeSession?.state, CallState.ringing);
+        expect(graph.videoContexts?.admittedV2Endpoint(_callA), isNotNull);
+        expect(fixture.bridge.commands, contains('call_ack_v1'));
+        expect(fixture.tokenSet.calls, greaterThan(0));
+        expect(fixture.bridge.commands, contains('call_wake_handle_set_v1'));
+        expect(relayEndpoint, same(previousEndpoint));
+        expect(
+          fixture.bridge.commands,
+          isNot(contains('call_endpoint_set_v1')),
+        );
+
+        await _endCall(graph).timeout(deadline);
+        await firstPublication.future.timeout(deadline);
+        expect(
+          fixture.bridge.commands.where((cmd) => cmd == 'call_endpoint_set_v1'),
+          hasLength(1),
+        );
+        expect(relayEndpoint['preferenceEpoch'], nowMs);
+        expect(
+          relayEndpoint['routingHandle'],
+          isNot(previousEndpoint['routingHandle']),
+        );
+      },
+    );
+  }
   for (final event in ['terminate', 'media_request', 'camera_state']) {
     test(
       'BL16 live resume preserves admitted authority for $event transport',
