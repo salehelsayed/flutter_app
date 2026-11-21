@@ -10015,8 +10015,24 @@ visible and cannot become an ordinary first-attempt PASS.
   27 guard tests, with 23 bootstrap, 2,237 call-signaling and five pinned Go
   preservation cases. The device and Linux receipts are in
   `.codex-test-logs/s132-306-20261121/calls/` and mailbox `m-6fb7824f`.
-  The first scripted fast-cancel tap never placed a call. Physical seven-second
-  cancellation, sub-second cancellation and redial still require the fixed build.
+  Build 310 delivered the seven-second cancel and ended iPhone ringing after
+  2.25 s. The fastest reducer cancel occurred 1.000 s after placement.
+  Use the Pixel's same-trace user-action receipt for the early input interval
+  and record terminal application and iPhone dismissal separately. The next
+  redial returned Busy while the native slot retained a presented,
+  unanswered predecessor with a remote terminal. The simulator RED
+  `081d305f` reproduced sequence 2 holding that slot. `398f9c8a` passed
+  103 cases with receipt-first successor admission for exactly that preStart
+  sequence. An authority write timed out across iOS suspension before its
+  callback, independently disabling callability on the device. At `5c807862`, a cold
+  background wake listens before routine advertisement, and a live endpoint
+  refresh waits for foreground after a background terminal. Outgoing remains
+  gated until actual current publication. Linux guard cases reached both
+  background paths and a foreground resume during ringing. First device
+  evidence is in `.codex-test-logs/bl54-20261121/calls/`, with simulator and
+  final host receipts in `m-495e23d8`, `m-873f49e6` and `m-64801f02`.
+  The installed continuation build still needs answerable-redial and
+  backgrounded-callee proof.
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
