@@ -57,6 +57,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.onThoughtsExpired,
     this.loadMedia,
     this.downloadMedia,
+    this.postChanges,
     this.hostChrome,
     this.onReply,
     this.replyStatusChanges,
@@ -101,8 +102,9 @@ class OrbitDepthSurface extends StatefulWidget {
   /// Shown on the author's own card instead of the reply bar.
   final OrbitDepthOwnActivity? ownActivity;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadMedia;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)?
   downloadMedia;
+  final Stream<String>? postChanges;
 
   /// Sends a reaction or a typed reply to a friend's thought on the ring as
   /// an ordinary quoted chat reply. Null leaves the thought without its bar.
@@ -1484,6 +1486,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             postId: post.id,
             load: widget.loadMedia!,
             download: widget.downloadMedia!,
+            postChanges: widget.postChanges,
             onOpen: open,
             onPlayVideo: widget.onThoughtVideoPlay == null ? null : play,
             onActivate: _bySemantics(open),

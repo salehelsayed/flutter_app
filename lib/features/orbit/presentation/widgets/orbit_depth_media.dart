@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -19,14 +20,16 @@ class OrbitDepthMedia extends StatefulWidget {
     required this.load,
     required this.download,
     required this.onOpen,
+    this.postChanges,
     this.onPlayVideo,
     this.onActivate,
     this.lastLoaded,
   });
   final String postId;
   final Future<List<PostMediaAttachmentModel>> Function(String) load;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)
   download;
+  final Stream<String>? postChanges;
   final VoidCallback onOpen;
 
   /// Replaces [onOpen] for a lone downloaded video, which plays at once.
@@ -48,23 +51,59 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
       widget.lastLoaded?[widget.postId] ?? const [];
   bool _loading = true;
   bool _failed = false;
+  bool _refreshRequested = false;
   int _generation = 0;
+  final _attempts = <String, int>{};
+  StreamSubscription<String>? _postSubscription;
+  Timer? _retryTimer;
+
   @override
   void initState() {
     super.initState();
+    _bindPostChanges();
     unawaited(_load());
   }
 
   @override
   void didUpdateWidget(covariant OrbitDepthMedia oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.postId != widget.postId) {
+    final sourceChanged = oldWidget.postChanges != widget.postChanges;
+    if (sourceChanged) _bindPostChanges();
+    if (oldWidget.postId != widget.postId || sourceChanged) {
+      _attempts.clear();
+      _refreshRequested = false;
       _media = widget.lastLoaded?[widget.postId] ?? const [];
       unawaited(_load());
     }
   }
 
-  Future<void> _load() async {
+  void _bindPostChanges() {
+    unawaited(_postSubscription?.cancel());
+    _postSubscription = widget.postChanges?.listen((postId) {
+      if (!mounted || postId != widget.postId) return;
+      if (_loading) {
+        _refreshRequested = true;
+      } else {
+        unawaited(_load(downloadMissing: false));
+      }
+    });
+  }
+
+  bool _hasLocalFile(PostMediaAttachmentModel attachment) {
+    final path = attachment.localPath;
+    return path != null &&
+        path.isNotEmpty &&
+        File(MediaFileManager.resolveStoredPathSync(path)).existsSync();
+  }
+
+  Future<void> _load({
+    bool downloadMissing = true,
+    bool transientOnly = false,
+  }) async {
+    if (downloadMissing) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+    }
     final generation = ++_generation;
     final postId = widget.postId;
     setState(() {
@@ -78,44 +117,57 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
           .load(postId)
           .timeout(const Duration(seconds: 30));
       if (!current()) return;
-      setState(() => _media = media);
-      // Do not start media work for any card except the one still displayed.
-      for (final attachment in media) {
-        if (!current()) return;
-        final local = attachment.localPath;
-        if (local != null &&
-            local.isNotEmpty &&
-            File(MediaFileManager.resolveStoredPathSync(local)).existsSync()) {
-          continue;
-        }
-        // The existing downloader joins an in-flight request and owns retry
-        // state. Skipping it here would leave this card with a stale snapshot.
-        try {
-          await widget
-              .download(attachment)
-              .timeout(const Duration(seconds: 30));
-        } catch (_) {
+      if (downloadMissing) {
+        setState(() => _media = media);
+        for (final attachment in media) {
           if (!current()) return;
-          _failed = true;
+          if (_hasLocalFile(attachment) ||
+              (transientOnly &&
+                  attachment.downloadStatus !=
+                      kMediaDownloadStatusRetryWaiting)) {
+            continue;
+          }
+          // The downloader joins active transfers and persists their outcome.
+          final attempt = _attempts.update(
+            attachment.mediaId,
+            (previous) => previous + 1,
+            ifAbsent: () => 1,
+          );
+          try {
+            await widget
+                .download(attachment, attempt)
+                .timeout(const Duration(seconds: 30));
+          } catch (_) {
+            if (!current()) return;
+          }
         }
+        if (!current()) return;
+        media = await widget.load(postId).timeout(const Duration(seconds: 30));
       }
       if (!current()) return;
-      media = await widget.load(postId).timeout(const Duration(seconds: 30));
-      if (!current()) return;
+      final waiting = media.any(
+        (item) =>
+            item.downloadStatus == kMediaDownloadStatusRetryWaiting &&
+            !_hasLocalFile(item),
+      );
+      if (downloadMissing && !transientOnly && waiting) {
+        _retryTimer = Timer(const Duration(seconds: 1), () {
+          _retryTimer = null;
+          if (mounted && widget.postId == postId) {
+            unawaited(_load(transientOnly: true));
+          }
+        });
+      } else if (!waiting) {
+        _retryTimer?.cancel();
+        _retryTimer = null;
+      }
       widget.lastLoaded?[postId] = media;
       setState(() {
         _media = media;
         _loading = false;
-        _failed |=
-            media.isEmpty ||
-            media.any((item) {
-              final local = item.localPath;
-              return local == null ||
-                  local.isEmpty ||
-                  !File(
-                    MediaFileManager.resolveStoredPathSync(local),
-                  ).existsSync();
-            });
+        _failed =
+            (downloadMissing && media.isEmpty) ||
+            media.any((item) => !_hasLocalFile(item));
       });
     } catch (_) {
       if (current()) {
@@ -124,12 +176,19 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
           _failed = true;
         });
       }
+    } finally {
+      if (current() && _refreshRequested) {
+        _refreshRequested = false;
+        unawaited(_load(downloadMissing: false));
+      }
     }
   }
 
   @override
   void dispose() {
     ++_generation;
+    _retryTimer?.cancel();
+    unawaited(_postSubscription?.cancel());
     super.dispose();
   }
 
@@ -173,7 +232,6 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
           AudioPlayerWidget(
             key: ValueKey('orbit-depth-voice-${item.mediaId}'),
             attachment: item.toSharedMediaAttachment(),
-            onRetryUnavailableMedia: () => unawaited(_load()),
           ),
         ],
         // The whole photo, as large as the space allows, on the scene.
@@ -197,7 +255,6 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
                         borderRadius: 22,
                         tileFit: BoxFit.contain,
                         squareTiles: true,
-                        onRetryUnavailableMedia: (_) => unawaited(_load()),
                       ),
                     ),
                   ),

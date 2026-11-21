@@ -88,7 +88,7 @@ void main() {
                 : null,
             replyStatusChanges: statuses.stream,
             loadMedia: load,
-            downloadMedia: load == null ? null : (item) async => item,
+            downloadMedia: load == null ? null : (item, _) async => item,
             child: const SizedBox.expand(child: Text('Flat circle')),
           ),
         ),

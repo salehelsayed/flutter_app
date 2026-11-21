@@ -27,6 +27,8 @@ typedef LocalDiagnosticConsent = ({bool enabled, int consentEpoch});
 typedef LocalConsentObserver =
     Future<void> Function(LocalDiagnosticConsent? consent);
 
+enum PostMediaDiagnosticSurface { background, orbit3d, story2d }
+
 Future<String> _encodeDiagnosticPreview(Map<String, Object?> state) =>
     Isolate.run(() => const JsonEncoder.withIndent('  ').convert(state));
 
@@ -92,8 +94,15 @@ final class AppDiagnostics with WidgetsBindingObserver {
       if (entry.value is List)
         entry.key: Set<Object?>.from(entry.value as List),
   };
-  static final _valueEnums = <Object?, Set<Object?>>{
+  // The deployed relay accepts the failure class, retry state and count in
+  // v1. The story-specific bucket and surface stay in local exports.
+  static const _localValueEnums = <String, Set<String>>{
     ...localAppConnectionEnums,
+    'postAgeBucket': {'under_hour', 'hour_to_day', 'day_or_more', 'unknown'},
+    'postMediaSurface': {'background', 'orbit3d', 'story2d'},
+  };
+  static final _valueEnums = <Object?, Set<Object?>>{
+    ..._localValueEnums,
     for (final entry in (appDiagnosticSchemaV1['enumValues'] as Map).entries)
       entry.key: Set<Object?>.from(entry.value as List),
   };
@@ -670,6 +679,38 @@ final class AppDiagnostics with WidgetsBindingObserver {
     values: values,
   );
 
+  void recordPostMediaFailure({
+    required bool upload,
+    required String reason,
+    required bool canRetry,
+    String? postCreatedAt,
+    PostMediaDiagnosticSurface surface = PostMediaDiagnosticSurface.background,
+    int attempt = 1,
+  }) {
+    if (!enabled) return;
+    final createdAt = DateTime.tryParse(postCreatedAt ?? '');
+    final age = createdAt == null ? null : _now().difference(createdAt);
+    final bucket = age == null || age.isNegative
+        ? 'unknown'
+        : age.inHours < 1
+        ? 'under_hour'
+        : age.inDays < 1
+        ? 'hour_to_day'
+        : 'day_or_more';
+    record(
+      feature: 'media',
+      stage: upload ? 'send' : 'download',
+      outcome: 'failed',
+      reason: reason,
+      values: {
+        'canRetry': canRetry,
+        'count': attempt,
+        'postAgeBucket': bucket,
+        'postMediaSurface': surface.name,
+      },
+    );
+  }
+
   bool _recordAt({
     required String feature,
     required String stage,
@@ -1094,7 +1135,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
   ) {
     final projected = withoutLocalConnectionValues(
       event,
-      localAppConnectionEnums,
+      _localValueEnums,
     );
     final values = projected['values'];
     // Deployed v1 receivers already accept the closed contact-request labels.

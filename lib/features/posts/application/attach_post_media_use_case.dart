@@ -4,12 +4,14 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
+import 'package:flutter_app/core/utils/transient_transport_error.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
@@ -127,6 +129,7 @@ attachPostMedia({
                 bridge: bridge,
                 postId: postId,
                 ownerPeerId: post.authorPeerId,
+                postCreatedAt: post.createdAt,
                 localFilePath: localFilePath,
                 mime: mime,
                 allowedPeers: allowedPeers,
@@ -350,6 +353,7 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
   required String localFilePath,
   required String mime,
   required List<String> allowedPeers,
+  String? postCreatedAt,
   MediaFileManager? mediaFileManager,
   int? width,
   int? height,
@@ -366,6 +370,16 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
   );
 
   String? encryptedPath;
+  var failureReason = 'encryption_failed';
+  void recordFailure(String reason) {
+    AppDiagnostics.instance.recordPostMediaFailure(
+      upload: true,
+      reason: reason,
+      canRetry: true,
+      postCreatedAt: postCreatedAt,
+    );
+  }
+
   try {
     final file = File(localFilePath);
 
@@ -385,6 +399,7 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
       encryptedPath,
     );
 
+    failureReason = 'send_failed';
     final result = await callP2PMediaUpload(
       bridge,
       id: blobId,
@@ -394,6 +409,14 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
       allowedPeers: allowedPeers,
     );
     if (result['ok'] != true) {
+      recordFailure(
+        TransientTransportError.matches(
+          result['errorMessage'],
+          code: result['errorCode'],
+        )
+            ? 'network_unavailable'
+            : failureReason,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'POST_MEDIA_UPLOAD_FAILED',
@@ -444,6 +467,13 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
       isEncrypted: true,
     );
   } catch (e) {
+    recordFailure(
+      TransientTransportError.matches(e)
+          ? 'network_unavailable'
+          : e is FileSystemException
+          ? 'io_failed'
+          : failureReason,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_MEDIA_UPLOAD_ERROR',

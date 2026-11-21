@@ -342,8 +342,9 @@ class OrbitScreen extends StatefulWidget {
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)?
   downloadDepthMedia;
+  final Stream<String>? depthPostChanges;
 
   /// Sends a reaction or typed reply from the 3D view's action bar.
   final ThoughtReplySender? onDepthReply;
@@ -444,6 +445,7 @@ class OrbitScreen extends StatefulWidget {
     this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
+    this.depthPostChanges,
     this.onDepthReply,
     this.depthReplyStatusChanges,
     this.depthAnswers,
@@ -584,6 +586,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onDepthSettled: widget.onDepthSettled,
     loadDepthMedia: widget.loadDepthMedia,
     downloadDepthMedia: widget.downloadDepthMedia,
+    depthPostChanges: widget.depthPostChanges,
     onDepthReply: widget.onDepthReply,
     depthReplyStatusChanges: widget.depthReplyStatusChanges,
     depthAnswers: widget.depthAnswers,
@@ -682,8 +685,9 @@ class _OrbitScreenView extends StatelessWidget {
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)?
   downloadDepthMedia;
+  final Stream<String>? depthPostChanges;
 
   /// Sends a reaction or typed reply from the 3D view's action bar.
   final ThoughtReplySender? onDepthReply;
@@ -799,6 +803,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
+    this.depthPostChanges,
     this.onDepthReply,
     this.depthReplyStatusChanges,
     this.depthAnswers,
@@ -1377,6 +1382,7 @@ class _OrbitScreenView extends StatelessWidget {
             onThoughtsExpired: onThoughtsExpired,
             loadMedia: loadDepthMedia,
             downloadMedia: downloadDepthMedia,
+            postChanges: depthPostChanges,
             onReply: onDepthReply,
             replyStatusChanges: depthReplyStatusChanges,
             answers: depthAnswers,

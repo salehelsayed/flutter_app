@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -1516,11 +1517,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         loadCurrentThought: loadCurrent,
         nowProvider: widget.thoughtNowProvider,
         eligibilityChanges: _thoughtEligibilityChanges.stream,
-        downloadMedia: (attachment) => downloadPostMedia(
+        downloadMedia: (attachment, attempt) => downloadPostMedia(
           bridge: widget.bridge,
           postRepo: repository,
           mediaFileManager: widget.mediaFileManager,
           attachment: attachment,
+          surface: PostMediaDiagnosticSurface.story2d,
+          postCreatedAt: attachment.postId == current.id
+              ? current.createdAt
+              : null,
+          attempt: attempt,
         ),
         replyChanges: widget.messageRepo is MessageRepositoryChangeSource
             ? (widget.messageRepo as MessageRepositoryChangeSource)
@@ -4345,13 +4351,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onDepthSettled: _onDepthSettled,
       onThoughtsSpread: _onIntroSpread,
       loadDepthMedia: _loadDepthMedia,
+      depthPostChanges: _thoughtPosts?.postChanges,
       downloadDepthMedia: _thoughtPosts == null
           ? null
-          : (attachment) => downloadPostMedia(
+          : (attachment, attempt) => downloadPostMedia(
               bridge: widget.bridge,
               postRepo: _thoughtPosts!,
               mediaFileManager: widget.mediaFileManager,
               attachment: attachment,
+              surface: PostMediaDiagnosticSurface.orbit3d,
+              postCreatedAt: _depthPosts
+                  .where((post) => post.id == attachment.postId)
+                  .firstOrNull
+                  ?.createdAt,
+              attempt: attempt,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
       onThoughtVideoPlay: (postId) =>

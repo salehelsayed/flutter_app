@@ -67,7 +67,7 @@ void main() {
             child: OrbitDepthMedia(
               postId: 'post',
               load: load,
-              download: download,
+              download: (attachment, _) => download(attachment),
               onOpen: open ?? () {},
               onPlayVideo: play,
             ),
@@ -234,6 +234,23 @@ void main() {
     } finally {
       await tester.pumpWidget(const SizedBox());
     }
+  });
+
+  testWidgets('BL-52 closing the card cancels transient retry', (tester) async {
+    var attempts = 0;
+    final item = attachment(
+      'image',
+      null,
+    ).copyWith(downloadStatus: 'retry_waiting');
+    await mount(tester, (_) async => [item], (item) async {
+      attempts++;
+      return item;
+    });
+    expect(attempts, 1);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+    expect(attempts, 1);
   });
 
   for (final (width, height, ratio) in const [
