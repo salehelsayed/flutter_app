@@ -22,6 +22,7 @@ final class AnimatedStickerCodecException implements Exception {
 typedef EncodedStickerAnimation = ({
   Uint8List webp,
   Uint8List poster,
+  int side,
   int frameCount,
   int durationMs,
 });
@@ -36,22 +37,23 @@ List<int> stickerAnimationSampleTimes(int durationMs) {
   return List.generate(count, (i) => _boundary(i, count, durationMs));
 }
 
-typedef _Profile = ({int fps, int quality, int rgbBits});
+typedef _Profile = ({int fps, int quality, int rgbBits, int side});
 
 const _opaqueProfiles = <_Profile>[
-  (fps: 12, quality: 70, rgbBits: 8),
-  (fps: 12, quality: 45, rgbBits: 8),
-  (fps: 8, quality: 55, rgbBits: 8),
-  (fps: 6, quality: 45, rgbBits: 8),
+  (fps: 12, quality: 70, rgbBits: 8, side: stickerAnimationSide),
+  (fps: 12, quality: 45, rgbBits: 8, side: stickerAnimationSide),
+  (fps: 8, quality: 55, rgbBits: 8, side: stickerAnimationSide),
+  (fps: 6, quality: 45, rgbBits: 8, side: stickerAnimationSide),
 ];
 
 // Lossy color can reconstruct RGB under zero alpha even if the input
 // had been cleared. Preserve alpha and the cleared pixels with VP8L.
 const _circleProfiles = <_Profile>[
-  (fps: 12, quality: 100, rgbBits: 8),
-  (fps: 12, quality: 100, rgbBits: 5),
-  (fps: 8, quality: 100, rgbBits: 5),
-  (fps: 6, quality: 100, rgbBits: 4),
+  (fps: 12, quality: 100, rgbBits: 8, side: stickerAnimationSide),
+  (fps: 12, quality: 100, rgbBits: 5, side: stickerAnimationSide),
+  (fps: 8, quality: 100, rgbBits: 5, side: stickerAnimationSide),
+  (fps: 6, quality: 100, rgbBits: 4, side: stickerAnimationSide),
+  (fps: 8, quality: 100, rgbBits: 8, side: 192),
 ];
 
 /// Encodes already cropped, orientation-corrected camera frames. The caller
@@ -76,6 +78,11 @@ EncodedStickerAnimation encodeStickerAnimation({
 
   final profiles = circle ? _circleProfiles : _opaqueProfiles;
   for (final profile in profiles) {
+    final side = profile.side;
+    final overlay = textOverlay == null
+        ? null
+        : _resizeRgba(textOverlay, side, alphaAware: true);
+    final firstSource = _resizeRgba(croppedFrames.first, side);
     final frameCount = _frameCount(durationMs, profile.fps);
     img.Image? sequence;
     for (var i = 0; i < frameCount; i++) {
@@ -83,8 +90,11 @@ EncodedStickerAnimation encodeStickerAnimation({
       final sourceIndex = i * sampleCount ~/ frameCount;
       final frame =
           _compose(
-              croppedFrames[sourceIndex],
-              overlay: textOverlay,
+              i == 0
+                  ? firstSource
+                  : _resizeRgba(croppedFrames[sourceIndex], side),
+              overlay: overlay,
+              side: side,
               circle: circle,
               rgbBits: profile.rgbBits,
             )
@@ -110,11 +120,13 @@ EncodedStickerAnimation encodeStickerAnimation({
       webp: webp,
       poster: _encodePoster(
         animation,
-        source: croppedFrames.first,
-        overlay: textOverlay,
+        source: firstSource,
+        overlay: overlay,
+        side: side,
         circle: circle,
         rgbBits: profile.rgbBits,
       ),
+      side: side,
       frameCount: frameCount,
       durationMs: durationMs,
     );
@@ -130,21 +142,66 @@ int _frameCount(int durationMs, int fps) =>
 int _boundary(int i, int count, int durationMs) =>
     (i * durationMs + count ~/ 2) ~/ count;
 
+// Resize the source and text before applying the circle mask.
+Uint8List _resizeRgba(Uint8List pixels, int side, {bool alphaAware = false}) {
+  if (side == stickerAnimationSide) return pixels;
+  final source = img.Image.fromBytes(
+    width: stickerAnimationSide,
+    height: stickerAnimationSide,
+    bytes: pixels.buffer,
+    bytesOffset: pixels.offsetInBytes,
+    order: img.ChannelOrder.rgba,
+  );
+  if (alphaAware) {
+    for (final pixel in source) {
+      final alpha = pixel.a.toInt();
+      pixel.setRgba(
+        (pixel.r.toInt() * alpha + 127) ~/ 255,
+        (pixel.g.toInt() * alpha + 127) ~/ 255,
+        (pixel.b.toInt() * alpha + 127) ~/ 255,
+        alpha,
+      );
+    }
+  }
+  final resized = img.copyResize(
+    source,
+    width: side,
+    height: side,
+    interpolation: img.Interpolation.average,
+  );
+  if (alphaAware) {
+    for (final pixel in resized) {
+      final alpha = pixel.a.toInt();
+      if (alpha == 0) continue;
+      int unpremultiply(num channel) =>
+          math.min(255, (channel.toInt() * 255 + alpha ~/ 2) ~/ alpha);
+      pixel.setRgba(
+        unpremultiply(pixel.r),
+        unpremultiply(pixel.g),
+        unpremultiply(pixel.b),
+        alpha,
+      );
+    }
+  }
+  return resized.getBytes(order: img.ChannelOrder.rgba);
+}
+
 img.Image _compose(
   Uint8List source, {
   required Uint8List? overlay,
+  required int side,
   required bool circle,
   required int rgbBits,
 }) {
   final pixels = Uint8List.fromList(source);
   final levels = (1 << rgbBits) - 1;
-  const radius = stickerAnimationSide / 2;
-  const innerRadius2 = (radius - 0.5) * (radius - 0.5);
-  const outerRadius2 = (radius + 0.5) * (radius + 0.5);
-  for (var y = 0; y < stickerAnimationSide; y++) {
+  final radius = side / 2;
+  final innerRadius2 = (radius - 0.5) * (radius - 0.5);
+  final outerRadius2 = (radius + 0.5) * (radius + 0.5);
+  for (var y = 0; y < side; y++) {
     final dy = y + 0.5 - radius;
-    for (var x = 0; x < stickerAnimationSide; x++) {
-      final p = 4 * (y * stickerAnimationSide + x);
+    for (var x = 0; x < side; x++) {
+      final p = 4 * (y * side + x);
       final overlayAlpha = overlay?[p + 3] ?? 0;
       if (overlayAlpha != 0) {
         for (var channel = 0; channel < 3; channel++) {
@@ -179,8 +236,8 @@ img.Image _compose(
     }
   }
   return img.Image.fromBytes(
-    width: stickerAnimationSide,
-    height: stickerAnimationSide,
+    width: side,
+    height: side,
     bytes: pixels.buffer,
     order: img.ChannelOrder.rgba,
     loopCount: 0,
@@ -191,6 +248,7 @@ Uint8List _encodePoster(
   img.Image sequence, {
   required Uint8List source,
   required Uint8List? overlay,
+  required int side,
   required bool circle,
   required int rgbBits,
 }) {
@@ -201,7 +259,13 @@ Uint8List _encodePoster(
     for (final bits in [5, 4]) {
       if (bits >= rgbBits) continue;
       final poster = lossless.encode(
-        _compose(source, overlay: overlay, circle: true, rgbBits: bits),
+        _compose(
+          source,
+          overlay: overlay,
+          side: side,
+          circle: true,
+          rgbBits: bits,
+        ),
       );
       if (poster.length <= _posterBytes) return poster;
     }
