@@ -2965,19 +2965,7 @@ final class ProductionCallSignalingGraph
         return await _failCapabilityAdvertisement(stage: stage);
       }
       final now = _nowMs();
-      if (videoEnabled &&
-          _hasLiveSession &&
-          (_advertisedEndpointExpiresAtMs ?? 0) > now) {
-        // A routine refresh must not replace an established v2 call's signed
-        // authority. Token and wake reconciliation above still run; refresh the
-        // endpoint once the call ends instead of retiring its admitted epoch.
-        _advertisementDeferredForLiveCall = true;
-        _emitCapabilityAdvertisementResult(
-          stage: 'endpoint_publish',
-          outcome: 'deferred_live_call',
-        );
-        return true;
-      }
+      if (_deferLiveCallEndpointPublication(now)) return true;
       final priorEpoch = _advertisedPreferenceEpoch;
       final preferenceEpoch = priorEpoch == null || now > priorEpoch
           ? now
@@ -3002,6 +2990,7 @@ final class ProductionCallSignalingGraph
         senderSigningPrivateKey: localIdentity.privateKey,
       );
       if (!_canAdvertiseCapability) return false;
+      if (_deferLiveCallEndpointPublication(_nowMs())) return true;
       _advertisedPreferenceEpoch = preferenceEpoch;
       stage = 'endpoint_publish';
       if (!await authorityClient.setEndpoint(signed)) {
@@ -3016,6 +3005,30 @@ final class ProductionCallSignalingGraph
     } catch (_) {
       return _failCapabilityAdvertisement(stage: stage, outcome: 'error');
     }
+  }
+
+  bool _deferLiveCallEndpointPublication(int now) {
+    final session = coordinator.activeSession;
+    if (!videoEnabled || session == null || session.isTerminal) return false;
+    final expiresAtMs = _advertisedEndpointExpiresAtMs;
+    if (expiresAtMs == null) {
+      // The startup drain can admit a call using the previous process's
+      // published endpoint before this graph has published its own record.
+      final callId = session.callId;
+      if (session.direction != CallDirection.incoming ||
+          callId == null ||
+          videoContexts?.admittedV2Endpoint(callId) == null) {
+        return false;
+      }
+    } else if (expiresAtMs <= now) {
+      return false;
+    }
+    _advertisementDeferredForLiveCall = true;
+    _emitCapabilityAdvertisementResult(
+      stage: 'endpoint_publish',
+      outcome: 'deferred_live_call',
+    );
+    return true;
   }
 
   Future<bool> _failCapabilityAdvertisement({
