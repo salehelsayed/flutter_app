@@ -39,6 +39,56 @@ Uint8List _frame(int phase, {bool cornerCanary = false}) {
   return bytes;
 }
 
+// Reproduce the center crop and bilinear resize of moving 720x480 footage.
+void _writeTexturedFrame(Uint8List pixels, int index, int timeMs) {
+  const cropLeft = 120;
+  const cropSize = 480;
+  final source = Uint8List(cropSize * cropSize * 4);
+  for (var y = 0; y < cropSize; y++) {
+    for (var x = 0; x < cropSize; x++) {
+      final offset = 4 * (y * cropSize + x);
+      final sourceX = x + cropLeft;
+      final panX = sourceX + timeMs ~/ 45;
+      final tile = ((panX ~/ 17) * 13 + (y ~/ 11) * 23) % 35;
+      final grain = ((panX * 31) ^ (y * 73) ^ (panX * y * 17)) & 15;
+      final dx = sourceX - 300 - index * 4;
+      final dy = y - 240 + index * 2;
+      final subject = dx * dx * 2 + dy * dy < 13456;
+      source[offset] = (subject ? 130 : 32) + panX ~/ 14 + tile + grain;
+      source[offset + 1] = (subject ? 68 : 65) + y ~/ 7 + tile + grain;
+      source[offset + 2] =
+          (subject ? 39 : 89) + (panX + y) ~/ 17 + tile + grain;
+    }
+  }
+
+  num position(int pixel) =>
+      ((pixel + 0.5) * cropSize / _side - 0.5).clamp(0.0, cropSize - 1.0);
+  for (var y = 0; y < _side; y++) {
+    final sy = position(y);
+    final y0 = sy.floor();
+    final y1 = min(y0 + 1, cropSize - 1);
+    final wy = sy - y0;
+    for (var x = 0; x < _side; x++) {
+      final sx = position(x);
+      final x0 = sx.floor();
+      final x1 = min(x0 + 1, cropSize - 1);
+      final wx = sx - x0;
+      final a = 4 * (y0 * cropSize + x0);
+      final b = 4 * (y0 * cropSize + x1);
+      final c = 4 * (y1 * cropSize + x0);
+      final d = 4 * (y1 * cropSize + x1);
+      final offset = 4 * (y * _side + x);
+      for (var channel = 0; channel < 3; channel++) {
+        final top = source[a + channel] * (1 - wx) + source[b + channel] * wx;
+        final bottom =
+            source[c + channel] * (1 - wx) + source[d + channel] * wx;
+        pixels[offset + channel] = (top * (1 - wy) + bottom * wy).round();
+      }
+      pixels[offset + 3] = 255;
+    }
+  }
+}
+
 List<num> _pixel(img.Image image, int x, int y) {
   final pixel = image.getPixel(x, y);
   return [pixel.r, pixel.g, pixel.b, pixel.a];
@@ -185,6 +235,94 @@ void main() {
       expect(_pixel(poster, 0, 0), [0, 0, 0, 0]);
     },
   );
+
+  test('fits a textured circular camera clip in the animation budget', () {
+    const durationMs = 2000;
+    const side = 192;
+    final samples = stickerAnimationSampleTimes(durationMs);
+    final frameBuffer = Uint8List(samples.length * _bytesPerFrame);
+    final frames = <Uint8List>[];
+    for (final (index, timeMs) in samples.indexed) {
+      final frame = Uint8List.sublistView(
+        frameBuffer,
+        index * _bytesPerFrame,
+        (index + 1) * _bytesPerFrame,
+      );
+      _writeTexturedFrame(frame, index, timeMs);
+      frames.add(frame);
+    }
+
+    // The center output pixel averages the 2x2 source region beginning
+    // at (256,256). Only one overlay pixel there has visible red.
+    final overlay = Uint8List(_bytesPerFrame);
+    final cameraRgbSums = [0, 0, 0];
+    for (var y = 256; y < 258; y++) {
+      for (var x = 256; x < 258; x++) {
+        final offset = 4 * (y * _side + x);
+        overlay.setAll(offset, [0, 255, 0, 0]);
+        for (var channel = 0; channel < 3; channel++) {
+          cameraRgbSums[channel] += frames.first[offset + channel];
+        }
+      }
+    }
+    overlay.setAll(4 * (256 * _side + 256), [255, 0, 0, 255]);
+
+    final encoded = encodeStickerAnimation(
+      croppedFrames: frames,
+      durationMs: durationMs,
+      circle: true,
+      textOverlay: overlay,
+    );
+
+    expect(encoded.webp.length, lessThanOrEqualTo(512 * 1024));
+    expect(encoded.poster.length, lessThanOrEqualTo(256 * 1024));
+    final decoder = img.WebPDecoder();
+    final info = decoder.startDecode(encoded.webp)!;
+    expect((info.width, info.height, info.numFrames), (side, side, 16));
+    expect((encoded.frameCount, encoded.durationMs), (16, durationMs));
+    expect(
+      info.frames.fold<int>(0, (ms, frame) => ms + frame.duration),
+      durationMs,
+    );
+    expect(info.animLoopCount, 0);
+    expect(info.hasAlpha, isTrue);
+    final first = decoder.decodeFrame(0)!;
+    final last = decoder.decodeFrame(info.numFrames - 1)!;
+    expect(
+      _pixel(first, side ~/ 4, side ~/ 2),
+      isNot(_pixel(last, side ~/ 4, side ~/ 2)),
+    );
+    const overlayAlpha = 255 ~/ 4;
+    int blendCenter(int channel) {
+      final camera = cameraRgbSums[channel] ~/ 4;
+      final text = channel == 0 ? 255 : 0;
+      return (text * overlayAlpha + camera * (255 - overlayAlpha) + 127) ~/ 255;
+    }
+
+    final expectedCenter = [
+      blendCenter(0),
+      blendCenter(1),
+      blendCenter(2),
+      255,
+    ];
+    expect(_pixel(first, side ~/ 2, side ~/ 2), expectedCenter);
+    for (var i = 0; i < info.numFrames; i++) {
+      final frame = decoder.decodeFrame(i)!;
+      expect(_pixel(frame, 0, 0), [0, 0, 0, 0]);
+      expect(frame.getPixel(side ~/ 2, side ~/ 2).a, 255);
+      expect(
+        frame.any((p) => p.a == 0 && (p.r != 0 || p.g != 0 || p.b != 0)),
+        isFalse,
+      );
+    }
+    final poster = img.decodeWebP(encoded.poster)!;
+    expect(
+      (poster.width, poster.height, poster.hasAnimation),
+      (side, side, false),
+    );
+    expect(_pixel(poster, side ~/ 2, side ~/ 2), expectedCenter);
+    expect(_pixel(poster, 0, 0), [0, 0, 0, 0]);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('refuses a clip that cannot fit the actual animation byte cap', () {
     final random = Random(1742);
