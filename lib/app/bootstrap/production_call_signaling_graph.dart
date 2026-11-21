@@ -595,6 +595,14 @@ final class ProductionCallSignalingGraph
   bool get canListenBeforeAdvertising =>
       iosCallLifecycleAdapter != null && _canAdvertiseCapability;
 
+  @override
+  bool get hasCurrentEndpointAdvertisement {
+    final expiresAtMs = _advertisedEndpointExpiresAtMs;
+    return _canAdvertiseCapability &&
+        expiresAtMs != null &&
+        expiresAtMs > _nowMs();
+  }
+
   /// A live (non-terminal) session must never be torn down over relay
   /// capability authority; a terminal-but-still-present session counts as idle.
   bool get _hasLiveSession => coordinator.activeSession?.isTerminal == false;

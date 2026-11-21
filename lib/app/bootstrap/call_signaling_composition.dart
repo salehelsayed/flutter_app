@@ -132,6 +132,8 @@ abstract interface class CallSignalingWakeDrain {
 /// publication waits for the foreground.
 abstract interface class CallSignalingNativeWakeStartup {
   bool get canListenBeforeAdvertising;
+
+  bool get hasCurrentEndpointAdvertisement;
 }
 
 /// Optional graph boundary used by encrypted contact-request distribution.
@@ -734,7 +736,7 @@ final class CallSignalingComposition
         return;
       }
       if (!_terminal && identical(_graph, graph)) {
-        _initialAdvertisementPending = false;
+        _confirmInitialAdvertisement(graph);
         _publishOutgoingCallAvailability();
         outcome = 'ready';
         return;
@@ -758,6 +760,15 @@ final class CallSignalingComposition
         error: failure,
         stackTrace: failureStack,
       );
+    }
+  }
+
+  void _confirmInitialAdvertisement(CallSignalingGraphLifecycle graph) {
+    if (_initialAdvertisementPending &&
+        graph is CallSignalingNativeWakeStartup &&
+        (graph as CallSignalingNativeWakeStartup)
+            .hasCurrentEndpointAdvertisement) {
+      _initialAdvertisementPending = false;
     }
   }
 
@@ -1036,7 +1047,7 @@ final class CallSignalingComposition
           }
         }
         if (!_terminal && identical(_graph, graph)) {
-          _initialAdvertisementPending = false;
+          _confirmInitialAdvertisement(graph);
           _acceptForegroundProjection(
             graph,
             _foregroundGraph?.current,
