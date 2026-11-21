@@ -552,7 +552,7 @@ Future<void> openStickerCreate(
         );
       },
       admitClip: (asset) async {
-        if (abandoned || admission?.isCurrent() == false) return null;
+        if (abandoned) return null;
         final admit = admission?.admit ?? library.admit;
         final sticker = await admit(asset);
         pending?.finish(sticker);
