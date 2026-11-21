@@ -5,13 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/features/stickers/application/account_custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart';
-import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -53,7 +58,8 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
   Future<void> init() async {}
 
   @override
-  Future<int?> createWithOptions(VideoCreationOptions options) async => ++_nextId;
+  Future<int?> createWithOptions(VideoCreationOptions options) async =>
+      ++_nextId;
 
   @override
   Stream<VideoEvent> videoEventsFor(int playerId) {
@@ -104,6 +110,21 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
   @override
   Widget buildViewWithOptions(VideoViewOptions options) =>
       const ColoredBox(color: Colors.blue);
+}
+
+final class _GatedClipLibrary extends FakeCustomStickerLibrary {
+  _GatedClipLibrary(this.bound);
+
+  final Duration bound;
+  final release = Completer<void>();
+  bool started = false;
+
+  @override
+  Future<CustomSticker> admit(NormalizedStickerAsset asset) async {
+    started = true;
+    await release.future.timeout(bound);
+    return super.admit(asset);
+  }
 }
 
 Future<void> _settleUntil(WidgetTester tester, bool Function() done) async {
@@ -235,83 +256,258 @@ void main() {
   );
 
   if (kCustomStickersEnabled) {
-    testWidgets('video save shows progress until exporter failure returns',
-        (tester) async {
-      const bound = Duration(seconds: 2);
-      final root = Directory.systemTemp.createTempSync('stk-clip-progress-');
-      addTearDown(() => root.deleteSync(recursive: true));
-      final input = File('${root.path}/clip.mp4')..writeAsBytesSync([1]);
-      final original = VideoPlayerPlatform.instance;
-      VideoPlayerPlatform.instance = _ClipVideoPlatform();
-      addTearDown(() => VideoPlayerPlatform.instance = original);
-      const channel = MethodChannel('mknoon/custom_sticker_clip_frames');
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      final release = Completer<void>();
-      var extracts = 0;
-      var finished = false;
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        expect(call.method, 'extract');
-        extracts++;
-        await release.future.timeout(bound);
-        throw PlatformException(code: 'invalid_clip');
-      });
-      addTearDown(() {
-        if (!release.isCompleted) release.complete();
-        messenger.setMockMethodCallHandler(channel, null);
-      });
+    for (final result in [
+      'ready',
+      'failed',
+      'library unavailable',
+      'retired after storage failure',
+      'scope replaced',
+    ]) {
+      testWidgets('video save opens a pending tray item, then $result', (
+        tester,
+      ) async {
+        const bound = Duration(seconds: 3);
+        final root = Directory.systemTemp.createTempSync('stk-clip-pending-');
+        addTearDown(() => root.deleteSync(recursive: true));
+        final input = File('${root.path}/clip.mp4')..writeAsBytesSync([1]);
+        final original = VideoPlayerPlatform.instance;
+        VideoPlayerPlatform.instance = _ClipVideoPlatform();
+        addTearDown(() => VideoPlayerPlatform.instance = original);
+        const channel = MethodChannel('mknoon/custom_sticker_clip_frames');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        final release = Completer<void>();
+        final library = _GatedClipLibrary(bound);
+        final libraryInitialization = Completer<void>();
+        final retiredAfterFailure = result == 'retired after storage failure';
+        final unavailableLibrary =
+            result == 'library unavailable' || retiredAfterFailure
+            ? AccountCustomStickerLibrary(
+                createLibrary: (_) async {
+                  await libraryInitialization.future.timeout(bound);
+                  throw StateError('Sticker library could not open');
+                },
+              )
+            : null;
+        if (result == 'failed') {
+          library.admitError = const CustomStickerException(
+            CustomStickerErrorCode.storageFailure,
+          );
+        }
+        final opened = ValueNotifier(true);
+        final scopeGeneration = ValueNotifier(0);
+        addTearDown(opened.dispose);
+        addTearDown(scopeGeneration.dispose);
+        final sent = <String>[];
+        var extracts = 0;
+        var cancelled = 0;
+        var finished = false;
+        var chats = 0;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'cancel') {
+            cancelled++;
+            return null;
+          }
+          expect(call.method, 'extract');
+          extracts++;
+          await release.future.timeout(bound);
+          if (result == 'scope replaced' || retiredAfterFailure) {
+            throw PlatformException(code: 'cancelled');
+          }
+          final args = call.arguments as Map;
+          final bytes = Uint8List(512 * 512 * 4 * 2);
+          for (var offset = 0; offset < bytes.length; offset += 4) {
+            bytes[offset] = offset < bytes.length ~/ 2 ? 45 : 145;
+            bytes[offset + 3] = 255;
+          }
+          File(args['framesPath'] as String).writeAsBytesSync(bytes);
+          return {'durationMs': 160, 'frameCount': 2};
+        });
+        addTearDown(() {
+          if (!release.isCompleted) release.complete();
+          if (!library.release.isCompleted) library.release.complete();
+          if (!libraryInitialization.isCompleted) {
+            libraryInitialization.complete();
+          }
+          messenger.setMockMethodCallHandler(channel, null);
+        });
+        final catalog = StickerCatalog.parse(
+          '{"packs":[]}',
+          includeTestOnly: false,
+        );
+        await tester
+            .pumpWidget(
+              _app(
+                ValueListenableBuilder<int>(
+                  valueListenable: scopeGeneration,
+                  builder: (_, generation, _) => CustomStickerScope(
+                    key: ValueKey(generation),
+                    library: unavailableLibrary ?? library,
+                    child: Scaffold(
+                      body: Column(
+                        children: [
+                          TextButton(
+                            onPressed: () => chats++,
+                            child: const Text('Chat action'),
+                          ),
+                          TextButton(
+                            onPressed: () => opened.value = !opened.value,
+                            child: const Text('Toggle tray'),
+                          ),
+                        ],
+                      ),
+                      bottomNavigationBar: ValueListenableBuilder<bool>(
+                        valueListenable: opened,
+                        builder: (context, show, _) {
+                          if (!show) return const SizedBox.shrink();
+                          final source = myStickersFromScope(
+                            context,
+                            onSend: sent.add,
+                          )!;
+                          return StickerPanel(
+                            catalog: catalog,
+                            recentIds: const [],
+                            onSend: (_) {},
+                            myStickers: MyStickersSource(
+                              library: source.library,
+                              clipSaves: source.clipSaves,
+                              onSend: source.onSend,
+                              onCreate: () => unawaited(
+                                openStickerCreate(
+                                  context,
+                                  library: source.library,
+                                  clipSaves: source.clipSaves,
+                                  captureClipPath: (_) async => input.path,
+                                  exporter: StickerClipExporter(
+                                    temporaryDirectory: () async => root,
+                                  ),
+                                  temporaryDirectory: () async => root,
+                                ).whenComplete(() => finished = true),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .timeout(bound);
 
-      await tester.pumpWidget(_app(
-        Builder(builder: (context) => Scaffold(
-          body: TextButton(
-            onPressed: () => unawaited(openStickerCreate(
-              context,
-              library: FakeCustomStickerLibrary(),
-              captureClipPath: (_) async => input.path,
-              exporter: StickerClipExporter(temporaryDirectory: () async => root),
-              temporaryDirectory: () async => root,
-            ).whenComplete(() { finished = true; })),
-            child: const Text('open clip creation'),
-          ),
-        )),
-      )).timeout(bound);
-      Future<void> advance() => tester.pumpAndSettle(
-        const Duration(milliseconds: 50),
-        EnginePhase.sendSemanticsUpdate,
-        bound,
-      ).then((_) {});
-      await tester.tap(find.text('open clip creation')).timeout(bound);
-      await advance();
-      await tester.tap(find.text('Record clip')).timeout(bound);
-      await advance();
-      await tester.tap(find.text('Crop')).timeout(bound);
-      await advance();
-      await tester.tap(find.text('Save sticker')).timeout(bound);
-      for (var i = 0; i < 75 && extracts == 0; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        ).timeout(bound);
-        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
-      }
-      await tester.pump(const Duration(milliseconds: 300)).timeout(bound);
-      final showedProgress = find.text('Creating sticker…').evaluate().isNotEmpty;
-      final exposedSave = find.text('Save sticker').hitTestable().evaluate().isNotEmpty;
-      release.complete();
-      for (var i = 0; i < 75 && !finished; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        ).timeout(bound);
-        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
-      }
-      await tester.pump(const Duration(milliseconds: 300)).timeout(bound);
-      expect(finished, isTrue, reason: "the save flow completed");
-      expect(extracts, 1);
-      expect(input.existsSync(), isFalse);
-      expect(showedProgress, isTrue);
-      expect(exposedSave, isFalse);
-      expect(find.text('Creating sticker…'), findsNothing);
-      expect(find.text("Couldn't save this sticker. Try again."), findsOneWidget);
-    });
+        Future<void> settle() => tester
+            .pumpAndSettle(
+              const Duration(milliseconds: 50),
+              EnginePhase.sendSemanticsUpdate,
+              bound,
+            )
+            .then((_) {});
+        Future<void> until(bool Function() condition) async {
+          final elapsed = Stopwatch()..start();
+          while (!condition() && elapsed.elapsed < bound) {
+            await tester
+                .runAsync(
+                  () => Future<void>.delayed(const Duration(milliseconds: 10)),
+                )
+                .timeout(bound);
+            await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
+          }
+          expect(condition(), isTrue);
+        }
+
+        const pending = ValueKey('my-sticker-pending');
+        const ready = ValueKey('my-sticker-custom-1');
+        final mine = find.byKey(const ValueKey('sticker-tab-mine'));
+        await tester.tap(mine).timeout(bound);
+        await settle();
+        await tester
+            .tap(find.byKey(const ValueKey('my-sticker-create')))
+            .timeout(bound);
+        await settle();
+        await tester.tap(find.text('Record clip')).timeout(bound);
+        await settle();
+        await tester.tap(find.text('Crop')).timeout(bound);
+        await settle();
+        await tester.tap(find.text('Save sticker')).timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
+        expect(find.text('Save sticker').hitTestable(), findsNothing);
+        expect(find.byKey(pending), findsOneWidget);
+        final pendingSemantics = tester.widget<Semantics>(find.byKey(pending));
+        expect(pendingSemantics.properties.label, 'Creating sticker…');
+        expect(pendingSemantics.properties.onTap, isNull);
+        expect(library.ids, isEmpty);
+        await tester
+            .tap(find.byKey(pending), warnIfMissed: false)
+            .timeout(bound);
+        expect(sent, isEmpty);
+        await tester.tap(find.text('Chat action')).timeout(bound);
+        expect(chats, 1);
+        await until(() => extracts == 1);
+
+        if (result == 'scope replaced') {
+          scopeGeneration.value++;
+          await tester.pump().timeout(bound);
+          await tester.tap(mine).timeout(bound);
+          await tester.pump().timeout(bound);
+          expect(find.byKey(pending), findsNothing);
+          await until(() => cancelled == 1);
+        } else {
+          await tester.tap(find.text('Toggle tray')).timeout(bound);
+          await tester.pump().timeout(bound);
+          expect(find.byKey(pending), findsNothing);
+          await tester.tap(find.text('Toggle tray')).timeout(bound);
+          await tester.pump().timeout(bound);
+          expect(find.byKey(pending), findsOneWidget);
+        }
+
+        if (unavailableLibrary != null) {
+          final rejected = expectLater(
+            unavailableLibrary.list(),
+            throwsA(isA<CustomStickerException>()),
+          );
+          libraryInitialization.complete();
+          await rejected.timeout(bound);
+          expect(find.byKey(pending), findsOneWidget);
+          if (retiredAfterFailure) {
+            await unavailableLibrary.retire().timeout(bound);
+            await tester.pump().timeout(bound);
+            expect(
+              find.byKey(pending),
+              findsNothing,
+              reason: 'account retirement clears the pending save immediately',
+            );
+            await until(() => cancelled == 1);
+          }
+        }
+        release.complete();
+        if (result == 'ready' || result == 'failed') {
+          await until(() => library.started);
+          expect(find.byKey(pending), findsOneWidget);
+          expect(find.byKey(ready), findsNothing);
+          library.release.complete();
+        }
+        await until(() => finished);
+        await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
+        expect(input.existsSync(), isFalse);
+        expect(find.byKey(pending), findsNothing);
+        if (result == 'ready') {
+          expect(find.byKey(ready), findsOneWidget);
+          expect(library.ids, ['custom-1']);
+          await tester.tap(find.byKey(ready)).timeout(bound);
+          expect(sent, ['custom-1']);
+        } else {
+          expect(library.ids, isEmpty);
+          expect(find.byKey(ready), findsNothing);
+          expect(
+            find.text("Couldn't save this sticker. Try again."),
+            result == 'failed' || result == 'library unavailable'
+                ? findsOneWidget
+                : findsNothing,
+          );
+        }
+      });
+    }
   }
 
   group('centeredSquareCrop', () {

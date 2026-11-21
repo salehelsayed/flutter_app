@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/camera_video_recorder.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/features/stickers/application/account_custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/method_channel_sticker_cutout_service.dart';
 import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
@@ -17,6 +18,7 @@ import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_edit
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_clip_saves.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:path/path.dart' as p;
@@ -433,6 +435,7 @@ Future<void> openStickerCreate(
   StickerCutoutService? cutout,
   MediaPicker? picker,
   StickerClipExporter? exporter,
+  StickerClipSaves? clipSaves,
   Future<String?> Function(BuildContext)? captureClipPath,
   Future<Directory> Function() temporaryDirectory = getTemporaryDirectory,
 }) async {
@@ -445,9 +448,16 @@ Future<void> openStickerCreate(
   final clips = exporter ?? StickerClipExporter();
 
   StickerCreateOutcome outcome;
-  DialogRoute<void>? clipProgress;
+  StickerClipSave? pending;
+  StreamSubscription<void>? accountRetirement;
+  var abandoned = false;
   String? clipExportFailure;
   try {
+    final admission =
+        source == StickerCreateSource.cameraClip &&
+            library is AccountCustomStickerLibrary
+        ? library.captureClipAdmission()
+        : null;
     final actualCutout =
         cutout ??
         MethodChannelStickerCutoutService(
@@ -506,34 +516,47 @@ Future<void> openStickerCreate(
             const StickerOverlayEditorCancelled();
       },
       exportClip: (path, crop, overlay) {
-        if (!navigator.mounted) return Future.value(null);
-        final progress = DialogRoute<void>(
-          context: navigator.context,
-          barrierDismissible: false,
-          builder: (_) => PopScope(
-            canPop: false,
-            child: AlertDialog(
-              content: Row(
-                children: [
-                  const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 16),
-                  Flexible(child: Text(l10n.stickers_creating)),
-                ],
-              ),
-            ),
-          ),
-        );
-        clipProgress = progress;
-        unawaited(navigator.push(progress));
+        if (!context.mounted ||
+            !navigator.mounted ||
+            admission?.isCurrent() == false) {
+          abandoned = true;
+          return Future.value(null);
+        }
+        if (clipSaves != null) {
+          pending = clipSaves.begin(
+            onDispose: () {
+              abandoned = true;
+              unawaited(clips.cancel());
+            },
+          );
+          if (pending == null) {
+            if (!clipSaves.isSaving) {
+              abandoned = true;
+              return Future.value(null);
+            }
+            throw const StickerClipExportException(
+              StickerClipExportFailure.busy,
+            );
+          }
+        }
+        accountRetirement = admission?.onRetired.listen((_) {
+          abandoned = true;
+          pending?.finish();
+          unawaited(clips.cancel());
+        });
         return clips.export(
           clipPath: path,
           crop: crop.crop,
           circle: crop.circle,
           textOverlay: overlay,
         );
+      },
+      admitClip: (asset) async {
+        if (abandoned) return null;
+        final admit = admission?.admit ?? library.admit;
+        final sticker = await admit(asset);
+        pending?.finish(sticker);
+        return sticker;
       },
       showNoSubject: () => messenger.showSnackBar(
         SnackBar(content: Text(l10n.stickers_no_subject)),
@@ -555,24 +578,25 @@ Future<void> openStickerCreate(
     clipExportFailure = 'unknown';
     outcome = const StickerCreateFailed(CustomStickerErrorCode.storageFailure);
   } finally {
-    final progress = clipProgress;
-    if (navigator.mounted && progress != null && progress.isActive) {
-      navigator.removeRoute(progress);
-    }
+    pending?.finish();
+    await accountRetirement?.cancel();
   }
+  if (abandoned) return;
   if (source == StickerCreateSource.cameraClip) {
     if (outcome case StickerCreateFailed(:final code)) {
       AppDiagnostics.instance.record(
         feature: 'stickers',
         stage: clipExportFailure == null ? 'store' : 'prepare',
         outcome: 'failed',
-        reason: clipExportFailure ?? switch (code) {
-          CustomStickerErrorCode.invalidAsset => 'invalid_payload',
-          CustomStickerErrorCode.byteQuota ||
-          CustomStickerErrorCode.countQuota => 'quota_exceeded',
-          CustomStickerErrorCode.storageFailure => 'storage_failed',
-          _ => 'unknown',
-        },
+        reason:
+            clipExportFailure ??
+            switch (code) {
+              CustomStickerErrorCode.invalidAsset => 'invalid_payload',
+              CustomStickerErrorCode.byteQuota ||
+              CustomStickerErrorCode.countQuota => 'quota_exceeded',
+              CustomStickerErrorCode.storageFailure => 'storage_failed',
+              _ => 'unknown',
+            },
       );
     }
   }

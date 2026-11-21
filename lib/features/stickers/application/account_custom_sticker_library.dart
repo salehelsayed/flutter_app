@@ -26,6 +26,7 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
   _createLibrary;
   final bool _enabled;
   final _changes = StreamController<void>.broadcast(sync: true);
+  final _accountRetirements = StreamController<void>.broadcast(sync: true);
   late final Stream<void> _changeStream = _changes.stream;
   _StickerLibraryGeneration? _current;
   bool _blocked = false;
@@ -81,9 +82,11 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
   }
 
   Future<T> _run<T>(
-    Future<T> Function(SqliteCustomStickerLibrary library) action,
-  ) async {
-    final generation = _captureGeneration();
+    Future<T> Function(SqliteCustomStickerLibrary library) action, {
+    _StickerLibraryGeneration? captured,
+  }) async {
+    final generation = captured ?? _captureGeneration();
+    if (!_isCurrent(generation)) _unavailable();
     final library = await _start(generation, _retirement);
     if (library == null || !_isCurrent(generation)) _unavailable();
     return action(library);
@@ -95,6 +98,23 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     }
     if (_blocked) _unavailable();
     return _current ??= _StickerLibraryGeneration(retryIfNoIdentity: true);
+  }
+
+  /// Binds a clip editor's later admission to the account that opened it.
+  /// Explicit retirement remains observable if storage initialization fails.
+  ({
+    Future<CustomSticker> Function(NormalizedStickerAsset) admit,
+    Stream<void> onRetired,
+    bool Function() isCurrent,
+  })
+  captureClipAdmission() {
+    final generation = _captureGeneration();
+    return (
+      admit: (asset) =>
+          _run((library) => library.admit(asset), captured: generation),
+      onRetired: _accountRetirements.stream,
+      isCurrent: () => _isCurrent(generation),
+    );
   }
 
   /// Binds received-media preparation to the account that began the action.
@@ -168,6 +188,7 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     _blocked = true;
     final generation = _current;
     _current = null;
+    _accountRetirements.add(null);
     if (generation == null) return _retirement;
     return _retirement = Future.wait<void>([
       _retirement,
