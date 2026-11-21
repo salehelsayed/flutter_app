@@ -8,12 +8,14 @@ import 'package:flutter_test/flutter_test.dart';
 const _hostedArchiveSha256 =
     'ba7733c5514cf0ccb0331997b771a890f73678bcd84cdfb5f7487a88a71f1738';
 const _expectHostedSqlCipher = bool.fromEnvironment('EXPECT_HOSTED_SQLCIPHER');
+// BL-41 changed only test/sqflite_sql_cipher_open_test.dart in the fork.
+// Both snapshots include that reviewed fixture and pin every other file too.
 const _patchedTreeSha256 =
-    'c4bcb962748f8bd99e4f514e6465003416dd03a502d773f51cf7493d7b763acb';
-const _untouchedNonAndroidTreeSha256 =
-    '9d99b174eae31ee0d391872f3a959f313cc465b12f7fed3acc71a2c99cd99ac4';
+    '23570d330a3d4ebd0ecdd3bc3a7e31495bb310cece6fb55eaaba9669dde0efdd';
+const _reviewedNonAndroidTreeSha256 =
+    'fb813ff1d8eee287e1325d554307687f4e7c7c19afc10911c4eff62e8e90e6bf';
 const _patchedFileCount = 171;
-const _untouchedNonAndroidFileCount = 148;
+const _reviewedNonAndroidFileCount = 148;
 const _junitDependencyLine = "    testImplementation 'junit:junit:4.13.2'\n";
 
 const _pinnedForkFileDigests = <String, String>{
@@ -217,15 +219,15 @@ void main() {
   });
 
   test(
-    'all Dart, iOS, macOS, examples, metadata, and assets stay pristine',
+    'non-Android files match the reviewed tree including the BL-41 fixture',
     () {
       final digest = _treeDigest(
         vendorRoot,
         include: (relative) =>
             relative != 'PATCH.md' && !relative.startsWith('android/'),
       );
-      expect(digest.fileCount, _untouchedNonAndroidFileCount);
-      expect(digest.sha256, _untouchedNonAndroidTreeSha256);
+      expect(digest.fileCount, _reviewedNonAndroidFileCount);
+      expect(digest.sha256, _reviewedNonAndroidTreeSha256);
     },
   );
 }
