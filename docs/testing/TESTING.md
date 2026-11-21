@@ -6805,17 +6805,25 @@ visible and cannot become an ordinary first-attempt PASS.
 
 - **Background motion scheduling:** the default-on Moving background preference
   is stored separately from the wallpaper and loaded into AppShellController
-  before startup routing. Only the saved preference and both OS motion flags
-  select the static frame through the backgrounds' gated MediaQuery; content
-  retains its original motion and accessibility policy. Lifecycle and TickerMode
-  pauses stop Cosmic/Mirror Cosmic clocks and controllers and Aurora's controller
-  without resetting their phase. Resuming continues mid-loop. Signal is already
-  static. `background_motion_lifecycle_test.dart` checks queued frame
+  before startup routing. The saved preference and both OS motion flags
+  can select the static frame through the backgrounds' gated MediaQuery.
+  Content retains its original motion and accessibility policy. Lifecycle and
+  TickerMode pauses stop Cosmic/Mirror Cosmic clocks and controllers and Aurora's
+  controller without resetting their phase. Resuming continues mid-loop.
+  Signal is already static. `background_motion_lifecycle_test.dart` checks queued frame
   callbacks for all animated treatments, covered routes, initial paused mounts,
   resume, switching and OS precedence. Before the fix, all three paused cases
   retained one queued callback rather than zero. Six additional continuity
   regressions caught pause/route cover resetting the drift to zero; all original
   32 scheduling assertions remain unchanged in the final 38-case motion check.
+  The chat-specific background gate at `147d072e` also selects static artwork
+  for every chat theme. The test-only parent `87464619` exposed idle callbacks
+  from Mirror Cosmic and Cosmic while Aurora passed. Final Linux proof checks
+  quiet initial chat mounts, transitions to and from chat, foreground content
+  motion, and the direct and group entry points. The lifecycle file passed
+  41 cases and affected-identity passed 1,197. First receipts are under
+  `~/.codex/investigations/bl53-closed-chat-ambient-codex2-20261121/`.
+  An exact device trace is needed to establish the CPU difference.
   Settings integration tests
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
@@ -7307,6 +7315,24 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/bl47b-20261121/`, `.codex-test-logs/bl47p-20261121/`
   and `.codex-test-logs/bl47f-20261121/`.
 
+  Android diagnostic build 302 used indexed bitmap retrieval. Its first
+  pilot matched all 24 cropped frames exactly. Three timed Pixel runs took
+  11.32–12.20 s for extraction and 22.73 s median Save-to-tray. Build 301's
+  ordinary extraction took about 3.83 s on the same lit fixture. Indexed
+  retrieval was dropped. The Pixel was warm and drew battery power during
+  the 302 runs. Retain its pilot and timings in
+  `.codex-test-logs/bl50-20261121/`.
+
+  The My stickers grid proof uses a real animated WebP without a persisted
+  poster. An offscreen finder must include cached sliver elements with
+  `skipOffstage: false`. The test-only tree found the hidden tile and an
+  earlier RED showed a live image listener after scrolling. Final
+  `00a6ec74` verified listener release, still tab artwork, resumed grid
+  animation and sending on return. The same product blobs passed 13 panel
+  and 294 affected sticker cases at `204cd58c`. Accessible navigation keeps
+  the scroll cache for implicit VoiceOver scrolling. First receipts are under
+  `~/.codex/investigations/bl53-tray-animation-codex2-20261121/`.
+
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
   cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
@@ -7484,6 +7510,21 @@ visible and cannot become an ordinary first-attempt PASS.
   This is host evidence, not native encoded-frame, device-motion, delivery,
   visual-parity or signed-artifact proof. The shipping flag and static-poster
   default remain unchanged.
+
+  Pending clip saves at `8ac16d84` keep their tray state in the account
+  scope. The widget proof holds export or admission open while the user
+  interacts with chat. It covers an unsendable tile, closing and reopening
+  the tray, replacement on commit, the existing error on storage failure,
+  and cleanup on scope replacement. A storage factory can fail and clear
+  its delegate before explicit account retirement. The test-only parent
+  `33710b7d` left the tile mounted in that order. The final facade emits
+  retirement independently of delegate initialization, so the held export
+  cancels and the pending tile disappears immediately. Its captured
+  generation still fences admission. The final Linux run passed five
+  focused widgets, 17 account and 56 creation-enabled cases. The earlier
+  affected-stickers pass belongs to `6973a2c3`. First receipts are under
+  `~/.codex/investigations/bl51-pending-sticker-codex2-20261121/`.
+  Phone timing and process-restart behavior require installed-app proof.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
