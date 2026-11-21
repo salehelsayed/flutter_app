@@ -260,6 +260,7 @@ void main() {
       'ready',
       'failed',
       'library unavailable',
+      'retired after storage failure',
       'scope replaced',
     ]) {
       testWidgets('video save opens a pending tray item, then $result', (
@@ -278,7 +279,9 @@ void main() {
         final release = Completer<void>();
         final library = _GatedClipLibrary(bound);
         final libraryInitialization = Completer<void>();
-        final unavailableLibrary = result == 'library unavailable'
+        final retiredAfterFailure = result == 'retired after storage failure';
+        final unavailableLibrary =
+            result == 'library unavailable' || retiredAfterFailure
             ? AccountCustomStickerLibrary(
                 createLibrary: (_) async {
                   await libraryInitialization.future.timeout(bound);
@@ -308,7 +311,7 @@ void main() {
           expect(call.method, 'extract');
           extracts++;
           await release.future.timeout(bound);
-          if (result == 'scope replaced') {
+          if (result == 'scope replaced' || retiredAfterFailure) {
             throw PlatformException(code: 'cancelled');
           }
           final args = call.arguments as Map;
@@ -466,6 +469,16 @@ void main() {
           libraryInitialization.complete();
           await rejected.timeout(bound);
           expect(find.byKey(pending), findsOneWidget);
+          if (retiredAfterFailure) {
+            await unavailableLibrary.retire().timeout(bound);
+            await tester.pump().timeout(bound);
+            expect(
+              find.byKey(pending),
+              findsNothing,
+              reason: 'account retirement clears the pending save immediately',
+            );
+            await until(() => cancelled == 1);
+          }
         }
         release.complete();
         if (result == 'ready' || result == 'failed') {
@@ -488,7 +501,7 @@ void main() {
           expect(find.byKey(ready), findsNothing);
           expect(
             find.text("Couldn't save this sticker. Try again."),
-            result == 'failed' || unavailableLibrary != null
+            result == 'failed' || result == 'library unavailable'
                 ? findsOneWidget
                 : findsNothing,
           );
