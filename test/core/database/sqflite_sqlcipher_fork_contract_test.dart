@@ -11,9 +11,9 @@ const _expectHostedSqlCipher = bool.fromEnvironment('EXPECT_HOSTED_SQLCIPHER');
 // The reviewed tree includes Android scheduling, the iOS suspension guard,
 // and the pinned Dart wire fixtures.
 const _patchedTreeSha256 =
-    '168b333bfc378428770fe61eebe6a2b7e6f31958703c17e144a6934b4f8e7af7';
+    'e34d3af4790f02277f06adb5b95eafea891e4c4393be1b2fd92f078bbc336bbc';
 const _reviewedNonAndroidTreeSha256 =
-    'e82e18464eda95f1360c401180d768c98402be00e7b910fa41620597fd4d8b61';
+    '66d9a32af9216e407c6134bfb84c1aadee1fb9567794d3286b978665cdcf2b41';
 const _patchedFileCount = 171;
 const _reviewedNonAndroidFileCount = 148;
 const _junitDependencyLine = "    testImplementation 'junit:junit:4.13.2'\n";

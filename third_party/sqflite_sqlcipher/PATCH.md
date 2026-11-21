@@ -64,6 +64,8 @@ database IDs, paths, SQL, keys, or message content.
 - `ios/Classes/SqfliteSqlCipherPlugin.m` takes a UIKit assertion before
   native database work and keeps it through open SQLite transactions. The
   serialized queue interrupts active SQL and rolls back on expiration.
+  The busy callback observes expiration during lock retries and retains
+  the configured wait in ordinary operation.
   The existing transaction ID protocol rejects continuations after rollback.
 - `test/sqflite_sql_cipher_open_test.dart` preserves the null BEGIN argument
   and verifies that the Dart caller forwards the returned transaction ID.
@@ -77,7 +79,7 @@ The patched 171-file tree (all files except this `PATCH.md`, sorted by relative
 path and hashed as `path + NUL + bytes + NUL`) has SHA-256:
 
 ```text
-168b333bfc378428770fe61eebe6a2b7e6f31958703c17e144a6934b4f8e7af7
+e34d3af4790f02277f06adb5b95eafea891e4c4393be1b2fd92f078bbc336bbc
 ```
 
 Key file SHA-256 values are:
@@ -99,7 +101,7 @@ The 148 non-Android files include the reviewed iOS guard and Dart wire
 fixtures. Their deterministic subtree SHA-256 is:
 
 ```text
-e82e18464eda95f1360c401180d768c98402be00e7b910fa41620597fd4d8b61
+66d9a32af9216e407c6134bfb84c1aadee1fb9567794d3286b978665cdcf2b41
 ```
 
 The root `pubspec.yaml` and generated `pubspec.lock` select this directory.

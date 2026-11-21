@@ -89,15 +89,46 @@ static int64_t const _expirationDrainNanos = 2 * NSEC_PER_SEC;
 @property (nonatomic, readonly, strong) dispatch_group_t drain;
 - (BOOL)beginSQLite:(sqlite3 *)handle;
 - (void)finishSQLite;
+- (void)installBusyHandler:(sqlite3 *)handle milliseconds:(int)milliseconds;
+- (BOOL)retryAfterContention:(int)count;
 - (void)revoke;
 @end
 
 @implementation SqfliteSuspensionLease {
     sqlite3 *_workingHandle;
+    NSTimeInterval _busyWaitLimit;
+    NSTimeInterval _busyWaitStarted;
 }
 
 static int sqliteSuspensionProgress(void *context) {
     return [(__bridge SqfliteSuspensionLease *)context isRevoked];
+}
+
+static int sqliteSuspensionBusy(void *context, int count) {
+    SqfliteSuspensionLease *lease = (__bridge SqfliteSuspensionLease *)context;
+    return [lease retryAfterContention:count];
+}
+
+- (BOOL)retryAfterContention:(int)count {
+    if (self.revoked) {
+        return NO;
+    }
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (count == 0) {
+        _busyWaitStarted = now;
+    }
+    NSTimeInterval remaining = _busyWaitLimit - (now - _busyWaitStarted);
+    if (remaining <= 0) {
+        return NO;
+    }
+    [NSThread sleepForTimeInterval:MIN(remaining, 0.010)];
+    return !self.revoked;
+}
+
+- (void)installBusyHandler:(sqlite3 *)handle milliseconds:(int)milliseconds {
+    _busyWaitLimit = milliseconds / 1000.0;
+    sqlite3_busy_handler(handle, milliseconds > 0 ? sqliteSuspensionBusy : NULL,
+        milliseconds > 0 ? (__bridge void *)self : NULL);
 }
 
 - (instancetype)init {
@@ -146,6 +177,7 @@ static int sqliteSuspensionProgress(void *context) {
 @property (nonatomic) bool inTransaction;
 @property (nonatomic, strong) NSNumber *transactionId;
 @property (nonatomic) BOOL rawTransactionAborted;
+@property (nonatomic, strong) NSNumber *busyTimeoutMilliseconds;
 @property (nonatomic) int logLevel;
 
 @end
@@ -164,6 +196,9 @@ static int sqliteSuspensionProgress(void *context) {
 @property (nonatomic) NSInteger lastDatabaseId;
 - (void)handleDatabaseCall:(FlutterMethodCall *)call result:(FlutterResult)result;
 - (void)closeDatabase:(SqfliteSqlCipherDatabase *)database;
+- (BOOL)runStatement:(SqfliteSqlCipherOperation *)operation
+             database:(SqfliteSqlCipherDatabase *)database
+                 fmdb:(FMDatabase *)db;
 
 @end
 
@@ -205,6 +240,44 @@ static BOOL isRollback(NSString *sql) {
     return sql != nil &&
         [[sql stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]
             caseInsensitiveCompare:@"ROLLBACK"] == NSOrderedSame;
+}
+
+// SQLite applies this pragma during prepare, replacing the connection's own
+// busy callback. Run direct reads and assignments with the native callback.
+static BOOL busyTimeoutPragma(NSString *sql, BOOL *assignsTimeout) {
+    if (sql == nil ||
+        [sql rangeOfString:@"busy_timeout" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+        return NO;
+    }
+    static NSRegularExpression *pattern;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *trivia = @"(?:\\s++|--[^\\r\\n]*+|/\\*(?:[^*]|\\*(?!/))*+\\*/)*+";
+        NSString *name = @"(?:[a-z_][a-z_0-9]*|\"[^\"]+\"|'[^']+'|\\x60[^\\x60]+\\x60|\\[[^\\]]+\\])";
+        NSString *pragma = @"(?:busy_timeout|\"busy_timeout\"|'busy_timeout'|\\x60busy_timeout\\x60|\\[busy_timeout\\])";
+        NSString *command = [NSString stringWithFormat:
+            @"^%@pragma%@(?:%@%@\\.%@)?%@(?![a-z_0-9])%@([=(])?",
+            trivia, trivia, name, trivia, trivia, pragma, trivia];
+        pattern = [NSRegularExpression regularExpressionWithPattern:command
+            options:NSRegularExpressionCaseInsensitive | NSRegularExpressionDotMatchesLineSeparators
+            error:NULL];
+    });
+    NSTextCheckingResult *match = [pattern firstMatchInString:sql options:0
+        range:NSMakeRange(0, sql.length)];
+    if (match == nil) {
+        return NO;
+    }
+    *assignsTimeout = [match rangeAtIndex:1].location != NSNotFound;
+    return YES;
+}
+
+static void restoreBusyHandler(FMDatabase *db, NSNumber *configuredTimeout) {
+    if (configuredTimeout != nil) {
+        sqlite3_busy_timeout(db.sqliteHandle, configuredTimeout.intValue);
+    } else {
+        NSTimeInterval defaultTimeout = db.maxBusyRetryTimeInterval;
+        db.maxBusyRetryTimeInterval = defaultTimeout;
+    }
 }
 
 static FlutterError *suspensionError(NSString *message) {
@@ -273,7 +346,9 @@ static FlutterError *suspensionError(NSString *message) {
                 }
                 [db closeOpenResultSets];
                 if (!sqlite3_get_autocommit(handle)) {
+                    sqlite3_busy_timeout(handle, 0);
                     [db executeUpdate:@"ROLLBACK"];
+                    restoreBusyHandler(db, database.busyTimeoutMilliseconds);
                 }
                 database.inTransaction = !sqlite3_get_autocommit(handle);
             }];
@@ -685,7 +760,7 @@ static FlutterError *suspensionError(NSString *message) {
     }
     [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
         SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-        [self query:database fmdb:db operation:operation];
+        [self runStatement:operation database:database fmdb:db];
     }];
 }
 
@@ -726,7 +801,7 @@ static FlutterError *suspensionError(NSString *message) {
     }
     [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
         SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-        [self insert:database fmdb:db operation:operation];
+        [self runStatement:operation database:database fmdb:db];
     }];
     
 }
@@ -758,7 +833,7 @@ static FlutterError *suspensionError(NSString *message) {
     
     [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
         SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-        [self update:database fmdb:db operation:operation];
+        [self runStatement:operation database:database fmdb:db];
     }];
 }
 
@@ -794,7 +869,7 @@ static FlutterError *suspensionError(NSString *message) {
             };
         }
         SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:executeResult];
-        [self execute:database fmdb:db operation:operation];
+        [self runStatement:operation database:database fmdb:db];
     }];
     
 }
@@ -828,7 +903,7 @@ static FlutterError *suspensionError(NSString *message) {
                 
                 NSString* method = [operation getMethod];
                 if ([_methodInsert isEqualToString:method]) {
-                    if ([self insert:database fmdb:db operation:operation]) {
+                    if ([self runStatement:operation database:database fmdb:db]) {
                         [operation handleSuccess:operationResults];
                     } else if (continueOnError) {
                         [operation handleErrorContinue:operationResults];
@@ -837,7 +912,7 @@ static FlutterError *suspensionError(NSString *message) {
                         return;
                     }
                 } else if ([_methodUpdate isEqualToString:method]) {
-                    if ([self update:database fmdb:db operation:operation]) {
+                    if ([self runStatement:operation database:database fmdb:db]) {
                         [operation handleSuccess:operationResults];
                     } else if (continueOnError) {
                         [operation handleErrorContinue:operationResults];
@@ -846,7 +921,7 @@ static FlutterError *suspensionError(NSString *message) {
                         return;
                     }
                 } else if ([_methodExecute isEqualToString:method]) {
-                    if ([self execute:database fmdb:db operation:operation]) {
+                    if ([self runStatement:operation database:database fmdb:db]) {
                         [operation handleSuccess:operationResults];
                     } else if (continueOnError) {
                         [operation handleErrorContinue:operationResults];
@@ -855,7 +930,7 @@ static FlutterError *suspensionError(NSString *message) {
                         return;
                     }
                 } else if ([_methodQuery isEqualToString:method]) {
-                    if ([self query:database fmdb:db operation:operation]) {
+                    if ([self runStatement:operation database:database fmdb:db]) {
                         [operation handleSuccess:operationResults];
                     } else if (continueOnError) {
                         [operation handleErrorContinue:operationResults];
@@ -880,6 +955,49 @@ static FlutterError *suspensionError(NSString *message) {
     }];
     
     
+}
+
+- (BOOL)runStatement:(SqfliteSqlCipherOperation *)operation
+             database:(SqfliteSqlCipherDatabase *)database
+                 fmdb:(FMDatabase *)db {
+    SqfliteSuspensionLease *lease = self.executingLease;
+    if (lease.revoked) {
+        [operation error:suspensionError(_errorTransactionAborted)];
+        return NO;
+    }
+    BOOL assignsTimeout = NO;
+    BOOL timeoutPragma = busyTimeoutPragma([operation getSql], &assignsTimeout);
+    if (!timeoutPragma) {
+        NSNumber *configured = database.busyTimeoutMilliseconds;
+        int milliseconds = configured != nil
+            ? configured.intValue : (int)(db.maxBusyRetryTimeInterval * 1000);
+        [lease installBusyHandler:db.sqliteHandle milliseconds:milliseconds];
+    }
+    @try {
+        NSString *method = [operation getMethod];
+        if ([_methodQuery isEqualToString:method]) {
+            return [self query:database fmdb:db operation:operation];
+        }
+        if ([_methodInsert isEqualToString:method]) {
+            return [self insert:database fmdb:db operation:operation];
+        }
+        if ([_methodUpdate isEqualToString:method]) {
+            return [self update:database fmdb:db operation:operation];
+        }
+        return [self execute:database fmdb:db operation:operation];
+    } @finally {
+        if (!timeoutPragma) {
+            restoreBusyHandler(db, database.busyTimeoutMilliseconds);
+        } else if (assignsTimeout) {
+            // SQLite supplies the effective value, including disabled timeouts
+            // and its handling of quoted, negative, or oversized arguments.
+            FMResultSet *timeout = [db executeQuery:@"PRAGMA busy_timeout"];
+            if ([timeout next]) {
+                database.busyTimeoutMilliseconds = @([timeout intForColumnIndex:0]);
+            }
+            [timeout close];
+        }
+    }
 }
 
 + (bool)isInMemoryPath:(NSString*)path {
@@ -965,12 +1083,15 @@ static FlutterError *suspensionError(NSString *message) {
         if (![lease beginSQLite:database.sqliteHandle]) {
             return;
         }
+        [lease installBusyHandler:database.sqliteHandle
+                      milliseconds:(int)(database.maxBusyRetryTimeInterval * 1000)];
         @try {
             [database setKey:password ?: @""];
             FMResultSet *probe = [database executeQuery:@"SELECT COUNT(*) FROM sqlite_schema"];
             verified = [probe next];
             [probe close];
         } @finally {
+            restoreBusyHandler(database, nil);
             [lease finishSQLite];
         }
     }];
