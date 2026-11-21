@@ -16,7 +16,8 @@ void main() {
         'mediaAttachmentRepository = MediaAttachmentRepositoryImpl(',
       );
       expect(start, isNonNegative);
-      final end = productionSource.indexOf(');', start);
+      // Nested callbacks can contain their own statement terminators.
+      final end = productionSource.indexOf('\n    );', start);
       expect(end, greaterThan(start));
 
       final repositoryBlock = productionSource.substring(start, end);

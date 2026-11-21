@@ -505,7 +505,9 @@ const _productionBootstrapNormalizedSha256 =
     // now samples UTC only when the mark closure runs; reversing this caller
     // delta restores baseline bytes and both pins under the same 25 URI
     // rewrites. Historical callback 843fb41c stays unique and exact.
-    '73b5194e92c34af876e79bd1b3b25b79124cbf23fe3475e9bb44699be36b9471';
+    // BL-29 receipt admission adds capture callbacks at the existing owners in
+    // d777d04c6 and 4b206563e. Reversing both diffs restores the 6969bc352 pins.
+    '972e5dd1efff8c72fc95e113d5c3d8c6ef62ee28f6648ebbb0ee5e9ad17935e5';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -552,8 +554,9 @@ const _productionBootstrapNormalizedSha256 =
 // BL-24 D1 receipt custody and BL-24 E2 dormant key-exchange retry wiring
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
+// BL-29 receipt admission only changes the surrounding owner wiring.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '0907b2df14807389346188f0e740ce948ad24ded87e3770913c4277172d798e6';
+    'ae4656fa45ebd14f27c3a613a593f2959b27872940a3285a310f3c29dd1bb506';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

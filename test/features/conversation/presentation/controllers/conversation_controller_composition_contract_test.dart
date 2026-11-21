@@ -115,7 +115,9 @@ const _expectedDirectApiFingerprint = '397800a2';
 // Stickers v1: the same optional `stickerUsageRecorder` field and default.
 // Without it the fingerprint is the previous cfec919a; with the earlier no-op
 // default it was 073281ee.
-const _expectedGroupApiFingerprint = '2b594730';
+// BL29 (93527a2e5): the same optional borrowed `activityReporter` field and
+// constructor parameter on `GroupConversationWired`.
+const _expectedGroupApiFingerprint = '6d5b10df';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).
@@ -184,7 +186,9 @@ const _expectedDirectHandoffFingerprint = 'f9991687';
 // In-chat search (owner, 2026-11-04): the group handoff adds only `search`,
 // the wired-owned search controller; without it the fingerprint is the
 // previous 3d456f26.
-const _expectedGroupHandoffFingerprint = '80a95f41';
+// BL29 (93527a2e5): the group handoff adds only `activityTextBuilder`, which
+// delegates visible-text observation to the wired reporter when present.
+const _expectedGroupHandoffFingerprint = 'aab19903';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 

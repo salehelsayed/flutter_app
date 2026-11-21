@@ -24,6 +24,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart'
+    show databaseFactoryFfiNoIsolate;
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -4036,8 +4038,12 @@ void main() {
           PathProviderPlatform.instance = previousPathProvider;
           if (root.existsSync()) root.deleteSync(recursive: true);
         });
+        // Exercise production SQLite custody without waiting on an FFI worker
+        // isolate while widget time and real I/O are being advanced separately.
         final fixture = (await tester.runAsync(
-          () => MediaRepositoryRealDbFixture.create().timeout(budget),
+          () => MediaRepositoryRealDbFixture.create(
+            databaseFactoryOverride: databaseFactoryFfiNoIsolate,
+          ).timeout(budget),
         ))!;
         addTearDown(() => fixture.dispose().timeout(budget));
         final bridge = _B15RealSenderBridge('blob:keygen');
@@ -4176,7 +4182,9 @@ void main() {
       testWidgets('B15UI ADD real database custody $scenario', (tester) async {
         installPrivateMediaProtectionEventChannelStub(tester);
         final fixture = (await tester.runAsync(
-          () => MediaRepositoryRealDbFixture.create().timeout(budget),
+          () => MediaRepositoryRealDbFixture.create(
+            databaseFactoryOverride: databaseFactoryFfiNoIsolate,
+          ).timeout(budget),
         ))!;
         addTearDown(() => fixture.dispose().timeout(budget));
         final bridge = _B15RealSenderBridge('message.encrypt');

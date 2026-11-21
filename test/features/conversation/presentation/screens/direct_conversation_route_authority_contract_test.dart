@@ -79,6 +79,13 @@ void main() {
   test('E2U-R001 bootstrap and root borrow the same daily reporter into route authority', () {
     final bootstrap = File('lib/app/bootstrap/production_application_bootstrap.dart').readAsStringSync();
     final root = File('lib/app/application_root.dart').readAsStringSync();
+    expect(
+      bootstrap,
+      contains(
+        'final activeIdentityReporter = await activityReporterBootstrap.reporter;',
+      ),
+      reason: 'the borrowed reporter must come from the bootstrap owner',
+    );
     expect(bootstrap, contains('activityReporter: activeIdentityReporter,'),
       reason: 'the already-owned production reporter must reach MyApp');
     final start = root.indexOf('DirectConversationRouteAuthority get _directRouteAuthority');
@@ -87,8 +94,11 @@ void main() {
     expect(end, greaterThan(start));
     expect(root.substring(start, end), contains('activityReporter: widget.activityReporter,'),
       reason: 'normal shell routes must receive the same borrowed reporter');
-    expect(bootstrap, contains('disposeActiveIdentityReporter: activeIdentityReporter.dispose,'),
-      reason: 'bootstrap retains its existing disposal responsibility');
+    expect(
+      bootstrap,
+      contains('disposeActiveIdentityReporter: activityReporterBootstrap.dispose,'),
+      reason: 'the same bootstrap owner must dispose the reporter and stores',
+    );
   });
 
   test('E2U-R002 every non-debug conversation builder forwards the borrowed daily reporter', () {
