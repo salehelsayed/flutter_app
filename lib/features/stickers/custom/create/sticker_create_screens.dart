@@ -588,13 +588,15 @@ Future<void> openStickerCreate(
         feature: 'stickers',
         stage: clipExportFailure == null ? 'store' : 'prepare',
         outcome: 'failed',
-        reason: clipExportFailure ?? switch (code) {
-          CustomStickerErrorCode.invalidAsset => 'invalid_payload',
-          CustomStickerErrorCode.byteQuota ||
-          CustomStickerErrorCode.countQuota => 'quota_exceeded',
-          CustomStickerErrorCode.storageFailure => 'storage_failed',
-          _ => 'unknown',
-        },
+        reason:
+            clipExportFailure ??
+            switch (code) {
+              CustomStickerErrorCode.invalidAsset => 'invalid_payload',
+              CustomStickerErrorCode.byteQuota ||
+              CustomStickerErrorCode.countQuota => 'quota_exceeded',
+              CustomStickerErrorCode.storageFailure => 'storage_failed',
+              _ => 'unknown',
+            },
       );
     }
   }

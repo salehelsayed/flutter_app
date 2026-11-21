@@ -57,7 +57,8 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
   Future<void> init() async {}
 
   @override
-  Future<int?> createWithOptions(VideoCreationOptions options) async => ++_nextId;
+  Future<int?> createWithOptions(VideoCreationOptions options) async =>
+      ++_nextId;
 
   @override
   Stream<VideoEvent> videoEventsFor(int playerId) {
