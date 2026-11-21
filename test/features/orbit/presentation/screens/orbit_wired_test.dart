@@ -1135,7 +1135,8 @@ void main() {
             if (own) {
               expect(grid, findsNothing);
             } else {
-              expect(find.text('Media unavailable'), findsOneWidget);
+              expect(grid, findsOneWidget);
+              expect(tester.widget<MediaGrid>(grid).media.single.localPath, isNull);
             }
 
             final directory = Directory.systemTemp.createTempSync(

@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 
@@ -159,6 +161,68 @@ void main() {
       final stored = (await posts.loadPostMediaAttachments(row.postId)).single;
       expect(stored.downloadStatus, 'failed');
       expect(stored.localPath, isNull);
+    },
+  );
+
+  test(
+    'BL-52 attachment failures record only closed diagnostic values',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final diagnostics = await AppDiagnostics.installForTesting(
+        directory: Directory('${tempDir.path}/diagnostics'),
+        persist: (_, _) async {},
+      ).timeout(deadline);
+      addTearDown(() => diagnostics.dispose().timeout(deadline));
+
+      final file = File('${tempDir.path}/private-story-image.jpg')
+        ..writeAsBytesSync(plaintext);
+      bridge.failMediaUpload = true;
+      final uploaded = await uploadPostMedia(
+        bridge: bridge,
+        postId: 'private-story-id',
+        ownerPeerId: 'private-peer-id',
+        localFilePath: file.path,
+        mime: 'image/jpeg',
+        allowedPeers: const ['private-peer-id'],
+      ).timeout(deadline);
+      expect(uploaded, isNull);
+
+      final row = attachment(
+        blobId: 'private-missing-blob',
+        isEncrypted: false,
+      );
+      await posts.savePostMediaAttachment(row).timeout(deadline);
+      await expectLater(
+        downloadPostMedia(
+          bridge: bridge,
+          postRepo: posts,
+          mediaFileManager: mediaFileManager,
+          attachment: row,
+        ).timeout(deadline),
+        throwsA(isA<StateError>()),
+      ).timeout(deadline);
+
+      final events = (await diagnostics.eventsForTesting().timeout(
+        deadline,
+      )).where((event) => event['feature'] == 'media').toList();
+      expect(events.map((event) => event['stage']), ['send', 'download']);
+      for (final event in events) {
+        expect(event['outcome'], 'failed');
+        expect(event['traceId'], isNull);
+        expect(event['attemptId'], isNull);
+        expect(
+          (event['values'] as Map).keys,
+          unorderedEquals([
+            'canRetry',
+            'count',
+            'postAgeBucket',
+            'postMediaSurface',
+          ]),
+        );
+        expect(event['values'], containsPair('count', 1));
+        expect(event['values'], containsPair('postMediaSurface', 'background'));
+        expect(jsonEncode(event), isNot(contains('private-')));
+      }
     },
   );
 
