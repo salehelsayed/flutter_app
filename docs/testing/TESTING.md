@@ -14921,6 +14921,11 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
+  BL-46 covers both Translator progress bars under the production Android dark
+  theme. Flutter's default track inherited the secondary green and had 1.35:1
+  contrast with the fill. The widget tests inspect the painted track and fill
+  as received bytes rise from 25% to 75%, and use a bounded pump to check
+  indeterminate progress when the total is unknown.
   Chat-header translation requires static device eligibility and `ModelReady`.
   Group-chat translation remains deferred. In the pinned Material
   theme, call/search/translation buttons use a 44-pixel style inside matching

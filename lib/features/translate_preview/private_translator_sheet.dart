@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
@@ -138,7 +139,7 @@ class PrivateTranslatorSheet extends StatelessWidget {
         _SheetLayout(
           title: l10n.translator_progress_title,
           progress: (
-            state.percent / 100,
+            totalBytes > 0 ? state.percent / 100 : null,
             translatorAmount(context, receivedBytes, totalBytes),
             remaining == null
                 ? null
@@ -209,7 +210,7 @@ class _SheetLayout extends StatelessWidget {
   final String line;
   final (String start, String end)? sizes;
   final String? privacy;
-  final (double value, String amount, String? note)? progress;
+  final (double? value, String amount, String? note)? progress;
   final _Action primary;
   final _Action secondary;
 
@@ -229,7 +230,10 @@ class _SheetLayout extends StatelessWidget {
         ),
         if (progress case (final value, final amount, final note)) ...[
           const SizedBox(height: 16),
-          LinearProgressIndicator(value: value),
+          LinearProgressIndicator(
+            value: value,
+            backgroundColor: context.backgroundReadableColors.divider,
+          ),
           const SizedBox(height: 8),
           Row(
             children: [

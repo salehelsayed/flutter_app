@@ -100,7 +100,10 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               if (state is ModelDownloading)
                 Padding(
                   padding: const EdgeInsetsDirectional.fromSTEB(40, 0, 14, 10),
-                  child: LinearProgressIndicator(value: state.percent / 100),
+                  child: LinearProgressIndicator(
+                    value: state.totalBytes > 0 ? state.percent / 100 : null,
+                    backgroundColor: context.backgroundReadableColors.divider,
+                  ),
                 ),
               divider,
               ValueListenableBuilder<String?>(
