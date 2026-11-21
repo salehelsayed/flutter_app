@@ -53,10 +53,16 @@ final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  for (final inviteDuringSigning in [false, true]) {
+  for (final (inviteDuringSigning, coldBackground) in [
+    (false, false),
+    (true, false),
+    (false, true),
+  ]) {
     test(
-      'BL54 cold iOS wake preserves the endpoint until the admitted call ends '
-      '(invite during signing: $inviteDuringSigning)',
+      coldBackground
+          ? 'BL54 cold background wake receives a terminal before initial advertisement'
+          : 'BL54 cold iOS wake preserves the endpoint until the admitted call ends '
+                '(invite during signing: $inviteDuringSigning)',
       () async {
         const deadline = Duration(seconds: 3);
         const nowMs = 2_000_000;
@@ -70,8 +76,10 @@ void main() {
         };
         var relayEndpoint = previousEndpoint;
         final firstPublication = Completer<void>();
+        var foreground = !coldBackground;
         final fixture = await _createFixture(
           videoEnabled: true,
+          isForeground: () => foreground,
         ).timeout(deadline);
         final invite = CallSignalV2.fromMap({
           'schema': CallSignalV2.schema,
@@ -135,6 +143,7 @@ void main() {
         };
 
         var inviteAvailable = !inviteDuringSigning;
+        var terminalPending = coldBackground;
         responses['call_retrieve_v1'] = (_) async {
           final events = <Map<String, Object?>>[];
           if (inviteAvailable) {
@@ -186,13 +195,18 @@ void main() {
               'receiptAtMs': nowMs,
               'expiresAtMs': invite.expiresAtMs,
             });
+          } else if (terminalPending) {
+            terminalPending = false;
+            final graph = fixture.graphs.single;
+            expect(graph.coordinator.activeSession?.state, CallState.ringing);
+            await _endCall(graph).timeout(deadline);
           }
           return {
             'ok': true,
             'events': events,
             'receiptAtMs': nowMs,
             'expiresAtMs': invite.expiresAtMs,
-            'hasMore': false,
+            'hasMore': coldBackground && events.isNotEmpty,
           };
         };
         if (inviteDuringSigning) {
@@ -212,19 +226,45 @@ void main() {
         await fixture.composition.onCallWake().timeout(deadline);
         final graph = fixture.graphs.single;
         expect(fixture.composition.isStarted, isTrue);
-        expect(graph.coordinator.activeSession?.callId, _callA);
-        expect(graph.coordinator.activeSession?.state, CallState.ringing);
-        expect(graph.videoContexts?.admittedV2Endpoint(_callA), isNotNull);
-        expect(fixture.bridge.commands, contains('call_ack_v1'));
-        expect(fixture.tokenSet.calls, greaterThan(0));
-        expect(fixture.bridge.commands, contains('call_wake_handle_set_v1'));
-        expect(relayEndpoint, same(previousEndpoint));
-        expect(
-          fixture.bridge.commands,
-          isNot(contains('call_endpoint_set_v1')),
-        );
+        expect(graph.runtime.isStarted, isTrue);
+        if (coldBackground) {
+          expect(terminalPending, isFalse);
+          expect(graph.coordinator.lastSnapshot?.isTerminal, isTrue);
+          expect(fixture.composition.isOutgoingCallAvailable, isFalse);
+          expect(fixture.tokenSet.calls, 0);
+          expect(
+            fixture.bridge.commands,
+            isNot(contains('call_wake_handle_set_v1')),
+          );
+          expect(relayEndpoint, same(previousEndpoint));
+          expect(
+            fixture.lifecycleMethods,
+            isNot(contains('disableCapability')),
+          );
+          expect(fixture.lifecycleMethods, isNot(contains('failClosed')));
 
-        await _endCall(graph).timeout(deadline);
+          foreground = true;
+          expect(
+            await fixture.composition.onResume().timeout(deadline),
+            isTrue,
+          );
+          expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+          expect(fixture.tokenSet.calls, 1);
+        } else {
+          expect(graph.coordinator.activeSession?.callId, _callA);
+          expect(graph.coordinator.activeSession?.state, CallState.ringing);
+          expect(graph.videoContexts?.admittedV2Endpoint(_callA), isNotNull);
+          expect(fixture.bridge.commands, contains('call_ack_v1'));
+          expect(fixture.tokenSet.calls, greaterThan(0));
+          expect(fixture.bridge.commands, contains('call_wake_handle_set_v1'));
+          expect(relayEndpoint, same(previousEndpoint));
+          expect(
+            fixture.bridge.commands,
+            isNot(contains('call_endpoint_set_v1')),
+          );
+
+          await _endCall(graph).timeout(deadline);
+        }
         await firstPublication.future.timeout(deadline);
         expect(
           fixture.bridge.commands.where((cmd) => cmd == 'call_endpoint_set_v1'),
@@ -703,6 +743,54 @@ void main() {
         fixture.lifecycleMethods.where((method) => method == 'failClosed'),
         hasLength(1),
       );
+    },
+  );
+
+  test(
+    'BL54 warm background terminal waits for foreground to refresh the endpoint',
+    () async {
+      const deadline = Duration(seconds: 3);
+      var foreground = true;
+      final fixture = await _createFixture(
+        videoEnabled: true,
+        isForeground: () => foreground,
+      ).timeout(deadline);
+      await fixture.composition.start().timeout(deadline);
+      final graph = fixture.graphs.single;
+      await _ringIncoming(graph).timeout(deadline);
+      await fixture.composition.onResume().timeout(deadline);
+      expect(
+        _details(
+          fixture.flowEvents,
+          'CALL_CAPABILITY_ADVERTISEMENT_RESULT',
+        ).last,
+        containsPair('outcome', 'deferred_live_call'),
+      );
+
+      final tokenSets = fixture.tokenSet.calls;
+      int count(String command) => fixture.bridge.commands
+          .where((candidate) => candidate == command)
+          .length;
+      final wakeSets = count('call_wake_handle_set_v1');
+      final endpointSets = count('call_endpoint_set_v1');
+      foreground = false;
+      await fixture.composition.onBackgrounded().timeout(deadline);
+      await _endCall(graph).timeout(deadline);
+      await _settle().timeout(deadline);
+
+      expect(fixture.composition.isStarted, isTrue);
+      expect(graph.runtime.isStarted, isTrue);
+      expect(fixture.tokenSet.calls, tokenSets);
+      expect(count('call_wake_handle_set_v1'), wakeSets);
+      expect(count('call_endpoint_set_v1'), endpointSets);
+      expect(fixture.lifecycleMethods, isNot(contains('disableCapability')));
+      expect(fixture.lifecycleMethods, isNot(contains('failClosed')));
+
+      foreground = true;
+      expect(await fixture.composition.onResume().timeout(deadline), isTrue);
+      expect(fixture.tokenSet.calls, tokenSets + 1);
+      expect(count('call_wake_handle_set_v1'), wakeSets + 1);
+      expect(count('call_endpoint_set_v1'), endpointSets + 1);
     },
   );
 
@@ -1276,6 +1364,7 @@ final class _Fixture {
 
 Future<_Fixture> _createFixture({
   int Function()? nowMs,
+  bool Function()? isForeground,
   bool videoEnabled = false,
   Set<String> failingLifecycleMethods = const <String>{},
 }) async {
@@ -1423,7 +1512,7 @@ Future<_Fixture> _createFixture({
         PlatformCallVideoQualityEnvironmentSource(),
     pictureInPictureBridgeFactory: () =>
         PlatformCallPictureInPictureBridge(),
-    isForeground: () => true,
+    isForeground: isForeground ?? () => true,
     nowMs: nowMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
   );
