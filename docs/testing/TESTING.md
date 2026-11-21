@@ -5071,6 +5071,24 @@ updates do not emit `postChanges`. Keep asynchronous loads fenced to the
 displayed card. Host image/video/voice fixtures prove metadata, renderer reuse,
 retry and stale-completion behavior, not native decoding or audible playback.
 
+An open 3D card consumes same-post attachment commits while an earlier download
+waits. Order snapshot reads before applying them, and resolve each queued media
+ID against the latest snapshot before starting a transfer. This preserves a
+carousel photo that another downloader has already committed. The card offers
+one Retry control and schedules one short retry for a classified transient
+failure. Leaving or changing cards cancels its retry and waits. The existing
+downloader keeps ownership of any active transfer.
+
+BL-52 passed seven focused Linux cases and all 30 depth-media widget cases at
+`5e835b881`. The carousel RED observed a second request for the already visible
+photo. The first GREEN attempts also retain the receiver snapshot miss and the
+uncanceled wait timers. Exact receipts are in
+`~/.codex/investigations/bl52-orbit-story-media-codex2-20261121/`. The diagnostics
+case checks closed upload and download failure values. Local exports include the
+story age bucket and initiating surface. The deployed relay receives the
+existing failure, retry and count fields. Two-peer phone evidence and the
+original TestFlight download error remain unverified by these host cases.
+
 Gesture cases include a stationary primary tap plus a second finger moving
 13 pixels across the pinch threshold: current pointer count at tap callback
 time cannot prove the sequence was single-touch. Suppress the entire cancelled
