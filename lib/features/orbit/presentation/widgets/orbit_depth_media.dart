@@ -169,9 +169,13 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
       final initialMedia = await _waitForMedia(widget.load(postId));
       if (initialMedia == null || !current()) return;
       setState(() => _applySnapshot(initialMedia, initialVersion));
-      for (final attachment in _media) {
+      for (final queued in _media) {
         if (!current()) return;
-        if (_hasLocalFile(attachment) ||
+        final attachment = _media
+            .where((item) => item.mediaId == queued.mediaId)
+            .firstOrNull;
+        if (attachment == null ||
+            _hasLocalFile(attachment) ||
             (transientOnly &&
                 attachment.downloadStatus !=
                     kMediaDownloadStatusRetryWaiting)) {
