@@ -13,6 +13,12 @@ const _targetFps = 12;
 
 enum AnimatedStickerCodecFailure { invalidInput, budgetExceeded }
 
+enum CircularStickerPass { fullColor, fiveBit, fallback }
+
+final class CircularStickerPassDidNotFit implements Exception {
+  const CircularStickerPassDidNotFit();
+}
+
 final class AnimatedStickerCodecException implements Exception {
   const AnimatedStickerCodecException(this.failure);
 
@@ -88,6 +94,7 @@ EncodedStickerAnimation encodeStickerAnimation({
   required int durationMs,
   required bool circle,
   Uint8List? textOverlay,
+  CircularStickerPass? only,
 }) {
   final sampleCount = stickerAnimationSampleTimes(durationMs).length;
   if (croppedFrames.length != sampleCount ||
@@ -161,8 +168,11 @@ EncodedStickerAnimation encodeStickerAnimation({
 
   _ProfileResult? selected;
   if (circle) {
-    selected = tryProfile(_circleFullColor);
-    if (selected == null) {
+    if (only == null || only == CircularStickerPass.fullColor) {
+      selected = tryProfile(_circleFullColor);
+    }
+    if (selected == null &&
+        (only == null || only == CircularStickerPass.fiveBit)) {
       // The 8 fps sampling grid is a subset of the 12 fps grid. Both profiles
       // use the same pixels and lossless frame encoder, so the larger grid
       // cannot fit when its subset already exceeds the animation cap.
@@ -177,13 +187,15 @@ EncodedStickerAnimation encodeStickerAnimation({
       }
     }
   }
-  if (selected == null) {
+  if (selected == null &&
+      (only == null || only == CircularStickerPass.fallback)) {
     for (final profile in circle ? _circleFallbacks : _opaqueProfiles) {
       selected = tryProfile(profile);
       if (selected != null) break;
     }
   }
   if (selected == null) {
+    if (only != null) throw const CircularStickerPassDidNotFit();
     throw const AnimatedStickerCodecException(
       AnimatedStickerCodecFailure.budgetExceeded,
     );

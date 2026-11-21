@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
+import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/features/stickers/application/animated_sticker_codec.dart';
@@ -32,13 +35,16 @@ final class StickerClipExportException implements Exception {
 final class StickerClipExporter {
   StickerClipExporter({
     Future<Directory> Function() temporaryDirectory = getTemporaryDirectory,
-  }) : _temporaryDirectory = temporaryDirectory;
+    @visibleForTesting bool? parallelEncoding,
+  }) : _temporaryDirectory = temporaryDirectory,
+       _parallelEncoding = parallelEncoding;
 
   static const _channel = MethodChannel('mknoon/custom_sticker_clip_frames');
   static const _maxSourceBytes = 64 * 1024 * 1024;
   static bool _exporting = false;
 
   final Future<Directory> Function() _temporaryDirectory;
+  final bool? _parallelEncoding;
   _ExportJob? _job;
 
   Future<NormalizedStickerAsset?> export({
@@ -120,6 +126,11 @@ final class StickerClipExporter {
         durationMs: duration,
         circle: circle,
         overlay: overlay,
+        parallel:
+            _parallelEncoding ??
+            ((Platform.isAndroid || Platform.isIOS) &&
+                Platform.numberOfProcessors >= 6 &&
+                frameCount >= 12),
       );
       if (encoded == null || job.cancelled) return null;
       final canonical = File(p.join(directory.path, 'sticker.webp'));
@@ -229,6 +240,8 @@ final class _ExportJob {
   void Function()? stopEncoding;
 }
 
+typedef _SharedFrames = ({int address, CircularStickerPass pass});
+
 typedef _EncodeRequest = ({
   SendPort reply,
   String framesPath,
@@ -236,6 +249,13 @@ typedef _EncodeRequest = ({
   int durationMs,
   bool circle,
   Uint8List? overlay,
+  _SharedFrames? sharedFrames,
+});
+
+typedef _CodecWorker = ({
+  Isolate isolate,
+  Future<Object?> result,
+  Future<void> exited,
 });
 
 Future<EncodedStickerAnimation?> _encodeInWorker(
@@ -245,55 +265,163 @@ Future<EncodedStickerAnimation?> _encodeInWorker(
   required int durationMs,
   required bool circle,
   required Uint8List? overlay,
+  required bool parallel,
 }) async {
-  final port = ReceivePort();
-  final response = port.first;
-  Isolate? isolate;
+  final running = <_CodecWorker>[];
+  Pointer<Uint8>? storage;
+
+  Future<_CodecWorker> start(_SharedFrames? sharedFrames) async {
+    final port = ReceivePort();
+    final result = Completer<Object?>();
+    final exited = Completer<void>();
+    port.listen((message) {
+      if (!result.isCompleted) result.complete(message);
+      if (message == null) {
+        exited.complete();
+        port.close();
+      }
+    });
+
+    try {
+      final isolate = await Isolate.spawn(
+        _runCodec,
+        (
+          reply: port.sendPort,
+          framesPath: framesPath,
+          frameCount: frameCount,
+          durationMs: durationMs,
+          circle: circle,
+          overlay: overlay,
+          sharedFrames: sharedFrames,
+        ),
+        onError: port.sendPort,
+        onExit: port.sendPort,
+      );
+      final worker = (
+        isolate: isolate,
+        result: result.future,
+        exited: exited.future,
+      );
+      running.add(worker);
+      if (job.cancelled) isolate.kill(priority: Isolate.immediate);
+      return worker;
+    } catch (_) {
+      port.close();
+      rethrow;
+    }
+  }
+
+  void stop() {
+    for (final worker in running) {
+      worker.isolate.kill(priority: Isolate.immediate);
+    }
+  }
+
+  Future<void> stopAndJoin() async {
+    stop();
+    await Future.wait(running.map((worker) => worker.exited));
+    running.clear();
+  }
+
+  job.stopEncoding = stop;
   try {
-    final worker = await Isolate.spawn(
-      _runCodec,
-      (
-        reply: port.sendPort,
-        framesPath: framesPath,
-        frameCount: frameCount,
-        durationMs: durationMs,
-        circle: circle,
-        overlay: overlay,
-      ),
-      onError: port.sendPort,
-      onExit: port.sendPort,
-    );
-    isolate = worker;
-    job.stopEncoding = () => worker.kill(priority: Isolate.immediate);
-    if (job.cancelled) job.stopEncoding!();
-    final result = await response;
+    if (parallel && circle) {
+      final expectedBytes = frameCount * stickerAnimationFrameBytes;
+      try {
+        storage = malloc<Uint8>(expectedBytes);
+      } on ArgumentError {
+        // The serial exporter remains available if the shared allocation fails.
+      }
+      if (storage case final shared?) {
+        final bytes = shared.asTypedList(expectedBytes);
+        final file = await File(framesPath).open();
+        try {
+          for (var offset = 0; offset < bytes.length;) {
+            if (job.cancelled) return null;
+            final end = (offset + stickerAnimationFrameBytes).clamp(
+              0,
+              bytes.length,
+            );
+            final count = await file.readInto(bytes, offset, end);
+            if (count <= 0) {
+              throw const AnimatedStickerCodecException(
+                AnimatedStickerCodecFailure.invalidInput,
+              );
+            }
+            offset += count;
+          }
+          if (await file.readByte() != -1) {
+            throw const AnimatedStickerCodecException(
+              AnimatedStickerCodecFailure.invalidInput,
+            );
+          }
+        } finally {
+          await file.close();
+        }
+      }
+    }
     if (job.cancelled) return null;
-    if (result is AnimatedStickerCodecException) throw result;
-    if (result is EncodedStickerAnimation) return result;
-    throw const StickerClipExportException(
-      StickerClipExportFailure.unavailable,
+
+    List<_CodecWorker> workers;
+    if (storage case final shared?) {
+      try {
+        workers = await Future.wait([
+          for (final pass in CircularStickerPass.values)
+            start((address: shared.address, pass: pass)),
+        ]);
+      } on IsolateSpawnException {
+        await stopAndJoin();
+        malloc.free(shared);
+        storage = null;
+        if (job.cancelled) return null;
+        workers = [await start(null)];
+      }
+    } else {
+      workers = [await start(null)];
+    }
+    // Resolve results in profile order even when a lower quality pass finishes first.
+    for (final worker in workers) {
+      final result = await worker.result;
+      if (job.cancelled) return null;
+      if (result is CircularStickerPassDidNotFit) continue;
+      if (result is AnimatedStickerCodecException) throw result;
+      if (result is EncodedStickerAnimation) return result;
+      throw const StickerClipExportException(
+        StickerClipExportFailure.unavailable,
+      );
+    }
+    throw const AnimatedStickerCodecException(
+      AnimatedStickerCodecFailure.budgetExceeded,
     );
   } finally {
+    // Every worker views the same read-only frame bytes, which remain live
+    // until all isolates have finished even when an earlier pass wins.
+    await stopAndJoin();
+    if (storage case final shared?) malloc.free(shared);
     job.stopEncoding = null;
-    isolate?.kill(priority: Isolate.immediate);
-    port.close();
   }
 }
 
 void _runCodec(_EncodeRequest request) {
   try {
     final expectedBytes = request.frameCount * stickerAnimationFrameBytes;
-    final file = File(request.framesPath).openSync();
     final Uint8List bytes;
-    try {
-      bytes = file.readSync(expectedBytes + 1);
-    } finally {
-      file.closeSync();
-    }
-    if (bytes.length != expectedBytes) {
-      throw const AnimatedStickerCodecException(
-        AnimatedStickerCodecFailure.invalidInput,
-      );
+    if (request.sharedFrames case final shared?) {
+      bytes = Pointer<Uint8>.fromAddress(
+        shared.address,
+      ).asTypedList(expectedBytes).asUnmodifiableView();
+    } else {
+      final file = File(request.framesPath).openSync();
+      try {
+        bytes = file.readSync(expectedBytes + 1);
+      } finally {
+        file.closeSync();
+      }
+      if (bytes.length != expectedBytes) {
+        throw const AnimatedStickerCodecException(
+          AnimatedStickerCodecFailure.invalidInput,
+        );
+      }
     }
     final frames = List.generate(
       request.frameCount,
@@ -310,8 +438,11 @@ void _runCodec(_EncodeRequest request) {
         durationMs: request.durationMs,
         circle: request.circle,
         textOverlay: request.overlay,
+        only: request.sharedFrames?.pass,
       ),
     );
+  } on CircularStickerPassDidNotFit catch (error) {
+    Isolate.exit(request.reply, error);
   } on AnimatedStickerCodecException catch (error) {
     Isolate.exit(request.reply, error);
   }
