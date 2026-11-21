@@ -70,8 +70,9 @@ void main() {
         };
         var relayEndpoint = previousEndpoint;
         final firstPublication = Completer<void>();
-        final fixture = await _createFixture(videoEnabled: true)
-            .timeout(deadline);
+        final fixture = await _createFixture(
+          videoEnabled: true,
+        ).timeout(deadline);
         final invite = CallSignalV2.fromMap({
           'schema': CallSignalV2.schema,
           'call_id': _callA.value,
