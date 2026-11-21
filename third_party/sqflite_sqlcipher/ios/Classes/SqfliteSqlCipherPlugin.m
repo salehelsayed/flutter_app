@@ -3,6 +3,7 @@
 // Include files differs on iOS and macOS
 #if TARGET_OS_IPHONE
 #import <fmdb/FMDB.h>
+#import <UIKit/UIKit.h>
 #else
 #import <FMDB/FMDB.h>
 #endif
@@ -40,6 +41,7 @@ static NSString *const _paramOperations = @"operations";
 static NSString *const _paramPath = @"path";
 static NSString *const _paramPassword = @"password";
 static NSString *const _paramId = @"id";
+static NSString *const _paramTransactionId = @"transactionId";
 static NSString *const _paramTable = @"table";
 static NSString *const _paramValues = @"values";
 
@@ -72,6 +74,69 @@ NSString *const SqfliteSqlCipherParamErrorMessage = @"message";
 NSString *const SqfliteSqlCipherParamErrorData = @"data";
 
 
+static NSString *const _errorGrantUnavailable = @"background_grant_unavailable";
+static NSString *const _errorTransactionAborted = @"transaction_aborted";
+// Leave the configured five-second SQLite busy wait and a cleanup margin.
+static NSTimeInterval const _backgroundDrainMargin = 7;
+static int64_t const _expirationDrainNanos = 2 * NSEC_PER_SEC;
+
+@interface SqfliteSuspensionLease : NSObject
+@property (atomic, getter=isRevoked) BOOL revoked;
+@property (nonatomic) UIBackgroundTaskIdentifier identifier;
+@property (nonatomic) NSUInteger pending;
+@property (nonatomic) BOOL draining;
+@property (nonatomic, strong) dispatch_block_t deadline;
+@property (nonatomic, readonly, strong) dispatch_group_t drain;
+- (BOOL)beginSQLite:(sqlite3 *)handle;
+- (void)finishSQLite;
+- (void)revoke;
+@end
+
+@implementation SqfliteSuspensionLease {
+    sqlite3 *_workingHandle;
+}
+
+static int sqliteSuspensionProgress(void *context) {
+    return [(__bridge SqfliteSuspensionLease *)context isRevoked];
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _identifier = UIBackgroundTaskInvalid;
+        _drain = dispatch_group_create();
+    }
+    return self;
+}
+
+- (BOOL)beginSQLite:(sqlite3 *)handle {
+    @synchronized (self) {
+        if (self.revoked || handle == NULL) {
+            return NO;
+        }
+        _workingHandle = handle;
+        sqlite3_progress_handler(handle, 1000, sqliteSuspensionProgress, (__bridge void *)self);
+        return YES;
+    }
+}
+
+- (void)finishSQLite {
+    @synchronized (self) {
+        sqlite3_progress_handler(_workingHandle, 0, NULL, NULL);
+        _workingHandle = NULL;
+    }
+}
+
+- (void)revoke {
+    @synchronized (self) {
+        self.revoked = YES;
+        if (_workingHandle != NULL) {
+            sqlite3_interrupt(_workingHandle);
+        }
+    }
+}
+@end
+
 @interface SqfliteSqlCipherDatabase : NSObject
 
 @property (atomic, retain) FMDatabaseQueue *fmDatabaseQueue;
@@ -79,6 +144,8 @@ NSString *const SqfliteSqlCipherParamErrorData = @"data";
 @property (atomic, retain) NSString* path;
 @property (nonatomic) bool singleInstance;
 @property (nonatomic) bool inTransaction;
+@property (nonatomic, strong) NSNumber *transactionId;
+@property (nonatomic) BOOL rawTransactionAborted;
 @property (nonatomic) int logLevel;
 
 @end
@@ -88,6 +155,15 @@ NSString *const SqfliteSqlCipherParamErrorData = @"data";
 @property (atomic, retain) NSMutableDictionary<NSNumber*, SqfliteSqlCipherDatabase*>* databaseMap;
 @property (atomic, retain) NSMutableDictionary<NSString*, SqfliteSqlCipherDatabase*>* singleInstanceDatabaseMap;
 @property (atomic, retain) NSObject* mapLock;
+// UIKit admission and end run on main. SQLite state and every file operation
+// belong to operationQueue, and the lease pins its interruptible handle.
+@property (nonatomic, strong) dispatch_queue_t operationQueue;
+@property (nonatomic, strong) SqfliteSuspensionLease *backgroundLease;
+@property (nonatomic, strong) SqfliteSuspensionLease *executingLease;
+@property (nonatomic) NSInteger lastTransactionId;
+@property (nonatomic) NSInteger lastDatabaseId;
+- (void)handleDatabaseCall:(FlutterMethodCall *)call result:(FlutterResult)result;
+- (void)closeDatabase:(SqfliteSqlCipherDatabase *)database;
 
 @end
 
@@ -103,12 +179,12 @@ NSString *const SqfliteSqlCipherParamErrorData = @"data";
 @synthesize databaseMap;
 @synthesize mapLock;
 
-static bool _queryAsMapList = false;
+static _Atomic(bool) _queryAsMapList = false;
 static const int logLevelNone = 0;
 static const int logLevelSql = 1;
 static const int logLevelVerbose = 2;
 
-static int logLevel = logLevelNone;
+static _Atomic(int) logLevel = 0;
 
 // True for basic debugging (open/close and sql)
 static bool hasSqlLogLevel(int logLevel) {
@@ -125,8 +201,15 @@ static BOOL _extra_log = false;
 
 static BOOL __extra_log = false; // to set to true for type debugging
 
-static NSInteger _lastDatabaseId = 0;
-static NSInteger _databaseOpenCount = 0;
+static BOOL isRollback(NSString *sql) {
+    return sql != nil &&
+        [[sql stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]
+            caseInsensitiveCompare:@"ROLLBACK"] == NSOrderedSame;
+}
+
+static FlutterError *suspensionError(NSString *message) {
+    return [FlutterError errorWithCode:_sqliteErrorCode message:message details:nil];
+}
 
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
@@ -143,8 +226,233 @@ static NSInteger _databaseOpenCount = 0;
         self.databaseMap = [NSMutableDictionary new];
         self.singleInstanceDatabaseMap = [NSMutableDictionary new];
         self.mapLock = [NSObject new];
+        self.operationQueue = dispatch_queue_create("com.mknoon.sqlcipher", DISPATCH_QUEUE_SERIAL);
+        [[NSNotificationCenter defaultCenter] addObserver:self
+            selector:@selector(applicationDidEnterBackground:)
+            name:UIApplicationDidEnterBackgroundNotification
+            object:nil];
     }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)finishLease:(SqfliteSuspensionLease *)lease {
+    if (self.backgroundLease == lease) {
+        self.backgroundLease = nil;
+    }
+    if (lease.deadline != nil) {
+        dispatch_block_cancel(lease.deadline);
+        lease.deadline = nil;
+    }
+    UIBackgroundTaskIdentifier identifier = lease.identifier;
+    lease.identifier = UIBackgroundTaskInvalid;
+    if (identifier != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:identifier];
+    }
+}
+
+- (void)drainLease:(SqfliteSuspensionLease *)lease {
+    if (lease.draining) {
+        return;
+    }
+    [lease revoke];
+    lease.draining = YES;
+    dispatch_group_enter(lease.drain);
+    dispatch_async(self.operationQueue, ^{
+        for (SqfliteSqlCipherDatabase *database in self.databaseMap.allValues) {
+            if (!database.inTransaction) {
+                continue;
+            }
+            [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
+                sqlite3 *handle = db.sqliteHandle;
+                if (handle == NULL) {
+                    return;
+                }
+                [db closeOpenResultSets];
+                if (!sqlite3_get_autocommit(handle)) {
+                    [db executeUpdate:@"ROLLBACK"];
+                }
+                database.inTransaction = !sqlite3_get_autocommit(handle);
+            }];
+            if (database.inTransaction) {
+                // Retire a connection that could not roll back.
+                [self closeDatabase:database];
+            } else {
+                database.rawTransactionAborted = database.transactionId == nil;
+                database.transactionId = nil;
+            }
+        }
+        dispatch_group_leave(lease.drain);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self finishLease:lease];
+        });
+    });
+}
+
+- (void)scheduleDrain:(SqfliteSuspensionLease *)lease {
+    UIApplication *application = [UIApplication sharedApplication];
+    if (lease == nil || lease.draining || lease.deadline != nil ||
+        application.applicationState != UIApplicationStateBackground) {
+        return;
+    }
+    NSTimeInterval remaining = application.backgroundTimeRemaining;
+    if (remaining <= _backgroundDrainMargin) {
+        [self drainLease:lease];
+        return;
+    }
+    // The reported deadline can be initially unbounded.
+    NSTimeInterval delay = MIN(remaining - _backgroundDrainMargin, 1);
+    __weak typeof(self) weakSelf = self;
+    __weak SqfliteSuspensionLease *weakLease = lease;
+    lease.deadline = dispatch_block_create(0, ^{
+        SqfliteSqlCipherPlugin *plugin = weakSelf;
+        SqfliteSuspensionLease *scheduledLease = weakLease;
+        if (scheduledLease != nil && scheduledLease == plugin.backgroundLease) {
+            scheduledLease.deadline = nil;
+            [plugin scheduleDrain:scheduledLease];
+        }
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), lease.deadline);
+}
+
+- (void)applicationDidEnterBackground:(NSNotification *)notification {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self scheduleDrain:self.backgroundLease];
+    });
+}
+
+- (void)performDatabaseCall:(FlutterMethodCall *)call result:(FlutterResult)result {
+    UIApplication *application = [UIApplication sharedApplication];
+    SqfliteSuspensionLease *lease = self.backgroundLease;
+    if (application.applicationState == UIApplicationStateBackground &&
+        application.backgroundTimeRemaining <= _backgroundDrainMargin) {
+        if (lease != nil) {
+            [self drainLease:lease];
+        }
+        result(suspensionError(_errorGrantUnavailable));
+        return;
+    }
+    if (lease == nil) {
+        lease = [SqfliteSuspensionLease new];
+        self.backgroundLease = lease;
+        // UIKit retains this assertion's owner between transaction calls.
+        SqfliteSuspensionLease *newLease = lease;
+        lease.identifier = [application beginBackgroundTaskWithName:@"mknoon.sqlcipher"
+            expirationHandler:^{
+                if (self.backgroundLease != newLease) {
+                    return;
+                }
+                [self drainLease:newLease];
+                // The worker never synchronously calls main. A kernel I/O
+                // call that fails to return cannot be interrupted here.
+                dispatch_group_wait(newLease.drain,
+                    dispatch_time(DISPATCH_TIME_NOW, _expirationDrainNanos));
+                [self finishLease:newLease];
+            }];
+        if (lease.identifier == UIBackgroundTaskInvalid || lease.revoked) {
+            [self finishLease:lease];
+            result(suspensionError(_errorGrantUnavailable));
+            return;
+        }
+        [self scheduleDrain:lease];
+    }
+    if (lease.revoked) {
+        result(suspensionError(_errorGrantUnavailable));
+        return;
+    }
+    lease.pending++;
+    dispatch_async(self.operationQueue, ^{
+        __block id output;
+        SqfliteSqlCipherDatabase *database = nil;
+        if (lease.revoked) {
+            output = suspensionError(_errorGrantUnavailable);
+        } else {
+            NSNumber *databaseId = call.arguments[_paramId];
+            if (databaseId != nil) {
+                database = self.databaseMap[databaseId];
+            }
+            self.executingLease = lease;
+            [self handleDatabaseCall:call result:^(id value) {
+                output = value;
+            }];
+            self.executingLease = nil;
+        }
+        BOOL transactionStillOpen = database.inTransaction;
+        BOOL anyTransaction = NO;
+        for (SqfliteSqlCipherDatabase *handle in self.databaseMap.allValues) {
+            if (handle.inTransaction) {
+                anyTransaction = YES;
+                break;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            lease.pending--;
+            if (!lease.draining && lease.pending == 0 && !anyTransaction) {
+                [self finishLease:lease];
+            }
+            result(transactionStillOpen && lease.revoked
+                ? suspensionError(_errorTransactionAborted) : output);
+        });
+    });
+}
+
+- (void)withDatabase:(SqfliteSqlCipherDatabase *)database
+                 call:(FlutterMethodCall *)call
+               result:(FlutterResult)result
+                 work:(void (^)(FMDatabase *))work {
+    SqfliteSuspensionLease *lease = self.executingLease;
+    id requestedId = call.arguments[_paramTransactionId];
+    BOOL rollback = [_methodExecute isEqualToString:call.method] &&
+        isRollback(call.arguments[SqfliteSqlCipherParamSql]);
+    BOOL managedBegin = requestedId == NSNull.null &&
+        [_methodExecute isEqualToString:call.method] &&
+        [call.arguments[SqfliteSqlCipherParamInTransaction] boolValue];
+    BOOL forceRollback = rollback && [requestedId isEqual:@(-1)];
+    if (database.rawTransactionAborted) {
+        if (rollback) {
+            database.rawTransactionAborted = NO;
+            result(nil);
+        } else {
+            result(suspensionError(_errorTransactionAborted));
+        }
+        return;
+    }
+    BOOL matchingTransaction = database.transactionId != nil &&
+        [database.transactionId isEqual:requestedId];
+    if (!forceRollback &&
+        ((database.transactionId != nil && !matchingTransaction) ||
+         (database.transactionId == nil && requestedId != nil && !managedBegin))) {
+        // A late ROLLBACK is cleanup for a retired transaction. A late
+        // COMMIT or a continuation must never act on the live connection.
+        result(rollback && !matchingTransaction && requestedId != nil
+            ? nil : suspensionError(_errorTransactionAborted));
+        return;
+    }
+    [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
+        sqlite3 *handle = db.sqliteHandle;
+        if (![lease beginSQLite:handle]) {
+            result(suspensionError(_errorGrantUnavailable));
+            return;
+        }
+        BOOL rawTransaction = database.inTransaction && database.transactionId == nil;
+        @try {
+            work(db);
+        } @finally {
+            [lease finishSQLite];
+            [db closeOpenResultSets];
+            database.inTransaction = !sqlite3_get_autocommit(handle);
+            if (!database.inTransaction) {
+                if (rawTransaction && lease.revoked) {
+                    database.rawTransactionAborted = YES;
+                }
+                database.transactionId = nil;
+            }
+        }
+    }];
 }
 
 - (SqfliteSqlCipherDatabase *)getDatabaseOrError:(FlutterMethodCall*)call result:(FlutterResult)result {
@@ -278,7 +586,6 @@ static NSInteger _databaseOpenCount = 0;
 - (bool)executeOrError:(SqfliteSqlCipherDatabase*)database fmdb:(FMDatabase*)db operation:(SqfliteSqlCipherOperation*)operation {
     NSString* sql = [operation getSql];
     NSArray* sqlArguments = [operation getSqlArguments];
-    NSNumber* inTransaction = [operation getInTransactionArgument];
     BOOL argumentsEmpty = [SqfliteSqlCipherPlugin arrayIsEmpy:sqlArguments];
     if (hasSqlLogLevel(database.logLevel)) {
         NSLog(@"%@ %@", sql, argumentsEmpty ? @"" : sqlArguments);
@@ -290,26 +597,7 @@ static NSInteger _databaseOpenCount = 0;
         [db executeUpdate: sql];
     }
     
-    // If wanted, we leave the transaction even if it fails
-    if (inTransaction != nil) {
-        if (![inTransaction boolValue]) {
-            database.inTransaction = false;
-        }
-    }
-    
-    // handle error
-    if ([self handleError:db operation:operation]) {
-        return false;
-    }
-    
-    // We enter the transaction on success
-    if (inTransaction != nil) {
-        if ([inTransaction boolValue]) {
-            database.inTransaction = true;
-        }
-    }
-    
-    return true;
+    return ![self handleError:db operation:operation];
 }
 
 //
@@ -332,16 +620,24 @@ static NSInteger _databaseOpenCount = 0;
     
     // handle error
     if ([self handleError:db operation:operation]) {
+        [rs close];
         return false;
     }
     
+    NSError *stepError = nil;
     bool queryAsMapList = _queryAsMapList;
     
     // NSLog(@"queryAsMapList %d", (int)queryAsMapList);
     if (queryAsMapList) {
         NSMutableArray* results = [NSMutableArray new];
-        while ([rs next]) {
+        while ([rs nextWithError:&stepError]) {
             [results addObject:[SqfliteSqlCipherPlugin fromSqlDictionary:[rs resultDictionary]]];
+        }
+        if (stepError != nil) {
+            [operation error:self.executingLease.revoked
+                ? suspensionError(_errorTransactionAborted)
+                : suspensionError(stepError.localizedDescription)];
+            return false;
         }
         [operation success:results];
     } else {
@@ -349,7 +645,7 @@ static NSInteger _databaseOpenCount = 0;
         NSMutableArray* columns = nil;
         NSMutableArray* rows;
         int columnCount = 0;
-        while ([rs next]) {
+        while ([rs nextWithError:&stepError]) {
             if (columns == nil) {
                 columnCount = [rs columnCount];
                 columns = [NSMutableArray new];
@@ -371,6 +667,12 @@ static NSInteger _databaseOpenCount = 0;
         if (hasVerboseLogLevel(database.logLevel)) {
             NSLog(@"columns %@ rows %@", columns, rows);
         }
+        if (stepError != nil) {
+            [operation error:self.executingLease.revoked
+                ? suspensionError(_errorTransactionAborted)
+                : suspensionError(stepError.localizedDescription)];
+            return false;
+        }
         [operation success:results];
     }
     return true;
@@ -381,12 +683,10 @@ static NSInteger _databaseOpenCount = 0;
     if (database == nil) {
         return;
     }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
-            SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-            [self query:database fmdb:db operation:operation];
-        }];
-    });
+    [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
+        SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
+        [self query:database fmdb:db operation:operation];
+    }];
 }
 
 //
@@ -424,12 +724,10 @@ static NSInteger _databaseOpenCount = 0;
     if (database == nil) {
         return;
     }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
-            SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-            [self insert:database fmdb:db operation:operation];
-        }];
-    });
+    [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
+        SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
+        [self insert:database fmdb:db operation:operation];
+    }];
     
 }
 
@@ -458,12 +756,10 @@ static NSInteger _databaseOpenCount = 0;
         return;
     }
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
-            SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-            [self update:database fmdb:db operation:operation];
-        }];
-    });
+    [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
+        SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
+        [self update:database fmdb:db operation:operation];
+    }];
 }
 
 //
@@ -482,12 +778,24 @@ static NSInteger _databaseOpenCount = 0;
     if (database == nil) {
         return;
     }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
-            SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
-            [self execute:database fmdb:db operation:operation];
-        }];
-    });
+    [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
+        FlutterResult executeResult = result;
+        if (sqlite3_get_autocommit(db.sqliteHandle) &&
+            call.arguments[_paramTransactionId] == NSNull.null &&
+            [call.arguments[SqfliteSqlCipherParamInTransaction] boolValue]) {
+            executeResult = ^(id output) {
+                if (![output isKindOfClass:FlutterError.class] &&
+                    !sqlite3_get_autocommit(db.sqliteHandle)) {
+                    database.transactionId = @(++self.lastTransactionId);
+                    result(@{_paramTransactionId: database.transactionId});
+                } else {
+                    result(output);
+                }
+            };
+        }
+        SqfliteSqlCipherMethodCallOperation* operation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:executeResult];
+        [self execute:database fmdb:db operation:operation];
+    }];
     
 }
 
@@ -499,8 +807,7 @@ static NSInteger _databaseOpenCount = 0;
     if (database == nil) {
         return;
     }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [database.fmDatabaseQueue inDatabase:^(FMDatabase *db) {
+    [self withDatabase:database call:call result:result work:^(FMDatabase *db) {
             
             SqfliteSqlCipherMethodCallOperation* mainOperation = [SqfliteSqlCipherMethodCallOperation newWithCall:call result:result];
             bool noResult = [mainOperation getNoResult];
@@ -509,6 +816,10 @@ static NSInteger _databaseOpenCount = 0;
             NSArray* operations = call.arguments[_paramOperations];
             NSMutableArray* operationResults = [NSMutableArray new];
             for (NSDictionary* dictionary in operations) {
+                if (self.executingLease.revoked) {
+                    result(suspensionError(_errorTransactionAborted));
+                    return;
+                }
                 // do something with object
                 
                 SqfliteSqlCipherBatchOperation* operation = [SqfliteSqlCipherBatchOperation new];
@@ -566,8 +877,7 @@ static NSInteger _databaseOpenCount = 0;
                 result(operationResults);
             }
             
-        }];
-    });
+    }];
     
     
 }
@@ -619,7 +929,8 @@ static NSInteger _databaseOpenCount = 0;
                 if (_log) {
                     NSLog(@"re-opened %@singleInstance %@ id %@", database.inTransaction ? @"(in transaction) ": @"", path, database.databaseId);
                 }
-                result([SqfliteSqlCipherPlugin makeOpenResult:database.databaseId recovered:true recoveredInTransaction:database.inTransaction]);
+                result([SqfliteSqlCipherPlugin makeOpenResult:database.databaseId
+                    recovered:true recoveredInTransaction:database.inTransaction || database.rawTransactionAborted]);
                 return;
             }
         }
@@ -648,27 +959,32 @@ static NSInteger _databaseOpenCount = 0;
         return;
     }
 
+    __block BOOL verified = NO;
+    SqfliteSuspensionLease *lease = self.executingLease;
     [queue inDatabase:^(FMDatabase *database) {
-        if (password == nil) {
-            [database setKey:@""];
-        } else {
-            [database setKey:password];
-        }
-        
-        // Actually query the database in order to check the password is correct
-        FMResultSet *s = [database executeQuery:@"SELECT COUNT(*) FROM sqlite_schema"];
-        if (s == nil) {
-            result([FlutterError errorWithCode:_sqliteErrorCode
-                                       message:[NSString stringWithFormat:@"%@ %@", _errorOpenFailed, path]
-                                      details:nil]);
+        if (![lease beginSQLite:database.sqliteHandle]) {
             return;
         }
+        @try {
+            [database setKey:password ?: @""];
+            FMResultSet *probe = [database executeQuery:@"SELECT COUNT(*) FROM sqlite_schema"];
+            verified = [probe next];
+            [probe close];
+        } @finally {
+            [lease finishSQLite];
+        }
     }];
-    
+    if (!verified || lease.revoked) {
+        [queue close];
+        result(lease.revoked ? suspensionError(_errorGrantUnavailable) :
+            suspensionError([NSString stringWithFormat:@"%@ %@", _errorOpenFailed, path]));
+        return;
+    }
+
     NSNumber* databaseId;
     @synchronized (self.mapLock) {
         SqfliteSqlCipherDatabase* database = [SqfliteSqlCipherDatabase new];
-        databaseId = [NSNumber numberWithInteger:++_lastDatabaseId];
+        databaseId = @(++self.lastDatabaseId);
         database.inTransaction = false;
         database.fmDatabaseQueue = queue;
         database.singleInstance = singleInstance;
@@ -679,11 +995,6 @@ static NSInteger _databaseOpenCount = 0;
         // To handle hot-restart recovery
         if (singleInstance) {
             self.singleInstanceDatabaseMap[path] = database;
-        }
-        if (_databaseOpenCount++ == 0) {
-            if (hasVerboseLogLevel(logLevel)) {
-                NSLog(@"Creating operation queue");
-            }
         }
         
     }
@@ -715,16 +1026,13 @@ static NSInteger _databaseOpenCount = 0;
         NSLog(@"closing %@", database.path);
     }
     [database.fmDatabaseQueue close];
+    database.inTransaction = NO;
+    database.transactionId = nil;
     
     @synchronized (self.mapLock) {
         [self.databaseMap removeObjectForKey:database.databaseId];
         if (database.singleInstance) {
             [self.singleInstanceDatabaseMap removeObjectForKey:database.path];
-        }
-        if (--_databaseOpenCount == 0) {
-            if (hasVerboseLogLevel(logLevel)) {
-                NSLog(@"No more databases open");
-            }
         }
     }
 }
@@ -842,46 +1150,54 @@ static NSInteger _databaseOpenCount = 0;
     result(paths.firstObject);
 }
 
-- (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result {
-    FlutterResult wrappedResult = ^(id res) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            result(res);
-        });
-    };
-    
-    if ([_methodGetPlatformVersion isEqualToString:call.method]) {
-#if TARGET_OS_IPHONE
-        result([@"iOS " stringByAppendingString:[[UIDevice currentDevice] systemVersion]]);
-        
-#else
-        result([@"macOS " stringByAppendingString:[[NSProcessInfo processInfo] operatingSystemVersionString]]);
-#endif
-    } else if ([_methodOpenDatabase isEqualToString:call.method]) {
-        [self handleOpenDatabaseCall:call result:wrappedResult];
+- (void)handleDatabaseCall:(FlutterMethodCall *)call result:(FlutterResult)result {
+    if ([_methodOpenDatabase isEqualToString:call.method]) {
+        [self handleOpenDatabaseCall:call result:result];
     } else if ([_methodInsert isEqualToString:call.method]) {
-        [self handleInsertCall:call result:wrappedResult];
+        [self handleInsertCall:call result:result];
     } else if ([_methodQuery isEqualToString:call.method]) {
-        [self handleQueryCall:call result:wrappedResult];
+        [self handleQueryCall:call result:result];
     } else if ([_methodUpdate isEqualToString:call.method]) {
-        [self handleUpdateCall:call result:wrappedResult];
+        [self handleUpdateCall:call result:result];
     } else if ([_methodExecute isEqualToString:call.method]) {
-        [self handleExecuteCall:call result:wrappedResult];
+        [self handleExecuteCall:call result:result];
     } else if ([_methodBatch isEqualToString:call.method]) {
-        [self handleBatchCall:call result:wrappedResult];
+        [self handleBatchCall:call result:result];
+    } else if ([_methodCloseDatabase isEqualToString:call.method]) {
+        [self handleCloseDatabaseCall:call result:result];
+    } else if ([_methodDeleteDatabase isEqualToString:call.method]) {
+        [self handleDeleteDatabaseCall:call result:result];
+    } else {
+        result(FlutterMethodNotImplemented);
+    }
+}
+
+- (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self handleMethodCall:call result:result];
+        });
+        return;
+    }
+    if ([_methodGetPlatformVersion isEqualToString:call.method]) {
+        result([@"iOS " stringByAppendingString:[[UIDevice currentDevice] systemVersion]]);
     } else if ([_methodGetDatabasesPath isEqualToString:call.method]) {
         [self handleGetDatabasesPath:call result:result];
-    } else if ([_methodCloseDatabase isEqualToString:call.method]) {
-        [self handleCloseDatabaseCall:call result:wrappedResult];
-    } else if ([_methodDeleteDatabase isEqualToString:call.method]) {
-        [self handleDeleteDatabaseCall:call result:wrappedResult];
     } else if ([_methodOptions isEqualToString:call.method]) {
         [self handleOptionsCall:call result:result];
     } else if ([_methodDebug isEqualToString:call.method]) {
-        [self handleDebugCall:call
-                       result:result];
+        [self handleDebugCall:call result:result];
     } else if ([_methodDebugMode isEqualToString:call.method]) {
-        [self handleDebugModeCall:call
-                           result:result];
+        [self handleDebugModeCall:call result:result];
+    } else if ([_methodOpenDatabase isEqualToString:call.method] ||
+               [_methodCloseDatabase isEqualToString:call.method] ||
+               [_methodDeleteDatabase isEqualToString:call.method] ||
+               [_methodInsert isEqualToString:call.method] ||
+               [_methodUpdate isEqualToString:call.method] ||
+               [_methodQuery isEqualToString:call.method] ||
+               [_methodExecute isEqualToString:call.method] ||
+               [_methodBatch isEqualToString:call.method]) {
+        [self performDatabaseCall:call result:result];
     } else {
         result(FlutterMethodNotImplemented);
     }

@@ -1,4 +1,4 @@
-# Vendored `sqflite_sqlcipher` 3.4.0 — engine-owned Android scheduler
+# Vendored `sqflite_sqlcipher` 3.4.0 — engine-owned Android scheduler and iOS suspension guard
 
 This fork was copied mechanically from the pub.dev-hosted
 `sqflite_sqlcipher` **3.4.0** package pinned by the root lockfile. The hosted
@@ -38,7 +38,7 @@ engine. App-owned production code has no database-delete caller. Any future
 same-path delete must first establish exclusive runtime ownership outside this
 plugin fork.
 
-The exact allowlisted fork diff, excluding this provenance file, is:
+The reviewed Android changes are:
 
 - modified `android/build.gradle` — adds JUnit 4.13.2 only;
 - modified
@@ -59,13 +59,25 @@ The existing `debug` method with `cmd: get` returns the same map under
 `terminatedInstances`, and `suppressedResults`; it retains no engine IDs,
 database IDs, paths, SQL, keys, or message content.
 
+## Reviewed iOS suspension and channel changes
+
+- `ios/Classes/SqfliteSqlCipherPlugin.m` takes a UIKit assertion before
+  native database work and keeps it through open SQLite transactions. The
+  serialized queue interrupts active SQL and rolls back on expiration.
+  The existing transaction ID protocol rejects continuations after rollback.
+- `test/sqflite_sql_cipher_open_test.dart` preserves the null BEGIN argument
+  and verifies that the Dart caller forwards the returned transaction ID.
+
+The iOS change uses the existing application task API. It requires no
+database schema, migration, entitlement, or background-mode change.
+
 ## Pinned boundary
 
 The patched 171-file tree (all files except this `PATCH.md`, sorted by relative
 path and hashed as `path + NUL + bytes + NUL`) has SHA-256:
 
 ```text
-c4bcb962748f8bd99e4f514e6465003416dd03a502d773f51cf7493d7b763acb
+168b333bfc378428770fe61eebe6a2b7e6f31958703c17e144a6934b4f8e7af7
 ```
 
 Key file SHA-256 values are:
@@ -83,12 +95,11 @@ d60687a780f186320fb3030beb43e582087c3b4f9505da2c9e2159c2606c90ce  SqlCommand.jav
 c5538ba79ab511c68dd8189dd14ad15f102fb81e31b0b8a82eaaa29455db12a6  android/build.gradle
 ```
 
-All 148 non-Android files — Dart package sources, iOS/macOS implementations,
-examples, tests, metadata, and assets — remain byte-identical to hosted 3.4.0.
-Their deterministic subtree SHA-256 is:
+The 148 non-Android files include the reviewed iOS guard and Dart wire
+fixtures. Their deterministic subtree SHA-256 is:
 
 ```text
-9d99b174eae31ee0d391872f3a959f313cc465b12f7fed3acc71a2c99cd99ac4
+e82e18464eda95f1360c401180d768c98402be00e7b910fa41620597fd4d8b61
 ```
 
 The root `pubspec.yaml` and generated `pubspec.lock` select this directory.

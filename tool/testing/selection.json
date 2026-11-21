@@ -1759,9 +1759,10 @@
     "sqflite-fork-host": {
       "kind": "flutter",
       "paths": [
-        "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart"
+        "third_party/sqflite_sqlcipher/test/sqflite_sql_cipher_open_test.dart",
+        "test/core/database/sqflite_sqlcipher_fork_contract_test.dart"
       ],
-      "boundary": "SQLCipher fork open/version/password method-channel arguments, including in-memory and transaction wire contracts",
+      "boundary": "SQLCipher fork source integrity and open/version/password/transaction method-channel contracts",
       "limitations": "Mock platform channel only; native SQLCipher encryption and device database behavior remain separate",
       "timeout_seconds": 120,
       "estimated_seconds": 33,
@@ -6683,12 +6684,14 @@
       "id": "sqflite-fork-host",
       "patterns": [
         "third_party/sqflite_sqlcipher/lib/*",
-        "third_party/sqflite_sqlcipher/test/*"
+        "third_party/sqflite_sqlcipher/test/*",
+        "third_party/sqflite_sqlcipher/ios/Classes/*",
+        "test/core/database/sqflite_sqlcipher_fork_contract_test.dart"
       ],
       "checks": [
         "sqflite-fork-host"
       ],
-      "why": "Fork open/version/password mock contracts must preserve the locked in-memory, null-argument and transaction wire behavior"
+      "why": "Verify the reviewed fork tree and preserve the open payload and transaction ID contract. RunnerTests owns native SQLCipher suspension and lock release proof."
     },
     {
       "id": "runtime-roots",

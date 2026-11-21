@@ -73,6 +73,63 @@ void main() {
       await db.close();
       scenario.end();
     });
+    test('passes the native transaction ID through subsequent calls', () async {
+      const timeout = Duration(seconds: 2);
+      final scenario = startScenario([
+        [
+          'openDatabase',
+          {'path': ':memory:', 'singleInstance': false},
+          1,
+        ],
+        [
+          'execute',
+          {
+            'sql': 'BEGIN IMMEDIATE',
+            'id': 1,
+            'transactionId': null,
+            'inTransaction': true,
+          },
+          {'transactionId': 7},
+        ],
+        [
+          'insert',
+          {
+            'sql': 'INSERT INTO marker VALUES (?)',
+            'arguments': [1],
+            'id': 1,
+            'transactionId': 7,
+          },
+          1,
+        ],
+        [
+          'execute',
+          {
+            'sql': 'COMMIT',
+            'id': 1,
+            'transactionId': 7,
+            'inTransaction': false,
+          },
+          null,
+        ],
+        [
+          'closeDatabase',
+          {'id': 1},
+          null,
+        ],
+      ]);
+      final db = await openDatabase(inMemoryDatabasePath).timeout(timeout);
+      try {
+        await db.transaction((txn) async {
+          final rowId = await txn
+              .rawInsert('INSERT INTO marker VALUES (?)', [1])
+              .timeout(timeout);
+          expect(rowId, 1);
+        }).timeout(timeout);
+      } finally {
+        await db.close().timeout(timeout);
+      }
+      scenario.end();
+    });
     test('open with version and password', () async {
       final scenario = startScenario([
         [

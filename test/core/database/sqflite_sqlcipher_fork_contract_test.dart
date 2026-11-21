@@ -8,17 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 const _hostedArchiveSha256 =
     'ba7733c5514cf0ccb0331997b771a890f73678bcd84cdfb5f7487a88a71f1738';
 const _expectHostedSqlCipher = bool.fromEnvironment('EXPECT_HOSTED_SQLCIPHER');
-// BL-41 changed only test/sqflite_sql_cipher_open_test.dart in the fork.
-// Both snapshots include that reviewed fixture and pin every other file too.
+// The reviewed tree includes Android scheduling, the iOS suspension guard,
+// and the pinned Dart wire fixtures.
 const _patchedTreeSha256 =
-    '23570d330a3d4ebd0ecdd3bc3a7e31495bb310cece6fb55eaaba9669dde0efdd';
+    '168b333bfc378428770fe61eebe6a2b7e6f31958703c17e144a6934b4f8e7af7';
 const _reviewedNonAndroidTreeSha256 =
-    'fb813ff1d8eee287e1325d554307687f4e7c7c19afc10911c4eff62e8e90e6bf';
+    'e82e18464eda95f1360c401180d768c98402be00e7b910fa41620597fd4d8b61';
 const _patchedFileCount = 171;
 const _reviewedNonAndroidFileCount = 148;
 const _junitDependencyLine = "    testImplementation 'junit:junit:4.13.2'\n";
 
 const _pinnedForkFileDigests = <String, String>{
+  'ios/Classes/SqfliteSqlCipherPlugin.m':
+      'e609695db9cb0de7bbe1b2944edd9ad1bb7bbb299d7d6bbe7f49dc4ff3a1daed',
   'android/build.gradle':
       'c5538ba79ab511c68dd8189dd14ad15f102fb81e31b0b8a82eaaa29455db12a6',
   'android/src/main/java/com/davidmartos96/sqflite_sqlcipher/'
@@ -181,7 +183,7 @@ void main() {
     },
   );
 
-  test('vendor tree equals the exact reviewed Android fork', () {
+  test('vendor tree equals the exact reviewed fork', () {
     final packagePubspec = File(
       '${vendorRoot.path}/pubspec.yaml',
     ).readAsStringSync();
@@ -219,7 +221,7 @@ void main() {
   });
 
   test(
-    'non-Android files match the reviewed tree including the BL-41 fixture',
+    'non-Android files match the exact reviewed fork',
     () {
       final digest = _treeDigest(
         vendorRoot,
