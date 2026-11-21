@@ -6805,7 +6805,14 @@ visible and cannot become an ordinary first-attempt PASS.
   motion, and the direct and group entry points. The lifecycle file passed
   41 cases and affected-identity passed 1,197. First receipts are under
   `~/.codex/investigations/bl53-closed-chat-ambient-codex2-20261121/`.
-  An exact device trace is needed to establish the CPU difference.
+  Release-mode staging build 306 at `7494c3c4` measured a static-chat median
+  of 3% CPU on Pixel (2–7%) and 0% on iPhone 13 (0–6%), with 100%
+  representing one core. The Pixel used the same landscape posture as the
+  provisional 303 run, which measured 116% static-chat CPU, at a different
+  charge level. The two-device run verified still artwork, readable controls
+  and visible sticker playback. A matched prior build and VoiceOver traversal
+  were outside this run. Evidence: `.codex-test-logs/s132-306-20261121/` and
+  mailbox `m-ee650763`.
   Settings integration tests
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
@@ -7506,7 +7513,12 @@ visible and cannot become an ordinary first-attempt PASS.
   focused widgets, 17 account and 56 creation-enabled cases. The earlier
   affected-stickers pass belongs to `6973a2c3`. First receipts are under
   `~/.codex/investigations/bl51-pending-sticker-codex2-20261121/`.
-  Phone timing and process-restart behavior require installed-app proof.
+  On iPhone 13, staging build 306 showed pending at an observed 2.02 s
+  after Save, above the roughly one-second target, and a ready item at
+  5.73 s. Tapping pending sent nothing. Killing the app 1.07 s after a
+  separate Save left no tile or additional sticker after restart. The Pixel
+  leg requires a usable camera fixture. Evidence: mailbox `m-ee650763` and
+  `.codex-test-logs/s132-306-20261121/`.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
