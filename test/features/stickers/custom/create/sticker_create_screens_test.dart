@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
@@ -41,7 +42,8 @@ class _OnePhotoPicker implements MediaPicker {
 }
 
 class _ClipVideoPlatform extends VideoPlayerPlatform {
-  StreamController<VideoEvent>? _events;
+  final _events = <int, StreamController<VideoEvent>>{};
+  int _nextId = 0;
   final volumes = <double>[];
   final looping = <bool>[];
   final disposed = <int>[];
@@ -51,7 +53,7 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
   Future<void> init() async {}
 
   @override
-  Future<int?> createWithOptions(VideoCreationOptions options) async => 1;
+  Future<int?> createWithOptions(VideoCreationOptions options) async => ++_nextId;
 
   @override
   Stream<VideoEvent> videoEventsFor(int playerId) {
@@ -62,10 +64,10 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
     );
     // Native player events stay open until the player is released.
     final events = StreamController<VideoEvent>(
-      onListen: () => _events!.add(initialized),
+      onListen: () => _events[playerId]!.add(initialized),
       onCancel: () async {},
     );
-    _events = events;
+    _events[playerId] = events;
     return events.stream;
   }
 
@@ -93,7 +95,7 @@ class _ClipVideoPlatform extends VideoPlayerPlatform {
   @override
   Future<void> dispose(int playerId) async {
     disposed.add(playerId);
-    final events = _events;
+    final events = _events.remove(playerId);
     if (events != null) {
       await events.close().timeout(const Duration(seconds: 2));
     }
@@ -231,6 +233,86 @@ void main() {
       expect(video.disposed, [1]);
     },
   );
+
+  if (kCustomStickersEnabled) {
+    testWidgets('video save shows progress until exporter failure returns',
+        (tester) async {
+      const bound = Duration(seconds: 2);
+      final root = Directory.systemTemp.createTempSync('stk-clip-progress-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final input = File('${root.path}/clip.mp4')..writeAsBytesSync([1]);
+      final original = VideoPlayerPlatform.instance;
+      VideoPlayerPlatform.instance = _ClipVideoPlatform();
+      addTearDown(() => VideoPlayerPlatform.instance = original);
+      const channel = MethodChannel('mknoon/custom_sticker_clip_frames');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final release = Completer<void>();
+      var extracts = 0;
+      var finished = false;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'extract');
+        extracts++;
+        await release.future.timeout(bound);
+        throw PlatformException(code: 'invalid_clip');
+      });
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+
+      await tester.pumpWidget(_app(
+        Builder(builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => unawaited(openStickerCreate(
+              context,
+              library: FakeCustomStickerLibrary(),
+              captureClipPath: (_) async => input.path,
+              exporter: StickerClipExporter(temporaryDirectory: () async => root),
+              temporaryDirectory: () async => root,
+            ).whenComplete(() { finished = true; })),
+            child: const Text('open clip creation'),
+          ),
+        )),
+      )).timeout(bound);
+      Future<void> advance() => tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        bound,
+      ).then((_) {});
+      await tester.tap(find.text('open clip creation')).timeout(bound);
+      await advance();
+      await tester.tap(find.text('Record clip')).timeout(bound);
+      await advance();
+      await tester.tap(find.text('Crop')).timeout(bound);
+      await advance();
+      await tester.tap(find.text('Save sticker')).timeout(bound);
+      for (var i = 0; i < 75 && extracts == 0; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        ).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
+      }
+      await tester.pump(const Duration(milliseconds: 300)).timeout(bound);
+      final showedProgress = find.text('Creating sticker…').evaluate().isNotEmpty;
+      final exposedSave = find.text('Save sticker').hitTestable().evaluate().isNotEmpty;
+      release.complete();
+      for (var i = 0; i < 75 && !finished; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        ).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 10)).timeout(bound);
+      }
+      await tester.pump(const Duration(milliseconds: 300)).timeout(bound);
+      expect(finished, isTrue, reason: "the save flow completed");
+      expect(extracts, 1);
+      expect(input.existsSync(), isFalse);
+      expect(showedProgress, isTrue);
+      expect(exposedSave, isFalse);
+      expect(find.text('Creating sticker…'), findsNothing);
+      expect(find.text("Couldn't save this sticker. Try again."), findsOneWidget);
+    });
+  }
 
   group('centeredSquareCrop', () {
     test('a portrait frame keeps the full width, centred vertically', () {

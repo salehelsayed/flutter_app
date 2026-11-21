@@ -431,6 +431,7 @@ Future<void> openStickerCreate(
   StickerCutoutService? cutout,
   MediaPicker? picker,
   StickerClipExporter? exporter,
+  Future<String?> Function(BuildContext)? captureClipPath,
   Future<Directory> Function() temporaryDirectory = getTemporaryDirectory,
 }) async {
   final source = await showStickerCreateSourceSheet(context);
@@ -471,6 +472,8 @@ Future<void> openStickerCreate(
       },
       captureClip: () async {
         if (!context.mounted) return null;
+        final capture = captureClipPath;
+        if (capture != null) return capture(context);
         return (await captureStickerCameraClip(context))?.path;
       },
       readBytes: (path) => File(path).readAsBytes(),
