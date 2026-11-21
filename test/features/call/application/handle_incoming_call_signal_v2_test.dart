@@ -855,6 +855,43 @@ void main() {
     },
   );
 
+  test('a mailbox copy ends a native ring created after the direct cancel',
+      () async {
+    const bound = Duration(seconds: 2);
+    final h = _Harness();
+    addTearDown(() => h.coordinator.dispose().timeout(bound));
+    var attempts = 0;
+    var nativeRinging = false;
+    h.native.onCancel = () {
+      attempts++;
+      if (attempts == 1) {
+        throw StateError('CallKit has no matching native descriptor yet');
+      }
+      nativeRinging = false;
+    };
+    final signal = _v2(event: 'terminate', sequence: 2);
+    final direct = await h.frame(signal).timeout(bound);
+    await h.handler.handle(direct).timeout(bound);
+    expect(attempts, 1);
+    expect(h.coordinator.activeSession, isNull);
+
+    // PushKit can present independently, after Dart handled the direct copy.
+    nativeRinging = true;
+    await h.handler.handleMailbox(
+      IncomingCallSignalFrame(
+        envelopeJson: direct.envelopeJson,
+        authenticatedTransportPeerId: signal.senderDevicePeerId,
+        route: CallRouteClass.ephemeralMailbox,
+        expectedCallHandle: _callHandle,
+        expectedMessageId: signal.messageId,
+        expectedExpiresAtMs: signal.expiresAtMs,
+        expectedRecipientDevicePeerId: signal.recipientDevicePeerId,
+      ),
+    ).timeout(bound);
+    expect(nativeRinging, isFalse);
+    expect(h.coordinator.activeSession, isNull);
+  });
+
   test('wrong mailbox identity cannot produce terminal custody', () async {
     final h = _Harness();
     final result = await h.handler.handleMailbox(
