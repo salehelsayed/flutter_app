@@ -55,6 +55,7 @@ void main() {
     VoidCallback? open,
     VoidCallback? play,
     double? height,
+    Stream<String>? postChanges,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -68,6 +69,7 @@ void main() {
               postId: 'post',
               load: load,
               download: (attachment, _) => download(attachment),
+              postChanges: postChanges,
               onOpen: open ?? () {},
               onPlayVideo: play,
             ),
@@ -251,6 +253,56 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 2));
     expect(attempts, 1);
+  });
+
+  testWidgets('BL-52 does not re-download a committed carousel item', (
+    tester,
+  ) async {
+    final changes = StreamController<String>.broadcast();
+    addTearDown(() => changes.close().timeout(const Duration(seconds: 2)));
+    final held = Completer<PostMediaAttachmentModel>();
+    var first = attachment(
+      'image',
+      null,
+    ).copyWith(mediaId: 'first', blobId: 'blob-first');
+    var second = attachment(
+      'image',
+      null,
+    ).copyWith(mediaId: 'second', blobId: 'blob-second', position: 1);
+    final bytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+    );
+    final requests = <String>[];
+    await mount(tester, (_) async => [first, second], (item) async {
+      requests.add(item.mediaId);
+      if (item.mediaId == first.mediaId) return held.future;
+      throw StateError('A committed attachment must not be requested again');
+    }, postChanges: changes.stream);
+
+    try {
+      expect(requests, ['first']);
+      final received = File('${temp.path}/committed.png')
+        ..writeAsBytesSync(bytes);
+      second = second.copyWith(
+        localPath: received.path,
+        downloadStatus: 'done',
+      );
+      changes.add('post');
+      await tester.pump();
+      expect(
+        tester.widget<MediaGrid>(find.byType(MediaGrid)).media.last.localPath,
+        received.path,
+      );
+
+      final completed = File('${temp.path}/first.png')..writeAsBytesSync(bytes);
+      first = first.copyWith(localPath: completed.path, downloadStatus: 'done');
+      held.complete(first);
+      await tester.pump();
+      expect(requests, ['first']);
+    } finally {
+      if (!held.isCompleted) held.complete(first);
+      await tester.pumpWidget(const SizedBox());
+    }
   });
 
   for (final (width, height, ratio) in const [
