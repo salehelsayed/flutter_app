@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/features/stickers/application/account_custom_sticker_library.dart';
 import 'package:flutter_app/features/stickers/application/sticker_clip_exporter.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_screens.dart';
@@ -255,7 +256,12 @@ void main() {
   );
 
   if (kCustomStickersEnabled) {
-    for (final result in ['ready', 'failed', 'scope replaced']) {
+    for (final result in [
+      'ready',
+      'failed',
+      'library unavailable',
+      'scope replaced',
+    ]) {
       testWidgets('video save opens a pending tray item, then $result', (
         tester,
       ) async {
@@ -271,6 +277,15 @@ void main() {
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         final release = Completer<void>();
         final library = _GatedClipLibrary(bound);
+        final libraryInitialization = Completer<void>();
+        final unavailableLibrary = result == 'library unavailable'
+            ? AccountCustomStickerLibrary(
+                createLibrary: (_) async {
+                  await libraryInitialization.future.timeout(bound);
+                  throw StateError('Sticker library could not open');
+                },
+              )
+            : null;
         if (result == 'failed') {
           library.admitError = const CustomStickerException(
             CustomStickerErrorCode.storageFailure,
@@ -308,6 +323,9 @@ void main() {
         addTearDown(() {
           if (!release.isCompleted) release.complete();
           if (!library.release.isCompleted) library.release.complete();
+          if (!libraryInitialization.isCompleted) {
+            libraryInitialization.complete();
+          }
           messenger.setMockMethodCallHandler(channel, null);
         });
         final catalog = StickerCatalog.parse(
@@ -321,7 +339,7 @@ void main() {
                   valueListenable: scopeGeneration,
                   builder: (_, generation, _) => CustomStickerScope(
                     key: ValueKey(generation),
-                    library: library,
+                    library: unavailableLibrary ?? library,
                     child: Scaffold(
                       body: Column(
                         children: [
@@ -440,8 +458,17 @@ void main() {
           expect(find.byKey(pending), findsOneWidget);
         }
 
+        if (unavailableLibrary != null) {
+          final rejected = expectLater(
+            unavailableLibrary.list(),
+            throwsA(isA<CustomStickerException>()),
+          );
+          libraryInitialization.complete();
+          await rejected.timeout(bound);
+          expect(find.byKey(pending), findsOneWidget);
+        }
         release.complete();
-        if (result != 'scope replaced') {
+        if (result == 'ready' || result == 'failed') {
           await until(() => library.started);
           expect(find.byKey(pending), findsOneWidget);
           expect(find.byKey(ready), findsNothing);
@@ -461,7 +488,9 @@ void main() {
           expect(find.byKey(ready), findsNothing);
           expect(
             find.text("Couldn't save this sticker. Try again."),
-            result == 'failed' ? findsOneWidget : findsNothing,
+            result == 'failed' || unavailableLibrary != null
+                ? findsOneWidget
+                : findsNothing,
           );
         }
       });
