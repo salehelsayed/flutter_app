@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -214,6 +215,11 @@ class _StickerPanelState extends State<StickerPanel> {
                   onHorizontalDragEnd: _managing ? null : _onSwipe,
                   child: GridView.count(
                     crossAxisCount: 4,
+                    scrollCacheExtent:
+                        selection is MyStickersSelection &&
+                            !MediaQuery.accessibleNavigationOf(context)
+                        ? const ScrollCacheExtent.pixels(0)
+                        : null,
                     padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 8, 8),
                     children: switch (selection) {
                       MyStickersSelection() => _buildMyStickers(l10n, colors),
@@ -346,9 +352,12 @@ class _StickerPanelState extends State<StickerPanel> {
                           Icons.emoji_emotions_outlined,
                           color: colors.iconPrimary,
                         )
-                      : _CustomStickerImage(
-                          _custom.first.asset.posterPath ??
-                              _custom.first.asset.filePath,
+                      : TickerMode(
+                          enabled: false,
+                          child: _CustomStickerImage(
+                            _custom.first.asset.posterPath ??
+                                _custom.first.asset.filePath,
+                          ),
                         ),
                 RecentStickersSelection() => Icon(
                   Icons.history_rounded,
