@@ -10004,6 +10004,19 @@ visible and cannot become an ordinary first-attempt PASS.
   were previewed separately. This result leaves physical rapid redial with
   Dart suspended unverified. First XCTest results and source identities are
   retained in the BL-48 native executor receipt (mailbox `m-68f51888`).
+  Staging build 306 reproduced two cancellations after the callee had already
+  started ringing. The caller resolved a fresh endpoint, then rejected the
+  terminal signal before encryption or transport. The cold iPhone graph had
+  republished its endpoint after accepting the invite, changing the signed
+  preference epoch and routing handle. At `e035d34b`, an admitted incoming
+  v2 call defers that publication until terminal. The graph checks again after
+  signing. The two test-only RED cases reached mailbox admission and ringing
+  before observing the unwanted rewrite. GREEN passed both focused cases and
+  27 guard tests, with 23 bootstrap, 2,237 call-signaling and five pinned Go
+  preservation cases. The device and Linux receipts are in
+  `.codex-test-logs/s132-306-20261121/calls/` and mailbox `m-6fb7824f`.
+  The first scripted fast-cancel tap never placed a call. Physical seven-second
+  cancellation, sub-second cancellation and redial still require the fixed build.
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
