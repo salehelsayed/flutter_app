@@ -201,6 +201,7 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     setState(() {
       _commitEditing();
       _saving = true;

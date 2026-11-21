@@ -2633,6 +2633,8 @@
   "@stickers_record_clip": {"description": "Custom stickers copy, Kayan-approved 2026-11-11"},
   "stickers_library_full": "My stickers is full. Delete one to add another.",
   "@stickers_library_full": {"description": "Custom stickers copy, Kayan-approved 2026-11-11"},
+  "stickers_creating": "Creating sticker…",
+  "@stickers_creating": {"description": "Progress shown while creating a video sticker"},
   "stickers_save_failed": "Couldn't save this sticker. Try again.",
   "@stickers_save_failed": {"description": "Custom stickers copy, Kayan-approved 2026-11-11"},
   "stickers_no_subject": "No clear subject. Crop it instead.",

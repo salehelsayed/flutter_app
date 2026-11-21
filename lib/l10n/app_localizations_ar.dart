@@ -5271,6 +5271,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get stickers_library_full => 'ملصقاتي ممتلئة. احذف ملصقًا لإضافة آخر.';
 
   @override
+  String get stickers_creating => 'جارٍ إنشاء الملصق…';
+
+  @override
   String get stickers_save_failed => 'تعذّر حفظ هذا الملصق. حاول مرة أخرى.';
 
   @override

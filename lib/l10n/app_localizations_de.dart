@@ -5318,6 +5318,9 @@ class AppLocalizationsDe extends AppLocalizations {
       '„Meine Sticker“ ist voll. Lösche einen, um einen neuen hinzuzufügen.';
 
   @override
+  String get stickers_creating => 'Sticker wird erstellt…';
+
+  @override
   String get stickers_save_failed =>
       'Dieser Sticker konnte nicht gespeichert werden. Versuch es noch einmal.';
 

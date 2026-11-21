@@ -2290,6 +2290,7 @@
   "stickers_mine_semantics": "Sticker {position} von {count}",
   "stickers_record_clip": "Clip aufnehmen",
   "stickers_library_full": "„Meine Sticker“ ist voll. Lösche einen, um einen neuen hinzuzufügen.",
+  "stickers_creating": "Sticker wird erstellt…",
   "stickers_save_failed": "Dieser Sticker konnte nicht gespeichert werden. Versuch es noch einmal.",
   "stickers_no_subject": "Kein klares Motiv. Schneide das Bild stattdessen zu.",
   "stickers_new": "Neuer Sticker",

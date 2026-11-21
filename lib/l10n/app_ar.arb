@@ -2290,6 +2290,7 @@
   "stickers_mine_semantics": "ملصق {position} من {count}",
   "stickers_record_clip": "تسجيل مقطع",
   "stickers_library_full": "ملصقاتي ممتلئة. احذف ملصقًا لإضافة آخر.",
+  "stickers_creating": "جارٍ إنشاء الملصق…",
   "stickers_save_failed": "تعذّر حفظ هذا الملصق. حاول مرة أخرى.",
   "stickers_no_subject": "لا يوجد عنصر واضح. اقتصّ الصورة بدلًا من ذلك.",
   "stickers_new": "ملصق جديد",

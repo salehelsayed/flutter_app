@@ -5203,6 +5203,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'My stickers is full. Delete one to add another.';
 
   @override
+  String get stickers_creating => 'Creating sticker…';
+
+  @override
   String get stickers_save_failed => 'Couldn\'t save this sticker. Try again.';
 
   @override

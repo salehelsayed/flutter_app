@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/camera_video_recorder.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
@@ -443,6 +445,8 @@ Future<void> openStickerCreate(
   final clips = exporter ?? StickerClipExporter();
 
   StickerCreateOutcome outcome;
+  DialogRoute<void>? clipProgress;
+  String? clipExportFailure;
   try {
     final actualCutout =
         cutout ??
@@ -501,23 +505,79 @@ Future<void> openStickerCreate(
             ) ??
             const StickerOverlayEditorCancelled();
       },
-      exportClip: (path, crop, overlay) => clips.export(
-        clipPath: path,
-        crop: crop.crop,
-        circle: crop.circle,
-        textOverlay: overlay,
-      ),
+      exportClip: (path, crop, overlay) {
+        if (!navigator.mounted) return Future.value(null);
+        final progress = DialogRoute<void>(
+          context: navigator.context,
+          barrierDismissible: false,
+          builder: (_) => PopScope(
+            canPop: false,
+            child: AlertDialog(
+              content: Row(
+                children: [
+                  const SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 16),
+                  Flexible(child: Text(l10n.stickers_creating)),
+                ],
+              ),
+            ),
+          ),
+        );
+        clipProgress = progress;
+        unawaited(navigator.push(progress));
+        return clips.export(
+          clipPath: path,
+          crop: crop.crop,
+          circle: crop.circle,
+          textOverlay: overlay,
+        );
+      },
       showNoSubject: () => messenger.showSnackBar(
         SnackBar(content: Text(l10n.stickers_no_subject)),
       ),
     );
 
     outcome = await flow.run(source);
-  } on Exception {
+  } on StickerClipExportException catch (error) {
+    clipExportFailure = switch (error.failure) {
+      StickerClipExportFailure.disabled => 'unsupported',
+      StickerClipExportFailure.busy => 'prepare_failed',
+      StickerClipExportFailure.invalidClip => 'invalid_payload',
+      StickerClipExportFailure.budgetExceeded => 'quota_exceeded',
+      StickerClipExportFailure.unavailable => 'bridge_unavailable',
+      StickerClipExportFailure.storageFailure => 'storage_failed',
+    };
     outcome = const StickerCreateFailed(CustomStickerErrorCode.storageFailure);
+  } on Exception {
+    clipExportFailure = 'unknown';
+    outcome = const StickerCreateFailed(CustomStickerErrorCode.storageFailure);
+  } finally {
+    final progress = clipProgress;
+    if (navigator.mounted && progress != null && progress.isActive) {
+      navigator.removeRoute(progress);
+    }
+  }
+  if (source == StickerCreateSource.cameraClip) {
+    if (outcome case StickerCreateFailed(:final code)) {
+      AppDiagnostics.instance.record(
+        feature: 'stickers',
+        stage: clipExportFailure == null ? 'store' : 'prepare',
+        outcome: 'failed',
+        reason: clipExportFailure ?? switch (code) {
+          CustomStickerErrorCode.invalidAsset => 'invalid_payload',
+          CustomStickerErrorCode.byteQuota ||
+          CustomStickerErrorCode.countQuota => 'quota_exceeded',
+          CustomStickerErrorCode.storageFailure => 'storage_failed',
+          _ => 'unknown',
+        },
+      );
+    }
   }
   final message = stickerCreateMessage(l10n, outcome);
-  if (message != null) {
+  if (message != null && messenger.mounted) {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 }

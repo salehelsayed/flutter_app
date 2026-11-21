@@ -8642,6 +8642,12 @@ abstract class AppLocalizations {
   /// **'My stickers is full. Delete one to add another.'**
   String get stickers_library_full;
 
+  /// Progress shown while creating a video sticker
+  ///
+  /// In en, this message translates to:
+  /// **'Creating sticker…'**
+  String get stickers_creating;
+
   /// Custom stickers copy, Kayan-approved 2026-11-11
   ///
   /// In en, this message translates to:
