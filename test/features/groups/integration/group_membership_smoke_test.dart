@@ -16577,6 +16577,10 @@ void main() {
           groupConversationTracker: charlieTracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
+        addTearDown(() {
+          admin.dispose();
+          charlie.dispose();
+        });
 
         await admin.createGroup(groupId: groupId, name: 'Rejoin Notifications');
         await admin.addMember(groupId: groupId, invitee: charlie);
@@ -16620,9 +16624,18 @@ void main() {
         expect(charlieNotificationService.shownGeneric, isEmpty);
 
         await admin.sendGroupMessage(groupId: groupId, text: 'After rejoin');
-        await pump();
+        // The receive handler saves the message before awaiting notification
+        // presentation, so delivery alone does not make the assertion ready.
+        await waitUntil(
+          () async => charlieNotificationService.shown.isNotEmpty,
+          maxTicks: 40,
+        ).timeout(const Duration(seconds: 3));
 
-        expect(charlieNotificationService.shown, hasLength(1));
+        expect(
+          charlieNotificationService.shown,
+          hasLength(1),
+          reason: 'Rejoined members must receive one notification',
+        );
         expect(charlieNotificationService.shownGeneric, isEmpty);
         expect(
           charlieNotificationService.shown.single.contactPeerId,
@@ -16653,9 +16666,6 @@ void main() {
               .toList(),
           isEmpty,
         );
-
-        admin.dispose();
-        charlie.dispose();
       },
     );
 
