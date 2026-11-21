@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/utils/flow_event_emitter.dart';
@@ -341,6 +344,9 @@ final class HandleIncomingCallSignal {
   final AuthenticatedIncomingCallV2MediaHandler? _incomingV2MediaHandler;
   final CallNegotiationMaterialStore _negotiationMaterialStore;
   CallId? _retiringMediaCallId;
+  static const _maxPendingNativeCancels = 16;
+  final _pendingNativeCancels =
+      <String, ({AuthenticatedIncomingCallTerminal terminal, String digest})>{};
 
   /// Authenticates [frame] and reports its call and event without consuming
   /// it: the replay reservation is rolled back so [handle] can admit the same
@@ -666,6 +672,7 @@ final class HandleIncomingCallSignal {
 
       final isAuthenticatedRemoteTerminal =
           event == CallSignalType.reject || event == CallSignalType.terminate;
+      var retainNativeCancel = false;
       if (isAuthenticatedRemoteTerminal) {
         if (_coordinator.activeSession?.callId == signal.callId) {
           // Stop adopted v2 effects immediately, including while the native
@@ -675,10 +682,12 @@ final class HandleIncomingCallSignal {
         // CallKit's snapshot subscriber projects terminal coordinator state as
         // a generic end. Retire the authenticated native presentation first so
         // the OS records the authoritative remote-cancel reason instead.
-        await _remoteCancelSafely(
+        final applied = await _remoteCancelSafely(
           admitted.callHandle,
           'signal_${signal.eventWireName}',
         );
+        retainNativeCancel =
+            !applied && frame.route != CallRouteClass.ephemeralMailbox;
       }
       // Media preparation can wait for permission or TURN. Once admitted,
       // release the inbound lane so a subsequent remote hang-up can interrupt
@@ -707,6 +716,24 @@ final class HandleIncomingCallSignal {
       final initialOutcome = _outcome(reduction);
       if (event != CallSignalType.invite) {
         admitted.commitReplay();
+        if (retainNativeCancel) {
+          // A direct cancel can beat the VoIP presentation. Keep proof for its
+          // exact mailbox copy without releasing the wire replay reservation.
+          final now = _coordinator.clock().millisecondsSinceEpoch;
+          _pendingNativeCancels.removeWhere(
+            (_, pending) => pending.terminal.signal.expiresAtMs <= now,
+          );
+          if (signal.expiresAtMs > now &&
+              _pendingNativeCancels.length < _maxPendingNativeCancels) {
+            _pendingNativeCancels[signal.messageId] = (
+              terminal: AuthenticatedIncomingCallTerminal._(
+                callHandle: admitted.callHandle,
+                signal: signal,
+              ),
+              digest: _nativeCancelDigest(frame.envelopeJson),
+            );
+          }
+        }
         if (isAuthenticatedRemoteTerminal &&
             frame.route == CallRouteClass.ephemeralMailbox &&
             frame.expectedCallHandle == admitted.callHandle &&
@@ -957,6 +984,35 @@ final class HandleIncomingCallSignal {
         IncomingCallPrePresentationAdmissionFailureCode.deferred =>
           IncomingCallSignalOutcome.deferred,
       };
+      if (error.envelopeCode == CallEnvelopeErrorCode.replay &&
+          frame.route == CallRouteClass.ephemeralMailbox) {
+        final messageId = frame.expectedMessageId;
+        final pending = _pendingNativeCancels[messageId];
+        if (pending != null) {
+          final terminal = pending.terminal;
+          final signal = terminal.signal;
+          if (signal.expiresAtMs > _coordinator.clock().millisecondsSinceEpoch &&
+              frame.expectedExpiresAtMs == signal.expiresAtMs &&
+              frame.expectedCallHandle == terminal.callHandle &&
+              frame.expectedRecipientDevicePeerId ==
+                  signal.recipientDevicePeerId &&
+              frame.authenticatedTransportPeerId == signal.senderDevicePeerId &&
+              _nativeCancelDigest(frame.envelopeJson) == pending.digest) {
+            final applied = await _remoteCancelSafely(
+              terminal.callHandle,
+              'signal_${signal.eventWireName}',
+            );
+            if (!applied) {
+              return settle(
+                IncomingCallSignalOutcome.deferred,
+                error.reasonCode,
+              );
+            }
+            _pendingNativeCancels.remove(messageId);
+            return IncomingCallSignalOutcome.accepted;
+          }
+        }
+      }
       if (error.code ==
               IncomingCallPrePresentationAdmissionFailureCode.permanentReject &&
           frame.expectedCallHandle != null) {
@@ -1024,24 +1080,52 @@ final class HandleIncomingCallSignal {
     }
   }
 
+  static String _nativeCancelDigest(String envelope) =>
+      sha256.convert(utf8.encode(envelope)).toString();
+
   /// [reason] is a closed code. It is printed in every build mode, because
   /// release iPhones log no flow events and a native `remote_cancelled` result
   /// alone cannot say which refusal retired the call (SE-42, 2026-10-14).
-  Future<void> _remoteCancelSafely(String callHandle, String reason) async {
+  Future<bool> _remoteCancelSafely(String callHandle, String reason) async {
     try {
       debugPrint('[MKNOON_CALL_DIAG] remote_cancel reason=$reason');
     } catch (_) {
       // Diagnostics cannot suppress native cancellation or canonical dispatch.
     }
+    final lifecycle = _provisionalNativeLifecycle;
+    if (lifecycle == null) return true;
+    final terminalSignal =
+        reason == 'signal_terminate' || reason == 'signal_reject';
+    final diagnostics = CallDiagnostics.instance;
+    final trace = diagnostics.traceForCall(callHandle: callHandle);
+    if (terminalSignal) {
+      diagnostics.record(
+        traceId: trace,
+        stage: 'signaling',
+        action: 'receive',
+        outcome: 'ok',
+        reason: 'remote_terminal',
+      );
+    }
+    var applied = false;
     try {
-      final lifecycle = _provisionalNativeLifecycle;
-      if (lifecycle == null) return;
       await lifecycle
           .remoteCancel(callHandle)
           .timeout(_provisionalNativeTerminalTimeout);
+      applied = true;
     } catch (_) {
       // Canonical terminal state remains authoritative.
     }
+    if (terminalSignal) {
+      diagnostics.record(
+        traceId: trace,
+        stage: 'cleanup',
+        action: 'cancel',
+        outcome: applied ? 'ok' : 'failed',
+        reason: 'remote_terminal',
+      );
+    }
+    return applied;
   }
 
   Future<void> _expireSafely(String callHandle) async {
