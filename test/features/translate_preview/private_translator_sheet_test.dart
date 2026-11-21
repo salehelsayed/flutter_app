@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_settings_section.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../shared/helpers/readability_test_helpers.dart';
 import 'fake_model_delivery_controller.dart';
 
 const _total = 2600000000;
@@ -47,7 +50,118 @@ bool _isEnabled(WidgetTester tester, String label) => tester
     )
     .enabled;
 
+({Color middle, Color tail}) _paintedProgressColors(WidgetTester tester) {
+  final progressPaint = find.descendant(
+    of: find.byType(LinearProgressIndicator),
+    matching: find.byType(CustomPaint),
+  );
+  final size = tester.getSize(progressPaint);
+  final middlePoint = Offset(size.width / 2, size.height / 2);
+  final tailPoint = Offset(size.width * 0.875, size.height / 2);
+  Color? middle;
+  Color? tail;
+  expect(
+    progressPaint,
+    paints..everything((method, args) {
+      final bounds = switch (method) {
+        #drawRect => args[0] as Rect,
+        #drawRRect => (args[0] as RRect).outerRect,
+        _ => null,
+      };
+      if (bounds != null) {
+        final color = (args[1] as Paint).color;
+        if (bounds.contains(middlePoint)) middle = color;
+        if (bounds.contains(tailPoint)) tail = color;
+      }
+      return true;
+    }),
+  );
+  expect(middle, isNotNull, reason: 'the center of the bar is painted');
+  expect(tail, isNotNull, reason: 'the remaining track is painted');
+  return (middle: middle!, tail: tail!);
+}
+
+void _testDownloadProgress(
+  String surface,
+  Widget Function(ModelDeliveryController) build,
+) {
+  final theme = AppTheme.darkTheme.copyWith(platform: TargetPlatform.android);
+
+  Future<FakeModelDeliveryController> pumpDownload(
+    WidgetTester tester,
+    ModelDownloading state,
+  ) async {
+    final controller = FakeModelDeliveryController(state);
+    addTearDown(() {
+      controller.state.dispose();
+      controller.deviceSupported.dispose();
+      controller.allowMobileData.dispose();
+      controller.memoryNoticePending.dispose();
+    });
+    await tester.pumpWidget(
+      localizedApp(
+        Theme(data: theme, child: Scaffold(body: build(controller))),
+      ),
+    );
+    return controller;
+  }
+
+  testWidgets('BL-46 $surface shows progress against a contrasting track', (
+    tester,
+  ) async {
+    final controller = await pumpDownload(
+      tester,
+      const ModelDownloading(
+        receivedBytes: 650000000,
+        totalBytes: _total,
+        remaining: Duration(minutes: 6),
+      ),
+    );
+    final progress = find.byType(LinearProgressIndicator);
+    expect(tester.widget<LinearProgressIndicator>(progress).value, 0.25);
+    final quarter = _paintedProgressColors(tester);
+    expect(quarter.middle, quarter.tail);
+
+    controller.state.value = const ModelDownloading(
+      receivedBytes: 1950000000,
+      totalBytes: _total,
+      remaining: Duration(minutes: 2),
+    );
+    await tester.pump();
+    expect(tester.widget<LinearProgressIndicator>(progress).value, 0.75);
+    final threeQuarters = _paintedProgressColors(tester);
+    expect(threeQuarters.tail, quarter.tail);
+    expectComponentContrast(
+      threeQuarters.middle,
+      Color.alphaBlend(threeQuarters.tail, theme.colorScheme.surface),
+      reason: 'the growing fill must be distinguishable from the track',
+    );
+  });
+
+  testWidgets('BL-46 $surface shows indeterminate progress without a total', (
+    tester,
+  ) async {
+    await pumpDownload(
+      tester,
+      const ModelDownloading(receivedBytes: 650000000, totalBytes: 0),
+    );
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, isNull);
+  });
+}
+
 void main() {
+  _testDownloadProgress(
+    'download sheet',
+    (controller) => PrivateTranslatorSheet(controller: controller),
+  );
+  _testDownloadProgress(
+    'Settings',
+    (controller) => PrivateTranslatorSettingsSection(controller: controller),
+  );
+
   for (final (language, message) in [
     ('en', 'Something went wrong. Please try again.'),
     ('ar', 'حدث خطأ ما. حاول مجددًا.'),
