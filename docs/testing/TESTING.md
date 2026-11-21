@@ -7249,6 +7249,21 @@ visible and cannot become an ordinary first-attempt PASS.
   Native extraction/orientation/cancellation latency, Flutter font shaping,
   installed old-build compatibility, transport and phone cost remain separate
   proofs; these host receipts do not certify an integrated or signed candidate.
+  The BL-47 camera-shaped texture fixture exposed the circular encoder's byte
+  limit after the two-second trim. Its square result was 345,572 bytes. The
+  final 192-pixel, 8 fps lossless fallback kept 16 frames and saved the same
+  texture in 432,120 bytes. The visual comparison showed smoother color
+  gradients than 512 pixels at 4 fps with reduced colors. The production
+  output matched the probe byte for byte. The Linux regression checks text
+  compositing across transparent neighbors and zero RGB under transparent
+  pixels. A separate probe verified byte-identical normalizer admission
+  with the actual canvas size. Noise still returns a typed budget error. The scoped
+  codec/exporter/normalizer run passed 68 cases and affected-stickers passed
+  293 cases across 23 files, with six wrapper rows omitted. The original
+  phone save failure remains unclassified and on-device playback was not
+  exercised. First attempts and assets are retained under
+  `~/.codex/investigations/bl47-circle-192-codex2-20261121/` and
+  `~/.codex/investigations/bl47-circle-quality-codex2-20261121/`.
 
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
@@ -9901,6 +9916,17 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/call-fallback-priority2/ios-lifecycle.xcresult` and its log
   retain the executed XCTest evidence. These native controller/store fixtures
   use fake platform ports; they do not establish live APNs or audible audio.
+  The later BL-48 follow-up checks a distinct incoming wake on a recreated
+  native store after a sequence-1 remote cancel before presentation. Baseline
+  XCTest returned busy both with a healthy backend and with receipt writes
+  blocked. The fixed store admits the healthy successor after recording the
+  predecessor's receipt, refuses admission when the write fails, and still
+  recognizes late predecessor receipts. The exact Swift change at
+  `0d5ab70bc494c5710dab959329e1239510efa662` passed 102 store and CallKit lifecycle
+  cases on the pinned iPhone Air simulator (Xcode 27.2). The 35 mapped rows
+  were previewed separately. This result leaves physical rapid redial with
+  Dart suspended unverified. First XCTest results and source identities are
+  retained in the BL-48 native executor receipt (mailbox `m-68f51888`).
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
