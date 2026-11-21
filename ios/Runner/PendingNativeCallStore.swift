@@ -482,19 +482,21 @@ internal final class PendingNativeCallStore {
         break
       }
       var state = readState()
-      // A distinct incoming wake can release a remote cancel recorded before
-      // CallKit presentation, even when Dart is suspended. Leave the terminal
-      // available for normal replay until an incoming successor actually needs it.
+      // A distinct incoming wake can release a remote cancel when Dart never
+      // adopted the invitation. Keep the terminal available for replay until
+      // an incoming successor needs the slot.
       if direction == .incoming,
          case let .valid(previous) = state,
          previous.nativeCallId != payload.nativeCallId,
          previous.direction == .incoming,
          previous.phase == .preStart,
-         !previous.presented,
          !previous.answerRequested,
          let terminal = previous.terminalEvent,
          terminal.type == .remoteCancelled,
-         terminal.sequence == 1 {
+         ((!previous.presented && terminal.sequence == 1) ||
+          (previous.presented && previous.connectedAtMs == nil && terminal.sequence == 2
+            && previous.events.count == 2 && previous.events.first?.sequence == 1
+            && previous.events.first?.type == .presented)) {
         guard acknowledge(
           nativeCallId: previous.nativeCallId,
           highestConsumedSequence: terminal.sequence,
