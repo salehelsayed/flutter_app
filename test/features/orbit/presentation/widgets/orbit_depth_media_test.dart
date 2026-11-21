@@ -55,6 +55,7 @@ void main() {
     VoidCallback? open,
     VoidCallback? play,
     double? height,
+    Stream<String>? postChanges,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -67,7 +68,8 @@ void main() {
             child: OrbitDepthMedia(
               postId: 'post',
               load: load,
-              download: download,
+              download: (attachment, _) => download(attachment),
+              postChanges: postChanges,
               onOpen: open ?? () {},
               onPlayVideo: play,
             ),
@@ -184,6 +186,125 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('BL-52 a failed attachment has only one Retry action', (
+    tester,
+  ) async {
+    var item = attachment('image', null);
+    await mount(tester, (_) async => [item], (_) async {
+      item = item.copyWith(downloadStatus: 'failed');
+      throw StateError('blob missing');
+    });
+
+    try {
+      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  testWidgets('BL-52 a transient failure retries on the open card', (
+    tester,
+  ) async {
+    var item = attachment('image', null);
+    var attempts = 0;
+    final file = File('${temp.path}/transient.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        ),
+      );
+    await mount(tester, (_) async => [item], (value) async {
+      attempts++;
+      item = attempts == 1
+          ? value.copyWith(downloadStatus: 'retry_waiting')
+          : value.copyWith(localPath: file.path, downloadStatus: 'done');
+      return item;
+    });
+
+    try {
+      expect(attempts, 1);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(attempts, 2, reason: 'the active card should retry automatically');
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(
+        tester.widget<MediaGrid>(find.byType(MediaGrid)).media.single.localPath,
+        file.path,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  testWidgets('BL-52 closing the card cancels transient retry', (tester) async {
+    var attempts = 0;
+    final item = attachment(
+      'image',
+      null,
+    ).copyWith(downloadStatus: 'retry_waiting');
+    await mount(tester, (_) async => [item], (item) async {
+      attempts++;
+      return item;
+    });
+    expect(attempts, 1);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+    expect(attempts, 1);
+  });
+
+  testWidgets('BL-52 does not re-download a committed carousel item', (
+    tester,
+  ) async {
+    final changes = StreamController<String>.broadcast();
+    addTearDown(() => changes.close().timeout(const Duration(seconds: 2)));
+    final held = Completer<PostMediaAttachmentModel>();
+    var first = attachment(
+      'image',
+      null,
+    ).copyWith(mediaId: 'first', blobId: 'blob-first');
+    var second = attachment(
+      'image',
+      null,
+    ).copyWith(mediaId: 'second', blobId: 'blob-second', position: 1);
+    final bytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+    );
+    final requests = <String>[];
+    await mount(tester, (_) async => [first, second], (item) async {
+      requests.add(item.mediaId);
+      if (item.mediaId == first.mediaId) return held.future;
+      throw StateError('A committed attachment must not be requested again');
+    }, postChanges: changes.stream);
+
+    try {
+      expect(requests, ['first']);
+      final received = File('${temp.path}/committed.png')
+        ..writeAsBytesSync(bytes);
+      second = second.copyWith(
+        localPath: received.path,
+        downloadStatus: 'done',
+      );
+      changes.add('post');
+      await tester.pump();
+      expect(
+        tester.widget<MediaGrid>(find.byType(MediaGrid)).media.last.localPath,
+        received.path,
+      );
+
+      final completed = File('${temp.path}/first.png')..writeAsBytesSync(bytes);
+      first = first.copyWith(localPath: completed.path, downloadStatus: 'done');
+      held.complete(first);
+      await tester.pump();
+      expect(requests, ['first']);
+    } finally {
+      if (!held.isCompleted) held.complete(first);
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
   for (final (width, height, ratio) in const [
     (720, 1280, 16 / 9),
     (1920, 1080, 9 / 16),

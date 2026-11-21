@@ -125,6 +125,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart'
     show ImagePickerPlatform, MediaOptions;
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -1030,6 +1031,8 @@ void main() {
       WidgetTester tester, {
       bool photo = false,
       bool online = false,
+      bool own = false,
+      bool seedLocalPhoto = true,
     }) async {
       setLargeTestSurface(tester);
       messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
@@ -1055,14 +1058,21 @@ void main() {
       contactRepo.seed([testContact]);
       final posts = _OrbitThoughtPostRepository();
       addTearDown(posts.dispose);
-      await posts.savePost(
-        thought(
-          'lake',
-          text: 'Sunset at the lake?',
-          mediaKind: photo ? 'image' : 'none',
-        ),
+      final post = thought(
+        'lake',
+        text: 'Sunset at the lake?',
+        mediaKind: photo ? 'image' : 'none',
       );
-      if (photo) {
+      await posts.savePost(
+        own
+            ? post.copyWith(
+                senderPeerId: testIdentity.peerId,
+                authorPeerId: testIdentity.peerId,
+                isIncoming: false,
+              )
+            : post,
+      );
+      if (photo && (seedLocalPhoto || !own)) {
         final directory = Directory.systemTemp.createTempSync('card-react-');
         addTearDown(() => directory.deleteSync(recursive: true));
         final file = File('${directory.path}/lake.png')
@@ -1080,8 +1090,8 @@ void main() {
             mime: 'image/png',
             sizeBytes: file.lengthSync(),
             createdAt: thoughtNow.toIso8601String(),
-            localPath: file.path,
-            downloadStatus: 'done',
+            localPath: seedLocalPhoto ? file.path : null,
+            downloadStatus: seedLocalPhoto ? 'done' : 'pending',
           ),
         );
       }
@@ -1099,6 +1109,83 @@ void main() {
       );
       await pumpOrbitFrames(tester, count: 30);
       return posts;
+    }
+
+    for (final own in [true, false]) {
+      testWidgets(
+        'BL-52 open 3D ${own ? 'own' : 'received'} Thought shows media saved for the same post',
+        (tester) async {
+          bridge.responses['media:download'] = {
+            'ok': false,
+            'errorMessage': 'blob missing',
+          };
+          final posts = await enterDepthWithThought(
+            tester,
+            photo: true,
+            own: own,
+            seedLocalPhoto: false,
+          );
+          try {
+            final card = find.byKey(const ValueKey('orbit-depth-card-lake'));
+            expect(card, findsOneWidget);
+            final grid = find.descendant(
+              of: card,
+              matching: find.byType(MediaGrid),
+            );
+            if (own) {
+              expect(grid, findsNothing);
+            } else {
+              expect(grid, findsOneWidget);
+              expect(tester.widget<MediaGrid>(grid).media.single.localPath, isNull);
+            }
+
+            final directory = Directory.systemTemp.createTempSync(
+              'orbit-late-photo-',
+            );
+            addTearDown(() => directory.deleteSync(recursive: true));
+            final file = File('${directory.path}/lake.png')
+              ..writeAsBytesSync(
+                base64Decode(
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                ),
+              );
+            final attachment = PostMediaAttachmentModel(
+              mediaId: 'media-lake',
+              postId: 'lake',
+              blobId: 'blob-lake',
+              kind: 'image',
+              mime: 'image/png',
+              sizeBytes: file.lengthSync(),
+              createdAt: thoughtNow.toIso8601String(),
+              localPath: file.path,
+              downloadStatus: 'done',
+            );
+            if (own) {
+              await posts
+                  .replacePostMediaAttachments('lake', [attachment])
+                  .timeout(const Duration(seconds: 2));
+            } else {
+              await posts
+                  .updatePostMediaLocalPath(
+                    'media-lake',
+                    file.path,
+                    postId: 'lake',
+                  )
+                  .timeout(const Duration(seconds: 2));
+            }
+            await pumpOrbitFrames(tester, count: 6);
+
+            expect(grid, findsOneWidget);
+            expect(
+              tester.widget<MediaGrid>(grid).media.single.localPath,
+              file.path,
+              reason: 'the open card missed the media update',
+            );
+          } finally {
+            await finishThoughtCase(tester);
+          }
+        },
+      );
     }
 
     bool reactionPressed(WidgetTester tester, String key) => tester

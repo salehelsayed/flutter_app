@@ -96,7 +96,7 @@ class ThoughtCardScreen extends StatefulWidget {
   /// Deletes the displayed thought for everyone. Completes once the local copy
   /// is gone; throws when it could not be deleted.
   final Future<void> Function(String postId)? onDelete;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)
   downloadMedia;
   final Stream<void>? eligibilityChanges;
   final DateTime Function()? nowProvider;
@@ -128,7 +128,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   NavigatorState? _navigator;
   final _markedIds = <String>{};
   final _markPendingIds = <String>{};
-  final _attemptedDownloads = <String>{};
+  final _downloadAttempts = <String, int>{};
   final _inFlightDownloads = <String>{};
   bool _validated = false;
   bool _loadFailed = false;
@@ -416,7 +416,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             ).existsSync();
         if (!isLocal &&
             attachment.downloadStatus != 'downloading' &&
-            !_attemptedDownloads.contains(attachment.mediaId)) {
+            !_downloadAttempts.containsKey(attachment.mediaId)) {
           unawaited(_download(attachment));
         }
       }
@@ -441,10 +441,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         !_inFlightDownloads.add(attachment.mediaId)) {
       return;
     }
-    _attemptedDownloads.add(attachment.mediaId);
+    final attempt = _downloadAttempts.update(
+      attachment.mediaId,
+      (previous) => previous + 1,
+      ifAbsent: () => 1,
+    );
     _replaceMedia(attachment.copyWith(downloadStatus: 'downloading'));
     try {
-      final downloaded = await widget.downloadMedia(attachment);
+      final downloaded = await widget.downloadMedia(attachment, attempt);
       _replaceMedia(downloaded);
     } catch (_) {
       _replaceMedia(attachment.copyWith(downloadStatus: 'failed'));

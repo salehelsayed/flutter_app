@@ -292,6 +292,7 @@ Future<int> retryPendingPostMediaUploads({
             postRepo: postRepo,
             mediaFileManager: mediaFileManager,
             attachment: attachment,
+            postCreatedAt: post.createdAt,
           );
         } catch (_) {
           // The normal download path persisted its terminal failure; one

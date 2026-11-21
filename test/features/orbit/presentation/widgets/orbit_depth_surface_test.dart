@@ -91,7 +91,7 @@ void main() {
               onSettled: (layer, front, turned) =>
                   settled.add('${layer.name}:$front:$turned'),
               loadMedia: load,
-              downloadMedia: (item) async => item,
+              downloadMedia: (item, _) async => item,
               ownSeat: ownSeat,
               ownActivity: ownActivity,
               child:

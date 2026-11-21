@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -33,6 +34,9 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
   required PostRepository postRepo,
   required MediaFileManager mediaFileManager,
   required PostMediaAttachmentModel attachment,
+  PostMediaDiagnosticSurface surface = PostMediaDiagnosticSurface.background,
+  String? postCreatedAt,
+  int attempt = 1,
 }) {
   final active = _activePostDownloads[postRepo] ??= {};
   return active.putIfAbsent(attachment.mediaId, () async {
@@ -42,6 +46,9 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
         postRepo: postRepo,
         mediaFileManager: mediaFileManager,
         attachment: attachment,
+        surface: surface,
+        postCreatedAt: postCreatedAt ?? attachment.createdAt,
+        attempt: attempt,
       );
     } finally {
       active.remove(attachment.mediaId);
@@ -54,6 +61,9 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
   required PostRepository postRepo,
   required MediaFileManager mediaFileManager,
   required PostMediaAttachmentModel attachment,
+  required PostMediaDiagnosticSurface surface,
+  required String postCreatedAt,
+  required int attempt,
 }) async {
   final absolutePath = await mediaFileManager.localPathForPostAttachment(
     postId: attachment.postId,
@@ -70,6 +80,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
       attachment.encryptionNonce != null;
   final downloadPath = hasKeyMaterial ? '$absolutePath.enc' : absolutePath;
   var transportInterrupted = false;
+  var failureReason = 'metadata_invalid';
 
   try {
     if (attachment.isEncrypted && !hasKeyMaterial) {
@@ -88,6 +99,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
       );
     }
 
+    failureReason = 'bridge_rejected';
     late final Map<String, dynamic> result;
     try {
       result = await callP2PMediaDownload(
@@ -100,16 +112,21 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
       rethrow;
     }
     if (result['ok'] != true) {
+      final error = result['errorMessage'];
       transportInterrupted = TransientTransportError.matches(
-        result['errorMessage'],
+        error,
         code: result['errorCode'],
       );
+      if (error is String && error.toLowerCase().endsWith('not found')) {
+        failureReason = 'missing_file';
+      }
       throw StateError(
-        'Post media download failed for ${attachment.mediaId}: ${result['errorMessage']}',
+        'Post media download failed for ${attachment.mediaId}: $error',
       );
     }
 
     if (hasKeyMaterial) {
+      failureReason = 'io_failed';
       // MIG-012: the hash is ALWAYS of the encrypted blob, verified against
       // the downloaded ciphertext BEFORE decrypt — never decrypted bytes.
       final expectedHash = attachment.contentHash;
@@ -118,6 +135,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
           downloadPath,
         );
         if (actualHash != expectedHash) {
+          failureReason = 'hash_mismatch';
           throw StateError(
             'Post media ${attachment.mediaId} ciphertext hash mismatch '
             '(expected $expectedHash, got $actualHash).',
@@ -125,6 +143,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
         }
       }
 
+      failureReason = 'encryption_failed';
       final decryptedPath = await callBlobDecrypt(
         bridge,
         filePath: downloadPath,
@@ -132,6 +151,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
         nonce: attachment.encryptionNonce!,
       );
       // Move decrypted file to final path.
+      failureReason = 'io_failed';
       final decryptedFile = File(decryptedPath);
       if (decryptedFile.existsSync()) {
         decryptedFile.renameSync(absolutePath);
@@ -145,6 +165,7 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
       } catch (_) {}
     }
 
+    failureReason = 'storage_failed';
     final relativePath = mediaFileManager.relativePathForPostAttachment(
       postId: attachment.postId,
       blobId: attachment.blobId,
@@ -179,6 +200,14 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
     final status = transportInterrupted
         ? kMediaDownloadStatusRetryWaiting
         : kMediaDownloadStatusFailed;
+    AppDiagnostics.instance.recordPostMediaFailure(
+      upload: false,
+      reason: transportInterrupted ? 'network_unavailable' : failureReason,
+      canRetry: transportInterrupted,
+      postCreatedAt: postCreatedAt,
+      surface: surface,
+      attempt: attempt,
+    );
     await postRepo.updatePostMediaDownloadStatus(attachment.mediaId, status);
     emitFlowEvent(
       layer: 'FL',

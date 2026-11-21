@@ -141,9 +141,9 @@ void main() {
             loadActivity: loadActivity,
             retryPosting: retryPosting,
             onDelete: onDelete,
-            downloadMedia:
-                download ??
-                (_) async => throw StateError('Unexpected media download'),
+            downloadMedia: download == null
+                ? (_, _) async => throw StateError('Unexpected media download')
+                : (attachment, _) => download(attachment),
             eligibilityChanges: eligibility.stream,
             nowProvider: () => now,
             playVideoAtOnce: playVideoAtOnce,

@@ -202,7 +202,7 @@ void main() {
               onThoughtTap: (_) {},
               onReply: (_, _, _) async => ThoughtReplyStatus.sent,
               loadMedia: (postId) async => media[postId] ?? const [],
-              downloadMedia: (item) async => item,
+              downloadMedia: (item, _) async => item,
               child: const SizedBox.expand(child: Text('Flat circle')),
             ),
           ),
