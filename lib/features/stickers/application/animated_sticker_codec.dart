@@ -13,6 +13,12 @@ const _targetFps = 12;
 
 enum AnimatedStickerCodecFailure { invalidInput, budgetExceeded }
 
+enum CircularStickerPass { fullColor, fiveBit, fallback }
+
+final class CircularStickerPassDidNotFit implements Exception {
+  const CircularStickerPassDidNotFit();
+}
+
 final class AnimatedStickerCodecException implements Exception {
   const AnimatedStickerCodecException(this.failure);
 
@@ -48,13 +54,38 @@ const _opaqueProfiles = <_Profile>[
 
 // Lossy color can reconstruct RGB under zero alpha even if the input
 // had been cleared. Preserve alpha and the cleared pixels with VP8L.
-const _circleProfiles = <_Profile>[
-  (fps: 12, quality: 100, rgbBits: 8, side: stickerAnimationSide),
-  (fps: 12, quality: 100, rgbBits: 5, side: stickerAnimationSide),
-  (fps: 8, quality: 100, rgbBits: 5, side: stickerAnimationSide),
+const _Profile _circleFullColor = (
+  fps: _targetFps,
+  quality: 100,
+  rgbBits: 8,
+  side: stickerAnimationSide,
+);
+const _Profile _circleFiveBit = (
+  fps: _targetFps,
+  quality: 100,
+  rgbBits: 5,
+  side: stickerAnimationSide,
+);
+final _Profile _circleFiveBitEightFps = (
+  fps: 8,
+  quality: _circleFiveBit.quality,
+  rgbBits: _circleFiveBit.rgbBits,
+  side: _circleFiveBit.side,
+);
+const _circleFallbacks = <_Profile>[
   (fps: 6, quality: 100, rgbBits: 4, side: stickerAnimationSide),
   (fps: 8, quality: 100, rgbBits: 8, side: 192),
 ];
+
+typedef _ProfileResult = ({
+  _Profile profile,
+  Uint8List animation,
+  Uint8List firstFrame,
+  Uint8List firstSource,
+  Uint8List? overlay,
+  img.Image? posterFrame,
+  int frameCount,
+});
 
 /// Encodes already cropped, orientation-corrected camera frames. The caller
 /// invokes this CPU-bound function on a worker and owns all supplied buffers.
@@ -63,6 +94,7 @@ EncodedStickerAnimation encodeStickerAnimation({
   required int durationMs,
   required bool circle,
   Uint8List? textOverlay,
+  CircularStickerPass? only,
 }) {
   final sampleCount = stickerAnimationSampleTimes(durationMs).length;
   if (croppedFrames.length != sampleCount ||
@@ -76,64 +108,174 @@ EncodedStickerAnimation encodeStickerAnimation({
     );
   }
 
-  final profiles = circle ? _circleProfiles : _opaqueProfiles;
-  for (final profile in profiles) {
+  _ProfileResult? tryProfile(
+    _Profile profile, {
+    Map<int, Uint8List>? sharedFrames,
+  }) {
     final side = profile.side;
     final overlay = textOverlay == null
         ? null
         : _resizeRgba(textOverlay, side, alphaAware: true);
     final firstSource = _resizeRgba(croppedFrames.first, side);
     final frameCount = _frameCount(durationMs, profile.fps);
-    img.Image? sequence;
-    for (var i = 0; i < frameCount; i++) {
-      // Reuse the captured sampling grid for every attempt.
-      final sourceIndex = i * sampleCount ~/ frameCount;
-      final frame =
-          _compose(
-              i == 0
-                  ? firstSource
-                  : _resizeRgba(croppedFrames[sourceIndex], side),
-              overlay: overlay,
-              side: side,
-              circle: circle,
-              rgbBits: profile.rgbBits,
-            )
-            ..frameDuration =
-                _boundary(i + 1, frameCount, durationMs) -
-                _boundary(i, frameCount, durationMs);
-      if (sequence == null) {
-        sequence = frame;
-      } else {
-        sequence.addFrame(frame);
-      }
-    }
-    final animation = sequence!;
-    final webp = img.WebPEncoder(
+    final encoder = img.WebPEncoder(
       lossless: circle,
       exact: false,
       quality: profile.quality,
       method: 0,
-    ).encode(animation);
-    if (webp.length > _animatedBytes) continue;
+    );
+    img.Image? posterFrame;
+    _EncodedFrame encodeFrame(int i) {
+      final sourceIndex = i * sampleCount ~/ frameCount;
+      Uint8List encodeStill() {
+        final frame = _compose(
+          i == 0 ? firstSource : _resizeRgba(croppedFrames[sourceIndex], side),
+          overlay: overlay,
+          side: side,
+          circle: circle,
+          rgbBits: profile.rgbBits,
+        );
+        if (i == 0 && !circle) posterFrame = frame;
+        return encoder.encode(frame, singleFrame: true);
+      }
 
-    return (
-      webp: webp,
-      poster: _encodePoster(
-        animation,
-        source: firstSource,
-        overlay: overlay,
-        side: side,
-        circle: circle,
-        rgbBits: profile.rgbBits,
-      ),
+      return (
+        still:
+            sharedFrames?.putIfAbsent(sourceIndex, encodeStill) ??
+            encodeStill(),
+        durationMs:
+            _boundary(i + 1, frameCount, durationMs) -
+            _boundary(i, frameCount, durationMs),
+      );
+    }
+
+    final encoded = _encodeBoundedWebP(
+      frames: Iterable.generate(frameCount, encodeFrame),
       side: side,
+      hasAlpha: circle,
+    );
+    if (encoded == null) return null;
+    return (
+      profile: profile,
+      animation: encoded.animation,
+      firstFrame: encoded.firstFrame,
+      firstSource: firstSource,
+      overlay: overlay,
+      posterFrame: posterFrame,
       frameCount: frameCount,
-      durationMs: durationMs,
     );
   }
-  throw const AnimatedStickerCodecException(
-    AnimatedStickerCodecFailure.budgetExceeded,
+
+  _ProfileResult? selected;
+  if (circle) {
+    if (only == null || only == CircularStickerPass.fullColor) {
+      selected = tryProfile(_circleFullColor);
+    }
+    if (selected == null &&
+        (only == null || only == CircularStickerPass.fiveBit)) {
+      // The 8 fps sampling grid is a subset of the 12 fps grid. Both profiles
+      // use the same pixels and lossless frame encoder, so the larger grid
+      // cannot fit when its subset already exceeds the animation cap.
+      final sharedFrames = <int, Uint8List>{};
+      final subset = tryProfile(
+        _circleFiveBitEightFps,
+        sharedFrames: sharedFrames,
+      );
+      if (subset != null) {
+        selected =
+            tryProfile(_circleFiveBit, sharedFrames: sharedFrames) ?? subset;
+      }
+    }
+  }
+  if (selected == null &&
+      (only == null || only == CircularStickerPass.fallback)) {
+    for (final profile in circle ? _circleFallbacks : _opaqueProfiles) {
+      selected = tryProfile(profile);
+      if (selected != null) break;
+    }
+  }
+  if (selected == null) {
+    if (only != null) throw const CircularStickerPassDidNotFit();
+    throw const AnimatedStickerCodecException(
+      AnimatedStickerCodecFailure.budgetExceeded,
+    );
+  }
+
+  final profile = selected.profile;
+  return (
+    webp: selected.animation,
+    poster: _encodePoster(
+      selected.posterFrame,
+      encodedFirstFrame: circle ? selected.firstFrame : null,
+      source: selected.firstSource,
+      overlay: selected.overlay,
+      side: profile.side,
+      circle: circle,
+      rgbBits: profile.rgbBits,
+    ),
+    side: profile.side,
+    frameCount: selected.frameCount,
+    durationMs: durationMs,
   );
+}
+
+typedef _EncodedFrame = ({Uint8List still, int durationMs});
+
+({Uint8List animation, Uint8List firstFrame})? _encodeBoundedWebP({
+  required Iterable<_EncodedFrame> frames,
+  required int side,
+  required bool hasAlpha,
+}) {
+  const riffHeaderBytes = 12;
+  const animationHeaderBytes = 44; // RIFF header, VP8X and ANIM.
+  const frameHeaderBytes = 24; // ANMF chunk header and frame fields.
+  final header = img.OutputBuffer(size: animationHeaderBytes)
+    ..writeBytes('RIFF'.codeUnits)
+    ..writeUint32(0) // Filled with the exact file size after the final frame.
+    ..writeBytes('WEBPVP8X'.codeUnits)
+    ..writeUint32(10)
+    ..writeUint32(hasAlpha ? 0x12 : 0x02); // Animation and optional alpha.
+  _writeUint24(header, side - 1);
+  _writeUint24(header, side - 1);
+  header
+    ..writeBytes('ANIM'.codeUnits)
+    ..writeUint32(6)
+    ..writeUint32(0) // Transparent background.
+    ..writeUint16(0); // Loop forever.
+  final animation = BytesBuilder(copy: false)..add(header.getBytes());
+
+  Uint8List? firstFrame;
+  for (final (:still, :durationMs) in frames) {
+    // These composed frames have no metadata. The standalone encoder writes
+    // one padded VP8 or VP8L chunk after the RIFF header.
+    final bitstream = Uint8List.sublistView(still, riffHeaderBytes);
+    final fileBytes = animation.length + frameHeaderBytes + bitstream.length;
+    if (fileBytes > _animatedBytes) return null;
+
+    firstFrame ??= still;
+    final frameHeader = img.OutputBuffer(size: frameHeaderBytes)
+      ..writeBytes('ANMF'.codeUnits)
+      ..writeUint32(frameHeaderBytes - 8 + bitstream.length)
+      ..writeUint32(0) // Top-left frame offset (two uint24 fields).
+      ..writeUint16(0);
+    _writeUint24(frameHeader, side - 1);
+    _writeUint24(frameHeader, side - 1);
+    _writeUint24(frameHeader, durationMs);
+    frameHeader.writeByte(3); // Replace the canvas, then clear to background.
+    animation
+      ..add(frameHeader.getBytes())
+      ..add(bitstream);
+  }
+
+  final bytes = animation.takeBytes();
+  ByteData.sublistView(bytes).setUint32(4, bytes.length - 8, Endian.little);
+  return (animation: bytes, firstFrame: firstFrame!);
+}
+
+void _writeUint24(img.OutputBuffer out, int value) {
+  out
+    ..writeUint16(value & 0xffff)
+    ..writeByte(value >> 16);
 }
 
 int _frameCount(int durationMs, int fps) =>
@@ -245,7 +387,8 @@ img.Image _compose(
 }
 
 Uint8List _encodePoster(
-  img.Image sequence, {
+  img.Image? firstFrame, {
+  required Uint8List? encodedFirstFrame,
   required Uint8List source,
   required Uint8List? overlay,
   required int side,
@@ -253,7 +396,7 @@ Uint8List _encodePoster(
   required int rgbBits,
 }) {
   final lossless = img.WebPEncoder(exact: false);
-  final preferred = lossless.encode(sequence, singleFrame: true);
+  final preferred = encodedFirstFrame ?? lossless.encode(firstFrame!);
   if (preferred.length <= _posterBytes) return preferred;
   if (circle) {
     for (final bits in [5, 4]) {
@@ -276,7 +419,7 @@ Uint8List _encodePoster(
         exact: false,
         quality: quality,
         method: 0,
-      ).encode(sequence, singleFrame: true);
+      ).encode(firstFrame!);
       if (poster.length <= _posterBytes) return poster;
     }
   }

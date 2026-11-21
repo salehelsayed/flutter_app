@@ -116,6 +116,54 @@ void main() {
   });
 
   test(
+    'parallel encoding saves the same two files as serial encoding',
+    () async {
+      const deadline = Duration(seconds: 3);
+      messenger.setMockMethodCallHandler(_channel, (call) async {
+        final args = Map<String, Object?>.from(call.arguments as Map);
+        final bytes = Uint8List(512 * 512 * 4 * 2);
+        for (var i = 0; i < bytes.length; i += 4) {
+          bytes[i] = i < bytes.length ~/ 2 ? 64 : 128;
+          bytes[i + 3] = 255;
+        }
+        File(args['framesPath']! as String).writeAsBytesSync(bytes);
+        return {'durationMs': 160, 'frameCount': 2};
+      });
+      final parallel = StickerClipExporter(
+        temporaryDirectory: () async => cache,
+        parallelEncoding: true,
+      );
+      addTearDown(() => parallel.cancel().timeout(deadline));
+
+      final serial = (await exporter
+          .export(clipPath: source.path, crop: _crop, circle: true)
+          .timeout(deadline))!;
+      final shared = (await parallel
+          .export(clipPath: source.path, crop: _crop, circle: true)
+          .timeout(deadline))!;
+
+      expect(shared.sha256Hex, serial.sha256Hex);
+      expect(
+        File(shared.filePath).readAsBytesSync(),
+        File(serial.filePath).readAsBytesSync(),
+      );
+      expect(
+        File(shared.posterPath!).readAsBytesSync(),
+        File(serial.posterPath!).readAsBytesSync(),
+      );
+      expect(
+        (shared.width, shared.height, shared.frameCount, shared.durationMs),
+        (512, 512, 2, 160),
+      );
+      expect(
+        jobs().expand((dir) => dir.listSync()).map((entry) => entry.path),
+        everyElement(endsWith('.webp')),
+      );
+      expect(source.readAsBytesSync(), [1, 2, 3]);
+    },
+  );
+
+  test(
     'cancel joins native extraction and rejects a concurrent export',
     () async {
       final started = Completer<void>();
