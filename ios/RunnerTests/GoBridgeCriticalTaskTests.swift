@@ -1,6 +1,11 @@
 // ios/RunnerTests/GoBridgeCriticalTaskTests.swift
 
+import Flutter
+import ObjectiveC
+import SQLCipher
+import UIKit
 import XCTest
+import sqflite_sqlcipher
 @testable import Runner
 
 final class GoBridgeActivityReporterContractTests: XCTestCase {
@@ -687,5 +692,243 @@ final class FakeBackgroundTaskManager: BackgroundTaskManaging {
     func expire(_ identifier: UIBackgroundTaskIdentifier) {
         let expirationHandler = expirationHandlers[identifier]
         expirationHandler?()
+    }
+}
+
+
+final class SqlCipherSuspensionTests: XCTestCase {
+    @MainActor
+    func testExpirationReleasesAnOpenWriteBeforeEndingTheGrant() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("suspension.db").path
+        let password = "x'\(String(repeating: "ab", count: 32))'"
+
+        let grants = try SqlCipherTestGrants()
+        defer { grants.restore() }
+        let plugin = SqfliteSqlCipherPlugin()
+        let opened = try success(plugin, grants, "openDatabase", [
+            "path": path, "password": password, "singleInstance": false,
+        ])
+        let id = try XCTUnwrap((opened as? [String: Any])?["id"] as? Int)
+        defer { _ = try? success(plugin, grants, "closeDatabase", ["id": id]) }
+
+        _ = try success(plugin, grants, "execute", [
+            "id": id, "sql": "CREATE TABLE marker (id INTEGER PRIMARY KEY)",
+        ])
+        _ = try success(plugin, grants, "insert", [
+            "id": id, "sql": "INSERT INTO marker VALUES (1)",
+        ])
+
+        var second: OpaquePointer?
+        let openCode = SQLCipher.sqlite3_open_v2(path, &second, SQLCipher.SQLITE_OPEN_READWRITE, nil)
+        defer { SQLCipher.sqlite3_close(second) }
+        XCTAssertEqual(openCode, SQLCipher.SQLITE_OK)
+        guard openCode == SQLCipher.SQLITE_OK else { return }
+        let peer = try XCTUnwrap(second)
+        XCTAssertEqual(
+            SQLCipher.sqlite3_exec(peer, "PRAGMA key = \"\(password)\"", nil, nil, nil),
+            SQLCipher.SQLITE_OK
+        )
+        XCTAssertEqual(try markers(on: peer), [1])
+        XCTAssertEqual(writeLockStatus(on: peer), SQLCipher.SQLITE_OK)
+
+        let begin = try success(plugin, grants, "execute", [
+            "id": id, "sql": "BEGIN IMMEDIATE", "inTransaction": true, "transactionId": NSNull(),
+        ])
+        let token = (begin as? [String: Any])?["transactionId"] as? Int
+        var write: [String: Any] = ["id": id, "sql": "INSERT INTO marker VALUES (2)"]
+        write["transactionId"] = token
+        _ = try success(plugin, grants, "insert", write)
+
+        // Establish real lock contention on another handle before injecting expiration.
+        let statusBeforeExpiration = writeLockStatus(on: peer)
+        XCTAssertEqual(statusBeforeExpiration, SQLCipher.SQLITE_BUSY)
+        guard statusBeforeExpiration == SQLCipher.SQLITE_BUSY else { return }
+        guard grants.pending.count == 1, let (grant, expire) = grants.pending.first else {
+            XCTFail("SQLCipher held an open write lock without a live background assertion")
+            return
+        }
+        let expiredToken = try XCTUnwrap(token)
+
+        let ended = expectation(description: "SQLCipher releases its write lock before ending its assertion")
+        var statusAtEnd: Int32?
+        grants.didEnd = { identifier in
+            guard identifier == grant else { return }
+            statusAtEnd = self.writeLockStatus(on: peer)
+            ended.fulfill()
+        }
+        expire()
+        wait(for: [ended], timeout: 3)
+        grants.didEnd = nil
+        XCTAssertEqual(statusAtEnd, SQLCipher.SQLITE_OK)
+        XCTAssertEqual(grants.ended.filter { $0 == grant }.count, 1)
+        XCTAssertEqual(try markers(on: peer), [1])
+
+        let lateWrite = try invoke(plugin, grants, "insert", [
+            "id": id, "sql": "INSERT INTO marker VALUES (3)", "transactionId": expiredToken,
+        ])
+        XCTAssertEqual((lateWrite as? FlutterError)?.code, "sqlite_error")
+        XCTAssertEqual((lateWrite as? FlutterError)?.message, "transaction_aborted")
+        XCTAssertEqual(try markers(on: peer), [1])
+
+        let fresh = try success(plugin, grants, "execute", [
+            "id": id, "sql": "BEGIN IMMEDIATE", "inTransaction": true, "transactionId": NSNull(),
+        ])
+        let freshToken = try XCTUnwrap((fresh as? [String: Any])?["transactionId"] as? Int)
+        XCTAssertNotEqual(freshToken, expiredToken)
+        _ = try success(plugin, grants, "insert", [
+            "id": id, "sql": "INSERT INTO marker VALUES (4)", "transactionId": freshToken,
+        ])
+        let lateCommit = try invoke(plugin, grants, "execute", [
+            "id": id, "sql": "COMMIT", "inTransaction": false, "transactionId": expiredToken,
+        ])
+        XCTAssertEqual((lateCommit as? FlutterError)?.message, "transaction_aborted")
+        XCTAssertEqual(writeLockStatus(on: peer), SQLCipher.SQLITE_BUSY)
+        _ = try success(plugin, grants, "execute", [
+            "id": id, "sql": "COMMIT", "inTransaction": false, "transactionId": freshToken,
+        ])
+        XCTAssertEqual(try markers(on: peer), [1, 4])
+    }
+
+    private func writeLockStatus(on peer: OpaquePointer) -> Int32 {
+        let status = SQLCipher.sqlite3_exec(peer, "BEGIN IMMEDIATE", nil, nil, nil)
+        guard status == SQLCipher.SQLITE_OK else { return status }
+        return SQLCipher.sqlite3_exec(peer, "ROLLBACK", nil, nil, nil)
+    }
+
+    private func markers(on peer: OpaquePointer) throws -> [Int64] {
+        var statement: OpaquePointer?
+        let status = SQLCipher.sqlite3_prepare_v2(
+            peer, "SELECT id FROM marker ORDER BY id", -1, &statement, nil
+        )
+        defer { SQLCipher.sqlite3_finalize(statement) }
+        XCTAssertEqual(status, SQLCipher.SQLITE_OK)
+        guard status == SQLCipher.SQLITE_OK else { throw ProbeFailure.statement }
+        var values = [Int64]()
+        var step = SQLCipher.sqlite3_step(statement)
+        while step == SQLCipher.SQLITE_ROW {
+            values.append(SQLCipher.sqlite3_column_int64(statement, 0))
+            step = SQLCipher.sqlite3_step(statement)
+        }
+        XCTAssertEqual(step, SQLCipher.SQLITE_DONE)
+        return values
+    }
+
+    private enum ProbeFailure: Error {
+        case statement, missingReply, unexpectedFlutterError
+    }
+
+    @MainActor
+    private func success(
+        _ plugin: FlutterPlugin, _ grants: SqlCipherTestGrants,
+        _ method: String, _ arguments: [String: Any]
+    ) throws -> Any? {
+        let reply = try invoke(plugin, grants, method, arguments)
+        if let error = reply as? FlutterError {
+            XCTFail("\(method) unexpectedly returned \(error.code)")
+            throw ProbeFailure.unexpectedFlutterError
+        }
+        return reply
+    }
+
+    @MainActor
+    private func invoke(
+        _ plugin: FlutterPlugin, _ grants: SqlCipherTestGrants,
+        _ method: String, _ arguments: [String: Any]
+    ) throws -> Any? {
+        let returned = expectation(description: method)
+        var reply: Any?
+        grants.capture {
+            plugin.handle?(FlutterMethodCall(methodName: method, arguments: arguments), result: {
+                reply = $0
+                returned.fulfill()
+            })
+        }
+        guard XCTWaiter.wait(for: [returned], timeout: 3) == .completed else {
+            XCTFail("SQLCipher \(method) did not return")
+            throw ProbeFailure.missingReply
+        }
+        return reply
+    }
+}
+
+@MainActor
+private final class SqlCipherTestGrants {
+    static var owner: SqlCipherTestGrants?
+
+    private let begin: (Method, Method)
+    private let end: (Method, Method)
+    private var nextIdentifier = Int.max - 1_000
+    private(set) var capturing = false
+    private(set) var pending: [Int: () -> Void] = [:]
+    private(set) var ended: [Int] = []
+    var didEnd: ((Int) -> Void)?
+
+    init() throws {
+        XCTAssertNil(Self.owner)
+        let cls = UIApplication.self
+        begin = (
+            try XCTUnwrap(class_getInstanceMethod(cls, NSSelectorFromString("beginBackgroundTaskWithName:expirationHandler:"))),
+            try XCTUnwrap(class_getInstanceMethod(cls, #selector(UIApplication.bl49_begin(_:expirationHandler:))))
+        )
+        end = (
+            try XCTUnwrap(class_getInstanceMethod(cls, NSSelectorFromString("endBackgroundTask:"))),
+            try XCTUnwrap(class_getInstanceMethod(cls, #selector(UIApplication.bl49_end(_:))))
+        )
+        Self.owner = self
+        method_exchangeImplementations(begin.0, begin.1)
+        method_exchangeImplementations(end.0, end.1)
+    }
+
+    func capture(_ body: () -> Void) {
+        capturing = true
+        defer { capturing = false }
+        body()
+    }
+
+    func start(_ expiration: (() -> Void)?) -> Int {
+        let identifier = nextIdentifier
+        nextIdentifier += 1
+        pending[identifier] = expiration ?? {}
+        return identifier
+    }
+
+    func finish(_ identifier: Int) -> Bool {
+        if ended.contains(identifier) {
+            XCTFail("SQLCipher ended the same background assertion twice")
+            return true
+        }
+        guard pending.removeValue(forKey: identifier) != nil else { return false }
+        ended.append(identifier)
+        didEnd?(identifier)
+        return true
+    }
+
+    func restore() {
+        XCTAssertTrue(pending.isEmpty, "SQLCipher left a captured background assertion outstanding")
+        method_exchangeImplementations(end.0, end.1)
+        method_exchangeImplementations(begin.0, begin.1)
+        Self.owner = nil
+    }
+}
+
+private extension UIApplication {
+    @objc(bl49_begin:expirationHandler:)
+    dynamic func bl49_begin(_ name: String?, expirationHandler: (() -> Void)?) -> Int {
+        if name == "mknoon.sqlcipher", let grants = SqlCipherTestGrants.owner, grants.capturing {
+            return grants.start(expirationHandler)
+        }
+        // The exchange routes this selector to the original UIKit implementation.
+        return bl49_begin(name, expirationHandler: expirationHandler)
+    }
+
+    @objc(bl49_end:)
+    dynamic func bl49_end(_ identifier: Int) {
+        if SqlCipherTestGrants.owner?.finish(identifier) == true { return }
+        bl49_end(identifier)
     }
 }
