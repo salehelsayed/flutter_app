@@ -26,6 +26,7 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
   _createLibrary;
   final bool _enabled;
   final _changes = StreamController<void>.broadcast(sync: true);
+  final _accountRetirements = StreamController<void>.broadcast(sync: true);
   late final Stream<void> _changeStream = _changes.stream;
   _StickerLibraryGeneration? _current;
   bool _blocked = false;
@@ -78,7 +79,6 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     if (!identical(_current, generation)) return;
     _current = null;
     _blocked = !allowInitialRetry;
-    unawaited(generation.retired.close());
   }
 
   Future<T> _run<T>(
@@ -101,6 +101,7 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
   }
 
   /// Binds a clip editor's later admission to the account that opened it.
+  /// Explicit retirement remains observable if storage initialization fails.
   ({
     Future<CustomSticker> Function(NormalizedStickerAsset) admit,
     Stream<void> onRetired,
@@ -111,7 +112,7 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     return (
       admit: (asset) =>
           _run((library) => library.admit(asset), captured: generation),
-      onRetired: generation.retired.stream,
+      onRetired: _accountRetirements.stream,
       isCurrent: () => _isCurrent(generation),
     );
   }
@@ -187,9 +188,8 @@ final class AccountCustomStickerLibrary implements CustomStickerLibrary {
     _blocked = true;
     final generation = _current;
     _current = null;
+    _accountRetirements.add(null);
     if (generation == null) return _retirement;
-    generation.retired.add(null);
-    unawaited(generation.retired.close());
     return _retirement = Future.wait<void>([
       _retirement,
       _retireGeneration(generation),
@@ -265,7 +265,6 @@ final class _StickerLibraryGeneration {
   _StickerLibraryGeneration({required this.retryIfNoIdentity});
 
   final bool retryIfNoIdentity;
-  final retired = StreamController<void>.broadcast(sync: true);
   Future<SqliteCustomStickerLibrary?>? initialization;
   StreamSubscription<void>? subscription;
 }
