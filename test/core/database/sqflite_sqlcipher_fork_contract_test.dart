@@ -20,7 +20,7 @@ const _junitDependencyLine = "    testImplementation 'junit:junit:4.13.2'\n";
 
 const _pinnedForkFileDigests = <String, String>{
   'ios/Classes/SqfliteSqlCipherPlugin.m':
-      'e609695db9cb0de7bbe1b2944edd9ad1bb7bbb299d7d6bbe7f49dc4ff3a1daed',
+      '65903cdf444ddf12196779247c1e7a55cb071be5557990ccb89cc25f638f290b',
   'android/build.gradle':
       'c5538ba79ab511c68dd8189dd14ad15f102fb81e31b0b8a82eaaa29455db12a6',
   'android/src/main/java/com/davidmartos96/sqflite_sqlcipher/'
