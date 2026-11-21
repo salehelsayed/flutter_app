@@ -43,6 +43,7 @@ final class PendingNativeCallStoreTests: XCTestCase {
     XCTAssertTrue(snapshot.answerRequested)
     guard case .ignoredAfterTerminal = reopened.append(nativeCallId: callA, type: .audioActivated)
     else { return XCTFail("terminal must dominate") }
+    XCTAssertEqual(reopened.create(payload(callB)), .busy(snapshot))
   }
 
   func testPartialAndAdoptionAcknowledgementsReplayOnlyUnconsumedEvents() throws {
@@ -105,6 +106,8 @@ final class PendingNativeCallStoreTests: XCTestCase {
     _ = store.create(payload(callA))
     _ = store.append(nativeCallId: callA, type: .presented)
     _ = store.append(nativeCallId: callA, type: .declineRequested)
+    let pendingDecline = try XCTUnwrap(store.snapshot())
+    XCTAssertEqual(store.create(payload(callB)), .busy(pendingDecline))
 
     XCTAssertTrue(store.acknowledge(
       nativeCallId: callA,
@@ -212,6 +215,9 @@ final class PendingNativeCallStoreTests: XCTestCase {
     let store = PendingNativeCallStore(backend: backend, nowMs: { clock })
     _ = store.create(payload(callA, receivedAtMs: clock))
     _ = store.append(nativeCallId: callA, type: .presented)
+    XCTAssertTrue(store.acknowledge(
+      nativeCallId: callA, highestConsumedSequence: 1, acknowledgement: .adopted
+    ))
     _ = store.append(nativeCallId: callA, type: .remoteCancelled)
     let terminal = try XCTUnwrap(store.snapshot())
     XCTAssertEqual(
@@ -274,6 +280,48 @@ final class PendingNativeCallStoreTests: XCTestCase {
       return XCTFail("the retired wake must stay fenced after replacement")
     }
     XCTAssertEqual(reopened.snapshot()?.nativeCallId, callB)
+  }
+
+  func testDistinctIncomingBypassesPresentedUnadoptedRemoteCancelAfterRecreation() throws {
+    let backend = MemoryPendingCallBackend()
+    var clock = now
+    let store = PendingNativeCallStore(backend: backend, nowMs: { clock })
+    let first = payload(callA, receivedAtMs: clock)
+    guard case .created = store.create(first) else { return XCTFail("expected create") }
+    assertAppended(store.append(nativeCallId: callA, type: .presented), sequence: 1)
+    assertAppended(store.append(nativeCallId: callA, type: .remoteCancelled), sequence: 2)
+    let previous = try XCTUnwrap(store.snapshot())
+
+    clock += 16_000
+    let reopened = PendingNativeCallStore(backend: backend, nowMs: { clock })
+    let next = payload(callB, receivedAtMs: clock)
+    XCTAssertEqual(reopened.create(first), .duplicate(previous))
+    XCTAssertEqual(reopened.createOutgoing(next), .busy(previous))
+
+    backend.failWrites = true
+    XCTAssertEqual(reopened.create(next), .persistenceFailure)
+    XCTAssertEqual(reopened.snapshot(), previous)
+    XCTAssertNil(backend.receipts)
+    XCTAssertEqual(backend.deleteCount, 0)
+    backend.failWrites = false
+
+    guard case let .created(successor) = reopened.create(next) else {
+      return XCTFail("the presented, cancelled call must release the slot before its replay deadline")
+    }
+    XCTAssertEqual(successor.nativeCallId, callB)
+    XCTAssertEqual(backend.deleteCount, 1)
+    let writesAfterSuccessor = backend.descriptorWriteCount
+    XCTAssertFalse(reopened.acknowledge(
+      nativeCallId: callA, highestConsumedSequence: 1, acknowledgement: .terminal
+    ))
+    for _ in 0..<2 {
+      XCTAssertTrue(reopened.acknowledge(
+        nativeCallId: callA, highestConsumedSequence: 2, acknowledgement: .terminal
+      ))
+    }
+    XCTAssertEqual(reopened.create(first), .duplicate(nil))
+    XCTAssertEqual(reopened.snapshot(), successor)
+    XCTAssertEqual(backend.descriptorWriteCount, writesAfterSuccessor)
   }
 
   private func makeStore(_ backend: MemoryPendingCallBackend) -> PendingNativeCallStore {
