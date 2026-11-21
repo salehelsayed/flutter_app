@@ -7265,6 +7265,30 @@ visible and cannot become an ordinary first-attempt PASS.
   `~/.codex/investigations/bl47-circle-192-codex2-20261121/` and
   `~/.codex/investigations/bl47-circle-quality-codex2-20261121/`.
 
+  The BL-47 speed fix at `58e5ee87` stops encoding a profile once its RIFF
+  frames exceed 512 KiB. The 8 fps five-bit profile uses a subset of the 12 fps
+  profile's frames. When that subset exceeds the cap, both profiles are
+  rejected. When both fit, the 12 fps profile still wins. Linux checked both
+  fitting cases, a textured clip with text, the actual Flutter decoder, and
+  identical exported bytes from serial and shared-buffer workers. The exact
+  source passed enabled animation (31), affected stickers (293) and affected
+  media (1,814). A prior group-text fixture failure is archived with passing
+  matched probes on both revisions.
+
+  Release-mode build 301 used the exact source with ordinary Android frame
+  retrieval. Three lit camera runs per phone measured median Save-to-tray
+  time of 4.69 s on iPhone 13 (4.60–4.82 s) and 14.70 s on Pixel
+  (12.94–14.88 s), compared with 17.91 s and 30.68 s on diagnostic build 298.
+  Diagnostic build 300 verified matching decoded pixels and WebP bytes in
+  its pilot. Overlapping Android frame retrieval increased median extraction
+  from 3.83 s to 4.25 s, so build 301 uses the original retrieval path.
+  Stage attribution and animation timing come from the diagnostic runs and
+  the host decoder cases. Compare recordings with similar framing and preview
+  luma. Four dark iPhone takes selected a much cheaper encoding profile and
+  were excluded. Evidence lives in `.codex-test-logs/bl47t-20261121/`,
+  `.codex-test-logs/bl47b-20261121/`, `.codex-test-logs/bl47p-20261121/`
+  and `.codex-test-logs/bl47f-20261121/`.
+
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
   cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
