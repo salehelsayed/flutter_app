@@ -51,8 +51,9 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
       widget.lastLoaded?[widget.postId] ?? const [];
   bool _loading = true;
   bool _failed = false;
-  bool _refreshRequested = false;
   int _generation = 0;
+  int _readVersion = 0;
+  int _appliedVersion = 0;
   final _attempts = <String, int>{};
   StreamSubscription<String>? _postSubscription;
   Timer? _retryTimer;
@@ -71,7 +72,6 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     if (sourceChanged) _bindPostChanges();
     if (oldWidget.postId != widget.postId || sourceChanged) {
       _attempts.clear();
-      _refreshRequested = false;
       _media = widget.lastLoaded?[widget.postId] ?? const [];
       unawaited(_load());
     }
@@ -80,13 +80,37 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   void _bindPostChanges() {
     unawaited(_postSubscription?.cancel());
     _postSubscription = widget.postChanges?.listen((postId) {
-      if (!mounted || postId != widget.postId) return;
-      if (_loading) {
-        _refreshRequested = true;
-      } else {
-        unawaited(_load(downloadMissing: false));
-      }
+      if (mounted && postId == widget.postId) unawaited(_refresh(postId));
     });
+  }
+
+  Future<void> _refresh(String postId) async {
+    final generation = _generation;
+    final version = ++_readVersion;
+    try {
+      final media = await widget
+          .load(postId)
+          .timeout(const Duration(seconds: 30));
+      if (!mounted || generation != _generation || version < _appliedVersion) {
+        return;
+      }
+      // A commit may arrive while the foreground download is still waiting.
+      // Publish it now without interrupting the remaining transfers.
+      setState(() {
+        _applySnapshot(media, version);
+        _failed = !_loading && _media.any((item) => !_hasLocalFile(item));
+      });
+      if (!_waitingForRetry) _cancelRetry();
+    } catch (_) {
+      // A background read cannot invalidate a visible, working attachment.
+    }
+  }
+
+  void _applySnapshot(List<PostMediaAttachmentModel> media, int version) {
+    if (version < _appliedVersion) return;
+    _appliedVersion = version;
+    _media = media;
+    widget.lastLoaded?[widget.postId] = media;
   }
 
   bool _hasLocalFile(PostMediaAttachmentModel attachment) {
@@ -96,14 +120,19 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
         File(MediaFileManager.resolveStoredPathSync(path)).existsSync();
   }
 
-  Future<void> _load({
-    bool downloadMissing = true,
-    bool transientOnly = false,
-  }) async {
-    if (downloadMissing) {
-      _retryTimer?.cancel();
-      _retryTimer = null;
-    }
+  bool get _waitingForRetry => _media.any(
+    (item) =>
+        item.downloadStatus == kMediaDownloadStatusRetryWaiting &&
+        !_hasLocalFile(item),
+  );
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  Future<void> _load({bool transientOnly = false}) async {
+    _cancelRetry();
     final generation = ++_generation;
     final postId = widget.postId;
     setState(() {
@@ -113,73 +142,58 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     bool current() =>
         mounted && generation == _generation && widget.postId == postId;
     try {
-      var media = await widget
+      final initialVersion = ++_readVersion;
+      final initialMedia = await widget
           .load(postId)
           .timeout(const Duration(seconds: 30));
       if (!current()) return;
-      if (downloadMissing) {
-        setState(() => _media = media);
-        for (final attachment in media) {
-          if (!current()) return;
-          if (_hasLocalFile(attachment) ||
-              (transientOnly &&
-                  attachment.downloadStatus !=
-                      kMediaDownloadStatusRetryWaiting)) {
-            continue;
-          }
-          // The downloader joins active transfers and persists their outcome.
-          final attempt = _attempts.update(
-            attachment.mediaId,
-            (previous) => previous + 1,
-            ifAbsent: () => 1,
-          );
-          try {
-            await widget
-                .download(attachment, attempt)
-                .timeout(const Duration(seconds: 30));
-          } catch (_) {
-            if (!current()) return;
-          }
-        }
+      setState(() => _applySnapshot(initialMedia, initialVersion));
+      for (final attachment in _media) {
         if (!current()) return;
-        media = await widget.load(postId).timeout(const Duration(seconds: 30));
+        if (_hasLocalFile(attachment) ||
+            (transientOnly &&
+                attachment.downloadStatus !=
+                    kMediaDownloadStatusRetryWaiting)) {
+          continue;
+        }
+        // The downloader joins active transfers and persists their outcome.
+        final attempt = _attempts.update(
+          attachment.mediaId,
+          (previous) => previous + 1,
+          ifAbsent: () => 1,
+        );
+        try {
+          await widget
+              .download(attachment, attempt)
+              .timeout(const Duration(seconds: 30));
+        } catch (_) {
+          if (!current()) return;
+        }
       }
       if (!current()) return;
-      final waiting = media.any(
-        (item) =>
-            item.downloadStatus == kMediaDownloadStatusRetryWaiting &&
-            !_hasLocalFile(item),
-      );
-      if (downloadMissing && !transientOnly && waiting) {
+      final finalVersion = ++_readVersion;
+      final media = await widget
+          .load(postId)
+          .timeout(const Duration(seconds: 30));
+      if (!current()) return;
+      setState(() {
+        _applySnapshot(media, finalVersion);
+        _loading = false;
+        _failed = _media.isEmpty || _media.any((item) => !_hasLocalFile(item));
+      });
+      if (!transientOnly && _waitingForRetry) {
         _retryTimer = Timer(const Duration(seconds: 1), () {
           _retryTimer = null;
-          if (mounted && widget.postId == postId) {
-            unawaited(_load(transientOnly: true));
-          }
+          if (current()) unawaited(_load(transientOnly: true));
         });
-      } else if (!waiting) {
-        _retryTimer?.cancel();
-        _retryTimer = null;
       }
-      widget.lastLoaded?[postId] = media;
-      setState(() {
-        _media = media;
-        _loading = false;
-        _failed =
-            (downloadMissing && media.isEmpty) ||
-            media.any((item) => !_hasLocalFile(item));
-      });
     } catch (_) {
       if (current()) {
         setState(() {
           _loading = false;
-          _failed = true;
+          _failed =
+              _media.isEmpty || _media.any((item) => !_hasLocalFile(item));
         });
-      }
-    } finally {
-      if (current() && _refreshRequested) {
-        _refreshRequested = false;
-        unawaited(_load(downloadMissing: false));
       }
     }
   }
@@ -187,7 +201,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   @override
   void dispose() {
     ++_generation;
-    _retryTimer?.cancel();
+    _cancelRetry();
     unawaited(_postSubscription?.cancel());
     super.dispose();
   }
