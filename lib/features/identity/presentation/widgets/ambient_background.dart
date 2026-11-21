@@ -17,25 +17,13 @@ class AmbientBackground extends StatefulWidget {
   final bool isFeedSurface;
   final BackgroundReadableTone? readableToneOverride;
 
-  /// 134 §7 app-level reduced-motion opt-in for the feed surface: when true the
-  /// Aurora ambient loop does NOT start its infinite repeat() and the static
-  /// glow frame is rendered instead.
-  ///
-  /// 156 QW-3: the OS reduce-motion preference (`MediaQuery.disableAnimations` /
-  /// `accessibleNavigation`) is now ALSO honored on every ambient surface,
-  /// independently of this flag (see [_AmbientBackgroundState._shouldAnimate]).
-  /// This flag remains the feed's explicit override.
+  /// Uses the static Aurora glow on the feed. Every background also follows
+  /// the saved and OS motion preferences.
   final bool reduceMotion;
 
-  /// 158 (`critic-2`): steady-state idle-animation suppression for the chat/group
-  /// surfaces. When true the Aurora ambient loop does NOT start its
-  /// infinite repeat() — the static glow frame is rendered instead — so the
-  /// always-mounted chrome `BackdropFilter`s (header/composer/group panel) sit in
-  /// front of a STILL backdrop and become cacheable at rest. Distinct from
-  /// [reduceMotion] (accessibility, feed-only) and the OS reduce-motion gate
-  /// (156 QW-3): this is the default (motion-on) chat-surface perf axis. Defaults
-  /// to false; ONLY the two chat call sites opt in (see
-  /// [_AmbientBackgroundState._shouldAnimate]).
+  /// Uses static ambient artwork behind direct and group chat so the header
+  /// and composer backdrop filters can remain idle. Chat content retains its
+  /// own animation and accessibility settings.
   final bool isChatSurface;
 
   const AmbientBackground({
@@ -56,8 +44,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
 
-  /// 156 QW-3: OS reduce-motion preference, read from MediaQuery in
-  /// [didChangeDependencies] (mirrors cosmic_background).
+  /// Motion policy for the ambient artwork.
   bool _motionDisabled = false;
   bool _appResumed = true;
 
@@ -104,11 +91,12 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     super.dispose();
   }
 
-  /// Stop background loops whenever the app, route, OS, or saved preference
-  /// disallows motion. Content animations keep their original MediaQuery.
+  /// Applies the chat, OS, and saved background settings. Lifecycle and route
+  /// pauses preserve phase. Content keeps its original MediaQuery.
   void _syncMotionPreference() {
     final mediaQuery = MediaQuery.maybeOf(context);
     _motionDisabled =
+        widget.isChatSurface ||
         !BackgroundMotionScope.enabledOf(context) ||
         (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
@@ -185,18 +173,10 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   bool get _temporarilyPaused =>
       !_appResumed || !TickerMode.valuesOf(context).enabled;
 
-  /// Aurora permits motion UNLESS (a) the preference is not the glow
-  /// treatment, (b) this is a chat/group surface (158 critic-2:
-  /// idle-glow suppression so the always-mounted chrome BackdropFilters stay
-  /// cacheable at rest), (c) this is the feed surface AND [reduceMotion] is
-  /// requested, or (d) the OS or saved preference disables motion.
-  /// Each clause is additive (OR-combined) — none
-  /// short-circuits another. When gated off the controller stays at value 0 →
-  /// the static final glow frame is rendered. Temporary lifecycle/route pauses
-  /// stop the controller separately, preserving its current phase.
+  /// Aurora uses its static glow when the shared background policy or the
+  /// feed's explicit reduced-motion setting disables motion.
   bool get _shouldAnimate {
     if (!_usesGlowBackground) return false;
-    if (widget.isChatSurface) return false;
     if (widget.isFeedSurface && widget.reduceMotion) return false;
     if (_motionDisabled) return false;
     return true;

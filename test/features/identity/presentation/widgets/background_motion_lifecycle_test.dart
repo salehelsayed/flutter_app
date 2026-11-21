@@ -11,6 +11,55 @@ void main() {
     BackgroundPreference.cosmic,
     BackgroundPreference.aurora,
   ]) {
+    testWidgets(
+      '${preference.name} chat background stops idle frames and keeps content motion',
+      (tester) async {
+        const bound = Duration(seconds: 3);
+        const interval = Duration(milliseconds: 32);
+        const motionEnabled = Key('content-motion-enabled');
+        final child = Builder(
+          builder: (context) => SizedBox.expand(
+            key:
+                !MediaQuery.disableAnimationsOf(context) &&
+                    !MediaQuery.accessibleNavigationOf(context) &&
+                    TickerMode.valuesOf(context).enabled
+                ? motionEnabled
+                : null,
+          ),
+        );
+
+        Future<void> show({required bool isChatSurface}) async {
+          await tester
+              .pumpWidget(
+                _background(
+                  preference,
+                  isChatSurface: isChatSurface,
+                  child: child,
+                ),
+              )
+              .timeout(bound);
+          await tester.pump(interval).timeout(bound);
+        }
+
+        void expectIdleChat() {
+          expect(
+            tester.binding.transientCallbackCount,
+            0,
+            reason: 'chat ambient artwork must stop queuing frames',
+          );
+          expect(tester.binding.hasScheduledFrame, isFalse);
+          expect(find.byKey(motionEnabled), findsOneWidget);
+        }
+
+        await show(isChatSurface: true);
+        expectIdleChat();
+        await show(isChatSurface: false);
+        expect(tester.binding.transientCallbackCount, greaterThan(0));
+        await show(isChatSurface: true);
+        expectIdleChat();
+      },
+    );
+
     testWidgets('${preference.name} background stops frames while paused', (
       tester,
     ) async {
@@ -326,6 +375,7 @@ Widget _background(
   bool visible = true,
   bool disableAnimations = false,
   bool accessibleNavigation = false,
+  bool isChatSurface = false,
   Widget child = const SizedBox.expand(),
 }) {
   final app = MaterialApp(
@@ -336,7 +386,11 @@ Widget _background(
       ),
       child: TickerMode(
         enabled: visible,
-        child: AmbientBackground(preference: preference, child: child),
+        child: AmbientBackground(
+          preference: preference,
+          isChatSurface: isChatSurface,
+          child: child,
+        ),
       ),
     ),
   );
