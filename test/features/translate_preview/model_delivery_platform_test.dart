@@ -647,6 +647,93 @@ void main() {
   );
 
   test(
+    'queued mobile revocation stays unapplied when native cancel returns false after canceled',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance().timeout(
+        checkpointBound,
+      );
+      final manifest = _manifest();
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        preferences: () async => preferences,
+        diskSpace: DiskSpaceChannel(invoker: (_, _) async => 1000),
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+      );
+      final downloader = _Downloader();
+      final checkpoints = _ResumeStorage();
+      final task = _ownedTask(
+        'legacy-mobile-resume',
+      ).copyWith(requiresWiFi: false);
+      downloader.active[task.taskId] = task;
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.enqueued,
+        0,
+        manifest.bytes,
+      );
+      final partial = await retainAndroidCheckpoint(checkpoints, task, 80);
+      await storage
+          .saveRecord(
+            ModelDeliveryRecord(
+              manifest: manifest,
+              taskId: task.taskId,
+              receivedBytes: 80,
+              phase: ModelDeliveryPhase.resumeRequested,
+              allowMobileData: true,
+            ),
+          )
+          .timeout(checkpointBound);
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: checkpoints,
+        isIOS: false,
+      );
+      final controller = PersistentModelDeliveryController(
+        storage: storage,
+        network: _StorageTestNetwork(manifest),
+        transport: transport,
+        appBuild: () async => 129,
+        supported: true,
+        spaceReserveBytes: 20,
+      );
+      addTearDown(() => controller.dispose().timeout(checkpointBound));
+      await controller.initialize().timeout(checkpointBound);
+      expect(controller.allowMobileData.value, isTrue);
+      expect(
+        (await transport.checkpoint(task.taskId).timeout(checkpointBound))
+            ?.retainedBytes,
+        80,
+      );
+      downloader.onCancel = (id) async {
+        expect(id, task.taskId);
+        downloader.emit(task, TaskStatus.canceled);
+        expect(downloader.active[id], isNull);
+        return false;
+      };
+
+      await controller.setAllowMobileData(false).timeout(checkpointBound);
+
+      expect(downloader.canceled, [task.taskId]);
+      expect(
+        controller.allowMobileData.value,
+        isTrue,
+        reason:
+            'A canceled callback cannot confirm a rejected native cancellation.',
+      );
+      final persisted = await storage.readRecord().timeout(checkpointBound);
+      expect(persisted?.allowMobileData, isTrue);
+      expect(persisted?.taskId, task.taskId);
+      expect(persisted?.phase, isNot(ModelDeliveryPhase.restartRequired));
+      expect(controller.state.value, isNot(isA<ModelRestartRequired>()));
+      expect(downloader.enqueued, isEmpty);
+      expect(downloader.resumed, isEmpty);
+      expect(await partial.length().timeout(checkpointBound), 80);
+    },
+  );
+
+  test(
     'cancel ACK waits for terminal callback after a racing destination move',
     () async {
       final downloader = _Downloader();
