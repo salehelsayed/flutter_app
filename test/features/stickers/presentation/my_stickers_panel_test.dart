@@ -78,15 +78,18 @@ const _motionBound = Duration(seconds: 3);
 Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
   WidgetTester tester, {
   required int count,
+  bool expectFullyVisible = false,
+  int frameDurationMs = 80,
 }) async {
   final directory = Directory.systemTemp.createTempSync('animated-tray-');
   addTearDown(() => directory.deleteSync(recursive: true));
-  final animation = img.Image(width: 8, height: 8, frameDuration: 80)
-    ..clear(img.ColorRgb8(255, 0, 0))
-    ..addFrame(
-      img.Image(width: 8, height: 8, frameDuration: 80)
-        ..clear(img.ColorRgb8(0, 0, 255)),
-    );
+  final animation =
+      img.Image(width: 8, height: 8, frameDuration: frameDurationMs)
+        ..clear(img.ColorRgb8(255, 0, 0))
+        ..addFrame(
+          img.Image(width: 8, height: 8, frameDuration: frameDurationMs)
+            ..clear(img.ColorRgb8(0, 0, 255)),
+        );
   final bytes = img.WebPEncoder().encode(animation);
   final library = FakeCustomStickerLibrary();
   for (var index = 0; index < count; index++) {
@@ -101,13 +104,22 @@ Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
             width: 8,
             height: 8,
             frameCount: 2,
-            durationMs: 160,
+            durationMs: frameDurationMs * 2,
           ),
         )
         .timeout(_motionBound);
   }
   final harness = await _pump(tester, library).timeout(_motionBound);
   final ids = library.ids;
+  if (expectFullyVisible) {
+    final viewport = tester.getRect(find.byType(GridView));
+    for (final id in ids) {
+      final tile = _sticker(id);
+      expect(tile, findsOneWidget, reason: 'The fixture mounts every sticker.');
+      final bounds = tester.getRect(tile);
+      expect(viewport.intersect(bounds), bounds);
+    }
+  }
   final watch = Stopwatch()..start();
   while (!ids.every((id) => _currentTrayFrame(tester, id) != null) &&
       watch.elapsed < _motionBound) {
@@ -396,22 +408,38 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
   });
 
-  testWidgets('animated tray shows one moving sticker beside still frames', (
+  testWidgets('animated tray shows three moving stickers beside still frames', (
     tester,
   ) async {
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(420, 900);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final started = tester.binding.clock.now();
     final tray = await _pumpAnimatedTray(
       tester,
-      count: 3,
+      count: 5,
+      expectFullyVisible: true,
+      frameDurationMs: 300,
     ).timeout(_motionBound);
     final moving = await _movingTrayStickers(
       tester,
       tray.ids,
+      samples: 42,
     ).timeout(_motionBound);
     expect(
+      tester.binding.clock.now().difference(started),
+      lessThan(const Duration(milliseconds: 1800)),
+      reason: 'The observation stays within the initial three loops.',
+    );
+    expect(
       moving,
-      hasLength(1),
+      hasLength(3),
       reason:
-          'The crowded tray gives its one autoplay slot to a visible sticker.',
+          'The crowded tray gives its three autoplay slots to visible stickers.',
     );
     await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
   });
