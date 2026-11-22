@@ -1462,80 +1462,90 @@ void main() {
           'and Back returns to Orbit',
           (tester) async {
             const bound = Duration(seconds: 3);
-            if (delivered) {
-              p2pService.sendMessageWithReplyResult = const SendMessageResult(
-                sent: true,
-                acked: true,
-                reply: 'ack',
-              );
+            const ack = SendMessageResult(
+              sent: true,
+              acked: true,
+              reply: 'ack',
+            );
+            final heldAck = delivered ? null : Completer<SendMessageResult>();
+            p2pService.sendMessageWithReplyResult = ack;
+            if (heldAck != null) {
+              p2pService.onSendMessageWithReply = (_, _, {timeoutMs}) =>
+                  heldAck.future.timeout(bound);
             }
-            await enterDepthWithThought(tester, online: delivered);
-            if (fullScreen) {
+            try {
+              await enterDepthWithThought(tester, online: true);
+              if (fullScreen) {
+                await tester.tap(
+                  find.byKey(const ValueKey('orbit-depth-text-lake')),
+                );
+                await pumpOrbitFrames(tester, count: 24);
+                expect(find.byType(ThoughtCardScreen), findsOneWidget);
+              }
               await tester.tap(
-                find.byKey(const ValueKey('orbit-depth-text-lake')),
+                fullScreen ? _thoughtReplyTextField : _depthReplyEntry,
               );
-              await pumpOrbitFrames(tester, count: 24);
-              expect(find.byType(ThoughtCardScreen), findsOneWidget);
-            }
-            await tester.tap(
-              fullScreen ? _thoughtReplyTextField : _depthReplyEntry,
-            );
-            await pumpOrbitFrames(tester, count: 8);
-            expect(find.byIcon(Icons.mic), findsNothing);
-            await tester.enterText(
-              fullScreen ? _thoughtReplyTextField : _depthReplyField,
-              'count me in',
-            );
-            await tester.pump();
-            await tester.tap(
-              fullScreen ? _thoughtReplySubmit : _depthReplySend,
-            );
-            await pumpOrbitFrames(tester, count: 24);
+              await pumpOrbitFrames(tester, count: 8);
+              expect(find.byIcon(Icons.mic), findsNothing);
+              await tester.enterText(
+                fullScreen ? _thoughtReplyTextField : _depthReplyField,
+                'count me in',
+              );
+              await tester.pump();
+              await tester.tap(
+                fullScreen ? _thoughtReplySubmit : _depthReplySend,
+              );
+              await pumpOrbitFrames(tester, count: 16);
 
-            final replies = await messageRepo
-                .getMessagesForContact(testContact.peerId)
-                .timeout(bound);
-            expect(replies, hasLength(1));
-            final reply = replies.single;
-            expect(reply.text, 'count me in');
-            expect(reply.quotedMessageId, 'thought:lake');
-            if (delivered) {
-              expect(['delivered', 'read', 'inboxed'], contains(reply.status));
-            } else {
-              final intents = messageRepo as AuthoredDirectTextIntentRepository;
+              final replies = await messageRepo
+                  .getMessagesForContact(testContact.peerId)
+                  .timeout(bound);
+              expect(replies, hasLength(1));
+              final reply = replies.single;
+              expect(reply.text, 'count me in');
+              expect(reply.quotedMessageId, 'thought:lake');
+              if (delivered) {
+                expect([
+                  'delivered',
+                  'read',
+                  'inboxed',
+                ], contains(reply.status));
+              } else {
+                expect(reply.status, anyOf('sending', 'sent'));
+                expect(p2pService.sendMessageWithReplyCallCount, 1);
+                expect(heldAck!.isCompleted, isFalse);
+              }
+              final chat = find.byType(ConversationWired);
+              expect(chat, findsOneWidget);
               expect(
-                (await intents.loadAuthoredDirectTextIntents().timeout(
-                  bound,
-                )).map((intent) => intent.id),
-                [reply.id],
+                tester.widget<ConversationWired>(chat).contact.peerId,
+                testContact.peerId,
               );
-              expect(reply.status, 'sending');
-              expect(p2pService.sendMessageWithReplyCallCount, 0);
-            }
-            final chat = find.byType(ConversationWired);
-            expect(chat, findsOneWidget);
-            expect(
-              tester.widget<ConversationWired>(chat).contact.peerId,
-              testContact.peerId,
-            );
-            expect(
-              find.byKey(const ValueKey('thought-quote-block')),
-              findsOneWidget,
-            );
-            expect(find.text('count me in'), findsOneWidget);
+              expect(
+                find.byKey(const ValueKey('thought-quote-block')),
+                findsOneWidget,
+              );
+              expect(find.text('count me in'), findsOneWidget);
 
-            expect(
-              await tester.binding.handlePopRoute().timeout(bound),
-              isTrue,
-            );
-            await pumpOrbitFrames(tester, count: 24);
-            expect(chat, findsNothing);
-            expect(find.byType(ThoughtCardScreen), findsNothing);
-            expect(
-              find.byKey(const ValueKey('orbit-depth-stage')),
-              findsOneWidget,
-            );
-            await finishThoughtCase(tester);
+              expect(
+                await tester.binding.handlePopRoute().timeout(bound),
+                isTrue,
+              );
+              heldAck?.complete(ack);
+              await pumpOrbitFrames(tester, count: 24);
+              expect(chat, findsNothing);
+              expect(find.byType(ThoughtCardScreen), findsNothing);
+              expect(
+                find.byKey(const ValueKey('orbit-depth-stage')),
+                findsOneWidget,
+              );
+              await finishThoughtCase(tester);
+            } finally {
+              if (heldAck != null && !heldAck.isCompleted) {
+                heldAck.complete(ack);
+                await tester.pump();
+              }
+            }
           },
         );
       }
