@@ -1968,6 +1968,100 @@ void main() {
       );
       expect(find.text('Update'), findsOneWidget);
     });
+
+    testWidgets('connection loss keeps progress and resumes the owned task', (
+      tester,
+    ) async {
+      final h = await _Harness.create().timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+
+      h.network.changeWifi(false);
+      await h.event(ModelTransferStatus.paused).timeout(bound);
+      await pumpSheet(tester, h.controller);
+
+      expect(h.transport.pauses, isEmpty);
+      expect(h.transport.resumes, isEmpty);
+      expect(
+        find.text('Waiting for a connection'),
+        findsOneWidget,
+        reason:
+            'an interrupted download explains that it is waiting for a connection',
+      );
+      expect(
+        find.text(
+          "Your download is safe at 42%. It continues by itself when you're "
+          'back online.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Pause'), findsOneWidget);
+
+      h.network.changeWifi(true);
+      await h.flush().timeout(bound);
+      await tester.pump(const Duration(seconds: 5)).timeout(bound);
+      await h.flush().timeout(bound);
+
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.cancels, isEmpty);
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.record!.receivedBytes, 42);
+    });
+
+    testWidgets('a checksum mismatch automatically refetches only once', (
+      tester,
+    ) async {
+      final h = await _Harness.create().timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final rejected = h.id;
+      h.storage.valid = false;
+      await pumpSheet(tester, h.controller);
+
+      Future<void> finishWithBadChecksum() async {
+        final requestedRemoval = Completer<void>();
+        h.storage.onRemove = () async => requestedRemoval.complete();
+        await h.event(ModelTransferStatus.complete).timeout(bound);
+        await requestedRemoval.future.timeout(bound);
+        await h.flush().timeout(bound);
+        await tester.pump().timeout(bound);
+      }
+
+      await finishWithBadChecksum().timeout(bound);
+      expect(
+        h.transport.enqueues,
+        hasLength(2),
+        reason:
+            'the first failed checksum requests one replacement automatically',
+      );
+      final replacement = h.transport.enqueues.last;
+      expect(replacement.taskId, isNot(rejected));
+      expect(replacement.requiresWiFi, isTrue);
+      expect(h.storage.removals, 1);
+      expect(h.transport.forgets, [rejected]);
+      expect(find.text('The file was damaged'), findsOneWidget);
+      expect(
+        find.text("We're downloading the file again. Nothing for you to do."),
+        findsOneWidget,
+      );
+      await expectLater(
+        h.controller.verifiedModelPath().timeout(bound),
+        throwsStateError,
+      ).timeout(bound);
+
+      await finishWithBadChecksum().timeout(bound);
+      expect(h.transport.enqueues, hasLength(2));
+      expect(h.storage.removals, 2);
+      expect(h.transport.forgets, [rejected, replacement.taskId]);
+      expect(find.text('Try again to download a new copy.'), findsOneWidget);
+      await expectLater(
+        h.controller.verifiedModelPath().timeout(bound),
+        throwsStateError,
+      ).timeout(bound);
+    });
   });
 }
 
