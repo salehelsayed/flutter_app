@@ -7442,6 +7442,7 @@
         "lib/core/config/custom_stickers_flag.dart",
         "lib/core/media/camera_video_recorder.dart",
         "lib/features/stickers/application/animated_sticker_codec.dart",
+        "lib/features/stickers/application/android_sticker_webp_encoder.dart",
         "lib/features/stickers/application/sticker_clip_exporter.dart",
         "android/app/src/main/kotlin/com/mknoon/app/StickerClipFrameBridge.kt",
         "ios/Runner/StickerClipFrameBridge.swift",

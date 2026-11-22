@@ -13,6 +13,8 @@ import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'android_sticker_webp_encoder.dart';
+
 enum StickerClipExportFailure {
   disabled,
   busy,
@@ -250,6 +252,7 @@ typedef _EncodeRequest = ({
   bool circle,
   Uint8List? overlay,
   _SharedFrames? sharedFrames,
+  int? nativeStagingAddress,
 });
 
 typedef _CodecWorker = ({
@@ -270,7 +273,10 @@ Future<EncodedStickerAnimation?> _encodeInWorker(
   final running = <_CodecWorker>[];
   Pointer<Uint8>? storage;
 
-  Future<_CodecWorker> start(_SharedFrames? sharedFrames) async {
+  Future<_CodecWorker> start(
+    _SharedFrames? sharedFrames, {
+    int? nativeStagingAddress,
+  }) async {
     final port = ReceivePort();
     final result = Completer<Object?>();
     final exited = Completer<void>();
@@ -293,6 +299,7 @@ Future<EncodedStickerAnimation?> _encodeInWorker(
           circle: circle,
           overlay: overlay,
           sharedFrames: sharedFrames,
+          nativeStagingAddress: nativeStagingAddress,
         ),
         onError: port.sendPort,
         onExit: port.sendPort,
@@ -325,6 +332,35 @@ Future<EncodedStickerAnimation?> _encodeInWorker(
 
   job.stopEncoding = stop;
   try {
+    if (circle && Platform.isAndroid && !job.cancelled) {
+      Pointer<Uint8>? nativeStorage;
+      try {
+        nativeStorage = malloc<Uint8>(
+          AndroidStickerWebPEncoder.stagingByteLength,
+        );
+      } on ArgumentError {
+        // The Dart encoder remains available when allocation fails.
+      }
+      if (nativeStorage case final staging?) {
+        try {
+          final worker = await start(
+            null,
+            nativeStagingAddress: staging.address,
+          );
+          final result = await worker.result;
+          if (job.cancelled) return null;
+          if (result is EncodedStickerAnimation) return result;
+          if (result is AnimatedStickerCodecException) throw result;
+        } on IsolateSpawnException {
+          // Continue with the Dart encoder if the native worker cannot start.
+        } finally {
+          await stopAndJoin();
+          malloc.free(staging);
+        }
+      }
+    }
+    if (job.cancelled) return null;
+
     if (parallel && circle) {
       final expectedBytes = frameCount * stickerAnimationFrameBytes;
       try {
@@ -404,6 +440,13 @@ Future<EncodedStickerAnimation?> _encodeInWorker(
 
 void _runCodec(_EncodeRequest request) {
   try {
+    final address = request.nativeStagingAddress;
+    final nativeEncoder = address == null
+        ? null
+        : AndroidStickerWebPEncoder.tryCreate(address);
+    if (address != null && nativeEncoder == null) {
+      throw const AndroidStickerEncodingUnavailable();
+    }
     final expectedBytes = request.frameCount * stickerAnimationFrameBytes;
     final Uint8List bytes;
     if (request.sharedFrames case final shared?) {
@@ -439,11 +482,18 @@ void _runCodec(_EncodeRequest request) {
         circle: request.circle,
         textOverlay: request.overlay,
         only: request.sharedFrames?.pass,
+        androidFrameEncoder: nativeEncoder?.encode,
       ),
     );
+  } on AndroidStickerEncodingUnavailable catch (error) {
+    Isolate.exit(request.reply, error);
   } on CircularStickerPassDidNotFit catch (error) {
     Isolate.exit(request.reply, error);
   } on AnimatedStickerCodecException catch (error) {
+    if (request.nativeStagingAddress != null &&
+        error.failure == AnimatedStickerCodecFailure.budgetExceeded) {
+      Isolate.exit(request.reply, const AndroidStickerEncodingUnavailable());
+    }
     Isolate.exit(request.reply, error);
   }
 }

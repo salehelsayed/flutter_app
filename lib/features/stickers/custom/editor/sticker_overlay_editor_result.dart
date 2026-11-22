@@ -1,13 +1,14 @@
-import 'dart:typed_data';
+import 'sticker_text_layers.dart';
 
 sealed class StickerOverlayEditorResult {
   const StickerOverlayEditorResult();
 }
 
 final class StickerOverlayEditorReady extends StickerOverlayEditorResult {
-  const StickerOverlayEditorReady(this.rgba);
+  StickerOverlayEditorReady(List<StickerTextLayer> layers)
+    : layers = List.unmodifiable(layers);
 
-  final Uint8List? rgba;
+  final List<StickerTextLayer> layers;
 }
 
 final class StickerOverlayEditorCancelled extends StickerOverlayEditorResult {

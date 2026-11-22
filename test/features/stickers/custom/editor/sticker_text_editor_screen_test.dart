@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_overlay.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
@@ -90,11 +91,12 @@ double _angle(WidgetTester tester, String text) {
   return math.atan2(edge.dy, edge.dx);
 }
 
-Future<void> _openOverlayEditor(
+Future<ModalRoute<dynamic>> _openOverlayEditor(
   WidgetTester tester,
   void Function(StickerOverlayEditorResult?) completed, {
   StickerShape shape = StickerShape.square,
 }) async {
+  const bound = Duration(seconds: 2);
   tester.view.physicalSize = const Size(420, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -104,8 +106,10 @@ Future<void> _openOverlayEditor(
           locale: const Locale('en'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: Builder(
-            builder: (context) => Scaffold(
+          home: const SizedBox.shrink(),
+          initialRoute: '/conversation',
+          routes: {
+            '/conversation': (context) => Scaffold(
               body: TextButton(
                 onPressed: () => unawaited(
                   Navigator.of(context)
@@ -125,18 +129,21 @@ Future<void> _openOverlayEditor(
                 child: const Text('open overlay'),
               ),
             ),
-          ),
+          },
         ),
       )
-      .timeout(const Duration(seconds: 2));
-  await tester
-      .tap(find.text('open overlay'))
-      .timeout(const Duration(seconds: 2));
+      .timeout(bound);
+  final openOverlay = find.text('open overlay');
+  final context = tester.element(openOverlay);
+  final conversation = ModalRoute.of(context)!;
+  expect(Navigator.of(context).canPop(), isTrue);
+  await tester.tap(openOverlay).timeout(bound);
   await tester.pumpAndSettle(
     const Duration(milliseconds: 50),
     EnginePhase.sendSemanticsUpdate,
-    const Duration(seconds: 2),
+    bound,
   );
+  return conversation;
 }
 
 Future<void> _awaitOverlayResult(
@@ -157,14 +164,38 @@ void main() {
     tester,
   ) async {
     StickerOverlayEditorResult? result;
-    await _openOverlayEditor(tester, (value) => result = value);
+    final conversation = await _openOverlayEditor(
+      tester,
+      (value) => result = value,
+    );
     await _addText(tester, 'H').timeout(const Duration(seconds: 2));
-    await tester
-        .tap(find.text('Save sticker'))
-        .timeout(const Duration(seconds: 2));
+    final save = find.widgetWithText(TextButton, 'Save sticker');
+    final route = ModalRoute.of(tester.element(save))!;
+    expect(route.isCurrent, isTrue);
+    final saveClip = tester.widget<TextButton>(save).onPressed!;
+    saveClip();
+    final returnedWithoutRendering = !route.isCurrent;
+    expect(conversation.isCurrent, isTrue);
+    saveClip();
+    final conversationRemainedCurrent = conversation.isCurrent;
     await _awaitOverlayResult(tester, () => result != null);
+    expect(
+      returnedWithoutRendering,
+      isTrue,
+      reason:
+          'approved clip Save dismisses the editor before text rasterization',
+    );
 
-    final rgba = (result as StickerOverlayEditorReady).rgba!;
+    expect(
+      conversationRemainedCurrent,
+      isTrue,
+      reason: 'a second clip Save callback leaves the conversation current',
+    );
+    final layers = (result as StickerOverlayEditorReady).layers;
+    final rendered = await tester
+        .runAsync(() => rasterizeStickerTextOverlay(layers))
+        .timeout(const Duration(seconds: 2));
+    final rgba = rendered!;
     expect(rgba, hasLength(512 * 512 * 4));
     expect(rgba.sublist(0, 4), [0, 0, 0, 0]);
     final center = 4 * (256 * 512 + 256);
@@ -181,7 +212,7 @@ void main() {
         .timeout(const Duration(seconds: 2));
     await _awaitOverlayResult(tester, () => result != null);
     expect(result, isA<StickerOverlayEditorReady>());
-    expect((result as StickerOverlayEditorReady).rgba, isNull);
+    expect((result as StickerOverlayEditorReady).layers, isEmpty);
     await tester.pumpAndSettle(
       const Duration(milliseconds: 50),
       EnginePhase.sendSemanticsUpdate,

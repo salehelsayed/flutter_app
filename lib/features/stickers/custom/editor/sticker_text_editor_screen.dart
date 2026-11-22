@@ -30,9 +30,9 @@ final class _OverlayEditorTarget extends _StickerEditorTarget {
   final Widget preview;
 }
 
-/// Free multi-layer text editor over an already cut-out or cropped image.
-/// Pops with [StickerEditorResult]: ready after Save sticker (the PNG is
-/// written to [outputFile], which the caller owns), cancelled otherwise.
+/// Edits text over an already cut-out or cropped image or a video preview.
+/// For a still, returns the rendered image. For a clip, returns the approved
+/// layers so Create can register a pending sticker before rendering them.
 class StickerTextEditorScreen extends StatefulWidget {
   StickerTextEditorScreen({
     super.key,
@@ -206,10 +206,11 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
       _commitEditing();
       _saving = true;
     });
+    var clipApproved = false;
     try {
-      final layers = List<StickerTextLayer>.unmodifiable(_state.layers);
       switch (widget._target) {
         case _StillEditorTarget(:final sourceBytes, :final outputFile):
+          final layers = List<StickerTextLayer>.unmodifiable(_state.layers);
           final asset = await exportStickerStill(
             sourceBytes: sourceBytes,
             layers: layers,
@@ -219,12 +220,12 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
           if (!mounted) return;
           Navigator.of(context).pop(StickerEditorResult.ready(asset));
         case _OverlayEditorTarget():
-          final overlay = await rasterizeStickerTextOverlay(layers);
-          if (!mounted) return;
-          Navigator.of(context).pop(StickerOverlayEditorReady(overlay));
+          Navigator.of(context).pop(StickerOverlayEditorReady(_state.layers));
+          clipApproved = true;
       }
     } finally {
-      if (mounted) setState(() => _saving = false);
+      // The departing clip editor stays mounted during its reverse transition.
+      if (mounted && !clipApproved) setState(() => _saving = false);
     }
   }
 

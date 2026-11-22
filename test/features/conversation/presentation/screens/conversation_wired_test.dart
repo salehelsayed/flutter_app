@@ -3839,6 +3839,9 @@ void main() {
           sendReactionFn: orderedSend,
           removeReactionFn: immediateRemove,
         );
+        List<MessageReaction>? visibleReactions() => tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .reactions['message-343'];
         var screen = tester.widget<ConversationScreen>(
           find.byType(ConversationScreen),
         );
@@ -3854,10 +3857,8 @@ void main() {
           SendReactionResult.success,
           committedReaction('older-add', '👍'),
         ));
-        await tester.pump();
-        var visible = tester
-            .widget<ConversationScreen>(find.byType(ConversationScreen))
-            .reactions['message-343']!;
+        await tester.pump(Duration.zero);
+        final visible = visibleReactions()!;
         expect(visible.single.emoji, '🔥');
         expect(visible.single.id, isNot('older-add'));
 
@@ -3865,11 +3866,17 @@ void main() {
           SendReactionResult.success,
           committedReaction('newer-add', '🔥'),
         ));
-        await tester.pump();
-        visible = tester
-            .widget<ConversationScreen>(find.byType(ConversationScreen))
-            .reactions['message-343']!;
-        expect(visible.single.id, 'newer-add');
+        // Resolving the send can schedule the first frame during an idle pump.
+        for (
+          var frame = 0;
+          frame < 3 && visibleReactions()?.singleOrNull?.id != 'newer-add';
+          frame++
+        ) {
+          await tester.pump();
+        }
+        expect(visibleReactions()?.map((reaction) => reaction.id), [
+          'newer-add',
+        ]);
 
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
@@ -3929,7 +3936,7 @@ void main() {
           SendReactionResult.success,
           committedReaction('removed-add', '👍'),
         ));
-        await tester.pump();
+        await tester.pump(Duration.zero);
         expect(
           tester
               .widget<ConversationScreen>(find.byType(ConversationScreen))

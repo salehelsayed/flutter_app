@@ -6,6 +6,7 @@ import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
 import 'package:flutter_app/features/stickers/custom/create/sticker_create_flow.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_layers.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +42,7 @@ class _FakeCutout implements StickerCutoutService {
 final _cutoutPng = Uint8List.fromList([1, 2, 3]);
 final _croppedPng = Uint8List.fromList([4, 5, 6]);
 const _cutoutPath = '/tmp/cutout.png';
+const _clipText = StickerTextLayer(id: 1, text: 'H');
 
 void main() {
   late FakeCustomStickerLibrary library;
@@ -48,7 +50,7 @@ void main() {
   late List<String> log;
   late StickerEditorResult editorResult;
   late StickerClipCrop? clipCrop;
-  late List<Uint8List?> exportedOverlays;
+  late List<List<StickerTextLayer>> exportedLayers;
 
   StickerCreateFlow flow({
     Future<StickerOverlayEditorResult> Function(
@@ -84,14 +86,14 @@ void main() {
       log.add('edit ${bytes.first} ${shape.name}');
       return editorResult;
     },
-    exportClip: (path, crop, overlay) async {
+    exportClip: (path, crop, layers) async {
       log.add('export $path ${crop.crop} ${crop.circle}');
-      exportedOverlays.add(overlay);
+      exportedLayers.add(layers);
       return fakeStickerAsset('clip');
     },
     showNoSubject: () => log.add('no subject'),
     editClipText:
-        editClipText ?? (_, _) async => const StickerOverlayEditorReady(null),
+        editClipText ?? (_, _) async => StickerOverlayEditorReady(const []),
   );
 
   setUp(() {
@@ -100,7 +102,7 @@ void main() {
     log = [];
     editorResult = StickerEditorResult.ready(fakeStickerAsset('made'));
     clipCrop = (crop: const Rect.fromLTWH(0.1, 0.2, 0.5, 0.5), circle: true);
-    exportedOverlays = [];
+    exportedLayers = [];
   });
 
   test(
@@ -234,14 +236,13 @@ void main() {
   });
 
   test('clip text is approved after crop and before export', () async {
-    final overlay = Uint8List(512 * 512 * 4)..[3] = 255;
     final create = flow(
       editClipText: (path, crop) async {
         expect(path, '/tmp/clip.mp4');
         expect(crop, clipCrop);
         expect(library.ids, isEmpty);
         log.add('edit clip text');
-        return StickerOverlayEditorReady(overlay);
+        return StickerOverlayEditorReady(const [_clipText]);
       },
     );
 
@@ -295,7 +296,7 @@ void main() {
       Duration.zero,
     ).timeout(const Duration(seconds: 2));
     await create.cancel().timeout(const Duration(seconds: 2));
-    approval.complete(const StickerOverlayEditorReady(null));
+    approval.complete(StickerOverlayEditorReady(const []));
     final outcome = await pending;
 
     expect(editing, isTrue);
@@ -308,28 +309,26 @@ void main() {
     ]);
   });
 
-  test('clip export receives an independent approved RGBA snapshot', () async {
-    final overlay = Uint8List(512 * 512 * 4);
-    overlay.setRange(0, 4, [120, 70, 40, 255]);
-    final create = flow(
-      editClipText: (_, _) async => StickerOverlayEditorReady(overlay),
-    );
+  test('clip export receives an immutable approved layer snapshot', () async {
+    final layers = [_clipText];
+    final approved = StickerOverlayEditorReady(layers);
+    layers.clear();
+    final create = flow(editClipText: (_, _) async => approved);
 
     await create
         .run(StickerCreateSource.cameraClip)
         .timeout(const Duration(seconds: 2));
 
-    expect(exportedOverlays, hasLength(1));
-    expect(exportedOverlays.single, orderedEquals(overlay));
-    expect(identical(exportedOverlays.single, overlay), isFalse);
-    overlay[0] = 0;
-    expect(exportedOverlays.single!.first, 120);
+    expect(exportedLayers, [
+      const [_clipText],
+    ]);
+    expect(exportedLayers.single.clear, throwsUnsupportedError);
     expect(library.ids, hasLength(1));
   });
 
   test('saving clip text with no layers still exports once', () async {
     final create = flow(
-      editClipText: (_, _) async => const StickerOverlayEditorReady(null),
+      editClipText: (_, _) async => StickerOverlayEditorReady(const []),
     );
 
     final outcome = await create
@@ -337,7 +336,7 @@ void main() {
         .timeout(const Duration(seconds: 2));
 
     expect(outcome, isA<StickerCreateSaved>());
-    expect(exportedOverlays, [null]);
+    expect(exportedLayers, [isEmpty]);
     expect(library.ids, hasLength(1));
   });
 
