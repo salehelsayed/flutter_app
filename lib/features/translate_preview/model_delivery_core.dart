@@ -465,6 +465,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     readCapability,
     int spaceReserveBytes = modelDeliverySpaceReserve,
     String Function()? newTaskId,
+    Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
   }) : _storage = storage,
        _network = network,
        _transport = transport,
@@ -473,6 +474,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _readAvailableMemory = readAvailableMemory ?? (() async => false),
        _readCapability = readCapability,
        _spaceReserveBytes = spaceReserveBytes,
+       _publishBackgroundStatus = publishBackgroundStatus,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
     _connectionSubscription = _network.connectionChanges.listen(
@@ -488,6 +490,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final Future<({bool supported, bool insufficientMemory})> Function()?
   _readCapability;
   final int _spaceReserveBytes;
+  // ignore: unused_field
+  final Future<void> Function(ModelDeliveryState)? _publishBackgroundStatus;
   final String Function() _newTaskId;
   final _state = ValueNotifier<ModelDeliveryState>(const ModelUnsupported());
   final _allowMobileData = ValueNotifier(false);
