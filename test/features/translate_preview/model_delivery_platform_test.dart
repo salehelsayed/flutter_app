@@ -1651,7 +1651,10 @@ class _Downloader extends Fake implements FileDownloader {
   }) async =>
       active.values.where((task) => allGroups || task.group == group).toList();
   @override
-  Future<bool> cancelTaskWithId(String taskId) async {
+  Future<bool> cancelTaskWithId(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     canceled.add(taskId);
     final action = onCancel;
     if (action != null) return action(taskId);

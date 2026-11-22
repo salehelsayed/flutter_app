@@ -327,6 +327,13 @@ abstract base class NativeDownloader extends BaseDownloader {
       await methodChannel.invokeMethod<bool>('cancelTasksWithIds', taskIds) ??
       false;
 
+  Future<bool> cancelTaskWithConfirmation(String taskId) async =>
+      await methodChannel.invokeMethod<bool>(
+        'cancelTaskWithConfirmation',
+        taskId,
+      ) ??
+      false;
+
   @override
   Future<Task?> taskForId(String taskId) async {
     final task = await super.taskForId(taskId);

@@ -681,7 +681,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
           await _settleCanceledWriter(task, status);
           return;
         }
-        final accepted = await _downloader.cancelTaskWithId(taskId);
+        final accepted = await _downloader.cancelTaskWithId(
+          taskId,
+          requireConfirmedStop:
+              _useAndroidGate && requireConfirmedStop && attempt == 0,
+        );
         final current = await _downloader.database.recordForId(taskId);
         final absent = await _downloader.taskForId(taskId) == null;
         status = _settledUpdates[taskId]?.status ?? current?.status;

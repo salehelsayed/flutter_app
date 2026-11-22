@@ -763,7 +763,18 @@ interface class FileDownloader {
   ///
   /// The task will emit a [TaskStatus.canceled] update to
   /// the registered callback, if requested
-  Future<bool> cancelTaskWithId(String taskId) => cancelTasksWithIds([taskId]);
+  Future<bool> cancelTaskWithId(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) {
+    final downloader = _downloader;
+    if (requireConfirmedStop &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        downloader is NativeDownloader) {
+      return downloader.cancelTaskWithConfirmation(taskId);
+    }
+    return cancelTasksWithIds([taskId]);
+  }
 
   /// Cancel this task
   ///

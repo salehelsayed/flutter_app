@@ -417,19 +417,27 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         }
 
         /** cancel tasks with [taskIds] and return true if successful */
-        suspend fun cancelTasksWithIds(context: Context, taskIds: Iterable<String>): Boolean {
+        suspend fun cancelTasksWithIds(
+            context: Context, taskIds: Iterable<String>, requireConfirmedStop: Boolean = false
+        ): Boolean {
             val workManager = WorkManager.getInstance(context)
             Log.v(TAG, "Canceling taskIds $taskIds")
-            holdingQueue?.stateMutex?.lock()
-            val taskIdsRemovedFromHoldingQueue =
-                holdingQueue?.cancelTasksWithIds(context, taskIds) ?: listOf()
-            val taskIdsRemaining = taskIds.filter { !taskIdsRemovedFromHoldingQueue.contains(it) }
-            var success = true
-            for (taskId in taskIdsRemaining) {
-                success = success && cancelActiveTaskWithId(context, taskId, workManager)
+            val queueMutex = holdingQueue?.stateMutex
+            queueMutex?.lock()
+            try {
+                val taskIdsRemovedFromHoldingQueue =
+                    holdingQueue?.cancelTasksWithIds(context, taskIds) ?: listOf()
+                val taskIdsRemaining = taskIds.filter { !taskIdsRemovedFromHoldingQueue.contains(it) }
+                var success = true
+                for (taskId in taskIdsRemaining) {
+                    success = success && cancelActiveTaskWithId(
+                        context, taskId, workManager, requireConfirmedStop
+                    )
+                }
+                return success
+            } finally {
+                queueMutex?.unlock()
             }
-            holdingQueue?.stateMutex?.unlock()
-            return success
         }
 
         /**
@@ -438,8 +446,25 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
          * The [taskId] must be managed by the [workManager]
          */
         suspend fun cancelActiveTaskWithId(
-            context: Context, taskId: String, workManager: WorkManager
+            context: Context,
+            taskId: String,
+            workManager: WorkManager,
+            requireConfirmedStop: Boolean = false
         ): Boolean {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+            val taskBeforeStop = if (requireConfirmedStop) getTaskMap(prefs)[taskId] else null
+            // A canceled status clears the Dart resume cursor. For a confirmed
+            // stop, keep the status and native metadata intact if the OS rejects it.
+            val confirmedWorkInfos = if (requireConfirmedStop) {
+                val workInfos = workInfoForTask(workManager, taskId)
+                if (workInfos.isNotEmpty() && !cancelWorkManagerTask(workManager, taskId)) {
+                    return false
+                }
+                workInfos
+            } else {
+                null
+            }
+
             // cancel chunk tasks if this is a ParallelDownloadTask
             parallelDownloadTaskWorkers[taskId]?.cancelAllChunkTasks()
 
@@ -453,8 +478,11 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                         try {
                             val task = bdJson.decodeFromString<Task>(taskJson)
                             if (task.taskId == taskId) {
+                                if (requireConfirmedStop) {
+                                    jobScheduler.cancel(jobInfo.id)
+                                    jobCanceled = true
+                                }
                                 canceledTaskIds.add(taskId)
-                                val prefs = PreferenceManager.getDefaultSharedPreferences(context)
                                 processStatusUpdate(
                                     task,
                                     TaskStatus.canceled,
@@ -478,33 +506,32 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                                         )
                                     }
                                 }
-                                jobScheduler.cancel(jobInfo.id)
-                                jobCanceled = true
+                                if (!requireConfirmedStop) {
+                                    jobScheduler.cancel(jobInfo.id)
+                                    jobCanceled = true
+                                }
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Error decoding task from JobScheduler: $e")
+                            if (requireConfirmedStop && !jobCanceled) return false
                         }
                     }
                 }
             }
 
             // get the workInfos for the task (should be only one)
-            val workInfos = withContext(Dispatchers.IO) {
-                workManager.getWorkInfosByTag("taskId=$taskId").get()
-            }
+            val workInfos = confirmedWorkInfos ?: workInfoForTask(workManager, taskId)
             if (workInfos.isEmpty()) {
                 if (jobCanceled) return true
                 Log.d(TAG, "Could not find tasks to cancel")
                 return false
             }
             // send cancel update and remove notification
-            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            val tasksMap = getTaskMap(prefs)
+            val task = if (requireConfirmedStop) taskBeforeStop else getTaskMap(prefs)[taskId]
             for (workInfo in workInfos) {
                 if (workInfo.state != WorkInfo.State.SUCCEEDED) {
                     // send cancellation update for tasks that have not yet succeeded
                     // and remove associated notification
-                    val task = tasksMap[taskId]
                     if (task != null) {
                         canceledTaskIds.add(task.taskId)
                         processStatusUpdate(
@@ -534,17 +561,27 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                         Log.d(TAG, "Could not find task with taskId $taskId to cancel")
                     }
                 }
-                val operation = workManager.cancelAllWorkByTag("taskId=$taskId")
-                try {
-                    withContext(Dispatchers.IO) {
-                        operation.result.get()
-                    }
-                } catch (_: Throwable) {
-                    Log.w(TAG, "Unable to cancel taskId $taskId in operation: $operation")
+                if (!requireConfirmedStop && !cancelWorkManagerTask(workManager, taskId)) {
                     return false
                 }
             }
             return true
+        }
+
+        private suspend fun workInfoForTask(workManager: WorkManager, taskId: String): List<WorkInfo> =
+            withContext(Dispatchers.IO) {
+                workManager.getWorkInfosByTag("taskId=$taskId").get()
+            }
+
+        private suspend fun cancelWorkManagerTask(workManager: WorkManager, taskId: String): Boolean {
+            val operation = workManager.cancelAllWorkByTag("taskId=$taskId")
+            return try {
+                withContext(Dispatchers.IO) { operation.result.get() }
+                true
+            } catch (_: Throwable) {
+                Log.w(TAG, "Unable to cancel taskId $taskId in operation: $operation")
+                false
+            }
         }
 
         /**
@@ -682,6 +719,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     "reset" -> methodReset(call)
                     "allTasks" -> methodAllTasks(call)
                     "cancelTasksWithIds" -> methodCancelTasksWithIds(call)
+                    "cancelTaskWithConfirmation" -> methodCancelTaskWithConfirmation(call)
                     "killTaskWithId" -> methodKillTaskWithId(call)
                     "taskForId" -> methodTaskForId(call)
                     "pause" -> methodPause(call)
@@ -1111,6 +1149,12 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         withContext(defaultScope.coroutineContext) {
             @Suppress("UNCHECKED_CAST") val taskIds = call.arguments as List<String>
             cancelTasksWithIds(applicationContext, taskIds)
+        }
+
+    private suspend fun methodCancelTaskWithConfirmation(call: MethodCall): Boolean =
+        withContext(defaultScope.coroutineContext) {
+            val taskId = call.arguments as String
+            cancelTasksWithIds(applicationContext, listOf(taskId), requireConfirmedStop = true)
         }
 
     /**

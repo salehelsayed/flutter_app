@@ -336,6 +336,7 @@ void main() {
         _offset,
         reason: 'Rejected cancellation must preserve SDK resume metadata.',
       );
+      expect(cancellationCalls, ['cancelTaskWithConfirmation']);
       expect(
         await transport
             .resume(
