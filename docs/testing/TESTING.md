@@ -7312,6 +7312,30 @@ visible and cannot become an ordinary first-attempt PASS.
   the 302 runs. Retain its pilot and timings in
   `.codex-test-logs/bl50-20261121/`.
 
+  BL-50 release diagnostics 312–314 used the same generated 3 s AVC clip
+  through the existing capture hook. Its encoded dimensions, frame rate and
+  portrait rotation matched the Pixel camera trace. The normal crop, Save and
+  tray ran on the Pixel. The library deduplicates by WebP content hash, so
+  each run removed only its own verified synthetic tile and restored the
+  pre-run tray count. The three native WebP saves measured 7.39 s median
+  (7.33–7.42 s) against 10.12 s (9.92–10.16 s) with the existing encoder.
+  Page-source polling took 2.3–2.8 s, limiting the precision of that gap.
+  Native codec round trips took 0.697–0.734 s. The legacy encoder on the
+  MediaCodec variant's fallback took 4.12–4.29 s on the same clip.
+  Native output kept 24 frames and 2 s in 197,718 bytes, with visible motion,
+  correct portrait orientation and an intact circular edge. Its same-frame
+  pilot compared 12 paired frames with zero maximum alpha error and mean
+  visible RGB error of 4.402 on the 8-bit scale.
+
+  Build 313 reached the first Exynos decoder output, which reported transfer
+  0 and color standard 86. The source clip had unspecified transfer metadata.
+  The sequential decoder rejected those aspects and fell back before emitting
+  comparison frames. Preserve its pilot and three invalid sequential timings.
+  A local remux added explicit SDR metadata with identical decoded YUV bytes.
+  Android results for that remux and the matched lit-camera acceptance remain
+  pending. APK bindings, raw markers, timings and owned-tile cleanup are in
+  `.codex-test-logs/bl50f-20261122/` and mailbox `m-28895587`.
+
   The My stickers grid proof uses a real animated WebP without a persisted
   poster. An offscreen finder must include cached sliver elements with
   `skipOffstage: false`. The test-only tree found the hidden tile and an
