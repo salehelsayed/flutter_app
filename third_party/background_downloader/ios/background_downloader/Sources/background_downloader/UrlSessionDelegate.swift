@@ -15,6 +15,49 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
     static var urlSession: URLSession?
     public static var sessionIdentifier = "com.bbflight.background_downloader.Downloader"
     public static var backgroundCompletionHandler: (() -> Void)?
+
+    private enum ManagedResumeAttempt: String {
+        case requested = "managed-resume"
+        case rejected = "managed-resume-rejected"
+    }
+
+    static func managedResumeDescription(_ description: String, hasNotificationConfig: Bool) -> String {
+        let notificationSlot = hasNotificationConfig ? "" : separatorString
+        return description + notificationSlot + separatorString + ManagedResumeAttempt.requested.rawValue
+    }
+
+    private func managedResumeAttempt(_ task: URLSessionTask) -> ManagedResumeAttempt? {
+        guard let fields = task.taskDescription?.components(separatedBy: separatorString),
+              fields.count == 3 else { return nil }
+        return ManagedResumeAttempt(rawValue: fields[2])
+    }
+
+    // A background session can receive bytes before the delegate runs.
+    private func rejectManagedRestart(
+        _ downloadTask: URLSessionDownloadTask,
+        task: Task,
+        restarted: Bool,
+        cancel: Bool
+    ) -> Bool {
+        guard task.options?.appManagedRecovery == true,
+              let attempt = managedResumeAttempt(downloadTask),
+              let description = downloadTask.taskDescription else { return false }
+        if attempt == .rejected { return true }
+        guard restarted else { return false }
+        downloadTask.taskDescription =
+            String(description.dropLast(attempt.rawValue.count)) + ManagedResumeAttempt.rejected.rawValue
+        if cancel { downloadTask.cancel() }
+        processStatusUpdate(
+            task: task,
+            status: .failed,
+            taskException: TaskException(
+                type: .resume,
+                httpResponseCode: -1,
+                description: "URLSession could not reuse the saved checkpoint"
+            )
+        )
+        return true
+    }
     
     //MARK: URLSessionTaskDelegate
     
@@ -110,6 +153,9 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
                 await BDPlugin.holdingQueue?.taskFinished(bgdTask)
             }
         }
+        if bgdTask.options?.appManagedRecovery == true && managedResumeAttempt(task) == .rejected {
+            return
+        }
         let responseBody = getResponseBody(taskId: bgdTask.taskId)
         let taskWasProgramaticallyCanceledAfterStart = BDPlugin.propertyLock.withLock( {
             BDPlugin.taskIdsProgrammaticallyCanceledAfterStart.remove(bgdTask.taskId) != nil
@@ -182,6 +228,16 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
     }
     
     //MARK: URLSessionDownloadTaskDelegate
+
+    public func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didResumeAtOffset fileOffset: Int64,
+        expectedTotalBytes: Int64
+    ) {
+        guard fileOffset == 0, let task = getTaskFrom(urlSessionTask: downloadTask) else { return }
+        _ = rejectManagedRestart(downloadTask, task: task, restarted: true, cancel: true)
+    }
     
     
     
@@ -192,6 +248,12 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         // task is var because the filename can be changed on the first 'didWriteData' call
         guard var task = getTaskFrom(urlSessionTask: downloadTask) else { return }
+        if rejectManagedRestart(
+            downloadTask,
+            task: task,
+            restarted: (downloadTask.response as? HTTPURLResponse)?.statusCode == 200,
+            cancel: true
+        ) { return }
         let progressInfo = BDPlugin.propertyLock.withLock({
             BDPlugin.progressInfo[task.taskId]
         })
@@ -332,6 +394,9 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
         else {
             os_log("Could not find task associated urlSessionTask %d, or did not get HttpResponse", log: log,  type: .info, downloadTask.taskIdentifier)
             return}
+        if rejectManagedRestart(downloadTask, task: task, restarted: response.statusCode == 200, cancel: false) {
+            return
+        }
         let responseHeaders = response.allHeaderFields
         let taskId = task.taskId
         let (mimeType, charSet) = BDPlugin.propertyLock.withLock({

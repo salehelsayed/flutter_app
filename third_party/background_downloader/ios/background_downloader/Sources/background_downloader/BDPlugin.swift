@@ -340,7 +340,14 @@ public class BDPlugin: NSObject, FlutterPlugin, UNUserNotificationCenterDelegate
             request.httpBody = (task.post ?? "").data(using: task.postIsBinary == true ? .isoLatin1 : .utf8)
         }
         let urlSessionDownloadTask = resumeData == nil ? UrlSessionDelegate.urlSession!.downloadTask(with: request) : UrlSessionDelegate.urlSession!.downloadTask(withResumeData: resumeData!)
-        urlSessionDownloadTask.taskDescription = taskDescription
+        if task.options?.appManagedRecovery == true && resumeData != nil {
+            urlSessionDownloadTask.taskDescription = UrlSessionDelegate.managedResumeDescription(
+                taskDescription,
+                hasNotificationConfig: notificationConfigJsonString != nil
+            )
+        } else {
+            urlSessionDownloadTask.taskDescription = taskDescription
+        }
         urlSessionDownloadTask.priority = 1 - Float(task.priority) / 10
         urlSessionDownloadTask.resume()
         await postEnqueuedStatusIfNotAlreadyDone(task: task, notificationConfigJsonString: notificationConfigJsonString)
