@@ -507,7 +507,9 @@ const _productionBootstrapNormalizedSha256 =
     // rewrites. Historical callback 843fb41c stays unique and exact.
     // BL-29 receipt admission adds capture callbacks at the existing owners in
     // d777d04c6 and 4b206563e. Reversing both diffs restores the 6969bc352 pins.
-    '972e5dd1efff8c72fc95e113d5c3d8c6ef62ee28f6648ebbb0ee5e9ad17935e5';
+    // BL-58 adds the dbLoadRetainedIncomingPost binding for Thought replies.
+    // Removing those two lines restores both previous bootstrap digests.
+    '1b7e0423ccd8e229bfb480413900be31fff2bbacdefd53a659ecd68ef7f4c2d7';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -555,8 +557,9 @@ const _productionBootstrapNormalizedSha256 =
 // leave the historical callback exact; no owner relocates.
 // The same BL-30 R2 background write window leaves the historical callback exact.
 // BL-29 receipt admission only changes the surrounding owner wiring.
+// The BL-58 binding also leaves the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'ae4656fa45ebd14f27c3a613a593f2959b27872940a3285a310f3c29dd1bb506';
+    '6ae235a87d90e5dc2cf0bbfafc95e42590029dbc12e3ff5d73c7c0bdba9a4ca7';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
