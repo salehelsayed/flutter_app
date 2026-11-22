@@ -659,6 +659,7 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                 file.fd.sync()
             }
         } catch (_: IOException) {
+            if (!isResume || tempFileLength() != requiredStartByte) deleteTempFile()
             return
         }
         processResumeData(ResumeData(task, tempFilePath, offset, validator), prefs)
