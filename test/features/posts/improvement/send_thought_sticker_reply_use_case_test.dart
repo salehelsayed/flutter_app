@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
@@ -45,7 +46,8 @@ void main() {
   late InMemoryPostRepository posts;
   late FakeContactRepository contacts;
   late FakeIdentityRepository identities;
-  late FakeP2PService service;
+  late _StickerP2PService service;
+  late FakeP2PService authorService;
   late RecordingFakeBridge bridge;
   late DateTime now;
   late List<Map<String, dynamic>> encryptedPayloads;
@@ -117,9 +119,9 @@ void main() {
       ),
     );
     final network = FakeP2PNetwork();
-    service = FakeP2PService(peerId: _local, network: network)
+    service = _StickerP2PService(peerId: _local, network: network)
       ..connectedPeers.add(_author);
-    final authorService = FakeP2PService(peerId: _author, network: network);
+    authorService = FakeP2PService(peerId: _author, network: network);
     addTearDown(service.dispose);
     addTearDown(authorService.dispose);
     encryptedPayloads = [];
@@ -271,6 +273,9 @@ void main() {
     () async {
       var prepares = 0;
       var uploadReady = false;
+      final blobExpiryMs = now
+          .add(const Duration(days: 1))
+          .millisecondsSinceEpoch;
       final attempts = <(String, String)>[];
       PreparedDirectMediaBlobCustodyCoordinator coordinator() =>
           PreparedDirectMediaBlobCustodyCoordinator(
@@ -312,9 +317,7 @@ void main() {
                     'contentHash': contentHash,
                     'size': ciphertextSize,
                     'mime': kDirectMediaBlobTransportMime,
-                    'expiresAtMs': now
-                        .add(const Duration(days: 1))
-                        .millisecondsSinceEpoch,
+                    'expiresAtMs': blobExpiryMs,
                     'custodyRelayPeerId': 'fixture-relay',
                   };
                 },
@@ -337,6 +340,8 @@ void main() {
       expect(encryptedPayloads, isEmpty);
       fixture = await _within(fixture.reopen());
       uploadReady = true;
+      authorService.setOnline(false);
+      service.connectedPeers.remove(_author);
 
       expect(
         await _within(
@@ -362,12 +367,16 @@ void main() {
         (pending.id, rows.single.contentHash),
       ]);
       expect(prepares, 1);
-      expect(
-        (await _within(
-          fixture.messageRepo.getMessage(_messageId),
-        ))?.quotedMessageId,
-        'thought:$_postId',
-      );
+      final message = (await _within(
+        fixture.messageRepo.getMessage(_messageId),
+      ))!;
+      expect(message.quotedMessageId, 'thought:$_postId');
+      expect(message.status, 'inboxed');
+      final store = service.boundedStores.single;
+      expect(store.recipient, _author);
+      expect(store.envelope, message.wireEnvelope);
+      expect(store.envelope, isNotEmpty);
+      expect(store.expiryMs, blobExpiryMs);
       expect(await _within(fixture.db.query('messages')), hasLength(1));
     },
   );
@@ -394,6 +403,37 @@ void main() {
       expect(await _within(fixture.db.query('media_attachments')), isEmpty);
     },
   );
+}
+
+class _StickerP2PService extends FakeP2PService
+    implements MediaExpiryBoundedInboxStore {
+  _StickerP2PService({required super.peerId, required super.network});
+
+  final boundedStores = <({String recipient, String envelope, int expiryMs})>[];
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    boundedStores.add((
+      recipient: toPeerId,
+      envelope: message,
+      expiryMs: custodyExpiresAtOrBeforeMs,
+    ));
+    final stored = await _within(
+      storeInInboxDetailed(toPeerId, message, timeoutMs: timeoutMs),
+    );
+    if (!stored.accepted) return stored;
+    return InboxStoreOutcome(
+      status: stored.status,
+      storeStatus: stored.storeStatus,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+      expiresAtMs: custodyExpiresAtOrBeforeMs,
+    );
+  }
 }
 
 class _PathProvider extends Fake

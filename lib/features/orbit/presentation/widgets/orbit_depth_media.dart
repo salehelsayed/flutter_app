@@ -249,8 +249,8 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   Widget build(BuildContext context) {
     final visual = _media.where((item) => item.kind != 'voice').toList();
     final voiced = _media.any((item) => item.kind == 'voice');
-    final column = Column(
-      mainAxisSize: visual.isEmpty ? MainAxisSize.min : MainAxisSize.max,
+    final controls = Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (_loading && _media.isEmpty)
           const SizedBox(
@@ -270,50 +270,59 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
             attachment: item.toSharedMediaAttachment(),
           ),
         ],
+      ],
+    );
+    if (visual.isEmpty) return controls;
+
+    Widget withVisual(Widget controls) => Column(
+      children: [
+        controls,
         // The whole photo, as large as the space allows, on the scene.
-        if (visual.isNotEmpty)
-          Expanded(
-            child: Semantics(
-              onTap: widget.onActivate ?? widget.onOpen,
-              child: GestureDetector(
-                key: const ValueKey('orbit-depth-photo-frame'),
-                onTap: () => _tap(visual),
-                excludeFromSemantics: true,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) => Center(
-                      child: MediaGrid(
-                        media: visual
-                            .map((item) => item.toSharedMediaAttachment())
-                            .toList(),
-                        singleMaxHeight: constraints.maxHeight,
-                        borderRadius: 22,
-                        tileFit: BoxFit.contain,
-                        squareTiles: true,
-                      ),
+        Expanded(
+          child: Semantics(
+            onTap: widget.onActivate ?? widget.onOpen,
+            child: GestureDetector(
+              key: const ValueKey('orbit-depth-photo-frame'),
+              onTap: () => _tap(visual),
+              excludeFromSemantics: true,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: LayoutBuilder(
+                  builder: (context, constraints) => Center(
+                    child: MediaGrid(
+                      media: visual
+                          .map((item) => item.toSharedMediaAttachment())
+                          .toList(),
+                      singleMaxHeight: constraints.maxHeight,
+                      borderRadius: 22,
+                      tileFit: BoxFit.contain,
+                      squareTiles: true,
                     ),
                   ),
                 ),
               ),
             ),
           ),
+        ),
       ],
     );
-    if (visual.isEmpty || !voiced) return column;
-    // A voice note above a photo needs a least height; while a reply leaves
-    // less, the pair keeps it and shows its top instead of overflowing. The
-    // clip stays mounted so a playing voice note is never rebuilt.
+    if (!voiced) return withVisual(controls);
+    // Keep the voice player mounted and leave a tappable frame for the
+    // photo. The available height belongs to this card, even on a short phone.
     return LayoutBuilder(
-      builder: (context, box) => ClipRect(
-        child: OverflowBox(
-          alignment: Alignment.topCenter,
-          maxHeight: math.max(box.maxHeight, _voiceAndPhotoMinHeight),
-          child: column,
+      builder: (context, box) => withVisual(
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: math.max(0, box.maxHeight - 44),
+          ),
+          child: UnconstrainedBox(
+            constrainedAxis: Axis.horizontal,
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.hardEdge,
+            child: controls,
+          ),
         ),
       ),
     );
   }
 }
-
-const _voiceAndPhotoMinHeight = 120.0;

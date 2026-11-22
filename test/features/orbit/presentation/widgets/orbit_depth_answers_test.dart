@@ -792,16 +792,20 @@ void main() {
 
   for (final size in const [Size(360, 640), Size(390, 844), Size(412, 915)]) {
     testWidgets('on a ${size.width.toInt()}x${size.height.toInt()} phone the '
-        'bar sits in the bottom fifth after a swipe up, and between the '
-        'thought and the ring after a swipe down', (tester) async {
+        'reply field sits near the bottom after a swipe up, and the dock '
+        'fits between the thought and ring after a swipe down', (tester) async {
       await mount(tester, reduceMotion: false, size: size);
       await enter(tester);
       await tester.pumpAndSettle();
+      final upDock = tester.getRect(bar(0));
+      final field = tester.getRect(composerField);
+      expect(field.center.dy, greaterThanOrEqualTo(size.height * .8));
+      expect(upDock.contains(field.topLeft), isTrue);
       expect(
-        tester.getTopLeft(bar(0)).dy,
-        greaterThanOrEqualTo(size.height * .8),
+        upDock.contains(field.bottomRight - const Offset(.01, .01)),
+        isTrue,
       );
-      expect(tester.getBottomLeft(bar(0)).dy, lessThanOrEqualTo(size.height));
+      expect(upDock.bottom, lessThanOrEqualTo(size.height));
       await leave(tester);
       await tester.pumpAndSettle();
 
