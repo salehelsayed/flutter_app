@@ -378,6 +378,7 @@ void main() {
       expect(find.textContaining('your 42% is kept.'), findsOneWidget);
       expect(find.text('Try now'), findsOneWidget);
       expect(find.textContaining('fixture server failure'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
     });
 
     testWidgets('native write failure after disk exhaustion offers Continue', (

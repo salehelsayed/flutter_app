@@ -358,7 +358,7 @@ void main() {
   );
 
   test(
-    'policy resume rejection restarts only owned task and rechecks full space',
+    'policy resume rejection explains restart and rechecks full space on retry',
     () async {
       final h = await _Harness.create(wifi: false);
       addTearDown(h.dispose);
@@ -370,16 +370,31 @@ void main() {
       h.transport.resumeAccepted = false;
       await h.controller.setAllowMobileData(false);
       await h.event(ModelTransferStatus.paused, bytes: 80);
+      expect(h.transport.resumes.single.requiresWiFi, isTrue);
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, isEmpty);
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+      expect(h.transport.enqueues, hasLength(1));
+
+      await h.controller.retry();
+      expect(
+        h.controller.state.value,
+        isA<ModelDownloadNeedsSpace>()
+            .having((state) => state.additionalBytes, 'additional bytes', 60)
+            .having(
+              (state) => state.restartsFromZero,
+              'restarts from zero',
+              true,
+            ),
+      );
+      expect(h.transport.enqueues, hasLength(1));
+
+      h.storage.freeBytes = 200;
+      await h.controller.retry();
       expect(h.transport.cancels, [oldId]);
       expect(h.transport.forgets, [oldId]);
       expect(h.storage.removals, 1);
-      expect(h.transport.enqueues, hasLength(1));
-      expect(
-        (h.controller.state.value as ModelNotEnoughSpace).neededBytes,
-        120,
-      );
-      h.storage.freeBytes = 200;
-      await h.controller.retry();
       expect(h.transport.enqueues, hasLength(2));
       expect(h.transport.enqueues.last.requiresWiFi, isTrue);
       expect(h.id, isNot(oldId));
@@ -2009,23 +2024,56 @@ void main() {
   group('BL60 translator download sheet states', () {
     const bound = Duration(seconds: 3);
 
+    Future<T> runController<T>(
+      WidgetTester tester,
+      Future<T> Function() action,
+    ) async {
+      final result = await tester.runAsync(
+        () async => (value: await action().timeout(bound)),
+      );
+      return result!.value;
+    }
+
     void testSheet(
       String description,
       Future<void> Function(WidgetTester tester, _Harness h) body, {
       Future<_Harness> Function()? create,
     }) {
       testWidgets(description, (tester) async {
-        final h = await (create ?? _Harness.create)().timeout(bound);
+        final h = await runController(tester, create ?? _Harness.create);
         try {
           await body(tester, h);
         } finally {
           await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
-          final verification = h.storage.verification;
-          if (verification != null && !verification.isCompleted) {
-            verification.complete(true);
-          }
-          await h.dispose().timeout(bound);
+          await runController(tester, () async {
+            final verification = h.storage.verification;
+            if (verification != null && !verification.isCompleted) {
+              verification.complete(true);
+              await h.flush();
+            }
+            await h.dispose();
+          });
         }
+      });
+    }
+
+    Future<void> pressSheetButton(
+      WidgetTester tester,
+      _Harness h,
+      String label,
+    ) {
+      final button = tester.widget<ButtonStyleButton>(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is ButtonStyleButton,
+          ),
+        ),
+      );
+      expect(button.onPressed, isNotNull);
+      return runController(tester, () async {
+        button.onPressed!();
+        await h.flush();
       });
     }
 
@@ -2050,14 +2098,15 @@ void main() {
       tester,
       h,
     ) async {
-      final started = Completer<void>();
-      h.storage
-        ..verification = Completer<bool>()
-        ..verificationStarted = started;
-
-      await h.controller.start(allowMobileData: false).timeout(bound);
-      await h.event(ModelTransferStatus.complete).timeout(bound);
-      await started.future.timeout(bound);
+      await runController(tester, () async {
+        final started = Completer<void>();
+        h.storage
+          ..verification = Completer<bool>()
+          ..verificationStarted = started;
+        await h.controller.start(allowMobileData: false);
+        await h.event(ModelTransferStatus.complete);
+        await started.future;
+      });
       await pumpSheet(tester, h.controller);
 
       expect(
@@ -2075,8 +2124,7 @@ void main() {
         h.network.offline = true;
 
         await pumpSheet(tester, h.controller);
-        await tester.tap(find.text('Download when on Wi-Fi')).timeout(bound);
-        await h.flush().timeout(bound);
+        await pressSheetButton(tester, h, 'Download when on Wi-Fi');
         await tester.pump().timeout(bound);
 
         expect(h.transport.enqueues, isEmpty);
@@ -2086,22 +2134,28 @@ void main() {
           findsOneWidget,
           reason: 'the sheet explains offline on the first download request',
         );
-        await tester.tap(find.text('Cancel')).timeout(bound);
-        await h.flush().timeout(bound);
-        h.network.changeWifi(true);
-        await h.flush().timeout(bound);
+        await pressSheetButton(tester, h, 'Cancel');
+        await runController(tester, () async {
+          h.network.changeWifi(true);
+          await h.flush();
+        });
         expect(h.transport.enqueues, isEmpty);
 
-        h.network.changeWifi(false, offline: true);
-        await h.flush().timeout(bound);
+        await runController(tester, () async {
+          h.network.changeWifi(false, offline: true);
+          await h.flush();
+        });
         await tester.pump().timeout(bound);
-        await tester.tap(find.text('Download when on Wi-Fi')).timeout(bound);
-        await h.flush().timeout(bound);
-        h.network.changeWifi(false);
-        await h.flush().timeout(bound);
+        await pressSheetButton(tester, h, 'Download when on Wi-Fi');
+        await runController(tester, () async {
+          h.network.changeWifi(false);
+          await h.flush();
+        });
         expect(h.transport.enqueues, isEmpty);
-        h.network.changeWifi(true);
-        await h.flush().timeout(bound);
+        await runController(tester, () async {
+          h.network.changeWifi(true);
+          await h.flush();
+        });
         expect(h.transport.enqueues, [(taskId: h.id, requiresWiFi: true)]);
       },
       create: () => _Harness.create(
@@ -2118,8 +2172,7 @@ void main() {
       h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
 
       await pumpSheet(tester, h.controller);
-      await tester.tap(find.text('Download on Wi-Fi')).timeout(bound);
-      await h.flush().timeout(bound);
+      await pressSheetButton(tester, h, 'Download on Wi-Fi');
       await tester.pump().timeout(bound);
 
       expect(h.network.fetches, 1);
@@ -2137,15 +2190,17 @@ void main() {
       tester,
       h,
     ) async {
-      await h.controller.start(allowMobileData: false).timeout(bound);
-      final taskId = h.id;
-      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
-
-      h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
-        retainedBytes: 42,
-      );
-      h.network.changeWifi(false, offline: true);
-      await h.event(ModelTransferStatus.paused).timeout(bound);
+      final taskId = await runController(tester, () async {
+        await h.controller.start(allowMobileData: false);
+        final id = h.id;
+        await h.event(ModelTransferStatus.running, bytes: 42);
+        h.transport.checkpoints[id] = const ModelResumeCheckpoint(
+          retainedBytes: 42,
+        );
+        h.network.changeWifi(false, offline: true);
+        await h.event(ModelTransferStatus.paused);
+        return id;
+      });
       await pumpSheet(tester, h.controller);
 
       expect(h.transport.pauses, isEmpty);
@@ -2165,10 +2220,10 @@ void main() {
       );
       expect(find.text('Pause'), findsOneWidget);
 
-      h.network.changeWifi(true);
-      await h.flush().timeout(bound);
-      await tester.pump(const Duration(seconds: 5)).timeout(bound);
-      await h.flush().timeout(bound);
+      await runController(tester, () async {
+        h.network.changeWifi(true);
+        await h.flush();
+      });
 
       expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: true)]);
       expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
@@ -2181,21 +2236,26 @@ void main() {
       tester,
       h,
     ) async {
-      await h.controller.start(allowMobileData: false).timeout(bound);
+      await runController(
+        tester,
+        () => h.controller.start(allowMobileData: false),
+      );
       final rejected = h.id;
       h.storage.valid = false;
       await pumpSheet(tester, h.controller);
 
       Future<void> finishWithBadChecksum() async {
-        final requestedRemoval = Completer<void>();
-        h.storage.onRemove = () async => requestedRemoval.complete();
-        await h.event(ModelTransferStatus.complete).timeout(bound);
-        await requestedRemoval.future.timeout(bound);
-        await h.flush().timeout(bound);
+        await runController(tester, () async {
+          final requestedRemoval = Completer<void>();
+          h.storage.onRemove = () async => requestedRemoval.complete();
+          await h.event(ModelTransferStatus.complete);
+          await requestedRemoval.future;
+          await h.flush();
+        });
         await tester.pump().timeout(bound);
       }
 
-      await finishWithBadChecksum().timeout(bound);
+      await finishWithBadChecksum();
       expect(
         h.transport.enqueues,
         hasLength(2),
@@ -2212,20 +2272,20 @@ void main() {
         find.text("We're downloading the file again. Nothing for you to do."),
         findsOneWidget,
       );
-      await expectLater(
-        h.controller.verifiedModelPath().timeout(bound),
-        throwsStateError,
-      ).timeout(bound);
+      await runController(
+        tester,
+        () => expectLater(h.controller.verifiedModelPath(), throwsStateError),
+      );
 
-      await finishWithBadChecksum().timeout(bound);
+      await finishWithBadChecksum();
       expect(h.transport.enqueues, hasLength(2));
       expect(h.storage.removals, 2);
       expect(h.transport.forgets, [rejected, replacement.taskId]);
       expect(find.text('Try again to download a new copy.'), findsOneWidget);
-      await expectLater(
-        h.controller.verifiedModelPath().timeout(bound),
-        throwsStateError,
-      ).timeout(bound);
+      await runController(
+        tester,
+        () => expectLater(h.controller.verifiedModelPath(), throwsStateError),
+      );
     });
   });
 }
