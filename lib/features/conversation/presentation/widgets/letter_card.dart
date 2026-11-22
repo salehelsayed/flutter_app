@@ -11,6 +11,7 @@ import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
@@ -1053,6 +1054,7 @@ class LetterCard extends StatelessWidget {
   Widget _buildSticker(AppLocalizations l10n, MediaAttachment sticker) {
     final width = sticker.width ?? 0;
     final height = sticker.height ?? 0;
+    final custom = sticker.stickerId == kCustomStickerMarkerId;
     final picture = MediaGridCell(
       attachment: sticker,
       borderRadius: 0,
@@ -1076,7 +1078,8 @@ class LetterCard extends StatelessWidget {
         builder: (context, catalog) => Semantics(
           image: true,
           label: stickerSemanticsLabel(l10n, catalog.data, sticker.stickerId!),
-          excludeSemantics: true,
+          excludeSemantics: !custom,
+          explicitChildNodes: custom,
           child: picture,
         ),
       ),

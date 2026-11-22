@@ -9,9 +9,11 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
 import 'media_thumbnail_image.dart';
+import 'sticker_playback_image.dart';
 import 'video_thumbnail_overlay.dart';
 
 /// A single cell in the media grid: image, video, placeholder, or "+N" overlay.
@@ -66,7 +68,9 @@ class MediaGridCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Semantics(
-      label: attachment.mediaType == 'image'
+      label: _isCustomSticker
+          ? null
+          : attachment.mediaType == 'image'
           ? l10n.shared_media_kind_photo
           : l10n.shared_media_kind_video,
       child: GestureDetector(
@@ -74,6 +78,9 @@ class MediaGridCell extends StatelessWidget {
         key: ValueKey(
           'media-grid-cell-${attachment.messageId}-${attachment.id}',
         ),
+        behavior: _isCustomSticker && onLongPress != null
+            ? HitTestBehavior.opaque
+            : null,
         onTap: _canOpen ? onTap : null,
         onLongPress: onLongPress,
         child: ClipRRect(
@@ -92,6 +99,10 @@ class MediaGridCell extends StatelessWidget {
       ),
     );
   }
+
+  bool get _isCustomSticker =>
+      attachment.stickerId == kCustomStickerMarkerId &&
+      attachment.mediaType == 'image';
 
   bool get _showsGifBadge => attachment.isAnimated && _isDisplayableDoneMedia;
 
@@ -273,20 +284,32 @@ class MediaGridCell extends StatelessWidget {
         _emitUnavailableDiagnostic();
         return _buildUnavailablePlaceholder(context);
       }
+      final path =
+          _resolvedExistingLocalPath ??
+          MediaFileManager.resolveStoredPathSync(attachment.localPath!);
+      final error = Builder(
+        builder: (context) =>
+            _buildUnavailablePlaceholder(context, cannotOpen: true),
+      );
+      if (_isCustomSticker) {
+        return StickerPlaybackImage(
+          path: path,
+          fit: fit,
+          decodeWidth: cacheWidth,
+          replay: onTap == null ? StickerReplay.tap : StickerReplay.button,
+          error: error,
+          renderedSemanticsLabel: renderedSemanticsLabel,
+        );
+      }
       return MediaThumbnailImage(
-        mediaPath:
-            _resolvedExistingLocalPath ??
-            MediaFileManager.resolveStoredPathSync(attachment.localPath!),
+        mediaPath: path,
         mediaType: attachment.mediaType,
         fit: fit,
         cacheWidth: cacheWidth,
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(context),
-        error: Builder(
-          builder: (context) =>
-              _buildUnavailablePlaceholder(context, cannotOpen: true),
-        ),
+        error: error,
         videoThumbnailResolver: videoThumbnailResolver,
         renderedSemanticsLabel: renderedSemanticsLabel,
       );

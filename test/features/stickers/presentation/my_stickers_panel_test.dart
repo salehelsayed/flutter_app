@@ -73,6 +73,99 @@ List<String> _myGrid(WidgetTester tester) => tester
 
 Finder _sticker(String id) => find.byKey(ValueKey('my-sticker-$id'));
 
+const _motionBound = Duration(seconds: 3);
+
+Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
+  WidgetTester tester, {
+  required int count,
+}) async {
+  final directory = Directory.systemTemp.createTempSync('animated-tray-');
+  addTearDown(() => directory.deleteSync(recursive: true));
+  final animation = img.Image(width: 8, height: 8, frameDuration: 80)
+    ..clear(img.ColorRgb8(255, 0, 0))
+    ..addFrame(
+      img.Image(width: 8, height: 8, frameDuration: 80)
+        ..clear(img.ColorRgb8(0, 0, 255)),
+    );
+  final bytes = img.WebPEncoder().encode(animation);
+  final library = FakeCustomStickerLibrary();
+  for (var index = 0; index < count; index++) {
+    final file = File('${directory.path}/$index.webp')..writeAsBytesSync(bytes);
+    await library
+        .admit(
+          NormalizedStickerAsset(
+            filePath: file.path,
+            sha256Hex: 'animated-tray-$index',
+            mime: 'image/webp',
+            byteLength: bytes.length,
+            width: 8,
+            height: 8,
+            frameCount: 2,
+            durationMs: 160,
+          ),
+        )
+        .timeout(_motionBound);
+  }
+  final harness = await _pump(tester, library).timeout(_motionBound);
+  final ids = library.ids;
+  final watch = Stopwatch()..start();
+  while (!ids.every((id) => _currentTrayFrame(tester, id) != null) &&
+      watch.elapsed < _motionBound) {
+    await _pumpTrayFrame(tester).timeout(_motionBound);
+  }
+  for (final id in ids) {
+    expect(_currentTrayFrame(tester, id), isNotNull);
+  }
+  return (ids: ids, harness: harness);
+}
+
+Object? _currentTrayFrame(WidgetTester tester, String id) => tester
+    .widgetList<RawImage>(
+      find.descendant(of: _sticker(id), matching: find.byType(RawImage)),
+    )
+    .firstOrNull
+    ?.image;
+
+Future<void> _pumpTrayFrame(WidgetTester tester) async {
+  await tester
+      .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 8)))
+      .timeout(_motionBound);
+  await tester.pump(const Duration(milliseconds: 20)).timeout(_motionBound);
+}
+
+Future<Set<String>> _movingTrayStickers(
+  WidgetTester tester,
+  List<String> ids, {
+  int samples = 12,
+}) async {
+  final moving = <String>{};
+  final previous = {for (final id in ids) id: _currentTrayFrame(tester, id)};
+  for (var sample = 0; sample < samples; sample++) {
+    await _pumpTrayFrame(tester).timeout(_motionBound);
+    for (final id in ids) {
+      final current = _currentTrayFrame(tester, id);
+      if (current != null && !identical(current, previous[id])) {
+        moving.add(id);
+      }
+      previous[id] = current;
+    }
+  }
+  return moving;
+}
+
+Future<void> _waitForTrayMotion(WidgetTester tester, List<String> ids) async {
+  final watch = Stopwatch()..start();
+  while (watch.elapsed < _motionBound) {
+    final moving = await _movingTrayStickers(
+      tester,
+      ids,
+      samples: 1,
+    ).timeout(_motionBound);
+    if (moving.isNotEmpty) return;
+  }
+  fail('The visible sticker did not start playing.');
+}
+
 Finder get _deleteBadges => find.byWidgetPredicate(
   (w) =>
       w.key is ValueKey<String> &&
@@ -246,13 +339,6 @@ void main() {
     final tile = _sticker(sticker.id);
     expect(tile.hitTestable(), findsOneWidget);
 
-    final provider = tester
-        .widget<Image>(find.descendant(of: tile, matching: find.byType(Image)))
-        .image;
-    final key = await provider
-        .obtainKey(ImageConfiguration.empty)
-        .timeout(bound);
-    final cache = PaintingBinding.instance.imageCache;
     final raw = find.descendant(of: tile, matching: find.byType(RawImage));
     RawImage? renderedImage() => tester.widgetList<RawImage>(raw).firstOrNull;
 
@@ -276,7 +362,6 @@ void main() {
         final image = renderedImage()?.image;
         return image != null && !identical(image, firstFrame);
       });
-      expect(cache.statusForKey(key).live, isTrue);
     }
 
     await expectAnimation();
@@ -299,7 +384,6 @@ void main() {
       findsNothing,
       reason: 'the hidden tile leaves the widget tree',
     );
-    expect(cache.statusForKey(key).live, isFalse);
     expect(tester.widget<RawImage>(thumbnail).image, same(thumbnailFrame));
 
     scroller.position.jumpTo(0);
@@ -310,6 +394,75 @@ void main() {
     await tester.tap(tile).timeout(bound);
     expect(harness.sent, [sticker.id]);
     await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+  });
+
+  testWidgets('animated tray shows one moving sticker beside still frames', (
+    tester,
+  ) async {
+    final tray = await _pumpAnimatedTray(
+      tester,
+      count: 3,
+    ).timeout(_motionBound);
+    final moving = await _movingTrayStickers(
+      tester,
+      tray.ids,
+    ).timeout(_motionBound);
+    expect(
+      moving,
+      hasLength(1),
+      reason:
+          'The crowded tray gives its one autoplay slot to a visible sticker.',
+    );
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
+  });
+
+  testWidgets('animated tray settles after three loops', (tester) async {
+    final tray = await _pumpAnimatedTray(
+      tester,
+      count: 1,
+    ).timeout(_motionBound);
+    await _waitForTrayMotion(tester, tray.ids).timeout(_motionBound);
+    await _movingTrayStickers(
+      tester,
+      tray.ids,
+      samples: 31,
+    ).timeout(_motionBound);
+    expect(
+      await _movingTrayStickers(tester, tray.ids).timeout(_motionBound),
+      isEmpty,
+      reason: 'Three playback loops finish and leave a stable picture.',
+    );
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
+  });
+
+  testWidgets('animated tray Play previews without sending', (tester) async {
+    final tray = await _pumpAnimatedTray(
+      tester,
+      count: 1,
+    ).timeout(_motionBound);
+    await _waitForTrayMotion(tester, tray.ids).timeout(_motionBound);
+    await _movingTrayStickers(
+      tester,
+      tray.ids,
+      samples: 31,
+    ).timeout(_motionBound);
+    final play = find.descendant(
+      of: _sticker(tray.ids.single),
+      matching: find.byTooltip('Play'),
+    );
+    expect(
+      play,
+      findsOneWidget,
+      reason: 'The tray has a separate Play action.',
+    );
+    await tester.tap(play).timeout(_motionBound);
+    await tester.pump().timeout(_motionBound);
+    expect(
+      await _movingTrayStickers(tester, tray.ids).timeout(_motionBound),
+      contains(tray.ids.single),
+    );
+    expect(tray.harness.sent, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
   });
 
   testWidgets('long-press enters manage mode; delete removes the sticker', (

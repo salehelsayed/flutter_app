@@ -11,12 +11,14 @@ import 'package:flutter_app/features/stickers/application/custom_sticker_library
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
+import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_selection.dart';
 import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_clip_saves.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/sticker_playback_image.dart';
 
 /// The panel's height on a tall screen; it takes at most 40% of a short one.
 const double kStickerPanelHeight = 300;
@@ -385,12 +387,9 @@ class _StickerPanelState extends State<StickerPanel> {
                           Icons.emoji_emotions_outlined,
                           color: colors.iconPrimary,
                         )
-                      : TickerMode(
-                          enabled: false,
-                          child: _CustomStickerImage(
-                            _custom.first.asset.posterPath ??
-                                _custom.first.asset.filePath,
-                          ),
+                      : _CustomStickerImage(
+                          _custom.first.asset,
+                          autoPlay: false,
                         ),
                 RecentStickersSelection() => Icon(
                   Icons.history_rounded,
@@ -677,7 +676,10 @@ class _CustomStickerCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final image = Padding(
       padding: const EdgeInsets.all(4),
-      child: _CustomStickerImage(sticker.asset.filePath),
+      child: _CustomStickerImage(
+        sticker.asset,
+        replay: managing ? StickerReplay.none : StickerReplay.button,
+      ),
     );
     if (!managing) {
       return Semantics(
@@ -685,10 +687,12 @@ class _CustomStickerCell extends StatelessWidget {
         label: label,
         onTap: onTap,
         onLongPress: onLongPress,
-        excludeSemantics: true,
+        excludeSemantics: !sticker.asset.isAnimated,
+        explicitChildNodes: sticker.asset.isAnimated,
         child: InkWell(
           onTap: onTap,
           onLongPress: onLongPress,
+          excludeFromSemantics: true,
           borderRadius: BorderRadius.circular(8),
           child: image,
         ),
@@ -723,7 +727,7 @@ class _CustomStickerCell extends StatelessWidget {
               delay: const Duration(milliseconds: 200),
               feedback: SizedBox.square(
                 dimension: 72,
-                child: _CustomStickerImage(sticker.asset.filePath),
+                child: _CustomStickerImage(sticker.asset, autoPlay: false),
               ),
               childWhenDragging: Opacity(opacity: 0.3, child: body),
               child: candidates.isEmpty
@@ -773,14 +777,29 @@ class _CustomStickerCell extends StatelessWidget {
 }
 
 class _CustomStickerImage extends StatelessWidget {
-  const _CustomStickerImage(this.path);
+  const _CustomStickerImage(
+    this.asset, {
+    this.autoPlay = true,
+    this.replay = StickerReplay.none,
+  });
 
-  final String path;
+  final NormalizedStickerAsset asset;
+  final bool autoPlay;
+  final StickerReplay replay;
 
   @override
   Widget build(BuildContext context) {
+    if (asset.isAnimated) {
+      return StickerPlaybackImage(
+        path: asset.filePath,
+        posterPath: asset.posterPath,
+        frameCount: asset.frameCount,
+        autoPlay: autoPlay,
+        replay: replay,
+      );
+    }
     return Image.file(
-      File(path),
+      File(asset.filePath),
       fit: BoxFit.contain,
       cacheWidth: 256,
       errorBuilder: (_, _, _) => const SizedBox.shrink(),

@@ -15,6 +15,7 @@ import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_reply_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/sticker_playback_image.dart';
 
 /// The reply controls for both Thought presentations. The host owns focus,
 /// navigation and expiry for its card.
@@ -460,11 +461,16 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
             if (send.sticker case final sticker?)
               Semantics(
                 label: l10n.thought_sticker_sent_label,
-                excludeSemantics: true,
+                excludeSemantics: sticker.entry != null,
+                explicitChildNodes: sticker.entry == null,
                 child: SizedBox.square(
                   key: const ValueKey('thought-reply-sent-sticker'),
                   dimension: 28,
-                  child: _stickerArt(sticker),
+                  child: _stickerArt(
+                    sticker,
+                    decodeWidth: 96,
+                    replay: StickerReplay.tap,
+                  ),
                 ),
               )
             else
@@ -555,14 +561,19 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     );
   }
 
-  Widget _stickerArt(ThoughtStickerSelection selection) {
+  Widget _stickerArt(
+    ThoughtStickerSelection selection, {
+    int decodeWidth = 256,
+    StickerReplay replay = StickerReplay.none,
+  }) {
     if (selection.entry case final entry?) {
       return Image.asset(entry.assetPath, fit: BoxFit.contain);
     }
-    return Image.file(
-      File(selection.customFilePath!),
-      fit: BoxFit.contain,
-      errorBuilder: (_, _, _) => const Icon(Icons.emoji_emotions_outlined),
+    return StickerPlaybackImage(
+      path: selection.customFilePath!,
+      decodeWidth: decodeWidth,
+      replay: replay,
+      error: const Icon(Icons.emoji_emotions_outlined),
     );
   }
 }
