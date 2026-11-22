@@ -262,10 +262,12 @@ void main() {
       'library unavailable',
       'retired after storage failure',
       'scope replaced',
+      'editor cancelled',
     ]) {
-      testWidgets('video save opens a pending tray item, then $result', (
-        tester,
-      ) async {
+      final testName = result == 'editor cancelled'
+          ? 'video clip editor Cancel keeps its full exit transition'
+          : 'video save opens a pending tray item, then $result';
+      testWidgets(testName, (tester) async {
         const bound = Duration(seconds: 3);
         final root = Directory.systemTemp.createTempSync('stk-clip-pending-');
         addTearDown(() => root.deleteSync(recursive: true));
@@ -445,15 +447,41 @@ void main() {
             createTile.hitTestable().evaluate().isNotEmpty &&
             chatAction.hitTestable().evaluate().isNotEmpty;
         const frame = Duration(milliseconds: 16);
-        final reverseBudget = editorRoute.reverseTransitionDuration + frame;
+        const saveExitBudget = Duration(milliseconds: 200);
+        final normalReverse = editorRoute.reverseTransitionDuration;
+        var editorRemoved = false;
+        unawaited(
+          editorRoute.completed.then<void>((_) => editorRemoved = true),
+        );
+
+        if (result == 'editor cancelled') {
+          expect(normalReverse, greaterThan(saveExitBudget));
+          await tester.tap(find.byTooltip('Cancel')).timeout(bound);
+          await tester.pump().timeout(bound);
+          await tester.pump(normalReverse - frame).timeout(bound);
+          expect(
+            editorRemoved,
+            isFalse,
+            reason: 'Cancel keeps the normal editor transition',
+          );
+          await tester.pump(frame * 2).timeout(bound);
+          await tester.pump().timeout(bound);
+          expect(editorRemoved, isTrue);
+          expect(chatAndTrayUsable(), isTrue);
+          await until(() => finished);
+          expect(find.byKey(pending), findsNothing);
+          expect(extracts, 0);
+          expect(library.ids, isEmpty);
+          return;
+        }
+
+        final reverseBudget = normalReverse + frame;
         await tester.tap(save).timeout(bound);
         await tester.pump().timeout(bound);
-        for (
-          var elapsed = Duration.zero;
-          !chatAndTrayUsable() && elapsed < reverseBudget;
-          elapsed += frame
-        ) {
+        var elapsed = Duration.zero;
+        while (!chatAndTrayUsable() && elapsed < reverseBudget) {
           await tester.pump(frame).timeout(bound);
+          elapsed += frame;
         }
         expect(chatAndTrayUsable(), isTrue);
         expect(save.hitTestable(), findsNothing);
@@ -475,6 +503,15 @@ void main() {
         expect(sent, isEmpty);
         await tester.tap(chatAction).timeout(bound);
         expect(chats, 1);
+        var revealedBySaveBudget = false;
+        if (result == 'ready' && elapsed <= saveExitBudget) {
+          await tester.pump(saveExitBudget - elapsed).timeout(bound);
+          await tester.pump().timeout(bound);
+          revealedBySaveBudget =
+              editorRemoved &&
+              chatAndTrayUsable() &&
+              tile.evaluate().isNotEmpty;
+        }
         await until(() => extracts == 1);
 
         if (result == 'scope replaced') {
@@ -524,6 +561,12 @@ void main() {
         expect(input.existsSync(), isFalse);
         expect(find.byKey(pending), findsNothing);
         if (result == 'ready') {
+          expect(
+            revealedBySaveBudget,
+            isTrue,
+            reason:
+                'Save fully reveals chat and the pending tile within 200 ms',
+          );
           expect(find.byKey(ready), findsOneWidget);
           expect(library.ids, ['custom-1']);
           await tester.tap(find.byKey(ready)).timeout(bound);
