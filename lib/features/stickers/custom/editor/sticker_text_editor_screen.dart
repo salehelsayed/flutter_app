@@ -206,6 +206,7 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
       _commitEditing();
       _saving = true;
     });
+    var clipApproved = false;
     try {
       switch (widget._target) {
         case _StillEditorTarget(:final sourceBytes, :final outputFile):
@@ -220,9 +221,11 @@ class _StickerTextEditorScreenState extends State<StickerTextEditorScreen> {
           Navigator.of(context).pop(StickerEditorResult.ready(asset));
         case _OverlayEditorTarget():
           Navigator.of(context).pop(StickerOverlayEditorReady(_state.layers));
+          clipApproved = true;
       }
     } finally {
-      if (mounted) setState(() => _saving = false);
+      // The departing clip editor stays mounted during its reverse transition.
+      if (mounted && !clipApproved) setState(() => _saving = false);
     }
   }
 
