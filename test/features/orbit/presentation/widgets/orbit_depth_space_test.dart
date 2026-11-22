@@ -289,7 +289,20 @@ void main() {
       lessThan(controlsBounds.first.top),
       reason: 'the photo remains above the single control row',
     );
+
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.tap(love);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1600));
     expect(tester.takeException(), isNull);
+
+    final history = find.byKey(const ValueKey('thought-reply-you-sent'));
+    expect(history, findsOneWidget);
+    final historyBounds = tester.getRect(history);
+    expect(historyBounds.height, greaterThanOrEqualTo(28));
+    expect(tester.getRect(photo).bottom, lessThan(historyBounds.top));
+    expect(historyBounds.bottom, lessThan(tester.getRect(love).top));
+    expect(tester.getRect(love), controlsBounds.first);
     await finish(tester);
   });
 

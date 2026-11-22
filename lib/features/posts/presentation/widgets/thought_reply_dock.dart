@@ -182,6 +182,9 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     final grace = widget.graceSeconds;
     final composing = widget.typing || grace != null;
     final compact = widget.onOpenComposer != null;
+    final sentLine = _openingPicker || composing
+        ? null
+        : _sentLine(l10n, ink, gap: compact ? 4 : 6);
     final preview = _sentPreview;
 
     return Stack(
@@ -201,7 +204,8 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
                 surface: surface,
               )
             else ...[
-              if (!_openingPicker) _sentLine(l10n, ink),
+              if (sentLine != null)
+                compact ? Flexible(child: sentLine) : sentLine,
               _chips(l10n, ink, compact: compact),
             ],
             if (composing || !compact) ...[
@@ -427,7 +431,7 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     );
   }
 
-  Widget _sentLine(AppLocalizations l10n, Color ink) {
+  Widget _sentLine(AppLocalizations l10n, Color ink, {required double gap}) {
     final sends = widget.visit
         .sentOn(widget.post.id)
         .where((send) => send.messageId != _sentPreview?.messageId)
@@ -435,7 +439,7 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     if (sends.isEmpty) return const SizedBox.shrink();
     final omitted = sends.length > 5 ? sends.length - 5 : 0;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: EdgeInsets.only(bottom: gap),
       child: Row(
         key: const ValueKey('thought-reply-you-sent'),
         children: [
