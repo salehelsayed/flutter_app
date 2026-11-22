@@ -7384,6 +7384,17 @@ visible and cannot become an ordinary first-attempt PASS.
   Retain both results. Evidence is in `.codex-test-logs/f132d-20261122/` and
   mailbox `m-9074764f`.
 
+  Normal signed build 317 (`206adc93`) repeated the real 3 s rear-camera
+  timing with diagnostics disabled. Three Pixel saves per shape measured
+  medians of 7.33 s for Circle and 7.50 s for Square, both within 10 s.
+  Pixel luma was 70.0, thermal status was 0, and the app process had run
+  for 47 s to 4 min 40 s. The earlier 315 samples remain part of the record.
+  The older app session and the diagnostic setting changes do not isolate
+  the cause of the gap. Three iPhone Circle saves measured 4.52, 4.68 and
+  4.88 s, with a median of 4.68 s within the 4.7 s target. The lower bound
+  at the last poll without the ready tile had a median of 4.44 s. Evidence
+  is in `.codex-test-logs/f317b-20261122/rows/` and mailbox `m-c755e453`.
+
   The My stickers grid proof uses a real animated WebP without a persisted
   poster. An offscreen finder must include cached sliver elements with
   `skipOffstage: false`. The test-only tree found the hidden tile and an
@@ -7637,8 +7648,14 @@ visible and cannot become an ordinary first-attempt PASS.
   57 creation-enabled cases and 296 affected sticker cases without skips.
   Four other wrapper rows were outside this run. See mailbox `m-f37258c2`
   and `flutter_app-ui-update/.audit/bl55/evidence/` for the first receipts.
-  This timing proof uses the widget clock. Installed-app timing on both
-  phones requires the normal signed build 317 run.
+  The widget test uses its controlled clock. On normal signed 317, Pixel
+  first showed the pending tile 0.33–0.35 s after Save tap dispatch across
+  six measured runs. The iPhone had a pending tile at every first poll,
+  0.71–0.72 s after tap dispatch and 0.29–0.30 s after the WDA click returned.
+  Those are external observation bounds. The exact iPhone app-side interval
+  remains unmeasured. The earlier 315 iPhone first poll at 0.53 s had no
+  pending tile. Evidence is in `.codex-test-logs/f317b-20261122/rows/` and
+  mailbox `m-c755e453`.
   Host evidence is in mailbox
   `m-f6160225` and `m-5516061f`, with the corresponding first results under
   `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
