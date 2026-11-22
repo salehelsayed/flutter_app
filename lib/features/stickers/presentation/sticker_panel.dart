@@ -694,44 +694,16 @@ class _CustomStickerCell extends StatelessWidget {
         ),
       );
     }
-    final tile = Padding(
-      padding: const EdgeInsets.all(4),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: colors.surfaceRaised,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: colors.border),
-              ),
-              child: image,
-            ),
-          ),
-          PositionedDirectional(
-            top: 0,
-            end: 0,
-            child: GestureDetector(
-              key: ValueKey('my-sticker-delete-${sticker.id}'),
-              behavior: HitTestBehavior.opaque,
-              onTap: onDelete,
-              child: Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.error,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 14,
-                  color: Theme.of(context).colorScheme.onError,
-                ),
-              ),
-            ),
-          ),
-        ],
+    const inset = 4.0;
+    final body = Padding(
+      padding: const EdgeInsets.all(inset),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceRaised,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.border),
+        ),
+        child: image,
       ),
     );
     return Semantics(
@@ -741,23 +713,51 @@ class _CustomStickerCell extends StatelessWidget {
       child: DragTarget<String>(
         onWillAcceptWithDetails: (details) => details.data != sticker.id,
         onAcceptWithDetails: (details) => onDropped(details.data),
-        builder: (context, candidates, _) => LongPressDraggable<String>(
-          data: sticker.id,
-          delay: const Duration(milliseconds: 200),
-          feedback: SizedBox.square(
-            dimension: 72,
-            child: _CustomStickerImage(sticker.asset.filePath),
-          ),
-          childWhenDragging: Opacity(opacity: 0.3, child: tile),
-          child: candidates.isEmpty
-              ? tile
-              : DecoratedBox(
+        builder: (context, candidates, _) => Stack(
+          clipBehavior: Clip.none,
+          fit: StackFit.expand,
+          children: [
+            LongPressDraggable<String>(
+              data: sticker.id,
+              delay: const Duration(milliseconds: 200),
+              feedback: SizedBox.square(
+                dimension: 72,
+                child: _CustomStickerImage(sticker.asset.filePath),
+              ),
+              childWhenDragging: Opacity(opacity: 0.3, child: body),
+              child: candidates.isEmpty
+                  ? body
+                  : DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(width: 2, color: colors.accent),
+                      ),
+                      child: body,
+                    ),
+            ),
+            PositionedDirectional(
+              top: inset,
+              end: inset,
+              child: GestureDetector(
+                key: ValueKey('my-sticker-delete-${sticker.id}'),
+                behavior: HitTestBehavior.opaque,
+                onTap: onDelete,
+                child: Container(
+                  width: 22,
+                  height: 22,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(width: 2, color: colors.accent),
+                    color: Theme.of(context).colorScheme.error,
+                    shape: BoxShape.circle,
                   ),
-                  child: tile,
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 14,
+                    color: Theme.of(context).colorScheme.onError,
+                  ),
                 ),
+              ),
+            ),
+          ],
         ),
       ),
     );
