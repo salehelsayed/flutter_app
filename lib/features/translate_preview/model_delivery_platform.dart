@@ -354,6 +354,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
+  bool get canRecoverUnexpectedPauses => _useAndroidGate;
+
+  @override
   Stream<ModelTransferEvent> get events => _events.stream;
 
   bool _owns(Task task) =>
@@ -481,7 +484,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<bool> resume(String taskId, {required bool requiresWiFi}) async {
+  Future<bool> resume(
+    String taskId, {
+    required bool requiresWiFi,
+    bool allowZeroByteRestart = true,
+  }) async {
     final task = await _task(taskId);
     if (task == null) return false;
     // iOS resumes from opaque resumeData, which retains the old request policy.
@@ -498,7 +505,21 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     );
     _settledStatuses.remove(taskId);
     _tasks[taskId] = resumed;
-    return _downloader.resume(resumed);
+    if (await _downloader.resume(resumed)) return true;
+    if (!_useAndroidGate || !allowZeroByteRestart) return false;
+    // A first-start readiness pause has neither a checkpoint nor a partial.
+    await _awaitPartialCaptures(taskId);
+    final record = await _downloader.database.recordForId(taskId);
+    final data = await _resumeStorage.retrieveResumeData(taskId);
+    if (record == null ||
+        !_owns(record.task) ||
+        record.status != TaskStatus.paused ||
+        record.progress != 0 ||
+        data != null ||
+        (_partialPaths[taskId]?.isNotEmpty ?? false)) {
+      return false;
+    }
+    return _downloader.enqueue(resumed);
   }
 
   @override

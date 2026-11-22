@@ -116,7 +116,7 @@ void main() {
     fakeAsync((clock) {
       late _Harness h;
       unawaited(
-        _Harness.create().then((harness) async {
+        _Harness.create(canRecoverUnexpectedPauses: true).then((harness) async {
           h = harness;
           await h.controller.start(allowMobileData: false);
           await h.event(ModelTransferStatus.running, bytes: 40);
@@ -145,7 +145,7 @@ void main() {
     fakeAsync((clock) {
       late _Harness h;
       unawaited(
-        _Harness.create().then((harness) async {
+        _Harness.create(canRecoverUnexpectedPauses: true).then((harness) async {
           h = harness;
           await h.controller.start(allowMobileData: false);
           await h.event(ModelTransferStatus.running, bytes: 40);
@@ -1896,6 +1896,7 @@ class _Harness {
 
   static Future<_Harness> create({
     bool supported = true,
+    bool canRecoverUnexpectedPauses = false,
     bool wifi = true,
     int freeBytes = 1000,
     ModelDeliveryRecord? record,
@@ -1917,7 +1918,8 @@ class _Harness {
       ..verification = verification;
     if (identity != null) storage.identity = identity;
     final network = _Network()..wifi = wifi;
-    final transport = _Transport();
+    final transport = _Transport()
+      ..canRecoverUnexpectedPauses = canRecoverUnexpectedPauses;
     if (restoredStatus != null) {
       transport.restored = ModelTransferSnapshot(
         taskId: record!.taskId!,
@@ -2099,6 +2101,9 @@ class _Network implements ModelDeliveryNetwork {
 }
 
 class _Transport implements ModelDeliveryTransport {
+  @override
+  bool canRecoverUnexpectedPauses = false;
+
   final eventsController = StreamController<ModelTransferEvent>.broadcast(
     sync: true,
   );
@@ -2140,7 +2145,11 @@ class _Transport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<bool> resume(String taskId, {required bool requiresWiFi}) async {
+  Future<bool> resume(
+    String taskId, {
+    required bool requiresWiFi,
+    bool allowZeroByteRestart = true,
+  }) async {
     resumes.add((taskId: taskId, requiresWiFi: requiresWiFi));
     return resumeAccepted;
   }
