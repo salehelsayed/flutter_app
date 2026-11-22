@@ -3672,9 +3672,8 @@ void main() {
       await finishThoughtCase(tester);
     });
 
-    /// Types [text] into the 3D bar's reply field for the friend in the
-    /// center and sends it. Nothing navigates.
-    Future<void> replyFromDepth(WidgetTester tester, String text) async {
+    /// Sends [text] to the friend in the center and opens their chat.
+    Future<void> sendDepthReply(WidgetTester tester, String text) async {
       await tester.timedDrag(
         find.byType(OrbitDepthSurface),
         const Offset(0, -260),
@@ -3687,10 +3686,15 @@ void main() {
       await tester.pump();
       await tester.tap(_depthReplySend);
       await pumpOrbitFrames(tester, count: 12);
-      expect(find.byType(ConversationWired), findsNothing);
+      final chat = find.byType(ConversationWired);
+      expect(chat, findsOneWidget);
+      expect(
+        tester.widget<ConversationWired>(chat).contact.peerId,
+        testContact.peerId,
+      );
     }
 
-    Future<void> replyFromDepthThenOpenChat(
+    Future<void> replyFromDepthAndCheckQuote(
       WidgetTester tester,
       _OrbitThoughtPostRepository posts, {
       required DateTime Function() clock,
@@ -3707,12 +3711,7 @@ void main() {
         buildOrbitWired(postRepository: posts, thoughtNowProvider: clock),
       );
       await pumpOrbitFrames(tester, count: 8);
-      await replyFromDepth(tester, 'count me in');
-      await tester.tap(
-        find.byKey(ValueKey('orbit-depth-face-${testContact.peerId}')),
-      );
-      await pumpOrbitFrames(tester, count: 12);
-      expect(find.byType(ConversationWired), findsOneWidget);
+      await sendDepthReply(tester, 'count me in');
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('thought-quote-block')),
@@ -3756,7 +3755,7 @@ void main() {
           downloadStatus: 'done',
         ),
       );
-      await replyFromDepthThenOpenChat(tester, posts, clock: () => thoughtNow);
+      await replyFromDepthAndCheckQuote(tester, posts, clock: () => thoughtNow);
 
       final thumbnail = tester.widget<Image>(
         find.descendant(
@@ -3795,7 +3794,7 @@ void main() {
             createdAt: thoughtNow.toIso8601String(),
           ),
         );
-        await replyFromDepthThenOpenChat(
+        await replyFromDepthAndCheckQuote(
           tester,
           posts,
           clock: () => thoughtNow,
@@ -4248,7 +4247,7 @@ void main() {
       'ordinary chat sends still animate to the live edge from older history',
       (tester) async {
         final posts = await photoThoughtForScroll();
-        await replyFromDepthThenOpenChat(
+        await replyFromDepthAndCheckQuote(
           tester,
           posts,
           clock: () => thoughtNow,
@@ -4290,7 +4289,7 @@ void main() {
           expiresAt: thoughtNow.add(const Duration(minutes: 5)),
         ),
       );
-      await replyFromDepthThenOpenChat(tester, posts, clock: () => now);
+      await replyFromDepthAndCheckQuote(tester, posts, clock: () => now);
 
       now = thoughtNow.add(const Duration(minutes: 6));
       await tester.pump(const Duration(minutes: 6));
@@ -4307,7 +4306,7 @@ void main() {
       final posts = _OrbitThoughtPostRepository();
       addTearDown(posts.dispose);
       await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
-      await replyFromDepthThenOpenChat(tester, posts, clock: () => thoughtNow);
+      await replyFromDepthAndCheckQuote(tester, posts, clock: () => thoughtNow);
 
       await posts.deletePostCascade('lake');
       await pumpOrbitFrames(tester, count: 6);
@@ -4337,12 +4336,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
-        await replyFromDepth(tester, 'count me in');
-        await tester.tap(
-          find.byKey(ValueKey('orbit-depth-face-${testContact.peerId}')),
-        );
-        await pumpOrbitFrames(tester, count: 12);
-        expect(find.byType(ConversationWired), findsOneWidget);
+        await sendDepthReply(tester, 'count me in');
         expect(posts.heldCount, greaterThan(0));
 
         await posts.deletePostCascade('lake');
@@ -4369,7 +4363,7 @@ void main() {
           expiresAt: thoughtNow.add(const Duration(minutes: 5)),
         ),
       );
-      await replyFromDepthThenOpenChat(tester, posts, clock: () => clock);
+      await replyFromDepthAndCheckQuote(tester, posts, clock: () => clock);
       expect(quoteGone(), findsNothing);
 
       clock = thoughtNow.add(const Duration(minutes: 5, seconds: 1));
