@@ -111,10 +111,12 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as p2p_connection;
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
@@ -1449,104 +1451,88 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a 3D typed reply does not open chat without delivery confirmation',
-      (tester) async {
-        await enterDepthWithThought(tester);
-        final navigator = tester.state<NavigatorState>(
-          find.byType(Navigator).first,
-        );
-        await tester.tap(_depthReplyEntry);
-        await pumpOrbitFrames(tester, count: 4);
-        expect(find.byIcon(Icons.mic), findsNothing);
-        await tester.enterText(_depthReplyField, 'count me in');
-        await tester.pump();
-        await tester.tap(_depthReplySend);
-        await pumpOrbitFrames(tester, count: 12);
-        final replies = await messageRepo.getMessagesForContact(
-          testContact.peerId,
-        );
-        expect(
-          replies.map((message) => (message.text, message.quotedMessageId)),
-          [('count me in', 'thought:lake')],
-        );
-        expect(
-          find.byKey(const ValueKey('orbit-depth-composer')),
-          findsNothing,
-        );
-        expect(find.byType(ThoughtCardScreen), findsNothing);
-        expect(find.byType(ConversationWired), findsNothing);
-        expect(navigator.canPop(), isFalse);
-        expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
-        await finishThoughtCase(tester);
-      },
-    );
-
     for (final (surface, fullScreen) in [
       ('depth', false),
       ('the full-screen card', true),
     ]) {
-      testWidgets(
-        'a delivered typed reply from $surface opens the author chat once '
-        'and Back returns to Orbit',
-        (tester) async {
-          const bound = Duration(seconds: 3);
-          p2pService.sendMessageWithReplyResult = const SendMessageResult(
-            sent: true,
-            acked: true,
-            reply: 'ack',
-          );
-          await enterDepthWithThought(tester, online: true);
-          if (fullScreen) {
+      for (final delivered in [true, false]) {
+        final delivery = delivered ? 'delivered' : 'durably queued';
+        testWidgets(
+          'a $delivery typed reply from $surface opens the author chat once '
+          'and Back returns to Orbit',
+          (tester) async {
+            const bound = Duration(seconds: 3);
+            if (delivered) {
+              p2pService.sendMessageWithReplyResult = const SendMessageResult(
+                sent: true,
+                acked: true,
+                reply: 'ack',
+              );
+            }
+            await enterDepthWithThought(tester, online: delivered);
+            if (fullScreen) {
+              await tester.tap(
+                find.byKey(const ValueKey('orbit-depth-text-lake')),
+              );
+              await pumpOrbitFrames(tester, count: 24);
+              expect(find.byType(ThoughtCardScreen), findsOneWidget);
+            }
             await tester.tap(
-              find.byKey(const ValueKey('orbit-depth-text-lake')),
+              fullScreen ? _thoughtReplyTextField : _depthReplyEntry,
             );
+            await pumpOrbitFrames(tester, count: 8);
+            expect(find.byIcon(Icons.mic), findsNothing);
+            await tester.enterText(
+              fullScreen ? _thoughtReplyTextField : _depthReplyField,
+              'count me in',
+            );
+            await tester.pump();
+            await tester.tap(fullScreen ? _thoughtReplySubmit : _depthReplySend);
             await pumpOrbitFrames(tester, count: 24);
-            expect(find.byType(ThoughtCardScreen), findsOneWidget);
-          }
-          await tester.tap(
-            fullScreen ? _thoughtReplyTextField : _depthReplyEntry,
-          );
-          await pumpOrbitFrames(tester, count: 8);
-          await tester.enterText(
-            fullScreen ? _thoughtReplyTextField : _depthReplyField,
-            'count me in',
-          );
-          await tester.pump();
-          await tester.tap(fullScreen ? _thoughtReplySubmit : _depthReplySend);
-          await pumpOrbitFrames(tester, count: 24);
 
-          final replies = await messageRepo
-              .getMessagesForContact(testContact.peerId)
-              .timeout(bound);
-          expect(replies, hasLength(1));
-          final reply = replies.single;
-          expect(reply.text, 'count me in');
-          expect(reply.quotedMessageId, 'thought:lake');
-          expect(['delivered', 'read', 'inboxed'], contains(reply.status));
-          final chat = find.byType(ConversationWired);
-          expect(chat, findsOneWidget);
-          expect(
-            tester.widget<ConversationWired>(chat).contact.peerId,
-            testContact.peerId,
-          );
-          expect(
-            find.byKey(const ValueKey('thought-quote-block')),
-            findsOneWidget,
-          );
-          expect(find.text('count me in'), findsOneWidget);
+            final replies = await messageRepo
+                .getMessagesForContact(testContact.peerId)
+                .timeout(bound);
+            expect(replies, hasLength(1));
+            final reply = replies.single;
+            expect(reply.text, 'count me in');
+            expect(reply.quotedMessageId, 'thought:lake');
+            if (delivered) {
+              expect(['delivered', 'read', 'inboxed'], contains(reply.status));
+            } else {
+              final intents = messageRepo as AuthoredDirectTextIntentRepository;
+              expect(
+                (await intents.loadAuthoredDirectTextIntents().timeout(bound))
+                    .map((intent) => intent.id),
+                [reply.id],
+              );
+              expect(reply.status, 'sending');
+              expect(p2pService.sendMessageWithReplyCallCount, 0);
+            }
+            final chat = find.byType(ConversationWired);
+            expect(chat, findsOneWidget);
+            expect(
+              tester.widget<ConversationWired>(chat).contact.peerId,
+              testContact.peerId,
+            );
+            expect(
+              find.byKey(const ValueKey('thought-quote-block')),
+              findsOneWidget,
+            );
+            expect(find.text('count me in'), findsOneWidget);
 
-          expect(await tester.binding.handlePopRoute().timeout(bound), isTrue);
-          await pumpOrbitFrames(tester, count: 24);
-          expect(chat, findsNothing);
-          expect(find.byType(ThoughtCardScreen), findsNothing);
-          expect(
-            find.byKey(const ValueKey('orbit-depth-stage')),
-            findsOneWidget,
-          );
-          await finishThoughtCase(tester);
-        },
-      );
+            expect(await tester.binding.handlePopRoute().timeout(bound), isTrue);
+            await pumpOrbitFrames(tester, count: 24);
+            expect(chat, findsNothing);
+            expect(find.byType(ThoughtCardScreen), findsNothing);
+            expect(
+              find.byKey(const ValueKey('orbit-depth-stage')),
+              findsOneWidget,
+            );
+            await finishThoughtCase(tester);
+          },
+        );
+      }
     }
 
     testWidgets('REV4 depth Reply and full-screen input open the same '
@@ -2889,6 +2875,106 @@ void main() {
           inThought(find.textContaining('2 wrote back', findRichText: true)),
           findsOneWidget,
         );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'REV4 incoming retraction during secure history restore purges the stored reply',
+      (tester) async {
+        const budget = Duration(seconds: 3);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        final retracted = thought(
+          'retracted-during-restore',
+        ).copyWith(isIncoming: true);
+        final retained = thought(
+          'retained-during-restore',
+        ).copyWith(isIncoming: true);
+        final seeded = [retracted, retained];
+        for (final post in seeded) {
+          await posts.savePost(post).timeout(budget);
+        }
+
+        final key =
+            'thought_reply_history_v1.${Uri.encodeComponent(testIdentity.peerId)}';
+        final held = _HeldReadSecureKeyStore(key);
+        secureKeyStore = held;
+        await held
+            .write(
+              key,
+              jsonEncode({
+                'recent': ['🔥'],
+                'sends': [
+                  for (final post in seeded)
+                    {
+                      'id': 'reply-${post.id}',
+                      'post': post.id,
+                      'until': post.expiresAt,
+                      'emoji': '🔥',
+                      'status': 'sent',
+                    },
+                ],
+              }),
+            )
+            .timeout(budget);
+
+        final retractions = StreamController<ChatMessage>();
+        final listener = PostListener(
+          postCreateStream: const Stream<ChatMessage>.empty(),
+          postRetractStream: retractions.stream,
+          postRepo: posts,
+          contactRepo: contactRepo,
+          nowProvider: () => thoughtNow,
+        )..start();
+        addTearDown(() async {
+          listener.dispose();
+          await retractions.close().timeout(budget);
+        });
+
+        try {
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              thoughtNowProvider: () => thoughtNow,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 8);
+          expect(held.heldReads, 1);
+          expect(await posts.getPost(retracted.id).timeout(budget), isNotNull);
+
+          retractions.add(
+            ChatMessage(
+              from: retracted.authorPeerId,
+              to: testIdentity.peerId,
+              content: PostRetractEnvelope(
+                eventId: 'incoming-retraction-during-restore',
+                createdAt: thoughtNow,
+                postId: retracted.id,
+                postCreatedAt: DateTime.parse(retracted.createdAt),
+              ).toJson(),
+              timestamp: thoughtNow.toIso8601String(),
+              isIncoming: true,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 4);
+          expect(await posts.getPost(retracted.id).timeout(budget), isNull);
+        } finally {
+          held.release();
+        }
+
+        await pumpOrbitFrames(tester, count: 8);
+        final stored = jsonDecode((await held.read(key).timeout(budget))!);
+        final rows = (stored as Map<String, dynamic>)['sends'] as List;
+        final restoredPosts = rows.map(
+          (row) => (row as Map<String, dynamic>)['post'],
+        );
+        expect(restoredPosts, [
+          retained.id,
+        ], reason: 'the late restore must persist only the live Thought reply');
         await finishThoughtCase(tester);
       },
     );

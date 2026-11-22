@@ -413,6 +413,45 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets(
+    'two cached emoji selections close only the picker and send once',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      final thought = _thought(initialNow);
+      await posts.savePost(thought).timeout(bound);
+      await openCard(tester, thought).timeout(bound);
+
+      try {
+        await openMore(tester).timeout(bound);
+        final first = find.byKey(const ValueKey('thought-reply-emoji-😀'));
+        final second = find.byKey(const ValueKey('thought-reply-emoji-😂'));
+        expect(first.hitTestable(), findsOneWidget);
+        expect(second.hitTestable(), findsOneWidget);
+        final selectFirst = tester.widget<IconButton>(first).onPressed!;
+        final selectSecond = tester.widget<IconButton>(second).onPressed!;
+
+        selectFirst();
+        selectSecond();
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
+
+        expect(
+          navigationObserver.poppedNames,
+          isNot(contains('thought-card')),
+          reason: 'a second selection cannot pop the Thought behind the picker',
+        );
+        expect(reactions.single.text, '😀');
+        expect(reactions.single.postId, thought.id);
+        expect(stickers, isEmpty);
+        expect(emojiTab, findsNothing);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+      } finally {
+        await finish(tester).timeout(bound);
+      }
+    },
+  );
+
   testWidgets('the personal chip remembers the last nonfixed panel emoji', (
     tester,
   ) async {
