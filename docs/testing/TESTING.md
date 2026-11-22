@@ -1628,6 +1628,15 @@ lock remains, with an additional cooperating cross-checkout lease for shared
 Flutter/native/AAR outputs. SIMS Flutter/native host rows also share an exclusive
 build resource. This does not fence unmanaged external build processes.
 
+For build 132 source `38de1d89`, the affected-conversation row recorded 3,157
+passes and 14 failures at two jobs and six Flutter workers. The restored
+two-job, one-worker invocation `453ca3067e1849cba7240dbe1ed7515e` ran all
+214 files fresh, with 3,171 passes and zero failures or skips. The failure
+cluster varied with the execution configuration. Its mechanism remains open.
+Retain both results and the execution settings when comparing them. See
+mailbox `m-61261b23` and the per-row record in
+`~/.codex/investigations/build132-final-linux-codex2-20261122/`.
+
 Host-only SIMS test rows (non-artifact `host.*` profiles with only `host.*`
 targets) remove inherited `MKNOON_*`/`SIMS_*` run settings while preserving
 `MKNOON_HOST_*`, `SIMS_HOST_*`, `SIMS_MAX_PARALLEL` and ordinary SDK/process
@@ -6823,7 +6832,40 @@ visible and cannot become an ordinary first-attempt PASS.
   motion, and the direct and group entry points. The lifecycle file passed
   41 cases and affected-identity passed 1,197. First receipts are under
   `~/.codex/investigations/bl53-closed-chat-ambient-codex2-20261121/`.
-  An exact device trace is needed to establish the CPU difference.
+  Release-mode staging build 306 at `7494c3c4` measured a static-chat median
+  of 3% CPU on Pixel (2–7%) and 0% on iPhone 13 (0–6%), with 100%
+  representing one core. The Pixel used the same landscape posture as the
+  provisional 303 run, which measured 116% static-chat CPU, at a different
+  charge level. The two-device run verified still artwork, readable controls
+  and visible sticker playback. A matched prior build and VoiceOver traversal
+  were outside this run. Evidence: `.codex-test-logs/s132-306-20261121/` and
+  mailbox `m-ee650763`.
+  On exact 315, fresh static chats measured 4% CPU on Pixel and 1% on iPhone
+  13. After closing the Pixel tray, CPU stayed at 13% for over two minutes.
+  One Back action brought it to 4%. The trigger remains unclassified.
+  Evidence is in `.codex-test-logs/f132-20261122/cpu/` and mailbox `m-c203816a`.
+  Removing the idle artwork ticker exposed four widget tests that relied on
+  unrelated scheduled frames. A fixed 300 ms pump could produce the
+  permission sheet's first frame, leaving both actions below the 800×600 test
+  viewport. A single idle pump could also deliver the relayed state or reaction
+  completion after checking whether a frame was scheduled. The navigator
+  sheet retains its own frame scheduling and the original motion policy.
+  The first `0648ffc7` affected-media run had 1,812 passes and four failures.
+  The exact pre-BL54 `7494c3c4` and BL53 `147d072e` anchors showed the same
+  misses and assertions. Earlier `d2c5cc92`, BL51 and BL52 passed the four
+  isolated cases. Retain completed timeouts and witnessed misses followed by
+  cancellation as distinct results. The test-only `bb28d31c` waits for both
+  real button hit targets, sheet dismissal, keyed offline-banner visibility,
+  and the exact committed reaction ID. All four focused runs passed on their
+  first attempt. The composed `38de1d89` Linux run passed 1,816 affected-media
+  cases with zero failures or skips, using one Flutter worker per check.
+  Each of the four earlier failures passed in its original machine log
+  reused during the same invocation. See mailbox `m-17625056` for the raw
+  log hash and exact reuse counts.
+  The original and matched receipts are under
+  `~/.codex/investigations/bl50-native-adoption-codex2-20261122/`,
+  `~/.codex/investigations/bl50-mic-ancestry-codex2-20261122/`, and
+  `~/.codex/investigations/bl50-media-combined-codex2-20261122/`.
   Settings integration tests
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
@@ -7323,6 +7365,63 @@ visible and cannot become an ordinary first-attempt PASS.
   the 302 runs. Retain its pilot and timings in
   `.codex-test-logs/bl50-20261121/`.
 
+  BL-50 release diagnostics 312–314 used the same generated 3 s AVC clip
+  through the existing capture hook. Its encoded dimensions, frame rate and
+  portrait rotation matched the Pixel camera trace. The normal crop, Save and
+  tray ran on the Pixel. The library deduplicates by WebP content hash, so
+  each run removed only its own verified synthetic tile and restored the
+  pre-run tray count. The three native WebP saves measured 7.39 s median
+  (7.33–7.42 s) against 10.12 s (9.92–10.16 s) with the existing encoder.
+  Page-source polling took 2.3–2.8 s, limiting the precision of that gap.
+  Native codec round trips took 0.697–0.734 s. The legacy encoder on the
+  MediaCodec variant's fallback took 4.12–4.29 s on the same clip.
+  Native output kept 24 frames and 2 s in 197,718 bytes, with visible motion,
+  correct portrait orientation and an intact circular edge. Its same-frame
+  pilot compared 12 paired frames with zero maximum alpha error and mean
+  visible RGB error of 4.402 on the 8-bit scale.
+
+  Build 313 reached the first Exynos decoder output, which reported transfer
+  0 and color standard 86. The source clip had unspecified transfer metadata.
+  The sequential decoder rejected those aspects and fell back before emitting
+  comparison frames. Preserve its pilot and three invalid sequential timings.
+  A local remux added explicit SDR metadata with identical decoded YUV bytes.
+  The remux has no Android timing result. APK bindings, raw markers, timings
+  and owned-tile cleanup are in
+  `.codex-test-logs/bl50f-20261122/` and mailbox `m-28895587`.
+
+  Exact Release build 315 (`38de1d89`) on both phones used the real camera.
+  Three valid saves per shape had Pixel medians of 11.89 s for Circle and
+  12.08 s for Square, above 10 s. The new Pixel fixture had luma 70.3. Its
+  timing is separate from the earlier camera and fixed-clip comparisons.
+  iPhone medians were 4.48 s for Circle and 2.30 s for Square, both within
+  4.7 s. Exclude the first iPhone Circle run with a 2.64 s observer stall;
+  retain its raw 6.86 s upper bound alongside the replacement sample. Normal
+  build 315 cannot establish the internal encode path or dominant stage.
+  Evidence is in `.codex-test-logs/f132-20261122/` and mailbox `m-c203816a`.
+
+  Diagnostic 316 (`6f4fcb86`, markers-only child of `38de1d89`) repeated the
+  same Pixel scene with luma 68.7 and thermal status 0. External medians were
+  7.37 s for Circle and 7.51 s for Square. Circle used native quality 60 on
+  all 24 frames, at 512 pixels and 2 s, with a codec time of 0.745–0.813 s.
+  Square used the Dart codec at 0.878–1.174 s. Extraction was the largest
+  stage at 4.33–4.55 s. Locked admission took 1.68–2.11 s, including full
+  normalization. The measured gap from app admission to the detector's ready
+  observation was about 0.1–0.2 s. A 315 CPU sample reported thermal status 1.
+  These receipts do not isolate the cause of the difference between builds.
+  Retain both results. Evidence is in `.codex-test-logs/f132d-20261122/` and
+  mailbox `m-9074764f`.
+
+  Normal signed build 317 (`206adc93`) repeated the real 3 s rear-camera
+  timing with diagnostics disabled. Three Pixel saves per shape measured
+  medians of 7.33 s for Circle and 7.50 s for Square, both within 10 s.
+  Pixel luma was 70.0, thermal status was 0, and the app process had run
+  for 47 s to 4 min 40 s. The earlier 315 samples remain part of the record.
+  The older app session and the diagnostic setting changes do not isolate
+  the cause of the gap. Three iPhone Circle saves measured 4.52, 4.68 and
+  4.88 s, with a median of 4.68 s within the 4.7 s target. The lower bound
+  at the last poll without the ready tile had a median of 4.44 s. Evidence
+  is in `.codex-test-logs/f317b-20261122/rows/` and mailbox `m-c755e453`.
+
   The My stickers grid proof uses a real animated WebP without a persisted
   poster. An offscreen finder must include cached sliver elements with
   `skipOffstage: false`. The test-only tree found the hidden tile and an
@@ -7524,7 +7623,70 @@ visible and cannot become an ordinary first-attempt PASS.
   focused widgets, 17 account and 56 creation-enabled cases. The earlier
   affected-stickers pass belongs to `6973a2c3`. First receipts are under
   `~/.codex/investigations/bl51-pending-sticker-codex2-20261121/`.
-  Phone timing and process-restart behavior require installed-app proof.
+  On iPhone 13, staging build 306 first observed pending at 2.02 s and a ready
+  item at 5.73 s. The clock starts before the Appium tap lookup, and the first
+  page snapshot at 1.21 s found neither the editor nor the tray. The pending
+  interaction interrupted the timing polls. Tapping pending sent nothing.
+  Killing the app 1.07 s after a separate Save left no tile or additional
+  sticker after restart. The 306 camera luma was 49, and the three 301 runs
+  had luma about 81. The ready-time difference leaves the app's generation
+  latency unclassified. Evidence is in mailbox `m-ee650763` and
+  `.codex-test-logs/s132-306-20261121/`.
+
+  BL55 covers a distinct delay when a clip has text. The test-only `727341e1`
+  pressed Save with a real text layer and the editor stayed current until
+  its raster result arrived. At `0077e0ef`, Save immediately returns an
+  immutable layer snapshot. The creation flow registers pending and account
+  retirement before rendering the same RGBA overlay. An abandoned save
+  cannot pass its raster result to the exporter. Clips without text still
+  skip this rendering. The tightened tray fixture checks pending on the first
+  usable tray frame while export remains held. Linux passed the focused edited Save,
+  five tray outcomes, 30 editor and flow cases, 56 creation-enabled cases and
+  295 affected sticker cases. The first RED remains archived after correcting
+  the receipt parser. The separate `2b15e450` case dispatches the same Save
+  callback twice before the next frame. Its second call popped the underlying
+  conversation. `d64dff23` keeps Save guarded while the accepted editor
+  leaves. The causal case, full 15-case editor suite, 56 creation-enabled
+  cases and 295 affected sticker cases passed. Exact 315 observed first
+  pending at 0.71–0.75 s on the Pixel and 1.00–1.09 s on iPhone after sending
+  the tap. Save was located before timing, but the tap commands took about
+  0.14 s and 0.42 s respectively. Polls and command delivery leave the 0.5 s
+  app timing target unproven. The timing receipts retain each observed gap.
+  On the Pixel, the pending View had no click action and separate bounds
+  from ready Buttons. Both peers' message rows confirmed no send. The
+  initial observer accepted any new label containing `ticker`, including
+  the 20-character Save notice `Saved to My stickers`. Its original label
+  was not retained. An app kill 1.91 s after Save restored the prior tray
+  count with no pending tile across 20 s of checks. Evidence is in mailbox
+  `m-c203816a`, `m-872ea05a`, and `.codex-test-logs/f132-20261122/`.
+  Pixel diagnostic 316 measured registration within 1 ms of accepted Save,
+  first tray layout in 29–56 ms, and editor route completion in 460–466 ms
+  across six timed captures. The layout can still be covered by the departing
+  editor. The observer first saw pending at 0.64–0.69 s after tap dispatch.
+  Keep app-side timestamps, actual visible observation and driver latency
+  separate. The pending phase markers were exercised on Pixel. Evidence is
+  in `.codex-test-logs/f132d-20261122/` and mailbox `m-9074764f`.
+  The test-only `2d930cb6` reproduces the wait on the production create
+  route. It fails the assertion for editor removal and a usable chat and
+  pending tile by 200 ms while export is held. `206adc93` caps the approved
+  clip Save reverse transition at 150 ms and passes the same case. A separate
+  case verifies the default Cancel transition, zero extraction requests and
+  an empty pending tray. The one scoped Mac host run passed the focused case,
+  57 creation-enabled cases and 296 affected sticker cases without skips.
+  Four other wrapper rows were outside this run. See mailbox `m-f37258c2`
+  and `flutter_app-ui-update/.audit/bl55/evidence/` for the first receipts.
+  The widget test uses its controlled clock. On normal signed 317, Pixel
+  first showed the pending tile 0.33–0.35 s after Save tap dispatch across
+  six measured runs. The iPhone had a pending tile at every first poll,
+  0.71–0.72 s after tap dispatch and 0.29–0.30 s after the WDA click returned.
+  Those are external observation bounds. The exact iPhone app-side interval
+  remains unmeasured. The earlier 315 iPhone first poll at 0.53 s had no
+  pending tile. Evidence is in `.codex-test-logs/f317b-20261122/rows/` and
+  mailbox `m-c755e453`.
+  Host evidence is in mailbox
+  `m-f6160225` and `m-5516061f`, with the corresponding first results under
+  `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
+  `~/.codex/investigations/bl55-save-once-codex2-20261122/`.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
@@ -10010,6 +10172,55 @@ visible and cannot become an ordinary first-attempt PASS.
   were previewed separately. This result leaves physical rapid redial with
   Dart suspended unverified. First XCTest results and source identities are
   retained in the BL-48 native executor receipt (mailbox `m-68f51888`).
+  Staging build 306 reproduced two cancellations after the callee had already
+  started ringing. The caller resolved a fresh endpoint, then rejected the
+  terminal signal before encryption or transport. The cold iPhone graph had
+  republished its endpoint after accepting the invite, changing the signed
+  preference epoch and routing handle. At `e035d34b`, an admitted incoming
+  v2 call defers that publication until terminal. The graph checks again after
+  signing. The two test-only RED cases reached mailbox admission and ringing
+  before observing the unwanted rewrite. GREEN passed both focused cases and
+  27 guard tests, with 23 bootstrap, 2,237 call-signaling and five pinned Go
+  preservation cases. The device and Linux receipts are in
+  `.codex-test-logs/s132-306-20261121/calls/` and mailbox `m-6fb7824f`.
+  Build 310 delivered the seven-second cancel and ended iPhone ringing after
+  2.25 s. The fastest reducer cancel occurred 1.000 s after placement.
+  Use the Pixel's same-trace user-action receipt for the early input interval
+  and record terminal application and iPhone dismissal separately. The next
+  redial returned Busy while the native slot retained a presented,
+  unanswered predecessor with a remote terminal. The simulator RED
+  `081d305f` reproduced sequence 2 holding that slot. `398f9c8a` passed
+  103 cases with receipt-first successor admission for exactly that preStart
+  sequence. An authority write timed out across iOS suspension before its
+  callback, independently disabling callability on the device. At `5c807862`, a cold
+  background wake listens before routine advertisement, and a live endpoint
+  refresh waits for foreground after a background terminal. Outgoing remains
+  gated until actual current publication. Linux guard cases reached both
+  background paths and a foreground resume during ringing. First device
+  evidence is in `.codex-test-logs/bl54-20261121/calls/`, with simulator and
+  final host receipts in `m-495e23d8`, `m-873f49e6` and `m-64801f02`.
+  Exact Release build 311 (`5c807862`) on the physical Pixel and iPhone 13
+  delivered the ordinary cold-call cancel and stopped iPhone ringing in 2.06 s.
+  The earlier accepted reducer cancel at 1.166 s ended iPhone ringing about
+  2.3 s later. Kayan accepted this observed input timing for the
+  scenario. The same-trace user-action diagnostic was not exported.
+  The killed-iPhone successor placed 7.0 s after cancel rang, was answered,
+  connected on both phones and cleaned up on hang-up. The reverse call to a
+  backgrounded Pixel ended 0.66 s after cancel. The live backgrounded iPhone
+  applied the cancel after 0.61 s, stopped ringing after 0.75 s and answered
+  the next redial through connection and normal hang-up. Two earlier redial
+  attempts are retained as harness misses: a 34.3 s redial outside the target
+  interval without access to the system Accept control, and an unpinned Pixel
+  attempt that never produced a cancel. The recovered harness used the native
+  CallKit Accept accessibility identifier and restored its app scope afterward.
+  Raw first attempts and completed rows are in
+  `.codex-test-logs/bl54r-20261121/calls/` and mailbox `m-eff27738`,
+  `m-84fec9f7`.
+  Exact composed build 315 repeated one killed-iPhone sanity sequence. The
+  iPhone ended ringing an observed 2.82 s after cancel, with 0.1–0.3 s
+  clock uncertainty. A redial at 10.9 s was answered and ended normally.
+  The earlier background and reverse cases remain build 311 evidence.
+  See `.codex-test-logs/f132-20261122/calls/` and mailbox `m-c203816a`.
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
