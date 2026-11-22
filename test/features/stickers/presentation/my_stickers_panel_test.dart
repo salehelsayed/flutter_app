@@ -347,44 +347,46 @@ void main() {
   ) async {
     const bound = Duration(seconds: 3);
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
+    try {
+      for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+        final library = FakeCustomStickerLibrary(ids: ['a', 'b', 'c']);
+        final harness = await _pump(
+          tester,
+          library,
+          locale: locale,
+        ).timeout(bound);
+        await tester.longPress(_sticker('b')).timeout(bound);
+        await tester.pump().timeout(bound);
 
-    for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
-      final library = FakeCustomStickerLibrary(ids: ['a', 'b', 'c']);
-      final harness = await _pump(
-        tester,
-        library,
-        locale: locale,
-      ).timeout(bound);
-      await tester.longPress(_sticker('b')).timeout(bound);
-      await tester.pump().timeout(bound);
+        final context = tester.element(find.byType(StickerPanel));
+        final l10n = AppLocalizations.of(context)!;
+        expect(Localizations.localeOf(context), locale);
+        expect(find.bySemanticsLabel(l10n.stickers_delete), findsNWidgets(3));
+        expect(
+          find.bySemanticsLabel(l10n.stickers_mine_semantics(2, 3)),
+          findsOneWidget,
+        );
 
-      final context = tester.element(find.byType(StickerPanel));
-      final l10n = AppLocalizations.of(context)!;
-      expect(Localizations.localeOf(context), locale);
-      expect(find.bySemanticsLabel(l10n.stickers_delete), findsNWidgets(3));
-      expect(
-        find.bySemanticsLabel(l10n.stickers_mine_semantics(2, 3)),
-        findsOneWidget,
-      );
+        final badge = find.byKey(const ValueKey('my-sticker-delete-b'));
+        final node = tester.getSemantics(badge);
+        final data = node.getSemanticsData();
+        expect(node.id, isNot(tester.getSemantics(_sticker('b')).id));
+        expect(data.label, l10n.stickers_delete);
+        expect(data.flagsCollection.isButton, isTrue);
+        expect(data.hasAction(SemanticsAction.tap), isTrue);
 
-      final badge = find.byKey(const ValueKey('my-sticker-delete-b'));
-      final node = tester.getSemantics(badge);
-      final data = node.getSemanticsData();
-      expect(node.id, isNot(tester.getSemantics(_sticker('b')).id));
-      expect(data.label, l10n.stickers_delete);
-      expect(data.flagsCollection.isButton, isTrue);
-      expect(data.hasAction(SemanticsAction.tap), isTrue);
+        node.owner!.performAction(node.id, SemanticsAction.tap);
+        await tester.pump().timeout(bound);
+        await tester.pump().timeout(bound);
 
-      node.owner!.performAction(node.id, SemanticsAction.tap);
-      await tester.pump().timeout(bound);
-      await tester.pump().timeout(bound);
-
-      expect(library.ids, ['a', 'c']);
-      expect(harness.sent, isEmpty);
-      expect(find.bySemanticsLabel(l10n.stickers_delete), findsNWidgets(2));
-      expect(find.byKey(const ValueKey('my-stickers-done')), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+        expect(library.ids, ['a', 'c']);
+        expect(harness.sent, isEmpty);
+        expect(find.bySemanticsLabel(l10n.stickers_delete), findsNWidgets(2));
+        expect(find.byKey(const ValueKey('my-stickers-done')), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+      }
+    } finally {
+      semantics.dispose();
     }
   });
 
