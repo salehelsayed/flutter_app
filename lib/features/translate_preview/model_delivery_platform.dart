@@ -653,20 +653,31 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<void> cancel(String taskId) async {
+  Future<void> cancel(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     var settled = Completer<TaskStatus>();
     // Observe before even looking up the task: an inspection can race completion.
     _cancellations[taskId] = settled;
     try {
       final task = await _task(taskId);
-      if (task == null) return;
+      if (task == null) {
+        if (requireConfirmedStop) {
+          throw StateError('Translator cancellation could not be confirmed');
+        }
+        return;
+      }
       // Cancellation clears SDK resume metadata, sometimes without its file.
       await _rememberPartial(task);
       for (var attempt = 0; attempt < 2; attempt++) {
         final native = await _downloader.taskForId(taskId);
         final record = await _downloader.database.recordForId(taskId);
         var status = _settledUpdates[taskId]?.status ?? record?.status;
-        if (native == null && status != null && status.isFinalState) {
+        if (!requireConfirmedStop &&
+            native == null &&
+            status != null &&
+            status.isFinalState) {
           await _settleCanceledWriter(task, status);
           return;
         }
@@ -675,8 +686,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
         final absent = await _downloader.taskForId(taskId) == null;
         status = _settledUpdates[taskId]?.status ?? current?.status;
         if (!accepted &&
-            !settled.isCompleted &&
-            !(absent && status != null && status.isFinalState)) {
+            (requireConfirmedStop ||
+                !settled.isCompleted &&
+                    !(absent && status != null && status.isFinalState))) {
           throw StateError('Translator cancellation was not accepted');
         }
         if (!(absent && status != null && status.isFinalState)) {

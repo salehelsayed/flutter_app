@@ -2795,7 +2795,10 @@ class _Transport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<void> cancel(String taskId) async {
+  Future<void> cancel(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     cancels.add(taskId);
     if (failCancel) throw StateError('cancellation rejected');
     cancellationStarted?.complete();

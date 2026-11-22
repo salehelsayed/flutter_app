@@ -456,7 +456,7 @@ abstract interface class ModelDeliveryTransport {
     required bool requiresWiFi,
     bool allowZeroByteRestart = true,
   });
-  Future<void> cancel(String taskId);
+  Future<void> cancel(String taskId, {bool requireConfirmedStop = false});
   Future<void> forget(String taskId);
   Future<void> dispose();
 }
@@ -1030,13 +1030,13 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       );
     } else if (hasProgress) {
       // A native pause request is volatile while the job is still queued.
-      await _transport.cancel(id);
+      await _transport.cancel(id, requireConfirmedStop: true);
       _record = _record.copyWith(
         phase: ModelDeliveryPhase.restartRequired,
         recovery: const ModelTransferRecovery(restartsFromZero: true),
       );
     } else {
-      await _cancelOwnedTask();
+      await _cancelOwnedTask(requireConfirmedStop: true);
       await _storage.removeOwnedModel();
       _record = _record.copyWith(
         clearTask: true,
@@ -1384,10 +1384,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _runNotice(_clearBackgroundStatus);
   }
 
-  Future<void> _cancelOwnedTask() async {
+  Future<void> _cancelOwnedTask({bool requireConfirmedStop = false}) async {
     final id = _record.taskId;
     if (id != null) {
-      await _transport.cancel(id);
+      await _transport.cancel(id, requireConfirmedStop: requireConfirmedStop);
       await _transport.forget(id);
     }
   }
