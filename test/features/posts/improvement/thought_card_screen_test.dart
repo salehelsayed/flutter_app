@@ -480,6 +480,9 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final thought = _thought(initialNow);
       await posts.savePost(thought);
+      // Keep both history write queues in this test's fake clock zone.
+      answers.dispose();
+      answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
       await openCard(tester, thought, persistSentHistory: true);
       expect(sentLine, findsNothing);
 
@@ -508,6 +511,7 @@ void main() {
       final field = find.byKey(const ValueKey('thought-reply-field'));
       await tester.tap(field);
       await tester.enterText(field, '🙂');
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
       await tester.pump();
       await tester.pump();
@@ -571,7 +575,11 @@ void main() {
 
       now = DateTime.parse(thought.expiresAt);
       await tester.pump(const Duration(hours: 22));
-      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 2),
+      );
       expect(find.byType(ThoughtCardScreen), findsNothing);
       expect(sentLine, findsNothing);
       final stored = await replyStorage
