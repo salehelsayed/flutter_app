@@ -7575,9 +7575,15 @@ visible and cannot become an ordinary first-attempt PASS.
   usable tray frame while export remains held. Linux passed the focused edited Save,
   five tray outcomes, 30 editor and flow cases, 56 creation-enabled cases and
   295 affected sticker cases. The first RED remains archived after correcting
-  the receipt parser. Two-phone timing still requires the exact composed
-  artifact and a finer observer. Evidence is in mailbox `m-f6160225` and
-  `~/.codex/investigations/bl55-pending-latency-codex2-20261122/`.
+  the receipt parser. The separate `2b15e450` case dispatches the same Save
+  callback twice before the next frame. Its second call popped the underlying
+  conversation. `d64dff23` keeps Save guarded while the accepted editor
+  leaves. The causal case, full 15-case editor suite, 56 creation-enabled
+  cases and 295 affected sticker cases passed. Two-phone timing still requires
+  the exact composed artifact and a finer observer. Evidence is in mailbox
+  `m-f6160225` and `m-5516061f`, with the corresponding first results under
+  `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
+  `~/.codex/investigations/bl55-save-once-codex2-20261122/`.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
