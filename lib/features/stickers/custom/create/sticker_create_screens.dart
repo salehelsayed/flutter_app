@@ -413,6 +413,30 @@ class _StickerClipTextScreenState extends State<StickerClipTextScreen> {
   );
 }
 
+final class _StickerClipEditorRoute
+    extends MaterialPageRoute<StickerOverlayEditorResult> {
+  _StickerClipEditorRoute({required super.builder});
+
+  static const _saveExitDuration = Duration(milliseconds: 150);
+  bool _approvedSave = false;
+
+  @override
+  Duration get reverseTransitionDuration {
+    final normalDuration = super.reverseTransitionDuration;
+    return _approvedSave && normalDuration > _saveExitDuration
+        ? _saveExitDuration
+        : normalDuration;
+  }
+
+  @override
+  bool didPop(StickerOverlayEditorResult? result) {
+    _approvedSave = result is StickerOverlayEditorReady;
+    final popped = super.didPop(result);
+    if (!popped) _approvedSave = false;
+    return popped;
+  }
+}
+
 /// A device without subject extraction: every photo goes straight to crop.
 final class UnsupportedStickerCutout implements StickerCutoutService {
   const UnsupportedStickerCutout();
@@ -509,7 +533,7 @@ Future<void> openStickerCreate(
       editClipText: (path, crop) async {
         if (!context.mounted) return const StickerOverlayEditorCancelled();
         return await navigator.push<StickerOverlayEditorResult>(
-              MaterialPageRoute(
+              _StickerClipEditorRoute(
                 builder: (_) =>
                     StickerClipTextScreen(clipPath: path, crop: crop),
               ),
