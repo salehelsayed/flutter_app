@@ -6813,6 +6813,10 @@ visible and cannot become an ordinary first-attempt PASS.
   and visible sticker playback. A matched prior build and VoiceOver traversal
   were outside this run. Evidence: `.codex-test-logs/s132-306-20261121/` and
   mailbox `m-ee650763`.
+  On exact 315, fresh static chats measured 4% CPU on Pixel and 1% on iPhone
+  13. After closing the Pixel tray, CPU stayed at 13% for over two minutes.
+  One Back action brought it to 4%. The trigger remains unclassified.
+  Evidence is in `.codex-test-logs/f132-20261122/cpu/` and mailbox `m-c203816a`.
   Removing the idle artwork ticker exposed four widget tests that relied on
   unrelated scheduled frames. A fixed 300 ms pump could produce the
   permission sheet's first frame, leaving both actions below the 800×600 test
@@ -7350,9 +7354,19 @@ visible and cannot become an ordinary first-attempt PASS.
   The sequential decoder rejected those aspects and fell back before emitting
   comparison frames. Preserve its pilot and three invalid sequential timings.
   A local remux added explicit SDR metadata with identical decoded YUV bytes.
-  Android results for that remux and the matched lit-camera acceptance remain
-  pending. APK bindings, raw markers, timings and owned-tile cleanup are in
+  The remux has no Android timing result. APK bindings, raw markers, timings
+  and owned-tile cleanup are in
   `.codex-test-logs/bl50f-20261122/` and mailbox `m-28895587`.
+
+  Exact Release build 315 (`38de1d89`) on both phones used the real camera.
+  Three valid saves per shape had Pixel medians of 11.89 s for Circle and
+  12.08 s for Square, above 10 s. The new Pixel fixture had luma 70.3. Its
+  timing is separate from the earlier camera and fixed-clip comparisons.
+  iPhone medians were 4.48 s for Circle and 2.30 s for Square, both within
+  4.7 s. Exclude the first iPhone Circle run with a 2.64 s observer stall;
+  retain its raw 6.86 s upper bound alongside the replacement sample. Normal
+  build 315 cannot establish the internal encode path or dominant stage.
+  Evidence is in `.codex-test-logs/f132-20261122/` and mailbox `m-c203816a`.
 
   The My stickers grid proof uses a real animated WebP without a persisted
   poster. An offscreen finder must include cached sliver elements with
@@ -7579,8 +7593,19 @@ visible and cannot become an ordinary first-attempt PASS.
   callback twice before the next frame. Its second call popped the underlying
   conversation. `d64dff23` keeps Save guarded while the accepted editor
   leaves. The causal case, full 15-case editor suite, 56 creation-enabled
-  cases and 295 affected sticker cases passed. Two-phone timing still requires
-  the exact composed artifact and a finer observer. Evidence is in mailbox
+  cases and 295 affected sticker cases passed. Exact 315 observed first
+  pending at 0.71–0.75 s on the Pixel and 1.00–1.09 s on iPhone after sending
+  the tap. Save was located before timing, but the tap commands took about
+  0.14 s and 0.42 s respectively. Polls and command delivery leave the 0.5 s
+  app timing target unproven. The timing receipts retain each observed gap.
+  On the Pixel, the pending View had no click action and separate bounds
+  from ready Buttons. Both peers' message rows confirmed no send. The
+  initial observer accepted any new label containing `ticker`, including
+  the 20-character Save notice `Saved to My stickers`. Its original label
+  was not retained. An app kill 1.91 s after Save restored the prior tray
+  count with no pending tile across 20 s of checks. Evidence is in mailbox
+  `m-c203816a`, `m-872ea05a`, and `.codex-test-logs/f132-20261122/`.
+  Host evidence is in mailbox
   `m-f6160225` and `m-5516061f`, with the corresponding first results under
   `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
   `~/.codex/investigations/bl55-save-once-codex2-20261122/`.
@@ -10113,6 +10138,11 @@ visible and cannot become an ordinary first-attempt PASS.
   Raw first attempts and completed rows are in
   `.codex-test-logs/bl54r-20261121/calls/` and mailbox `m-eff27738`,
   `m-84fec9f7`.
+  Exact composed build 315 repeated one killed-iPhone sanity sequence. The
+  iPhone ended ringing an observed 2.82 s after cancel, with 0.1–0.3 s
+  clock uncertainty. A redial at 10.9 s was answered and ended normally.
+  The earlier background and reverse cases remain build 311 evidence.
+  See `.codex-test-logs/f132-20261122/calls/` and mailbox `m-c203816a`.
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
