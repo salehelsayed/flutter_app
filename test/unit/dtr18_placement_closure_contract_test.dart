@@ -43,7 +43,8 @@ const _relocations = <String, List<String>>{
     // hooks to this same adapter; removing those two methods restores the pin.
     // CONTACT-008 adds the targeted avatar UPDATE to this same adapter;
     // imports and placement are unchanged.
-    'b06d1b04668afe70e9e66cf8705bcff998ae4df13d2976b4aaf80f0ea9e7df5e',
+    // BL-29 4b206563e observes receipt authority around contact removals.
+    '51732e365fd0ddc61c234dccd594ae21287cd7379e117d3007b0d092c55ec34e',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[
@@ -92,7 +93,8 @@ const _relocations = <String, List<String>>{
     // placement, ownership and dependency direction are unchanged.
     // BL-29 U2 preserves committed scalar/linked generation authority when key
     // hydration fails in this same adapter; no placement or owner moves.
-    'ffb2615856ed71925fb91d53c2d9559094f6d7374f524cc045a46ba99d274791',
+    // BL-29 4b206563e observes receipt authority around outgoing media staging.
+    '1c1b410e1904643d1a31847337d380f3241702bbe480e19d28eedc4570ea4ef9',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
@@ -122,7 +124,9 @@ const _relocations = <String, List<String>>{
     // NAV-006 carries incoming recency through this existing data adapter.
     // BL-24C adds terminal retry capability and delegates in this existing
     // data adapter (4d21b6bcb); placement and dependency direction are unchanged.
-    '46b077649b192ece0a3d34e2b628c096d92152d74b781fbf483eac3e504466c4',
+    // BL-29 4b206563e adds receipt authority observation. 8a88944f closes
+    // those wrappers correctly and retires finalized receipt controls.
+    '225217e0c0a0e16e25d98bfad8c3fa80db904aff65da046c61e243c4482e6485',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -261,7 +265,8 @@ const _relocations = <String, List<String>>{
     // item 9) add the own-Thought view count, view list and replaced-Thought
     // retire callbacks to the same adapter; placement and imports are
     // unchanged.
-    'b959bd955ece9641fcc99bca1ef1fa86cbb1f55f0881ffd480ded5f38c926c30',
+    // BL-58 f7a05ac2a adds the retained-Thought lookup for replies.
+    '25bc2c071bfe8fb6ed8b3cfb061a33e67d372d1545f3f9d0cd480f2fb65e3a00',
   ],
 };
 
