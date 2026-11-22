@@ -5069,6 +5069,16 @@ checks the history row height and photo clearance after sending, along with
 unchanged chip position. Preserve the original failure in the Linux audit
 for `bl58-rev4-build132-green-codex2-20261122` (mail `m-4b08fdd4`).
 
+The full-screen and depth text-reply cases hold a transport acknowledgement
+after durable chat projection. They require the quoted reply to open chat
+before the acknowledgement and Back to return to Orbit without reopening chat
+when the acknowledgement is released. A stopped transport can already publish
+a failure and does not isolate this admission boundary. The picker test calls
+two cached results before a dismissal frame. The restoration test retracts
+one incoming Thought through the normal listener during a held secure read and
+requires its removal while a second live Thought stays. The four causal reds
+on `8fd1c609a` are in the build 132 REV4 review evidence (mail `m-156983ea`).
+
 Positive reaction-selection fixtures must start the fake P2P node and seed a
 connected peer. Its default stopped state legitimately stages a quoted reply
 as failed (`CHAT_MSG_SEND_NODE_NOT_RUNNING`), leaving the reaction unpressed

@@ -1169,7 +1169,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   void _onReplyStatusChanged() {
     final send = widget.answers?.value.sends[_pendingTypedReply];
-    if (send == null || send.status != ThoughtReplyStatus.sent) return;
+    if (send == null || send.status?.isAdmitted != true) return;
     _pendingTypedReply = null;
     if (!mounted ||
         _closing ||

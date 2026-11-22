@@ -1040,40 +1040,31 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     } else {
       _closeComposer();
     }
-    final epoch = _replyNavigation;
-    final landing = _settleGeneration;
+    // The message change stream can publish a durable reply while the
+    // transport call is still waiting for its acknowledgement.
+    _pendingReplyNavigation = (
+      seat: seat,
+      epoch: _replyNavigation,
+      landing: _settleGeneration,
+      id: send.messageId,
+      grace: grace,
+    );
     final status = await _dispatch(dispatch, textDraft: draft);
-    if (!mounted ||
-        epoch != _replyNavigation ||
-        landing != _settleGeneration ||
-        !_enabled ||
-        (grace ? _graceSendId != send.messageId : !_canAnswer(send.postId))) {
+    if (!mounted || _pendingReplyNavigation?.id != send.messageId) return;
+    if (status?.isAdmitted == true) {
+      _maybeOpenPendingReply();
       return;
     }
-    if (grace) {
-      if (status == ThoughtReplyStatus.sent) {
-        _closeComposer();
-      } else {
-        setState(() => _graceSendId = null);
-      }
-    }
-    if (status == ThoughtReplyStatus.sent) {
-      widget.onTypedReplySent?.call(seat.thought.authorPeerId);
-    } else if (status == ThoughtReplyStatus.queued) {
-      _pendingReplyNavigation = (
-        seat: seat,
-        epoch: epoch,
-        landing: landing,
-        id: send.messageId,
-        grace: grace,
-      );
+    _pendingReplyNavigation = null;
+    if (grace && _graceSendId == send.messageId) {
+      setState(() => _graceSendId = null);
     }
   }
 
   void _maybeOpenPendingReply() {
     final pending = _pendingReplyNavigation;
     if (pending == null ||
-        _visit.sends[pending.id]?.status != ThoughtReplyStatus.sent) {
+        _visit.sends[pending.id]?.status?.isAdmitted != true) {
       return;
     }
     _pendingReplyNavigation = null;

@@ -278,6 +278,7 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
   DateTime Function() _historyClock = DateTime.now;
   Future<void> _historyWrites = Future<void>.value();
   Timer? _historyExpiryTimer;
+  Set<String>? _historyRestoreChanges;
 
   /// Incoming reply history is local to the active account and stays with a
   /// live Thought. Text uses the chat repository and never enters this data.
@@ -285,6 +286,7 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
     required SecureKeyStore store,
     required String accountPeerId,
     DateTime Function()? nowProvider,
+    Future<Set<String>> Function(List<String> postIds)? loadLivePostIds,
     Future<ThoughtReplyStatus?> Function(String)? loadMessageStatus,
     Future<String?> Function(String)? loadStickerPath,
   }) async {
@@ -298,8 +300,10 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
     _historyKey = key;
     _historyClock = nowProvider ?? DateTime.now;
     final now = _historyClock();
+    final postChanges = <String>{};
+    _historyRestoreChanges = postChanges;
     bool current() =>
-        !_disposed && _historyKey == key && _historyStore == store;
+        !_disposed && identical(_historyRestoreChanges, postChanges);
     try {
       final raw = await store.read(key);
       if (!current() || raw == null) return;
@@ -370,6 +374,22 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
         }
       }
       if (!current()) return;
+      if (loadLivePostIds != null && expiries.isNotEmpty) {
+        final postIds = expiries.keys.toList(growable: false);
+        Set<String> live;
+        // A retraction can land before the secure read or during this lookup.
+        // Check again if the repository changed while answering the lookup.
+        do {
+          postChanges.clear();
+          live = await loadLivePostIds(postIds);
+          if (!current()) return;
+        } while (postChanges.any(expiries.containsKey));
+        expiries.removeWhere((postId, _) => !live.contains(postId));
+      }
+      final restoredAt = _historyClock();
+      expiries.removeWhere((_, expiry) => !expiry.isAfter(restoredAt));
+      restored.removeWhere((_, send) => !expiries.containsKey(send.postId));
+      resolved.removeWhere((id, _) => !restored.containsKey(id));
       _historyExpiries.addAll(expiries);
       _scheduleHistoryExpiry();
       var updated = OrbitDepthVisit._(
@@ -385,7 +405,15 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
       await _persistHistory();
     } catch (_) {
       // The active chat can still send when its local preference store fails.
+    } finally {
+      if (identical(_historyRestoreChanges, postChanges)) {
+        _historyRestoreChanges = null;
+      }
     }
+  }
+
+  void noteHistoryPostChange(String postId) {
+    _historyRestoreChanges?.add(postId);
   }
 
   bool hasHistory(String postId) => _historyExpiries.containsKey(postId);

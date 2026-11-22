@@ -25,6 +25,14 @@ class ThoughtReplyPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final library = CustomStickerScope.libraryOf(context);
+    final sheet = ModalRoute.of<Object>(context);
+
+    void select(Object result) {
+      // The outgoing sheet's callbacks can still run until its exit completes.
+      if (!context.mounted || sheet == null || !sheet.isCurrent) return;
+      sheet.navigator?.pop<Object>(result);
+    }
+
     final height = (MediaQuery.sizeOf(context).height * .4)
         .clamp(0.0, kStickerPanelHeight)
         .toDouble();
@@ -51,12 +59,11 @@ class ThoughtReplyPicker extends StatelessWidget {
               Expanded(
                 child: TabBarView(
                   children: [
-                    _emojiTab(context, l10n),
+                    _emojiTab(context, l10n, select),
                     if (stickersAvailable)
                       BundledStickerPanel(
-                        onSend: (entry) => Navigator.of(
-                          context,
-                        ).pop(ThoughtStickerSelection.bundled(entry)),
+                        onSend: (entry) =>
+                            select(ThoughtStickerSelection.bundled(entry)),
                         onSendCustom: library == null
                             ? null
                             : (id) async {
@@ -65,10 +72,8 @@ class ThoughtReplyPicker extends StatelessWidget {
                                   final item = items
                                       .where((item) => item.id == id)
                                       .firstOrNull;
-                                  if (item != null &&
-                                      context.mounted &&
-                                      ModalRoute.isCurrentOf(context) == true) {
-                                    Navigator.of(context).pop(
+                                  if (item != null) {
+                                    select(
                                       ThoughtStickerSelection.custom(
                                         id,
                                         item.asset.filePath,
@@ -92,7 +97,11 @@ class ThoughtReplyPicker extends StatelessWidget {
     );
   }
 
-  Widget _emojiTab(BuildContext context, AppLocalizations l10n) {
+  Widget _emojiTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    ValueChanged<ThoughtReaction> onSelect,
+  ) {
     final recent = visit.recentEmoji;
     final columns = (MediaQuery.sizeOf(context).width / 46).floor().clamp(3, 8);
     return CustomScrollView(
@@ -110,6 +119,7 @@ class ThoughtReplyPicker extends StatelessWidget {
             columns: columns,
             glyphAt: (index) => recent[index].glyph,
             recent: true,
+            onSelect: onSelect,
           ),
         ],
         _emojiGrid(
@@ -117,6 +127,7 @@ class ThoughtReplyPicker extends StatelessWidget {
           columns: columns,
           glyphAt: (index) => thoughtEmojiCatalog[index],
           recent: false,
+          onSelect: onSelect,
         ),
       ],
     );
@@ -127,6 +138,7 @@ class ThoughtReplyPicker extends StatelessWidget {
     required int columns,
     required String Function(int) glyphAt,
     required bool recent,
+    required ValueChanged<ThoughtReaction> onSelect,
   }) => SliverPadding(
     padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 8, 8),
     sliver: SliverGrid.builder(
@@ -135,7 +147,7 @@ class ThoughtReplyPicker extends StatelessWidget {
         mainAxisExtent: 44,
       ),
       itemCount: count,
-      itemBuilder: (context, index) {
+      itemBuilder: (_, index) {
         final glyph = glyphAt(index);
         final reaction = ThoughtReaction.fromText(glyph)!;
         final pressed = visit.pressed(postId, reaction);
@@ -146,7 +158,7 @@ class ThoughtReplyPicker extends StatelessWidget {
                 : 'thought-reply-emoji-$glyph',
           ),
           tooltip: glyph,
-          onPressed: pressed ? null : () => Navigator.of(context).pop(reaction),
+          onPressed: pressed ? null : () => onSelect(reaction),
           icon: FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(glyph, style: const TextStyle(fontSize: 25)),

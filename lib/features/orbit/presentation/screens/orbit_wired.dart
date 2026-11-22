@@ -1053,10 +1053,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
       if (!mounted) return;
 
+      final repository = _thoughtPosts;
+      final nowProvider = widget.thoughtNowProvider;
       await _depthAnswers.restoreHistory(
         store: widget.secureKeyStore,
         accountPeerId: identity.peerId,
-        nowProvider: widget.thoughtNowProvider,
+        nowProvider: nowProvider,
+        loadLivePostIds: repository == null
+            ? null
+            : (postIds) async {
+                final posts = await repository.loadPostsByIds(postIds);
+                final now = (nowProvider ?? DateTime.now)();
+                return {
+                  for (final post in posts)
+                    if (post.isIncoming &&
+                        liveOrbitDepthThought(post, now) != null)
+                      post.id,
+                };
+              },
         loadMessageStatus: (id) async {
           final message = await widget.messageRepo.getMessage(id);
           return message != null &&
@@ -1103,6 +1117,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
     _thoughtSubscription = repository.postChanges.listen((postId) {
       _forgetYouTags();
+      _depthAnswers.noteHistoryPostChange(postId);
       if (_depthAnswers.hasHistory(postId)) {
         unawaited(_forgetEndedReplyHistory(repository, postId));
       }

@@ -47,6 +47,9 @@ enum ThoughtReplyStatus {
   queued,
   failed;
 
+  /// The reply is available in its conversation before delivery is confirmed.
+  bool get isAdmitted => this == queued || this == sent;
+
   static ThoughtReplyStatus fromMessage(ConversationMessage message) {
     if (message.isDeleted || message.isHidden) return failed;
     return switch (message.status) {
