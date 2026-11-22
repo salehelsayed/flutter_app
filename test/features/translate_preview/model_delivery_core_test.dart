@@ -4,12 +4,15 @@ import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1851,6 +1854,105 @@ void main() {
       });
     }
   });
+
+  group('BL60 translator download sheet states', () {
+    const bound = Duration(seconds: 3);
+
+    Future<void> pumpSheet(
+      WidgetTester tester,
+      ModelDeliveryController controller,
+    ) => tester
+        .pumpWidget(
+          MaterialApp(
+            title: 'mknoon',
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PrivateTranslatorSheet(controller: controller),
+            ),
+          ),
+        )
+        .timeout(bound);
+
+    testWidgets('checking hides Pause while verification is pending', (
+      tester,
+    ) async {
+      final verification = Completer<bool>();
+      final started = Completer<void>();
+      final h = await _Harness.create(
+        verification: verification,
+      ).timeout(bound);
+      h.storage.verificationStarted = started;
+      addTearDown(() async {
+        verification.complete(true);
+        await h.dispose().timeout(bound);
+      });
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await started.future.timeout(bound);
+      await pumpSheet(tester, h.controller);
+
+      expect(
+        find.text('Checking the download'),
+        findsOneWidget,
+        reason:
+            'the sheet shows download checking while the checksum is pending',
+      );
+      expect(find.text('Pause'), findsNothing);
+    });
+
+    testWidgets(
+      'the first offline download tap explains the wait without enqueuing',
+      (tester) async {
+        final h = await _Harness.create(
+          wifi: false,
+          freeBytes: 3000000000,
+          record: const ModelDeliveryRecord(),
+        ).timeout(bound);
+        h.network.manifestFailure = const SocketException(
+          'network unavailable',
+        );
+        addTearDown(() => h.dispose().timeout(bound));
+
+        await pumpSheet(tester, h.controller);
+        await tester.tap(find.text('Download when on Wi-Fi')).timeout(bound);
+        await h.flush().timeout(bound);
+        await tester.pump().timeout(bound);
+
+        expect(h.transport.enqueues, isEmpty);
+        expect(
+          find.text("You're offline"),
+          findsOneWidget,
+          reason: 'the sheet explains offline on the first download request',
+        );
+      },
+    );
+
+    testWidgets('a newer required build offers Update without enqueuing', (
+      tester,
+    ) async {
+      final h = await _Harness.create().timeout(bound);
+      h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
+      addTearDown(() => h.dispose().timeout(bound));
+
+      await pumpSheet(tester, h.controller);
+      await tester.tap(find.text('Download on Wi-Fi')).timeout(bound);
+      await h.flush().timeout(bound);
+      await tester.pump().timeout(bound);
+
+      expect(h.network.fetches, 1);
+      expect(h.transport.enqueues, isEmpty);
+      expect(
+        find.text('Update mknoon to use the translator'),
+        findsOneWidget,
+        reason:
+            'the sheet offers a branded update when the manifest requires a newer build',
+      );
+      expect(find.text('Update'), findsOneWidget);
+    });
+  });
 }
 
 class _Bl15Documents extends PathProviderPlatform {
@@ -2080,6 +2182,7 @@ class _MemorySession extends Fake implements InferenceModelSession {
 class _Network implements ModelDeliveryNetwork {
   bool wifi = true;
   bool failFetch = false;
+  SocketException? manifestFailure;
   int fetches = 0;
   Map<String, Object?> manifest = _manifest.toJson();
   final changes = StreamController<bool>.broadcast(sync: true);
@@ -2090,6 +2193,7 @@ class _Network implements ModelDeliveryNetwork {
   @override
   Future<Map<String, Object?>> fetchManifest() async {
     fetches++;
+    if (manifestFailure case final failure?) throw failure;
     if (failFetch) throw StateError('offline');
     return manifest;
   }
