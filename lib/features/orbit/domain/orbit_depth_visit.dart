@@ -350,8 +350,9 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
             final path =
                 await loadStickerPath?.call(id) ?? row['path'] as String?;
             if (!current()) return;
-            if (path != null)
+            if (path != null) {
               sticker = ThoughtStickerSelection.custom(custom, path);
+            }
           }
           if (reaction == null && sticker == null) continue;
           expiries[postId] = expiry;
@@ -486,7 +487,7 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
   List<ThoughtReaction> _storedReactions(Object? source) => source is List
       ? [
           for (final raw in source.whereType<String>().take(14))
-            if (ThoughtReaction.fromText(raw) case final reaction?) reaction,
+            ?ThoughtReaction.fromText(raw),
         ]
       : const [];
 

@@ -483,22 +483,33 @@ void main() {
       await openCard(tester, thought, persistSentHistory: true);
       expect(sentLine, findsNothing);
 
+      Future<void> settleFeedback() async {
+        // Secure history writes and the send result can request successive
+        // frames. Start measuring the preview after it is mounted.
+        for (var frame = 0; frame < 4 && feedback.evaluate().isEmpty; frame++) {
+          await tester.pump();
+        }
+        expect(feedback, findsOneWidget);
+        await tester.pump(const Duration(milliseconds: 1550));
+        expect(feedback, findsNothing);
+      }
+
       for (final name in ['love', 'laugh', 'fire', 'applause']) {
         final chip = find.byKey(ValueKey('thought-react-$name'));
         await tester.tap(chip);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 1550));
+        await settleFeedback();
         if (name == 'love') expect(sentLine, findsOneWidget);
       }
       await choosePanelEmoji(tester, '😀');
-      await tester.pump(const Duration(milliseconds: 1200));
+      await settleFeedback();
       await choosePanelEmoji(tester, '😄');
-      await tester.pump(const Duration(milliseconds: 1200));
+      await settleFeedback();
 
       final field = find.byKey(const ValueKey('thought-reply-field'));
       await tester.tap(field);
       await tester.enterText(field, '🙂');
       await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await tester.pump();
       await tester.pump();
       expect(reactions.last.text, '🙂');
 
