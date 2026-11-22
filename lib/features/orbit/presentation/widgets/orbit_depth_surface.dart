@@ -141,10 +141,14 @@ typedef _DepthLanding = ({
   String? departedPostId,
   bool markDeparture,
   bool byTurn,
+  bool fromSwipe,
 });
 
 class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const _restingDockHeight = 80.0;
+  static const _swipeGuardDuration = Duration(milliseconds: 300);
+
   late final AnimationController _vertical = AnimationController.unbounded(
     vsync: this,
   );
@@ -164,6 +168,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   bool _sequenceCancelled = false;
   // Retained through recognizer callbacks after raw pointer-up clears the map.
   bool _suppressTap = false;
+  bool _startedInDepth = false;
+  bool _depthSwipe = false;
+  bool _startedDuringSwipeGuard = false;
+  Timer? _swipeGuard;
   final _pointers = <int, Offset>{};
   Offset? _start;
   double _startVertical = 0;
@@ -406,6 +414,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _pointers.clear();
     _start = null;
     _sequenceCancelled = false;
+    _depthSwipe = false;
+    _startedDuringSwipeGuard = false;
+    _swipeGuard?.cancel();
     _expiry?.cancel();
     _age?.cancel();
     _publish(false);
@@ -521,13 +532,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     double verticalVelocity = 0,
     double turnVelocity = 0,
     bool byTurn = false,
+    bool fromSwipe = false,
   }) async {
+    if (!fromSwipe && _pendingLanding?.fromSwipe == true) _guardAfterSwipe();
     final generation = ++_settleGeneration;
     final landing = (
       generation: generation,
       departedPostId: _landedPostId,
       markDeparture: markDeparture,
       byTurn: byTurn,
+      fromSwipe: fromSwipe,
     );
     _pendingLanding = landing;
     if (_layer == OrbitDepthLayer.flat && target != OrbitDepthLayer.flat) {
@@ -572,6 +586,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       return;
     }
     _pendingLanding = null;
+    if (landing.fromSwipe) _guardAfterSwipe();
     // A landing can complete during build (Reduce Motion); tell the host
     // after the frame.
     final layer = _layer;
@@ -616,12 +631,24 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   /// left in a right-to-left one, so pulling it in follows the finger.
   double get _turnSign => _rtl ? 1 : -1;
 
+  bool get _swipeGuardActive =>
+      _pendingLanding?.fromSwipe == true || _swipeGuard?.isActive == true;
+
+  bool get _canTapReaction =>
+      !_suppressTap && !_startedDuringSwipeGuard && !_swipeGuardActive;
+
+  void _guardAfterSwipe() {
+    _swipeGuard?.cancel();
+    _swipeGuard = Timer(_swipeGuardDuration, () => _swipeGuard = null);
+  }
+
   void _down(PointerDownEvent event) {
     if (!_enabled || _composing) return;
     _pointers[event.pointer] = event.localPosition;
     if (_pointers.length > 1) {
       _suppressTap = true;
       _sequenceCancelled = true;
+      if (_pendingLanding?.fromSwipe == true) _guardAfterSwipe();
       ++_settleGeneration;
       _pendingLanding = null;
       _gesture = OrbitDepthGesture.pinch;
@@ -637,6 +664,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     }
     _sequenceCancelled = false;
     _suppressTap = false;
+    _startedInDepth = _depth;
+    _depthSwipe = false;
+    _startedDuringSwipeGuard = _swipeGuardActive;
     _start = event.localPosition;
     _startVertical = _vertical.value;
     _startTurn = _turn.value;
@@ -652,6 +682,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final delta = event.localPosition - _start!;
     if (_gesture == OrbitDepthGesture.idle) {
       if (delta.distance < 10) return;
+      _suppressTap = true;
+      _depthSwipe = _startedInDepth;
       if (delta.dy.abs() > delta.dx.abs()) {
         _gesture = OrbitDepthGesture.vertical;
         if (!_depth) {
@@ -666,7 +698,6 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         _sequenceCancelled = true;
         return;
       }
-      _suppressTap = true;
       ++_settleGeneration;
       _pendingLanding = null;
       _vertical.stop();
@@ -695,10 +726,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _pointers.remove(event.pointer);
     if (_pointers.isNotEmpty) return;
     final gesture = _gesture;
+    final fromSwipe = _depthSwipe;
+    _depthSwipe = false;
     _gesture = OrbitDepthGesture.idle;
     if (_sequenceCancelled || cancelled) {
       _sequenceCancelled = false;
-      if (_depth || _owned) unawaited(_settle(_layer, markDeparture: false));
+      if (_depth || _owned) {
+        unawaited(_settle(_layer, markDeparture: false, fromSwipe: fromSwipe));
+      }
       return;
     }
     if (gesture == OrbitDepthGesture.vertical) {
@@ -710,6 +745,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         _settle(
           value < 160 ? OrbitDepthLayer.flat : OrbitDepthLayer.inner,
           verticalVelocity: direction * dy / _scale,
+          fromSwipe: fromSwipe,
         ),
       );
     } else if (gesture == OrbitDepthGesture.turn) {
@@ -724,7 +760,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           ? -1
           : 0;
       unawaited(
-        _settle(_layer, turnTo: from + step, turnVelocity: speed, byTurn: true),
+        _settle(
+          _layer,
+          turnTo: from + step,
+          turnVelocity: speed,
+          byTurn: true,
+          fromSwipe: fromSwipe,
+        ),
       );
     }
   }
@@ -763,9 +805,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   /// A screen-reader activation comes with no pointer, so the drag that last
   /// set [_suppressTap] cannot be what it means; it starts fresh, as [_down]
   /// does.
-  VoidCallback _bySemantics(VoidCallback action) => () {
+  T Function() _bySemantics<T>(T Function() action) => () {
     if (_pointers.isEmpty) _suppressTap = false;
-    action();
+    return action();
   };
 
   void _endVisit() {
@@ -776,24 +818,29 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         : OrbitDepthVisit.empty.withAnswersFrom(answers.value);
   }
 
-  void _onReplyInputChanged(OrbitDepthSeat seat, _DepthReplyInputState input) {
+  void _openComposer(OrbitDepthSeat seat, _DepthReplyInputState input) {
+    if (!_canAnswer(seat.thought.id)) return;
+    setState(() {
+      _replySeat = seat;
+      _replyInput = input;
+      _replyNavigation++;
+      _visit = _visit.openComposer(seat.thought.id);
+    });
+    // The field mounts with the typing dock on the next frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && input.mounted && identical(input, _replyInput)) {
+        input.focusNode.requestFocus();
+      }
+    });
+  }
+
+  void _onReplyInputChanged(_DepthReplyInputState input) {
+    final seat = _replySeat;
+    if (seat == null || !identical(input, _replyInput)) return;
     if (!input.focusNode.hasFocus) {
-      if (identical(input, _replyInput)) _closeComposerAfterFrame();
+      _closeComposerAfterFrame();
       return;
     }
-    if (!_composing) {
-      if (!_canAnswer(seat.thought.id)) {
-        input.focusNode.unfocus();
-        return;
-      }
-      setState(() {
-        _replySeat = seat;
-        _replyInput = input;
-        _replyNavigation++;
-        _visit = _visit.openComposer(seat.thought.id);
-      });
-    }
-    if (!identical(input, _replyInput)) return;
     final now = _now;
     if (input.controller.text.trim().isEmpty) {
       if (!_hasExpiredReply) _replyDraft = null;
@@ -900,24 +947,44 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   bool _canAnswer(String postId) =>
       widget.onReply != null && _answerable && _center?.thought.id == postId;
 
-  void _react(String postId, ThoughtReaction reaction) {
-    if (_canAnswer(postId)) {
-      unawaited(_dispatch(_visit.react(postId, reaction, const Uuid().v4())));
+  void _react(
+    PostModel post,
+    ThoughtReaction reaction, {
+    bool fromPicker = false,
+  }) {
+    if (_canAnswer(post.id)) {
+      unawaited(
+        _dispatch(
+          _visit.react(
+            post.id,
+            reaction,
+            const Uuid().v4(),
+            fromPicker: fromPicker,
+          ),
+          post: post,
+        ),
+      );
     }
   }
 
-  void _sendSticker(String postId, ThoughtStickerSelection selection) {
+  void _afterPicker(String postId, VoidCallback action) {
     // Pop of the bottom sheet may complete before the covered route gets its
     // current-route notification. Recheck the focused thought after that frame.
     WidgetsBinding.instance
       ..addPostFrameCallback((_) {
-        if (mounted && _canAnswer(postId) && widget.onStickerReply != null) {
-          unawaited(
-            _dispatch(_visit.sticker(postId, selection, const Uuid().v4())),
-          );
-        }
+        if (mounted && _canAnswer(postId)) action();
       })
       ..ensureVisualUpdate();
+  }
+
+  void _sendSticker(PostModel post, ThoughtStickerSelection selection) {
+    if (widget.onStickerReply == null) return;
+    unawaited(
+      _dispatch(
+        _visit.sticker(post.id, selection, const Uuid().v4()),
+        post: post,
+      ),
+    );
   }
 
   void _retry(OrbitDepthSend send) {
@@ -931,7 +998,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         unawaited(_sendText(dispatch, seat));
       }
     } else if (_canAnswer(send.postId)) {
-      unawaited(_dispatch(dispatch));
+      unawaited(_dispatch(dispatch, post: seat.thought));
     }
   }
 
@@ -1026,6 +1093,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   Future<ThoughtReplyStatus?> _dispatch(
     OrbitDepthDispatch? dispatch, {
     ThoughtReplyDraft? textDraft,
+    PostModel? post,
   }) async {
     final onReply = widget.onReply;
     if (dispatch == null || onReply == null) return null;
@@ -1044,7 +1112,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     setState(() => _visit = visit);
     final answers = widget.answers;
     if (answers != null) {
-      return answers.dispatch(dispatch, sendReply, onSticker: onSticker);
+      return answers.dispatch(
+        dispatch,
+        sendReply,
+        onSticker: onSticker,
+        post: post,
+      );
     }
     final sticker = send.sticker;
     ThoughtReplyStatus status;
@@ -1067,6 +1140,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _replyStatuses?.cancel();
     widget.answers?.removeListener(_onAnswersChanged);
     _graceClock?.cancel();
+    _swipeGuard?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     ++_settleGeneration;
     _expiry?.cancel();
@@ -1217,11 +1291,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final hasDock = widget.onReply != null && shown != null && !_isOwn(shown);
     final statusRow = places.statusHeight;
     final composing = _composing;
-    // The dock has an extra field and privacy line below the reaction row.
-    // Only a friend's replyable card needs that space.
-    const dockHeight = 145.0;
+    // The next send can add its history line without moving the card.
     const typingDockHeight = 160.0;
-    final dockExtra = hasDock ? dockHeight - places.barHeight : 0.0;
+    final dockExtra = hasDock ? _restingDockHeight - places.barHeight : 0.0;
     final cardBottom = math.max(places.areaTop, places.areaBottom - dockExtra);
     final cardInset = size.height - cardBottom;
     if (composing && shown?.thought.id != _visit.composingPostId) {
@@ -1509,36 +1581,60 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         : null;
     return _DepthReplyInput(
       key: ValueKey('orbit-depth-answers-${post.id}'),
-      onChanged: (input) => _onReplyInputChanged(seat, input),
-      builder: (controller, focusNode) => Column(
+      onChanged: _onReplyInputChanged,
+      builder: (input) => Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ThoughtReplyDock(
-            post: post,
-            authorName: seat.friend.username,
-            media: _lastLoadedMedia[post.id] ?? const [],
-            controller: controller,
-            focusNode: focusNode,
-            typing: typing,
-            visit: _visit,
-            reactionKeyPrefix: 'orbit-depth-react',
-            onReaction: (reaction) => _react(post.id, reaction),
-            onReactionActivate: (reaction) =>
-                _bySemantics(() => _react(post.id, reaction))(),
-            onSend: () => _sendTyped(seat, controller),
-            sendEnabled:
-                _graceSendId == null &&
-                (!_hasExpiredReply || _canSendDraftInGrace),
-            onSticker: widget.onStickerReply == null
-                ? null
-                : (selection) => _sendSticker(post.id, selection),
-            graceSeconds: graceSeconds,
+          SizedBox(
+            height: typing ? null : _restingDockHeight,
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: ThoughtReplyDock(
+                post: post,
+                authorName: seat.friend.username,
+                media: _lastLoadedMedia[post.id] ?? const [],
+                controller: input.controller,
+                focusNode: input.focusNode,
+                typing: typing,
+                visit: _visit,
+                reactionKeyPrefix: 'orbit-depth-react',
+                onReaction: (reaction) {
+                  if (_canTapReaction) _react(post, reaction);
+                },
+                onReactionActivate: (reaction) =>
+                    _bySemantics(() => _react(post, reaction))(),
+                canOpenPicker: () => _canTapReaction && _canAnswer(post.id),
+                canActivatePicker: _bySemantics(() => _canAnswer(post.id)),
+                onPanelEmoji: (reaction) => _afterPicker(
+                  post.id,
+                  () => _react(post, reaction, fromPicker: true),
+                ),
+                onOpenComposer: () => _openComposer(seat, input),
+                onOpenComposerActivate: _bySemantics(
+                  () => _openComposer(seat, input),
+                ),
+                onSend: () => _sendTyped(seat, input.controller),
+                sendEnabled:
+                    _graceSendId == null &&
+                    (!_hasExpiredReply || _canSendDraftInGrace),
+                onSticker: widget.onStickerReply == null
+                    ? null
+                    : (selection) => _afterPicker(
+                        post.id,
+                        () => _sendSticker(post, selection),
+                      ),
+                graceSeconds: graceSeconds,
+              ),
+            ),
           ),
           if (!typing || _graceSendId != null)
             SizedBox(
               height: statusRow,
-              child: latest == null
+              child:
+                  latest == null ||
+                      (!latest.isText &&
+                          latest.status == ThoughtReplyStatus.sent)
                   ? null
                   : _answerStatus(latest, l10n, colors),
             ),
@@ -1894,7 +1990,7 @@ class _DepthReplyInput extends StatefulWidget {
   });
 
   final ValueChanged<_DepthReplyInputState> onChanged;
-  final Widget Function(TextEditingController, FocusNode) builder;
+  final Widget Function(_DepthReplyInputState) builder;
 
   @override
   State<_DepthReplyInput> createState() => _DepthReplyInputState();
@@ -1921,7 +2017,7 @@ class _DepthReplyInputState extends State<_DepthReplyInput> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(controller, focusNode);
+  Widget build(BuildContext context) => widget.builder(this);
 }
 
 class _RingPainter extends CustomPainter {

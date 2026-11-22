@@ -9,6 +9,7 @@ class ThoughtReactionCircle extends StatelessWidget {
     required this.label,
     required this.size,
     required this.pressed,
+    this.confirmed = false,
     required this.onTap,
     required this.onActivate,
     this.foregroundColor,
@@ -18,6 +19,7 @@ class ThoughtReactionCircle extends StatelessWidget {
   final String label;
   final double size;
   final bool pressed;
+  final bool confirmed;
   final Color? foregroundColor;
   final VoidCallback onTap;
 
@@ -48,8 +50,32 @@ class ThoughtReactionCircle extends StatelessWidget {
           onTap: onTap,
           child: SizedBox.square(
             dimension: size,
-            child: Center(
-              child: Text(glyph, style: TextStyle(fontSize: size * .46)),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: Text(glyph, style: TextStyle(fontSize: size * .46)),
+                ),
+                if (confirmed)
+                  const PositionedDirectional(
+                    end: 0,
+                    bottom: 0,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: thoughtReactionGreen,
+                        shape: BoxShape.circle,
+                      ),
+                      child: SizedBox.square(
+                        dimension: 16,
+                        child: Icon(
+                          Icons.check_rounded,
+                          size: 12,
+                          color: Color(0xff04130a),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

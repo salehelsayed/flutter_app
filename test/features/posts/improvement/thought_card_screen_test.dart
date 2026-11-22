@@ -32,6 +32,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/bidi_layout_checks.dart';
@@ -51,6 +52,7 @@ void main() {
   late _RecordingNavigatorObserver navigationObserver;
   late JustAudioPlatform originalAudioPlatform;
   late OrbitDepthAnswers answers;
+  late FakeSecureKeyStore replyStorage;
   late StreamController<({String messageId, ThoughtReplyStatus status})>
   reactionStatuses;
   late List<({String text, String postId, String messageId})> reactions;
@@ -70,6 +72,7 @@ void main() {
     originalAudioPlatform = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
     reactions = [];
+    replyStorage = FakeSecureKeyStore();
     stickers = [];
     reactionResult = ThoughtReplyStatus.sent;
     reactionStatuses = StreamController.broadcast();
@@ -110,8 +113,18 @@ void main() {
     download,
     bool playVideoAtOnce = false,
     bool canReply = true,
+    bool persistSentHistory = false,
     double? textScale,
   }) async {
+    if (persistSentHistory) {
+      await answers
+          .restoreHistory(
+            store: replyStorage,
+            accountPeerId: 'local-peer',
+            nowProvider: () => now,
+          )
+          .timeout(const Duration(seconds: 3));
+    }
     await tester.pumpWidget(
       MaterialApp(
         builder: textScale == null
@@ -467,7 +480,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final thought = _thought(initialNow);
       await posts.savePost(thought);
-      await openCard(tester, thought);
+      await openCard(tester, thought, persistSentHistory: true);
       expect(sentLine, findsNothing);
 
       for (final name in ['love', 'laugh', 'fire', 'applause']) {
@@ -484,9 +497,10 @@ void main() {
 
       final field = find.byKey(const ValueKey('thought-reply-field'));
       await tester.tap(field);
-      await tester.enterText(field, 'See you at the lake');
+      await tester.enterText(field, '🙂');
       await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
       await tester.pump();
+      expect(reactions.last.text, '🙂');
 
       void expectHistory() {
         expect(sentLine, findsOneWidget);
@@ -513,10 +527,7 @@ void main() {
           findsNothing,
         );
         expect(
-          find.descendant(
-            of: sentLine,
-            matching: find.text('See you at the lake'),
-          ),
+          find.descendant(of: sentLine, matching: find.text('🙂')),
           findsNothing,
         );
       }
@@ -535,7 +546,7 @@ void main() {
 
       answers.dispose();
       answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
-      await openCard(tester, thought);
+      await openCard(tester, thought, persistSentHistory: true);
       expectHistory();
       expect(
         find.descendant(of: personal, matching: find.text('😄')),
@@ -552,13 +563,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
       expect(find.byType(ThoughtCardScreen), findsNothing);
       expect(sentLine, findsNothing);
+      final stored = await replyStorage
+          .read('thought_reply_history_v1.local-peer')
+          .timeout(const Duration(seconds: 3));
+      expect(jsonDecode(stored!)['sends'], isEmpty);
 
       final newThought = _withId(
         _thought(now).copyWith(text: 'The next Thought'),
         'later-thought',
       );
       await posts.savePost(newThought);
-      await openCard(tester, newThought);
+      await openCard(tester, newThought, persistSentHistory: true);
       expect(find.text('The next Thought', findRichText: true), findsOneWidget);
       expect(sentLine, findsNothing);
       expect(

@@ -20,6 +20,7 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
@@ -1052,6 +1053,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
       if (!mounted) return;
 
+      await _depthAnswers.restoreHistory(
+        store: widget.secureKeyStore,
+        accountPeerId: identity.peerId,
+        nowProvider: widget.thoughtNowProvider,
+        loadMessageStatus: (id) async {
+          final message = await widget.messageRepo.getMessage(id);
+          return message != null &&
+                  !message.isIncoming &&
+                  message.senderPeerId == identity.peerId
+              ? ThoughtReplyStatus.fromMessage(message)
+              : null;
+        },
+        loadStickerPath: (id) async {
+          final attachments = await widget.mediaAttachmentRepo
+              .getAttachmentsForMessage(id, owner: MediaOwnerLane.direct);
+          final path = attachments
+              .where((attachment) => attachment.stickerId != null)
+              .firstOrNull
+              ?.localPath;
+          return path == null
+              ? null
+              : widget.mediaFileManager.resolveStoredPath(path);
+        },
+      );
+      if (!mounted) return;
       _identity = identity;
       _avatarBytes = avatarBytes;
       _publishAllProjections();
@@ -1070,10 +1096,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void _bindThoughtChanges() {
     _thoughtSubscription?.cancel();
     _forgetYouTags();
-    _thoughtSubscription = _thoughtPosts?.postChanges.listen((_) {
+    final repository = _thoughtPosts;
+    if (repository == null) {
+      _thoughtSubscription = null;
+      return;
+    }
+    _thoughtSubscription = repository.postChanges.listen((postId) {
       _forgetYouTags();
+      if (_depthAnswers.hasHistory(postId)) {
+        unawaited(_forgetEndedReplyHistory(repository, postId));
+      }
       unawaited(_reloadThoughts());
     }, onError: (Object error) => _reportThoughtFailure(error));
+  }
+
+  Future<void> _forgetEndedReplyHistory(
+    PostRepository repository,
+    String postId,
+  ) async {
+    try {
+      if (await repository.getPost(postId) == null && mounted) {
+        _depthAnswers.forgetHistory(postId);
+      }
+    } catch (error) {
+      if (mounted) _reportThoughtFailure(error);
+    }
   }
 
   /// Every tag on the author's own Thoughts, kept between You page reloads.

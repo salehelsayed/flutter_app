@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+import 'package:flutter_app/features/posts/domain/thought_emoji_catalog.dart';
 
 /// A chat message points at a thought through its quoted-message id, as
 /// `thought:<postId>`. Nothing of the thought is copied into the message: each
@@ -20,23 +21,36 @@ String? thoughtIdFromQuote(String? quotedMessageId) {
 /// One-tap answers to a thought. A reply to a thought whose whole text is one
 /// of these glyphs is shown as a reaction line instead of a bubble, so older
 /// builds still see the glyph as an ordinary message.
-enum ThoughtReaction {
-  love('❤️'),
-  laugh('😂'),
-  fire('🔥'),
-  applause('👏');
+class ThoughtReaction {
+  const ThoughtReaction._(this.glyph, [this._fixedName]);
 
-  const ThoughtReaction(this.glyph);
+  static const love = ThoughtReaction._('❤️', 'love');
+  static const laugh = ThoughtReaction._('😂', 'laugh');
+  static const fire = ThoughtReaction._('🔥', 'fire');
+  static const applause = ThoughtReaction._('👏', 'applause');
+  static const values = [love, laugh, fire, applause];
 
   final String glyph;
+  final String? _fixedName;
+
+  String get name => _fixedName ?? glyph;
+  bool get isFixed => _fixedName != null;
 
   static ThoughtReaction? fromText(String text) {
-    final trimmed = text.trim();
+    final glyph = canonicalThoughtEmoji(text);
+    if (glyph == null) return null;
     for (final reaction in values) {
-      if (reaction.glyph == trimmed) return reaction;
+      if (glyph == reaction.glyph) return reaction;
     }
-    return null;
+    return ThoughtReaction._(glyph);
   }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ThoughtReaction && other.glyph == glyph;
+
+  @override
+  int get hashCode => glyph.hashCode;
 }
 
 /// What a chat shows for a quoted thought it found stored here. A quote the

@@ -727,6 +727,15 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get thought_picker_emoji_tab => 'الرموز التعبيرية';
+
+  @override
+  String get thought_more_label => 'المزيد من الرموز التعبيرية والملصقات';
+
+  @override
+  String get thought_you_sent => 'ما أرسلته';
+
+  @override
   String get thought_react_love => 'تفاعل بقلب';
 
   @override

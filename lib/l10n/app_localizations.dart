@@ -1198,6 +1198,24 @@ abstract class AppLocalizations {
   /// **'gone in {minutes} min'**
   String thought_gone_in_minutes(int minutes);
 
+  /// Thought reply picker Emoji tab
+  ///
+  /// In en, this message translates to:
+  /// **'Emoji'**
+  String get thought_picker_emoji_tab;
+
+  /// Accessible label for the Thought reply picker button
+  ///
+  /// In en, this message translates to:
+  /// **'More emoji and stickers'**
+  String get thought_more_label;
+
+  /// Heading for the private list of the user’s reactions and sticker on this Thought
+  ///
+  /// In en, this message translates to:
+  /// **'You sent'**
+  String get thought_you_sent;
+
   /// Thought card: heart reaction button label for screen readers
   ///
   /// In en, this message translates to:

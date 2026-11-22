@@ -221,6 +221,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   void _syncReplyExpiry() {
     if (_isLive || _inReplyGrace || _closing) return;
+    widget.answers?.pruneHistory();
     final draft = _replyDraft;
     if (!_validated ||
         !_canReply ||
@@ -337,6 +338,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         // Deletion ends this presentation; an older surviving copy must not
         // silently replace the thought the user was viewing.
         if (storedCurrent == null) {
+          widget.answers?.forgetHistory(displayedId);
           _close();
           return;
         }
@@ -1100,13 +1102,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     );
   }
 
-  void _react(ThoughtReaction reaction) {
+  void _react(ThoughtReaction reaction, {bool fromPicker = false}) {
     final answers = widget.answers;
     if (!_canReply || !_validated || _closing || !_isLive) return;
     final dispatch = answers!.value.react(
       _post.id,
       reaction,
       const Uuid().v4(),
+      fromPicker: fromPicker,
     );
     _dispatchReply(dispatch);
   }
@@ -1159,6 +1162,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                   textSender(text, postId, messageId, draft)
             : sender,
         onSticker: widget.onStickerReply,
+        post: _post,
       ),
     );
   }
@@ -1204,6 +1208,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               visit: visit,
               reactionKeyPrefix: 'thought-react',
               onReaction: _react,
+              onPanelEmoji: (reaction) => _react(reaction, fromPicker: true),
               onSend: _sendTypedReply,
               onSticker: widget.onStickerReply == null ? null : _sendSticker,
               onScrim: true,

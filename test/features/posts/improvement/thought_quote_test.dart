@@ -19,6 +19,10 @@ void main() {
     expect(ThoughtReaction.fromText('👏'), ThoughtReaction.applause);
     expect(ThoughtReaction.fromText('😂'), ThoughtReaction.laugh);
     expect(ThoughtReaction.fromText('❤️ see you'), isNull);
-    expect(ThoughtReaction.fromText('😮'), isNull);
+    expect(ThoughtReaction.fromText('❤'), ThoughtReaction.love);
+    expect(ThoughtReaction.fromText('😮')?.glyph, '😮');
+    expect(ThoughtReaction.fromText('👩🏽‍🚀')?.glyph, '👩🏽‍🚀');
+    expect(ThoughtReaction.fromText('😮😮'), isNull);
+    expect(ThoughtReaction.fromText('12'), isNull);
   });
 }

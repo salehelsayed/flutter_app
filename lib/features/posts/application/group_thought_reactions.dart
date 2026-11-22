@@ -49,8 +49,9 @@ List<ThoughtReactionGroup> groupThoughtReactions({
     }
   }
 
+  final orderedReactions = {...ThoughtReaction.values, ...actors.keys};
   return List.unmodifiable([
-    for (final reaction in ThoughtReaction.values)
+    for (final reaction in orderedReactions)
       if (actors[reaction] case final byActor?)
         (
           reaction: reaction,

@@ -238,10 +238,11 @@ void main() {
   final love = find.byKey(const ValueKey('orbit-depth-react-love'));
   final laugh = find.byKey(const ValueKey('orbit-depth-react-laugh'));
   final applause = find.byKey(const ValueKey('orbit-depth-react-applause'));
-  final reply = find.byKey(const ValueKey('thought-reply-field'));
+  final reply = find.byKey(const ValueKey('orbit-depth-reply'));
+  final field = find.byKey(const ValueKey('thought-reply-field'));
   final dock = find.byKey(const ValueKey('thought-reply-dock'));
   final quote = find.byKey(const ValueKey('thought-reply-quote'));
-  final stickers = find.byKey(const ValueKey('thought-reply-stickers'));
+  final more = find.byKey(const ValueKey('thought-reply-more'));
   final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
   final ring = find.byKey(const ValueKey('orbit-depth-center-slot'));
   final name = find.byKey(const ValueKey('orbit-depth-name'));
@@ -264,7 +265,7 @@ void main() {
       find.byKey(const ValueKey('thought-reply-more')),
       find.byKey(const ValueKey('orbit-depth-reply')),
     ];
-    expect(reply, findsNothing, reason: 'depth has no resting text field');
+    expect(field, findsNothing, reason: 'depth has no resting text field');
     final controlsBounds = <Rect>[];
     for (final control in controls) {
       expect(control, findsOneWidget);
@@ -292,9 +293,8 @@ void main() {
     await finish(tester);
   });
 
-  // The expanded dock takes the place of the single reaction row. The ring
-  // and the gap between the card and its controls keep their established place.
-  double dockTop(_Place place) => place.barBottom - 145;
+  // The compact dock reserves space for the controls and their history.
+  double dockTop(_Place place) => place.barBottom - 80;
   double cardBottom(_Place place) =>
       place.areaBottom - place.barTop + dockTop(place);
 
@@ -330,8 +330,8 @@ void main() {
           await enter(tester, up: up);
           expect(tester.getTopLeft(bar).dy, at(dockTop(place)), reason: kind);
           expect(
-            tester.getBottomLeft(reply).dy,
-            greaterThan(tester.getBottomLeft(love).dy),
+            tester.getCenter(reply).dy,
+            at(tester.getCenter(love).dy),
             reason: kind,
           );
           expect(tester.getTopLeft(slot).dy, at(place.areaTop), reason: kind);
@@ -457,7 +457,7 @@ void main() {
         greaterThan(tester.getCenter(laugh).dx),
       );
       expect(
-        tester.getTopRight(stickers).dx,
+        tester.getTopRight(more).dx,
         lessThan(tester.getTopLeft(applause).dx),
       );
       expect(tester.getTopLeft(bar).dy, at(dockTop(place)));
@@ -520,7 +520,7 @@ void main() {
         expect(quote, findsOneWidget);
         expect(
           tester.getRect(quote).bottom,
-          lessThanOrEqualTo(tester.getRect(reply).top),
+          lessThanOrEqualTo(tester.getRect(field).top),
           reason: 'the compact quote stays above the reply field',
         );
         tester.view.viewInsets = const FakeViewPadding();

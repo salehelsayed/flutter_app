@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,12 +13,11 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
-import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
-import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reply_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-/// The reply controls for a Thought in either presentation. The host owns
-/// focus and expiry because it also owns the card and its Back action.
+/// The reply controls for both Thought presentations. The host owns focus,
+/// navigation and expiry for its card.
 class ThoughtReplyDock extends StatefulWidget {
   const ThoughtReplyDock({
     super.key,
@@ -33,6 +33,11 @@ class ThoughtReplyDock extends StatefulWidget {
     required this.onSend,
     this.onSticker,
     this.onReactionActivate,
+    this.onPanelEmoji,
+    this.onOpenComposer,
+    this.onOpenComposerActivate,
+    this.canOpenPicker,
+    this.canActivatePicker,
     this.sendEnabled = true,
     this.graceSeconds,
     this.onScrim = false,
@@ -48,9 +53,17 @@ class ThoughtReplyDock extends StatefulWidget {
   final String reactionKeyPrefix;
   final ValueChanged<ThoughtReaction> onReaction;
   final ValueChanged<ThoughtReaction>? onReactionActivate;
+  final ValueChanged<ThoughtReaction>? onPanelEmoji;
+  final ValueChanged<ThoughtStickerSelection>? onSticker;
   final VoidCallback onSend;
   final bool sendEnabled;
-  final ValueChanged<ThoughtStickerSelection>? onSticker;
+
+  /// In depth the resting controls use a Reply pill. It opens this same
+  /// dock's typing state.
+  final VoidCallback? onOpenComposer;
+  final VoidCallback? onOpenComposerActivate;
+  final bool Function()? canOpenPicker;
+  final bool Function()? canActivatePicker;
 
   /// Null while live. Zero leaves an ended composition visible for closing.
   final int? graceSeconds;
@@ -61,9 +74,13 @@ class ThoughtReplyDock extends StatefulWidget {
 }
 
 class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
+  static const _feedbackDuration = Duration(milliseconds: 1500);
+
   ModalRoute<dynamic>? _picker;
   bool _openingPicker = false;
   int? _firstGraceSeconds;
+  OrbitDepthSend? _sentPreview;
+  Timer? _previewTimer;
 
   @override
   void didUpdateWidget(ThoughtReplyDock oldWidget) {
@@ -73,6 +90,25 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     }
     if (oldWidget.post.id != widget.post.id || widget.graceSeconds != null) {
       _dismissOwnedPicker();
+      _previewTimer?.cancel();
+      _sentPreview = null;
+    }
+    if (widget.graceSeconds != null) return;
+    final newAnswer = widget.visit
+        .sentOn(widget.post.id)
+        .where(
+          (send) =>
+              !send.restored &&
+              oldWidget.visit.sends[send.messageId]?.status !=
+                  ThoughtReplyStatus.sent,
+        )
+        .lastOrNull;
+    if (newAnswer != null) {
+      _sentPreview = newAnswer;
+      _previewTimer?.cancel();
+      _previewTimer = Timer(_feedbackDuration, () {
+        if (mounted) setState(() => _sentPreview = null);
+      });
     }
   }
 
@@ -90,17 +126,20 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
 
   @override
   void dispose() {
+    _previewTimer?.cancel();
     _dismissOwnedPicker();
     super.dispose();
   }
 
-  Future<void> _openPicker() async {
-    if (_openingPicker || widget.onSticker == null) return;
-    _openingPicker = true;
+  Future<void> _openPicker({bool semantics = false}) async {
+    final canOpen = semantics
+        ? widget.canActivatePicker ?? widget.canOpenPicker
+        : widget.canOpenPicker;
+    if (_openingPicker || canOpen?.call() == false) return;
+    setState(() => _openingPicker = true);
     final postId = widget.post.id;
-    final custom = CustomStickerScope.libraryOf(context);
     try {
-      final selected = await showModalBottomSheet<ThoughtStickerSelection>(
+      final selected = await showModalBottomSheet<Object>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
@@ -108,45 +147,27 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
             ? AnimationStyle.noAnimation
             : null,
         builder: (sheetContext) {
-          final route = ModalRoute.of(sheetContext);
-          _picker = route;
-          return SizedBox(
-            height: kStickerPanelHeight,
-            child: BundledStickerPanel(
-              onSend: (entry) => Navigator.of(
-                sheetContext,
-              ).pop(ThoughtStickerSelection.bundled(entry)),
-              onSendCustom: custom == null
-                  ? null
-                  : (id) async {
-                      final items = await custom.list();
-                      final item = items
-                          .where((item) => item.id == id)
-                          .firstOrNull;
-                      if (item != null &&
-                          sheetContext.mounted &&
-                          route?.isCurrent == true) {
-                        Navigator.of(sheetContext).pop(
-                          ThoughtStickerSelection.custom(
-                            id,
-                            item.asset.filePath,
-                          ),
-                        );
-                      }
-                    },
-            ),
+          _picker = ModalRoute.of(sheetContext);
+          return ThoughtReplyPicker(
+            postId: postId,
+            visit: widget.visit,
+            stickersAvailable:
+                widget.onSticker != null &&
+                widget.visit.stickerFor(postId) == null,
           );
         },
       );
-      if (mounted &&
-          selected != null &&
-          widget.post.id == postId &&
-          widget.graceSeconds == null) {
+      if (!mounted || widget.post.id != postId || widget.graceSeconds != null) {
+        return;
+      }
+      if (selected is ThoughtReaction) {
+        (widget.onPanelEmoji ?? widget.onReaction)(selected);
+      } else if (selected is ThoughtStickerSelection) {
         widget.onSticker?.call(selected);
       }
     } finally {
       _picker = null;
-      _openingPicker = false;
+      if (mounted) setState(() => _openingPicker = false);
     }
   }
 
@@ -159,30 +180,64 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
         ? const Color(0xff192522)
         : colors.surfaceContainerHigh;
     final grace = widget.graceSeconds;
-    final ended = grace == 0;
     final composing = widget.typing || grace != null;
+    final compact = widget.onOpenComposer != null;
+    final preview = _sentPreview;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Column(
+          key: const ValueKey('thought-reply-dock'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (composing)
+              _ThoughtReplyQuote(
+                post: widget.post,
+                authorName: widget.authorName,
+                media: widget.media,
+                ink: ink,
+                surface: surface,
+              )
+            else ...[
+              if (!_openingPicker) _sentLine(l10n, ink),
+              _chips(l10n, ink, compact: compact),
+            ],
+            if (composing || !compact) ...[
+              const SizedBox(height: 8),
+              _textField(l10n, ink, surface, composing),
+            ],
+          ],
+        ),
+        if (!composing && !_openingPicker && preview != null)
+          PositionedDirectional(
+            start: 0,
+            end: 0,
+            bottom: compact ? 56 : 126,
+            child: IgnorePointer(child: _feedback(l10n, preview, ink, surface)),
+          ),
+      ],
+    );
+  }
+
+  Widget _textField(
+    AppLocalizations l10n,
+    Color ink,
+    Color surface,
+    bool composing,
+  ) {
+    final grace = widget.graceSeconds;
+    final ended = grace == 0;
     final note = switch (grace) {
       null => l10n.thought_reply_private_note(widget.authorName),
       0 => l10n.thought_reply_ended,
       final seconds => l10n.thought_reply_grace(seconds),
     };
-
     return Column(
-      key: const ValueKey('thought-reply-dock'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (composing)
-          _ThoughtReplyQuote(
-            post: widget.post,
-            authorName: widget.authorName,
-            media: widget.media,
-            ink: ink,
-            surface: surface,
-          )
-        else
-          _chips(l10n, ink, surface),
-        const SizedBox(height: 8),
         DecoratedBox(
           decoration: BoxDecoration(
             color: surface,
@@ -225,8 +280,7 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
                   ),
                 ),
               ),
-              // Space in the field for the planned microphone. It has no
-              // control or semantics of its own.
+              // Empty space for the later microphone control.
               const SizedBox(width: 36),
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: widget.controller,
@@ -268,76 +322,243 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     );
   }
 
-  Widget _chips(AppLocalizations l10n, Color ink, Color surface) {
+  Widget _chips(AppLocalizations l10n, Color ink, {required bool compact}) {
     final visit = widget.visit;
-    final postId = widget.post.id;
-    final sticker = visit.stickerFor(postId);
-    final selection = sticker?.sticker;
-    final entry = selection?.entry;
+    final personal = visit.personalEmoji;
+    final open = widget.onOpenComposer;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         for (final reaction in ThoughtReaction.values)
-          ThoughtReactionCircle(
-            key: ValueKey('${widget.reactionKeyPrefix}-${reaction.name}'),
-            glyph: reaction.glyph,
-            label:
-                visit.sends.values.any(
-                  (send) =>
-                      send.postId == postId &&
-                      send.reaction == reaction &&
-                      send.status == ThoughtReplyStatus.sent,
-                )
-                ? l10n.thought_reaction_sent_label(reaction.glyph)
-                : switch (reaction) {
-                    ThoughtReaction.love => l10n.thought_react_love,
-                    ThoughtReaction.laugh => l10n.thought_react_laugh,
-                    ThoughtReaction.fire => l10n.thought_react_fire,
-                    ThoughtReaction.applause => l10n.thought_react_applause,
-                  },
-            size: 44,
-            pressed: visit.pressed(postId, reaction),
-            foregroundColor: ink,
-            onTap: () => widget.onReaction(reaction),
-            onActivate: () =>
-                (widget.onReactionActivate ?? widget.onReaction)(reaction),
+          _chip(
+            l10n,
+            ink,
+            reaction,
+            ValueKey('${widget.reactionKeyPrefix}-${reaction.name}'),
           ),
-        if (sticker?.status == ThoughtReplyStatus.sent && selection != null)
-          Semantics(
-            key: const ValueKey('thought-sticker-sent'),
-            label: l10n.thought_sticker_sent_label,
-            liveRegion: true,
-            excludeSemantics: true,
-            child: SizedBox.square(
-              dimension: 44,
-              child: entry != null
-                  ? Image.asset(entry.assetPath, fit: BoxFit.contain)
-                  : Image.file(
-                      File(selection.customFilePath!),
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) =>
-                          Icon(Icons.emoji_emotions, color: ink),
-                    ),
-            ),
-          )
-        else
-          IconButton(
-            key: const ValueKey('thought-reply-stickers'),
-            tooltip: l10n.stickers_title,
+        if (!compact && personal != null)
+          _chip(
+            l10n,
+            ink,
+            personal,
+            const ValueKey('thought-reply-personal-emoji'),
+          ),
+        if (!compact)
+          SizedBox(
+            width: 1,
+            height: 24,
+            child: ColoredBox(color: ink.withValues(alpha: .28)),
+          ),
+        Semantics(
+          button: true,
+          label: l10n.thought_more_label,
+          excludeSemantics: true,
+          onTap: () => _openPicker(semantics: true),
+          child: IconButton(
+            key: const ValueKey('thought-reply-more'),
+            tooltip: l10n.thought_more_label,
             constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-            onPressed: sticker == null && widget.onSticker != null
-                ? _openPicker
-                : null,
+            onPressed: _openPicker,
             style: IconButton.styleFrom(
               foregroundColor: ink,
-              backgroundColor: surface,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: ink.withValues(alpha: .55)),
+            ),
+            icon: const Icon(Icons.add_reaction_outlined),
+          ),
+        ),
+        if (open != null)
+          Flexible(
+            child: Semantics(
+              button: true,
+              excludeSemantics: true,
+              label: l10n.conversation_context_reply,
+              onTap: widget.onOpenComposerActivate ?? open,
+              child: FilledButton(
+                key: const ValueKey('orbit-depth-reply'),
+                onPressed: open,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  backgroundColor: thoughtReactionGreen,
+                  foregroundColor: const Color(0xff04130a),
+                ),
+                child: Text(
+                  l10n.conversation_context_reply,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
-            icon: const Icon(Icons.emoji_emotions_outlined),
           ),
       ],
+    );
+  }
+
+  Widget _chip(
+    AppLocalizations l10n,
+    Color ink,
+    ThoughtReaction reaction,
+    Key key,
+  ) {
+    final postId = widget.post.id;
+    final sent = widget.visit
+        .sentOn(postId)
+        .any((send) => send.reaction == reaction);
+    final label = sent
+        ? l10n.thought_reaction_sent_label(reaction.glyph)
+        : switch (reaction) {
+            ThoughtReaction.love => l10n.thought_react_love,
+            ThoughtReaction.laugh => l10n.thought_react_laugh,
+            ThoughtReaction.fire => l10n.thought_react_fire,
+            ThoughtReaction.applause => l10n.thought_react_applause,
+            _ => reaction.glyph,
+          };
+    return ThoughtReactionCircle(
+      key: key,
+      glyph: reaction.glyph,
+      label: label,
+      size: 44,
+      pressed: widget.visit.pressed(postId, reaction),
+      confirmed: sent,
+      foregroundColor: ink,
+      onTap: () => widget.onReaction(reaction),
+      onActivate: () =>
+          (widget.onReactionActivate ?? widget.onReaction)(reaction),
+    );
+  }
+
+  Widget _sentLine(AppLocalizations l10n, Color ink) {
+    final sends = widget.visit
+        .sentOn(widget.post.id)
+        .where((send) => send.messageId != _sentPreview?.messageId)
+        .toList(growable: false);
+    if (sends.isEmpty) return const SizedBox.shrink();
+    final omitted = sends.length > 5 ? sends.length - 5 : 0;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        key: const ValueKey('thought-reply-you-sent'),
+        children: [
+          Flexible(
+            child: Text(
+              l10n.thought_you_sent,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: ink,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          for (final send in sends.skip(omitted)) ...[
+            const SizedBox(width: 6),
+            if (send.sticker case final sticker?)
+              Semantics(
+                label: l10n.thought_sticker_sent_label,
+                excludeSemantics: true,
+                child: SizedBox.square(
+                  key: const ValueKey('thought-reply-sent-sticker'),
+                  dimension: 28,
+                  child: _stickerArt(sticker),
+                ),
+              )
+            else
+              SizedBox(
+                width: 24,
+                height: 28,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    send.reaction!.glyph,
+                    style: const TextStyle(fontSize: 20),
+                  ),
+                ),
+              ),
+          ],
+          if (omitted > 0) ...[
+            const SizedBox(width: 6),
+            Text('+$omitted', style: TextStyle(color: ink, fontSize: 13)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _feedback(
+    AppLocalizations l10n,
+    OrbitDepthSend preview,
+    Color ink,
+    Color surface,
+  ) {
+    final sticker = preview.sticker;
+    final image = sticker == null
+        ? Text(
+            preview.reaction!.glyph,
+            style: const TextStyle(fontSize: 64, height: 1),
+          )
+        : SizedBox.square(dimension: 120, child: _stickerArt(sticker));
+    final child = Center(
+      child: Semantics(
+        key: const ValueKey('thought-reply-sent-feedback'),
+        label: sticker == null
+            ? l10n.thought_reaction_sent_label(preview.reaction!.glyph)
+            : l10n.thought_sticker_sent_label,
+        liveRegion: true,
+        excludeSemantics: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            image,
+            const SizedBox(height: 6),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Text(
+                  l10n.message_status_sent,
+                  style: TextStyle(color: ink, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(preview.messageId),
+      tween: Tween(begin: 0, end: 1),
+      duration: _feedbackDuration,
+      child: child,
+      builder: (context, time, child) {
+        final fade = ((1 - time) / .14).clamp(0.0, 1.0);
+        final rise = (time / .12).clamp(0.0, 1.0);
+        return Opacity(
+          opacity: fade,
+          child: Transform.scale(
+            scale: .88 + .12 * rise - .35 * (1 - fade),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _stickerArt(ThoughtStickerSelection selection) {
+    if (selection.entry case final entry?) {
+      return Image.asset(entry.assetPath, fit: BoxFit.contain);
+    }
+    return Image.file(
+      File(selection.customFilePath!),
+      fit: BoxFit.contain,
+      errorBuilder: (_, _, _) => const Icon(Icons.emoji_emotions_outlined),
     );
   }
 }

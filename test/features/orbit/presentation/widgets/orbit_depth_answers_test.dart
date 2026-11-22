@@ -141,10 +141,11 @@ void main() {
 
   Finder bar(int i) => find.byKey(ValueKey('orbit-depth-answers-post-$i'));
   Finder react(String name) => find.byKey(ValueKey('orbit-depth-react-$name'));
+  final reply = find.byKey(const ValueKey('orbit-depth-reply'));
   final composerField = find.byKey(const ValueKey('thought-reply-field'));
   final composer = find.byKey(const ValueKey('thought-reply-quote'));
   final dock = find.byKey(const ValueKey('thought-reply-dock'));
-  final stickers = find.byKey(const ValueKey('thought-reply-stickers'));
+  final more = find.byKey(const ValueKey('thought-reply-more'));
   final sendButton = find.byKey(const ValueKey('thought-reply-send'));
   final status = find.byKey(const ValueKey('orbit-depth-answer-status'));
   final retry = find.byKey(const ValueKey('orbit-depth-answer-retry'));
@@ -172,7 +173,7 @@ void main() {
   }
 
   testWidgets('the dock shows only under the focused friend, with four '
-      'reactions and the sticker choice above the reply field', (tester) async {
+      'reactions, More and the Reply pill on one row', (tester) async {
     await mount(tester);
     expect(bar(0), findsNothing);
     await enter(tester);
@@ -185,13 +186,15 @@ void main() {
     expect(xs, orderedEquals([...xs]..sort()));
     expect(tester.getSize(react('love')), const Size(44, 44));
     expect(
-      tester.getTopLeft(stickers).dx,
+      tester.getTopLeft(more).dx,
       greaterThan(tester.getTopRight(react('applause')).dx),
     );
+    expect(composerField, findsNothing);
     expect(
-      tester.getTopLeft(composerField).dy,
-      greaterThan(tester.getBottomLeft(react('applause')).dy),
+      tester.getTopLeft(reply).dx,
+      greaterThanOrEqualTo(tester.getTopRight(more).dx),
     );
+    expect(tester.getCenter(reply).dy, tester.getCenter(more).dy);
     expect(
       tester
           .getBottomLeft(find.byKey(const ValueKey('orbit-depth-card-slot')))
@@ -290,10 +293,10 @@ void main() {
       tester.getSemantics(react('laugh')),
       isSemantics(label: 'React with a laugh', isSelected: false),
     );
-    expect(
-      find.descendant(of: status, matching: find.text('sent')),
-      findsOneWidget,
-    );
+    expect(find.text('sent'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1600));
+    expect(find.text('sent'), findsNothing);
+    expect(find.text('You sent'), findsOneWidget);
     await finish(tester);
   });
 
@@ -339,10 +342,7 @@ void main() {
     await tap(tester, retry);
     expect(sent.map((s) => s.text), ['👏', '👏']);
     expect(sent[1].messageId, sent[0].messageId);
-    expect(
-      find.descendant(of: status, matching: find.text('sent')),
-      findsOneWidget,
-    );
+    expect(find.text('sent'), findsOneWidget);
     expect(retry, findsNothing);
     await tap(tester, react('applause'));
     expect(sent, hasLength(2));
@@ -365,10 +365,7 @@ void main() {
       status: ThoughtReplyStatus.sent,
     ));
     await rest(tester);
-    expect(
-      find.descendant(of: status, matching: find.text('sent')),
-      findsOneWidget,
-    );
+    expect(find.text('sent'), findsOneWidget);
     await finish(tester);
   });
 
@@ -389,10 +386,7 @@ void main() {
       await rest(tester);
       hold!.complete(lateResult);
       await rest(tester);
-      expect(
-        find.descendant(of: status, matching: find.text('sent')),
-        findsOneWidget,
-      );
+      expect(find.text('sent'), findsOneWidget);
       expect(retry, findsNothing);
       await tap(tester, react('love'));
       expect(sent.map((s) => s.text), ['❤️']);
@@ -405,20 +399,19 @@ void main() {
     final handle = tester.ensureSemantics();
     await mount(tester);
     await enter(tester);
-    for (final name in ['love', 'laugh', 'fire', 'applause']) {
-      await activate(tester, react(name));
-    }
-    expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏']);
-
-    await activate(tester, composerField);
+    await activate(tester, reply);
     expect(composer, findsOneWidget);
     await activate(
       tester,
       find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
     );
     expect(composer, findsNothing);
+    for (final name in ['love', 'laugh', 'fire', 'applause']) {
+      await activate(tester, react(name));
+    }
+    expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏']);
 
-    await activate(tester, composerField);
+    await activate(tester, reply);
     await tester.enterText(composerField, 'by voice over');
     await rest(tester);
     await activate(tester, sendButton);
@@ -442,10 +435,7 @@ void main() {
     await activate(tester, retry);
     expect(sent.map((s) => s.text), ['👏', '👏']);
     expect(sent[1].messageId, sent[0].messageId);
-    expect(
-      find.descendant(of: status, matching: find.text('sent')),
-      findsOneWidget,
-    );
+    expect(find.text('sent'), findsOneWidget);
     await finish(tester);
     handle.dispose();
   });
@@ -508,7 +498,7 @@ void main() {
       'sender, closes it and stays in 3D showing "sent"', (tester) async {
     await mount(tester);
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     expect(composer, findsOneWidget);
     expect(
       tester.widget<TextField>(composerField).decoration?.hintText,
@@ -547,7 +537,7 @@ void main() {
   ) async {
     await mount(tester);
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     await tester.enterText(composerField, 'half a thought');
     await tester.pump();
     await tap(
@@ -557,7 +547,7 @@ void main() {
     expect(composer, findsNothing);
     expect(sent, isEmpty);
     expect(opened, isEmpty);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
     await tap(
       tester,
@@ -565,7 +555,7 @@ void main() {
     );
     await leave(tester);
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
     await finish(tester);
   });
@@ -575,7 +565,7 @@ void main() {
     (tester) async {
       await mount(tester);
       await enter(tester);
-      await tap(tester, composerField);
+      await tap(tester, reply);
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await rest(tester);
       expect(tester.testTextInput.isVisible, isTrue);
@@ -584,7 +574,7 @@ void main() {
       await rest(tester);
       expect(composer, findsNothing);
       expect(sent, isEmpty);
-      await tap(tester, composerField);
+      await tap(tester, reply);
       expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
       tester.view.resetViewInsets();
       await finish(tester);
@@ -605,7 +595,7 @@ void main() {
         'composer and discards its reply', (tester) async {
       await mount(tester);
       await enter(tester);
-      await tap(tester, composerField);
+      await tap(tester, reply);
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await rest(tester);
       await tester.enterText(composerField, 'half a thought');
@@ -619,7 +609,7 @@ void main() {
       expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
       expect(bar(0), findsOneWidget);
       expect(sent, isEmpty);
-      await tap(tester, composerField);
+      await tap(tester, reply);
       expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
       tester.view.resetViewInsets();
       await finish(tester);
@@ -647,7 +637,7 @@ void main() {
       },
     );
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     await tester.enterText(composerField, 'which day works?');
 
     now = expiry;
@@ -693,7 +683,7 @@ void main() {
           result.future.timeout(const Duration(seconds: 3)),
     );
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     await tester.enterText(composerField, 'which day works?');
     await rest(tester);
     await tap(tester, sendButton);
@@ -724,9 +714,14 @@ void main() {
     final laugh = tester.getCenter(react('laugh')).dx;
     expect(love, greaterThan(laugh));
     expect(
-      tester.getTopRight(stickers).dx,
+      tester.getTopRight(more).dx,
       lessThan(tester.getTopLeft(react('applause')).dx),
     );
+    expect(
+      tester.getTopRight(reply).dx,
+      lessThanOrEqualTo(tester.getTopLeft(more).dx),
+    );
+    await tap(tester, reply);
     expect(
       tester.getCenter(sendButton).dx,
       lessThan(tester.getCenter(composerField).dx),
@@ -798,12 +793,17 @@ void main() {
     for (final name in ['love', 'laugh', 'fire', 'applause']) {
       expect(tester.getSize(react(name)), const Size(44, 44));
     }
-    for (final target in [stickers, composerField, sendButton]) {
+    for (final target in [more, reply]) {
       expect(tester.getSize(target).height, greaterThanOrEqualTo(44));
       expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
     }
     // The dock leaves room for its status row at the bottom of the ring.
     expect(tester.getBottomLeft(dock).dy, lessThanOrEqualTo(667 - 44));
+    await tap(tester, reply);
+    for (final target in [composerField, sendButton]) {
+      expect(tester.getSize(target).height, greaterThanOrEqualTo(44));
+      expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
+    }
     await finish(tester);
   });
 
@@ -824,7 +824,7 @@ void main() {
     final handle = tester.ensureSemantics();
     await mount(tester);
     await enter(tester);
-    await tap(tester, composerField);
+    await tap(tester, reply);
     final send = sendButton;
     expect(send, findsOneWidget);
     expect(shownOpacity(tester, send), 1.0);
@@ -861,17 +861,17 @@ void main() {
 
   for (final size in const [Size(360, 640), Size(390, 844), Size(412, 915)]) {
     testWidgets('on a ${size.width.toInt()}x${size.height.toInt()} phone the '
-        'reply field sits near the bottom after a swipe up, and the dock '
+        'Reply pill sits near the bottom after a swipe up, and the dock '
         'fits between the thought and ring after a swipe down', (tester) async {
       await mount(tester, reduceMotion: false, size: size);
       await enter(tester);
       await tester.pumpAndSettle();
       final upDock = tester.getRect(bar(0));
-      final field = tester.getRect(composerField);
-      expect(field.center.dy, greaterThanOrEqualTo(size.height * .8));
-      expect(upDock.contains(field.topLeft), isTrue);
+      final pill = tester.getRect(reply);
+      expect(pill.center.dy, greaterThanOrEqualTo(size.height * .8));
+      expect(upDock.contains(pill.topLeft), isTrue);
       expect(
-        upDock.contains(field.bottomRight - const Offset(.01, .01)),
+        upDock.contains(pill.bottomRight - const Offset(.01, .01)),
         isTrue,
       );
       expect(upDock.bottom, lessThanOrEqualTo(size.height));

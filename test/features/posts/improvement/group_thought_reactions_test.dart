@@ -97,7 +97,7 @@ void main() {
           _reply('message-quote', 'sam', '❤️', quote: 'message-id'),
           _reply('no-quote', 'sam', '❤️', quote: null),
           _reply('text', 'sam', '❤️ see you'),
-          _reply('unknown-glyph', 'sam', '😮'),
+          _reply('lone-letter', 'sam', 'A'),
           _reply('outgoing', 'sam', '❤️', incoming: false),
           _reply(
             'failed-outgoing',
@@ -167,6 +167,42 @@ void main() {
         ThoughtReaction.fire,
       ]);
       expect(groups.map((group) => group.participants.length), [1, 1, 1]);
+    },
+  );
+
+  test(
+    'keeps fixed reactions first and groups additional glyphs in encounter order',
+    () {
+      final groups = groupThoughtReactions(
+        postId: 'mine',
+        participantNames: _names,
+        replies: [
+          _reply('first-orange', 'sam', '🧡'),
+          _reply('surprised', 'kim', '😮'),
+          _reply('fire', 'sam', '🔥'),
+          _reply('second-orange', 'mo', '🧡'),
+          _reply('love', 'mo', '❤️'),
+          _reply(
+            'linked-orange',
+            'sam',
+            ' 🧡 ',
+            sender: 'sam-tablet',
+            at: '2026-10-27T12:01:00Z',
+          ),
+        ],
+      );
+
+      expect(groups.map((group) => group.reaction.glyph), [
+        '❤️',
+        '🔥',
+        '🧡',
+        '😮',
+      ]);
+      expect(groups[2].participants, [
+        (peerId: 'sam', name: 'Sam'),
+        (peerId: 'mo', name: 'Mo'),
+      ]);
+      expect(groups[3].participants, [(peerId: 'kim', name: 'Kim')]);
     },
   );
 

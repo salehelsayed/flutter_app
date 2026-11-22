@@ -727,6 +727,15 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get thought_picker_emoji_tab => 'Emojis';
+
+  @override
+  String get thought_more_label => 'Mehr Emojis und Sticker';
+
+  @override
+  String get thought_you_sent => 'Gesendet';
+
+  @override
   String get thought_react_love => 'Mit Herz reagieren';
 
   @override
