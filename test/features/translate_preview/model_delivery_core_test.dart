@@ -303,6 +303,76 @@ void main() {
   );
 
   test(
+    'revoking mobile data durably cancels an unreconfigurable queued resume',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(
+        wifi: false,
+        canRecoverUnexpectedPauses: true,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: true).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+      await h.controller.pause().timeout(bound);
+      h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
+        retainedBytes: 42,
+      );
+      await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+      await h.controller.resume().timeout(bound);
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: false)]);
+      await h.event(ModelTransferStatus.enqueued, bytes: 42).timeout(bound);
+      final checkpoint = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(checkpoint?.retainedBytes, 42);
+
+      final cancellationStarted = Completer<void>();
+      final cancellation = Completer<void>();
+      h.transport
+        ..restored = ModelTransferSnapshot(
+          taskId: taskId,
+          status: ModelTransferStatus.enqueued,
+          receivedBytes: 42,
+          requiresWiFi: false,
+        )
+        ..queuedPolicyUpdateResult = ModelQueuedPolicyUpdate.unavailable
+        ..cancellationStarted = cancellationStarted
+        ..cancellation = cancellation;
+      final revoke = h.controller.setAllowMobileData(false);
+
+      try {
+        final cancelStarted = await Future.any([
+          cancellationStarted.future.then((_) => true),
+          revoke.then((_) => false),
+        ]).timeout(bound);
+        expect(h.transport.queuedPolicyUpdates, [
+          (taskId: taskId, requiresWiFi: true),
+        ]);
+        expect(
+          cancelStarted,
+          isTrue,
+          reason:
+              'revocation must durably stop the queued mobile task before returning',
+        );
+        expect(h.transport.cancels, [taskId]);
+        expect(h.transport.ownedTasks, {taskId});
+        expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: false)]);
+        expect(h.controller.allowMobileData.value, isTrue);
+        expect(h.storage.record!.allowMobileData, isTrue);
+      } finally {
+        cancellation.complete();
+      }
+      await revoke.timeout(bound);
+
+      expect(h.controller.allowMobileData.value, isFalse);
+      expect(h.storage.record!.allowMobileData, isFalse);
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, [taskId]);
+      expect(h.transport.ownedTasks, isEmpty);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: false)]);
+    },
+  );
+
+  test(
     'explicit mobile start replaces a never-started Wi-Fi task without waiting for pause',
     () async {
       final h = await _Harness.create(wifi: false);
@@ -2671,6 +2741,8 @@ class _Transport implements ModelDeliveryTransport {
   final checkpoints = <String, ModelResumeCheckpoint>{};
   int peakOwnedTasks = 0;
   bool resumeAccepted = true;
+  ModelQueuedPolicyUpdate queuedPolicyUpdateResult =
+      ModelQueuedPolicyUpdate.applied;
   bool failCancel = false;
   Completer<void>? cancellationStarted;
   Completer<void>? cancellation;
@@ -2691,7 +2763,7 @@ class _Transport implements ModelDeliveryTransport {
     required bool requiresWiFi,
   }) async {
     queuedPolicyUpdates.add((taskId: taskId, requiresWiFi: requiresWiFi));
-    return ModelQueuedPolicyUpdate.applied;
+    return queuedPolicyUpdateResult;
   }
 
   @override
