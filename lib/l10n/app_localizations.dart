@@ -8222,6 +8222,24 @@ abstract class AppLocalizations {
   /// **'This version can\'t use the newest translator. Update to continue.'**
   String get translator_update_line;
 
+  /// No description provided for @translator_integrity_title.
+  ///
+  /// In en, this message translates to:
+  /// **'The file was damaged'**
+  String get translator_integrity_title;
+
+  /// No description provided for @translator_integrity_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'We\'re downloading the file again. Nothing for you to do.'**
+  String get translator_integrity_retry;
+
+  /// No description provided for @translator_integrity_exhausted.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again to download a new copy.'**
+  String get translator_integrity_exhausted;
+
   /// Closes the sheet; the download continues.
   ///
   /// In en, this message translates to:

@@ -38,6 +38,16 @@ final class ModelChecking extends ModelDeliveryState {
   const ModelChecking();
 }
 
+final class ModelIntegrityRepair extends ModelDeliveryState {
+  const ModelIntegrityRepair({
+    required this.needsManualRetry,
+    this.canPause = false,
+  });
+
+  final bool needsManualRetry;
+  final bool canPause;
+}
+
 final class ModelNotEnoughSpace extends ModelDeliveryState {
   const ModelNotEnoughSpace({
     required this.totalBytes,

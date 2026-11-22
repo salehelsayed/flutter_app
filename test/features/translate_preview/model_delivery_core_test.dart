@@ -626,12 +626,14 @@ void main() {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       await h.controller.start(allowMobileData: false);
+      final damagedTask = h.id;
       h.storage.valid = false;
-      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
+      final refetching = _nextState<ModelIntegrityRepair>(h.controller.state);
       await h.event(ModelTransferStatus.complete);
-      await offer;
+      await refetching;
+      await h.flush();
       expect(h.storage.removals, 1);
-      expect(h.transport.forgets, [h.transport.enqueues.single.taskId]);
+      expect(h.transport.forgets, [damagedTask]);
       expect(h.storage.record!.verification, isNull);
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
     },

@@ -5029,6 +5029,16 @@ class AppLocalizationsAr extends AppLocalizations {
       'لا يمكن لهذا الإصدار استخدام أحدث نسخة من المترجم. حدّث التطبيق للمتابعة.';
 
   @override
+  String get translator_integrity_title => 'الملف تالف';
+
+  @override
+  String get translator_integrity_retry =>
+      'ننزّل الملف مجددًا. لا يلزمك فعل شيء.';
+
+  @override
+  String get translator_integrity_exhausted => 'حاول مجددًا لتنزيل نسخة جديدة.';
+
+  @override
   String get translator_close => 'إغلاق';
 
   @override

@@ -4960,6 +4960,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'This version can\'t use the newest translator. Update to continue.';
 
   @override
+  String get translator_integrity_title => 'The file was damaged';
+
+  @override
+  String get translator_integrity_retry =>
+      'We\'re downloading the file again. Nothing for you to do.';
+
+  @override
+  String get translator_integrity_exhausted =>
+      'Try again to download a new copy.';
+
+  @override
   String get translator_close => 'Close';
 
   @override

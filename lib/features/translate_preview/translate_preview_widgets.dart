@@ -416,6 +416,12 @@ class _DeliveryGate extends StatelessWidget {
             onTap: openSheet,
             quiet: true,
           ),
+          ModelIntegrityRepair() => _Link(
+            l10n.translator_integrity_title,
+            base,
+            onTap: openSheet,
+            quiet: true,
+          ),
           ModelUpdateRequired() => _Link(
             l10n.update_available_action,
             base,

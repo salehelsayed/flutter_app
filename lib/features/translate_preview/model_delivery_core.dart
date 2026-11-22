@@ -126,6 +126,8 @@ enum ModelDeliveryPhase {
   userPaused,
   policyPauseRequested,
   verifying,
+  integrityRepairPending,
+  integrityFailed,
   failed,
   ready,
   removing,
@@ -225,6 +227,7 @@ final class ModelDeliveryRecord {
     this.phase = ModelDeliveryPhase.idle,
     this.allowMobileData = false,
     this.verification,
+    this.integrityRepairAttempted = false,
   });
 
   factory ModelDeliveryRecord.fromJson(Map<String, Object?> json) {
@@ -251,6 +254,7 @@ final class ModelDeliveryRecord {
       phase: ModelDeliveryPhase.values.byName(phase),
       allowMobileData: allow,
       verification: ModelDeliveryVerification.tryFromJson(json['verification']),
+      integrityRepairAttempted: json['integrityRepairAttempted'] == true,
     );
   }
 
@@ -260,6 +264,7 @@ final class ModelDeliveryRecord {
   final ModelDeliveryPhase phase;
   final bool allowMobileData;
   final ModelDeliveryVerification? verification;
+  final bool integrityRepairAttempted;
 
   ModelDeliveryRecord copyWith({
     ModelDeliveryManifest? manifest,
@@ -270,6 +275,7 @@ final class ModelDeliveryRecord {
     bool? allowMobileData,
     ModelDeliveryVerification? verification,
     bool clearVerification = false,
+    bool? integrityRepairAttempted,
   }) => ModelDeliveryRecord(
     manifest: manifest ?? this.manifest,
     taskId: clearTask ? null : taskId ?? this.taskId,
@@ -279,6 +285,8 @@ final class ModelDeliveryRecord {
     verification: clearTask || clearVerification
         ? null
         : verification ?? this.verification,
+    integrityRepairAttempted:
+        integrityRepairAttempted ?? this.integrityRepairAttempted,
   );
 
   Map<String, Object?> toJson() => {
@@ -289,6 +297,7 @@ final class ModelDeliveryRecord {
     'phase': phase.name,
     'allowMobileData': allowMobileData,
     'verification': verification?.toJson(),
+    if (integrityRepairAttempted) 'integrityRepairAttempted': true,
   };
 }
 
@@ -489,6 +498,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _remove();
         return;
       }
+      if (_record.phase == ModelDeliveryPhase.integrityRepairPending) {
+        _render();
+        await _continueIntegrityRepair();
+        return;
+      }
       final manifest = _record.manifest;
       if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
         final identity = await _storage.modelIdentity();
@@ -597,6 +611,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         _render();
         if (_canRun && _record.phase == ModelDeliveryPhase.verifying) {
           _beginVerification();
+        } else if (_record.phase == ModelDeliveryPhase.integrityRepairPending) {
+          await _continueIntegrityRepair();
         } else if (_canStartPending) {
           await _startOrResume();
         }
@@ -851,12 +867,22 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (_record.phase == ModelDeliveryPhase.removing) {
         await _remove();
       } else {
+        if (_record.phase == ModelDeliveryPhase.integrityFailed) {
+          _record = _record.copyWith(
+            phase: ModelDeliveryPhase.idle,
+            integrityRepairAttempted: false,
+          );
+          await _persist();
+        }
         await _startOrResume();
       }
     });
   }
 
-  Future<void> _startOrResume({int? recoveryGeneration}) async {
+  Future<void> _startOrResume({
+    int? recoveryGeneration,
+    bool useCachedManifest = false,
+  }) async {
     if (!_canRun || _record.phase == ModelDeliveryPhase.removing) return;
     if (_record.phase == ModelDeliveryPhase.ready ||
         _record.phase == ModelDeliveryPhase.active ||
@@ -879,7 +905,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     final cached = _record.manifest;
     var manifest = cached;
-    if (!recovering) {
+    if (!recovering && !useCachedManifest) {
       Map<String, Object?> raw;
       try {
         raw = await _network.fetchManifest();
@@ -896,10 +922,13 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           cached?.sha256 == manifest.sha256 &&
           cached?.bytes == manifest.bytes &&
           cached?.url == manifest.url;
-      if (!sameFile && _record.taskId != null) {
-        await _cancelOwnedTask();
-        await _storage.removeOwnedModel();
-        _record = _record.copyWith(clearTask: true, receivedBytes: 0);
+      if (!sameFile) {
+        if (_record.taskId != null) {
+          await _cancelOwnedTask();
+          await _storage.removeOwnedModel();
+          _record = _record.copyWith(clearTask: true, receivedBytes: 0);
+        }
+        _record = _record.copyWith(integrityRepairAttempted: false);
       }
       _record = _record.copyWith(manifest: manifest);
       await _persist();
@@ -1210,6 +1239,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _verification = verification;
     unawaited(() async {
       var valid = false;
+      var damaged = false;
       ModelDeliveryFileIdentity? verifiedIdentity;
       try {
         await _storage.prepare();
@@ -1219,8 +1249,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
               (_record.verification?.matches(manifest, before) ?? false) ||
               await _storage.verify(manifest);
           final after = await _storage.modelIdentity();
-          valid =
-              valid && before.sizeBytes == manifest.bytes && before == after;
+          final stable = before.sizeBytes == manifest.bytes && before == after;
+          damaged = stable && !valid;
+          valid = stable && valid;
           if (valid) verifiedIdentity = after;
         }
       } on Object {
@@ -1240,18 +1271,31 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           _verifiedPath = verified.canonicalPath;
           _record = _record.copyWith(
             phase: ModelDeliveryPhase.ready,
+            integrityRepairAttempted: false,
             verification: ModelDeliveryVerification(
               expectedSha256: manifest.sha256,
               identity: verified,
             ),
           );
+        } else if (damaged && !_record.integrityRepairAttempted) {
+          _record = _record.copyWith(
+            phase: ModelDeliveryPhase.integrityRepairPending,
+            integrityRepairAttempted: true,
+            clearVerification: true,
+          );
+          await _persist();
+          _render();
+          await _continueIntegrityRepair();
+          return;
         } else {
           await _storage.removeOwnedModel();
           await _transport.forget(id);
           _record = _record.copyWith(
             clearTask: true,
             receivedBytes: 0,
-            phase: ModelDeliveryPhase.idle,
+            phase: damaged
+                ? ModelDeliveryPhase.integrityFailed
+                : ModelDeliveryPhase.idle,
           );
           _freeBytes = await _storage.availableBytes();
         }
@@ -1264,6 +1308,18 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         }
       });
     }());
+  }
+
+  Future<void> _continueIntegrityRepair() async {
+    if (!_canRun) return;
+    final id = _record.taskId;
+    if (id != null) {
+      await _storage.removeOwnedModel();
+      await _transport.forget(id);
+      _record = _record.copyWith(clearTask: true, receivedBytes: 0);
+      await _persist();
+    }
+    await _startOrResume(useCachedManifest: true);
   }
 
   int get _totalBytes => _record.manifest?.bytes ?? gemmaModelBytes;
@@ -1327,6 +1383,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
                 totalBytes: _totalBytes,
               ),
       ModelDeliveryPhase.verifying => const ModelChecking(),
+      ModelDeliveryPhase.integrityRepairPending => const ModelIntegrityRepair(
+        needsManualRetry: false,
+      ),
+      ModelDeliveryPhase.integrityFailed => const ModelIntegrityRepair(
+        needsManualRetry: true,
+      ),
       ModelDeliveryPhase.failed => const ModelFailed(),
       ModelDeliveryPhase.ready => ModelReady(sizeBytes: _totalBytes),
       ModelDeliveryPhase.removing => const ModelFailed(),
@@ -1335,6 +1397,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             ? ModelWaitingForWifi(
                 receivedBytes: _record.receivedBytes,
                 totalBytes: _totalBytes,
+              )
+            : _record.integrityRepairAttempted
+            ? ModelIntegrityRepair(
+                needsManualRetry: false,
+                canPause: _record.phase == ModelDeliveryPhase.active,
               )
             : ModelDownloading(
                 receivedBytes: _record.receivedBytes,

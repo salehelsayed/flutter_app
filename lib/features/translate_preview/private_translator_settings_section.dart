@@ -66,6 +66,14 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               ),
             ),
             ModelChecking() => (l10n.translator_checking_title, null),
+            ModelIntegrityRepair(:final needsManualRetry, :final canPause) => (
+              l10n.translator_integrity_title,
+              needsManualRetry
+                  ? (l10n.translator_try_again, openSheet)
+                  : canPause
+                  ? (l10n.translator_pause, () => unawaited(controller.pause()))
+                  : null,
+            ),
             ModelDownloading(:final receivedBytes, :final totalBytes) => (
               l10n.translator_settings_downloading(
                 translatorAmount(context, receivedBytes, totalBytes),

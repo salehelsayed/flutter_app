@@ -5072,6 +5072,17 @@ class AppLocalizationsDe extends AppLocalizations {
       'Diese Version kann den neuesten Übersetzer nicht verwenden. Aktualisiere die App, um fortzufahren.';
 
   @override
+  String get translator_integrity_title => 'Die Datei war beschädigt';
+
+  @override
+  String get translator_integrity_retry =>
+      'Wir laden die Datei erneut herunter. Du musst nichts tun.';
+
+  @override
+  String get translator_integrity_exhausted =>
+      'Versuche es erneut, um eine neue Kopie zu laden.';
+
+  @override
   String get translator_close => 'Schließen';
 
   @override

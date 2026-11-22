@@ -168,6 +168,23 @@ class PrivateTranslatorSheet extends StatelessWidget {
         line: l10n.translator_checking_line,
         primary: (l10n.translator_close, close),
       ),
+      ModelIntegrityRepair(needsManualRetry: true) => _SheetLayout(
+        title: l10n.translator_integrity_title,
+        line: l10n.translator_integrity_exhausted,
+        primary: (
+          l10n.translator_try_again,
+          () => unawaited(controller.retry()),
+        ),
+        secondary: (l10n.translator_close, close),
+      ),
+      ModelIntegrityRepair(:final canPause) => _SheetLayout(
+        title: l10n.translator_integrity_title,
+        line: l10n.translator_integrity_retry,
+        primary: (l10n.translator_close, close),
+        secondary: canPause
+            ? (l10n.translator_pause, () => unawaited(controller.pause()))
+            : null,
+      ),
       ModelDownloading(
         :final receivedBytes,
         :final totalBytes,
