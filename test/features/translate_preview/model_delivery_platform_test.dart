@@ -1131,7 +1131,7 @@ void main() {
   );
 
   test(
-    'persisted file identity skips adapter hashing after restart and rejects changed bytes',
+    'persisted identity skips hashing after restart and refetches changed bytes',
     () async {
       SharedPreferences.setMockInitialValues({});
       final preferences = await SharedPreferences.getInstance();
@@ -1206,7 +1206,7 @@ void main() {
       restarted.state.addListener(() => states.add(restarted.state.value));
       await restarted.initialize();
       expect(restarted.state.value, isA<ModelReady>());
-      expect(states.whereType<ModelDownloading>(), isEmpty);
+      expect(states.whereType<ModelChecking>(), isEmpty);
       expect(hashes, 1);
       await restarted.dispose();
       active.remove(restarted);
@@ -1214,10 +1214,20 @@ void main() {
       await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(1000));
       final changed = controller();
       await changed.initialize();
-      await _waitForState<ModelNotDownloaded>(changed);
+      await _waitForState<ModelIntegrityRepair>(changed);
+      await changed
+          .setAllowMobileData(false)
+          .timeout(const Duration(seconds: 3));
       expect(hashes, 2);
       expect(await file.exists(), isFalse);
-      expect((await storage.readRecord())!.verification, isNull);
+      final replacement = (await storage.readRecord())!;
+      expect(replacement.verification, isNull);
+      expect(replacement.phase, ModelDeliveryPhase.active);
+      expect(replacement.taskId, isNot('one'));
+      await expectLater(
+        changed.verifiedModelPath().timeout(const Duration(seconds: 3)),
+        throwsStateError,
+      );
     },
   );
 
