@@ -274,8 +274,8 @@ void main() {
 
   group('BL60 native download failures in the translator sheet', () {
     const bound = Duration(seconds: 3);
-    final manifest = _manifest(bytes: 10 * 1024 * 1024);
-    final deliveredBytes = (.42 * manifest.bytes).round();
+    final manifest = _manifest(bytes: 10000000);
+    final deliveredBytes = manifest.bytes * 42 ~/ 100;
 
     Future<PersistentModelDeliveryController> startDownload(
       _Downloader downloader, {
@@ -366,6 +366,14 @@ void main() {
           ),
         );
         await controller.setAllowMobileData(false).timeout(bound);
+        expect(
+          controller.state.value,
+          isA<ModelServerRetry>().having(
+            (state) => state.retainedBytes,
+            'confirmed retained bytes',
+            deliveredBytes,
+          ),
+        );
         return controller;
       }))!;
 
