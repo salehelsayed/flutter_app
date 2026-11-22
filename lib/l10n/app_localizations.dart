@@ -8177,7 +8177,7 @@ abstract class AppLocalizations {
   /// Sheet line while downloading.
   ///
   /// In en, this message translates to:
-  /// **'You can close this. It keeps going, even if you leave Mknoon.'**
+  /// **'You can leave this screen. Your download can continue in the background and picks up where it stopped.'**
   String get translator_progress_keeps_going;
 
   /// Closes the sheet; the download continues.

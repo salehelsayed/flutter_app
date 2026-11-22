@@ -317,7 +317,8 @@ void main() {
     expect(find.text('about 6 min left'), findsOneWidget);
     expect(
       find.text(
-        'You can close this. It keeps going, even if you leave Mknoon.',
+        'You can leave this screen. Your download can continue in the '
+        'background and picks up where it stopped.',
       ),
       findsOneWidget,
     );

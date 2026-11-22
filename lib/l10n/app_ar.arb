@@ -2212,7 +2212,7 @@
   "translator_progress_title": "جارٍ تجهيز الترجمة",
   "translator_progress_amount": "{received} من {total}",
   "translator_progress_minutes_left": "باقٍ حوالي {minutes} د",
-  "translator_progress_keeps_going": "يمكنك إغلاق هذا. يستمر التنزيل حتى لو غادرت مكنون.",
+  "translator_progress_keeps_going": "يمكنك مغادرة هذه الشاشة. يمكن أن يستمر التنزيل في الخلفية ويُستأنف من حيث توقف.",
   "translator_close": "إغلاق",
   "translator_pause": "إيقاف مؤقت",
   "translator_waiting_title": "بانتظار Wi-Fi",

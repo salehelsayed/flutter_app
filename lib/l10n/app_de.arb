@@ -2212,7 +2212,7 @@
   "translator_progress_title": "Übersetzung wird vorbereitet",
   "translator_progress_amount": "{received} von {total}",
   "translator_progress_minutes_left": "noch etwa {minutes} Min.",
-  "translator_progress_keeps_going": "Du kannst das schließen. Es läuft weiter, auch wenn du Mknoon verlässt.",
+  "translator_progress_keeps_going": "Du kannst diesen Bildschirm verlassen. Der Download kann im Hintergrund weiterlaufen und wird nach einer Unterbrechung fortgesetzt.",
   "translator_close": "Schließen",
   "translator_pause": "Pausieren",
   "translator_waiting_title": "Warte auf WLAN",

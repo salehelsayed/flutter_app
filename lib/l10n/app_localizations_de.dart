@@ -5042,7 +5042,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get translator_progress_keeps_going =>
-      'Du kannst das schließen. Es läuft weiter, auch wenn du Mknoon verlässt.';
+      'Du kannst diesen Bildschirm verlassen. Der Download kann im Hintergrund weiterlaufen und wird nach einer Unterbrechung fortgesetzt.';
 
   @override
   String get translator_close => 'Schließen';

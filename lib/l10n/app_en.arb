@@ -2495,7 +2495,7 @@
   "@translator_progress_amount": {"description": "Downloaded amount, like 1.1 of 2.6 GB.", "placeholders": {"received": {"type": "String"}, "total": {"type": "String"}}},
   "translator_progress_minutes_left": "about {minutes} min left",
   "@translator_progress_minutes_left": {"description": "Time left for the download.", "placeholders": {"minutes": {"type": "String"}}},
-  "translator_progress_keeps_going": "You can close this. It keeps going, even if you leave Mknoon.",
+  "translator_progress_keeps_going": "You can leave this screen. Your download can continue in the background and picks up where it stopped.",
   "@translator_progress_keeps_going": {"description": "Sheet line while downloading."},
   "translator_close": "Close",
   "@translator_close": {"description": "Closes the sheet; the download continues."},

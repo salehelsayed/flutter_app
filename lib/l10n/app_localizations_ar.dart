@@ -4999,7 +4999,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get translator_progress_keeps_going =>
-      'يمكنك إغلاق هذا. يستمر التنزيل حتى لو غادرت مكنون.';
+      'يمكنك مغادرة هذه الشاشة. يمكن أن يستمر التنزيل في الخلفية ويُستأنف من حيث توقف.';
 
   @override
   String get translator_close => 'إغلاق';
