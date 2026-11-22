@@ -4971,6 +4971,89 @@ class AppLocalizationsEn extends AppLocalizations {
       'Try again to download a new copy.';
 
   @override
+  String get translator_connection_title => 'Waiting for a connection';
+
+  @override
+  String translator_connection_kept(String percent) {
+    return 'Your download is safe at $percent%. It continues by itself when you\'re back online.';
+  }
+
+  @override
+  String get translator_connection_unmeasured =>
+      'We\'ll try to continue your download when you\'re back online.';
+
+  @override
+  String translator_kept_amount(String amount) {
+    return '$amount kept';
+  }
+
+  @override
+  String get translator_server_title => 'Our download server isn\'t answering';
+
+  @override
+  String translator_server_retry(String time, String percent) {
+    return 'This is on our side. We\'ll try again in $time, and your $percent% is kept.';
+  }
+
+  @override
+  String translator_server_retry_unmeasured(String time) {
+    return 'This is on our side. We\'ll try again in $time.';
+  }
+
+  @override
+  String translator_server_exhausted(String percent) {
+    return 'This is on our side. Your $percent% is kept. Try again to continue.';
+  }
+
+  @override
+  String get translator_server_exhausted_unmeasured =>
+      'This is on our side. Try again to continue.';
+
+  @override
+  String translator_retry_seconds(String count) {
+    return '$count sec';
+  }
+
+  @override
+  String translator_retry_minutes(String count) {
+    return '$count min';
+  }
+
+  @override
+  String get translator_try_now => 'Try now';
+
+  @override
+  String get translator_transfer_full_title => 'Your phone is full';
+
+  @override
+  String translator_transfer_full_kept(String size, String percent) {
+    return 'Free up $size to finish. Your $percent% is kept.';
+  }
+
+  @override
+  String translator_transfer_full_size(String size) {
+    return 'Free up $size to finish.';
+  }
+
+  @override
+  String get translator_transfer_full_unmeasured =>
+      'Free up some space, then continue the download.';
+
+  @override
+  String get translator_continue => 'Continue';
+
+  @override
+  String get translator_transfer_save_title => 'The download can\'t be saved';
+
+  @override
+  String get translator_transfer_save_line =>
+      'Check your phone\'s storage, then try again.';
+
+  @override
+  String get translator_resume_lost =>
+      'Saved progress couldn\'t be kept. The download will start over.';
+
+  @override
   String get translator_close => 'Close';
 
   @override

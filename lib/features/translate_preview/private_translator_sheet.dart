@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
@@ -27,6 +28,31 @@ String _gigabytes(BuildContext context, int bytes) {
     '0.0',
     language == 'de' ? 'de' : 'en',
   ).format(bytes / 1000000000);
+}
+
+String _additionalSpace(BuildContext context, int bytes) => switch (bytes) {
+  >= 100000000 => translatorSize(
+    context,
+    ((bytes + 99999999) ~/ 100000000) * 100000000,
+  ),
+  >= 1000000 => '${(bytes + 999999) ~/ 1000000} MB',
+  >= 1000 => '${(bytes + 999) ~/ 1000} kB',
+  _ => '$bytes B',
+};
+
+(double?, String, String?)? _retainedProgress(
+  BuildContext context,
+  ModelRetainedDownload state,
+) {
+  final bytes = state.retainedBytes;
+  final percent = state.retainedPercent;
+  if (bytes == null || percent == null) return null;
+  final l10n = AppLocalizations.of(context)!;
+  return (
+    percent / 100,
+    translatorAmount(context, bytes, state.totalBytes),
+    l10n.translator_kept_amount(translatorSize(context, bytes)),
+  );
 }
 
 String translatorAppName(BuildContext context) =>
@@ -185,6 +211,102 @@ class PrivateTranslatorSheet extends StatelessWidget {
             ? (l10n.translator_pause, () => unawaited(controller.pause()))
             : null,
       ),
+      final ModelWaitingForConnection waiting => _SheetLayout(
+        title: l10n.translator_connection_title,
+        line: waiting.retainedPercent == null
+            ? l10n.translator_connection_unmeasured
+            : l10n.translator_connection_kept('${waiting.retainedPercent}'),
+        progress: _retainedProgress(context, waiting),
+        primary: (l10n.translator_close, close),
+        secondary: (l10n.translator_pause, () => unawaited(controller.pause())),
+      ),
+      final ModelServerRetry server => StreamBuilder<void>(
+        stream: server.retryAt == null
+            ? null
+            : Stream<void>.periodic(const Duration(seconds: 1)),
+        builder: (context, _) {
+          final retryAt = server.retryAt;
+          final percent = server.retainedPercent?.toString();
+          final String line;
+          if (retryAt == null) {
+            line = percent == null
+                ? l10n.translator_server_exhausted_unmeasured
+                : l10n.translator_server_exhausted(percent);
+          } else {
+            final seconds =
+                (retryAt.difference(clock.now()).inMilliseconds / 1000)
+                    .ceil()
+                    .clamp(1, 999);
+            final time = seconds < 60
+                ? l10n.translator_retry_seconds('$seconds')
+                : l10n.translator_retry_minutes('${(seconds / 60).ceil()}');
+            line = percent == null
+                ? l10n.translator_server_retry_unmeasured(time)
+                : l10n.translator_server_retry(time, percent);
+          }
+          return _SheetLayout(
+            title: l10n.translator_server_title,
+            line: line,
+            note: server.restartsFromZero ? l10n.translator_resume_lost : null,
+            progress: _retainedProgress(context, server),
+            primary: (
+              retryAt == null
+                  ? l10n.translator_try_again
+                  : l10n.translator_try_now,
+              () => unawaited(controller.retry()),
+            ),
+            secondary: (l10n.translator_close, close),
+          );
+        },
+      ),
+      final ModelDownloadNeedsSpace storage => _SheetLayout(
+        title: l10n.translator_transfer_full_title,
+        line: switch ((storage.additionalBytes, storage.retainedPercent)) {
+          (final int bytes, final int percent) =>
+            l10n.translator_transfer_full_kept(
+              _additionalSpace(context, bytes),
+              '$percent',
+            ),
+          (final int bytes, null) => l10n.translator_transfer_full_size(
+            _additionalSpace(context, bytes),
+          ),
+          _ => l10n.translator_transfer_full_unmeasured,
+        },
+        note: storage.restartsFromZero ? l10n.translator_resume_lost : null,
+        progress: _retainedProgress(context, storage),
+        primary: (
+          l10n.translator_continue,
+          () => unawaited(controller.retry()),
+        ),
+        secondary: (
+          l10n.translator_free_up_space,
+          onFreeUpSpace == null
+              ? null
+              : () async {
+                  await Navigator.of(context).maybePop();
+                  onFreeUpSpace!();
+                },
+        ),
+      ),
+      ModelStorageWriteFailed(:final restartsFromZero) => _SheetLayout(
+        title: l10n.translator_transfer_save_title,
+        line: l10n.translator_transfer_save_line,
+        note: restartsFromZero ? l10n.translator_resume_lost : null,
+        primary: (
+          l10n.translator_try_again,
+          () => unawaited(controller.retry()),
+        ),
+        secondary: (l10n.translator_close, close),
+      ),
+      ModelRestartRequired() => _SheetLayout(
+        title: l10n.translator_failed_title,
+        line: l10n.translator_resume_lost,
+        primary: (
+          l10n.translator_try_again,
+          () => unawaited(controller.retry()),
+        ),
+        secondary: (l10n.translator_close, close),
+      ),
       ModelDownloading(
         :final receivedBytes,
         :final totalBytes,
@@ -258,12 +380,14 @@ class _SheetLayout extends StatelessWidget {
     this.sizes,
     this.privacy,
     this.progress,
+    this.note,
   });
 
   final String title;
   final String line;
   final (String start, String end)? sizes;
   final String? privacy;
+  final String? note;
   final (double? value, String amount, String? note)? progress;
   final _Action primary;
   final _Action? secondary;
@@ -302,6 +426,10 @@ class _SheetLayout extends StatelessWidget {
         ],
         const SizedBox(height: 8),
         Text(line, style: theme.textTheme.bodyMedium?.copyWith(color: muted)),
+        if (note case final note?) ...[
+          const SizedBox(height: 8),
+          Text(note, style: theme.textTheme.bodyMedium?.copyWith(color: muted)),
+        ],
         if (sizes case (final start, final end)) ...[
           const SizedBox(height: 16),
           Container(

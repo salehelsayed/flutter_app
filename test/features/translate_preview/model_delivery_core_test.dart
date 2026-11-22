@@ -456,7 +456,7 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       final ready = _nextState<ModelReady>(h.controller.state);
       verification.complete(true);
       await ready;
@@ -479,7 +479,7 @@ void main() {
           verification: verification,
         );
         addTearDown(h.dispose);
-        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.controller.state.value, isA<ModelChecking>());
         final ready = _nextState<ModelReady>(h.controller.state);
         verification.complete(true);
         await ready;
@@ -520,7 +520,7 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       final ready = _nextState<ModelReady>(h.controller.state);
       verification.complete(true);
       await ready;
@@ -703,11 +703,12 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
-      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
+      final refetching = _nextState<ModelIntegrityRepair>(h.controller.state);
       verification.complete(false);
-      await offer;
+      await refetching;
+      await h.flush();
       expect(h.storage.removals, 1);
     },
   );
@@ -1860,6 +1861,26 @@ void main() {
   group('BL60 translator download sheet states', () {
     const bound = Duration(seconds: 3);
 
+    void testSheet(
+      String description,
+      Future<void> Function(WidgetTester tester, _Harness h) body, {
+      Future<_Harness> Function()? create,
+    }) {
+      testWidgets(description, (tester) async {
+        final h = await (create ?? _Harness.create)().timeout(bound);
+        try {
+          await body(tester, h);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          final verification = h.storage.verification;
+          if (verification != null && !verification.isCompleted) {
+            verification.complete(true);
+          }
+          await h.dispose().timeout(bound);
+        }
+      });
+    }
+
     Future<void> pumpSheet(
       WidgetTester tester,
       ModelDeliveryController controller,
@@ -1877,19 +1898,14 @@ void main() {
         )
         .timeout(bound);
 
-    testWidgets('checking hides Pause while verification is pending', (
+    testSheet('checking hides Pause while verification is pending', (
       tester,
+      h,
     ) async {
-      final verification = Completer<bool>();
       final started = Completer<void>();
-      final h = await _Harness.create(
-        verification: verification,
-      ).timeout(bound);
-      h.storage.verificationStarted = started;
-      addTearDown(() async {
-        verification.complete(true);
-        await h.dispose().timeout(bound);
-      });
+      h.storage
+        ..verification = Completer<bool>()
+        ..verificationStarted = started;
 
       await h.controller.start(allowMobileData: false).timeout(bound);
       await h.event(ModelTransferStatus.complete).timeout(bound);
@@ -1905,16 +1921,10 @@ void main() {
       expect(find.text('Pause'), findsNothing);
     });
 
-    testWidgets(
+    testSheet(
       'the first offline download tap explains the wait without enqueuing',
-      (tester) async {
-        final h = await _Harness.create(
-          wifi: false,
-          freeBytes: 3000000000,
-          record: const ModelDeliveryRecord(),
-        ).timeout(bound);
+      (tester, h) async {
         h.network.offline = true;
-        addTearDown(() => h.dispose().timeout(bound));
 
         await pumpSheet(tester, h.controller);
         await tester.tap(find.text('Download when on Wi-Fi')).timeout(bound);
@@ -1946,14 +1956,18 @@ void main() {
         await h.flush().timeout(bound);
         expect(h.transport.enqueues, [(taskId: h.id, requiresWiFi: true)]);
       },
+      create: () => _Harness.create(
+        wifi: false,
+        freeBytes: 3000000000,
+        record: const ModelDeliveryRecord(),
+      ),
     );
 
-    testWidgets('a newer required build offers Update without enqueuing', (
+    testSheet('a newer required build offers Update without enqueuing', (
       tester,
+      h,
     ) async {
-      final h = await _Harness.create().timeout(bound);
       h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
-      addTearDown(() => h.dispose().timeout(bound));
 
       await pumpSheet(tester, h.controller);
       await tester.tap(find.text('Download on Wi-Fi')).timeout(bound);
@@ -1971,16 +1985,18 @@ void main() {
       expect(find.text('Update'), findsOneWidget);
     });
 
-    testWidgets('connection loss keeps progress and resumes the owned task', (
+    testSheet('connection loss keeps progress and resumes the owned task', (
       tester,
+      h,
     ) async {
-      final h = await _Harness.create().timeout(bound);
-      addTearDown(() => h.dispose().timeout(bound));
       await h.controller.start(allowMobileData: false).timeout(bound);
       final taskId = h.id;
       await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
 
-      h.network.changeWifi(false);
+      h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
+        retainedBytes: 42,
+      );
+      h.network.changeWifi(false, offline: true);
       await h.event(ModelTransferStatus.paused).timeout(bound);
       await pumpSheet(tester, h.controller);
 
@@ -2013,11 +2029,10 @@ void main() {
       expect(h.storage.record!.receivedBytes, 42);
     });
 
-    testWidgets('a checksum mismatch automatically refetches only once', (
+    testSheet('a checksum mismatch automatically refetches only once', (
       tester,
+      h,
     ) async {
-      final h = await _Harness.create().timeout(bound);
-      addTearDown(() => h.dispose().timeout(bound));
       await h.controller.start(allowMobileData: false).timeout(bound);
       final rejected = h.id;
       h.storage.valid = false;
@@ -2336,6 +2351,7 @@ class _Transport implements ModelDeliveryTransport {
   final cancels = <String>[];
   final forgets = <String>[];
   final ownedTasks = <String>{};
+  final checkpoints = <String, ModelResumeCheckpoint>{};
   int peakOwnedTasks = 0;
   bool resumeAccepted = true;
   bool failCancel = false;
@@ -2349,6 +2365,9 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<ModelTransferSnapshot?> restore(String taskId) async =>
       restored?.taskId == taskId ? restored : null;
+  @override
+  Future<ModelResumeCheckpoint?> checkpoint(String taskId) async =>
+      checkpoints[taskId];
   @override
   Future<bool> enqueue({
     required String taskId,
@@ -2389,6 +2408,7 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<void> forget(String taskId) async {
     forgets.add(taskId);
+    checkpoints.remove(taskId);
   }
 
   @override

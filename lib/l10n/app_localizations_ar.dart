@@ -5039,6 +5039,89 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_integrity_exhausted => 'حاول مجددًا لتنزيل نسخة جديدة.';
 
   @override
+  String get translator_connection_title => 'بانتظار الاتصال';
+
+  @override
+  String translator_connection_kept(String percent) {
+    return 'تم حفظ $percent٪ من التنزيل. سيُستأنف تلقائيًا عند عودة الاتصال.';
+  }
+
+  @override
+  String get translator_connection_unmeasured =>
+      'سنحاول متابعة التنزيل عند عودة الاتصال.';
+
+  @override
+  String translator_kept_amount(String amount) {
+    return 'تم حفظ $amount';
+  }
+
+  @override
+  String get translator_server_title => 'خادم التنزيل لا يستجيب';
+
+  @override
+  String translator_server_retry(String time, String percent) {
+    return 'المشكلة من جانبنا. سنحاول مجددًا خلال $time. تم حفظ $percent٪ من التنزيل.';
+  }
+
+  @override
+  String translator_server_retry_unmeasured(String time) {
+    return 'المشكلة من جانبنا. سنحاول مجددًا خلال $time.';
+  }
+
+  @override
+  String translator_server_exhausted(String percent) {
+    return 'المشكلة من جانبنا. تم حفظ $percent٪ من التنزيل. حاول مجددًا للمتابعة.';
+  }
+
+  @override
+  String get translator_server_exhausted_unmeasured =>
+      'المشكلة من جانبنا. حاول مجددًا للمتابعة.';
+
+  @override
+  String translator_retry_seconds(String count) {
+    return '$count ث';
+  }
+
+  @override
+  String translator_retry_minutes(String count) {
+    return '$count د';
+  }
+
+  @override
+  String get translator_try_now => 'حاول الآن';
+
+  @override
+  String get translator_transfer_full_title => 'مساحة هاتفك ممتلئة';
+
+  @override
+  String translator_transfer_full_kept(String size, String percent) {
+    return 'أفرغ $size لإكمال التنزيل. تم حفظ $percent٪ من التنزيل.';
+  }
+
+  @override
+  String translator_transfer_full_size(String size) {
+    return 'أفرغ $size لإكمال التنزيل.';
+  }
+
+  @override
+  String get translator_transfer_full_unmeasured =>
+      'أفرغ بعض المساحة، ثم تابع التنزيل.';
+
+  @override
+  String get translator_continue => 'متابعة';
+
+  @override
+  String get translator_transfer_save_title => 'تعذّر حفظ التنزيل';
+
+  @override
+  String get translator_transfer_save_line =>
+      'تحقق من مساحة التخزين على هاتفك، ثم حاول مجددًا.';
+
+  @override
+  String get translator_resume_lost =>
+      'تعذّر الاحتفاظ بتقدّم التنزيل. سيبدأ التنزيل من جديد.';
+
+  @override
   String get translator_close => 'إغلاق';
 
   @override

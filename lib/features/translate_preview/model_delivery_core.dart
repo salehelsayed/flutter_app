@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
@@ -121,6 +122,11 @@ enum ModelDeliveryPhase {
   insufficientSpace,
   active,
   waitingToRetry,
+  waitingForConnection,
+  serverRetry,
+  transferNeedsSpace,
+  storageWriteFailed,
+  restartRequired,
   resumeRequested,
   pauseRequested,
   userPaused,
@@ -228,6 +234,7 @@ final class ModelDeliveryRecord {
     this.allowMobileData = false,
     this.verification,
     this.integrityRepairAttempted = false,
+    this.recovery,
   });
 
   factory ModelDeliveryRecord.fromJson(Map<String, Object?> json) {
@@ -255,6 +262,7 @@ final class ModelDeliveryRecord {
       allowMobileData: allow,
       verification: ModelDeliveryVerification.tryFromJson(json['verification']),
       integrityRepairAttempted: json['integrityRepairAttempted'] == true,
+      recovery: ModelTransferRecovery.tryFromJson(json['recovery']),
     );
   }
 
@@ -265,6 +273,7 @@ final class ModelDeliveryRecord {
   final bool allowMobileData;
   final ModelDeliveryVerification? verification;
   final bool integrityRepairAttempted;
+  final ModelTransferRecovery? recovery;
 
   ModelDeliveryRecord copyWith({
     ModelDeliveryManifest? manifest,
@@ -276,6 +285,8 @@ final class ModelDeliveryRecord {
     ModelDeliveryVerification? verification,
     bool clearVerification = false,
     bool? integrityRepairAttempted,
+    ModelTransferRecovery? recovery,
+    bool clearRecovery = false,
   }) => ModelDeliveryRecord(
     manifest: manifest ?? this.manifest,
     taskId: clearTask ? null : taskId ?? this.taskId,
@@ -287,6 +298,9 @@ final class ModelDeliveryRecord {
         : verification ?? this.verification,
     integrityRepairAttempted:
         integrityRepairAttempted ?? this.integrityRepairAttempted,
+    recovery: clearRecovery
+        ? null
+        : recovery ?? (clearTask ? null : this.recovery),
   );
 
   Map<String, Object?> toJson() => {
@@ -298,7 +312,61 @@ final class ModelDeliveryRecord {
     'allowMobileData': allowMobileData,
     'verification': verification?.toJson(),
     if (integrityRepairAttempted) 'integrityRepairAttempted': true,
+    if (recovery != null) 'recovery': recovery!.toJson(),
   };
+}
+
+final class ModelResumeCheckpoint {
+  const ModelResumeCheckpoint({required this.retainedBytes});
+
+  /// iOS exposes an opaque resume token and no trusted byte offset.
+  final int? retainedBytes;
+}
+
+final class ModelTransferRecovery {
+  const ModelTransferRecovery({
+    this.checkpoint,
+    this.restartsFromZero = false,
+    this.serverAttempts = 0,
+    this.retryAt,
+  });
+
+  final ModelResumeCheckpoint? checkpoint;
+  final bool restartsFromZero;
+  final int serverAttempts;
+  final DateTime? retryAt;
+
+  static ModelTransferRecovery? tryFromJson(Object? json) {
+    if (json is! Map<String, Object?>) return null;
+    final bytes = json['retainedBytes'];
+    final hasCheckpoint = json['hasCheckpoint'] == true;
+    final attempts = json['serverAttempts'];
+    final at = json['retryAt'];
+    return ModelTransferRecovery(
+      checkpoint: hasCheckpoint && (bytes == null || bytes is int && bytes > 0)
+          ? ModelResumeCheckpoint(retainedBytes: bytes as int?)
+          : null,
+      restartsFromZero: json['restartsFromZero'] == true,
+      serverAttempts: attempts is int ? max(0, attempts) : 0,
+      retryAt: at is String ? DateTime.tryParse(at) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'hasCheckpoint': checkpoint != null,
+    'retainedBytes': checkpoint?.retainedBytes,
+    'restartsFromZero': restartsFromZero,
+    'serverAttempts': serverAttempts,
+    'retryAt': retryAt?.toIso8601String(),
+  };
+}
+
+enum ModelTransferFailure {
+  connection,
+  server,
+  storageFull,
+  storageWrite,
+  invalidCheckpoint,
 }
 
 enum ModelTransferStatus {
@@ -317,12 +385,14 @@ final class ModelTransferEvent {
     this.status,
     this.receivedBytes,
     this.remaining,
+    this.failure,
   });
 
   final String taskId;
   final ModelTransferStatus? status;
   final int? receivedBytes;
   final Duration? remaining;
+  final ModelTransferFailure? failure;
 }
 
 final class ModelTransferSnapshot {
@@ -330,11 +400,13 @@ final class ModelTransferSnapshot {
     required this.taskId,
     required this.status,
     required this.receivedBytes,
+    this.failure,
   });
 
   final String taskId;
   final ModelTransferStatus status;
   final int receivedBytes;
+  final ModelTransferFailure? failure;
 }
 
 abstract interface class ModelDeliveryStorage {
@@ -364,6 +436,7 @@ abstract interface class ModelDeliveryTransport {
   Stream<ModelTransferEvent> get events;
   Future<void> initialize(String? ownedTaskId);
   Future<ModelTransferSnapshot?> restore(String taskId);
+  Future<ModelResumeCheckpoint?> checkpoint(String taskId);
   Future<bool> enqueue({
     required String taskId,
     required ModelDeliveryManifest manifest,
@@ -441,6 +514,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   ({String taskId, int generation})? _verification;
   Timer? _recoveryTimer;
   int _recoveryDelaySeconds = 5;
+  static const _serverRetrySeconds = [5, 15, 45];
 
   @override
   ValueListenable<ModelDeliveryState> get state => _state;
@@ -503,6 +577,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _continueIntegrityRepair();
         return;
       }
+      if (_hasManagedRecovery) {
+        await _restoreManagedCheckpoint();
+        _render();
+        return;
+      }
       final manifest = _record.manifest;
       if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
         final identity = await _storage.modelIdentity();
@@ -521,6 +600,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (id != null) {
         final recovered = await _transport.restore(id);
         if (recovered != null) {
+          if (recovered.failure case final failure?) {
+            if (_record.phase != ModelDeliveryPhase.userPaused &&
+                _record.phase != ModelDeliveryPhase.pauseRequested) {
+              await _recoverFromFailure(failure);
+              await _persist();
+              _render();
+              return;
+            }
+          }
           final retryPausedTask =
               recovered.status == ModelTransferStatus.paused &&
               _shouldRecoverUnexpectedPause;
@@ -780,7 +868,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         }
         if (_record.phase == ModelDeliveryPhase.idle ||
             _record.phase == ModelDeliveryPhase.insufficientSpace ||
-            _record.phase == ModelDeliveryPhase.userPaused) {
+            _record.phase == ModelDeliveryPhase.userPaused ||
+            _record.phase == ModelDeliveryPhase.transferNeedsSpace) {
           _render();
         }
       });
@@ -874,7 +963,18 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           );
           await _persist();
         }
-        await _startOrResume();
+        if (_record.phase == ModelDeliveryPhase.serverRetry &&
+            _record.recovery?.retryAt == null) {
+          final recovery = _record.recovery;
+          _record = _record.copyWith(
+            recovery: ModelTransferRecovery(
+              checkpoint: recovery?.checkpoint,
+              restartsFromZero: recovery?.restartsFromZero ?? false,
+            ),
+          );
+          await _persist();
+        }
+        await _startOrResume(manualRetry: true);
       }
     });
   }
@@ -882,6 +982,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   Future<void> _startOrResume({
     int? recoveryGeneration,
     bool useCachedManifest = false,
+    bool manualRetry = false,
   }) async {
     if (!_canRun || _record.phase == ModelDeliveryPhase.removing) return;
     if (_record.phase == ModelDeliveryPhase.ready ||
@@ -893,6 +994,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     _verifiedPath = null;
     final recovering = recoveryGeneration != null;
+    final managedRecovery = _hasManagedRecovery;
+    final needsFreshStart = _record.recovery?.restartsFromZero ?? false;
+    if (needsFreshStart && !manualRetry) return;
     final pending = _record.phase == ModelDeliveryPhase.awaitingConnection;
     final generation = _generation;
     if (!recovering) {
@@ -905,7 +1009,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     final cached = _record.manifest;
     var manifest = cached;
-    if (!recovering && !useCachedManifest) {
+    if (!recovering && !useCachedManifest && !managedRecovery) {
       Map<String, Object?> raw;
       try {
         raw = await _network.fetchManifest();
@@ -924,6 +1028,18 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           cached?.url == manifest.url;
       if (!sameFile) {
         if (_record.taskId != null) {
+          if (_record.receivedBytes > 0 ||
+              _record.recovery?.checkpoint != null) {
+            _record = _record.copyWith(
+              manifest: manifest,
+              phase: ModelDeliveryPhase.restartRequired,
+              recovery: const ModelTransferRecovery(restartsFromZero: true),
+              integrityRepairAttempted: false,
+            );
+            await _persist();
+            _render();
+            return;
+          }
           await _cancelOwnedTask();
           await _storage.removeOwnedModel();
           _record = _record.copyWith(clearTask: true, receivedBytes: 0);
@@ -950,7 +1066,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _render();
       return;
     }
-    if (hasCompleteFile) {
+    if (hasCompleteFile && !needsFreshStart) {
       _record = _record.copyWith(
         taskId: _record.taskId ?? _newTaskId(),
         receivedBytes: manifest.bytes,
@@ -962,28 +1078,63 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       return;
     }
     if (!recovering && await _deferOfflineStart()) return;
-    if (_freeBytes < _neededBytes) {
-      _record = _record.copyWith(phase: ModelDeliveryPhase.insufficientSpace);
+    final transferNeedsSpace =
+        _record.phase == ModelDeliveryPhase.transferNeedsSpace;
+    final requiredBytes = managedRecovery
+        ? _neededBytesForRecovery
+        : _neededBytes;
+    if (requiredBytes != null && _freeBytes < requiredBytes) {
+      if (!transferNeedsSpace) {
+        _record = _record.copyWith(
+          phase: managedRecovery
+              ? ModelDeliveryPhase.transferNeedsSpace
+              : ModelDeliveryPhase.insufficientSpace,
+        );
+      }
       await _persist();
       _render();
       return;
     }
     var id = _record.taskId;
+    final resumeCheckpoint = _record.recovery?.checkpoint;
+    if (id != null &&
+        (needsFreshStart || managedRecovery && resumeCheckpoint == null)) {
+      await _cancelOwnedTask();
+      await _storage.removeOwnedModel();
+      _record = _record.copyWith(
+        clearTask: true,
+        receivedBytes: 0,
+        recovery: ModelTransferRecovery(
+          serverAttempts: _record.recovery?.serverAttempts ?? 0,
+        ),
+      );
+      id = null;
+    }
     if (id != null && _record.phase != ModelDeliveryPhase.failed) {
-      if (!recovering) {
+      if (!recovering || managedRecovery) {
         _record = _record.copyWith(phase: ModelDeliveryPhase.resumeRequested);
         await _persist();
       }
       final accepted = await _transport.resume(
         id,
         requiresWiFi: !_record.allowMobileData,
-        allowZeroByteRestart: _record.receivedBytes == 0,
+        allowZeroByteRestart:
+            resumeCheckpoint == null && _record.receivedBytes == 0,
       );
-      if (recovering && accepted) {
+      if ((recovering || managedRecovery) && accepted) {
         _record = _record.copyWith(phase: ModelDeliveryPhase.active);
         await _persist();
       }
-      if (accepted || recovering) {
+      if (accepted || recovering && !managedRecovery) {
+        _render();
+        return;
+      }
+      if (resumeCheckpoint != null || _record.receivedBytes > 0) {
+        _record = _record.copyWith(
+          phase: ModelDeliveryPhase.restartRequired,
+          recovery: const ModelTransferRecovery(restartsFromZero: true),
+        );
+        await _persist();
         _render();
         return;
       }
@@ -1040,7 +1191,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _cancelRecoveryTimer();
     return _perform(() async {
       if (_record.phase == ModelDeliveryPhase.verifying ||
-          _record.phase == ModelDeliveryPhase.waitingToRetry) {
+          _record.phase == ModelDeliveryPhase.waitingToRetry ||
+          _record.phase == ModelDeliveryPhase.waitingForConnection ||
+          _record.phase == ModelDeliveryPhase.serverRetry &&
+              !_connectionEligible) {
         _record = _record.copyWith(phase: ModelDeliveryPhase.userPaused);
       } else if (_record.phase == ModelDeliveryPhase.active ||
           _record.phase == ModelDeliveryPhase.policyPauseRequested) {
@@ -1094,7 +1248,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (event.taskId != _record.taskId ||
           _record.phase == ModelDeliveryPhase.removing ||
           _record.phase == ModelDeliveryPhase.idle ||
-          _record.phase == ModelDeliveryPhase.ready) {
+          _record.phase == ModelDeliveryPhase.ready ||
+          _hasManagedRecovery) {
         return;
       }
       if (event.receivedBytes case final bytes?) {
@@ -1127,6 +1282,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             _record = _record.copyWith(phase: ModelDeliveryPhase.userPaused);
             await _persist();
             await _startOrResume();
+          } else if (_record.phase != ModelDeliveryPhase.userPaused &&
+              _record.phase != ModelDeliveryPhase.pauseRequested &&
+              _connection == ModelDeliveryConnection.offline) {
+            await _recoverFromFailure(ModelTransferFailure.connection);
           } else if (_shouldRecoverUnexpectedPause) {
             _record = _record.copyWith(
               phase: ModelDeliveryPhase.waitingToRetry,
@@ -1135,7 +1294,17 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           } else {
             _record = _record.copyWith(phase: ModelDeliveryPhase.userPaused);
           }
-        case ModelTransferStatus.failed || ModelTransferStatus.canceled:
+        case ModelTransferStatus.failed:
+          if (_record.phase == ModelDeliveryPhase.verifying) return;
+          if (_record.phase == ModelDeliveryPhase.userPaused ||
+              _record.phase == ModelDeliveryPhase.pauseRequested) {
+            _record = _record.copyWith(phase: ModelDeliveryPhase.userPaused);
+          } else if (event.failure case final failure?) {
+            await _recoverFromFailure(failure);
+          } else {
+            _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
+          }
+        case ModelTransferStatus.canceled:
           _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
         case ModelTransferStatus.running ||
             ModelTransferStatus.enqueued ||
@@ -1149,6 +1318,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             _record = _record.copyWith(phase: ModelDeliveryPhase.active);
           }
         case null:
+          if (event.receivedBytes != null) await _persist();
           _render();
           return;
       }
@@ -1157,17 +1327,101 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }),
   );
 
+  Future<void> _recoverFromFailure(ModelTransferFailure failure) async {
+    final id = _record.taskId;
+    if (id == null || _record.manifest == null) return;
+    var checkpoint = failure == ModelTransferFailure.invalidCheckpoint
+        ? null
+        : await _transport.checkpoint(id);
+    if (checkpoint?.retainedBytes case final int bytes
+        when bytes >= _totalBytes) {
+      checkpoint = null;
+    }
+    final losingProgress =
+        checkpoint == null && _record.receivedBytes > 0 ||
+        failure == ModelTransferFailure.invalidCheckpoint;
+    var attempts = _record.recovery?.serverAttempts ?? 0;
+    DateTime? retryAt;
+    if (failure == ModelTransferFailure.server &&
+        !losingProgress &&
+        attempts < _serverRetrySeconds.length) {
+      retryAt = clock.now().toUtc().add(
+        Duration(seconds: _serverRetrySeconds[attempts]),
+      );
+      attempts++;
+    }
+    _remaining = null;
+    _record = _record.copyWith(
+      receivedBytes: checkpoint?.retainedBytes,
+      recovery: ModelTransferRecovery(
+        checkpoint: checkpoint,
+        restartsFromZero: losingProgress,
+        serverAttempts: attempts,
+        retryAt: retryAt,
+      ),
+    );
+    if (failure == ModelTransferFailure.storageFull ||
+        failure == ModelTransferFailure.storageWrite) {
+      _freeBytes = await _storage.availableBytes();
+    }
+    final required = _neededBytesForRecovery;
+    final phase = switch (failure) {
+      ModelTransferFailure.connection =>
+        losingProgress
+            ? ModelDeliveryPhase.restartRequired
+            : ModelDeliveryPhase.waitingForConnection,
+      ModelTransferFailure.server => ModelDeliveryPhase.serverRetry,
+      ModelTransferFailure.storageFull => ModelDeliveryPhase.transferNeedsSpace,
+      ModelTransferFailure.storageWrite =>
+        required != null && required > _freeBytes
+            ? ModelDeliveryPhase.transferNeedsSpace
+            : ModelDeliveryPhase.storageWriteFailed,
+      ModelTransferFailure.invalidCheckpoint =>
+        ModelDeliveryPhase.restartRequired,
+    };
+    _record = _record.copyWith(phase: phase);
+  }
+
+  Future<void> _restoreManagedCheckpoint() async {
+    final id = _record.taskId;
+    final recovery = _record.recovery;
+    if (id == null || recovery?.checkpoint == null) return;
+    final checkpoint = await _transport.checkpoint(id);
+    if (checkpoint != null &&
+        checkpoint.retainedBytes == recovery!.checkpoint?.retainedBytes) {
+      return;
+    }
+    _record = _record.copyWith(
+      phase:
+          checkpoint == null &&
+              _record.phase == ModelDeliveryPhase.waitingForConnection
+          ? ModelDeliveryPhase.restartRequired
+          : _record.phase,
+      receivedBytes: checkpoint?.retainedBytes,
+      recovery: ModelTransferRecovery(
+        checkpoint: checkpoint,
+        restartsFromZero: checkpoint == null,
+        serverAttempts: recovery!.serverAttempts,
+        retryAt: checkpoint == null ? null : recovery.retryAt,
+      ),
+    );
+    await _persist();
+  }
+
   void _receiveConnection(ModelDeliveryConnection connection) {
     final generation = _generation;
     unawaited(
       _perform(() async {
-        final returned = connection == ModelDeliveryConnection.wifi && !_onWifi;
+        final wasEligible = _connectionEligible;
+        final wifiReturned =
+            connection == ModelDeliveryConnection.wifi && !_onWifi;
         _connection = connection;
         if (generation == _generation && _canStartPending) {
           await _startOrResume();
           return;
         }
-        if (returned) {
+        final returned = wifiReturned || !wasEligible && _connectionEligible;
+        if (returned && _record.phase != ModelDeliveryPhase.serverRetry) {
           _resetRecoveryDelay();
           final id = _record.taskId;
           if (id != null && _canRecoverTransfer) {
@@ -1190,10 +1444,24 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   bool get _canRecoverTransfer =>
       !_disposed &&
       _canRun &&
-      _transport.canRecoverUnexpectedPauses &&
-      _record.phase == ModelDeliveryPhase.waitingToRetry &&
       _record.manifest != null &&
-      (_onWifi || _record.allowMobileData);
+      _connectionEligible &&
+      switch (_record.phase) {
+        ModelDeliveryPhase.waitingToRetry =>
+          _transport.canRecoverUnexpectedPauses,
+        ModelDeliveryPhase.waitingForConnection => true,
+        ModelDeliveryPhase.serverRetry => _record.recovery?.retryAt != null,
+        _ => false,
+      };
+
+  bool get _hasManagedRecovery => switch (_record.phase) {
+    ModelDeliveryPhase.waitingForConnection ||
+    ModelDeliveryPhase.serverRetry ||
+    ModelDeliveryPhase.transferNeedsSpace ||
+    ModelDeliveryPhase.storageWriteFailed ||
+    ModelDeliveryPhase.restartRequired => true,
+    _ => false,
+  };
 
   void _cancelRecoveryTimer() {
     _recoveryTimer?.cancel();
@@ -1213,7 +1481,13 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     final id = _record.taskId;
     if (_recoveryTimer != null || id == null) return;
     final generation = _generation;
-    _recoveryTimer = Timer(Duration(seconds: _recoveryDelaySeconds), () {
+    final deadline = _record.phase == ModelDeliveryPhase.serverRetry
+        ? _record.recovery?.retryAt
+        : null;
+    final delay =
+        deadline?.difference(clock.now()) ??
+        Duration(seconds: _recoveryDelaySeconds);
+    _recoveryTimer = Timer(delay, () {
       _recoveryTimer = null;
       unawaited(_perform(() => _recoverTransfer(id, generation)));
     });
@@ -1325,13 +1599,22 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   int get _totalBytes => _record.manifest?.bytes ?? gemmaModelBytes;
   int get _neededBytes =>
       max(0, _totalBytes - _record.receivedBytes) + _spaceReserveBytes;
+  int? get _neededBytesForRecovery {
+    final checkpoint = _record.recovery?.checkpoint;
+    if (checkpoint != null && checkpoint.retainedBytes == null) return null;
+    return max(0, _totalBytes - (checkpoint?.retainedBytes ?? 0)) +
+        _spaceReserveBytes;
+  }
+
   int _clamp(int bytes) => bytes.clamp(0, _totalBytes);
   bool get _onWifi => _connection == ModelDeliveryConnection.wifi;
+  bool get _connectionEligible =>
+      _onWifi ||
+      _record.allowMobileData && _connection == ModelDeliveryConnection.other;
   bool get _canStartPending =>
       _canRun &&
       _record.phase == ModelDeliveryPhase.awaitingConnection &&
-      _connection != ModelDeliveryConnection.offline &&
-      (_onWifi || _record.allowMobileData);
+      _connectionEligible;
   bool get _eligibleDevice => _supported.value && _safety.blockedReason == null;
   bool get _requiresUpdate => (_record.manifest?.minAppBuild ?? 0) > _build;
   bool get _canRun => _eligibleDevice && !_requiresUpdate;
@@ -1347,6 +1630,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _state.value = const ModelUpdateRequired();
       return;
     }
+    final recovery = _record.recovery;
+    final kept = recovery?.checkpoint?.retainedBytes;
+    final required = _neededBytesForRecovery;
     _state.value = switch (_record.phase) {
       ModelDeliveryPhase.idle =>
         _freeBytes < _neededBytes
@@ -1382,6 +1668,36 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
                 receivedBytes: _record.receivedBytes,
                 totalBytes: _totalBytes,
               ),
+      ModelDeliveryPhase.waitingForConnection || ModelDeliveryPhase.serverRetry
+          when _connection == ModelDeliveryConnection.other &&
+              !_record.allowMobileData &&
+              !(recovery?.restartsFromZero ?? false) =>
+        ModelWaitingForWifi(receivedBytes: kept ?? 0, totalBytes: _totalBytes),
+      ModelDeliveryPhase.waitingForConnection => ModelWaitingForConnection(
+        retainedBytes: kept,
+        totalBytes: _totalBytes,
+      ),
+      ModelDeliveryPhase.serverRetry
+          when !_connectionEligible && recovery?.retryAt != null =>
+        ModelWaitingForConnection(retainedBytes: kept, totalBytes: _totalBytes),
+      ModelDeliveryPhase.serverRetry => ModelServerRetry(
+        retainedBytes: kept,
+        totalBytes: _totalBytes,
+        retryAt: recovery?.retryAt,
+        restartsFromZero: recovery?.restartsFromZero ?? false,
+      ),
+      ModelDeliveryPhase.transferNeedsSpace => ModelDownloadNeedsSpace(
+        retainedBytes: kept,
+        totalBytes: _totalBytes,
+        additionalBytes: required != null && required > _freeBytes
+            ? required - _freeBytes
+            : null,
+        restartsFromZero: recovery?.restartsFromZero ?? false,
+      ),
+      ModelDeliveryPhase.storageWriteFailed => ModelStorageWriteFailed(
+        restartsFromZero: recovery?.restartsFromZero ?? false,
+      ),
+      ModelDeliveryPhase.restartRequired => const ModelRestartRequired(),
       ModelDeliveryPhase.verifying => const ModelChecking(),
       ModelDeliveryPhase.integrityRepairPending => const ModelIntegrityRepair(
         needsManualRetry: false,

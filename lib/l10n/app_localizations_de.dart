@@ -5083,6 +5083,91 @@ class AppLocalizationsDe extends AppLocalizations {
       'Versuche es erneut, um eine neue Kopie zu laden.';
 
   @override
+  String get translator_connection_title => 'Warten auf eine Verbindung';
+
+  @override
+  String translator_connection_kept(String percent) {
+    return 'Dein Fortschritt von $percent % ist gespeichert. Sobald du wieder online bist, läuft der Download automatisch weiter.';
+  }
+
+  @override
+  String get translator_connection_unmeasured =>
+      'Wir versuchen, den Download fortzusetzen, sobald du wieder online bist.';
+
+  @override
+  String translator_kept_amount(String amount) {
+    return '$amount gespeichert';
+  }
+
+  @override
+  String get translator_server_title => 'Unser Downloadserver antwortet nicht';
+
+  @override
+  String translator_server_retry(String time, String percent) {
+    return 'Das Problem liegt bei uns. Wir versuchen es in $time erneut. Dein Fortschritt von $percent % ist gespeichert.';
+  }
+
+  @override
+  String translator_server_retry_unmeasured(String time) {
+    return 'Das Problem liegt bei uns. Wir versuchen es in $time erneut.';
+  }
+
+  @override
+  String translator_server_exhausted(String percent) {
+    return 'Das Problem liegt bei uns. Dein Fortschritt von $percent % ist gespeichert. Versuche es erneut, um fortzufahren.';
+  }
+
+  @override
+  String get translator_server_exhausted_unmeasured =>
+      'Das Problem liegt bei uns. Versuche es erneut, um fortzufahren.';
+
+  @override
+  String translator_retry_seconds(String count) {
+    return '$count Sek.';
+  }
+
+  @override
+  String translator_retry_minutes(String count) {
+    return '$count Min.';
+  }
+
+  @override
+  String get translator_try_now => 'Jetzt versuchen';
+
+  @override
+  String get translator_transfer_full_title =>
+      'Der Speicher deines Handys ist voll';
+
+  @override
+  String translator_transfer_full_kept(String size, String percent) {
+    return 'Gib $size frei, um den Download abzuschließen. Dein Fortschritt von $percent % ist gespeichert.';
+  }
+
+  @override
+  String translator_transfer_full_size(String size) {
+    return 'Gib $size frei, um den Download abzuschließen.';
+  }
+
+  @override
+  String get translator_transfer_full_unmeasured =>
+      'Gib etwas Speicherplatz frei und setze den Download dann fort.';
+
+  @override
+  String get translator_continue => 'Weiter';
+
+  @override
+  String get translator_transfer_save_title =>
+      'Der Download kann nicht gespeichert werden';
+
+  @override
+  String get translator_transfer_save_line =>
+      'Prüfe den Speicher deines Handys und versuche es erneut.';
+
+  @override
+  String get translator_resume_lost =>
+      'Der gespeicherte Fortschritt konnte nicht übernommen werden. Der Download beginnt von vorn.';
+
+  @override
   String get translator_close => 'Schließen';
 
   @override

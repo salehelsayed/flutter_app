@@ -101,6 +101,65 @@ final class ModelPaused extends ModelDeliveryInProgress {
   const ModelPaused({required super.receivedBytes, required super.totalBytes});
 }
 
+sealed class ModelRetainedDownload extends ModelDeliveryState {
+  const ModelRetainedDownload({
+    required this.retainedBytes,
+    required this.totalBytes,
+  });
+
+  final int? retainedBytes;
+  final int totalBytes;
+
+  int? get retainedPercent => switch (retainedBytes) {
+    final int bytes when totalBytes > 0 => (bytes * 100 ~/ totalBytes).clamp(
+      0,
+      100,
+    ),
+    _ => null,
+  };
+}
+
+final class ModelWaitingForConnection extends ModelRetainedDownload {
+  const ModelWaitingForConnection({
+    required super.retainedBytes,
+    required super.totalBytes,
+  });
+}
+
+final class ModelServerRetry extends ModelRetainedDownload {
+  const ModelServerRetry({
+    required super.retainedBytes,
+    required super.totalBytes,
+    required this.retryAt,
+    required this.restartsFromZero,
+  });
+
+  final DateTime? retryAt;
+  final bool restartsFromZero;
+}
+
+final class ModelDownloadNeedsSpace extends ModelRetainedDownload {
+  const ModelDownloadNeedsSpace({
+    required super.retainedBytes,
+    required super.totalBytes,
+    required this.additionalBytes,
+    required this.restartsFromZero,
+  });
+
+  final int? additionalBytes;
+  final bool restartsFromZero;
+}
+
+final class ModelStorageWriteFailed extends ModelDeliveryState {
+  const ModelStorageWriteFailed({required this.restartsFromZero});
+
+  final bool restartsFromZero;
+}
+
+final class ModelRestartRequired extends ModelDeliveryState {
+  const ModelRestartRequired();
+}
+
 /// The silent retries ran out (broken file or server error).
 final class ModelFailed extends ModelDeliveryState {
   const ModelFailed();
