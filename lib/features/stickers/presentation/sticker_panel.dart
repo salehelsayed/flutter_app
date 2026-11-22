@@ -666,7 +666,7 @@ class _CustomStickerCell extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
-  /// Screen-reader replacements for dragging and the delete badge.
+  /// Screen-reader alternatives to dragging and using the delete badge.
   final Map<CustomSemanticsAction, VoidCallback> manageActions;
   final VoidCallback onDelete;
 
@@ -706,27 +706,34 @@ class _CustomStickerCell extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: colors.border),
               ),
-              child: image,
+              child: ExcludeSemantics(child: image),
             ),
           ),
           PositionedDirectional(
             top: 0,
             end: 0,
-            child: GestureDetector(
+            child: Semantics(
               key: ValueKey('my-sticker-delete-${sticker.id}'),
-              behavior: HitTestBehavior.opaque,
+              container: true,
+              button: true,
+              label: AppLocalizations.of(context)!.stickers_delete,
               onTap: onDelete,
-              child: Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.error,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 14,
-                  color: Theme.of(context).colorScheme.onError,
+              excludeSemantics: true,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onDelete,
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 14,
+                    color: Theme.of(context).colorScheme.onError,
+                  ),
                 ),
               ),
             ),
@@ -735,9 +742,10 @@ class _CustomStickerCell extends StatelessWidget {
       ),
     );
     return Semantics(
+      container: true,
+      explicitChildNodes: true,
       label: label,
       customSemanticsActions: manageActions,
-      excludeSemantics: true,
       child: DragTarget<String>(
         onWillAcceptWithDetails: (details) => details.data != sticker.id,
         onAcceptWithDetails: (details) => onDropped(details.data),

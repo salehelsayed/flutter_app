@@ -888,6 +888,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
     final rc = context.backgroundReadableColors;
     final thought = widget.thoughtsOnly;
+    final thoughtVideo = thought && _mediaDrafts.firstOrNull?.kind == 'video';
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1172,12 +1173,19 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         ] else if (_mediaDrafts.isNotEmpty &&
             _mediaDrafts.first.kind != 'voice') ...[
           const SizedBox(height: 12),
-          AttachmentPreviewStrip(
-            attachments: [
-              for (final draft in _mediaDrafts) File(draft.localFilePath),
-            ],
-            onRemove: (index) => setState(
-              () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+          Semantics(
+            container: thoughtVideo,
+            explicitChildNodes: thoughtVideo,
+            label: thoughtVideo
+                ? AppLocalizations.of(context)!.shared_media_kind_video
+                : null,
+            child: AttachmentPreviewStrip(
+              attachments: [
+                for (final draft in _mediaDrafts) File(draft.localFilePath),
+              ],
+              onRemove: (index) => setState(
+                () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+              ),
             ),
           ),
         ],
