@@ -5051,13 +5051,23 @@ expiry tests need a second live peer and must assert its face rotates to the
 front as well as its card changing. A static replacement-card assertion misses
 that geometry failure.
 
-Friend full-screen Thought reactions use the same four circles, quoted-chat
-sender and send ledger as the 3D bar; own Thoughts expose no reaction controls.
-The wiring tests cover text and decoded-photo cards, all four quoted sends,
-selection in both directions and duplicate suppression after returning to 3D.
-The card tests retain the own-card exclusion and verify a later failed
-delivery retries the same message ID, plus 320-point EN/AR layouts at 2× text.
-The dial's unsent drafts remain local when shared answer state changes.
+Friend Thought replies share a quoted-chat sender and answer ledger across
+full screen and depth. Both docks have four fixed reactions and the Emoji and
+Stickers picker. At rest, full screen adds the personal emoji and text field.
+Depth uses a Reply pill and guards the chips during swipes and for 300 ms after
+settlement. Own Thoughts have no reply dock. The wiring and card tests cover
+text and decoded-photo cards, duplicate suppression across both views, retry
+with the same message ID, and 320-point EN/AR layouts at 2× text. Unsent text
+stays local while the shared answer state changes.
+
+Depth layout assertions must send a reaction and let the confirmation settle
+before measuring the resting dock. Three Orbit cases on `eb4c8a00e` exposed a
+2 px overflow after history appeared. A 28 px history row, 6 px gap and
+48 px Reply tap target exceeded the dock's 80 px height. The compact history
+now flexes into the remaining space with a 4 px gap. The 360×640 photo test
+checks the history row height and photo clearance after sending, along with
+unchanged chip position. Preserve the original failure in the Linux audit
+for `bl58-rev4-build132-green-codex2-20261122` (mail `m-4b08fdd4`).
 
 Positive reaction-selection fixtures must start the fake P2P node and seed a
 connected peer. Its default stopped state legitimately stages a quoted reply
