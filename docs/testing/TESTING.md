@@ -7537,12 +7537,29 @@ visible and cannot become an ordinary first-attempt PASS.
   focused widgets, 17 account and 56 creation-enabled cases. The earlier
   affected-stickers pass belongs to `6973a2c3`. First receipts are under
   `~/.codex/investigations/bl51-pending-sticker-codex2-20261121/`.
-  On iPhone 13, staging build 306 showed pending at an observed 2.02 s
-  after Save, above the roughly one-second target, and a ready item at
-  5.73 s. Tapping pending sent nothing. Killing the app 1.07 s after a
-  separate Save left no tile or additional sticker after restart. The Pixel
-  leg requires a usable camera fixture. Evidence: mailbox `m-ee650763` and
+  On iPhone 13, staging build 306 first observed pending at 2.02 s and a ready
+  item at 5.73 s. The clock starts before the Appium tap lookup, and the first
+  page snapshot at 1.21 s found neither the editor nor the tray. The pending
+  interaction interrupted the timing polls. Tapping pending sent nothing.
+  Killing the app 1.07 s after a separate Save left no tile or additional
+  sticker after restart. The 306 camera luma was 49, and the three 301 runs
+  had luma about 81. The ready-time difference leaves the app's generation
+  latency unclassified. Evidence is in mailbox `m-ee650763` and
   `.codex-test-logs/s132-306-20261121/`.
+
+  BL55 covers a distinct delay when a clip has text. The test-only `727341e1`
+  pressed Save with a real text layer and the editor stayed current until
+  its raster result arrived. At `0077e0ef`, Save immediately returns an
+  immutable layer snapshot. The creation flow registers pending and account
+  retirement before rendering the same RGBA overlay. An abandoned save
+  cannot pass its raster result to the exporter. Clips without text still
+  skip this rendering. The tightened tray fixture checks pending on the first
+  usable tray frame while export remains held. Linux passed the focused edited Save,
+  five tray outcomes, 30 editor and flow cases, 56 creation-enabled cases and
+  295 affected sticker cases. The first RED remains archived after correcting
+  the receipt parser. Two-phone timing still requires the exact composed
+  artifact and a finer observer. Evidence is in mailbox `m-f6160225` and
+  `~/.codex/investigations/bl55-pending-latency-codex2-20261122/`.
 
 - **Custom sticker migration and erasure:** canonical sticker files are critical
   manifest entries bound to persisted paths, byte lengths and hashes. Missing,
