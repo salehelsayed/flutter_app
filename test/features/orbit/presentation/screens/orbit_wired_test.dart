@@ -1487,7 +1487,9 @@ void main() {
               'count me in',
             );
             await tester.pump();
-            await tester.tap(fullScreen ? _thoughtReplySubmit : _depthReplySend);
+            await tester.tap(
+              fullScreen ? _thoughtReplySubmit : _depthReplySend,
+            );
             await pumpOrbitFrames(tester, count: 24);
 
             final replies = await messageRepo
@@ -1502,8 +1504,9 @@ void main() {
             } else {
               final intents = messageRepo as AuthoredDirectTextIntentRepository;
               expect(
-                (await intents.loadAuthoredDirectTextIntents().timeout(bound))
-                    .map((intent) => intent.id),
+                (await intents.loadAuthoredDirectTextIntents().timeout(
+                  bound,
+                )).map((intent) => intent.id),
                 [reply.id],
               );
               expect(reply.status, 'sending');
@@ -1521,7 +1524,10 @@ void main() {
             );
             expect(find.text('count me in'), findsOneWidget);
 
-            expect(await tester.binding.handlePopRoute().timeout(bound), isTrue);
+            expect(
+              await tester.binding.handlePopRoute().timeout(bound),
+              isTrue,
+            );
             await pumpOrbitFrames(tester, count: 24);
             expect(chat, findsNothing);
             expect(find.byType(ThoughtCardScreen), findsNothing);
