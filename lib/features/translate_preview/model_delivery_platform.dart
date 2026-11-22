@@ -14,6 +14,7 @@ import 'package:flutter_app/core/storage/exclude_from_backup.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_notifications.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 PersistentModelDeliveryController createProductionModelDeliveryController() {
   final service = GemmaPreviewService.instance;
   final resumeStorage = LocalStorePersistentStorage();
+  final notices = ModelDeliveryNotifications();
   final controller = PersistentModelDeliveryController(
     storage: AppSupportModelDeliveryStorage(
       removeModel: service.removeDownloadedModel,
@@ -35,6 +37,8 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
         int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ?? 0,
     readAvailableMemory: readTranslationMemoryAvailability,
     readCapability: readTranslationCapabilityFacts,
+    publishBackgroundStatus: notices.publish,
+    clearBackgroundStatus: notices.clear,
   );
   service.setInferenceSafetyController(controller);
   service.setDownloadedModelPathResolver(controller.verifiedModelPath);

@@ -5122,6 +5122,22 @@ class AppLocalizationsAr extends AppLocalizations {
       'تعذّر الاحتفاظ بتقدّم التنزيل. سيبدأ التنزيل من جديد.';
 
   @override
+  String get translator_notification_ready_title => 'الترجمة جاهزة';
+
+  @override
+  String get translator_notification_ready_body =>
+      'يمكنك الآن ترجمة الرسائل بلغات أخرى على هاتفك.';
+
+  @override
+  String get translator_notification_paused_title =>
+      'توقف تنزيل المترجم مؤقتًا';
+
+  @override
+  String translator_notification_paused_body(String reason, String percent) {
+    return '$reason. تم حفظ $percent٪ من التنزيل.';
+  }
+
+  @override
   String get translator_close => 'إغلاق';
 
   @override

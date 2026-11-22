@@ -98,7 +98,13 @@ final class ModelWaitingForWifi extends ModelDeliveryInProgress {
 
 /// Stopped by the user, or by a restart, with the part already received kept.
 final class ModelPaused extends ModelDeliveryInProgress {
-  const ModelPaused({required super.receivedBytes, required super.totalBytes});
+  const ModelPaused({
+    required super.receivedBytes,
+    required super.totalBytes,
+    this.confirmedReceivedBytes,
+  });
+
+  final int? confirmedReceivedBytes;
 }
 
 sealed class ModelRetainedDownload extends ModelDeliveryState {

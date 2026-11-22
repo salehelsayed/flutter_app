@@ -466,6 +466,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     int spaceReserveBytes = modelDeliverySpaceReserve,
     String Function()? newTaskId,
     Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
+    Future<void> Function()? clearBackgroundStatus,
   }) : _storage = storage,
        _network = network,
        _transport = transport,
@@ -475,6 +476,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _readCapability = readCapability,
        _spaceReserveBytes = spaceReserveBytes,
        _publishBackgroundStatus = publishBackgroundStatus,
+       _clearBackgroundStatus = clearBackgroundStatus,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
     _connectionSubscription = _network.connectionChanges.listen(
@@ -490,8 +492,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final Future<({bool supported, bool insufficientMemory})> Function()?
   _readCapability;
   final int _spaceReserveBytes;
-  // ignore: unused_field
   final Future<void> Function(ModelDeliveryState)? _publishBackgroundStatus;
+  final Future<void> Function()? _clearBackgroundStatus;
   final String Function() _newTaskId;
   final _state = ValueNotifier<ModelDeliveryState>(const ModelUnsupported());
   final _allowMobileData = ValueNotifier(false);
@@ -515,6 +517,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   int _generation = 0;
   String? _verifiedPath;
   Duration? _remaining;
+  String? _previouslyReadyTaskId;
   ({String taskId, int generation})? _verification;
   Timer? _recoveryTimer;
   int _recoveryDelaySeconds = 5;
@@ -588,6 +591,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       final manifest = _record.manifest;
       if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
+        _previouslyReadyTaskId = _record.taskId;
         final identity = await _storage.modelIdentity();
         if (generation == _generation &&
             (_record.verification?.matches(manifest, identity) ?? false)) {
@@ -1131,6 +1135,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       if (accepted || recovering && !managedRecovery) {
         _render();
+        if (accepted) _runNotice(_clearBackgroundStatus);
         return;
       }
       if (resumeCheckpoint != null || _record.receivedBytes > 0) {
@@ -1174,6 +1179,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     )) {
       throw StateError('Translator task was not accepted');
     }
+    _runNotice(_clearBackgroundStatus);
   }
 
   Future<bool> _deferOfflineStart() async {
@@ -1194,6 +1200,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _generation++;
     _cancelRecoveryTimer();
     return _perform(() async {
+      final previousPhase = _record.phase;
       if (_record.phase == ModelDeliveryPhase.verifying ||
           _record.phase == ModelDeliveryPhase.waitingToRetry ||
           _record.phase == ModelDeliveryPhase.waitingForConnection ||
@@ -1214,6 +1221,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       await _persist();
       _render();
+      await _publishStablePause(previousPhase);
     });
   }
 
@@ -1237,6 +1245,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _freeBytes = await _storage.availableBytes();
     await _persist();
     _render();
+    _runNotice(_clearBackgroundStatus);
   }
 
   Future<void> _cancelOwnedTask() async {
@@ -1253,9 +1262,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           _record.phase == ModelDeliveryPhase.removing ||
           _record.phase == ModelDeliveryPhase.idle ||
           _record.phase == ModelDeliveryPhase.ready ||
+          _record.phase == ModelDeliveryPhase.userPaused &&
+              event.status == null ||
           _hasManagedRecovery) {
         return;
       }
+      final previousPhase = _record.phase;
       if (event.receivedBytes case final bytes?) {
         final received = _clamp(bytes);
         if (received > _record.receivedBytes) _resetRecoveryDelay();
@@ -1328,8 +1340,51 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       await _persist();
       _render();
+      await _publishStablePause(previousPhase);
     }),
   );
+
+  Future<void> _publishStablePause(ModelDeliveryPhase previousPhase) async {
+    final publish = _publishBackgroundStatus;
+    if (publish == null || _record.phase == previousPhase) return;
+    final stable = switch (_record.phase) {
+      ModelDeliveryPhase.userPaused ||
+      ModelDeliveryPhase.transferNeedsSpace ||
+      ModelDeliveryPhase.storageWriteFailed ||
+      ModelDeliveryPhase.restartRequired => true,
+      ModelDeliveryPhase.waitingForConnection => !_connectionEligible,
+      ModelDeliveryPhase.serverRetry => _record.recovery?.retryAt == null,
+      _ => false,
+    };
+    if (!stable) return;
+    var status = _state.value;
+    if (status case final ModelPaused paused) {
+      final id = _record.taskId;
+      final generation = _generation;
+      int? confirmed;
+      try {
+        if (id != null) {
+          confirmed = (await _transport.checkpoint(id))?.retainedBytes;
+        }
+      } on Object {
+        // The pause itself has already committed.
+      }
+      if (_disposed || generation != _generation || _state.value != status) {
+        return;
+      }
+      status = ModelPaused(
+        receivedBytes: paused.receivedBytes,
+        totalBytes: paused.totalBytes,
+        confirmedReceivedBytes: confirmed,
+      );
+    }
+    _runNotice(() => publish(status));
+  }
+
+  void _runNotice(Future<void> Function()? action) {
+    if (action == null || _disposed) return;
+    unawaited(Future<void>.sync(action).catchError((Object _) {}));
+  }
 
   Future<void> _recoverFromFailure(ModelTransferFailure failure) async {
     final id = _record.taskId;
@@ -1579,6 +1634,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         }
         await _persist();
         _render();
+        if (_state.value case final ModelReady ready
+            when id != _previouslyReadyTaskId) {
+          final publish = _publishBackgroundStatus;
+          if (publish != null) _runNotice(() => publish(ready));
+        }
       }).catchError((Object _) {
         if (!_disposed && generation == _generation) {
           _record = _record.copyWith(phase: ModelDeliveryPhase.failed);

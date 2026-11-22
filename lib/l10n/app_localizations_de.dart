@@ -5168,6 +5168,22 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der gespeicherte Fortschritt konnte nicht übernommen werden. Der Download beginnt von vorn.';
 
   @override
+  String get translator_notification_ready_title => 'Übersetzung ist bereit';
+
+  @override
+  String get translator_notification_ready_body =>
+      'Nachrichten in anderen Sprachen können jetzt auf deinem Handy übersetzt werden.';
+
+  @override
+  String get translator_notification_paused_title =>
+      'Download des Übersetzers pausiert';
+
+  @override
+  String translator_notification_paused_body(String reason, String percent) {
+    return '$reason. Dein Fortschritt von $percent % ist gespeichert.';
+  }
+
+  @override
   String get translator_close => 'Schließen';
 
   @override

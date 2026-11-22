@@ -1617,6 +1617,9 @@ void main() {
           reason: 'a pause request awaits acknowledgement',
         );
 
+        h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
+          retainedBytes: 42,
+        );
         final write = holdRecordWrite(h.storage, ModelDeliveryPhase.userPaused);
         final acknowledgement = h.event(ModelTransferStatus.paused, bytes: 42);
         await write.started.timeout(bound);
@@ -1638,7 +1641,9 @@ void main() {
         final (state, record) = notices.single;
         expect(
           state,
-          isA<ModelPaused>().having((s) => s.percent, 'percent', 42),
+          isA<ModelPaused>()
+              .having((s) => s.percent, 'percent', 42)
+              .having((s) => s.confirmedReceivedBytes, 'confirmed bytes', 42),
         );
         expect(record?.phase, ModelDeliveryPhase.userPaused);
         expect(record?.taskId, taskId);
@@ -1650,6 +1655,7 @@ void main() {
         );
         await h.flush().timeout(bound);
         expect(notices, hasLength(1));
+        expect(h.storage.record!.receivedBytes, 42);
       },
     );
   });

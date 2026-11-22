@@ -8360,6 +8360,30 @@ abstract class AppLocalizations {
   /// **'Saved progress couldn\'t be kept. The download will start over.'**
   String get translator_resume_lost;
 
+  /// No description provided for @translator_notification_ready_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translation is ready'**
+  String get translator_notification_ready_title;
+
+  /// No description provided for @translator_notification_ready_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in other languages can now be translated on your phone.'**
+  String get translator_notification_ready_body;
+
+  /// No description provided for @translator_notification_paused_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translator download paused'**
+  String get translator_notification_paused_title;
+
+  /// Paused notification body
+  ///
+  /// In en, this message translates to:
+  /// **'{reason}. Your {percent}% is kept.'**
+  String translator_notification_paused_body(String reason, String percent);
+
   /// Closes the sheet; the download continues.
   ///
   /// In en, this message translates to:

@@ -5054,6 +5054,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Saved progress couldn\'t be kept. The download will start over.';
 
   @override
+  String get translator_notification_ready_title => 'Translation is ready';
+
+  @override
+  String get translator_notification_ready_body =>
+      'Messages in other languages can now be translated on your phone.';
+
+  @override
+  String get translator_notification_paused_title =>
+      'Translator download paused';
+
+  @override
+  String translator_notification_paused_body(String reason, String percent) {
+    return '$reason. Your $percent% is kept.';
+  }
+
+  @override
   String get translator_close => 'Close';
 
   @override
