@@ -58,12 +58,11 @@ packages:
     source: hosted
     version: "0.1.25"
   background_downloader:
-    dependency: "direct main"
+    dependency: "direct overridden"
     description:
-      name: background_downloader
-      sha256: "41173cfbb759c9c41b7ea98372f18e36bcb0add1a0754484e38f17c890cc9fc6"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/background_downloader"
+      relative: true
+    source: path
     version: "9.6.4"
   background_push_crypto:
     dependency: "direct main"

@@ -74,7 +74,8 @@ class TaskOptions(
     private val beforeTaskStartRawHandle: Long?,
     private val onTaskStartRawHandle: Long?,
     private val onTaskFinishedRawHandle: Long?,
-    var auth: Auth?
+    var auth: Auth?,
+    val appManagedRecovery: Boolean = false
 ) {
 
     fun hasBeforeStartCallback(): Boolean = beforeTaskStartRawHandle != null
@@ -491,6 +492,8 @@ enum class ExceptionType(val typeString: String) {
     /// Could not save or find file, or create directory
     fileSystem("TaskFileSystemException"),
 
+    storageFull("TaskStorageFullException"),
+
     /// URL incorrect
     url("TaskUrlException"),
 
@@ -532,6 +535,7 @@ object TaskExceptionSerializer : KSerializer<TaskException> {
             encodeStringElement(
                 descriptor, 0, when (value.type) {
                     ExceptionType.fileSystem -> "TaskFileSystemException"
+                    ExceptionType.storageFull -> "TaskStorageFullException"
                     ExceptionType.url -> "TaskUrlException"
                     ExceptionType.connection -> "TaskConnectionException"
                     ExceptionType.resume -> "TaskResumeException"
@@ -554,6 +558,7 @@ object TaskExceptionSerializer : KSerializer<TaskException> {
                 when (val index = decodeElementIndex(descriptor)) {
                     0 -> type = when (decodeStringElement(descriptor, 0)) {
                         "TaskFileSystemException" -> ExceptionType.fileSystem
+                        "TaskStorageFullException" -> ExceptionType.storageFull
                         "TaskUrlException" -> ExceptionType.url
                         "TaskConnectionException" -> ExceptionType.connection
                         "TaskResumeException" -> ExceptionType.resume

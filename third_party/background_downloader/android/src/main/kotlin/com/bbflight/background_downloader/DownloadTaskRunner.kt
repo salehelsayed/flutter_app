@@ -34,6 +34,7 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
     private var requiredStartByte = 0L // required start byte within the task range
     private var taskRangeStartByte = 0L // Start of the Task's download range
     private var eTag: String? = null
+    private val appManagedRecovery get() = task.options?.appManagedRecovery == true
 
     /**
      * Make the request to the [connection] and process the [Task]
@@ -41,6 +42,9 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
      * Returns the [TaskStatus]
      * */
     override suspend fun connectAndProcess(connection: HttpURLConnection): TaskStatus {
+        if (appManagedRecovery && requiredStartByte != 0L && !isResume) {
+            return checkpointRejected("Saved partial is missing or has the wrong length")
+        }
         if (isResume) {
             val taskRangeHeader = task.headers["Range"] ?: ""
             val taskRange = parseRange(taskRangeHeader)
@@ -48,12 +52,15 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
             val resumeRange = Pair(taskRangeStartByte + requiredStartByte, taskRange.second)
             val newRangeString = "bytes=${resumeRange.first}-${resumeRange.second ?: ""}"
             connection.setRequestProperty("Range", newRangeString)
+            if (appManagedRecovery) connection.setRequestProperty("If-Range", eTag)
         }
         val result = super.connectAndProcess(connection)
         if (result == TaskStatus.canceled) {
             deleteTempFile()
         }
-        if (result == TaskStatus.failed) {
+        if (appManagedRecovery && (result == TaskStatus.failed || result == TaskStatus.notFound)) {
+            if (taskException?.type != ExceptionType.resume) saveManagedCheckpoint()
+        } else if (result == TaskStatus.failed) {
             prepResumeAfterFailure()
         }
         return result
@@ -82,7 +89,13 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
             }
         }
 
-        responseStatusCode = connection.responseCode
+        val status = connection.responseCode
+        responseStatusCode = status
+        if (appManagedRecovery && isResume &&
+            (status == 416 || (status in 200..206 && status != 206))
+        ) {
+            return checkpointRejected("Server did not honor the requested byte range")
+        }
         if (connection.responseCode in 200..206) {
             // determine if we are using Uri or not.  Uri means pause/resume not allowed
             val directoryUri = UriUtils.uriFromStringValue(task.directory)
@@ -99,8 +112,11 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                 )
             }
             isResume = isResume && connection.responseCode == 206  // confirm resume response
+            if (appManagedRecovery && isResume && eTagHeader != eTag) {
+                return checkpointRejected("Saved partial belongs to a different representation")
+            }
             if (isResume && !prepareResume(connection)) {
-                deleteTempFile()
+                if (!appManagedRecovery) deleteTempFile()
                 return TaskStatus.failed
             }
             if (isResume && (eTagHeader != eTag || eTag?.startsWith("W/") == true)) {
@@ -146,7 +162,9 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                 }
                 val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(context.appContext)
                 val tempFilePathConfig = sharedPrefs.getString(BDPlugin.keyConfigTempFilePath, null)
-                val tempDir = if (!tempFilePathConfig.isNullOrEmpty()) {
+                val tempDir = if (appManagedRecovery) {
+                    File(applicationSupportPath)
+                } else if (!tempFilePathConfig.isNullOrEmpty()) {
                     File(tempFilePathConfig)
                 } else {
                     when (sharedPrefs.getInt(BDPlugin.keyConfigUseCacheDir, -2)) {
@@ -184,7 +202,7 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                         "Insufficient space to store the file to be downloaded for taskId ${task.taskId}"
                     )
                     taskException = TaskException(
-                        ExceptionType.fileSystem,
+                        if (appManagedRecovery) ExceptionType.storageFull else ExceptionType.fileSystem,
                         description = "Insufficient space to store the file to be downloaded"
                     )
                     return TaskStatus.failed
@@ -387,6 +405,10 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
      * otherwise fails the task. Never returns [TaskStatus.enqueued]
      */
     private suspend fun timeoutResult(usesUri: Boolean, destUri: Uri?, resumeStart: Long): TaskStatus {
+        if (appManagedRecovery) {
+            taskException = TaskException(ExceptionType.connection, description = "Task timed out")
+            return TaskStatus.failed
+        }
         if (!task.allowPause) {
             Log.i(TAG, "Task ${task.taskId} timed out")
             taskException =
@@ -495,6 +517,10 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
         tempFilePath = if (requiredStartByte > 0) context.getInputString(keyResumeDataData) ?: ""
         else ""
         val tempFile = File(tempFilePath)
+        if (appManagedRecovery) {
+            return tempFile.isFile && tempFile.length() == requiredStartByte &&
+                isStrongValidator(eTag)
+        }
         if (tempFile.exists()) {
             val tempFileLength = tempFile.length()
             if (tempFileLength == requiredStartByte) {
@@ -557,6 +583,10 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
         val tempFile = File(tempFilePath)
         val tempFileLength = tempFile.length()
         startByte = start - taskRangeStartByte // relative to start of range
+        if (appManagedRecovery && startByte != requiredStartByte) {
+            taskException = TaskException(ExceptionType.resume, description = "Unexpected resume offset")
+            return false
+        }
         if (startByte > tempFileLength) {
             Log.i(TAG, "Offered range not feasible: $range with startByte $startByte")
             taskException = TaskException(
@@ -600,6 +630,38 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
             // if it cannot be resumed, delete the temp file
             deleteTempFile()
         }
+    }
+
+    private fun checkpointRejected(description: String): TaskStatus {
+        taskException = TaskException(ExceptionType.resume, description = description)
+        return TaskStatus.failed
+    }
+
+    private fun isStrongValidator(value: String?): Boolean =
+        value != null && value.length >= 2 && value.first() == '"' && value.last() == '"'
+
+    private suspend fun saveManagedCheckpoint() {
+        val validator = if (serverAcceptsRanges) eTagHeader else if (isResume) eTag else null
+        val length = tempFileLength()
+        if (!isStrongValidator(validator) || length <= 0) {
+            deleteTempFile()
+            return
+        }
+        val offset = if (serverAcceptsRanges) minOf(length, bytesTotal + startByte) else
+            requiredStartByte.takeIf { it == length } ?: 0L
+        if (offset <= 0) {
+            deleteTempFile()
+            return
+        }
+        try {
+            RandomAccessFile(tempFilePath, "rw").use { file ->
+                file.setLength(offset)
+                file.fd.sync()
+            }
+        } catch (_: IOException) {
+            return
+        }
+        processResumeData(ResumeData(task, tempFilePath, offset, validator), prefs)
     }
 
     /**

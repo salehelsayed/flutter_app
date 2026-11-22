@@ -204,11 +204,15 @@ abstract base class NativeDownloader extends BaseDownloader {
         'resumeData',
         [final String data, final int requiredStartByte, final String? eTag],
       ):
-        setResumeData(ResumeData(task, data, requiredStartByte, eTag));
+        final stored = setResumeData(
+          ResumeData(task, data, requiredStartByte, eTag),
+        );
+        if (task.options?.appManagedRecovery == true) await stored;
 
       // resumeData iOS and ParallelDownloads variant
       case ('resumeData', final String data):
-        setResumeData(ResumeData(task, data));
+        final stored = setResumeData(ResumeData(task, data));
+        if (task.options?.appManagedRecovery == true) await stored;
 
       case ('notificationTap', final int notificationTypeOrdinal):
         final notificationType =
@@ -363,7 +367,9 @@ abstract base class NativeDownloader extends BaseDownloader {
               (awaitTask) => awaitTask.taskId == task.taskId,
             )
           : task;
-      final taskResumeData = await getResumeData(task.taskId);
+      final taskResumeData = task.options?.appManagedRecovery == true
+          ? await getManagedResumeData(task)
+          : await getResumeData(task.taskId);
       if (taskResumeData != null) {
         final notificationConfig = notificationConfigForTask(task);
         final enqueueSuccess =

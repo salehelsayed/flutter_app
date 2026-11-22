@@ -1465,6 +1465,20 @@ interface class FileDownloader {
   }
 }
 
+extension FileDownloaderCheckpoint on FileDownloader {
+  /// An Android checkpoint includes its validated byte offset. An iOS
+  /// checkpoint is opaque and may still be rejected by URLSession.
+  Future<({int? offset})?> resumeCheckpoint(DownloadTask task) async {
+    await ready;
+    final data = await _downloader.getManagedResumeData(
+      withNamespacedGroup(task),
+    );
+    return data == null
+        ? null
+        : (offset: data.requiredStartByte > 0 ? data.requiredStartByte : null);
+  }
+}
+
 /// Performs the actual server request, with retries
 ///
 /// This function is run on an Isolate to ensure performance on the main

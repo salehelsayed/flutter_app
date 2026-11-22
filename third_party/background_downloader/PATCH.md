@@ -1,0 +1,1 @@
+Runtime from the background_downloader 9.6.4 pub.dev archive (SHA-256 `41173cfbb759c9c41b7ea98372f18e36bcb0add1a0754484e38f17c890cc9fc6`), with BL60 recovery opt-in via `TaskOptions.appManagedRecovery`.

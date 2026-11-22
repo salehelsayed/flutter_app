@@ -155,6 +155,9 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             }
 
             Log.i(TAG, "Enqueuing task with id ${task.taskId}")
+            if (task.options?.appManagedRecovery == true) {
+                QueueService.startManagedAttempt(task.taskId)
+            }
             // store backgroundChannel to be used by this task
             val bgChannel = backgroundChannel(plugin)
             if (bgChannel != null) {
@@ -335,6 +338,9 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     }
                 }
                 return true
+            }
+            if (task.options?.appManagedRecovery == true) {
+                QueueService.cleanupTaskId(task.taskId, appManagedRecovery = true)
             }
             return false
         }

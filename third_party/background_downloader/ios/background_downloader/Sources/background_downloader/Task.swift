@@ -210,6 +210,7 @@ struct TaskOptions : Codable, Hashable {
     var onTaskStartRawHandle: Int64?
     var onTaskFinishedRawHandle: Int64?
     var auth: Auth?
+    var appManagedRecovery: Bool?
     
     /// True if [TaskOptions] contains a callback for beforeTaskStart
     func hasBeforeStartCallback() -> Bool {
@@ -290,6 +291,8 @@ public enum ExceptionType: String, Codable {
     
     // Could not save or find file, or create directory
     fileSystem = "TaskFileSystemException",
+
+    storageFull = "TaskStorageFullException",
     
     // URL incorrect
     url = "TaskUrlException",

@@ -797,6 +797,44 @@ abstract base class BaseDownloader {
   Future<ResumeData?> getResumeData(String taskId) =>
       _storage.retrieveResumeData(taskId);
 
+  Future<ResumeData?> getManagedResumeData(Task task) async {
+    final data = await getResumeData(task.taskId);
+    if (data == null ||
+        data.task.taskId != task.taskId ||
+        data.task.group != task.group ||
+        data.task.url != task.url ||
+        data.task.filename != task.filename ||
+        data.task.directory != task.directory ||
+        data.task.baseDirectory != task.baseDirectory) {
+      return null;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try {
+        return base64Decode(data.data).isEmpty ? null : data;
+      } on FormatException {
+        return null;
+      }
+    }
+    if (defaultTargetPlatform != TargetPlatform.android ||
+        data.requiredStartByte <= 0 ||
+        data.eTag == null ||
+        data.eTag!.length < 2 ||
+        !data.eTag!.startsWith('"') ||
+        !data.eTag!.endsWith('"')) {
+      return null;
+    }
+    try {
+      if (await FileSystemEntity.type(data.tempFilepath, followLinks: false) ==
+              FileSystemEntityType.file &&
+          await File(data.tempFilepath).length() == data.requiredStartByte) {
+        return data;
+      }
+    } on FileSystemException {
+      return null;
+    }
+    return null;
+  }
+
   /// Remove resumeData for this [taskId], or all if null
   Future<void> removeResumeData([String? taskId]) =>
       _storage.removeResumeData(taskId);
@@ -819,9 +857,9 @@ abstract base class BaseDownloader {
   Future<Map<String, String>> popUndeliveredData(Undelivered dataType);
 
   /// Clear pause and resume info associated with this [task]
-  void _clearPauseResumeInfo(Task task) {
+  void _clearPauseResumeInfo(Task task, {bool preserveResume = false}) {
     canResumeTask.remove(task);
-    removeResumeData(task.taskId);
+    if (!preserveResume) removeResumeData(task.taskId);
     removePausedTask(task.taskId);
   }
 
@@ -908,6 +946,7 @@ abstract base class BaseDownloader {
     // has retriesRemaining > 0: those are always sent here, and are
     // intercepted to hold the task and reschedule in the near future
     final task = update.task;
+    final appManagedRecovery = task.options?.appManagedRecovery ?? false;
     final isConnectionError =
         update.exception is TaskConnectionException ||
         (update.exception?.description.toLowerCase().contains('socket') ==
@@ -917,7 +956,8 @@ abstract base class BaseDownloader {
         (update.exception?.description.toLowerCase().contains('network') ==
             true);
 
-    if (update.status == TaskStatus.failed &&
+    if (!appManagedRecovery &&
+        update.status == TaskStatus.failed &&
         (task.retriesRemaining > 0 || (!isConnected && isConnectionError))) {
       _emitStatusUpdate(TaskStatusUpdate(task, TaskStatus.waitingToRetry));
       _emitProgressUpdate(TaskProgressUpdate(task, progressWaitingToRetry));
@@ -970,7 +1010,14 @@ abstract base class BaseDownloader {
         setPausedTask(task);
       }
       if (update.status.isFinalState) {
-        _clearPauseResumeInfo(task);
+        _clearPauseResumeInfo(
+          task,
+          preserveResume:
+              appManagedRecovery &&
+              (update.status == TaskStatus.failed ||
+                  update.status == TaskStatus.notFound) &&
+              update.exception is! TaskResumeException,
+        );
       }
       if (update.status.isFinalState || update.status == TaskStatus.paused) {
         notifyTaskQueues(task);

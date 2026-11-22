@@ -153,7 +153,10 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
                 }
                 else {
                     os_log("Error for taskId %@: %@", log: log, type: .error, bgdTask.taskId, error!.localizedDescription)
-                    processStatusUpdate(task: bgdTask, status: .failed, taskException: TaskException(type: .general, httpResponseCode: -1, description: error!.localizedDescription))
+                    let type = bgdTask.options?.appManagedRecovery == true
+                        ? managedErrorType(error!)
+                        : .general
+                    processStatusUpdate(task: bgdTask, status: .failed, taskException: TaskException(type: type, httpResponseCode: -1, description: error!.localizedDescription))
                 }
             }
             if isDownloadTask(task: bgdTask) && notificationType != nil {
@@ -245,11 +248,25 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
                     })
                     if notProgrammaticallyCancelled {
                         os_log("Error for taskId %@: Insufficient space to store the file to be downloaded", log: log, type: .error, task.taskId)
-                        processStatusUpdate(task: task, status: .failed, taskException: TaskException(type: .fileSystem, httpResponseCode: -1, description: "Insufficient space to store the file to be downloaded for taskId \(task.taskId)"))
-                        BDPlugin.propertyLock.withLock({
-                            _ = BDPlugin.taskIdsProgrammaticallyCanceledAfterStart.insert(task.taskId)
-                        })
-                        downloadTask.cancel()
+                        let message = "Insufficient space to store the file to be downloaded for taskId \(task.taskId)"
+                        if task.options?.appManagedRecovery == true {
+                            BDPlugin.propertyLock.withLock({
+                                _ = BDPlugin.taskIdsProgrammaticallyCanceledAfterStart.insert(task.taskId)
+                            })
+                            let stoppedTask = task
+                            downloadTask.cancel(byProducingResumeData: { data in
+                                if let data, !data.isEmpty {
+                                    _ = processResumeData(task: stoppedTask, resumeData: data)
+                                }
+                                processStatusUpdate(task: stoppedTask, status: .failed, taskException: TaskException(type: .storageFull, httpResponseCode: -1, description: message))
+                            })
+                        } else {
+                            processStatusUpdate(task: task, status: .failed, taskException: TaskException(type: .fileSystem, httpResponseCode: -1, description: message))
+                            BDPlugin.propertyLock.withLock({
+                                _ = BDPlugin.taskIdsProgrammaticallyCanceledAfterStart.insert(task.taskId)
+                            })
+                            downloadTask.cancel()
+                        }
                     }
                     return
                 }
@@ -428,7 +445,10 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
                     
                 } catch {
                     os_log("File operation failed: %@", log: log, type: .error, error.localizedDescription)
-                    taskException = TaskException(type: .fileSystem, httpResponseCode: -1, description: "File operation failed: \(error.localizedDescription)")
+                    let type = task.options?.appManagedRecovery == true
+                        ? managedErrorType(error, fallback: .fileSystem)
+                        : .fileSystem
+                    taskException = TaskException(type: type, httpResponseCode: -1, description: "File operation failed: \(error.localizedDescription)")
                     return
                 }
             } else {
@@ -442,6 +462,30 @@ public class UrlSessionDelegate : NSObject, URLSessionDelegate, URLSessionDownlo
         }
     }
     
+    private func managedErrorType(_ error: Error, fallback: ExceptionType = .general) -> ExceptionType {
+        var current: NSError? = error as NSError
+        for _ in 0..<8 {
+            guard let diagnostic = current else { break }
+            if (diagnostic.domain == NSCocoaErrorDomain && diagnostic.code == NSFileWriteOutOfSpaceError) ||
+                (diagnostic.domain == NSPOSIXErrorDomain && diagnostic.code == Int(ENOSPC)) {
+                return .storageFull
+            }
+            if diagnostic.domain == NSURLErrorDomain {
+                switch diagnostic.code {
+                case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost,
+                    NSURLErrorDNSLookupFailed, NSURLErrorNotConnectedToInternet:
+                    return .connection
+                case NSURLErrorCannotWriteToFile:
+                    return .fileSystem
+                default:
+                    break
+                }
+            }
+            current = diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return fallback
+    }
+
     //MARK: URLSessionDataDelegate
     
     /// Collects incoming data following a file upload, by appending the data block to a static dictionary keyed by taskId

@@ -4,6 +4,8 @@ import android.app.job.JobParameters
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.system.ErrnoException
+import android.system.OsConstants
 import android.util.Log
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.CancellationException
@@ -30,6 +32,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.net.URL
 import java.net.URLDecoder
 import java.net.MalformedURLException
@@ -244,8 +247,8 @@ open class TaskRunner(
                     charSet = null
                 )
 
-            // Post update if task expects one, or if failed and retry is needed
-            if (canSendStatusUpdate && (task.providesStatusUpdates() || retryNeeded)) {
+            suspend fun postStatus() {
+                if (!canSendStatusUpdate || (!task.providesStatusUpdates() && !retryNeeded)) return
                 val arg = taskStatusUpdate.argList
                 postOnBackgroundChannel("statusUpdate", task, arg, onFail = {
                     // unsuccessful post, so store in local prefs
@@ -258,6 +261,9 @@ open class TaskRunner(
                     )
                 })
             }
+            val managedTerminal = task.options?.appManagedRecovery == true &&
+                modifiedStatus.isFinalState()
+            if (!managedTerminal) postStatus()
             // if task is in final state, cancel the WorkManager job (if failed),
             // remove task from persistent storage, clean up references to taskId
             // and invoke the onTaskFinishedCallback if necessary
@@ -290,7 +296,8 @@ open class TaskRunner(
                         )
                     }
                 }
-                QueueService.cleanupTaskId(task.taskId)
+                QueueService.cleanupTaskId(task.taskId, appManagedRecovery = managedTerminal)
+                if (managedTerminal) postStatus()
                 if (task.options?.hasOnFinishCallback() == true) {
                     Callbacks.invokeOnTaskFinishedCallback(context, taskStatusUpdate)
                 }
@@ -965,6 +972,14 @@ open class TaskRunner(
         }
         if (e is SocketException || e is SocketTimeoutException) {
             exceptionType = ExceptionType.connection
+        }
+        if (task.options?.appManagedRecovery == true) {
+            if (e is UnknownHostException) exceptionType = ExceptionType.connection
+            if (e is Throwable && generateSequence(e) { it.cause }
+                    .any { it is ErrnoException && it.errno == OsConstants.ENOSPC }
+            ) {
+                exceptionType = ExceptionType.storageFull
+            }
         }
         taskException = TaskException(exceptionType, description = e.toString())
     }

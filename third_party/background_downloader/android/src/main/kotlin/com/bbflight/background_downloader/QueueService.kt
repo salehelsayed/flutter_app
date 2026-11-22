@@ -16,7 +16,8 @@ import kotlinx.coroutines.launch
 object QueueService {
     private val scope = CoroutineScope(Dispatchers.Default)
 
-    private val taskIdDeletionQueue = Channel<String>(capacity = Channel.UNLIMITED)
+    private val taskIdDeletionQueue = Channel<Pair<String, Any?>>(capacity = Channel.UNLIMITED)
+    private val managedAttempts = mutableMapOf<String, Any>()
     private var lastTaskIdAdditionTime: Long = 0
     private const val minTaskIdDeletionDelay: Long = 2000L //ms
 
@@ -37,16 +38,21 @@ object QueueService {
      */
     init {
         scope.launch {
-            for (taskId in taskIdDeletionQueue) {
+            for ((taskId, attempt) in taskIdDeletionQueue) {
                 val now = System.currentTimeMillis()
                 val elapsed = now - lastTaskIdAdditionTime
                 if (elapsed < minTaskIdDeletionDelay) {
                     delay(minTaskIdDeletionDelay - elapsed)
                 }
-                BDPlugin.flutterEngineByTaskId.remove(taskId)
-                BDPlugin.bgChannelByTaskId.remove(taskId)
-                BDPlugin.localResumeData.remove(taskId)
-                BDPlugin.notificationConfigJsonStrings.remove(taskId)
+                synchronized(managedAttempts) {
+                    if (attempt == null || managedAttempts[taskId] === attempt) {
+                        managedAttempts.remove(taskId)
+                        BDPlugin.flutterEngineByTaskId.remove(taskId)
+                        BDPlugin.bgChannelByTaskId.remove(taskId)
+                        BDPlugin.localResumeData.remove(taskId)
+                        BDPlugin.notificationConfigJsonStrings.remove(taskId)
+                    }
+                }
             }
         }
         scope.launch {
@@ -97,9 +103,16 @@ object QueueService {
      * Remove this [taskId] from the [BDPlugin.bgChannelByTaskId] map and the
      * [BDPlugin.localResumeData] map
      */
-    suspend fun cleanupTaskId(taskId: String) {
+    suspend fun cleanupTaskId(taskId: String, appManagedRecovery: Boolean = false) {
         lastTaskIdAdditionTime = System.currentTimeMillis()
-        taskIdDeletionQueue.send(taskId)
+        val attempt = if (appManagedRecovery) synchronized(managedAttempts) {
+            managedAttempts.getOrPut(taskId) { Any() }
+        } else null
+        taskIdDeletionQueue.send(taskId to attempt)
+    }
+
+    fun startManagedAttempt(taskId: String) {
+        synchronized(managedAttempts) { managedAttempts[taskId] = Any() }
     }
 
     /**

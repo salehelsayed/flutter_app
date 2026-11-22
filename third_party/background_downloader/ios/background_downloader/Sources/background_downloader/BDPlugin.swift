@@ -259,6 +259,9 @@ public class BDPlugin: NSObject, FlutterPlugin, UNUserNotificationCenterDelegate
             os_log("Could not decode %@ to Task", log: log, taskJsonString)
             return false
         }
+        if task.options?.appManagedRecovery == true && isResume && (resumeData?.isEmpty ?? true) {
+            return false
+        }
         // Check if the file should be skipped (only for downloads, as an
         // upload's file always exists)
         if !isResume && isDownloadTask(task: task) {

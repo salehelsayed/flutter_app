@@ -3,6 +3,7 @@ import 'dart:convert';
 const _exceptions = {
   'TaskException': TaskException.new,
   'TaskFileSystemException': TaskFileSystemException.new,
+  'TaskStorageFullException': TaskStorageFullException.new,
   'TaskUrlException': TaskUrlException.new,
   'TaskConnectionException': TaskConnectionException.new,
   'TaskResumeException': TaskResumeException.new,
@@ -64,6 +65,12 @@ base class TaskException(final String description) implements Exception {
 final class TaskFileSystemException(super.description) extends TaskException {
   @override
   String get exceptionType => 'TaskFileSystemException';
+}
+
+/// The platform reported that the download exhausted available storage.
+final class TaskStorageFullException(super.description) extends TaskException {
+  @override
+  String get exceptionType => 'TaskStorageFullException';
 }
 
 /// Exception related to the url, eg malformed

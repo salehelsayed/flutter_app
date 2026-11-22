@@ -22,6 +22,9 @@ class TaskOptions {
   /// The [Auth] object associated with this task
   final Auth? auth;
 
+  /// Leaves retries and checkpoint disposal after failure to the caller.
+  final bool appManagedRecovery;
+
   /// Constructor for [TaskOptions], containing "native" callbacks:
   ///
   /// * `beforeTaskStart`: a callback called before a task starts executing.
@@ -42,6 +45,7 @@ class TaskOptions {
     OnTaskStartCallback? onTaskStart,
     OnTaskFinishedCallback? onTaskFinished,
     this.auth,
+    this.appManagedRecovery = false,
   }) : _beforeTaskStartRawHandle = beforeTaskStart != null
            ? PluginUtilities.getCallbackHandle(beforeTaskStart)?.toRawHandle()
            : null,
@@ -74,7 +78,8 @@ class TaskOptions {
     : _beforeTaskStartRawHandle = json['beforeTaskStartRawHandle'] as int?,
       _onTaskStartRawHandle = json['onTaskStartRawHandle'] as int?,
       _onTaskFinishedRawHandle = json['onTaskFinishedRawHandle'] as int?,
-      auth = json['auth'] != null ? Auth.fromJson(json['auth']) : null;
+      auth = json['auth'] != null ? Auth.fromJson(json['auth']) : null,
+      appManagedRecovery = json['appManagedRecovery'] == true;
 
   /// Returns the [BeforeTaskStartCallback] registered with this [TaskOptions], or null
   BeforeTaskStartCallback? get beforeTaskStartCallBack =>
@@ -112,5 +117,6 @@ class TaskOptions {
     'onTaskStartRawHandle': _onTaskStartRawHandle,
     'onTaskFinishedRawHandle': _onTaskFinishedRawHandle,
     'auth': auth?.toJson(),
+    if (appManagedRecovery) 'appManagedRecovery': true,
   };
 }
