@@ -925,6 +925,14 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         id != null &&
         (previousPhase == ModelDeliveryPhase.active ||
             previousPhase == ModelDeliveryPhase.resumeRequested);
+    if (active && !allow) {
+      final transfer = await _transport.restore(id);
+      if (transfer != null && transfer.status == ModelTransferStatus.enqueued) {
+        await _revokeQueuedMobileData(id, previousPhase, transfer);
+        _render();
+        return;
+      }
+    }
     _allowMobileData.value = allow;
     _record = _record.copyWith(
       allowMobileData: allow,
@@ -944,7 +952,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     final transfer = restored ?? await _transport.restore(id);
     var hasProgress =
         _record.receivedBytes > 0 || _record.recovery?.checkpoint != null;
-    if (transfer?.status == ModelTransferStatus.enqueued) {
+    if (transfer != null && transfer.status == ModelTransferStatus.enqueued) {
+      if (!allow) {
+        await _revokeQueuedMobileData(id, previousPhase, transfer);
+        return;
+      }
       final checkpoint = await _transport.checkpoint(id);
       hasProgress = hasProgress || checkpoint != null;
       if (!hasProgress) {
@@ -960,15 +972,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _startOrResume();
         return;
       }
-      final reconfigured = transfer?.requiresWiFi == !allow
+      final reconfigured = transfer.requiresWiFi == false
           ? ModelQueuedPolicyUpdate.applied
           : checkpoint == null
           ? ModelQueuedPolicyUpdate.unavailable
-          : await _transport.updateQueuedPolicy(id, requiresWiFi: !allow);
+          : await _transport.updateQueuedPolicy(id, requiresWiFi: false);
       if (reconfigured == ModelQueuedPolicyUpdate.applied ||
-          reconfigured == ModelQueuedPolicyUpdate.unavailable && allow) {
+          reconfigured == ModelQueuedPolicyUpdate.unavailable) {
         _queuedRequiresWifi =
-            reconfigured == ModelQueuedPolicyUpdate.unavailable || !allow;
+            reconfigured == ModelQueuedPolicyUpdate.unavailable;
         _record = _record.copyWith(
           phase: previousPhase,
           receivedBytes: checkpoint?.retainedBytes,
@@ -993,6 +1005,49 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       );
     }
     await _persist();
+  }
+
+  Future<void> _revokeQueuedMobileData(
+    String id,
+    ModelDeliveryPhase previousPhase,
+    ModelTransferSnapshot transfer,
+  ) async {
+    final checkpoint = await _transport.checkpoint(id);
+    final hasProgress =
+        checkpoint != null ||
+        _record.receivedBytes > 0 ||
+        _record.recovery?.checkpoint != null;
+    final nowWifiOnly =
+        transfer.requiresWiFi == true ||
+        checkpoint != null &&
+            await _transport.updateQueuedPolicy(id, requiresWiFi: true) ==
+                ModelQueuedPolicyUpdate.applied;
+    if (nowWifiOnly) {
+      _queuedRequiresWifi = true;
+      _record = _record.copyWith(
+        phase: previousPhase,
+        receivedBytes: checkpoint?.retainedBytes,
+      );
+    } else if (hasProgress) {
+      // A native pause request is volatile while the job is still queued.
+      await _transport.cancel(id);
+      _record = _record.copyWith(
+        phase: ModelDeliveryPhase.restartRequired,
+        recovery: const ModelTransferRecovery(restartsFromZero: true),
+      );
+    } else {
+      await _cancelOwnedTask();
+      await _storage.removeOwnedModel();
+      _record = _record.copyWith(
+        clearTask: true,
+        receivedBytes: 0,
+        phase: ModelDeliveryPhase.idle,
+      );
+    }
+    _record = _record.copyWith(allowMobileData: false);
+    await _persist();
+    _allowMobileData.value = false;
+    if (_record.phase == ModelDeliveryPhase.idle) await _startOrResume();
   }
 
   @override
