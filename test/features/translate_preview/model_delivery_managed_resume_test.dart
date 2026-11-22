@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_platform.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _bound = Duration(seconds: 3);
@@ -39,7 +42,45 @@ void main() {
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const native = MethodChannel('com.bbflight.background_downloader');
+      final translator = DownloadTask(
+        taskId: 'queued-translator-mobile',
+        group: modelDeliveryGroup,
+        baseDirectory: BaseDirectory.applicationSupport,
+        directory: modelDeliveryDirectory,
+        filename: gemmaModelFileName,
+        url: 'https://model.invalid/model.bin',
+        retries: 0,
+        allowPause: true,
+        options: TaskOptions(appManagedRecovery: true),
+      );
+      final translatorJson = jsonEncode(translator.toJson());
+      final cancellationCalls = <String>[];
+      Future<void> deliverTranslatorStatus(TaskStatus status) => messenger
+          .handlePlatformMessage(
+            'com.bbflight.background_downloader.background',
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall('statusUpdate', [translatorJson, status.index]),
+            ),
+            null,
+          )
+          .timeout(_bound);
       messenger.setMockMethodCallHandler(native, (call) async {
+        if (call.method == 'taskForId') {
+          expect(call.arguments, translator.taskId);
+          return translatorJson;
+        }
+        if (call.method == 'cancelTasksWithIds') {
+          expect(call.arguments, [translator.taskId]);
+          cancellationCalls.add(call.method);
+          // Android's legacy method posts canceled before a rejected stop.
+          await deliverTranslatorStatus(TaskStatus.canceled);
+          return false;
+        }
+        if (call.method == 'cancelTaskWithConfirmation') {
+          expect(call.arguments, translator.taskId);
+          cancellationCalls.add(call.method);
+          return false;
+        }
         if (call.method == 'updateQueuedManagedDownload') {
           policyUpdates.add(List<Object?>.of(call.arguments as List));
           return policyUpdateResult;
@@ -256,6 +297,57 @@ void main() {
       );
       expect(await downloader.resume(managed.task).timeout(_bound), isFalse);
       expect(enqueues.length, beforeInvalid);
+
+      final transport = BackgroundModelDeliveryTransport(
+        downloader: downloader,
+        resumeStorage: storage,
+        partialDirectories: () async => [directory],
+        isIOS: false,
+      );
+      addTearDown(() => transport.dispose().timeout(_bound));
+      final partial = File(
+        '${directory.path}/com.bbflight.background_downloader-60',
+      );
+      final writer = partial.openSync(mode: FileMode.write);
+      try {
+        writer.truncateSync(_offset);
+      } finally {
+        writer.closeSync();
+      }
+      await storage
+          .storeResumeData(ResumeData(translator, partial.path, _offset, _eTag))
+          .timeout(_bound);
+      expect(
+        (await transport.checkpoint(translator.taskId).timeout(_bound))
+            ?.retainedBytes,
+        _offset,
+      );
+      await expectLater(
+        transport
+            .cancel(translator.taskId, requireConfirmedStop: true)
+            .timeout(_bound),
+        throwsStateError,
+      );
+      expect(cancellationCalls, hasLength(1));
+      expect(partial.lengthSync(), _offset);
+      expect(
+        (await transport.checkpoint(translator.taskId).timeout(_bound))
+            ?.retainedBytes,
+        _offset,
+        reason: 'Rejected cancellation must preserve SDK resume metadata.',
+      );
+      expect(
+        await transport
+            .resume(
+              translator.taskId,
+              requiresWiFi: true,
+              allowZeroByteRestart: false,
+            )
+            .timeout(_bound),
+        isTrue,
+      );
+      expect(enqueues.last.id, translator.taskId);
+      expect(enqueues.last.arguments.skip(2), [partial.path, _offset, _eTag]);
     },
   );
 }
