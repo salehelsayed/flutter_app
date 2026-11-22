@@ -6830,7 +6830,11 @@ visible and cannot become an ordinary first-attempt PASS.
   cancellation as distinct results. The test-only `bb28d31c` waits for both
   real button hit targets, sheet dismissal, keyed offline-banner visibility,
   and the exact committed reaction ID. All four focused runs passed on their
-  first attempt. The final composed affected-media run remains open.
+  first attempt. The composed `38de1d89` Linux run passed 1,816 affected-media
+  cases with zero failures or skips, using one Flutter worker per check.
+  Each of the four earlier failures passed in its original machine log
+  reused during the same invocation. See mailbox `m-17625056` for the raw
+  log hash and exact reuse counts.
   The original and matched receipts are under
   `~/.codex/investigations/bl50-native-adoption-codex2-20261122/`,
   `~/.codex/investigations/bl50-mic-ancestry-codex2-20261122/`, and
