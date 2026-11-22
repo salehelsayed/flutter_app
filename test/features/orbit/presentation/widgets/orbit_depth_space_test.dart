@@ -252,6 +252,46 @@ void main() {
 
   Matcher at(double value) => closeTo(value, .01);
 
+  testWidgets('REV4 compact depth controls fit above the 360x640 edge '
+      'without covering the photo', (tester) async {
+    kinds['photo']!();
+    await mount(tester, _phones.first);
+    await enter(tester, up: true);
+
+    final controls = [
+      for (final name in ['love', 'laugh', 'fire', 'applause'])
+        find.byKey(ValueKey('orbit-depth-react-$name')),
+      find.byKey(const ValueKey('thought-reply-more')),
+      find.byKey(const ValueKey('orbit-depth-reply')),
+    ];
+    expect(reply, findsNothing, reason: 'depth has no resting text field');
+    final controlsBounds = <Rect>[];
+    for (final control in controls) {
+      expect(control, findsOneWidget);
+      final rect = tester.getRect(control);
+      expect(rect.width, greaterThanOrEqualTo(44));
+      expect(rect.height, greaterThanOrEqualTo(44));
+      expect((Offset.zero & _phones.first.size).contains(rect.center), isTrue);
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(360));
+      expect(rect.bottom, lessThanOrEqualTo(640));
+      controlsBounds.add(rect);
+    }
+    for (final (index, bounds) in controlsBounds.indexed) {
+      expect(bounds.center.dy, closeTo(controlsBounds.first.center.dy, 1));
+      if (index > 0) {
+        expect(controlsBounds[index - 1].right, lessThanOrEqualTo(bounds.left));
+      }
+    }
+    expect(
+      tester.getRect(photo).bottom,
+      lessThan(controlsBounds.first.top),
+      reason: 'the photo remains above the single control row',
+    );
+    expect(tester.takeException(), isNull);
+    await finish(tester);
+  });
+
   // The expanded dock takes the place of the single reaction row. The ring
   // and the gap between the card and its controls keep their established place.
   double dockTop(_Place place) => place.barBottom - 145;

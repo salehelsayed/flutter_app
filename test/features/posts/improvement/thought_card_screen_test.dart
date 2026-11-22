@@ -186,6 +186,29 @@ void main() {
     await tester.pump();
   }
 
+  final more = find.byKey(const ValueKey('thought-reply-more'));
+  final emojiTab = find.byKey(const ValueKey('thought-reply-emoji-tab'));
+  final stickersTab = find.byKey(const ValueKey('thought-reply-stickers-tab'));
+  final personal = find.byKey(const ValueKey('thought-reply-personal-emoji'));
+  final sentLine = find.byKey(const ValueKey('thought-reply-you-sent'));
+  final feedback = find.byKey(const ValueKey('thought-reply-sent-feedback'));
+
+  Future<void> openMore(WidgetTester tester) async {
+    expect(more.hitTestable(), findsOneWidget);
+    await tester.tap(more);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
+  Future<void> choosePanelEmoji(WidgetTester tester, String glyph) async {
+    await openMore(tester);
+    final item = find.byKey(ValueKey('thought-reply-emoji-$glyph'));
+    expect(item.hitTestable(), findsOneWidget);
+    await tester.tap(item);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
   Future<void> pumpMediaFrames(WidgetTester tester) async {
     // These assertions cover downloaded metadata and viewer/retry controls.
     // File-image decoding can retain a loading ticker in a fake-async test;
@@ -237,10 +260,7 @@ void main() {
       expect(find.text('❤️'), findsOneWidget);
       expect(find.byKey(const ValueKey('thought-reply-dock')), findsOneWidget);
       expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('thought-reply-stickers')).hitTestable(),
-        findsOneWidget,
-      );
+      expect(more.hitTestable(), findsOneWidget);
       expect(find.text('Only Alice sees your reply'), findsOneWidget);
       expect(find.byIcon(Icons.mic), findsNothing);
       expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
@@ -310,7 +330,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('the sticker chip opens the picker over the thought', (
+  testWidgets('More opens Emoji first and the existing Stickers tab', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -318,45 +338,236 @@ void main() {
     await posts.savePost(thought);
     await openCard(tester, thought);
 
-    final stickerChip = find.byKey(const ValueKey('thought-reply-stickers'));
-    expect(stickerChip.hitTestable(), findsOneWidget);
-    await tester.tap(stickerChip);
+    expect(sentLine, findsNothing);
+    expect(personal, findsNothing);
+    await openMore(tester);
+
+    expect(emojiTab.hitTestable(), findsOneWidget);
+    expect(stickersTab.hitTestable(), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('thought-reply-emoji-grid')),
+      findsOneWidget,
+    );
+    expect(find.byType(BundledStickerPanel), findsNothing);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(reactions, isEmpty);
+    expect(stickers, isEmpty);
+
+    await tester.tap(stickersTab);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-
-    final panel = find.byType(BundledStickerPanel);
-    expect(panel, findsOneWidget);
-    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(find.byType(BundledStickerPanel), findsOneWidget);
+    expect(reactions, isEmpty);
+    expect(stickers, isEmpty);
 
     const entry = StickerEntry(
       id: 'orbit_crew.planet.angry',
       assetPath: 'assets/stickers/orbit_crew/planet/angry.webp',
     );
-    tester.widget<BundledStickerPanel>(panel).onSend(entry);
+    tester
+        .widget<BundledStickerPanel>(find.byType(BundledStickerPanel))
+        .onSend(entry);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 
-    final sentSticker = find.byKey(const ValueKey('thought-sticker-sent'));
-    expect(sentSticker, findsOneWidget);
+    expect(emojiTab, findsNothing);
+    expect(feedback, findsOneWidget);
     expect(
-      find.descendant(of: sentSticker, matching: find.byType(Image)),
+      find.descendant(of: feedback, matching: find.byType(Image)),
       findsOneWidget,
     );
-    expect(stickerChip, findsNothing);
+    expect(more, findsOneWidget);
     expect(find.byType(ThoughtCardScreen), findsOneWidget);
     expect(stickers.single.selection.entry, same(entry));
     expect(stickers.single.postId, thought.id);
     expect(reactions, isEmpty);
 
-    await tester.tap(find.byKey(const ValueKey('thought-close')));
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(feedback, findsNothing);
+    final thumbnail = find.descendant(
+      of: sentLine,
+      matching: find.byKey(const ValueKey('thought-reply-sent-sticker')),
+    );
+    expect(thumbnail, findsOneWidget);
+    expect(tester.getSize(thumbnail), const Size(28, 28));
+
+    await openMore(tester);
+    await tester.tap(stickersTab);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-    await openCard(tester, thought);
-    expect(sentSticker, findsOneWidget);
-    expect(stickerChip, findsNothing);
     expect(stickers, hasLength(1));
+    expect(find.byType(BundledStickerPanel), findsNothing);
     await finish(tester);
   });
+
+  testWidgets('the personal chip remembers the last nonfixed panel emoji', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    await openCard(tester, thought);
+    expect(personal, findsNothing);
+
+    await choosePanelEmoji(tester, '😀');
+    expect(reactions.map((send) => send.text), ['😀']);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(feedback, findsOneWidget);
+    expect(
+      find.descendant(of: feedback, matching: find.text('😀')),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(feedback, findsNothing);
+    expect(
+      find.descendant(of: personal, matching: find.text('😀')),
+      findsOneWidget,
+    );
+    final personalX = tester.getCenter(personal).dx;
+    expect(
+      personalX,
+      greaterThan(
+        tester
+            .getCenter(find.byKey(const ValueKey('thought-react-applause')))
+            .dx,
+      ),
+    );
+    expect(personalX, lessThan(tester.getCenter(more).dx));
+
+    await openMore(tester);
+    final recent = find.byKey(const ValueKey('thought-reply-recent-emoji-😀'));
+    expect(recent.hitTestable(), findsOneWidget);
+    expect(
+      tester.getTopLeft(recent).dy,
+      lessThan(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('thought-reply-emoji-😂')))
+            .dy,
+      ),
+    );
+    await tester.tap(recent);
+    await tester.pump();
+    expect(reactions.map((send) => send.text), ['😀']);
+
+    await tester.tap(find.byKey(const ValueKey('thought-reply-emoji-😂')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(reactions.map((send) => send.text), ['😀', '😂']);
+    expect(
+      find.descendant(of: personal, matching: find.text('😀')),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
+
+  testWidgets(
+    'You sent keeps the last five in order across a new app session',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+      await openCard(tester, thought);
+      expect(sentLine, findsNothing);
+
+      for (final name in ['love', 'laugh', 'fire', 'applause']) {
+        final chip = find.byKey(ValueKey('thought-react-$name'));
+        await tester.tap(chip);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1550));
+        if (name == 'love') expect(sentLine, findsOneWidget);
+      }
+      await choosePanelEmoji(tester, '😀');
+      await tester.pump(const Duration(milliseconds: 1200));
+      await choosePanelEmoji(tester, '😄');
+      await tester.pump(const Duration(milliseconds: 1200));
+
+      final field = find.byKey(const ValueKey('thought-reply-field'));
+      await tester.tap(field);
+      await tester.enterText(field, 'See you at the lake');
+      await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await tester.pump();
+
+      void expectHistory() {
+        expect(sentLine, findsOneWidget);
+        expect(
+          find.descendant(of: sentLine, matching: find.text('You sent')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: sentLine, matching: find.text('+1')),
+          findsOneWidget,
+        );
+        final positions = [
+          for (final glyph in ['😂', '🔥', '👏', '😀', '😄'])
+            tester
+                .getCenter(
+                  find.descendant(of: sentLine, matching: find.text(glyph)),
+                )
+                .dx,
+        ];
+        expect(positions.toSet(), hasLength(5));
+        expect(positions, orderedEquals([...positions]..sort()));
+        expect(
+          find.descendant(of: sentLine, matching: find.text('❤️')),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: sentLine,
+            matching: find.text('See you at the lake'),
+          ),
+          findsNothing,
+        );
+      }
+
+      expectHistory();
+      await openMore(tester);
+      expect(sentLine.hitTestable(), findsNothing);
+      await tester.binding.handlePopRoute().timeout(const Duration(seconds: 3));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expectHistory();
+      await tester.tap(field);
+      await tester.pump();
+      expect(sentLine, findsNothing);
+      await finish(tester);
+
+      answers.dispose();
+      answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
+      await openCard(tester, thought);
+      expectHistory();
+      expect(
+        find.descendant(of: personal, matching: find.text('😄')),
+        findsOneWidget,
+      );
+
+      final before = reactions.length;
+      await tester.tap(find.byKey(const ValueKey('thought-react-love')));
+      await tester.pump();
+      expect(reactions, hasLength(before));
+
+      now = DateTime.parse(thought.expiresAt);
+      await tester.pump(const Duration(hours: 22));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byType(ThoughtCardScreen), findsNothing);
+      expect(sentLine, findsNothing);
+
+      final newThought = _withId(
+        _thought(now).copyWith(text: 'The next Thought'),
+        'later-thought',
+      );
+      await posts.savePost(newThought);
+      await openCard(tester, newThought);
+      expect(find.text('The next Thought', findRichText: true), findsOneWidget);
+      expect(sentLine, findsNothing);
+      expect(
+        find.descendant(of: personal, matching: find.text('😄')),
+        findsOneWidget,
+      );
+      await finish(tester);
+    },
+  );
 
   testWidgets('a later failed card reaction retries the same quoted reply ID', (
     tester,

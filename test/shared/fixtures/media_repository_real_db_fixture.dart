@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/thought_views_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -1229,6 +1230,10 @@ MessageRepositoryImpl _buildMessageRepository(
       return rows.isEmpty ? '' : rows.single['peer_id'] as String;
     },
     dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbLoadThoughtReactionMessages: (postId) =>
+        dbLoadThoughtReactionMessages(db, postId),
+    dbLoadThoughtWroteBackMessages: (postId) =>
+        dbLoadThoughtWroteBackMessages(db, postId),
     dbLoadMessagesForContact: (contactPeerId) =>
         dbLoadMessagesForContact(db, contactPeerId),
     dbLoadLatestMessageForContact: (contactPeerId) =>

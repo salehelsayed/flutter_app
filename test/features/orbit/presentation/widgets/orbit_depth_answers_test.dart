@@ -21,6 +21,7 @@ typedef _Sent = ({String text, String postId, String messageId});
 void main() {
   late List<_Sent> sent;
   late List<String> chats, opened;
+  late List<String> settledTurns;
   late Map<String, PostModel> thoughts;
   late DateTime now;
   late ValueNotifier<int> reset;
@@ -34,6 +35,7 @@ void main() {
     sent = [];
     chats = [];
     opened = [];
+    settledTurns = [];
     thoughts = {for (var i = 0; i < 4; i++) 'peer-$i': depthThought(i)};
     now = depthNow;
     reset = ValueNotifier(0);
@@ -81,6 +83,9 @@ void main() {
             resetSignal: reset,
             onFriendTap: (friend) => chats.add(friend.peerId),
             onThoughtTap: opened.add,
+            onSettled: (_, peerId, turned) {
+              if (turned && peerId != null) settledTurns.add(peerId);
+            },
             onBackActionChanged: (value) => back = value,
             onReply: answers
                 ? (text, postId, messageId) {
@@ -193,6 +198,70 @@ void main() {
           .dy,
       lessThan(tester.getTopLeft(bar(0)).dy),
     );
+    await finish(tester);
+  });
+
+  testWidgets('REV4 a moved emoji gesture and independent taps within 300 ms '
+      'send nothing', (tester) async {
+    await mount(tester);
+    await enter(tester);
+    final fire = find.descendant(of: bar(0), matching: react('fire'));
+    final swipe = await tester.startGesture(tester.getCenter(fire));
+    await swipe.moveBy(const Offset(12, 0));
+    await swipe.moveBy(const Offset(-12, 0));
+    await swipe.up();
+    await tester.pump();
+    expect(
+      sent,
+      isEmpty,
+      reason: 'a swipe ending over the chip is never a tap',
+    );
+
+    await tester.tap(fire, warnIfMissed: false);
+    await tester.pump();
+    expect(
+      sent,
+      isEmpty,
+      reason: 'a new pointer does not clear the swipe guard',
+    );
+
+    await tester.pump(const Duration(milliseconds: 299));
+    await tester.tap(fire, warnIfMissed: false);
+    await tester.pump();
+    expect(sent, isEmpty, reason: '299 ms is still inside the guard');
+
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.tap(fire);
+    await tester.pump();
+    expect(sent.map((send) => (send.text, send.postId)), [('🔥', 'post-0')]);
+    await finish(tester);
+  });
+
+  testWidgets('REV4 the 300 ms guard starts at fling settlement', (
+    tester,
+  ) async {
+    await mount(tester, reduceMotion: false);
+    await enter(tester);
+    await tester.pump(const Duration(seconds: 1));
+    final fire = find.descendant(of: bar(0), matching: react('fire'));
+    await tester.fling(fire, const Offset(-115, 0), 1800);
+    for (var frame = 0; frame < 100 && settledTurns.isEmpty; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(settledTurns, ['peer-1']);
+    expect(sent, isEmpty);
+    final landedFire = find.descendant(of: bar(1), matching: react('fire'));
+    await tester.tap(landedFire, warnIfMissed: false);
+    await tester.pump();
+    expect(sent, isEmpty, reason: 'landing does not release the guard early');
+    await tester.pump(const Duration(milliseconds: 299));
+    await tester.tap(landedFire, warnIfMissed: false);
+    await tester.pump();
+    expect(sent, isEmpty);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.tap(landedFire);
+    await tester.pump();
+    expect(sent.map((send) => (send.text, send.postId)), [('🔥', 'post-1')]);
     await finish(tester);
   });
 

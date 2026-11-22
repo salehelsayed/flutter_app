@@ -128,6 +128,7 @@ import 'package:image_picker_platform_interface/image_picker_platform_interface.
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -145,6 +146,7 @@ import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dar
 import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../../shared/helpers/durable_group_exit_surface_harness.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
@@ -1547,21 +1549,36 @@ void main() {
       );
     }
 
-    testWidgets('depth and full-screen Thought expose the same reply dock', (
-      tester,
-    ) async {
+    testWidgets('REV4 depth Reply and full-screen input open the same '
+        'typing card', (tester) async {
       await enterDepthWithThought(tester);
-      expect(_thoughtReplyDock, findsOneWidget);
+      expect(_thoughtReplyTextField, findsNothing);
+      expect(_thoughtReplyMore, findsOneWidget);
+      final reply = find.byKey(const ValueKey('orbit-depth-reply'));
+      expect(reply, findsOneWidget);
+      await tester.tap(reply);
+      await pumpOrbitFrames(tester, count: 8);
+      final quote = find.byKey(const ValueKey('thought-reply-quote'));
+      expect(quote, findsOneWidget);
       expect(_thoughtReplyTextField, findsOneWidget);
-      expect(_thoughtReplyStickers, findsOneWidget);
-      expect(find.byKey(const ValueKey('orbit-depth-reply')), findsNothing);
+      expect(_thoughtReplyMore, findsNothing);
+
+      await tester.binding.handlePopRoute().timeout(const Duration(seconds: 3));
+      await pumpOrbitFrames(tester, count: 8);
+      expect(quote, findsNothing);
+      expect(reply, findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
       await pumpOrbitFrames(tester, count: 24);
       expect(find.byType(ThoughtCardScreen), findsOneWidget);
       expect(find.byKey(const ValueKey('thought-react-love')), findsOneWidget);
       expect(_thoughtReplyDock, findsOneWidget);
       expect(_thoughtReplyTextField, findsOneWidget);
-      expect(_thoughtReplyStickers, findsOneWidget);
+      expect(_thoughtReplyMore, findsOneWidget);
+      await tester.tap(_thoughtReplyTextField);
+      await pumpOrbitFrames(tester, count: 8);
+      expect(quote, findsOneWidget);
+      expect(_thoughtReplyTextField, findsOneWidget);
+      expect(_thoughtReplyMore, findsNothing);
       expect(find.byIcon(Icons.mic), findsNothing);
       expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
       await finishThoughtCase(tester);
@@ -2718,6 +2735,160 @@ void main() {
           findsOneWidget,
         );
 
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'You page shows a panel emoji as a reaction and counts sticker and typed replies',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+
+        const postId = 'you-live';
+        const emoji = '🧡';
+        final activity = [
+          (id: 'emoji-friend', name: 'Emi', text: emoji),
+          (id: 'sticker-friend', name: 'Sam', text: ''),
+          (id: 'writer-friend', name: 'Wren', text: 'Lovely, thanks!'),
+        ];
+        final friends = [
+          for (final person in activity)
+            testContact.copyWith(
+              peerId: person.id,
+              username: person.name,
+              publicKey: 'public-${person.id}',
+            ),
+        ];
+        contactRepo.seed(friends);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+
+        const budget = Duration(seconds: 4);
+        final at = thoughtNow.toIso8601String();
+        await posts
+            .savePost(
+              thought(postId, text: 'Morning walk').copyWith(
+                senderPeerId: testIdentity.peerId,
+                authorPeerId: testIdentity.peerId,
+                authorUsername: testIdentity.username,
+                isIncoming: false,
+              ),
+            )
+            .timeout(budget);
+        for (final friend in friends) {
+          await posts
+              .saveRecipientDelivery(
+                PostRecipientDelivery(
+                  postId: postId,
+                  recipientPeerId: friend.peerId,
+                  deliveryStatus: 'delivered',
+                  lastAttemptAt: at,
+                  deliveryPath: 'direct',
+                  createdAt: at,
+                  updatedAt: at,
+                ),
+              )
+              .timeout(budget);
+        }
+
+        final projected = await tester.runAsync(() async {
+          final fixture = await MediaRepositoryRealDbFixture.create(
+            databaseFactoryOverride: databaseFactoryFfiNoIsolate,
+          ).timeout(budget);
+          try {
+            for (final friend in friends) {
+              await fixture.db
+                  .insert('contacts', friend.toMap())
+                  .timeout(budget);
+            }
+            for (final person in activity) {
+              await fixture.messageRepo
+                  .saveMessage(
+                    ConversationMessage(
+                      id: '${person.id}-reply',
+                      contactPeerId: person.id,
+                      senderPeerId: person.id,
+                      text: person.text,
+                      timestamp: at,
+                      createdAt: at,
+                      status: 'delivered',
+                      isIncoming: true,
+                      quotedMessageId: thoughtQuoteId(postId),
+                    ),
+                  )
+                  .timeout(budget);
+            }
+            await fixture.repo
+                .saveAttachment(
+                  MediaAttachment(
+                    id: 'incoming-sticker',
+                    messageId: 'sticker-friend-reply',
+                    mime: 'image/png',
+                    mediaType: 'image',
+                    size: 10,
+                    downloadStatus: 'done',
+                    createdAt: at,
+                    ownerLane: MediaOwnerLane.direct,
+                    stickerId: 'custom',
+                  ),
+                  owner: MediaOwnerLane.direct,
+                )
+                .timeout(budget);
+            return (
+              reactions: await fixture.messageRepo
+                  .loadThoughtReactionMessages(postId)
+                  .timeout(budget),
+              wroteBack: await fixture.messageRepo
+                  .loadThoughtWroteBack(postId)
+                  .timeout(budget),
+            );
+          } finally {
+            await fixture.dispose().timeout(budget);
+          }
+        });
+        // Keep real SQL preparation out of the widget's simulated clock.
+        final messages = _WroteBackMessageRepository()
+          ..reactionMessages = projected!.reactions
+          ..wroteBack = projected.wroteBack;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            messageRepository: messages,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.byType(YouPageScreen), findsOneWidget);
+        final card = find.byKey(const ValueKey('you-thought-you-live'));
+        Finder inThought(Finder child) =>
+            find.descendant(of: card, matching: child);
+        expect(inThought(find.text('Morning walk')), findsOneWidget);
+        expect(
+          inThought(find.byKey(const ValueKey('you-wrote-sticker-friend'))),
+          findsOneWidget,
+        );
+        expect(
+          inThought(find.byKey(const ValueKey('you-wrote-writer-friend'))),
+          findsOneWidget,
+        );
+        expect(inThought(find.text(emoji)), findsOneWidget);
+        expect(inThought(find.text('1 reacted')), findsOneWidget);
+        expect(
+          inThought(find.byKey(const ValueKey('you-wrote-emoji-friend'))),
+          findsNothing,
+        );
+        expect(
+          inThought(find.textContaining('2 wrote back', findRichText: true)),
+          findsOneWidget,
+        );
         await finishThoughtCase(tester);
       },
     );
@@ -14299,9 +14470,7 @@ class _CountingCallActivitySource implements OrbitCallActivitySource {
 }
 
 final _thoughtReplyDock = find.byKey(const ValueKey('thought-reply-dock'));
-final _thoughtReplyStickers = find.byKey(
-  const ValueKey('thought-reply-stickers'),
-);
+final _thoughtReplyMore = find.byKey(const ValueKey('thought-reply-more'));
 final _thoughtReplySubmit = find.byKey(const ValueKey('thought-reply-send'));
 final _thoughtReplyTextField = find.descendant(
   of: find.byKey(const ValueKey('thought-reply-field')),
@@ -14309,9 +14478,10 @@ final _thoughtReplyTextField = find.descendant(
   matchRoot: true,
 );
 
-Finder get _depthReplyEntry => _thoughtReplyTextField.evaluate().isNotEmpty
-    ? _thoughtReplyTextField
-    : find.byKey(const ValueKey('orbit-depth-reply'));
+Finder get _depthReplyEntry {
+  final reply = find.byKey(const ValueKey('orbit-depth-reply'));
+  return reply.evaluate().isNotEmpty ? reply : _thoughtReplyTextField;
+}
 
 Finder get _depthReplyField => _thoughtReplyTextField.evaluate().isNotEmpty
     ? _thoughtReplyTextField
@@ -14331,12 +14501,13 @@ Finder get _depthReplySend => _thoughtReplySubmit.evaluate().isNotEmpty
 class _WroteBackMessageRepository extends InMemoryMessageRepository
     implements ThoughtReactionMessageRepository {
   List<ThoughtWroteBack> wroteBack = const [];
+  List<ConversationMessage> reactionMessages = const [];
   int wroteBackLookups = 0;
 
   @override
   Future<List<ConversationMessage>> loadThoughtReactionMessages(
     String postId,
-  ) async => const [];
+  ) async => reactionMessages;
 
   @override
   Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async {
