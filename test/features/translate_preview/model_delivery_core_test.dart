@@ -1512,6 +1512,148 @@ void main() {
     }
   });
 
+  group('BL60 committed background notices', () {
+    const bound = Duration(seconds: 3);
+
+    ({Future<void> started, VoidCallback release}) holdRecordWrite(
+      _Storage storage,
+      ModelDeliveryPhase phase,
+    ) {
+      final started = Completer<void>();
+      final proceed = Completer<void>();
+      storage.beforeSaveRecord = (record) async {
+        if (record.phase != phase || started.isCompleted) return;
+        started.complete();
+        await proceed.future.timeout(bound);
+      };
+
+      void release() {
+        if (!proceed.isCompleted) proceed.complete();
+      }
+
+      addTearDown(release);
+      return (started: started.future, release: release);
+    }
+
+    test('verified Ready publishes once after its record commits', () async {
+      final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
+      _Storage? storage;
+      final h = await _Harness.create(
+        publishBackgroundStatus: (state) async =>
+            notices.add((state, storage?.record)),
+      ).timeout(bound);
+      storage = h.storage;
+      addTearDown(() => h.dispose().timeout(bound));
+
+      final checking = Completer<bool>();
+      final checkingStarted = Completer<void>();
+      h.storage
+        ..verification = checking
+        ..verificationStarted = checkingStarted;
+      addTearDown(() {
+        if (!checking.isCompleted) checking.complete(false);
+      });
+      final write = holdRecordWrite(h.storage, ModelDeliveryPhase.ready);
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await checkingStarted.future.timeout(bound);
+      expect(notices, isEmpty, reason: 'transport complete is still checking');
+
+      checking.complete(true);
+      await write.started.timeout(bound);
+      expect(h.storage.record!.phase, ModelDeliveryPhase.verifying);
+      expect(
+        notices,
+        isEmpty,
+        reason: 'the verified record is still being saved',
+      );
+      write.release();
+      await h.flush().timeout(bound);
+
+      expect(
+        notices,
+        hasLength(1),
+        reason:
+            'the committed verified record publishes exactly one Ready notice',
+      );
+      final (state, record) = notices.single;
+      expect(
+        state,
+        isA<ModelReady>().having((s) => s.sizeBytes, 'sizeBytes', 100),
+      );
+      expect(record?.phase, ModelDeliveryPhase.ready);
+      expect(record?.taskId, taskId);
+      expect(record?.verification?.expectedSha256, _manifest.sha256);
+      expect(record?.verification?.identity, _fileIdentity());
+
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await h.controller.refresh().timeout(bound);
+      expect(notices, hasLength(1));
+    });
+
+    test(
+      'acknowledged Pause publishes once after owned progress commits',
+      () async {
+        final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
+        _Storage? storage;
+        final h = await _Harness.create(
+          publishBackgroundStatus: (state) async =>
+              notices.add((state, storage?.record)),
+        ).timeout(bound);
+        storage = h.storage;
+        addTearDown(() => h.dispose().timeout(bound));
+
+        await h.controller.start(allowMobileData: false).timeout(bound);
+        final taskId = h.id;
+        await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+        await h.controller.pause().timeout(bound);
+        expect(h.transport.pauses, [taskId]);
+        expect(h.storage.record!.phase, ModelDeliveryPhase.pauseRequested);
+        expect(
+          notices,
+          isEmpty,
+          reason: 'a pause request awaits acknowledgement',
+        );
+
+        final write = holdRecordWrite(h.storage, ModelDeliveryPhase.userPaused);
+        final acknowledgement = h.event(ModelTransferStatus.paused, bytes: 42);
+        await write.started.timeout(bound);
+        expect(h.storage.record!.phase, ModelDeliveryPhase.pauseRequested);
+        expect(
+          notices,
+          isEmpty,
+          reason: 'the acknowledged pause is still being saved',
+        );
+        write.release();
+        await acknowledgement.timeout(bound);
+
+        expect(
+          notices,
+          hasLength(1),
+          reason:
+              'the committed pause publishes exactly one owned progress notice',
+        );
+        final (state, record) = notices.single;
+        expect(
+          state,
+          isA<ModelPaused>().having((s) => s.percent, 'percent', 42),
+        );
+        expect(record?.phase, ModelDeliveryPhase.userPaused);
+        expect(record?.taskId, taskId);
+        expect(record?.receivedBytes, 42);
+
+        await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+        h.transport.eventsController.add(
+          ModelTransferEvent(taskId: taskId, receivedBytes: 43),
+        );
+        await h.flush().timeout(bound);
+        expect(notices, hasLength(1));
+      },
+    );
+  });
+
   group('BL15 transcription tail', () {
     Uint8List samples(List<int> values) {
       final data = ByteData(values.length * 2);
@@ -2138,6 +2280,7 @@ class _Harness {
     Future<bool> Function()? readAvailableMemory,
     Future<({bool supported, bool insufficientMemory})> Function()?
     readCapability,
+    Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
@@ -2169,6 +2312,7 @@ class _Harness {
           () async => (supported: supported, insufficientMemory: false),
       spaceReserveBytes: 20,
       newTaskId: () => 'task-${++next}',
+      publishBackgroundStatus: publishBackgroundStatus,
     );
     await controller.initialize();
     return _Harness(controller, storage, network, transport);
@@ -2225,10 +2369,12 @@ class _Storage implements ModelDeliveryStorage {
   Completer<bool>? verification;
   Completer<void>? verificationStarted;
   Future<void> Function()? onRemove;
+  Future<void> Function(ModelDeliveryRecord)? beforeSaveRecord;
   @override
   Future<ModelDeliveryRecord?> readRecord() async => record;
   @override
   Future<void> saveRecord(ModelDeliveryRecord value) async {
+    if (beforeSaveRecord case final beforeSave?) await beforeSave(value);
     record = value;
   }
 
