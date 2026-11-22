@@ -404,6 +404,23 @@ class _DeliveryGate extends StatelessWidget {
           ModelReady() => null,
           ModelNotDownloaded() ||
           ModelNotEnoughSpace() => _Link(action, base, onTap: openSheet),
+          ModelAwaitingConnection() => _Link(
+            l10n.translator_offline_start_title,
+            base,
+            onTap: openSheet,
+            quiet: true,
+          ),
+          ModelChecking() => _Link(
+            l10n.translator_checking_title,
+            base,
+            onTap: openSheet,
+            quiet: true,
+          ),
+          ModelUpdateRequired() => _Link(
+            l10n.update_available_action,
+            base,
+            onTap: openSheet,
+          ),
           ModelDownloading(:final percent) => _Link(
             words.downloading('$percent'),
             base,

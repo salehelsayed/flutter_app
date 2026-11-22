@@ -72,13 +72,22 @@ final class HttpModelDeliveryNetwork implements ModelDeliveryNetwork {
   }
 
   @override
-  Future<bool> checkWifi() async => (await _connectivity.checkConnectivity())
-      .contains(ConnectivityResult.wifi);
+  Future<ModelDeliveryConnection> checkConnection() async =>
+      _connection(await _connectivity.checkConnectivity());
 
   @override
-  Stream<bool> get wifiChanges => _connectivity.onConnectivityChanged
-      .map((results) => results.contains(ConnectivityResult.wifi))
-      .distinct();
+  Stream<ModelDeliveryConnection> get connectionChanges =>
+      _connectivity.onConnectivityChanged.map(_connection).distinct();
+
+  static ModelDeliveryConnection _connection(List<ConnectivityResult> results) {
+    if (results.contains(ConnectivityResult.wifi)) {
+      return ModelDeliveryConnection.wifi;
+    }
+    if (results.any((result) => result != ConnectivityResult.none)) {
+      return ModelDeliveryConnection.other;
+    }
+    return ModelDeliveryConnection.offline;
+  }
 }
 
 final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {

@@ -5002,6 +5002,33 @@ class AppLocalizationsAr extends AppLocalizations {
       'يمكنك مغادرة هذه الشاشة. يمكن أن يستمر التنزيل في الخلفية ويُستأنف من حيث توقف.';
 
   @override
+  String get translator_checking_title => 'جارٍ التحقق من التنزيل';
+
+  @override
+  String get translator_checking_line =>
+      'نتحقق من اكتمال الملف. قد يستغرق ذلك لحظة.';
+
+  @override
+  String get translator_offline_start_title => 'أنت غير متصل بالإنترنت';
+
+  @override
+  String get translator_offline_start_wifi =>
+      'اتصل بشبكة واي فاي. يبدأ التنزيل تلقائيًا عند عودة الاتصال.';
+
+  @override
+  String get translator_offline_start_mobile =>
+      'اتصل بشبكة واي فاي أو فعّل بيانات الهاتف. يبدأ التنزيل تلقائيًا عند عودة الاتصال.';
+
+  @override
+  String translator_update_title(String appName) {
+    return 'حدّث $appName لاستخدام المترجم';
+  }
+
+  @override
+  String get translator_update_line =>
+      'لا يمكن لهذا الإصدار استخدام أحدث نسخة من المترجم. حدّث التطبيق للمتابعة.';
+
+  @override
   String get translator_close => 'إغلاق';
 
   @override

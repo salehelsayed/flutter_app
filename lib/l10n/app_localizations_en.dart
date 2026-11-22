@@ -4933,6 +4933,33 @@ class AppLocalizationsEn extends AppLocalizations {
       'You can leave this screen. Your download can continue in the background and picks up where it stopped.';
 
   @override
+  String get translator_checking_title => 'Checking the download';
+
+  @override
+  String get translator_checking_line =>
+      'Making sure the file arrived complete. This may take a moment.';
+
+  @override
+  String get translator_offline_start_title => 'You\'re offline';
+
+  @override
+  String get translator_offline_start_wifi =>
+      'Connect to Wi-Fi. The download starts by itself as soon as you\'re online.';
+
+  @override
+  String get translator_offline_start_mobile =>
+      'Connect to Wi-Fi or mobile data. The download starts by itself as soon as you\'re online.';
+
+  @override
+  String translator_update_title(String appName) {
+    return 'Update $appName to use the translator';
+  }
+
+  @override
+  String get translator_update_line =>
+      'This version can\'t use the newest translator. Update to continue.';
+
+  @override
   String get translator_close => 'Close';
 
   @override

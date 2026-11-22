@@ -5045,6 +5045,33 @@ class AppLocalizationsDe extends AppLocalizations {
       'Du kannst diesen Bildschirm verlassen. Der Download kann im Hintergrund weiterlaufen und wird nach einer Unterbrechung fortgesetzt.';
 
   @override
+  String get translator_checking_title => 'Download wird überprüft';
+
+  @override
+  String get translator_checking_line =>
+      'Wir prüfen, ob die Datei vollständig ist. Das kann einen Moment dauern.';
+
+  @override
+  String get translator_offline_start_title => 'Du bist offline';
+
+  @override
+  String get translator_offline_start_wifi =>
+      'Verbinde dich mit dem WLAN. Der Download startet automatisch, sobald du online bist.';
+
+  @override
+  String get translator_offline_start_mobile =>
+      'Verbinde dich per WLAN oder mobilen Daten. Der Download startet automatisch, sobald du online bist.';
+
+  @override
+  String translator_update_title(String appName) {
+    return 'Aktualisiere $appName für den Übersetzer';
+  }
+
+  @override
+  String get translator_update_line =>
+      'Diese Version kann den neuesten Übersetzer nicht verwenden. Aktualisiere die App, um fortzufahren.';
+
+  @override
   String get translator_close => 'Schließen';
 
   @override

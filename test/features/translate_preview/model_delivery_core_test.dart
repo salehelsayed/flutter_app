@@ -576,14 +576,14 @@ void main() {
   );
 
   test(
-    'completion stays downloading until size/checksum verification succeeds',
+    'completion shows Checking until size/checksum verification succeeds',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       await h.controller.start(allowMobileData: false);
       h.storage.verification = Completer<bool>();
       await h.event(ModelTransferStatus.complete);
-      expect((h.controller.state.value as ModelDownloading).receivedBytes, 100);
+      expect(h.controller.state.value, isA<ModelChecking>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
       final ready = _nextState<ModelReady>(h.controller.state);
       h.storage.verification!.complete(true);
@@ -814,13 +814,13 @@ void main() {
   });
 
   test(
-    'manifest build floor projects Unsupported without a native task',
+    'manifest build floor requires an update without a native task',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
       await h.controller.start(allowMobileData: false);
-      expect(h.controller.state.value, isA<ModelUnsupported>());
+      expect(h.controller.state.value, isA<ModelUpdateRequired>());
       expect(h.transport.enqueues, isEmpty);
     },
   );
@@ -1911,9 +1911,7 @@ void main() {
           freeBytes: 3000000000,
           record: const ModelDeliveryRecord(),
         ).timeout(bound);
-        h.network.manifestFailure = const SocketException(
-          'network unavailable',
-        );
+        h.network.offline = true;
         addTearDown(() => h.dispose().timeout(bound));
 
         await pumpSheet(tester, h.controller);
@@ -1922,11 +1920,29 @@ void main() {
         await tester.pump().timeout(bound);
 
         expect(h.transport.enqueues, isEmpty);
+        expect(h.network.fetches, 0);
         expect(
           find.text("You're offline"),
           findsOneWidget,
           reason: 'the sheet explains offline on the first download request',
         );
+        await tester.tap(find.text('Cancel')).timeout(bound);
+        await h.flush().timeout(bound);
+        h.network.changeWifi(true);
+        await h.flush().timeout(bound);
+        expect(h.transport.enqueues, isEmpty);
+
+        h.network.changeWifi(false, offline: true);
+        await h.flush().timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.tap(find.text('Download when on Wi-Fi')).timeout(bound);
+        await h.flush().timeout(bound);
+        h.network.changeWifi(false);
+        await h.flush().timeout(bound);
+        expect(h.transport.enqueues, isEmpty);
+        h.network.changeWifi(true);
+        await h.flush().timeout(bound);
+        expect(h.transport.enqueues, [(taskId: h.id, requiresWiFi: true)]);
       },
     );
 
@@ -2181,26 +2197,33 @@ class _MemorySession extends Fake implements InferenceModelSession {
 
 class _Network implements ModelDeliveryNetwork {
   bool wifi = true;
+  bool offline = false;
   bool failFetch = false;
-  SocketException? manifestFailure;
   int fetches = 0;
   Map<String, Object?> manifest = _manifest.toJson();
-  final changes = StreamController<bool>.broadcast(sync: true);
+  final changes = StreamController<ModelDeliveryConnection>.broadcast(
+    sync: true,
+  );
+  ModelDeliveryConnection get _connection => offline
+      ? ModelDeliveryConnection.offline
+      : wifi
+      ? ModelDeliveryConnection.wifi
+      : ModelDeliveryConnection.other;
   @override
-  Stream<bool> get wifiChanges => changes.stream;
+  Stream<ModelDeliveryConnection> get connectionChanges => changes.stream;
   @override
-  Future<bool> checkWifi() async => wifi;
+  Future<ModelDeliveryConnection> checkConnection() async => _connection;
   @override
   Future<Map<String, Object?>> fetchManifest() async {
     fetches++;
-    if (manifestFailure case final failure?) throw failure;
     if (failFetch) throw StateError('offline');
     return manifest;
   }
 
-  void changeWifi(bool value) {
+  void changeWifi(bool value, {bool offline = false}) {
     wifi = value;
-    changes.add(value);
+    this.offline = offline;
+    changes.add(_connection);
   }
 }
 

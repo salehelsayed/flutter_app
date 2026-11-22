@@ -8180,6 +8180,48 @@ abstract class AppLocalizations {
   /// **'You can leave this screen. Your download can continue in the background and picks up where it stopped.'**
   String get translator_progress_keeps_going;
 
+  /// No description provided for @translator_checking_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the download'**
+  String get translator_checking_title;
+
+  /// No description provided for @translator_checking_line.
+  ///
+  /// In en, this message translates to:
+  /// **'Making sure the file arrived complete. This may take a moment.'**
+  String get translator_checking_line;
+
+  /// No description provided for @translator_offline_start_title.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re offline'**
+  String get translator_offline_start_title;
+
+  /// No description provided for @translator_offline_start_wifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to Wi-Fi. The download starts by itself as soon as you\'re online.'**
+  String get translator_offline_start_wifi;
+
+  /// No description provided for @translator_offline_start_mobile.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to Wi-Fi or mobile data. The download starts by itself as soon as you\'re online.'**
+  String get translator_offline_start_mobile;
+
+  /// Translator model needs a newer app build. appName is the app title.
+  ///
+  /// In en, this message translates to:
+  /// **'Update {appName} to use the translator'**
+  String translator_update_title(String appName);
+
+  /// No description provided for @translator_update_line.
+  ///
+  /// In en, this message translates to:
+  /// **'This version can\'t use the newest translator. Update to continue.'**
+  String get translator_update_line;
+
   /// Closes the sheet; the download continues.
   ///
   /// In en, this message translates to:

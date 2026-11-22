@@ -1321,7 +1321,9 @@ class _StorageTestNetwork implements ModelDeliveryNetwork {
   @override
   Future<Map<String, Object?>> fetchManifest() async => manifest.toJson();
   @override
-  Future<bool> checkWifi() async => true;
+  Future<ModelDeliveryConnection> checkConnection() async =>
+      ModelDeliveryConnection.wifi;
   @override
-  Stream<bool> get wifiChanges => const Stream<bool>.empty();
+  Stream<ModelDeliveryConnection> get connectionChanges =>
+      const Stream<ModelDeliveryConnection>.empty();
 }

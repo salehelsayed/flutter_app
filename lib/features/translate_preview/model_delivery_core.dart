@@ -117,6 +117,7 @@ final class ModelDeliveryManifest {
 
 enum ModelDeliveryPhase {
   idle,
+  awaitingConnection,
   insufficientSpace,
   active,
   waitingToRetry,
@@ -341,10 +342,12 @@ abstract interface class ModelDeliveryStorage {
   Future<void> removeOwnedModel();
 }
 
+enum ModelDeliveryConnection { offline, wifi, other }
+
 abstract interface class ModelDeliveryNetwork {
   Future<Map<String, Object?>> fetchManifest();
-  Future<bool> checkWifi();
-  Stream<bool> get wifiChanges;
+  Future<ModelDeliveryConnection> checkConnection();
+  Stream<ModelDeliveryConnection> get connectionChanges;
 }
 
 abstract interface class ModelDeliveryTransport {
@@ -390,7 +393,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _spaceReserveBytes = spaceReserveBytes,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
-    _wifiSubscription = _network.wifiChanges.listen(_receiveWifi);
+    _connectionSubscription = _network.connectionChanges.listen(
+      _receiveConnection,
+    );
   }
 
   final ModelDeliveryStorage _storage;
@@ -406,7 +411,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final _allowMobileData = ValueNotifier(false);
   final _memoryNoticePending = ValueNotifier(false);
   late final StreamSubscription<ModelTransferEvent> _transferSubscription;
-  late final StreamSubscription<bool> _wifiSubscription;
+  late final StreamSubscription<ModelDeliveryConnection>
+  _connectionSubscription;
   Future<void>? _initialization;
   Future<void> _tail = Future.value();
   // Remove owns _tail while awaiting Gemma's queue. Inference safety must never
@@ -416,7 +422,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   bool _inferenceActive = false;
   ModelDeliveryRecord _record = const ModelDeliveryRecord();
   final ValueNotifier<bool> _supported;
-  bool _onWifi = false;
+  ModelDeliveryConnection _connection = ModelDeliveryConnection.offline;
   bool _disposed = false;
   int _build = 0;
   int _freeBytes = 0;
@@ -476,7 +482,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       } else {
         _memoryNoticePending.value = _safety.noticePending;
       }
-      _onWifi = await _network.checkWifi();
+      _connection = await _network.checkConnection();
       _freeBytes = await _storage.availableBytes();
       await _transport.initialize(_record.taskId);
       if (_record.phase == ModelDeliveryPhase.removing) {
@@ -544,6 +550,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _render();
       if (_canRun && _record.phase == ModelDeliveryPhase.verifying) {
         _beginVerification();
+      } else if (_canStartPending) {
+        await _startOrResume();
       }
     } on Object {
       _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
@@ -589,6 +597,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         _render();
         if (_canRun && _record.phase == ModelDeliveryPhase.verifying) {
           _beginVerification();
+        } else if (_canStartPending) {
+          await _startOrResume();
         }
       }),
     );
@@ -739,10 +749,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     try {
       await initialize();
       await _queue(() async {
-        final onWifi = await _network.checkWifi();
+        final connection = await _network.checkConnection();
         final freeBytes = await _storage.availableBytes();
         if (_disposed) return;
-        _onWifi = onWifi;
+        _connection = connection;
         _freeBytes = freeBytes;
         if (_record.phase == ModelDeliveryPhase.insufficientSpace &&
             _freeBytes >= _neededBytes) {
@@ -764,8 +774,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   }
 
   @override
-  Future<void> setAllowMobileData(bool allow) =>
-      _perform(() => _setAllowMobileData(allow));
+  Future<void> setAllowMobileData(bool allow) => _perform(() async {
+    await _setAllowMobileData(allow);
+    if (_canStartPending) await _startOrResume();
+  });
 
   Future<void> _setAllowMobileData(bool allow) async {
     if (_record.allowMobileData == allow) return;
@@ -814,6 +826,17 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   }
 
   @override
+  Future<void> cancelPendingStart() {
+    if (_state.value is ModelAwaitingConnection) _generation++;
+    return _perform(() async {
+      if (_record.phase != ModelDeliveryPhase.awaitingConnection) return;
+      _record = _record.copyWith(phase: ModelDeliveryPhase.idle);
+      await _persist();
+      _render();
+    });
+  }
+
+  @override
   Future<void> resume() {
     _generation++;
     _resetRecoveryDelay();
@@ -844,6 +867,16 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     _verifiedPath = null;
     final recovering = recoveryGeneration != null;
+    final pending = _record.phase == ModelDeliveryPhase.awaitingConnection;
+    final generation = _generation;
+    if (!recovering) {
+      _connection = await _network.checkConnection();
+      if (await _deferOfflineStart()) return;
+      if (pending && !_canStartPending) {
+        _render();
+        return;
+      }
+    }
     final cached = _record.manifest;
     var manifest = cached;
     if (!recovering) {
@@ -851,7 +884,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       try {
         raw = await _network.fetchManifest();
       } on Object {
-        if (cached == null) rethrow;
+        if (cached == null) {
+          _connection = await _network.checkConnection();
+          if (await _deferOfflineStart()) return;
+          rethrow;
+        }
         raw = cached.toJson();
       }
       manifest = ModelDeliveryManifest.fromJson(raw);
@@ -872,11 +909,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       return;
     }
     await _storage.prepare();
-    _onWifi = await _network.checkWifi();
+    _connection = await _network.checkConnection();
     _freeBytes = await _storage.availableBytes();
     final hasCompleteFile = await _storage.modelLength() == manifest.bytes;
     if (recovering &&
         (recoveryGeneration != _generation || !_canRecoverTransfer)) {
+      _render();
+      return;
+    }
+    if (pending && (generation != _generation || !_canStartPending)) {
       _render();
       return;
     }
@@ -891,6 +932,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _beginVerification();
       return;
     }
+    if (!recovering && await _deferOfflineStart()) return;
     if (_freeBytes < _neededBytes) {
       _record = _record.copyWith(phase: ModelDeliveryPhase.insufficientSpace);
       await _persist();
@@ -948,6 +990,19 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     )) {
       throw StateError('Translator task was not accepted');
     }
+  }
+
+  Future<bool> _deferOfflineStart() async {
+    if (_record.taskId != null ||
+        _connection != ModelDeliveryConnection.offline) {
+      return false;
+    }
+    if (_record.phase != ModelDeliveryPhase.awaitingConnection) {
+      _record = _record.copyWith(phase: ModelDeliveryPhase.awaitingConnection);
+      await _persist();
+    }
+    _render();
+    return true;
   }
 
   @override
@@ -1073,21 +1128,28 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }),
   );
 
-  void _receiveWifi(bool onWifi) => unawaited(
-    _perform(() async {
-      final returned = onWifi && !_onWifi;
-      _onWifi = onWifi;
-      if (returned) {
-        _resetRecoveryDelay();
-        final id = _record.taskId;
-        if (id != null && _canRecoverTransfer) {
-          await _recoverTransfer(id, _generation);
+  void _receiveConnection(ModelDeliveryConnection connection) {
+    final generation = _generation;
+    unawaited(
+      _perform(() async {
+        final returned = connection == ModelDeliveryConnection.wifi && !_onWifi;
+        _connection = connection;
+        if (generation == _generation && _canStartPending) {
+          await _startOrResume();
           return;
         }
-      }
-      _render();
-    }),
-  );
+        if (returned) {
+          _resetRecoveryDelay();
+          final id = _record.taskId;
+          if (id != null && _canRecoverTransfer) {
+            await _recoverTransfer(id, _generation);
+            return;
+          }
+        }
+        _render();
+      }),
+    );
+  }
 
   bool get _shouldRecoverUnexpectedPause =>
       _transport.canRecoverUnexpectedPauses &&
@@ -1208,16 +1270,25 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   int get _neededBytes =>
       max(0, _totalBytes - _record.receivedBytes) + _spaceReserveBytes;
   int _clamp(int bytes) => bytes.clamp(0, _totalBytes);
-  bool get _canRun =>
-      _supported.value &&
-      _safety.blockedReason == null &&
-      (_record.manifest?.minAppBuild ?? 0) <= _build;
+  bool get _onWifi => _connection == ModelDeliveryConnection.wifi;
+  bool get _canStartPending =>
+      _canRun &&
+      _record.phase == ModelDeliveryPhase.awaitingConnection &&
+      _connection != ModelDeliveryConnection.offline &&
+      (_onWifi || _record.allowMobileData);
+  bool get _eligibleDevice => _supported.value && _safety.blockedReason == null;
+  bool get _requiresUpdate => (_record.manifest?.minAppBuild ?? 0) > _build;
+  bool get _canRun => _eligibleDevice && !_requiresUpdate;
 
   void _render() {
     if (_disposed) return;
     _updateRecoveryTimer();
-    if (!_canRun) {
+    if (!_eligibleDevice) {
       _state.value = const ModelUnsupported();
+      return;
+    }
+    if (_requiresUpdate) {
+      _state.value = const ModelUpdateRequired();
       return;
     }
     _state.value = switch (_record.phase) {
@@ -1233,6 +1304,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
                 freeBytes: _freeBytes,
                 onWifi: _onWifi,
               ),
+      ModelDeliveryPhase.awaitingConnection => ModelAwaitingConnection(
+        allowMobileData: _record.allowMobileData,
+      ),
       ModelDeliveryPhase.insufficientSpace => ModelNotEnoughSpace(
         totalBytes: _totalBytes,
         neededBytes: _neededBytes,
@@ -1252,10 +1326,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
                 receivedBytes: _record.receivedBytes,
                 totalBytes: _totalBytes,
               ),
-      ModelDeliveryPhase.verifying => ModelDownloading(
-        receivedBytes: _totalBytes,
-        totalBytes: _totalBytes,
-      ),
+      ModelDeliveryPhase.verifying => const ModelChecking(),
       ModelDeliveryPhase.failed => const ModelFailed(),
       ModelDeliveryPhase.ready => ModelReady(sizeBytes: _totalBytes),
       ModelDeliveryPhase.removing => const ModelFailed(),
@@ -1309,7 +1380,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _generation++;
     _verifiedPath = null;
     await _transferSubscription.cancel();
-    await _wifiSubscription.cancel();
+    await _connectionSubscription.cancel();
     await _tail;
     await _safetyTail;
     await _transport.dispose();

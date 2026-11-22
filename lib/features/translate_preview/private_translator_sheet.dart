@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/update_check/domain/update_check_models.dart';
+import 'package:flutter_app/features/update_check/presentation/update_store_launcher.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
 
@@ -25,6 +27,16 @@ String _gigabytes(BuildContext context, int bytes) {
     '0.0',
     language == 'de' ? 'de' : 'en',
   ).format(bytes / 1000000000);
+}
+
+String translatorAppName(BuildContext context) =>
+    context.findAncestorWidgetOfExactType<MaterialApp>()?.title ?? '';
+
+void openTranslatorUpdateStore(BuildContext context) {
+  final platform = Theme.of(context).platform == TargetPlatform.iOS
+      ? UpdatePlatform.ios
+      : UpdatePlatform.android;
+  unawaited(launchUpdateStore(updateStoreUrlForPlatform(platform)));
 }
 
 /// The one download sheet, opened from a link or from Settings. It follows
@@ -131,6 +143,31 @@ class PrivateTranslatorSheet extends StatelessWidget {
                   },
           ),
         ),
+      ModelAwaitingConnection(:final allowMobileData) => _SheetLayout(
+        title: l10n.translator_offline_start_title,
+        line: allowMobileData
+            ? l10n.translator_offline_start_mobile
+            : l10n.translator_offline_start_wifi,
+        primary: (l10n.translator_close, close),
+        secondary: (
+          l10n.btn_cancel,
+          () => unawaited(controller.cancelPendingStart()),
+        ),
+      ),
+      ModelUpdateRequired() => _SheetLayout(
+        title: l10n.translator_update_title(translatorAppName(context)),
+        line: l10n.translator_update_line,
+        primary: (
+          l10n.update_available_action,
+          () => openTranslatorUpdateStore(context),
+        ),
+        secondary: (l10n.translator_not_now, close),
+      ),
+      ModelChecking() => _SheetLayout(
+        title: l10n.translator_checking_title,
+        line: l10n.translator_checking_line,
+        primary: (l10n.translator_close, close),
+      ),
       ModelDownloading(
         :final receivedBytes,
         :final totalBytes,
@@ -200,7 +237,7 @@ class _SheetLayout extends StatelessWidget {
     required this.title,
     required this.line,
     required this.primary,
-    required this.secondary,
+    this.secondary,
     this.sizes,
     this.privacy,
     this.progress,
@@ -212,7 +249,7 @@ class _SheetLayout extends StatelessWidget {
   final String? privacy;
   final (double? value, String amount, String? note)? progress;
   final _Action primary;
-  final _Action secondary;
+  final _Action? secondary;
 
   @override
   Widget build(BuildContext context) {
@@ -289,8 +326,10 @@ class _SheetLayout extends StatelessWidget {
         ],
         const SizedBox(height: 20),
         FilledButton(onPressed: primary.$2, child: Text(primary.$1)),
-        const SizedBox(height: 4),
-        TextButton(onPressed: secondary.$2, child: Text(secondary.$1)),
+        if (secondary case final action?) ...[
+          const SizedBox(height: 4),
+          TextButton(onPressed: action.$2, child: Text(action.$1)),
+        ],
       ],
     );
   }

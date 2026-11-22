@@ -35,7 +35,7 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               onFreeUpSpace: onFreeUpSpace,
             ),
           );
-          final (String subtitle, _RowAction action) = switch (state) {
+          final (String subtitle, _RowAction? action) = switch (state) {
             ModelUnsupported() => (
               l10n.translator_settings_unsupported,
               (
@@ -51,6 +51,21 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               l10n.translator_sheet_needs(translatorSize(context, neededBytes)),
               (l10n.translator_get, openSheet),
             ),
+            ModelAwaitingConnection() => (
+              l10n.translator_offline_start_title,
+              (
+                l10n.btn_cancel,
+                () => unawaited(controller.cancelPendingStart()),
+              ),
+            ),
+            ModelUpdateRequired() => (
+              l10n.translator_update_title(translatorAppName(context)),
+              (
+                l10n.update_available_action,
+                () => openTranslatorUpdateStore(context),
+              ),
+            ),
+            ModelChecking() => (l10n.translator_checking_title, null),
             ModelDownloading(:final receivedBytes, :final totalBytes) => (
               l10n.translator_settings_downloading(
                 translatorAmount(context, receivedBytes, totalBytes),
@@ -78,14 +93,16 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
             icon: Icons.translate,
             label: l10n.translator_settings_title,
             subtitle: subtitle,
-            trailing: TextButton(
-              onPressed: action.$2,
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(action.$1),
-            ),
+            trailing: action == null
+                ? null
+                : TextButton(
+                    onPressed: action.$2,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(action.$1),
+                  ),
           );
           if (state is ModelUnsupported) return row;
           final divider = Divider(

@@ -53,6 +53,9 @@ class FakeModelDeliveryController implements ModelDeliveryController {
       calls.add('start(allowMobileData: $allowMobileData)');
 
   @override
+  Future<void> cancelPendingStart() async => calls.add('cancelPendingStart');
+
+  @override
   Future<void> pause() async => calls.add('pause');
 
   @override

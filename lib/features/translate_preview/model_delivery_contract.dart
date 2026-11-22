@@ -24,6 +24,20 @@ final class ModelNotDownloaded extends ModelDeliveryState {
   final bool onWifi;
 }
 
+final class ModelAwaitingConnection extends ModelDeliveryState {
+  const ModelAwaitingConnection({required this.allowMobileData});
+
+  final bool allowMobileData;
+}
+
+final class ModelUpdateRequired extends ModelDeliveryState {
+  const ModelUpdateRequired();
+}
+
+final class ModelChecking extends ModelDeliveryState {
+  const ModelChecking();
+}
+
 final class ModelNotEnoughSpace extends ModelDeliveryState {
   const ModelNotEnoughSpace({
     required this.totalBytes,
@@ -123,6 +137,8 @@ abstract class ModelDeliveryController {
   Future<void> refresh();
 
   Future<void> start({required bool allowMobileData});
+
+  Future<void> cancelPendingStart();
 
   Future<void> pause();
 
