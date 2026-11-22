@@ -8,6 +8,50 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 
 void main() {
+  testWidgets('a picked Thought video has a localized accessibility label', (
+    tester,
+  ) async {
+    const bound = Duration(seconds: 3);
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('ar'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: ComposePostSheet(
+                thoughtsOnly: true,
+                eligibleContacts: const [],
+                onSubmit: (_) async {},
+                onPickMedia: () async => (
+                  drafts: const [
+                    PostMediaDraft(
+                      localFilePath: '/picked/selected.mp4',
+                      mime: 'video/mp4',
+                    ),
+                  ],
+                  leftOut: false,
+                ),
+              ),
+            ),
+          ),
+        )
+        .timeout(bound);
+
+    final video = find.bySemanticsLabel('فيديو');
+    expect(video, findsNothing);
+    await tester
+        .tap(find.byKey(const ValueKey('thought-composer-media')).hitTestable())
+        .timeout(bound);
+    await tester.pump().timeout(bound);
+
+    expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+    expect(video, findsOneWidget);
+  });
+
   testWidgets('allows media-only submit after attaching image drafts', (
     tester,
   ) async {
