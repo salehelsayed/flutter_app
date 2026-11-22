@@ -7452,6 +7452,118 @@ visible and cannot become an ordinary first-attempt PASS.
   the scroll cache for implicit VoiceOver scrolling. First receipts are under
   `~/.codex/investigations/bl53-tray-animation-codex2-20261121/`.
 
+  On exact build-132 source `7267f93f`, internal Pixel build 324 measured
+  3% app CPU for a warm static chat with the keyboard and tray closed
+  (repeat 2%), 87% with one visible sticker moving (repeat 85%), and 176%
+  with My stickers open (173% after ten seconds). Device temperature was
+  27.6–28.2°C, portrait at 90 Hz on the same Mac USB path. The open tray
+  had seven fully visible stickers and 11 mounted. Raster and IO dominated.
+  Net current was +333 mA in the static chat and -261 mA in the open tray
+  (-180 mA at the tail). Ten one-second intervals per state used cumulative
+  `/proc` ticks, where 100% is one core. The keyboard-open samples are
+  retained separately. Evidence is in `.codex-test-logs/bl62-20261122/`
+  and receipt `m-f8863570`.
+
+  The playback RED uses a real two-frame WebP inside a `LetterCard`.
+  A cached offscreen row advanced four frames on baseline after its
+  rectangle left the viewport. A finder must set `skipOffstage: false`
+  to inspect that retained sliver child. In the crowded tray calibration,
+  fit every sticker in the four-column viewport first, then observe the
+  serially loaded sequences before any lease can finish its first three
+  loops. The earlier 800×600 fixture clipped the second row. A separate
+  240 ms sample after poster load saw only two movers. The 420×900 fixture
+  captures all three within the 840 ms observation of their first run.
+  The original singleton decode queue also held an idle completed future
+  in the previous widget test's FakeAsync zone. Clearing only the last
+  completed tail preserves serialization between active jobs and restores
+  first images in later tests. Source `9544d4c4` passed 119 focused tests
+  and 361 workflow tests. Source `7570097b` passed the exact cap-three
+  viewport case with identical product bytes to the prior 118 passing
+  preservation cases. Raw receipts `m-4937b069`, `m-960cb49f`, `m-d721f763`
+  and `m-da395abf` retain the source and initial failures.
+  A received custom sticker must expose its existing long-press target during
+  initial decode. The first broad `9544d4c4` run missed that hit and hid Save to
+  My stickers. The identical target correction in `a5deaeb9` and `5f7b2e49`
+  passed the nine-case preservation group, including outgoing, private and
+  no-handler controls (`m-97f6540b`).
+
+  Exact `5f7b2e49` passed all six selected affected host rows and 57 enabled
+  creation cases (`m-55dc2ef9`). The wrapper accounted for every selected file
+  with zero gaps. Affected surfaces passed 3,535 cases (3,175 fresh and 360
+  from matching receipts in the same run). Affected media passed 1,821 (1,186
+  fresh and 635 from the same run), with all 93 files from the earlier 1,816-case
+  gate. The counts and reused file identities are recorded in
+  `~/.codex/investigations/bl62-sticker-cpu-20261122/selected-count-reconciliation.json`.
+  The earlier broad Linux wake-token failure came from missing ignored build
+  inputs. The unchanged sentinel passed on exact `5f7b2e49` with all four
+  receipt-matched payloads and the same Go source tree (`m-c2445553`).
+  The first broad B15RA-015 and PB264-07 failures are retained. Both selectors
+  passed on `7267f93f` and corrected cap-one `a5deaeb9` in separate exact
+  runs (`m-34c8a39c`). The three-slot source passed the 3,171-case
+  conversation row, including B15RA-015 and the received-sticker Save case.
+  BL-58's two-line retained-Thought binding changed both DTR-18 bootstrap
+  digests. Removing that binding reproduces the prior bootstrap bytes.
+  The reviewed test-only `9b537f74` re-pin passed the four unchanged DTR-18
+  cases and all 23 bootstrap cases (`m-ce12d30c`, `m-fd7b6b47`).
+  The debug-composition companion exposed a separate placement pin drift
+  from BL-29 and BL-58. The family tests stop at the first mismatch. Checking
+  all 22 adapter bodies found four stale pins on baseline `7267f93f` and
+  the candidate. The reviewed test-only `6ff8adb8` re-pin kept the placement
+  assertions intact and passed 4/4 placement and 128/128 companion cases
+  (`m-b69bd895`, `m-ec5d12dd`). Keep the original 126/2 companion receipt.
+
+  The cap comparison used Pixel internal 327 (one slot) and 328 (three slots)
+  with identical 10 fps decoded-frame playback, the same 18-sticker tray and
+  the same device at 92% battery and 27.2–28.0°C. The one-slot build showed one
+  moving tile, median 4% CPU and peak 61% during initial decode, with median
+  +200 mA. The three-slot build visibly moved three tiles. Initial and repeat
+  windows had medians 3% and 4%, peaks 70% and 64%, and median +179 mA in
+  both. The first opening included brief negative-current samples. The repeat
+  current was positive in all 11 samples. Settled caps measured 2% (one) and
+  3–4% (three). These measurements supported the three-slot cap. Raw
+  `.codex-test-logs/bl62p-20261122/cal/`
+  and `m-8b1b21ea` distinguish calibration from the later corrected source.
+
+  The final physical pair compared `7267f93f` with `5f7b2e49` using internal
+  Pixel baseline builds 329 and 331, candidate builds 330 and 332, and the
+  iPhone 13's baseline 322 and candidate 329. The flags, signer, app version
+  and data-retention conditions matched. The Pixel ran at 90 Hz in portrait
+  on Mac USB, at 96–100% battery and thermal status 0. The static chat
+  measured a 3% app CPU median on both sources. Opening the same 18-sticker
+  tray moved seven tiles at baseline and three on the candidate. App CPU
+  fell from a 176% median (172–182%) to 4% (1–64%), and remained at 3% once
+  the candidate tiles settled. Median USB current rose from -448 mA to
+  +181 mA, with nine of 11 candidate readings positive and +311 mA after
+  settling. A visible sticker in closed chat measured 81% continuously on
+  baseline. Re-entry on the candidate measured a 4% median, a 117% first
+  one-second burst, and 3% after the loops.
+
+  Camera Save-to-ready medians in seconds were Pixel Circle 7.70 to 6.44,
+  Pixel Square 7.72 to 7.20, and iPhone Circle 4.09 to 4.02. All met the
+  0.5-second regression margin. Pixel used three recorded saves per shape
+  per source. The iPhone used six baseline and five candidate saves. One
+  candidate sample took 6.41 seconds with a 2.81-second polling gap and is
+  retained separately. Including it gives a 4.07-second candidate median.
+  Pixel timing blocks ranged from 29.4 to 32.6°C, and some overlapped Mac
+  host checks. The timing reflects the observed UI after save, including
+  device automation polling. Both devices verified explicit tray replay,
+  send, manage, Save to My stickers, and the Thought picker and sent state.
+  The iPhone playback proof used explicit Play. The host preservation cases
+  cover a received sticker's hit target during initial decode. The timing
+  and CPU runs finished before the Mac restart. Raw
+  `.codex-test-logs/bl62f-20261122/SHA256SUMS.rows` verifies 79 files, as
+  reported in `m-0cc6640a`.
+
+  The separate physical depth-dock check measured the actual sent thumbnail
+  on the same candidate. Pixel showed automatic motion, motion on tap and a
+  stable frame after replay. The iPhone thumbnail showed no measured motion
+  in samples starting three seconds after its tap. The shared thumbnail
+  supplies a tap-to-replay handler. Tap delivery and early replay frames on
+  the iPhone remain unverified. Tray and picker replay worked on both phones.
+  Kayan accepted the iPhone depth-thumbnail gap for 132 (`m-27bd5b10`). Keep
+  the first device results under `.codex-test-logs/bl62f-20261122/depth/`
+  (`m-39ef54c3`).
+
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
   cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
