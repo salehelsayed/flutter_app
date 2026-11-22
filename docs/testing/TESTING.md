@@ -1628,6 +1628,15 @@ lock remains, with an additional cooperating cross-checkout lease for shared
 Flutter/native/AAR outputs. SIMS Flutter/native host rows also share an exclusive
 build resource. This does not fence unmanaged external build processes.
 
+For build 132 source `38de1d89`, the affected-conversation row recorded 3,157
+passes and 14 failures at two jobs and six Flutter workers. The restored
+two-job, one-worker invocation `453ca3067e1849cba7240dbe1ed7515e` ran all
+214 files fresh, with 3,171 passes and zero failures or skips. The failure
+cluster varied with the execution configuration. Its mechanism remains open.
+Retain both results and the execution settings when comparing them. See
+mailbox `m-61261b23` and the per-row record in
+`~/.codex/investigations/build132-final-linux-codex2-20261122/`.
+
 Host-only SIMS test rows (non-artifact `host.*` profiles with only `host.*`
 targets) remove inherited `MKNOON_*`/`SIMS_*` run settings while preserving
 `MKNOON_HOST_*`, `SIMS_HOST_*`, `SIMS_MAX_PARALLEL` and ordinary SDK/process
