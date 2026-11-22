@@ -428,12 +428,35 @@ void main() {
         await settle();
         await tester.tap(find.text('Crop')).timeout(bound);
         await settle();
-        await tester.tap(find.text('Save sticker')).timeout(bound);
+        final save = find.text('Save sticker');
+        final editorRoute = ModalRoute.of(tester.element(save))!;
+        final createTile = find.byKey(const ValueKey('my-sticker-create'));
+        final chatAction = find.text('Chat action');
+        bool chatAndTrayUsable() =>
+            createTile.hitTestable().evaluate().isNotEmpty &&
+            chatAction.hitTestable().evaluate().isNotEmpty;
+        const frame = Duration(milliseconds: 16);
+        final reverseBudget = editorRoute.reverseTransitionDuration + frame;
+        await tester.tap(save).timeout(bound);
         await tester.pump().timeout(bound);
-        await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
-        expect(find.text('Save sticker').hitTestable(), findsNothing);
-        expect(find.byKey(pending), findsOneWidget);
-        final pendingSemantics = tester.widget<Semantics>(find.byKey(pending));
+        for (
+          var elapsed = Duration.zero;
+          !chatAndTrayUsable() && elapsed < reverseBudget;
+          elapsed += frame
+        ) {
+          await tester.pump(frame).timeout(bound);
+        }
+        expect(chatAndTrayUsable(), isTrue);
+        expect(save.hitTestable(), findsNothing);
+        final tile = find.byKey(pending);
+        expect(
+          tile,
+          findsOneWidget,
+          reason: 'first usable chat and tray frame',
+        );
+        final grid = find.byKey(const ValueKey('sticker-grid'));
+        expect(tester.getRect(grid).contains(tester.getCenter(tile)), isTrue);
+        final pendingSemantics = tester.widget<Semantics>(tile);
         expect(pendingSemantics.properties.label, 'Creating sticker…');
         expect(pendingSemantics.properties.onTap, isNull);
         expect(library.ids, isEmpty);
@@ -441,7 +464,7 @@ void main() {
             .tap(find.byKey(pending), warnIfMissed: false)
             .timeout(bound);
         expect(sent, isEmpty);
-        await tester.tap(find.text('Chat action')).timeout(bound);
+        await tester.tap(chatAction).timeout(bound);
         expect(chats, 1);
         await until(() => extracts == 1);
 

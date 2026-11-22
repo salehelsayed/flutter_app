@@ -159,10 +159,18 @@ void main() {
     StickerOverlayEditorResult? result;
     await _openOverlayEditor(tester, (value) => result = value);
     await _addText(tester, 'H').timeout(const Duration(seconds: 2));
-    await tester
-        .tap(find.text('Save sticker'))
-        .timeout(const Duration(seconds: 2));
+    final save = find.widgetWithText(TextButton, 'Save sticker');
+    final route = ModalRoute.of(tester.element(save))!;
+    expect(route.isCurrent, isTrue);
+    tester.widget<TextButton>(save).onPressed!();
+    final returnedWithoutRendering = !route.isCurrent;
     await _awaitOverlayResult(tester, () => result != null);
+    expect(
+      returnedWithoutRendering,
+      isTrue,
+      reason:
+          'approved clip Save dismisses the editor before text rasterization',
+    );
 
     final rgba = (result as StickerOverlayEditorReady).rgba!;
     expect(rgba, hasLength(512 * 512 * 4));
