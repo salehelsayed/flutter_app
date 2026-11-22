@@ -7368,6 +7368,18 @@ visible and cannot become an ordinary first-attempt PASS.
   build 315 cannot establish the internal encode path or dominant stage.
   Evidence is in `.codex-test-logs/f132-20261122/` and mailbox `m-c203816a`.
 
+  Diagnostic 316 (`6f4fcb86`, markers-only child of `38de1d89`) repeated the
+  same Pixel scene with luma 68.7 and thermal status 0. External medians were
+  7.37 s for Circle and 7.51 s for Square. Circle used native quality 60 on
+  all 24 frames, at 512 pixels and 2 s, with a codec time of 0.745–0.813 s.
+  Square used the Dart codec at 0.878–1.174 s. Extraction was the largest
+  stage at 4.33–4.55 s. Locked admission took 1.68–2.11 s, including full
+  normalization. The measured gap from app admission to the detector's ready
+  observation was about 0.1–0.2 s. A 315 CPU sample reported thermal status 1.
+  These receipts do not isolate the cause of the difference between builds.
+  Retain both results. Evidence is in `.codex-test-logs/f132d-20261122/` and
+  mailbox `m-9074764f`.
+
   The My stickers grid proof uses a real animated WebP without a persisted
   poster. An offscreen finder must include cached sliver elements with
   `skipOffstage: false`. The test-only tree found the hidden tile and an
@@ -7605,6 +7617,13 @@ visible and cannot become an ordinary first-attempt PASS.
   was not retained. An app kill 1.91 s after Save restored the prior tray
   count with no pending tile across 20 s of checks. Evidence is in mailbox
   `m-c203816a`, `m-872ea05a`, and `.codex-test-logs/f132-20261122/`.
+  Pixel diagnostic 316 measured registration within 1 ms of accepted Save,
+  first tray layout in 29–56 ms, and editor route completion in 460–466 ms
+  across six timed captures. The layout can still be covered by the departing
+  editor. The observer first saw pending at 0.64–0.69 s after tap dispatch.
+  Keep app-side timestamps, actual visible observation and driver latency
+  separate. The pending phase markers were exercised on Pixel. Evidence is
+  in `.codex-test-logs/f132d-20261122/` and mailbox `m-9074764f`.
   Host evidence is in mailbox
   `m-f6160225` and `m-5516061f`, with the corresponding first results under
   `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
