@@ -16,6 +16,7 @@ import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_overlay.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_clip_saves.dart';
@@ -515,12 +516,12 @@ Future<void> openStickerCreate(
             ) ??
             const StickerOverlayEditorCancelled();
       },
-      exportClip: (path, crop, overlay) {
+      exportClip: (path, crop, layers) async {
         if (!context.mounted ||
             !navigator.mounted ||
             admission?.isCurrent() == false) {
           abandoned = true;
-          return Future.value(null);
+          return null;
         }
         if (clipSaves != null) {
           pending = clipSaves.begin(
@@ -532,7 +533,7 @@ Future<void> openStickerCreate(
           if (pending == null) {
             if (!clipSaves.isSaving) {
               abandoned = true;
-              return Future.value(null);
+              return null;
             }
             throw const StickerClipExportException(
               StickerClipExportFailure.busy,
@@ -544,6 +545,10 @@ Future<void> openStickerCreate(
           pending?.finish();
           unawaited(clips.cancel());
         });
+        final overlay = layers.isEmpty
+            ? null
+            : await rasterizeStickerTextOverlay(layers);
+        if (abandoned) return null;
         return clips.export(
           clipPath: path,
           crop: crop.crop,

@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_text_editor_screen.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_overlay.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
@@ -172,7 +173,11 @@ void main() {
           'approved clip Save dismisses the editor before text rasterization',
     );
 
-    final rgba = (result as StickerOverlayEditorReady).rgba!;
+    final layers = (result as StickerOverlayEditorReady).layers;
+    final rendered = await tester
+        .runAsync(() => rasterizeStickerTextOverlay(layers))
+        .timeout(const Duration(seconds: 2));
+    final rgba = rendered!;
     expect(rgba, hasLength(512 * 512 * 4));
     expect(rgba.sublist(0, 4), [0, 0, 0, 0]);
     final center = 4 * (256 * 512 + 256);
@@ -189,7 +194,7 @@ void main() {
         .timeout(const Duration(seconds: 2));
     await _awaitOverlayResult(tester, () => result != null);
     expect(result, isA<StickerOverlayEditorReady>());
-    expect((result as StickerOverlayEditorReady).rgba, isNull);
+    expect((result as StickerOverlayEditorReady).layers, isEmpty);
     await tester.pumpAndSettle(
       const Duration(milliseconds: 50),
       EnginePhase.sendSemanticsUpdate,

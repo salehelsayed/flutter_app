@@ -5,6 +5,7 @@ import 'package:flutter_app/features/stickers/application/custom_sticker_library
 import 'package:flutter_app/features/stickers/application/sticker_cutout.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_overlay_editor_result.dart';
 import 'package:flutter_app/features/stickers/custom/editor/sticker_still_export.dart';
+import 'package:flutter_app/features/stickers/custom/editor/sticker_text_layers.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker.dart';
 import 'package:flutter_app/features/stickers/domain/custom_sticker_asset.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_editor_result.dart';
@@ -79,7 +80,7 @@ final class StickerCreateFlow {
   final Future<NormalizedStickerAsset?> Function(
     String clipPath,
     StickerClipCrop crop,
-    Uint8List? textOverlay,
+    List<StickerTextLayer> approvedLayers,
   )
   exportClip;
   final Future<CustomSticker?> Function(NormalizedStickerAsset)? admitClip;
@@ -155,11 +156,6 @@ final class StickerCreateFlow {
     if (crop == null || _cancelled) return null;
     final edited = await editClipText(clip, crop);
     if (_cancelled || edited is! StickerOverlayEditorReady) return null;
-    final overlay = edited.rgba;
-    return exportClip(
-      clip,
-      crop,
-      overlay == null ? null : Uint8List.fromList(overlay),
-    );
+    return exportClip(clip, crop, edited.layers);
   }
 }

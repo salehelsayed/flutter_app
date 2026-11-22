@@ -428,6 +428,15 @@ void main() {
         await settle();
         await tester.tap(find.text('Crop')).timeout(bound);
         await settle();
+        if (result == 'ready') {
+          await tester.tap(find.byIcon(Icons.text_fields)).timeout(bound);
+          await tester.pump().timeout(bound);
+          await tester.enterText(find.byType(TextField), 'H').timeout(bound);
+          await tester.testTextInput
+              .receiveAction(TextInputAction.done)
+              .timeout(bound);
+          await settle();
+        }
         final save = find.text('Save sticker');
         final editorRoute = ModalRoute.of(tester.element(save))!;
         final createTile = find.byKey(const ValueKey('my-sticker-create'));
