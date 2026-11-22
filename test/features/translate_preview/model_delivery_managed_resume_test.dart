@@ -33,11 +33,17 @@ void main() {
       final enqueueEvents = StreamController<_Enqueue>.broadcast(sync: true);
       addTearDown(enqueueEvents.close);
       final paused = <String>[];
+      final policyUpdates = <List<Object?>>[];
+      var policyUpdateResult = 'applied';
       var resumeAccepted = true;
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const native = MethodChannel('com.bbflight.background_downloader');
       messenger.setMockMethodCallHandler(native, (call) async {
+        if (call.method == 'updateQueuedManagedDownload') {
+          policyUpdates.add(List<Object?>.of(call.arguments as List));
+          return policyUpdateResult;
+        }
         if (call.method == 'pause') {
           paused.add(call.arguments as String);
           return true;
@@ -125,6 +131,35 @@ void main() {
         'explicit-false',
         managed: false,
       ).timeout(_bound);
+
+      final savedCheckpoint = (await storage
+          .retrieveResumeData(managed.task.taskId)
+          .timeout(_bound))!;
+      final rebound = managed.task.copyWith(requiresWiFi: false);
+      final enqueuesBeforePolicyUpdate = enqueues.length;
+      for (final result in ManagedQueuePolicyUpdate.values) {
+        policyUpdateResult = result.name;
+        expect(
+          await downloader
+              .updateQueuedManagedDownload(rebound, savedCheckpoint)
+              .timeout(_bound),
+          result,
+        );
+      }
+      expect(enqueues, hasLength(enqueuesBeforePolicyUpdate));
+      expect(policyUpdates, hasLength(ManagedQueuePolicyUpdate.values.length));
+      for (final arguments in policyUpdates) {
+        final task = jsonDecode(arguments.first as String) as Map;
+        expect(task, {...managed.task.toJson(), 'requiresWiFi': false});
+        expect(arguments.skip(1), [null, managed.partial.path, _offset, _eTag]);
+      }
+      expect(
+        await downloader
+            .updateQueuedManagedDownload(defaultTask.task, savedCheckpoint)
+            .timeout(_bound),
+        ManagedQueuePolicyUpdate.unavailable,
+      );
+      expect(policyUpdates, hasLength(ManagedQueuePolicyUpdate.values.length));
 
       for (final control in [defaultTask, explicitFalse]) {
         expect(downloader.isConnected, isTrue);

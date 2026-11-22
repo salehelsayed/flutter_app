@@ -449,6 +449,10 @@ open class TaskRunner(
 
     // additional parameters for final TaskStatusUpdate
     var taskException: TaskException? = null
+    private class ManagedSystemStop : Exception()
+    private val managedSystemStopFailure by lazy {
+        TaskException(ExceptionType.connection, description = "Task was stopped by the system")
+    }
     var responseBody: String? = null
     private var responseHeaders: Map<String, String>? = null
     var responseStatusCode: Int? = null
@@ -672,10 +676,16 @@ open class TaskRunner(
                 // stopped by the system (e.g. constraint no longer met), not by
                 // the user, so fail (as in [transferBytes]) to allow a retry
                 Log.i(TAG, "Task ${task.taskId} was stopped, ignoring exception: ${e.message}")
-                taskException = TaskException(
-                    ExceptionType.general,
-                    description = "Task was stopped by the system"
-                )
+                if (isManagedSystemStop(task)) {
+                    if (taskException == null || taskException?.type == ExceptionType.general) {
+                        taskException = managedSystemStopFailure
+                    }
+                } else {
+                    taskException = TaskException(
+                        ExceptionType.general,
+                        description = "Task was stopped by the system"
+                    )
+                }
                 return TaskStatus.failed
             }
 
@@ -830,9 +840,13 @@ open class TaskRunner(
                     while (isActive) {
                         // check if task is stopped (canceled), paused or timed out
                         if (context.isTaskStopped) {
+                            val managedStop = isManagedSystemStop(task)
+                            if (managedStop) {
+                                doneCompleter.completeExceptionally(ManagedSystemStop())
+                            }
                             activeConnection?.disconnect()
                             Log.w(TAG, "Task ${task.taskId} stopped")
-                            doneCompleter.complete(TaskStatus.failed)
+                            if (!managedStop) doneCompleter.complete(TaskStatus.failed)
                             break
                         }
                         // 'pause' is signalled by adding the taskId to a static list
@@ -962,10 +976,24 @@ open class TaskRunner(
         return null
     }
 
+    private fun isManagedSystemStop(task: Task): Boolean =
+        task.options?.appManagedRecovery == true &&
+            !BDPlugin.canceledTaskIds.contains(task.taskId) &&
+            !BDPlugin.cancelUpdateSentForTaskId.containsKey(task.taskId) &&
+            !BDPlugin.pausedTaskIds.contains(task.taskId) &&
+            (!isTimedOut || runInForeground)
+
     /**
      * Set the [taskException] variable based on Exception [e]
      */
     private fun setTaskException(e: Any) {
+        if (task.options?.appManagedRecovery == true) {
+            if (e is ManagedSystemStop) {
+                taskException = managedSystemStopFailure
+                return
+            }
+            if (taskException === managedSystemStopFailure) return
+        }
         var exceptionType = ExceptionType.general
         if (e is IOException) {
             exceptionType = ExceptionType.fileSystem

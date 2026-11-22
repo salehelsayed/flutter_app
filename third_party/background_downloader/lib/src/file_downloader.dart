@@ -10,6 +10,7 @@ import 'base_downloader.dart';
 import 'database.dart';
 import 'localstore/localstore.dart';
 import 'models.dart';
+import 'native_downloader.dart';
 import 'permissions.dart';
 import 'persistent_storage.dart';
 import 'queue/task_queue.dart';
@@ -18,6 +19,9 @@ import 'transfers.dart';
 import 'uri/uri_utils.dart';
 import 'web_downloader.dart'
     if (dart.library.io) 'desktop/desktop_downloader.dart';
+
+/// Result of changing the network policy of one managed Android request.
+enum ManagedQueuePolicyUpdate { applied, running, unavailable }
 
 /// Provides access to all functions of the plugin in a single place.
 interface class FileDownloader {
@@ -1016,6 +1020,24 @@ interface class FileDownloader {
   /// task from scratch, or fail.
   Future<bool> resume(DownloadTask task) =>
       _downloader.resume(withNamespacedGroup(task) as DownloadTask);
+
+  /// Changes the Wi-Fi requirement of an already queued Android resume.
+  Future<ManagedQueuePolicyUpdate> updateQueuedManagedDownload(
+    DownloadTask task,
+    ResumeData resumeData,
+  ) async {
+    final downloader = _downloader;
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        downloader is! NativeDownloader ||
+        task.options?.appManagedRecovery != true) {
+      return ManagedQueuePolicyUpdate.unavailable;
+    }
+    return downloader.updateQueuedManagedDownload(
+      withNamespacedGroup(task) as DownloadTask,
+      resumeData,
+    );
+  }
 
   /// Resume all paused tasks, or those in [tasks], or paused tasks in
   /// group [group]

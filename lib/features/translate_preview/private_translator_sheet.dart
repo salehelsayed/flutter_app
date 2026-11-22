@@ -349,11 +349,15 @@ class PrivateTranslatorSheet extends StatelessWidget {
           l10n.translator_paused_word,
         ),
         line: l10n.translator_waiting_line,
-        primary: (
-          l10n.translator_use_mobile_data,
-          () => unawaited(controller.start(allowMobileData: true)),
-        ),
-        secondary: (l10n.translator_close, close),
+        primary: waiting.canUseMobileData
+            ? (
+                l10n.translator_use_mobile_data,
+                () => unawaited(controller.start(allowMobileData: true)),
+              )
+            : (l10n.translator_close, close),
+        secondary: waiting.canUseMobileData
+            ? (l10n.translator_close, close)
+            : null,
       ),
       ModelFailed() => _SheetLayout(
         title: l10n.translator_failed_title,

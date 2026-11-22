@@ -488,7 +488,8 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   Future<ModelTransferSnapshot?> restore(String taskId) async {
     final record = await _downloader.database.recordForId(taskId);
     if (record == null) {
-      if (await _task(taskId) == null) return null;
+      final task = await _task(taskId);
+      if (task == null) return null;
       final lastUpdate = _settledUpdates[taskId];
       final status = lastUpdate?.status;
       return ModelTransferSnapshot(
@@ -498,10 +499,15 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
             ? _sizes[taskId] ?? gemmaModelBytes
             : 0,
         failure: _failure(lastUpdate?.exception),
+        requiresWiFi: task.requiresWiFi,
       );
     }
     if (!_owns(record.task)) return null;
-    _tasks[taskId] = record.task as DownloadTask;
+    final recordedTask = record.task as DownloadTask;
+    final task = record.status == TaskStatus.enqueued
+        ? _tasks[taskId] ?? recordedTask
+        : recordedTask;
+    _tasks[taskId] = task;
     final total = record.expectedFileSize > 0
         ? record.expectedFileSize
         : _sizes[taskId] ?? gemmaModelBytes;
@@ -512,7 +518,39 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
           ? 0
           : (record.progress.clamp(0, 1) * total).round(),
       failure: _failure(record.exception),
+      requiresWiFi: task.requiresWiFi,
     );
+  }
+
+  @override
+  Future<ModelQueuedPolicyUpdate> updateQueuedPolicy(
+    String taskId, {
+    required bool requiresWiFi,
+  }) async {
+    if (_isIOS) return ModelQueuedPolicyUpdate.unavailable;
+    final task = await _task(taskId);
+    if (task == null || task.options?.appManagedRecovery != true) {
+      return ModelQueuedPolicyUpdate.unavailable;
+    }
+    final resumeData = await _ownedResumeData(task);
+    if (resumeData == null ||
+        await _validatedCheckpoint(task, resumeData) == null) {
+      return ModelQueuedPolicyUpdate.unavailable;
+    }
+    final updated = task.copyWith(requiresWiFi: requiresWiFi);
+    final result = await _downloader.updateQueuedManagedDownload(
+      updated,
+      resumeData,
+    );
+    if (result == ManagedQueuePolicyUpdate.applied) {
+      _tasks[taskId] = updated;
+    }
+    return switch (result) {
+      ManagedQueuePolicyUpdate.applied => ModelQueuedPolicyUpdate.applied,
+      ManagedQueuePolicyUpdate.running => ModelQueuedPolicyUpdate.running,
+      ManagedQueuePolicyUpdate.unavailable =>
+        ModelQueuedPolicyUpdate.unavailable,
+    };
   }
 
   @override

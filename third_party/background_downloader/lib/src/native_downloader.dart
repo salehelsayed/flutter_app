@@ -393,6 +393,44 @@ abstract base class NativeDownloader extends BaseDownloader {
     return false;
   }
 
+  Future<ManagedQueuePolicyUpdate> updateQueuedManagedDownload(
+    DownloadTask task,
+    ResumeData resumeData,
+  ) async {
+    if (resumeData.taskId != task.taskId) {
+      return ManagedQueuePolicyUpdate.unavailable;
+    }
+    final stored = await getManagedResumeData(task);
+    if (stored == null ||
+        stored.data != resumeData.data ||
+        stored.requiredStartByte != resumeData.requiredStartByte ||
+        stored.eTag != resumeData.eTag) {
+      return ManagedQueuePolicyUpdate.unavailable;
+    }
+    final notification = notificationConfigForTask(task);
+    try {
+      final result = await methodChannel.invokeMethod<String>(
+        'updateQueuedManagedDownload',
+        [
+          jsonEncode(task.toJson()),
+          if (notification == null) null else jsonEncode(notification.toJson()),
+          stored.data,
+          stored.requiredStartByte,
+          stored.eTag,
+        ],
+      );
+      return switch (result) {
+        'applied' => ManagedQueuePolicyUpdate.applied,
+        'running' => ManagedQueuePolicyUpdate.running,
+        _ => ManagedQueuePolicyUpdate.unavailable,
+      };
+    } on MissingPluginException {
+      return ManagedQueuePolicyUpdate.unavailable;
+    } on PlatformException {
+      return ManagedQueuePolicyUpdate.unavailable;
+    }
+  }
+
   @override
   Future<bool> requireWiFi(
     RequireWiFi requirement,

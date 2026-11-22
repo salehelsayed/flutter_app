@@ -379,6 +379,8 @@ enum ModelTransferStatus {
   canceled,
 }
 
+enum ModelQueuedPolicyUpdate { applied, running, unavailable }
+
 final class ModelTransferEvent {
   const ModelTransferEvent({
     required this.taskId,
@@ -401,12 +403,14 @@ final class ModelTransferSnapshot {
     required this.status,
     required this.receivedBytes,
     this.failure,
+    this.requiresWiFi,
   });
 
   final String taskId;
   final ModelTransferStatus status;
   final int receivedBytes;
   final ModelTransferFailure? failure;
+  final bool? requiresWiFi;
 }
 
 abstract interface class ModelDeliveryStorage {
@@ -437,6 +441,10 @@ abstract interface class ModelDeliveryTransport {
   Future<void> initialize(String? ownedTaskId);
   Future<ModelTransferSnapshot?> restore(String taskId);
   Future<ModelResumeCheckpoint?> checkpoint(String taskId);
+  Future<ModelQueuedPolicyUpdate> updateQueuedPolicy(
+    String taskId, {
+    required bool requiresWiFi,
+  });
   Future<bool> enqueue({
     required String taskId,
     required ModelDeliveryManifest manifest,
@@ -517,6 +525,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   int _generation = 0;
   String? _verifiedPath;
   Duration? _remaining;
+  bool _queuedRequiresWifi = false;
   String? _previouslyReadyTaskId;
   ({String taskId, int generation})? _verification;
   Timer? _recoveryTimer;
@@ -608,6 +617,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (id != null) {
         final recovered = await _transport.restore(id);
         if (recovered != null) {
+          _queuedRequiresWifi =
+              recovered.status == ModelTransferStatus.enqueued &&
+              recovered.requiresWiFi == true;
           if (recovered.failure case final failure?) {
             if (_record.phase != ModelDeliveryPhase.userPaused &&
                 _record.phase != ModelDeliveryPhase.pauseRequested) {
@@ -622,7 +634,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
               _shouldRecoverUnexpectedPause;
           _record = _record.copyWith(
             receivedBytes: _clamp(
-              retryPausedTask
+              retryPausedTask ||
+                      recovered.status == ModelTransferStatus.failed ||
+                      recovered.status == ModelTransferStatus.enqueued
                   ? max(_record.receivedBytes, recovered.receivedBytes)
                   : recovered.receivedBytes,
             ),
@@ -636,14 +650,25 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
                     ? ModelDeliveryPhase.waitingToRetry
                     : ModelDeliveryPhase.userPaused,
               );
-            case ModelTransferStatus.failed || ModelTransferStatus.canceled:
+            case ModelTransferStatus.failed:
+              if (_record.phase != ModelDeliveryPhase.userPaused &&
+                  _record.phase != ModelDeliveryPhase.pauseRequested) {
+                await _recoverFromFailure(null);
+                await _persist();
+              }
+            case ModelTransferStatus.canceled:
               _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
             case ModelTransferStatus.enqueued ||
                 ModelTransferStatus.running ||
                 ModelTransferStatus.waitingToRetry:
-              if (_record.phase == ModelDeliveryPhase.pauseRequested ||
-                  _record.phase == ModelDeliveryPhase.userPaused ||
-                  _record.phase == ModelDeliveryPhase.policyPauseRequested) {
+              if (_record.phase == ModelDeliveryPhase.policyPauseRequested) {
+                await _applyTransferPolicy(
+                  id,
+                  ModelDeliveryPhase.active,
+                  restored: recovered,
+                );
+              } else if (_record.phase == ModelDeliveryPhase.pauseRequested ||
+                  _record.phase == ModelDeliveryPhase.userPaused) {
                 await _transport.pause(id);
               } else {
                 _record = _record.copyWith(phase: ModelDeliveryPhase.active);
@@ -894,15 +919,35 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
 
   Future<void> _setAllowMobileData(bool allow) async {
     if (_record.allowMobileData == allow) return;
-    _allowMobileData.value = allow;
-    _record = _record.copyWith(allowMobileData: allow);
-    await _persist();
     final id = _record.taskId;
-    if (id != null &&
-        (_record.phase == ModelDeliveryPhase.active ||
-            _record.phase == ModelDeliveryPhase.resumeRequested)) {
-      final transfer = await _transport.restore(id);
-      if (transfer?.status == ModelTransferStatus.enqueued) {
+    final previousPhase = _record.phase;
+    final active =
+        id != null &&
+        (previousPhase == ModelDeliveryPhase.active ||
+            previousPhase == ModelDeliveryPhase.resumeRequested);
+    _allowMobileData.value = allow;
+    _record = _record.copyWith(
+      allowMobileData: allow,
+      phase: active ? ModelDeliveryPhase.policyPauseRequested : previousPhase,
+    );
+    await _persist();
+    if (active) await _applyTransferPolicy(id, previousPhase);
+    _render();
+  }
+
+  Future<void> _applyTransferPolicy(
+    String id,
+    ModelDeliveryPhase previousPhase, {
+    ModelTransferSnapshot? restored,
+  }) async {
+    final allow = _record.allowMobileData;
+    final transfer = restored ?? await _transport.restore(id);
+    var hasProgress =
+        _record.receivedBytes > 0 || _record.recovery?.checkpoint != null;
+    if (transfer?.status == ModelTransferStatus.enqueued) {
+      final checkpoint = await _transport.checkpoint(id);
+      hasProgress = hasProgress || checkpoint != null;
+      if (!hasProgress) {
         // A constrained queued worker cannot consume a pause request yet.
         await _cancelOwnedTask();
         await _storage.removeOwnedModel();
@@ -915,17 +960,39 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _startOrResume();
         return;
       }
-      _record = _record.copyWith(
-        phase: ModelDeliveryPhase.policyPauseRequested,
-      );
-      await _persist();
-      if (!await _transport.pause(id)) {
-        await _transport.cancel(id);
-        _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
+      final reconfigured = transfer?.requiresWiFi == !allow
+          ? ModelQueuedPolicyUpdate.applied
+          : checkpoint == null
+          ? ModelQueuedPolicyUpdate.unavailable
+          : await _transport.updateQueuedPolicy(id, requiresWiFi: !allow);
+      if (reconfigured == ModelQueuedPolicyUpdate.applied ||
+          reconfigured == ModelQueuedPolicyUpdate.unavailable && allow) {
+        _queuedRequiresWifi =
+            reconfigured == ModelQueuedPolicyUpdate.unavailable || !allow;
+        _record = _record.copyWith(
+          phase: previousPhase,
+          receivedBytes: checkpoint?.retainedBytes,
+        );
         await _persist();
+        return;
       }
     }
-    _render();
+    if (await _transport.pause(id)) return;
+    if (hasProgress && allow) {
+      _queuedRequiresWifi = true;
+      _record = _record.copyWith(phase: previousPhase);
+    } else {
+      await _transport.cancel(id);
+      _record = _record.copyWith(
+        phase: hasProgress
+            ? ModelDeliveryPhase.restartRequired
+            : ModelDeliveryPhase.failed,
+        recovery: hasProgress
+            ? const ModelTransferRecovery(restartsFromZero: true)
+            : null,
+      );
+    }
+    await _persist();
   }
 
   @override
@@ -1118,7 +1185,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       );
       id = null;
     }
-    if (id != null && _record.phase != ModelDeliveryPhase.failed) {
+    if (id != null &&
+        (_record.phase != ModelDeliveryPhase.failed ||
+            resumeCheckpoint != null)) {
       if (!recovering || managedRecovery) {
         _record = _record.copyWith(phase: ModelDeliveryPhase.resumeRequested);
         await _persist();
@@ -1134,6 +1203,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _persist();
       }
       if (accepted || recovering && !managedRecovery) {
+        if (accepted) _queuedRequiresWifi = !_record.allowMobileData;
         _render();
         if (accepted) _runNotice(_clearBackgroundStatus);
         return;
@@ -1157,12 +1227,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _record = _record.copyWith(clearTask: true, receivedBytes: 0);
     }
     _freeBytes = await _storage.availableBytes();
+    if (pending && generation != _generation) return;
     if (_freeBytes < _neededBytes) {
       _record = _record.copyWith(phase: ModelDeliveryPhase.insufficientSpace);
       await _persist();
       _render();
       return;
     }
+    await _storage.prepare();
+    if (pending && generation != _generation) return;
     id = _newTaskId();
     _record = _record.copyWith(
       taskId: id,
@@ -1170,8 +1243,16 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       phase: ModelDeliveryPhase.active,
     );
     await _persist();
+    if (pending && generation != _generation) {
+      _record = _record.copyWith(
+        clearTask: true,
+        phase: ModelDeliveryPhase.awaitingConnection,
+      );
+      await _persist();
+      return;
+    }
+    _queuedRequiresWifi = !_record.allowMobileData;
     _render();
-    await _storage.prepare();
     if (!await _transport.enqueue(
       taskId: id,
       manifest: manifest,
@@ -1268,6 +1349,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         return;
       }
       final previousPhase = _record.phase;
+      if (event.status == ModelTransferStatus.running) {
+        _queuedRequiresWifi = false;
+      }
       if (event.receivedBytes case final bytes?) {
         final received = _clamp(bytes);
         if (received > _record.receivedBytes) _resetRecoveryDelay();
@@ -1315,10 +1399,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           if (_record.phase == ModelDeliveryPhase.userPaused ||
               _record.phase == ModelDeliveryPhase.pauseRequested) {
             _record = _record.copyWith(phase: ModelDeliveryPhase.userPaused);
-          } else if (event.failure case final failure?) {
-            await _recoverFromFailure(failure);
           } else {
-            _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
+            await _recoverFromFailure(event.failure);
           }
         case ModelTransferStatus.canceled:
           _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
@@ -1386,7 +1468,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     unawaited(Future<void>.sync(action).catchError((Object _) {}));
   }
 
-  Future<void> _recoverFromFailure(ModelTransferFailure failure) async {
+  Future<void> _recoverFromFailure(ModelTransferFailure? failure) async {
     final id = _record.taskId;
     if (id == null || _record.manifest == null) return;
     var checkpoint = failure == ModelTransferFailure.invalidCheckpoint
@@ -1397,7 +1479,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       checkpoint = null;
     }
     final losingProgress =
-        checkpoint == null && _record.receivedBytes > 0 ||
+        checkpoint == null &&
+            (_record.receivedBytes > 0 ||
+                _record.recovery?.checkpoint != null) ||
         failure == ModelTransferFailure.invalidCheckpoint;
     var attempts = _record.recovery?.serverAttempts ?? 0;
     DateTime? retryAt;
@@ -1437,6 +1521,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             : ModelDeliveryPhase.storageWriteFailed,
       ModelTransferFailure.invalidCheckpoint =>
         ModelDeliveryPhase.restartRequired,
+      null =>
+        losingProgress
+            ? ModelDeliveryPhase.restartRequired
+            : ModelDeliveryPhase.failed,
     };
     _record = _record.copyWith(phase: phase);
   }
@@ -1453,7 +1541,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _record = _record.copyWith(
       phase:
           checkpoint == null &&
-              _record.phase == ModelDeliveryPhase.waitingForConnection
+              (_record.phase == ModelDeliveryPhase.waitingForConnection ||
+                  _record.phase == ModelDeliveryPhase.failed)
           ? ModelDeliveryPhase.restartRequired
           : _record.phase,
       receivedBytes: checkpoint?.retainedBytes,
@@ -1519,6 +1608,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     ModelDeliveryPhase.transferNeedsSpace ||
     ModelDeliveryPhase.storageWriteFailed ||
     ModelDeliveryPhase.restartRequired => true,
+    ModelDeliveryPhase.failed => _record.recovery?.checkpoint != null,
     _ => false,
   };
 
@@ -1672,6 +1762,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
 
   int _clamp(int bytes) => bytes.clamp(0, _totalBytes);
   bool get _onWifi => _connection == ModelDeliveryConnection.wifi;
+  bool get _waitingForWifi =>
+      (!_record.allowMobileData || _queuedRequiresWifi) && !_onWifi;
   bool get _connectionEligible =>
       _onWifi ||
       _record.allowMobileData && _connection == ModelDeliveryConnection.other;
@@ -1723,10 +1815,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         totalBytes: _totalBytes,
       ),
       ModelDeliveryPhase.resumeRequested =>
-        !_record.allowMobileData && !_onWifi
+        _waitingForWifi
             ? ModelWaitingForWifi(
                 receivedBytes: _record.receivedBytes,
                 totalBytes: _totalBytes,
+                canUseMobileData: !_record.allowMobileData,
               )
             : ModelPaused(
                 receivedBytes: _record.receivedBytes,
@@ -1773,10 +1866,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       ModelDeliveryPhase.ready => ModelReady(sizeBytes: _totalBytes),
       ModelDeliveryPhase.removing => const ModelFailed(),
       _ =>
-        !_record.allowMobileData && !_onWifi
+        _waitingForWifi
             ? ModelWaitingForWifi(
                 receivedBytes: _record.receivedBytes,
                 totalBytes: _totalBytes,
+                canUseMobileData: !_record.allowMobileData,
               )
             : _record.integrityRepairAttempted
             ? ModelIntegrityRepair(

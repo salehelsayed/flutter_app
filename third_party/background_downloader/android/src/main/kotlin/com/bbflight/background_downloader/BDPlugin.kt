@@ -45,6 +45,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -52,7 +54,9 @@ import java.lang.Long.min
 import java.net.MalformedURLException
 import java.net.URL
 import java.net.URLDecoder
+import java.security.MessageDigest
 import java.util.Collections
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -130,6 +134,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             Collections.synchronizedMap(mutableMapOf<String, String>()) // by taskId
         var forceFailPostOnBackgroundChannel = false
         val prefsLock = ReentrantReadWriteLock()
+        private val managedQueuePolicyMutex = Mutex()
         val remainingBytesToDownload =
             Collections.synchronizedMap(mutableMapOf<String, Long>()) // <taskId, size>
         var haveLoggedProxyMessage = false
@@ -248,32 +253,11 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             }
             if (!useJobScheduler) {
                 // Use WorkManager
-                val dataBuilder = Data.Builder().putString(TaskWorker.keyTask, taskToJsonString(task))
                 if (notificationConfigJsonString != null) {
-                    dataBuilder.putString(
-                        TaskWorker.keyNotificationConfig,
-                        notificationConfigJsonString
-                    )
                     notificationConfigJsonStrings[task.taskId] = notificationConfigJsonString
                 }
-                if (resumeData != null) {
-                    dataBuilder.putString(TaskWorker.keyResumeDataData, resumeData.data)
-                        .putLong(TaskWorker.keyStartByte, resumeData.requiredStartByte)
-                        .putString(TaskWorker.keyETag, resumeData.eTag)
-                }
-                val data = dataBuilder.build()
-                
-                val constraints = Constraints.Builder().apply {
-                    if (taskRequiresWifi) {
-                        if (Build.VERSION.SDK_INT >= 28) {
-                            setRequiredNetworkRequest(wifiNetworkRequest(), NetworkType.UNMETERED)
-                        } else {
-                            setRequiredNetworkType(NetworkType.UNMETERED)
-                        }
-                    } else {
-                        setRequiredNetworkType(NetworkType.CONNECTED)
-                    }
-                }.build()
+                val data = workInput(task, notificationConfigJsonString, resumeData)
+                val constraints = workConstraints(taskRequiresWifi)
                 val requestBuilder: OneTimeWorkRequest.Builder =
                     createRequestBuilder(task, data, constraints) ?: return false
                 if (actualDelayMillis != 0L) {
@@ -357,6 +341,51 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .build()
 
+        private fun workConstraints(requiresWifi: Boolean): Constraints =
+            Constraints.Builder().apply {
+                if (!requiresWifi) {
+                    setRequiredNetworkType(NetworkType.CONNECTED)
+                } else if (Build.VERSION.SDK_INT >= 28) {
+                    setRequiredNetworkRequest(wifiNetworkRequest(), NetworkType.UNMETERED)
+                } else {
+                    setRequiredNetworkType(NetworkType.UNMETERED)
+                }
+            }.build()
+
+        private fun workInput(task: Task, notification: String?, resume: ResumeData?): Data =
+            Data.Builder().apply {
+                putString(TaskWorker.keyTask, taskToJsonString(task))
+                if (notification != null) putString(TaskWorker.keyNotificationConfig, notification)
+                if (resume != null) {
+                    putString(TaskWorker.keyResumeDataData, resume.data)
+                    putLong(TaskWorker.keyStartByte, resume.requiredStartByte)
+                    putString(TaskWorker.keyETag, resume.eTag)
+                }
+            }.build()
+
+        private fun isManagedDownload(task: Task): Boolean =
+            task.options?.appManagedRecovery == true &&
+                task.taskType == "DownloadTask" && task.priority >= 5 && task.allowPause &&
+                task.post == null
+
+        // WorkInfo does not expose original input data. The tag lets an update
+        // prove that the non-network input is identical, including after restart.
+        private fun managedResumeTag(task: Task, data: Data): String? {
+            val offset = data.getLong(TaskWorker.keyStartByte, 0)
+            if (!isManagedDownload(task) || offset <= 0) return null
+            val input = bdJson.encodeToString(
+                listOf(
+                    taskToJsonString(task.copyWith(requiresWiFi = false)),
+                    data.getString(TaskWorker.keyNotificationConfig),
+                    data.getString(TaskWorker.keyResumeDataData),
+                    offset.toString(),
+                    data.getString(TaskWorker.keyETag)
+                )
+            )
+            val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+            return "managedResume=${digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }}"
+        }
+
         /**
          * Create a [OneTimeWorkRequestBuilder] for the given [task], [data] and [constraints]
          *
@@ -383,6 +412,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             requestBuilder.setInputData(data)
                 .setConstraints(constraints).addTag(TAG).addTag("taskId=${task.taskId}")
                 .addTag("group=${task.group}")
+            managedResumeTag(task, data)?.let { requestBuilder.addTag(it) }
             return requestBuilder
         }
 
@@ -647,6 +677,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             try {
                 val res: Any? = when (call.method) {
                     "enqueue" -> methodEnqueue(call)
+                    "updateQueuedManagedDownload" -> methodUpdateQueuedManagedDownload(call)
                     "enqueueAll" -> methodEnqueueAll(call)
                     "reset" -> methodReset(call)
                     "allTasks" -> methodAllTasks(call)
@@ -704,6 +735,91 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 result.error(e.errorCode, e.errorMessage, e.errorDetails)
             }
         }
+    }
+
+    private suspend fun methodUpdateQueuedManagedDownload(call: MethodCall): String =
+        withContext(Dispatchers.IO) {
+            val args = call.arguments as? List<*> ?: return@withContext "unavailable"
+            if (args.size != 5) return@withContext "unavailable"
+            val suppliedJson = args[0] as? String ?: return@withContext "unavailable"
+            val supplied = try {
+                bdJson.decodeFromString<Task>(suppliedJson)
+            } catch (_: IllegalArgumentException) {
+                return@withContext "unavailable"
+            }
+            val path = args[2] as? String ?: return@withContext "unavailable"
+            val offset = when (val value = args[3]) {
+                is Long -> value
+                is Int -> value.toLong()
+                else -> return@withContext "unavailable"
+            }
+            val eTag = args[4] as? String ?: return@withContext "unavailable"
+            if (!isManagedDownload(supplied) || path.isEmpty() || offset <= 0 ||
+                eTag.length < 2 || !eTag.startsWith('"') || !eTag.endsWith('"')) {
+                return@withContext "unavailable"
+            }
+
+            try {
+                managedQueuePolicyMutex.withLock {
+                    updateQueuedManagedDownload(supplied, args[1] as? String, path, offset, eTag)
+                }
+            } catch (_: ExecutionException) {
+                "unavailable"
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                "unavailable"
+            }
+        }
+
+    private fun updateQueuedManagedDownload(
+        supplied: Task,
+        notification: String?,
+        path: String,
+        offset: Long,
+        eTag: String
+    ): String {
+        if (requireWifi != RequireWiFi.asSetByTask) return "unavailable"
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val current = prefsLock.read { getTaskMap(prefs)[supplied.taskId] }
+            ?: return "unavailable"
+        val updated = current.copyWith(requiresWiFi = supplied.requiresWiFi)
+        if (!isManagedDownload(current) || taskToJsonString(updated) != taskToJsonString(supplied)) {
+            return "unavailable"
+        }
+
+        val manager = WorkManager.getInstance(applicationContext)
+        val work = manager.getWorkInfosByTag("taskId=${current.taskId}").get()
+            .filter { !it.state.isFinished }.singleOrNull() ?: return "unavailable"
+        val resume = ResumeData(updated, path, offset, eTag)
+        val data = workInput(updated, notification, resume)
+        val resumeTag = managedResumeTag(updated, data) ?: return "unavailable"
+        if (TAG !in work.tags || "group=${current.group}" !in work.tags ||
+            resumeTag !in work.tags) return "unavailable"
+        if (work.state == WorkInfo.State.RUNNING) return "running"
+        if (work.state != WorkInfo.State.ENQUEUED) return "unavailable"
+
+        val request = createRequestBuilder(updated, data, workConstraints(updated.requiresWiFi))
+            ?: return "unavailable"
+        request.setId(work.id).setInitialDelay(work.initialDelayMillis, TimeUnit.MILLISECONDS)
+        work.tags.forEach { request.addTag(it) }
+        val result = manager.updateWork(request.build()).get()
+        if (result == WorkManager.UpdateResult.APPLIED_FOR_NEXT_RUN) return "running"
+        if (result != WorkManager.UpdateResult.APPLIED_IMMEDIATELY) return "unavailable"
+
+        val original = taskToJsonString(current)
+        prefsLock.write {
+            val tasks = getTaskMap(prefs)
+            val stillOwned = tasks[current.taskId] ?: return@write
+            if (taskToJsonString(stillOwned) != original) return@write
+            tasks[current.taskId] = updated
+            prefs.edit { putString(keyTasksMap, bdJson.encodeToString(tasks)) }
+            if (updated.requiresWiFi) {
+                taskIdsRequiringWiFi.add(current.taskId)
+            } else {
+                taskIdsRequiringWiFi.remove(current.taskId)
+            }
+        }
+        return "applied"
     }
 
 

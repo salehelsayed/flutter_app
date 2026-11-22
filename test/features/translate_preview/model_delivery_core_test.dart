@@ -281,12 +281,24 @@ void main() {
       expect(h.transport.forgets, isEmpty);
       expect(h.storage.removals, 0);
       expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.queuedPolicyUpdates, [
+        (taskId: taskId, requiresWiFi: false),
+      ]);
       expect(h.transport.ownedTasks, {taskId});
       expect(h.storage.record!.allowMobileData, isTrue);
       expect(h.id, taskId);
       expect(h.storage.record!.receivedBytes, 42);
       final retained = await h.transport.checkpoint(taskId).timeout(bound);
       expect(retained?.retainedBytes, 42);
+
+      await h.controller.setAllowMobileData(false).timeout(bound);
+      expect(h.transport.queuedPolicyUpdates, [
+        (taskId: taskId, requiresWiFi: false),
+        (taskId: taskId, requiresWiFi: true),
+      ]);
+      expect(h.storage.record!.allowMobileData, isFalse);
+      expect(h.transport.cancels, isEmpty);
+      expect(h.id, taskId);
     },
   );
 
@@ -493,7 +505,7 @@ void main() {
   );
 
   test(
-    'silent native retries preserve progress; exhausted failure is retryable',
+    'legacy retries show progress and explain restart when no checkpoint remains',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
@@ -502,7 +514,8 @@ void main() {
       await h.event(ModelTransferStatus.waitingToRetry, bytes: 30);
       expect((h.controller.state.value as ModelDownloading).receivedBytes, 30);
       await h.event(ModelTransferStatus.failed);
-      expect(h.controller.state.value, isA<ModelFailed>());
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, isEmpty);
       await h.controller.retry();
       expect(h.transport.cancels, [oldId]);
       expect(h.transport.enqueues, hasLength(2));
@@ -2650,6 +2663,7 @@ class _Transport implements ModelDeliveryTransport {
   );
   final enqueues = <({String taskId, bool requiresWiFi})>[];
   final resumes = <({String taskId, bool requiresWiFi})>[];
+  final queuedPolicyUpdates = <({String taskId, bool requiresWiFi})>[];
   final pauses = <String>[];
   final cancels = <String>[];
   final forgets = <String>[];
@@ -2671,6 +2685,15 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<ModelResumeCheckpoint?> checkpoint(String taskId) async =>
       checkpoints[taskId];
+  @override
+  Future<ModelQueuedPolicyUpdate> updateQueuedPolicy(
+    String taskId, {
+    required bool requiresWiFi,
+  }) async {
+    queuedPolicyUpdates.add((taskId: taskId, requiresWiFi: requiresWiFi));
+    return ModelQueuedPolicyUpdate.applied;
+  }
+
   @override
   Future<bool> enqueue({
     required String taskId,

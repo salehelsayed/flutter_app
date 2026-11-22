@@ -93,7 +93,10 @@ final class ModelWaitingForWifi extends ModelDeliveryInProgress {
   const ModelWaitingForWifi({
     required super.receivedBytes,
     required super.totalBytes,
+    this.canUseMobileData = true,
   });
+
+  final bool canUseMobileData;
 }
 
 /// Stopped by the user, or by a restart, with the part already received kept.

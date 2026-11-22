@@ -105,6 +105,10 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               ),
               (l10n.translator_pause, () => unawaited(controller.pause())),
             ),
+            ModelWaitingForWifi(canUseMobileData: false) => (
+              l10n.translator_waiting_title,
+              null,
+            ),
             ModelWaitingForWifi() || ModelPaused() => (
               l10n.translator_settings_paused,
               (l10n.translator_resume, () => unawaited(controller.resume())),
