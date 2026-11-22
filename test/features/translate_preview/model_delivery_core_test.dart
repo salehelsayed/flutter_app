@@ -2253,11 +2253,12 @@ void main() {
 
     Future<void> pumpSheet(
       WidgetTester tester,
-      ModelDeliveryController controller,
-    ) => tester
+      ModelDeliveryController controller, {
+      String appName = 'mknoon',
+    }) => tester
         .pumpWidget(
           MaterialApp(
-            title: 'mknoon',
+            title: appName,
             locale: const Locale('en'),
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
@@ -2375,7 +2376,7 @@ void main() {
         await h.event(ModelTransferStatus.paused);
         return id;
       });
-      await pumpSheet(tester, h.controller);
+      await pumpSheet(tester, h.controller, appName: 'Example App');
 
       expect(h.transport.pauses, isEmpty);
       expect(h.transport.resumes, isEmpty);
@@ -2387,8 +2388,8 @@ void main() {
       );
       expect(
         find.text(
-          "Your download is safe at 42%. It continues by itself when you're "
-          'back online.',
+          "Your download is safe at 42%. Open Example App when you're back "
+          'online to check your download.',
         ),
         findsOneWidget,
       );
