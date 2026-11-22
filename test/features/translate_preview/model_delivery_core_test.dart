@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
@@ -110,6 +111,73 @@ void main() {
       expect(h.controller.state.value, isA<ModelDownloading>());
     },
   );
+
+  test('readiness pause resumes the same owned partial task', () {
+    fakeAsync((clock) {
+      late _Harness h;
+      unawaited(
+        _Harness.create().then((harness) async {
+          h = harness;
+          await h.controller.start(allowMobileData: false);
+          await h.event(ModelTransferStatus.running, bytes: 40);
+          await h.event(ModelTransferStatus.paused);
+        }),
+      );
+      clock.flushMicrotasks();
+      try {
+        final id = h.id;
+        clock.elapse(const Duration(milliseconds: 4999));
+        expect(h.transport.resumes, isEmpty);
+        clock.elapse(const Duration(milliseconds: 1));
+        expect(h.transport.resumes, [(taskId: id, requiresWiFi: true)]);
+        expect(h.transport.enqueues, hasLength(1));
+        expect(h.transport.cancels, isEmpty);
+        expect(h.transport.forgets, isEmpty);
+        expect(h.storage.record!.receivedBytes, 40);
+      } finally {
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      }
+    });
+  });
+
+  test('rejected readiness resume retains the partial and backs off', () {
+    fakeAsync((clock) {
+      late _Harness h;
+      unawaited(
+        _Harness.create().then((harness) async {
+          h = harness;
+          await h.controller.start(allowMobileData: false);
+          await h.event(ModelTransferStatus.running, bytes: 40);
+          h.network.failFetch = true;
+          h.transport.resumeAccepted = false;
+          await h.event(ModelTransferStatus.paused);
+        }),
+      );
+      clock.flushMicrotasks();
+      try {
+        final id = h.id;
+        const delaysInSeconds = [5, 15, 45, 135, 405, 600, 600];
+        for (final (index, seconds) in delaysInSeconds.indexed) {
+          clock.elapse(Duration(milliseconds: seconds * 1000 - 1));
+          expect(h.transport.resumes, hasLength(index));
+          clock.elapse(const Duration(milliseconds: 1));
+          expect(h.transport.resumes, hasLength(index + 1));
+          expect(h.transport.resumes.last, (taskId: id, requiresWiFi: true));
+          expect(h.id, id);
+          expect(h.storage.record!.receivedBytes, 40);
+          expect(h.storage.removals, 0);
+        }
+        expect(h.network.fetches, 1);
+        expect(h.transport.enqueues, hasLength(1));
+        expect(h.transport.cancels, isEmpty);
+        expect(h.transport.forgets, isEmpty);
+      } finally {
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      }
+    });
+  });
 
   test(
     'mobile opt-in is persisted without starting on initialization or toggle',

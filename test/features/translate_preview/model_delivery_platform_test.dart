@@ -214,6 +214,49 @@ void main() {
   });
 
   test(
+    'Android readiness pause with no partial re-enqueues the owned task',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final downloader = _Downloader()..resumeAccepted = false;
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(() => transport.dispose().timeout(deadline));
+      await transport.initialize(null).timeout(deadline);
+      await transport
+          .enqueue(taskId: 'one', manifest: _manifest(), requiresWiFi: true)
+          .timeout(deadline);
+      final task = downloader.enqueued.single;
+      final origin = _RecoveringOrigin(recoverOnProbe: false);
+      fakeAsync((clock) {
+        TaskStatusUpdate? readinessPause;
+        unawaited(
+          HttpOverrides.runZoned(
+            () => task.options!.beforeTaskStartCallBack!(task),
+            createHttpClient: (_) => _OriginClient(origin),
+          ).then<void>((update) {
+            readinessPause = update;
+          }),
+        );
+        clock.elapse(const Duration(seconds: 20));
+        expect(readinessPause?.status, TaskStatus.paused);
+        expect(readinessPause?.task.taskId, task.taskId);
+      });
+
+      downloader.emit(task, TaskStatus.paused);
+      expect(
+        await transport
+            .resume(task.taskId, requiresWiFi: true)
+            .timeout(deadline),
+        isTrue,
+      );
+      expect(downloader.resumed.single.taskId, task.taskId);
+      expect(downloader.enqueued, hasLength(2));
+      expect(downloader.enqueued.last.taskId, task.taskId);
+      expect(downloader.enqueued.last.requiresWiFi, isTrue);
+      expect(downloader.canceled, isEmpty);
+    },
+  );
+
+  test(
     'iOS unchanged policy resumes partial; changed policy requests scoped restart',
     () async {
       final downloader = _Downloader();
@@ -1093,6 +1136,7 @@ class _Downloader extends Fake implements FileDownloader {
   TaskNotification? completeNotification;
   bool? markDownloadedComplete;
   bool resumedBackground = false;
+  bool resumeAccepted = true;
   Future<bool> Function(String)? onCancel;
   Future<Task?> Function(String)? onTaskForId;
   @override
@@ -1159,7 +1203,7 @@ class _Downloader extends Fake implements FileDownloader {
   @override
   Future<bool> resume(Task task) async {
     resumed.add(task as DownloadTask);
-    return true;
+    return resumeAccepted;
   }
 
   @override
