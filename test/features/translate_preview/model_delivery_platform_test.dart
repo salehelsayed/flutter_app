@@ -389,6 +389,48 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
     });
 
+    test(
+      'Android system stop retries the same retained translator checkpoint',
+      () async {
+        final downloader = _Downloader();
+        final checkpoints = _ResumeStorage();
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => 2 * manifest.bytes,
+          checkpoints: checkpoints,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        final partial = await retainAndroidCheckpoint(
+          checkpoints,
+          task,
+          deliveredBytes,
+        );
+
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task,
+            TaskStatus.failed,
+            TaskException('Task was stopped by the system'),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        await controller.retry().timeout(bound);
+
+        expect(
+          downloader.enqueued,
+          hasLength(1),
+          reason: 'The system stop must not enqueue a new transfer from zero.',
+        );
+        expect(downloader.resumed.map((task) => task.taskId), [task.taskId]);
+        expect(downloader.canceled, isEmpty);
+        expect(await partial.length().timeout(bound), deliveredBytes);
+        expect(
+          checkpoints.records[task.taskId]?.requiredStartByte,
+          deliveredBytes,
+        );
+      },
+    );
+
     testWidgets('native write failure after disk exhaustion offers Continue', (
       tester,
     ) async {

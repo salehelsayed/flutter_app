@@ -247,6 +247,50 @@ void main() {
   );
 
   test(
+    'mobile consent keeps a queued resume with a confirmed partial',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(
+        canRecoverUnexpectedPauses: true,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+      await h.controller.pause().timeout(bound);
+      const checkpoint = ModelResumeCheckpoint(retainedBytes: 42);
+      h.transport.checkpoints[taskId] = checkpoint;
+      await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+
+      h.network.changeWifi(false);
+      await h.flush().timeout(bound);
+      await h.controller.resume().timeout(bound);
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: true)]);
+      await h.event(ModelTransferStatus.enqueued, bytes: 42).timeout(bound);
+      expect(h.controller.state.value, isA<ModelWaitingForWifi>());
+      final confirmed = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(confirmed?.retainedBytes, 42);
+
+      await h.controller.setAllowMobileData(true).timeout(bound);
+
+      expect(
+        h.transport.cancels,
+        isEmpty,
+        reason: 'enabling mobile data preserves a queued confirmed checkpoint',
+      );
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.ownedTasks, {taskId});
+      expect(h.storage.record!.allowMobileData, isTrue);
+      expect(h.id, taskId);
+      expect(h.storage.record!.receivedBytes, 42);
+      final retained = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(retained?.retainedBytes, 42);
+    },
+  );
+
+  test(
     'explicit mobile start replaces a never-started Wi-Fi task without waiting for pause',
     () async {
       final h = await _Harness.create(wifi: false);
@@ -264,6 +308,53 @@ void main() {
       expect(h.transport.ownedTasks, {h.id});
       expect(h.id, isNot(oldId));
       expect(h.controller.state.value, isA<ModelDownloading>());
+    },
+  );
+
+  test(
+    'cancel still stops offline start while the active record is being saved',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(wifi: false).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      h.network.offline = true;
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      expect(h.controller.state.value, isA<ModelAwaitingConnection>());
+      expect(h.transport.enqueues, isEmpty);
+
+      final activeWriteStarted = Completer<void>();
+      final releaseActiveWrite = Completer<void>();
+      h.storage.beforeSaveRecord = (record) async {
+        if (record.phase != ModelDeliveryPhase.active ||
+            activeWriteStarted.isCompleted) {
+          return;
+        }
+        activeWriteStarted.complete();
+        await releaseActiveWrite.future.timeout(bound);
+      };
+      h.network.changeWifi(true);
+
+      late Future<void> cancel;
+      try {
+        await activeWriteStarted.future.timeout(bound);
+        expect(h.controller.state.value, isA<ModelAwaitingConnection>());
+        expect(h.storage.record!.phase, ModelDeliveryPhase.awaitingConnection);
+        expect(h.transport.enqueues, isEmpty);
+        cancel = h.controller.cancelPendingStart();
+      } finally {
+        releaseActiveWrite.complete();
+      }
+      await cancel.timeout(bound);
+      await h.flush().timeout(bound);
+
+      expect(
+        h.transport.enqueues,
+        isEmpty,
+        reason: 'cancel during the active record write prevents native enqueue',
+      );
+      expect(h.controller.state.value, isA<ModelNotDownloaded>());
+      expect(h.storage.record!.phase, ModelDeliveryPhase.idle);
+      expect(h.storage.record!.taskId, isNull);
     },
   );
 
