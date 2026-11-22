@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+import 'android_sticker_webp_encoder.dart' show AndroidStickerWebPResult;
+
 const stickerAnimationSide = 512;
 const stickerAnimationFrameBytes =
     stickerAnimationSide * stickerAnimationSide * 4;
@@ -18,6 +20,18 @@ enum CircularStickerPass { fullColor, fiveBit, fallback }
 final class CircularStickerPassDidNotFit implements Exception {
   const CircularStickerPassDidNotFit();
 }
+
+final class AndroidStickerEncodingUnavailable implements Exception {
+  const AndroidStickerEncodingUnavailable();
+}
+
+typedef AndroidStickerFrameEncoder =
+    AndroidStickerWebPResult? Function(
+      Uint8List rgba,
+      int side, {
+      required int byteLimit,
+      required int quality,
+    });
 
 final class AnimatedStickerCodecException implements Exception {
   const AnimatedStickerCodecException(this.failure);
@@ -50,6 +64,11 @@ const _opaqueProfiles = <_Profile>[
   (fps: 12, quality: 45, rgbBits: 8, side: stickerAnimationSide),
   (fps: 8, quality: 55, rgbBits: 8, side: stickerAnimationSide),
   (fps: 6, quality: 45, rgbBits: 8, side: stickerAnimationSide),
+];
+
+const _androidCircleProfiles = <_Profile>[
+  (fps: _targetFps, quality: 60, rgbBits: 8, side: stickerAnimationSide),
+  (fps: _targetFps, quality: 48, rgbBits: 8, side: stickerAnimationSide),
 ];
 
 // Lossy color can reconstruct RGB under zero alpha even if the input
@@ -95,7 +114,9 @@ EncodedStickerAnimation encodeStickerAnimation({
   required bool circle,
   Uint8List? textOverlay,
   CircularStickerPass? only,
+  AndroidStickerFrameEncoder? androidFrameEncoder,
 }) {
+  assert(androidFrameEncoder == null || (circle && only == null));
   final sampleCount = stickerAnimationSampleTimes(durationMs).length;
   if (croppedFrames.length != sampleCount ||
       croppedFrames.any(
@@ -110,7 +131,7 @@ EncodedStickerAnimation encodeStickerAnimation({
 
   _ProfileResult? tryProfile(
     _Profile profile, {
-    Map<int, Uint8List>? sharedFrames,
+    Map<int, Uint8List?>? sharedFrames,
   }) {
     final side = profile.side;
     final overlay = textOverlay == null
@@ -127,7 +148,7 @@ EncodedStickerAnimation encodeStickerAnimation({
     img.Image? posterFrame;
     _EncodedFrame encodeFrame(int i) {
       final sourceIndex = i * sampleCount ~/ frameCount;
-      Uint8List encodeStill() {
+      Uint8List? encodeStill() {
         final frame = _compose(
           i == 0 ? firstSource : _resizeRgba(croppedFrames[sourceIndex], side),
           overlay: overlay,
@@ -136,13 +157,27 @@ EncodedStickerAnimation encodeStickerAnimation({
           rgbBits: profile.rgbBits,
         );
         if (i == 0 && !circle) posterFrame = frame;
+        if (androidFrameEncoder != null) {
+          final result = androidFrameEncoder(
+            frame.getBytes(order: img.ChannelOrder.rgba),
+            side,
+            byteLimit: _animatedBytes,
+            quality: profile.quality,
+          );
+          if (result == null) {
+            throw const AndroidStickerEncodingUnavailable();
+          }
+          if (result.exceedsLimit) return null;
+          return result.bytes ??
+              (throw const AndroidStickerEncodingUnavailable());
+        }
         return encoder.encode(frame, singleFrame: true);
       }
 
       return (
-        still:
-            sharedFrames?.putIfAbsent(sourceIndex, encodeStill) ??
-            encodeStill(),
+        still: sharedFrames == null
+            ? encodeStill()
+            : sharedFrames.putIfAbsent(sourceIndex, encodeStill),
         durationMs:
             _boundary(i + 1, frameCount, durationMs) -
             _boundary(i, frameCount, durationMs),
@@ -167,7 +202,13 @@ EncodedStickerAnimation encodeStickerAnimation({
   }
 
   _ProfileResult? selected;
-  if (circle) {
+  if (androidFrameEncoder != null) {
+    for (final profile in _androidCircleProfiles) {
+      selected = tryProfile(profile);
+      if (selected != null) break;
+    }
+    if (selected == null) throw const AndroidStickerEncodingUnavailable();
+  } else if (circle) {
     if (only == null || only == CircularStickerPass.fullColor) {
       selected = tryProfile(_circleFullColor);
     }
@@ -176,7 +217,7 @@ EncodedStickerAnimation encodeStickerAnimation({
       // The 8 fps sampling grid is a subset of the 12 fps grid. Both profiles
       // use the same pixels and lossless frame encoder, so the larger grid
       // cannot fit when its subset already exceeds the animation cap.
-      final sharedFrames = <int, Uint8List>{};
+      final sharedFrames = <int, Uint8List?>{};
       final subset = tryProfile(
         _circleFiveBitEightFps,
         sharedFrames: sharedFrames,
@@ -202,11 +243,16 @@ EncodedStickerAnimation encodeStickerAnimation({
   }
 
   final profile = selected.profile;
+  final encodedFirstFrame = androidFrameEncoder != null
+      ? _standaloneAlphaWebP(selected.firstFrame, profile.side)
+      : circle
+      ? selected.firstFrame
+      : null;
   return (
     webp: selected.animation,
     poster: _encodePoster(
       selected.posterFrame,
-      encodedFirstFrame: circle ? selected.firstFrame : null,
+      encodedFirstFrame: encodedFirstFrame,
       source: selected.firstSource,
       overlay: selected.overlay,
       side: profile.side,
@@ -219,7 +265,7 @@ EncodedStickerAnimation encodeStickerAnimation({
   );
 }
 
-typedef _EncodedFrame = ({Uint8List still, int durationMs});
+typedef _EncodedFrame = ({Uint8List? still, int durationMs});
 
 ({Uint8List animation, Uint8List firstFrame})? _encodeBoundedWebP({
   required Iterable<_EncodedFrame> frames,
@@ -246,8 +292,9 @@ typedef _EncodedFrame = ({Uint8List still, int durationMs});
 
   Uint8List? firstFrame;
   for (final (:still, :durationMs) in frames) {
-    // These composed frames have no metadata. The standalone encoder writes
-    // one padded VP8 or VP8L chunk after the RIFF header.
+    if (still == null) return null;
+    // Frame chunks follow the RIFF header. Android's adapter strips VP8X
+    // and its generated color profile before supplying ALPH and VP8.
     final bitstream = Uint8List.sublistView(still, riffHeaderBytes);
     final fileBytes = animation.length + frameHeaderBytes + bitstream.length;
     if (fileBytes > _animatedBytes) return null;
@@ -270,6 +317,23 @@ typedef _EncodedFrame = ({Uint8List still, int durationMs});
   final bytes = animation.takeBytes();
   ByteData.sublistView(bytes).setUint32(4, bytes.length - 8, Endian.little);
   return (animation: bytes, firstFrame: firstFrame!);
+}
+
+Uint8List _standaloneAlphaWebP(Uint8List frame, int side) {
+  const riffHeaderBytes = 12;
+  const extendedBytes = 18;
+  final header = img.OutputBuffer(size: riffHeaderBytes + extendedBytes)
+    ..writeBytes('RIFF'.codeUnits)
+    ..writeUint32(frame.length + extendedBytes - 8)
+    ..writeBytes('WEBPVP8X'.codeUnits)
+    ..writeUint32(10)
+    ..writeUint32(0x10); // Alpha flag.
+  _writeUint24(header, side - 1);
+  _writeUint24(header, side - 1);
+  return (BytesBuilder(copy: false)
+        ..add(header.getBytes())
+        ..add(Uint8List.sublistView(frame, riffHeaderBytes)))
+      .takeBytes();
 }
 
 void _writeUint24(img.OutputBuffer out, int value) {

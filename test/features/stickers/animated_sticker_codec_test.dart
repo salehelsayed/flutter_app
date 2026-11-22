@@ -200,6 +200,71 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 10)));
 
   test(
+    'lossy circle frames preserve alpha, sampling and the poster format',
+    () {
+      final frames = [_frame(0, cornerCanary: true), _frame(5)];
+      final baseline = encodeStickerAnimation(
+        croppedFrames: frames,
+        durationMs: 160,
+        circle: true,
+      );
+      final encoded = encodeStickerAnimation(
+        croppedFrames: frames,
+        durationMs: 160,
+        circle: true,
+        androidFrameEncoder:
+            (rgba, side, {required byteLimit, required quality}) {
+              final still =
+                  img.WebPEncoder(
+                    lossless: false,
+                    quality: quality,
+                    alphaQuality: 100,
+                    method: 0,
+                  ).encode(
+                    img.Image.fromBytes(
+                      width: side,
+                      height: side,
+                      bytes: rgba.buffer,
+                      bytesOffset: rgba.offsetInBytes,
+                      order: img.ChannelOrder.rgba,
+                    ),
+                  );
+              expect(String.fromCharCodes(still.sublist(12, 16)), 'VP8X');
+              final chunks = Uint8List(still.length - 18)
+                ..setRange(0, 12, still)
+                ..setRange(12, still.length - 18, still, 30);
+              ByteData.sublistView(
+                chunks,
+              ).setUint32(4, chunks.length - 8, Endian.little);
+              expect(chunks.length, lessThan(byteLimit));
+              return (bytes: chunks, exceedsLimit: false);
+            },
+      );
+      final decoder = img.WebPDecoder();
+      final info = decoder.startDecode(encoded.webp)!;
+      expect(info.hasAlpha, isTrue);
+      expect((info.width, info.height, info.numFrames), (512, 512, 2));
+      expect(info.frames.map((frame) => frame.duration), [80, 80]);
+      final reference = img.WebPDecoder()..startDecode(baseline.webp);
+      for (var i = 0; i < info.numFrames; i++) {
+        final actual = decoder.decodeFrame(i)!;
+        final expected = reference.decodeFrame(i)!;
+        expect(
+          actual.every((p) => p.a == expected.getPixel(p.x, p.y).a),
+          isTrue,
+        );
+      }
+      final poster = img.decodeWebP(encoded.poster)!;
+      expect(
+        (poster.width, poster.height, poster.hasAnimation),
+        (512, 512, false),
+      );
+      expect(poster.getPixel(0, 0).a, 0);
+      expect(poster.getPixel(256, 256).a, 255);
+    },
+  );
+
+  test(
     'circle output discards hidden source pixels and decodes with zero RGB',
     () {
       EncodedStickerAnimation export(bool canary) => encodeStickerAnimation(
