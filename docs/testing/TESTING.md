@@ -10031,8 +10031,23 @@ visible and cannot become an ordinary first-attempt PASS.
   background paths and a foreground resume during ringing. First device
   evidence is in `.codex-test-logs/bl54-20261121/calls/`, with simulator and
   final host receipts in `m-495e23d8`, `m-873f49e6` and `m-64801f02`.
-  The installed continuation build still needs answerable-redial and
-  backgrounded-callee proof.
+  Exact Release build 311 (`5c807862`) on the physical Pixel and iPhone 13
+  delivered the ordinary cold-call cancel and stopped iPhone ringing in 2.06 s.
+  The earlier accepted reducer cancel at 1.166 s ended iPhone ringing about
+  2.3 s later. Kayan accepted this observed input timing for the
+  scenario. The same-trace user-action diagnostic was not exported.
+  The killed-iPhone successor placed 7.0 s after cancel rang, was answered,
+  connected on both phones and cleaned up on hang-up. The reverse call to a
+  backgrounded Pixel ended 0.66 s after cancel. The live backgrounded iPhone
+  applied the cancel after 0.61 s, stopped ringing after 0.75 s and answered
+  the next redial through connection and normal hang-up. Two earlier redial
+  attempts are retained as harness misses: a 34.3 s redial outside the target
+  interval without access to the system Accept control, and an unpinned Pixel
+  attempt that never produced a cancel. The recovered harness used the native
+  CallKit Accept accessibility identifier and restored its app scope afterward.
+  Raw first attempts and completed rows are in
+  `.codex-test-logs/bl54r-20261121/calls/` and mailbox `m-eff27738`,
+  `m-84fec9f7`.
   The September 14 incoming-call investigation additionally executed all 119
   selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
   the available iPhone 17 Pro simulator, with zero failures/skips. The curated
