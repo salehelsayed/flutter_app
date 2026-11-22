@@ -16959,10 +16959,8 @@ void main() {
         await tester.pumpWidget(buildWidget(group: group));
         await pumpFrames(tester);
 
-        expect(
-          find.byKey(const ValueKey('offline-message-banner')),
-          findsOneWidget,
-        );
+        final banner = find.byKey(const ValueKey('offline-message-banner'));
+        expect(banner, findsOneWidget);
         expect(find.text("You're offline"), findsOneWidget);
 
         p2pService.emitState(
@@ -16973,19 +16971,12 @@ void main() {
             inboxCapabilityReady: true,
           ),
         );
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('offline-message-banner')),
-          findsNothing,
-        );
+        await pumpUntil(tester, () => banner.evaluate().isEmpty);
+        expect(banner, findsNothing);
 
         p2pService.emitState(NodeState.stopped);
-        await tester.pump();
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('offline-message-banner')),
-          findsOneWidget,
-        );
+        await pumpUntil(tester, () => banner.evaluate().isNotEmpty);
+        expect(banner, findsOneWidget);
       },
     );
 
@@ -22908,10 +22899,13 @@ void main() {
           expect(screen.onRecordStart, isNotNull);
 
           final pending = (screen.onRecordStart! as Future<void> Function())();
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
-
-          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
+          final sheet = find.byKey(const ValueKey('mic-perm-sheet'));
+          final notNow = find
+              .byKey(const ValueKey('mic-perm-not-now'))
+              .hitTestable();
+          await pumpUntil(tester, () => notNow.evaluate().isNotEmpty);
+          expect(notNow, findsOneWidget);
+          expect(sheet, findsOneWidget);
           expect(
             find.byKey(const ValueKey('mic-perm-open-settings')),
             findsOneWidget,
@@ -22919,14 +22913,13 @@ void main() {
           expect(find.text(l10n.perm_microphone_record), findsNothing);
           expect(recorder.startCallCount, 0);
 
-          await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
+          await tester.tap(notNow);
           // Wait for the sheet route to leave first so its decorative mic
           // cannot satisfy the live composer check.
+          await pumpUntil(tester, () => sheet.evaluate().isEmpty);
+          expect(sheet, findsNothing);
+          await pumpUntilFuturesComplete(tester, [pending], maxPumps: 40);
           await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
-          await pending;
-          await tester.pump();
-          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
           expect(find.byIcon(Icons.stop_rounded), findsNothing);
           expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
         },
@@ -22946,19 +22939,20 @@ void main() {
           );
 
           final pending = (screen.onRecordStart! as Future<void> Function())();
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
+          final sheet = find.byKey(const ValueKey('mic-perm-sheet'));
+          final openSettings = find
+              .byKey(const ValueKey('mic-perm-open-settings'))
+              .hitTestable();
+          await pumpUntil(tester, () => openSettings.evaluate().isNotEmpty);
+          expect(openSettings, findsOneWidget);
+          expect(sheet, findsOneWidget);
 
-          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
-          await tester.tap(
-            find.byKey(const ValueKey('mic-perm-open-settings')),
-          );
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
-          await pending;
+          await tester.tap(openSettings);
+          await pumpUntil(tester, () => sheet.evaluate().isEmpty);
+          expect(sheet, findsNothing);
+          await pumpUntilFuturesComplete(tester, [pending], maxPumps: 40);
 
           expect(gateway.openAppSettingsCallCount, 1);
-          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
         },
       );
 
