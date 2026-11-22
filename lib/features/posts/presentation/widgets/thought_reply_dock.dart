@@ -164,7 +164,7 @@ class _ThoughtReplyDockState extends State<ThoughtReplyDock> {
     final note = switch (grace) {
       null => l10n.thought_reply_private_note(widget.authorName),
       0 => l10n.thought_reply_ended,
-      final seconds? => l10n.thought_reply_grace(seconds),
+      final seconds => l10n.thought_reply_grace(seconds),
     };
 
     return Column(

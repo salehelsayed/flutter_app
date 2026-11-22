@@ -154,8 +154,9 @@ Future<ThoughtReplyStatus> sendThoughtStickerReply({
 
   Future<ThoughtReplyStatus> currentStatus() async {
     final current = await messageRepo.getMessage(messageId);
-    if (current == null || !ownsReply(current))
+    if (current == null || !ownsReply(current)) {
       return ThoughtReplyStatus.failed;
+    }
     return ThoughtReplyStatus.fromMessage(current);
   }
 
@@ -183,8 +184,9 @@ Future<ThoughtReplyStatus> sendThoughtStickerReply({
         if (stored.length != 1 || !ownsSticker(stored.single)) {
           return ThoughtReplyStatus.failed;
         }
-        if (existing.status != 'failed')
+        if (existing.status != 'failed') {
           return ThoughtReplyStatus.fromMessage(existing);
+        }
         final attachment = stored.single;
         final strictAuthorityMissing =
             strict &&
@@ -254,8 +256,9 @@ Future<ThoughtReplyStatus> sendThoughtStickerReply({
     if (lease == null) return await currentStatus();
 
     final current = await messageRepo.getMessage(messageId);
-    if (!mapEquals(current?.toMap(), existing?.toMap()))
+    if (!mapEquals(current?.toMap(), existing?.toMap())) {
       return await currentStatus();
+    }
     final timestamp = now().toUtc().toIso8601String();
     final authoredParent =
         existing ??
@@ -319,8 +322,9 @@ Future<ThoughtReplyStatus> sendThoughtStickerReply({
         attachmentId: blobId,
         mime: mime,
       );
-      if (storedPath != path)
+      if (storedPath != path) {
         throw StateError('Unexpected pending sticker path');
+      }
       absolutePath = await mediaFileManager.resolveStoredPath(path);
       final contact = await eligibleContact();
       if (contact == null ||
@@ -381,8 +385,9 @@ Future<ThoughtReplyStatus> sendThoughtStickerReply({
     }
 
     final identity = await identityRepo.loadIdentity();
-    if (identity?.peerId != expectedSenderPeerId)
+    if (identity?.peerId != expectedSenderPeerId) {
       return ThoughtReplyStatus.queued;
+    }
     backgroundTask = await callBgBegin(bridge);
 
     Future<ThoughtReplyStatus> projectFailure(UploadMediaFailed failure) async {
