@@ -14,11 +14,13 @@ import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
@@ -161,12 +163,17 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 import 'package:flutter_app/features/posts/domain/repositories/thought_view_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
+import 'package:flutter_app/features/posts/application/send_thought_sticker_reply_use_case.dart';
 import 'package:flutter_app/features/posts/application/publish_thought_view_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
 import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
+import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
+import 'package:flutter_app/features/stickers/presentation/custom_sticker_scope.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'orbit_screen.dart';
@@ -1442,11 +1449,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// Friend cards share their reaction controls and sends with the 3D ring.
+  /// Friend cards share their reply controls and sends with the 3D ring.
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
     bool playVideoAtOnce = false,
+    String? existingConversationPeerId,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1462,6 +1470,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final attemptedTarget = notificationStore?.target;
     final lookupRevision = _thoughtLoadRevision;
     var opened = false;
+    String? replyAuthor;
     bool targetIsCurrent() =>
         notificationStore == null ||
         (identical(notificationStore, widget.pendingPostTargetStore) &&
@@ -1514,6 +1523,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         postRepo: repository,
         answers: isOwn ? null : _depthAnswers,
         onReply: isOwn ? null : _sendDepthReply,
+        onTextReply: isOwn ? null : _sendThoughtTextReply,
+        onStickerReply: isOwn || !_allowsThoughtSticker
+            ? null
+            : _sendThoughtSticker,
+        onTypedReplySent: isOwn ? null : (author) => replyAuthor = author,
+        validateGrace: isOwn ? null : _validateThoughtReplyGrace,
         loadCurrentThought: loadCurrent,
         nowProvider: widget.thoughtNowProvider,
         eligibilityChanges: _thoughtEligibilityChanges.stream,
@@ -1612,22 +1627,36 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         );
       }
     }
+    final author = replyAuthor;
+    if (author != null && author != existingConversationPeerId) {
+      await _openThoughtReplyConversation(author);
+    }
   }
 
-  /// Reactions from either Thought view, and typed replies from the 3D bar,
-  /// use the same ordinary quoted-chat-reply path.
   Future<ThoughtReplyStatus> _sendDepthReply(
     String text,
     String postId,
     String messageId,
+  ) => _sendThoughtTextReply(text, postId, messageId, null);
+
+  Future<ThoughtReplyStatus> _sendThoughtTextReply(
+    String text,
+    String postId,
+    String messageId,
+    ThoughtReplyDraft? draft,
   ) async {
     final repository = _thoughtPosts;
-    final post = await repository?.getPost(postId);
-    if (repository == null || post == null) return ThoughtReplyStatus.failed;
+    final sender = _identity?.peerId;
+    if (repository == null || sender == null) return ThoughtReplyStatus.failed;
+    final author =
+        draft?.authorPeerId ?? (await repository.getPost(postId))?.authorPeerId;
+    if (!mounted || _identity?.peerId != sender || author == null) {
+      return ThoughtReplyStatus.failed;
+    }
     return sendThoughtReply(
       messageId: messageId,
       postId: postId,
-      authorPeerId: post.authorPeerId,
+      authorPeerId: author,
       text: text,
       postRepo: repository,
       messageRepo: widget.messageRepo,
@@ -1637,7 +1666,124 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       bridge: widget.bridge,
       directEventFanout: widget.directRouteAuthority.resolvedDirectEventFanout,
       nowProvider: widget.thoughtNowProvider,
+      expectedSenderPeerId: sender,
+      activeDraft: draft,
     );
+  }
+
+  Future<bool> _validateThoughtReplyGrace(ThoughtReplyDraft draft) async {
+    final repository = _thoughtPosts;
+    final sender = _identity?.peerId;
+    if (repository == null || sender == null) return false;
+    final identity = await widget.identityRepo.loadIdentity();
+    if (!mounted || identity?.peerId != sender || _identity?.peerId != sender) {
+      return false;
+    }
+    return canSendThoughtReplyDuringGrace(
+      draft: draft,
+      postRepo: repository,
+      contactRepo: widget.contactRepo,
+      nowProvider: widget.thoughtNowProvider ?? DateTime.now,
+    );
+  }
+
+  Future<void> _openThoughtReplyConversation(String authorPeerId) async {
+    if (!mounted) return;
+    final contact = await widget.contactRepo.getContact(authorPeerId);
+    if (!mounted ||
+        contact == null ||
+        contact.isBlocked ||
+        contact.isArchived) {
+      return;
+    }
+    await _openConversationForContact(contact);
+  }
+
+  bool get _allowsThoughtSticker =>
+      widget.directRouteAuthority.resolvedModalityGate.allowsMediaAuthoring;
+
+  Future<ThoughtReplyStatus> _sendThoughtSticker(
+    ThoughtStickerSelection selection,
+    String postId,
+    String messageId,
+  ) async {
+    final repository = _thoughtPosts;
+    final sender = _identity?.peerId;
+    if (repository == null || sender == null || !_allowsThoughtSticker) {
+      return ThoughtReplyStatus.failed;
+    }
+    final post = await repository.getPost(postId);
+    if (!mounted || _identity?.peerId != sender || post == null) {
+      return ThoughtReplyStatus.failed;
+    }
+    final reporter = widget.directRouteAuthority?.activityReporter;
+    ActiveIdentityReporterCapture? capture;
+    try {
+      capture = reporter?.captureOwner(expectedAccountPeerId: sender);
+    } catch (_) {}
+    bool isCurrent() =>
+        mounted && _identity?.peerId == sender && _allowsThoughtSticker;
+    Future<ThoughtReplyStatus> send(
+      String marker,
+      PendingComposerMedia media,
+      VoidCallback adopt,
+    ) async {
+      if (!isCurrent()) return ThoughtReplyStatus.failed;
+      return sendThoughtStickerReply(
+        messageId: messageId,
+        postId: postId,
+        authorPeerId: post.authorPeerId,
+        expectedSenderPeerId: sender,
+        stickerId: marker,
+        preparedMedia: media,
+        onMediaAdopted: adopt,
+        postRepo: repository,
+        messageRepo: widget.messageRepo,
+        identityRepo: widget.identityRepo,
+        contactRepo: widget.contactRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        mediaFileManager: widget.mediaFileManager,
+        capturedActivity: (reporter: reporter, capture: capture),
+        directEventFanout:
+            widget.directRouteAuthority.resolvedDirectEventFanout,
+        nowProvider: widget.thoughtNowProvider,
+      );
+    }
+
+    void discard(PendingComposerMedia media) =>
+        unawaited(media.file.delete().then((_) {}, onError: (Object _) {}));
+
+    if (selection.entry case final entry?) {
+      PendingComposerMedia? media;
+      var adopted = false;
+      try {
+        media = await prepareStickerMedia(entry);
+        return await send(entry.id, media, () => adopted = true);
+      } catch (error) {
+        _reportThoughtFailure(error);
+        return ThoughtReplyStatus.failed;
+      } finally {
+        if (media != null && !adopted) discard(media);
+      }
+    }
+
+    final library = CustomStickerScope.libraryOf(context);
+    final customId = selection.customId;
+    if (library == null || customId == null) return ThoughtReplyStatus.failed;
+    var result = ThoughtReplyStatus.failed;
+    await sendCustomSticker(
+      library: library,
+      id: customId,
+      isCurrent: isCurrent,
+      send: (marker, media, adopt) async {
+        result = await send(marker, media, adopt);
+      },
+      discard: discard,
+      onPrepareError: _reportThoughtFailure,
+    );
+    return result;
   }
 
   late final _depthAnswers = OrbitDepthAnswers(
@@ -3713,7 +3859,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             initialThoughtReply: thoughtReply,
             // The card's reactions and chat's typed answers use the same
             // quoted-reply path.
-            onOpenThought: (postId, _) => _openThought(postId),
+            onOpenThought: (postId, _) => _openThought(
+              postId,
+              existingConversationPeerId: contact.peerId,
+            ),
             postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
             identityRepo: widget.identityRepo,
@@ -4370,6 +4519,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onThoughtVideoPlay: (postId) =>
           unawaited(_openThought(postId, playVideoAtOnce: true)),
       onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
+      onDepthTextReply: _thoughtPosts == null ? null : _sendThoughtTextReply,
+      onDepthStickerReply: _thoughtPosts == null || !_allowsThoughtSticker
+          ? null
+          : _sendThoughtSticker,
+      onDepthTypedReplySent: (author) =>
+          unawaited(_openThoughtReplyConversation(author)),
+      validateDepthReplyGrace: _validateThoughtReplyGrace,
       depthReplyStatusChanges: _depthReplyStatuses,
       depthAnswers: _depthAnswers,
       onComposeThought: _thoughtPosts == null || _identity == null

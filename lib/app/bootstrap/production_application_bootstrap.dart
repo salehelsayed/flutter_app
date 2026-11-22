@@ -2393,6 +2393,8 @@ final class ProductionApplicationBootstrap
               ),
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
+      dbLoadRetainedIncomingPost: (postId, expiredAfter) =>
+          dbLoadRetainedIncomingPost(db, postId, expiredAfter),
       dbLoadPostsByIds: (postIds) => dbLoadPostsByIds(db, postIds),
       dbLoadPostsFeed: () => dbLoadPostsFeed(db),
       dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),

@@ -682,6 +682,38 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String thought_reply_private_note(String name) {
+    return '$name فقط يرى ردّك';
+  }
+
+  @override
+  String thought_reply_grace(int seconds) {
+    return 'انتهت هذه الفكرة للتو. ما زال بإمكانك الإرسال خلال $seconds ث';
+  }
+
+  @override
+  String get thought_reply_ended => 'انتهت هذه الفكرة';
+
+  @override
+  String get thought_reply_contacts_only => 'يمكن لجهات الاتصال فقط الرد';
+
+  @override
+  String get thought_reply_send_label => 'أرسل الرد';
+
+  @override
+  String thought_reply_field_label(String name) {
+    return 'رُدّ على $name';
+  }
+
+  @override
+  String thought_reaction_sent_label(String reaction) {
+    return 'تم إرسال تفاعل $reaction';
+  }
+
+  @override
+  String get thought_sticker_sent_label => 'تم إرسال الملصق';
+
+  @override
   String get thought_close => 'إغلاق';
 
   @override

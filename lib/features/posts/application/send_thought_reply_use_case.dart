@@ -9,10 +9,37 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:uuid/uuid.dart';
 
-/// Sends an ordinary encrypted chat reply without navigating away from a card.
+/// Rechecks the retained original row and its current contact eligibility.
+Future<bool> canSendThoughtReplyDuringGrace({
+  required ThoughtReplyDraft draft,
+  required PostRepository postRepo,
+  required ContactRepository contactRepo,
+  required DateTime Function() nowProvider,
+}) async {
+  final now = nowProvider().toUtc();
+  if (!draft.isInGraceAt(now)) return false;
+  final post = await postRepo.getRetainedIncomingPost(
+    draft.postId,
+    now.subtract(ThoughtReplyDraft.grace),
+  );
+  if (post == null || !draft.matches(post)) return false;
+  final contact = await contactRepo.getContact(draft.authorPeerId);
+  if (contact == null || contact.isBlocked || contact.isArchived) return false;
+  final feed = await postRepo.loadFeed();
+  return draft.isInGraceAt(nowProvider()) &&
+      !feed.any((thought) {
+        final expiry = DateTime.tryParse(thought.expiresAt);
+        return expiry != null &&
+            expiry.isAfter(now) &&
+            draft.isSupersededBy(thought);
+      });
+}
+
+/// Sends an ordinary encrypted chat reply; the calling surface owns navigation.
 /// The card keeps [messageId] for Retry. Authored intent and transport custody
 /// remain owned by the existing chat pipeline, including offline recovery.
 Future<ThoughtReplyStatus> sendThoughtReply({
@@ -28,21 +55,38 @@ Future<ThoughtReplyStatus> sendThoughtReply({
   required Bridge bridge,
   DirectEventFanoutAuthoring? directEventFanout,
   DateTime Function()? nowProvider,
+  String? expectedSenderPeerId,
+  ThoughtReplyDraft? activeDraft,
 }) async {
   final sanitized = sanitizeMessageText(text.trim());
   final quoteId = thoughtQuoteId(postId);
-  if (messageId.isEmpty || postId.isEmpty || sanitized.isEmpty) {
+  if (messageId.isEmpty ||
+      postId.isEmpty ||
+      sanitized.isEmpty ||
+      isMessageTooLong(sanitized)) {
     return ThoughtReplyStatus.failed;
   }
   try {
+    final clock = nowProvider ?? DateTime.now;
     final post = await postRepo.getPost(postId);
-    final now = (nowProvider ?? DateTime.now)().toUtc();
+    final now = clock().toUtc();
     final expiry = DateTime.tryParse(post?.expiresAt ?? '');
-    if (post == null ||
-        !post.isIncoming ||
-        post.authorPeerId != authorPeerId ||
-        expiry == null ||
-        !expiry.isAfter(now)) {
+    final live =
+        post != null &&
+        post.isIncoming &&
+        post.authorPeerId == authorPeerId &&
+        expiry != null &&
+        expiry.isAfter(now);
+    if (!live &&
+        (activeDraft == null ||
+            activeDraft.postId != postId ||
+            activeDraft.authorPeerId != authorPeerId ||
+            !await canSendThoughtReplyDuringGrace(
+              draft: activeDraft,
+              postRepo: postRepo,
+              contactRepo: contactRepo,
+              nowProvider: clock,
+            ))) {
       return ThoughtReplyStatus.failed;
     }
     final contact = await contactRepo.getContact(authorPeerId);
@@ -50,7 +94,9 @@ Future<ThoughtReplyStatus> sendThoughtReply({
     if (contact == null ||
         contact.isBlocked ||
         contact.isArchived ||
-        identity == null) {
+        identity == null ||
+        (expectedSenderPeerId != null &&
+            identity.peerId != expectedSenderPeerId)) {
       return ThoughtReplyStatus.failed;
     }
 
@@ -103,6 +149,17 @@ Future<ThoughtReplyStatus> sendThoughtReply({
       return ThoughtReplyStatus.failed;
     }
     if (intent == null) {
+      final admissionTime = clock().toUtc();
+      if ((expiry == null || !expiry.isAfter(admissionTime)) &&
+          (activeDraft == null ||
+              !await canSendThoughtReplyDuringGrace(
+                draft: activeDraft,
+                postRepo: postRepo,
+                contactRepo: contactRepo,
+                nowProvider: clock,
+              ))) {
+        return ThoughtReplyStatus.failed;
+      }
       intent = AuthoredDirectTextIntent(
         id: messageId,
         contactPeerId: authorPeerId,

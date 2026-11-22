@@ -1,14 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/authored_direct_text_intent.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
+import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -122,12 +128,15 @@ void main() {
     String postId = _postId,
     String authorId = _author,
     String text = 'Count me in',
+    PostRepository? postRepo,
+    ThoughtReplyDraft? draft,
   }) => sendThoughtReply(
     messageId: id,
     postId: postId,
     authorPeerId: authorId,
     text: text,
-    postRepo: posts,
+    postRepo: postRepo ?? posts,
+    activeDraft: draft,
     messageRepo: fixture.messageRepo,
     identityRepo: identities,
     contactRepo: contacts,
@@ -402,6 +411,74 @@ void main() {
 
     expect(await send(), ThoughtReplyStatus.failed);
     await expectNoEgressOrIntent();
+  });
+
+  group('active reply grace reads the retained SQLite row', () {
+    late PostRepositoryImpl realPosts;
+    late ThoughtReplyDraft draft;
+    late DateTime expiry;
+    const bound = Duration(seconds: 3);
+
+    setUp(() async {
+      final db = fixture.db;
+      realPosts = PostRepositoryImpl(
+        dbInsertPost: (row) => dbInsertPost(db, row),
+        dbLoadPost: (id) => dbLoadPost(db, id, nowProvider: () => now),
+        dbLoadRetainedIncomingPost: (id, cutoff) =>
+            dbLoadRetainedIncomingPost(db, id, cutoff),
+        dbLoadPostsFeed: () => dbLoadPostsFeed(db, nowProvider: () => now),
+        dbDeletePostCascade: (id) => dbDeletePostCascade(db, id),
+        dbUpsertRecipientDelivery: (row) =>
+            dbUpsertPostRecipientDelivery(db, row),
+        dbLoadRecipientDeliveries: (id) =>
+            dbLoadPostRecipientDeliveries(db, id),
+        dbMarkPostFocused: (id) => dbMarkPostFocused(db, id),
+      );
+      addTearDown(realPosts.dispose);
+      await realPosts.savePost(thought).timeout(bound);
+      expiry = DateTime.parse(thought.expiresAt);
+      draft = ThoughtReplyDraft.start(thought, now)!;
+    });
+
+    test(
+      'a reply started while live sends at 59 seconds with its quote',
+      () async {
+        now = expiry.add(const Duration(seconds: 59));
+        expect(await realPosts.getPost(_postId).timeout(bound), isNull);
+        expect(
+          await send(postRepo: realPosts).timeout(bound),
+          ThoughtReplyStatus.failed,
+        );
+        expect(
+          await send(postRepo: realPosts, draft: draft).timeout(bound),
+          ThoughtReplyStatus.sent,
+        );
+        expect(
+          (await fixture.messageRepo.getMessage(_messageId).timeout(bound))!
+              .quotedMessageId,
+          _quoteId,
+        );
+        expect(encryptedPayloads, hasLength(1));
+      },
+    );
+
+    for (final condition in ['deadline', 'deleted', 'archived']) {
+      test('refuses the original draft on $condition', () async {
+        now = expiry.add(Duration(seconds: condition == 'deadline' ? 60 : 5));
+        if (condition == 'deleted') {
+          await realPosts.deletePostCascade(_postId).timeout(bound);
+        }
+        if (condition == 'archived') {
+          contacts.seed([author.copyWith(isArchived: true)]);
+        }
+
+        expect(
+          await send(postRepo: realPosts, draft: draft).timeout(bound),
+          ThoughtReplyStatus.failed,
+        );
+        await expectNoEgressOrIntent().timeout(bound);
+      });
+    }
   });
 
   test('own thought and a crossed author cannot admit a reply', () async {

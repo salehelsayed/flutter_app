@@ -682,6 +682,38 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String thought_reply_private_note(String name) {
+    return 'Nur $name sieht deine Antwort';
+  }
+
+  @override
+  String thought_reply_grace(int seconds) {
+    return 'Dieser Gedanke ist gerade abgelaufen. Du kannst noch $seconds s senden';
+  }
+
+  @override
+  String get thought_reply_ended => 'Dieser Gedanke ist abgelaufen';
+
+  @override
+  String get thought_reply_contacts_only => 'Nur Kontakte können antworten';
+
+  @override
+  String get thought_reply_send_label => 'Antwort senden';
+
+  @override
+  String thought_reply_field_label(String name) {
+    return '$name antworten';
+  }
+
+  @override
+  String thought_reaction_sent_label(String reaction) {
+    return 'Reaktion $reaction gesendet';
+  }
+
+  @override
+  String get thought_sticker_sent_label => 'Sticker gesendet';
+
+  @override
   String get thought_close => 'Schließen';
 
   @override

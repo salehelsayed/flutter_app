@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
@@ -16,7 +15,11 @@ import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart'
+    show thoughtReactionGreen;
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reply_dock.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
@@ -24,7 +27,6 @@ import 'package:flutter_app/features/translate_preview/translate_preview_persist
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:uuid/uuid.dart';
-import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
 import 'orbit_depth_media.dart';
 
 /// The production flat surface remains mounted below this local dial. Data,
@@ -60,6 +62,10 @@ class OrbitDepthSurface extends StatefulWidget {
     this.postChanges,
     this.hostChrome,
     this.onReply,
+    this.onTextReply,
+    this.onStickerReply,
+    this.onTypedReplySent,
+    this.validateGrace,
     this.replyStatusChanges,
     this.answers,
   });
@@ -102,13 +108,19 @@ class OrbitDepthSurface extends StatefulWidget {
   /// Shown on the author's own card instead of the reply bar.
   final OrbitDepthOwnActivity? ownActivity;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadMedia;
-  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel, int)?
+  final Future<PostMediaAttachmentModel> Function(
+    PostMediaAttachmentModel,
+    int,
+  )?
   downloadMedia;
   final Stream<String>? postChanges;
 
-  /// Sends a reaction or a typed reply to a friend's thought on the ring as
-  /// an ordinary quoted chat reply. Null leaves the thought without its bar.
+  /// Sends a reaction as an ordinary quoted chat reply. Null hides the dock.
   final ThoughtReplySender? onReply;
+  final ThoughtTextReplySender? onTextReply;
+  final ThoughtStickerReplySender? onStickerReply;
+  final ValueChanged<String>? onTypedReplySent;
+  final Future<bool> Function(ThoughtReplyDraft)? validateGrace;
 
   /// Shared with the host's full-screen cards; it owns later status updates.
   final OrbitDepthAnswers? answers;
@@ -170,8 +182,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   _FlatSeats? _flat;
   List<String> _seated = const [];
   OrbitDepthVisit _visit = OrbitDepthVisit.empty;
-  final _replyController = TextEditingController();
-  final _replyFocus = FocusNode();
+  _DepthReplyInputState? _replyInput;
+  OrbitDepthSeat? _replySeat;
+  ThoughtReplyDraft? _replyDraft;
+  String? _graceSendId;
+  Timer? _graceClock;
+  bool _graceValidated = false;
+  int _graceValidation = 0;
+  int _replyNavigation = 0;
+  ({OrbitDepthSeat seat, int epoch, int landing, String id, bool grace})?
+  _pendingReplyNavigation;
   StreamSubscription<({String messageId, ThoughtReplyStatus status})>?
   _replyStatuses;
   double _keyboard = 0;
@@ -221,7 +241,6 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     WidgetsBinding.instance.addObserver(this);
     widget.resetSignal?.addListener(_reset);
     _vertical.addListener(_publishChrome);
-    _replyFocus.addListener(_onReplyFocus);
     _listenAnswers();
     _listenReplyStatuses();
   }
@@ -238,6 +257,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final answers = widget.answers;
     if (mounted && answers != null) {
       setState(() => _visit = _visit.withAnswersFrom(answers.value));
+      _maybeOpenPendingReply();
     }
   }
 
@@ -254,6 +274,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           finished: false,
         ),
       );
+      _maybeOpenPendingReply();
     });
   }
 
@@ -287,6 +308,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   // the host its gestures back. Ring, anchor and center friend wait for the
   // pop.
   void _hold() {
+    _replyNavigation++;
     if (_composing) _closeComposer();
     _gesture = OrbitDepthGesture.idle;
     _pointers.clear();
@@ -310,6 +332,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       _listenReplyStatuses();
     }
     if (!_active || !widget.gesturesEnabled) _reset(notifyBuild: false);
+    if (!identical(oldWidget.thoughts, widget.thoughts)) {
+      _checkReplySeat();
+    }
+    if (_composing && widget.onReply == null) _closeComposerAfterFrame();
     _reseat();
     _armTimers();
   }
@@ -400,6 +426,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (expiries.isNotEmpty) {
       _expiry = Timer(expiries.first.difference(_now), () {
         if (!mounted || !_active) return;
+        _checkReplySeat();
         setState(_reseat);
         widget.onThoughtsExpired?.call();
         _armTimers();
@@ -577,6 +604,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       _closeComposer();
       return;
     }
+    _replyNavigation++;
     if (!_active || !_depth) return;
     unawaited(_settle(OrbitDepthLayer.flat));
   }
@@ -741,84 +769,296 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   };
 
   void _endVisit() {
+    _discardComposer();
     final answers = widget.answers;
     _visit = answers == null
         ? OrbitDepthVisit.empty
         : OrbitDepthVisit.empty.withAnswersFrom(answers.value);
-    if (_replyFocus.hasFocus) _replyFocus.unfocus();
   }
 
-  void _onReplyFocus() {
-    if (!_replyFocus.hasFocus && _composing) _closeComposerAfterFrame();
+  void _onReplyInputChanged(OrbitDepthSeat seat, _DepthReplyInputState input) {
+    if (!input.focusNode.hasFocus) {
+      if (identical(input, _replyInput)) _closeComposerAfterFrame();
+      return;
+    }
+    if (!_composing) {
+      if (!_canAnswer(seat.thought.id)) {
+        input.focusNode.unfocus();
+        return;
+      }
+      setState(() {
+        _replySeat = seat;
+        _replyInput = input;
+        _replyNavigation++;
+        _visit = _visit.openComposer(seat.thought.id);
+      });
+    }
+    if (!identical(input, _replyInput)) return;
+    final now = _now;
+    if (input.controller.text.trim().isEmpty) {
+      if (!_hasExpiredReply) _replyDraft = null;
+    } else {
+      _replyDraft ??= ThoughtReplyDraft.start(seat.thought, now);
+    }
   }
 
-  /// The system Back that hid the keyboard can arrive in this same frame; it
-  /// must still find the composer open, so it closes only that and 3D stays.
+  bool get _hasExpiredReply {
+    final expiry = DateTime.tryParse(_replySeat?.thought.expiresAt ?? '');
+    return expiry != null && !expiry.isAfter(_now);
+  }
+
+  void _checkReplySeat() {
+    final seat = _replySeat;
+    if (seat == null) return;
+    final live = widget.thoughts[seat.friend.peerId];
+    final draft = _replyDraft;
+    final expired = _hasExpiredReply;
+    if (live != null &&
+        (expired
+            ? draft?.isSupersededBy(live) == true
+            : live.id != seat.thought.id ||
+                  (draft != null && !draft.matches(live)))) {
+      _closeComposerAfterFrame();
+      return;
+    }
+    if (!expired) {
+      if (live == null) _closeComposerAfterFrame();
+      return;
+    }
+    if (_graceSendId != null ||
+        (_graceValidated && draft != null && !draft.isInGraceAt(_now))) {
+      return;
+    }
+    final validate = widget.validateGrace;
+    if (draft == null ||
+        validate == null ||
+        widget.onTextReply == null ||
+        _replyInput?.focusNode.hasFocus != true ||
+        _replyInput?.controller.text.trim().isEmpty != false) {
+      _closeComposerAfterFrame();
+      return;
+    }
+    final validation = ++_graceValidation;
+    unawaited(() async {
+      var valid = false;
+      try {
+        valid = await validate(draft);
+      } catch (_) {
+        // An unavailable eligibility read cannot keep expired content open.
+      }
+      if (!mounted ||
+          validation != _graceValidation ||
+          !identical(draft, _replyDraft)) {
+        return;
+      }
+      if (!valid) {
+        _closeComposer();
+        return;
+      }
+      setState(() => _graceValidated = true);
+      _graceClock ??= Timer.periodic(const Duration(seconds: 1), (clock) {
+        if (!_now.isBefore(draft.deadline)) clock.cancel();
+        if (mounted) setState(() {});
+      });
+    }());
+  }
+
+  /// The system Back that hid the keyboard can arrive in this same frame.
+  /// Keep the composer open until then so Back dismisses it before the ring.
   void _closeComposerAfterFrame() {
+    final input = _replyInput;
     WidgetsBinding.instance
       ..addPostFrameCallback((_) {
-        if (mounted) _closeComposer();
+        if (mounted && identical(input, _replyInput)) _closeComposer();
       })
       ..ensureVisualUpdate();
   }
 
-  void _openComposer(String postId) {
-    if (!_answerable) return;
-    setState(() => _visit = _visit.openComposer(postId));
-    _replyController.text = _visit.drafts[postId] ?? '';
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _visit.composingPostId == postId) {
-        _replyFocus.requestFocus();
-      }
-    });
+  void _discardComposer() {
+    final input = _replyInput;
+    _replyInput = null;
+    _replySeat = null;
+    _pendingReplyNavigation = null;
+    _replyDraft = null;
+    _graceSendId = null;
+    _graceClock?.cancel();
+    _graceClock = null;
+    _graceValidation++;
+    _graceValidated = false;
+    _replyNavigation++;
+    _visit = _visit.closeComposer();
+    if (input != null && input.mounted) {
+      input.controller.clear();
+      if (input.focusNode.hasFocus) input.focusNode.unfocus();
+    }
   }
 
   void _closeComposer() {
-    if (!_composing) return;
-    setState(() => _visit = _visit.closeComposer(_replyController.text));
-    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+    if (_composing) setState(_discardComposer);
   }
+
+  bool _canAnswer(String postId) =>
+      widget.onReply != null && _answerable && _center?.thought.id == postId;
 
   void _react(String postId, ThoughtReaction reaction) {
-    if (_answerable) {
-      _dispatch(_visit.react(postId, reaction, const Uuid().v4()));
+    if (_canAnswer(postId)) {
+      unawaited(_dispatch(_visit.react(postId, reaction, const Uuid().v4())));
     }
   }
 
-  void _retry(String messageId) {
-    if (_answerable) _dispatch(_visit.retry(messageId));
+  void _sendSticker(String postId, ThoughtStickerSelection selection) {
+    // Pop of the bottom sheet may complete before the covered route gets its
+    // current-route notification. Recheck the focused thought after that frame.
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        if (mounted && _canAnswer(postId) && widget.onStickerReply != null) {
+          unawaited(
+            _dispatch(_visit.sticker(postId, selection, const Uuid().v4())),
+          );
+        }
+      })
+      ..ensureVisualUpdate();
   }
 
-  void _sendTyped(String postId, String text) {
-    final dispatch = _visit.reply(postId, text, const Uuid().v4());
+  void _retry(OrbitDepthSend send) {
+    final dispatch = _visit.retry(send.messageId);
     if (dispatch == null) return;
-    _dispatch(dispatch);
-    _replyController.clear();
-    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+    final seat = _replySeat ?? _center;
+    if (seat == null || seat.thought.id != send.postId) return;
+    if (send.isText) {
+      if (_canAnswer(send.postId) ||
+          (_hasExpiredReply && _canSendDraftInGrace)) {
+        unawaited(_sendText(dispatch, seat));
+      }
+    } else if (_canAnswer(send.postId)) {
+      unawaited(_dispatch(dispatch));
+    }
   }
 
-  /// The send itself belongs to the host; the visit only records its answer.
-  void _dispatch(OrbitDepthDispatch? dispatch) {
-    final onReply = widget.onReply;
-    if (dispatch == null || onReply == null) return;
-    final send = dispatch.send;
-    setState(() => _visit = dispatch.visit);
-    final answers = widget.answers;
-    if (answers != null) {
-      unawaited(answers.dispatch(dispatch, onReply));
+  bool get _canSendDraftInGrace =>
+      _graceValidated &&
+      _graceSendId == null &&
+      _replyDraft?.isInGraceAt(_now) == true;
+
+  void _sendTyped(OrbitDepthSeat seat, TextEditingController controller) {
+    if (!_enabled ||
+        _replySeat?.thought.id != seat.thought.id ||
+        (_hasExpiredReply && !_canSendDraftInGrace)) {
       return;
     }
-    unawaited(() async {
-      ThoughtReplyStatus status;
-      try {
-        status = await onReply(send.text, send.postId, send.messageId);
-      } catch (_) {
-        status = ThoughtReplyStatus.failed;
+    final postId = seat.thought.id;
+    final latest = _visit.latestFor(postId);
+    final text = controller.text;
+    final dispatch =
+        _hasExpiredReply &&
+            latest != null &&
+            latest.isText &&
+            latest.canRetry &&
+            latest.text == text.trim()
+        ? _visit.retry(latest.messageId)
+        : _visit.reply(postId, text, const Uuid().v4());
+    if (dispatch != null) unawaited(_sendText(dispatch, seat));
+  }
+
+  Future<void> _sendText(
+    OrbitDepthDispatch dispatch,
+    OrbitDepthSeat seat,
+  ) async {
+    final grace = _hasExpiredReply;
+    final draft = _replyDraft;
+    final send = dispatch.send;
+    if (grace) {
+      setState(() => _graceSendId = send.messageId);
+      dispatch = (visit: dispatch.visit.openComposer(send.postId), send: send);
+    } else {
+      _closeComposer();
+    }
+    final epoch = _replyNavigation;
+    final landing = _settleGeneration;
+    final status = await _dispatch(dispatch, textDraft: draft);
+    if (!mounted ||
+        epoch != _replyNavigation ||
+        landing != _settleGeneration ||
+        !_enabled ||
+        (grace ? _graceSendId != send.messageId : !_canAnswer(send.postId))) {
+      return;
+    }
+    if (grace) {
+      if (status == ThoughtReplyStatus.sent) {
+        _closeComposer();
+      } else {
+        setState(() => _graceSendId = null);
       }
-      if (mounted) {
-        setState(() => _visit = _visit.settle(send.messageId, status));
-      }
-    }());
+    }
+    if (status == ThoughtReplyStatus.sent) {
+      widget.onTypedReplySent?.call(seat.thought.authorPeerId);
+    } else if (status == ThoughtReplyStatus.queued) {
+      _pendingReplyNavigation = (
+        seat: seat,
+        epoch: epoch,
+        landing: landing,
+        id: send.messageId,
+        grace: grace,
+      );
+    }
+  }
+
+  void _maybeOpenPendingReply() {
+    final pending = _pendingReplyNavigation;
+    if (pending == null ||
+        _visit.sends[pending.id]?.status != ThoughtReplyStatus.sent) {
+      return;
+    }
+    _pendingReplyNavigation = null;
+    final post = pending.seat.thought;
+    if (pending.epoch == _replyNavigation &&
+        pending.landing == _settleGeneration &&
+        _enabled &&
+        (pending.grace
+            ? _replySeat?.thought.id == post.id
+            : _canAnswer(post.id))) {
+      if (pending.grace) _closeComposer();
+      widget.onTypedReplySent?.call(post.authorPeerId);
+    }
+  }
+
+  /// The send belongs to the host. The visit only records its answer.
+  Future<ThoughtReplyStatus?> _dispatch(
+    OrbitDepthDispatch? dispatch, {
+    ThoughtReplyDraft? textDraft,
+  }) async {
+    final onReply = widget.onReply;
+    if (dispatch == null || onReply == null) return null;
+    final send = dispatch.send;
+    final onText = widget.onTextReply;
+    final onSticker = widget.onStickerReply;
+    Future<ThoughtReplyStatus> sendReply(
+      String text,
+      String postId,
+      String messageId,
+    ) => send.isText && onText != null
+        ? onText(text, postId, messageId, textDraft)
+        : onReply(text, postId, messageId);
+
+    final visit = dispatch.visit;
+    setState(() => _visit = visit);
+    final answers = widget.answers;
+    if (answers != null) {
+      return answers.dispatch(dispatch, sendReply, onSticker: onSticker);
+    }
+    final sticker = send.sticker;
+    ThoughtReplyStatus status;
+    try {
+      status = sticker == null
+          ? await sendReply(send.text, send.postId, send.messageId)
+          : await onSticker?.call(sticker, send.postId, send.messageId) ??
+                ThoughtReplyStatus.failed;
+    } catch (_) {
+      status = ThoughtReplyStatus.failed;
+    }
+    if (!mounted) return null;
+    setState(() => _visit = _visit.settle(send.messageId, status));
+    return _visit.sends[send.messageId]?.status;
   }
 
   @override
@@ -826,8 +1066,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     widget.resetSignal?.removeListener(_reset);
     _replyStatuses?.cancel();
     widget.answers?.removeListener(_onAnswersChanged);
-    _replyController.dispose();
-    _replyFocus.dispose();
+    _graceClock?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     ++_settleGeneration;
     _expiry?.cancel();
@@ -967,21 +1206,26 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final lifted = faces.isEmpty
         ? null
         : faces.reduce((a, b) => b.lift > a.lift ? b : a);
-    final shown = lifted == null ? null : queue[lifted.index];
+    final front = lifted == null ? null : queue[lifted.index];
+    final expiredReply = _hasExpiredReply && _replyDraft != null;
+    final shown = expiredReply ? _replySeat : front;
     final reveal = _smooth((tiltProgress - .5) / .5);
     final named = _smooth((tiltProgress - .65) / .35);
     final presence = _reduceMotion
         ? 1.0
         : math.pow(lifted?.lift ?? 0, 2).toDouble();
-    // The bar's row and its status line below it; never under 44 pt.
-    final answers = widget.onReply != null;
-    final target = places.barHeight;
+    final hasDock = widget.onReply != null && shown != null && !_isOwn(shown);
     final statusRow = places.statusHeight;
     final composing = _composing;
+    // The dock has an extra field and privacy line below the reaction row.
+    // Only a friend's replyable card needs that space.
+    const dockHeight = 145.0;
+    const typingDockHeight = 160.0;
+    final dockExtra = hasDock ? dockHeight - places.barHeight : 0.0;
+    final cardBottom = math.max(places.areaTop, places.areaBottom - dockExtra);
+    final cardInset = size.height - cardBottom;
     if (composing && shown?.thought.id != _visit.composingPostId) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _closeComposer();
-      });
+      _closeComposerAfterFrame();
     }
     final keyboard = math.max(
       widget.bottomClearance,
@@ -1065,7 +1309,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                   ),
                 ),
               ),
-            if (shown != null)
+            if (shown != null && !expiredReply)
               Positioned(
                 key: const ValueKey('orbit-depth-name-slot'),
                 left: 0,
@@ -1107,7 +1351,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               left: 14 * k,
               right: 14 * k,
               top: places.areaTop,
-              bottom: composing ? keyboard : size.height - places.areaBottom,
+              bottom: composing
+                  ? math.min(
+                      size.height - places.areaTop,
+                      math.max(cardInset, keyboard + typingDockHeight),
+                    )
+                  : cardInset,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1118,17 +1367,20 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                         // The thought slides up into place as the orbit tilts.
                         offset: Offset(0, (1 - reveal) * 40 * k),
                         child: Opacity(
-                          opacity: (presence * reveal)
-                              .clamp(0.0, 1.0)
-                              .toDouble(),
+                          // The compact quote is visible while typing. Keep
+                          // this card mounted so its loaded media stays alive.
+                          opacity: composing
+                              ? 0
+                              : (presence * reveal).clamp(0.0, 1.0).toDouble(),
                           child: fade(
                             'orbit-depth-content',
-                            shown != null
+                            expiredReply
+                                ? null
+                                : shown != null
                                 ? _card(
                                     shown,
                                     k,
-                                    restHeight:
-                                        places.areaBottom - places.areaTop,
+                                    restHeight: cardBottom - places.areaTop,
                                   )
                                 : _layer == OrbitDepthLayer.flat ||
                                       _gesture == OrbitDepthGesture.vertical
@@ -1158,45 +1410,35 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       ),
                     ),
                   ),
-                  if (composing && shown != null)
-                    Padding(
-                      padding: EdgeInsets.only(top: 8 * k),
-                      child: ComposeArea(
-                        key: const ValueKey('orbit-depth-composer'),
-                        controller: _replyController,
-                        focusNode: _replyFocus,
-                        hintText: AppLocalizations.of(
-                          context,
-                        )!.thought_reply_hint(shown.friend.username),
-                        showAttachButton: false,
-                        alwaysShowSend: true,
-                        clearOnSend: false,
-                        onSend: (text) => _sendTyped(shown.thought.id, text),
-                      ),
-                    ),
                 ],
               ),
             ),
-            if ((answers || _isOwn(shown)) && !composing)
+            if (hasDock || _isOwn(shown))
               Positioned(
                 key: const ValueKey('orbit-depth-answers-slot'),
                 left: 14 * k,
                 right: 14 * k,
-                top: places.barTop,
-                height: target + statusRow,
+                top: composing ? null : places.barTop - dockExtra,
+                bottom: composing ? keyboard : null,
                 child: Transform.translate(
-                  offset: Offset(0, (1 - barReveal) * 40 * k),
+                  offset: Offset(0, composing ? 0 : (1 - barReveal) * 40 * k),
                   child: Opacity(
-                    opacity: (barPresence * barReveal).clamp(0.0, 1.0),
+                    opacity: composing
+                        ? 1
+                        : (barPresence * barReveal).clamp(0.0, 1.0),
                     child: IgnorePointer(
-                      ignoring: trailingLift <= .5,
+                      ignoring: !composing && trailingLift <= .5,
                       child: fade(
                         'orbit-depth-answers',
                         shown == null
                             ? null
                             : _isOwn(shown)
-                            ? _ownActivity(shown, k, target + statusRow)
-                            : _answers(shown, k, target, statusRow),
+                            ? _ownActivity(
+                                shown,
+                                k,
+                                places.barHeight + statusRow,
+                              )
+                            : _answers(shown, statusRow),
                       ),
                     ),
                   ),
@@ -1254,93 +1496,52 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     );
   }
 
-  Widget _answers(
-    OrbitDepthSeat seat,
-    double k,
-    double target,
-    double statusRow,
-  ) {
-    final l10n = AppLocalizations.of(context)!;
+  Widget _answers(OrbitDepthSeat seat, double statusRow) {
+    final post = seat.thought;
+    final latest = _visit.latestFor(post.id);
+    final typing = _visit.composingPostId == post.id;
     final colors = Theme.of(context).colorScheme;
-    final postId = seat.thought.id;
-    final latest = _visit.latestFor(postId);
-    return SizedBox(
-      key: ValueKey('orbit-depth-answers-$postId'),
-      height: target + statusRow,
-      child: Column(
+    final l10n = AppLocalizations.of(context)!;
+    final graceSeconds = typing && _hasExpiredReply
+        ? _graceValidated
+              ? _replyDraft?.secondsRemaining(_now) ?? 0
+              : 0
+        : null;
+    return _DepthReplyInput(
+      key: ValueKey('orbit-depth-answers-${post.id}'),
+      onChanged: (input) => _onReplyInputChanged(seat, input),
+      builder: (controller, focusNode) => Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            height: target,
-            child: Row(
-              children: [
-                for (final reaction in ThoughtReaction.values) ...[
-                  ThoughtReactionCircle(
-                    key: ValueKey('orbit-depth-react-${reaction.name}'),
-                    glyph: reaction.glyph,
-                    label: switch (reaction) {
-                      ThoughtReaction.love => l10n.thought_react_love,
-                      ThoughtReaction.laugh => l10n.thought_react_laugh,
-                      ThoughtReaction.fire => l10n.thought_react_fire,
-                      ThoughtReaction.applause => l10n.thought_react_applause,
-                    },
-                    size: target,
-                    pressed: _visit.pressed(postId, reaction),
-                    onTap: () => _react(postId, reaction),
-                    onActivate: _bySemantics(() => _react(postId, reaction)),
-                  ),
-                  SizedBox(width: 8 * k),
-                ],
-                Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: l10n.conversation_context_reply,
-                    excludeSemantics: true,
-                    onTap: _bySemantics(() => _openComposer(postId)),
-                    child: Material(
-                      key: const ValueKey('orbit-depth-reply'),
-                      color: _answerGreen,
-                      shape: const StadiumBorder(),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () => _openComposer(postId),
-                        child: SizedBox(
-                          height: target,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.reply_rounded,
-                                size: 18,
-                                color: _onAnswerGreen,
-                              ),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  l10n.conversation_context_reply,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: _onAnswerGreen,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+          ThoughtReplyDock(
+            post: post,
+            authorName: seat.friend.username,
+            media: _lastLoadedMedia[post.id] ?? const [],
+            controller: controller,
+            focusNode: focusNode,
+            typing: typing,
+            visit: _visit,
+            reactionKeyPrefix: 'orbit-depth-react',
+            onReaction: (reaction) => _react(post.id, reaction),
+            onReactionActivate: (reaction) =>
+                _bySemantics(() => _react(post.id, reaction))(),
+            onSend: () => _sendTyped(seat, controller),
+            sendEnabled:
+                _graceSendId == null &&
+                (!_hasExpiredReply || _canSendDraftInGrace),
+            onSticker: widget.onStickerReply == null
+                ? null
+                : (selection) => _sendSticker(post.id, selection),
+            graceSeconds: graceSeconds,
+          ),
+          if (!typing || _graceSendId != null)
+            SizedBox(
+              height: statusRow,
+              child: latest == null
+                  ? null
+                  : _answerStatus(latest, l10n, colors),
             ),
-          ),
-          SizedBox(
-            height: statusRow,
-            child: latest == null ? null : _answerStatus(latest, l10n, colors),
-          ),
         ],
       ),
     );
@@ -1382,11 +1583,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             button: true,
             label: l10n.btn_retry,
             excludeSemantics: true,
-            onTap: _bySemantics(() => _retry(send.messageId)),
+            onTap: _bySemantics(() => _retry(send)),
             child: TextButton(
               key: const ValueKey('orbit-depth-answer-retry'),
               style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-              onPressed: () => _retry(send.messageId),
+              onPressed: () => _retry(send),
               child: Text(l10n.btn_retry),
             ),
           ),
@@ -1676,7 +1877,6 @@ const _thoughtType = {
 const _voiceType = (size: 30.0, weight: FontWeight.w600);
 
 const _answerGreen = thoughtReactionGreen;
-const _onAnswerGreen = Color(0xFF04130A);
 
 /// The near half of the ring is tinted light blue, as in the agreed mock; on
 /// a light background the same tint would vanish, so it deepens there.
@@ -1685,6 +1885,44 @@ Color orbitDepthRingFront(Brightness brightness) =>
             ? const Color(0xFFCFE0FF)
             : const Color(0xFF2F5FB8))
         .withValues(alpha: .45);
+
+class _DepthReplyInput extends StatefulWidget {
+  const _DepthReplyInput({
+    super.key,
+    required this.onChanged,
+    required this.builder,
+  });
+
+  final ValueChanged<_DepthReplyInputState> onChanged;
+  final Widget Function(TextEditingController, FocusNode) builder;
+
+  @override
+  State<_DepthReplyInput> createState() => _DepthReplyInputState();
+}
+
+class _DepthReplyInputState extends State<_DepthReplyInput> {
+  final controller = TextEditingController();
+  final focusNode = FocusNode();
+
+  void _changed() => widget.onChanged(this);
+
+  @override
+  void initState() {
+    super.initState();
+    controller.addListener(_changed);
+    focusNode.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(controller, focusNode);
+}
 
 class _RingPainter extends CustomPainter {
   const _RingPainter(

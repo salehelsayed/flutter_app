@@ -1132,6 +1132,54 @@ abstract class AppLocalizations {
   /// **'Reply to {name}…'**
   String thought_reply_hint(String name);
 
+  /// Names the only recipient of a Thought reply
+  ///
+  /// In en, this message translates to:
+  /// **'Only {name} sees your reply'**
+  String thought_reply_private_note(String name);
+
+  /// Countdown for the active reply to an expired Thought
+  ///
+  /// In en, this message translates to:
+  /// **'This thought just ended. You can still send for {seconds} s'**
+  String thought_reply_grace(int seconds);
+
+  /// Shown when the reply grace period has ended
+  ///
+  /// In en, this message translates to:
+  /// **'This thought has ended'**
+  String get thought_reply_ended;
+
+  /// Shown on a Thought without reply eligibility
+  ///
+  /// In en, this message translates to:
+  /// **'Only contacts can reply'**
+  String get thought_reply_contacts_only;
+
+  /// Accessible label of the Thought reply Send button
+  ///
+  /// In en, this message translates to:
+  /// **'Send reply'**
+  String get thought_reply_send_label;
+
+  /// Accessible label of the Thought reply text field
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to {name}'**
+  String thought_reply_field_label(String name);
+
+  /// Accessible label of an already sent Thought reaction
+  ///
+  /// In en, this message translates to:
+  /// **'Sent {reaction} reaction'**
+  String thought_reaction_sent_label(String reaction);
+
+  /// Accessible label of the sent Thought reply sticker
+  ///
+  /// In en, this message translates to:
+  /// **'Sticker sent'**
+  String get thought_sticker_sent_label;
+
   /// Thought card: close button label for screen readers
   ///
   /// In en, this message translates to:

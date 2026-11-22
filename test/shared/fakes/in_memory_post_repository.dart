@@ -121,6 +121,21 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<PostModel?> getRetainedIncomingPost(
+    String postId,
+    DateTime expiredAfter,
+  ) async {
+    final post = await getPost(postId);
+    final expiresAt = DateTime.tryParse(post?.expiresAt ?? '');
+    return post != null &&
+            post.isIncoming &&
+            expiresAt != null &&
+            expiresAt.isAfter(expiredAfter)
+        ? post
+        : null;
+  }
+
+  @override
   Future<List<PostModel>> loadPostsByIds(List<String> postIds) async {
     final posts = <PostModel>[];
     for (final postId in postIds) {

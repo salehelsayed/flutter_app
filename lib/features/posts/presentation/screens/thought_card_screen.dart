@@ -15,8 +15,9 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
-import 'package:flutter_app/features/posts/presentation/widgets/thought_reaction_circle.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_reply_dock.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
@@ -56,8 +57,8 @@ MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
 
 /// One author's current thought, full screen.
 ///
-/// A friend's card shares its reactions with the 3D ring. The user's own card
-/// adds its posting status, Seen by and Delete, without reaction controls.
+/// A friend's card shares its replies with the 3D ring. The user's own card
+/// adds its posting status, Seen by and Delete.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
@@ -76,6 +77,10 @@ class ThoughtCardScreen extends StatefulWidget {
     this.playVideoAtOnce = false,
     this.answers,
     this.onReply,
+    this.onTextReply,
+    this.onStickerReply,
+    this.onTypedReplySent,
+    this.validateGrace,
   });
 
   final PostModel initialPost;
@@ -83,6 +88,10 @@ class ThoughtCardScreen extends StatefulWidget {
   final PostRepository postRepo;
   final OrbitDepthAnswers? answers;
   final ThoughtReplySender? onReply;
+  final ThoughtTextReplySender? onTextReply;
+  final ThoughtStickerReplySender? onStickerReply;
+  final ValueChanged<String>? onTypedReplySent;
+  final Future<bool> Function(ThoughtReplyDraft)? validateGrace;
 
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
@@ -123,6 +132,13 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   StreamSubscription<ConversationMessage>? _replySubscription;
   Timer? _expiryTimer;
   Timer? _ageTimer;
+  Timer? _replyCountdown;
+  final _replyController = TextEditingController();
+  final _replyFocus = FocusNode();
+  ThoughtReplyDraft? _replyDraft;
+  String? _pendingTypedReply;
+  bool _inReplyGrace = false;
+  double _keyboard = 0;
   ModalRoute<dynamic>? _cardRoute;
   Route<void>? _mediaRoute;
   NavigatorState? _navigator;
@@ -157,10 +173,84 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     return expiry != null && expiry.isAfter(_now);
   }
 
+  bool get _canReply =>
+      _post.isIncoming && widget.answers != null && widget.onReply != null;
+
+  bool get _isTyping => _canReply && (_replyFocus.hasFocus || _inReplyGrace);
+
+  int? get _graceSeconds =>
+      _inReplyGrace ? _replyDraft?.secondsRemaining(_now) : null;
+
+  void _updateReplyDraft() {
+    if (!_replyFocus.hasFocus || _inReplyGrace) return;
+    if (_replyController.text.trim().isEmpty) {
+      _replyDraft = null;
+    } else {
+      _replyDraft ??= ThoughtReplyDraft.start(_post, _now);
+    }
+  }
+
+  void _onReplyFocus() {
+    if (!mounted || _closing) return;
+    if (_replyFocus.hasFocus) {
+      _updateReplyDraft();
+    } else if (!_inReplyGrace) {
+      _replyController.clear();
+      _replyDraft = null;
+    }
+    setState(() {});
+  }
+
+  void _discardReply() {
+    _replyFocus.unfocus();
+    _replyController.clear();
+    _replyDraft = null;
+    if (_inReplyGrace) _close();
+  }
+
+  @override
+  void didChangeMetrics() {
+    final keyboard = View.of(context).viewInsets.bottom;
+    if (_keyboard > 0 && keyboard == 0 && _isTyping && !_inReplyGrace) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_closing && !_inReplyGrace) _discardReply();
+      });
+    }
+    _keyboard = keyboard;
+  }
+
+  void _syncReplyExpiry() {
+    if (_isLive || _inReplyGrace || _closing) return;
+    final draft = _replyDraft;
+    if (!_validated ||
+        !_canReply ||
+        !_replyFocus.hasFocus ||
+        _cardRoute?.isCurrent != true ||
+        draft == null ||
+        !draft.matches(_post) ||
+        !draft.isInGraceAt(_now)) {
+      _close();
+      return;
+    }
+    setState(() => _inReplyGrace = true);
+    _requestRefresh();
+    _replyCountdown = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _closing) {
+        timer.cancel();
+        return;
+      }
+      setState(() {});
+      if (_graceSeconds == 0) timer.cancel();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _post = widget.initialPost;
+    _replyController.addListener(_updateReplyDraft);
+    _replyFocus.addListener(_onReplyFocus);
+    widget.answers?.addListener(_onReplyStatusChanged);
     WidgetsBinding.instance.addObserver(this);
     _postSubscription = widget.postRepo.postChanges.listen(
       (_) => _requestRefresh(),
@@ -174,7 +264,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _ageTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted || _closing) return;
       if (!_isLive) {
-        _close();
+        _syncReplyExpiry();
       } else {
         setState(() {});
       }
@@ -193,11 +283,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && !_closing) {
-      if (!_isLive) {
-        _close();
-      } else {
-        _requestRefresh();
-      }
+      if (!_isLive) _syncReplyExpiry();
+      _requestRefresh();
     }
   }
 
@@ -210,7 +297,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       if (_isLive) {
         _armExpiry();
       } else {
-        _close();
+        _syncReplyExpiry();
       }
     });
   }
@@ -228,8 +315,24 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       while (_refreshAgain && mounted && !_closing) {
         _refreshAgain = false;
         final displayedId = _post.id;
+        if (!_isLive) {
+          _syncReplyExpiry();
+          final draft = _replyDraft;
+          if (_inReplyGrace && draft != null && draft.isInGraceAt(_now)) {
+            final canSend =
+                await (widget.validateGrace?.call(draft) ??
+                    _retainedDraftExists(draft));
+            if (!mounted || _closing) return;
+            if (!canSend && draft.isInGraceAt(_now)) _close();
+          }
+          continue;
+        }
         final storedCurrent = await widget.postRepo.getPost(displayedId);
         if (!mounted || _closing) return;
+        if (!_isLive) {
+          _refreshAgain = true;
+          continue;
+        }
         if (_post.id != displayedId) continue;
         // Deletion ends this presentation; an older surviving copy must not
         // silently replace the thought the user was viewing.
@@ -240,12 +343,20 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         final current = await widget.loadCurrentThought();
         if (!mounted || _closing) return;
         if (_post.id != displayedId) continue;
+        if (!_isLive) {
+          _refreshAgain = true;
+          continue;
+        }
         if (current == null) {
           _close();
           return;
         }
         final changedPost = _post.id != current.id;
-        if (changedPost) _closeMediaViewer();
+        if (changedPost) {
+          _closeMediaViewer();
+          _pendingTypedReply = null;
+          _discardReply();
+        }
         setState(() {
           _post = current;
           _validated = true;
@@ -272,6 +383,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     } finally {
       _refreshing = false;
     }
+  }
+
+  Future<bool> _retainedDraftExists(ThoughtReplyDraft draft) async {
+    final row = await widget.postRepo.getRetainedIncomingPost(
+      draft.postId,
+      _now.subtract(ThoughtReplyDraft.grace),
+    );
+    return row != null && draft.matches(row);
   }
 
   void _markWhenShown() {
@@ -482,6 +601,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     if (!mounted || _closing) return;
     setState(() => _closing = true);
     _expiryTimer?.cancel();
+    _replyCountdown?.cancel();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final navigator = _navigator;
       final route = _cardRoute;
@@ -597,13 +717,19 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _replySubscription?.cancel();
     _expiryTimer?.cancel();
     _ageTimer?.cancel();
+    _replyCountdown?.cancel();
+    widget.answers?.removeListener(_onReplyStatusChanged);
+    _replyFocus.removeListener(_onReplyFocus);
+    _replyFocus.dispose();
+    _replyController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final visible = _validated && !_loadFailed && !_closing && _isLive;
+    final visible =
+        _validated && !_loadFailed && !_closing && (_isLive || _inReplyGrace);
     final visual = _media
         .where((item) => item.kind != 'voice')
         .toList(growable: false);
@@ -636,7 +762,11 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                   Center(child: _visualMedia(l10n, visual))
                 else
                   _centeredText(),
-                if (!_immersive) ...[
+                if (_inReplyGrace)
+                  const IgnorePointer(
+                    child: ColoredBox(color: Color(0x66000000)),
+                  ),
+                if (!_immersive || _isTyping) ...[
                   const _Scrim(top: true),
                   const _Scrim(top: false),
                   SafeArea(
@@ -644,7 +774,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       children: [
                         _topChrome(l10n),
                         const Spacer(),
-                        _bottomChrome(l10n, showText: hasVisual),
+                        _bottomChrome(l10n, showText: hasVisual && !_isTyping),
                       ],
                     ),
                   ),
@@ -914,8 +1044,15 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             ),
           ),
         ],
-        if (_post.isIncoming && widget.answers != null && widget.onReply != null)
-          _reactionRow(l10n),
+        if (_post.isIncoming)
+          if (_canReply)
+            _replyDock(l10n)
+          else
+            Text(
+              l10n.thought_reply_contacts_only,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white),
+            ),
         if (!_post.isIncoming) ...[
           _postingStatus(l10n),
           if (widget.loadActivity != null) _ownActivity(l10n),
@@ -965,48 +1102,147 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   void _react(ThoughtReaction reaction) {
     final answers = widget.answers;
-    final sender = widget.onReply;
-    if (answers == null ||
-        sender == null ||
-        !_post.isIncoming ||
+    if (!_canReply || !_validated || _closing || !_isLive) return;
+    final dispatch = answers!.value.react(
+      _post.id,
+      reaction,
+      const Uuid().v4(),
+    );
+    _dispatchReply(dispatch);
+  }
+
+  void _sendSticker(ThoughtStickerSelection selection) {
+    final answers = widget.answers;
+    if (!_canReply || !_validated || _closing || !_isLive) return;
+    _dispatchReply(
+      answers!.value.sticker(_post.id, selection, const Uuid().v4()),
+    );
+  }
+
+  void _sendTypedReply() {
+    final answers = widget.answers;
+    if (!_canReply ||
         !_validated ||
         _closing ||
-        !_isLive) {
+        (!_isLive && (_graceSeconds ?? 0) == 0)) {
       return;
     }
+    final draft = _replyDraft;
+    final visit = answers!.value;
+    final latest = visit.latestFor(_post.id);
+    final text = _replyController.text;
+    final dispatch =
+        latest != null &&
+            latest.isText &&
+            latest.status == ThoughtReplyStatus.failed &&
+            latest.text == text.trim()
+        ? visit.retry(latest.messageId)
+        : visit.reply(_post.id, text, const Uuid().v4());
+    if (dispatch == null) return;
+    _dispatchReply(dispatch, draft: draft);
+    if (!_inReplyGrace) _discardReply();
+  }
+
+  void _dispatchReply(
+    OrbitDepthDispatch? dispatch, {
+    ThoughtReplyDraft? draft,
+  }) {
+    final sender = widget.onReply;
+    final textSender = widget.onTextReply;
+    if (dispatch == null || sender == null) return;
+    if (dispatch.send.isText) _pendingTypedReply = dispatch.send.messageId;
     unawaited(
-      answers.dispatch(
-        answers.value.react(_post.id, reaction, const Uuid().v4()),
-        sender,
+      widget.answers!.dispatch(
+        dispatch,
+        dispatch.send.isText && textSender != null
+            ? (text, postId, messageId) =>
+                  textSender(text, postId, messageId, draft)
+            : sender,
+        onSticker: widget.onStickerReply,
       ),
     );
   }
 
-  Widget _reactionRow(AppLocalizations l10n) =>
-      ValueListenableBuilder<OrbitDepthVisit>(
-        valueListenable: widget.answers!,
-        builder: (context, visit, _) => Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  void _onReplyStatusChanged() {
+    final send = widget.answers?.value.sends[_pendingTypedReply];
+    if (send == null || send.status != ThoughtReplyStatus.sent) return;
+    _pendingTypedReply = null;
+    if (!mounted ||
+        _closing ||
+        _cardRoute?.isCurrent != true ||
+        _post.id != send.postId) {
+      return;
+    }
+    if (widget.onTypedReplySent case final open?) {
+      open(_post.authorPeerId);
+      _close();
+    }
+  }
+
+  Widget _replyDock(
+    AppLocalizations l10n,
+  ) => ValueListenableBuilder<OrbitDepthVisit>(
+    valueListenable: widget.answers!,
+    builder: (context, visit, _) {
+      final latest = visit.latestFor(_post.id);
+      final grace = _graceSeconds;
+      return TapRegion(
+        onTapOutside: (_) {
+          if (_isTyping && !_inReplyGrace) _discardReply();
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            for (final reaction in ThoughtReaction.values)
-              ThoughtReactionCircle(
-                key: ValueKey('thought-react-${reaction.name}'),
-                glyph: reaction.glyph,
-                label: switch (reaction) {
-                  ThoughtReaction.love => l10n.thought_react_love,
-                  ThoughtReaction.laugh => l10n.thought_react_laugh,
-                  ThoughtReaction.fire => l10n.thought_react_fire,
-                  ThoughtReaction.applause => l10n.thought_react_applause,
-                },
-                size: 52,
-                pressed: visit.pressed(_post.id, reaction),
-                foregroundColor: Colors.white,
-                onTap: () => _react(reaction),
-                onActivate: () => _react(reaction),
+            ThoughtReplyDock(
+              key: ValueKey(_post.id),
+              post: _post,
+              authorName: widget.authorName,
+              media: _media,
+              controller: _replyController,
+              focusNode: _replyFocus,
+              typing: _isTyping,
+              visit: visit,
+              reactionKeyPrefix: 'thought-react',
+              onReaction: _react,
+              onSend: _sendTypedReply,
+              onSticker: widget.onStickerReply == null ? null : _sendSticker,
+              onScrim: true,
+              graceSeconds: grace,
+              sendEnabled:
+                  latest == null ||
+                  !latest.isText ||
+                  !(latest.inFlight ||
+                      (_inReplyGrace &&
+                          latest.status == ThoughtReplyStatus.queued)),
+            ),
+            if (latest != null &&
+                !latest.inFlight &&
+                latest.status == ThoughtReplyStatus.failed &&
+                grace != 0)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      l10n.error_send_message,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _dispatchReply(
+                      visit.retry(latest.messageId),
+                      draft: _replyDraft,
+                    ),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    child: Text(l10n.btn_retry),
+                  ),
+                ],
               ),
           ],
         ),
       );
+    },
+  );
 
   Widget _postingStatus(AppLocalizations l10n) {
     final status = _retryingPost ? 'sending' : _post.deliveryStatus;

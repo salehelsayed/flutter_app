@@ -9,6 +9,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ void main() {
   late List<_Sent> sent;
   late List<String> chats, opened;
   late Map<String, PostModel> thoughts;
+  late DateTime now;
   late ValueNotifier<int> reset;
   late Completer<ThoughtReplyStatus>? hold;
   late ThoughtReplyStatus result;
@@ -33,6 +35,7 @@ void main() {
     chats = [];
     opened = [];
     thoughts = {for (var i = 0; i < 4; i++) 'peer-$i': depthThought(i)};
+    now = depthNow;
     reset = ValueNotifier(0);
     hold = null;
     result = ThoughtReplyStatus.sent;
@@ -49,6 +52,9 @@ void main() {
     double bottomClearance = 0,
     bool answers = true,
     Future<List<PostMediaAttachmentModel>> Function(String)? load,
+    ThoughtTextReplySender? onTextReply,
+    Future<bool> Function(ThoughtReplyDraft)? validateGrace,
+    ValueChanged<String>? onTypedReplySent,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -71,7 +77,7 @@ void main() {
             thoughts: thoughts,
             topClearance: topClearance,
             bottomClearance: bottomClearance,
-            nowProvider: () => depthNow,
+            nowProvider: () => now,
             resetSignal: reset,
             onFriendTap: (friend) => chats.add(friend.peerId),
             onThoughtTap: opened.add,
@@ -86,6 +92,9 @@ void main() {
                     return hold?.future ?? Future.value(result);
                   }
                 : null,
+            onTextReply: onTextReply,
+            validateGrace: validateGrace,
+            onTypedReplySent: onTypedReplySent,
             replyStatusChanges: statuses.stream,
             loadMedia: load,
             downloadMedia: load == null ? null : (item, _) async => item,
@@ -127,22 +136,11 @@ void main() {
 
   Finder bar(int i) => find.byKey(ValueKey('orbit-depth-answers-post-$i'));
   Finder react(String name) => find.byKey(ValueKey('orbit-depth-react-$name'));
-  final replyButton = find.byKey(const ValueKey('orbit-depth-reply'));
-  final composer = find.byKey(const ValueKey('orbit-depth-composer'));
-  final composerField = find.descendant(
-    of: composer,
-    matching: find.byType(TextField),
-  );
-  final dockField = find.descendant(
-    of: find.byKey(const ValueKey('thought-reply-field')),
-    matching: find.byType(TextField),
-    matchRoot: true,
-  );
-  Finder replyEntry() =>
-      dockField.evaluate().isNotEmpty ? dockField : replyButton;
-  Finder replyField() =>
-      dockField.evaluate().isNotEmpty ? dockField : composerField;
-  final typingQuote = find.byKey(const ValueKey('thought-reply-quote'));
+  final composerField = find.byKey(const ValueKey('thought-reply-field'));
+  final composer = find.byKey(const ValueKey('thought-reply-quote'));
+  final dock = find.byKey(const ValueKey('thought-reply-dock'));
+  final stickers = find.byKey(const ValueKey('thought-reply-stickers'));
+  final sendButton = find.byKey(const ValueKey('thought-reply-send'));
   final status = find.byKey(const ValueKey('orbit-depth-answer-status'));
   final retry = find.byKey(const ValueKey('orbit-depth-answer-retry'));
 
@@ -168,10 +166,8 @@ void main() {
     await rest(tester);
   }
 
-  testWidgets('the bar shows under the focused friend\'s thought only, in '
-      'the bottom fifth, with the four reactions in order then Reply', (
-    tester,
-  ) async {
+  testWidgets('the dock shows only under the focused friend, with four '
+      'reactions and the sticker choice above the reply field', (tester) async {
     await mount(tester);
     expect(bar(0), findsNothing);
     await enter(tester);
@@ -182,13 +178,15 @@ void main() {
         tester.getCenter(react(name)).dx,
     ];
     expect(xs, orderedEquals([...xs]..sort()));
-    expect(tester.getSize(react('love')), const Size(52, 52));
+    expect(tester.getSize(react('love')), const Size(44, 44));
     expect(
-      tester.getTopLeft(replyButton).dx,
+      tester.getTopLeft(stickers).dx,
       greaterThan(tester.getTopRight(react('applause')).dx),
     );
-    expect(find.text('Reply'), findsOneWidget);
-    expect(tester.getTopLeft(bar(0)).dy, greaterThan(844 * .8));
+    expect(
+      tester.getTopLeft(composerField).dy,
+      greaterThan(tester.getBottomLeft(react('applause')).dy),
+    );
     expect(
       tester
           .getBottomLeft(find.byKey(const ValueKey('orbit-depth-card-slot')))
@@ -217,7 +215,7 @@ void main() {
     expect(chats, isEmpty);
     expect(
       tester.getSemantics(react('love')),
-      isSemantics(label: 'React with love', isSelected: true),
+      isSemantics(label: 'Sent ❤️ reaction', isSelected: true),
     );
     expect(
       tester.getSemantics(react('laugh')),
@@ -343,7 +341,7 @@ void main() {
     }
     expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏']);
 
-    await activate(tester, replyButton);
+    await activate(tester, composerField);
     expect(composer, findsOneWidget);
     await activate(
       tester,
@@ -351,16 +349,10 @@ void main() {
     );
     expect(composer, findsNothing);
 
-    await activate(tester, replyButton);
+    await activate(tester, composerField);
     await tester.enterText(composerField, 'by voice over');
     await rest(tester);
-    await activate(
-      tester,
-      find.descendant(
-        of: composer,
-        matching: find.byIcon(Icons.arrow_upward_rounded),
-      ),
-    );
+    await activate(tester, sendButton);
     expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏', 'by voice over']);
     expect(composer, findsNothing);
     await finish(tester);
@@ -447,9 +439,12 @@ void main() {
       'sender, closes it and stays in 3D showing "sent"', (tester) async {
     await mount(tester);
     await enter(tester);
-    await tap(tester, replyButton);
+    await tap(tester, composerField);
     expect(composer, findsOneWidget);
-    expect(find.text('Reply to Friend 0…'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(composerField).decoration?.hintText,
+      'Reply to Friend 0…',
+    );
     expect(find.byIcon(Icons.mic), findsNothing);
     expect(find.byKey(const ValueKey('composer-attach-button')), findsNothing);
     expect(find.byKey(const ValueKey('voice-record-button')), findsNothing);
@@ -459,16 +454,11 @@ void main() {
       tester
           .getBottomLeft(find.byKey(const ValueKey('orbit-depth-card-post-0')))
           .dy,
-      lessThanOrEqualTo(tester.getTopLeft(composer).dy),
+      lessThanOrEqualTo(tester.getTopLeft(dock).dy),
     );
     await tester.enterText(composerField, 'looks great');
     await tester.pump();
-    await tester.tap(
-      find.descendant(
-        of: composer,
-        matching: find.byIcon(Icons.arrow_upward_rounded),
-      ),
-    );
+    await tester.tap(sendButton);
     await rest(tester);
     expect(sent.map((s) => (s.text, s.postId)), [('looks great', 'post-0')]);
     expect(composer, findsNothing);
@@ -488,27 +478,26 @@ void main() {
   ) async {
     await mount(tester);
     await enter(tester);
-    await tap(tester, replyEntry());
-    await tester.enterText(replyField(), 'half a thought');
+    await tap(tester, composerField);
+    await tester.enterText(composerField, 'half a thought');
     await tester.pump();
     await tap(
       tester,
       find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
     );
     expect(composer, findsNothing);
-    expect(typingQuote, findsNothing);
     expect(sent, isEmpty);
     expect(opened, isEmpty);
-    await tap(tester, replyEntry());
-    expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
+    await tap(tester, composerField);
+    expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
     await tap(
       tester,
       find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
     );
     await leave(tester);
     await enter(tester);
-    await tap(tester, replyEntry());
-    expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
+    await tap(tester, composerField);
+    expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
     await finish(tester);
   });
 
@@ -517,18 +506,17 @@ void main() {
     (tester) async {
       await mount(tester);
       await enter(tester);
-      await tap(tester, replyEntry());
+      await tap(tester, composerField);
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await rest(tester);
       expect(tester.testTextInput.isVisible, isTrue);
-      await tester.enterText(replyField(), 'unsent reply');
+      await tester.enterText(composerField, 'unsent reply');
       tester.view.viewInsets = FakeViewPadding.zero;
       await rest(tester);
       expect(composer, findsNothing);
-      expect(typingQuote, findsNothing);
       expect(sent, isEmpty);
-      await tap(tester, replyEntry());
-      expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
+      await tap(tester, composerField);
+      expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
       tester.view.resetViewInsets();
       await finish(tester);
     },
@@ -548,10 +536,10 @@ void main() {
         'composer and discards its reply', (tester) async {
       await mount(tester);
       await enter(tester);
-      await tap(tester, replyEntry());
+      await tap(tester, composerField);
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await rest(tester);
-      await tester.enterText(replyField(), 'half a thought');
+      await tester.enterText(composerField, 'half a thought');
       await tester.pump();
       hide(tester);
       await tester.binding.handlePopRoute().timeout(const Duration(seconds: 3));
@@ -559,16 +547,95 @@ void main() {
       tester.view.viewInsets = FakeViewPadding.zero;
       await rest(tester);
       expect(composer, findsNothing);
-      expect(typingQuote, findsNothing);
       expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
       expect(bar(0), findsOneWidget);
       expect(sent, isEmpty);
-      await tap(tester, replyEntry());
-      expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
+      await tap(tester, composerField);
+      expect(tester.widget<TextField>(composerField).controller!.text, isEmpty);
       tester.view.resetViewInsets();
       await finish(tester);
     });
   }
+
+  testWidgets('typing through expiry keeps the exact reply until an admitted '
+      'send finishes', (tester) async {
+    final expiry = depthNow.add(const Duration(seconds: 2));
+    thoughts['peer-0'] = depthThought(
+      0,
+    ).copyWith(expiresAt: expiry.toIso8601String());
+    final result = Completer<ThoughtReplyStatus>();
+    addTearDown(() {
+      if (!result.isCompleted) result.complete(ThoughtReplyStatus.failed);
+    });
+    ThoughtReplyDraft? admitted;
+    await mount(
+      tester,
+      validateGrace: (draft) async => draft.postId == 'post-0',
+      onTextReply: (text, postId, messageId, draft) {
+        sent.add((text: text, postId: postId, messageId: messageId));
+        admitted = draft;
+        return result.future.timeout(const Duration(seconds: 3));
+      },
+    );
+    await enter(tester);
+    await tap(tester, composerField);
+    await tester.enterText(composerField, 'which day works?');
+
+    now = expiry;
+    await tester.pump(const Duration(seconds: 2));
+    await rest(tester);
+    expect(composer, findsOneWidget);
+    expect(
+      tester.widget<TextField>(composerField).controller!.text,
+      'which day works?',
+    );
+    expect(react('love'), findsNothing);
+
+    now = expiry.add(const Duration(seconds: 59));
+    await tester.pump(const Duration(seconds: 1));
+    await tap(tester, sendButton);
+    expect(sent.single.postId, 'post-0');
+    expect(admitted?.expiresAt, expiry);
+
+    now = expiry.add(const Duration(seconds: 60));
+    await tester.pump(const Duration(seconds: 1));
+    expect(composer, findsOneWidget);
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNull);
+    expect(sent, hasLength(1));
+
+    result.complete(ThoughtReplyStatus.sent);
+    await rest(tester);
+    expect(composer, findsNothing);
+    expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a typed reply finishing after Back does not reopen chat', (
+    tester,
+  ) async {
+    final result = Completer<ThoughtReplyStatus>();
+    addTearDown(() {
+      if (!result.isCompleted) result.complete(ThoughtReplyStatus.failed);
+    });
+    await mount(
+      tester,
+      onTypedReplySent: chats.add,
+      onTextReply: (_, _, _, _) =>
+          result.future.timeout(const Duration(seconds: 3)),
+    );
+    await enter(tester);
+    await tap(tester, composerField);
+    await tester.enterText(composerField, 'which day works?');
+    await rest(tester);
+    await tap(tester, sendButton);
+    expect(composer, findsNothing);
+    await leave(tester);
+    result.complete(ThoughtReplyStatus.sent);
+    await rest(tester);
+    expect(chats, isEmpty);
+    expect(find.byKey(const ValueKey('orbit-depth-stage')), findsNothing);
+    await finish(tester);
+  });
 
   testWidgets('the avatar tap still opens the chat', (tester) async {
     await mount(tester);
@@ -579,18 +646,22 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('right to left mirrors the bar: reactions from the right, '
-      'Reply on the left', (tester) async {
+  testWidgets('right to left mirrors the reaction and send controls', (
+    tester,
+  ) async {
     await mount(tester, rtl: true);
     await enter(tester);
     final love = tester.getCenter(react('love')).dx;
     final laugh = tester.getCenter(react('laugh')).dx;
     expect(love, greaterThan(laugh));
     expect(
-      tester.getTopRight(replyButton).dx,
+      tester.getTopRight(stickers).dx,
       lessThan(tester.getTopLeft(react('applause')).dx),
     );
-    expect(find.text('رد'), findsOneWidget);
+    expect(
+      tester.getCenter(sendButton).dx,
+      lessThan(tester.getCenter(composerField).dx),
+    );
     await finish(tester);
   });
 
@@ -658,11 +729,12 @@ void main() {
     for (final name in ['love', 'laugh', 'fire', 'applause']) {
       expect(tester.getSize(react(name)), const Size(44, 44));
     }
-    expect(tester.getSize(replyButton).height, 44);
-    expect(tester.getSize(replyButton).width, greaterThanOrEqualTo(44));
-    // In 3D the host's nav band leaves, so the bar rests 44 pt (the status
-    // line under it) above the bottom instead of above the band.
-    expect(tester.getBottomLeft(replyButton).dy, closeTo(667 - 44, .01));
+    for (final target in [stickers, composerField, sendButton]) {
+      expect(tester.getSize(target).height, greaterThanOrEqualTo(44));
+      expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
+    }
+    // The dock leaves room for its status row at the bottom of the ring.
+    expect(tester.getBottomLeft(dock).dy, lessThanOrEqualTo(667 - 44));
     await finish(tester);
   });
 
@@ -683,21 +755,17 @@ void main() {
     final handle = tester.ensureSemantics();
     await mount(tester);
     await enter(tester);
-    await tap(tester, replyButton);
-    final send = find.descendant(
-      of: composer,
-      matching: find.byIcon(Icons.arrow_upward_rounded),
-    );
+    await tap(tester, composerField);
+    final send = sendButton;
     expect(send, findsOneWidget);
     expect(shownOpacity(tester, send), 1.0);
+    expect(tester.widget<IconButton>(send).tooltip, 'Send reply');
     expect(
-      tester.getSemantics(send),
-      isSemantics(
-        label: 'Send message',
-        isButton: true,
-        hasEnabledState: true,
-        isEnabled: false,
-      ),
+      tester
+          .getSemantics(send)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isFalse,
     );
     await tap(tester, send);
     expect(sent, isEmpty);
@@ -709,12 +777,11 @@ void main() {
     expect(composer, findsOneWidget);
     expect(shownOpacity(tester, send), 1.0);
     expect(
-      tester.getSemantics(send),
-      isSemantics(
-        label: 'Send message',
-        hasEnabledState: true,
-        isEnabled: true,
-      ),
+      tester
+          .getSemantics(send)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
     );
     await tap(tester, send);
     expect(sent.map((s) => (s.text, s.postId)), [('nice one', 'post-0')]);

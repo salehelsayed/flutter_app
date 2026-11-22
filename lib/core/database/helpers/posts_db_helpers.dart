@@ -227,6 +227,28 @@ Future<Map<String, Object?>?> dbLoadPost(
   }
 }
 
+/// A single still-stored incoming Thought for exact reply grace or retraction.
+Future<Map<String, Object?>?> dbLoadRetainedIncomingPost(
+  Database db,
+  String postId,
+  DateTime expiredAfter,
+) async {
+  final rows = await db.rawQuery(
+    '''
+      SELECT p.*
+      FROM posts p
+      LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+      WHERE p.post_id = ?
+        AND p.is_incoming = 1
+        AND COALESCE(fs.is_hidden, 0) = 0
+        AND julianday(p.expires_at) > julianday(?)
+      LIMIT 1
+    ''',
+    <Object?>[postId, expiredAfter.toUtc().toIso8601String()],
+  );
+  return rows.firstOrNull;
+}
+
 Future<List<Map<String, Object?>>> dbLoadPostsByIds(
   Database db,
   List<String> postIds, {

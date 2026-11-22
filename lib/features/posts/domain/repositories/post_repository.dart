@@ -20,6 +20,13 @@ abstract class PostRepository {
 
   Future<PostModel?> getPost(String postId);
 
+  /// Checks that an exact incoming Thought still exists in the short interval
+  /// in which a text already being written may be sent.
+  Future<PostModel?> getRetainedIncomingPost(
+    String postId,
+    DateTime expiredAfter,
+  );
+
   Future<List<PostModel>> loadPostsByIds(List<String> postIds);
 
   Future<bool> postExists(String postId);

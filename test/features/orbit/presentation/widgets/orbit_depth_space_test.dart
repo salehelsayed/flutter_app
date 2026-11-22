@@ -238,7 +238,10 @@ void main() {
   final love = find.byKey(const ValueKey('orbit-depth-react-love'));
   final laugh = find.byKey(const ValueKey('orbit-depth-react-laugh'));
   final applause = find.byKey(const ValueKey('orbit-depth-react-applause'));
-  final reply = find.byKey(const ValueKey('orbit-depth-reply'));
+  final reply = find.byKey(const ValueKey('thought-reply-field'));
+  final dock = find.byKey(const ValueKey('thought-reply-dock'));
+  final quote = find.byKey(const ValueKey('thought-reply-quote'));
+  final stickers = find.byKey(const ValueKey('thought-reply-stickers'));
   final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
   final ring = find.byKey(const ValueKey('orbit-depth-center-slot'));
   final name = find.byKey(const ValueKey('orbit-depth-name'));
@@ -249,6 +252,12 @@ void main() {
 
   Matcher at(double value) => closeTo(value, .01);
 
+  // The expanded dock takes the place of the single reaction row. The ring
+  // and the gap between the card and its controls keep their established place.
+  double dockTop(_Place place) => place.barBottom - 145;
+  double cardBottom(_Place place) =>
+      place.areaBottom - place.barTop + dockTop(place);
+
   void expectInside(WidgetTester tester, Finder part, _Place place) {
     final rect = tester.getRect(part);
     expect(
@@ -258,7 +267,7 @@ void main() {
     );
     expect(
       rect.bottom,
-      lessThanOrEqualTo(place.areaBottom + .01),
+      lessThanOrEqualTo(cardBottom(place) + .01),
       reason: '$part',
     );
     expect(rect.overlaps(tester.getRect(bar)), isFalse, reason: '$part');
@@ -279,16 +288,16 @@ void main() {
           seed();
           await mount(tester, phone);
           await enter(tester, up: up);
-          expect(tester.getTopLeft(love).dy, at(place.barTop), reason: kind);
+          expect(tester.getTopLeft(bar).dy, at(dockTop(place)), reason: kind);
           expect(
-            tester.getBottomLeft(love).dy,
-            at(place.barBottom),
+            tester.getBottomLeft(reply).dy,
+            greaterThan(tester.getBottomLeft(love).dy),
             reason: kind,
           );
           expect(tester.getTopLeft(slot).dy, at(place.areaTop), reason: kind);
           expect(
             tester.getBottomLeft(slot).dy,
-            at(place.areaBottom),
+            at(cardBottom(place)),
             reason: kind,
           );
           expect(tester.getCenter(ring).dy, at(place.ringY), reason: kind);
@@ -302,7 +311,7 @@ void main() {
             expectInside(tester, photo, place);
             expect(
               tester.getBottomLeft(photo).dy,
-              at(place.areaBottom),
+              at(cardBottom(place)),
               reason: '$kind fills down to the bar',
             );
           }
@@ -360,7 +369,7 @@ void main() {
         expect(when.top, greaterThan(words.bottom));
         expect(
           words.top - place.areaTop,
-          closeTo(place.areaBottom - when.bottom, 1),
+          closeTo(cardBottom(place) - when.bottom, 1),
         );
         final paragraph = tester.renderObject<RenderParagraph>(text);
         final last = paragraph
@@ -388,7 +397,7 @@ void main() {
       expect(tester.getTopLeft(text).dx, at(14));
       expect(
         tester.getBottomLeft(text).dy,
-        lessThanOrEqualTo(place.areaBottom),
+        lessThanOrEqualTo(cardBottom(place)),
       );
       expect(
         tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
@@ -408,12 +417,12 @@ void main() {
         greaterThan(tester.getCenter(laugh).dx),
       );
       expect(
-        tester.getTopRight(reply).dx,
+        tester.getTopRight(stickers).dx,
         lessThan(tester.getTopLeft(applause).dx),
       );
-      expect(tester.getTopLeft(love).dy, at(place.barTop));
+      expect(tester.getTopLeft(bar).dy, at(dockTop(place)));
       expect(tester.getTopLeft(slot).dy, at(place.areaTop));
-      expect(tester.getBottomLeft(slot).dy, at(place.areaBottom));
+      expect(tester.getBottomLeft(slot).dy, at(cardBottom(place)));
       expect(tester.getCenter(ring).dy, at(place.ringY));
       await finish(tester);
     });
@@ -434,13 +443,12 @@ void main() {
 
       await tester.tap(reply);
       await tester.pump();
-      final composer = find.byKey(const ValueKey('orbit-depth-composer'));
-      expect(composer, findsOneWidget);
+      expect(quote, findsOneWidget);
       expectSamePlayer('opening Reply keeps the playing voice note');
       tester.view.viewInsets = const FakeViewPadding(bottom: 280);
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect(tester.getRect(composer).bottom, lessThanOrEqualTo(360));
+      expect(tester.getRect(dock).bottom, lessThanOrEqualTo(360));
       expectSamePlayer('the keyboard keeps the playing voice note');
       tester.view.viewInsets = const FakeViewPadding();
       await tester.pump();
@@ -469,14 +477,12 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(tester.getRect(photo), restPhoto);
         expect(tester.getRect(text), restText);
-        if (!up) {
-          final composer = find.byKey(const ValueKey('orbit-depth-composer'));
-          expect(
-            restText.bottom,
-            lessThanOrEqualTo(tester.getRect(composer).top),
-            reason: 'the whole caption shows above the composer',
-          );
-        }
+        expect(quote, findsOneWidget);
+        expect(
+          tester.getRect(quote).bottom,
+          lessThanOrEqualTo(tester.getRect(reply).top),
+          reason: 'the compact quote stays above the reply field',
+        );
         tester.view.viewInsets = const FakeViewPadding();
         await tester.pump();
         await tester.pump();
@@ -518,8 +524,8 @@ void main() {
     ('Pixel', _phones[2], 320.0),
   ]) {
     for (final kind in ['short', 'medium', 'voice', 'photo']) {
-      testWidgets('$label swiped up, Reply with the keyboard up still paints '
-          'the top of a $kind thought above the composer', (tester) async {
+      testWidgets('$label swiped up, replying to a $kind thought keeps '
+          'its compact quote and dock above the keyboard', (tester) async {
         kinds[kind]!();
         await mount(tester, phone);
         await enter(tester, up: true);
@@ -530,17 +536,14 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         expect(tester.takeException(), isNull);
-        final composer = tester.getRect(
-          find.byKey(const ValueKey('orbit-depth-composer')),
+        expect(visible(tester, quote).height, greaterThan(20));
+        expect(shownOpacity(tester, quote), greaterThan(.9));
+        expect(
+          tester.getRect(dock).bottom,
+          lessThanOrEqualTo(phone.size.height - keyboard),
         );
-        expect(shownOpacity(tester, text), greaterThan(.9));
         if (restPhoto != null) {
           expect(tester.getRect(photo).size, restPhoto.size);
-          expect(tester.getRect(text).top, lessThan(composer.top));
-        } else {
-          final words = visible(tester, text);
-          expect(words.height, greaterThan(20), reason: 'the text is shown');
-          expect(words.bottom, lessThanOrEqualTo(composer.top + .01));
         }
         tester.view.viewInsets = const FakeViewPadding();
         await tester.pump();

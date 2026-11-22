@@ -48,6 +48,8 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   dbRecordIncomingThoughtView;
   final Future<void> Function(Map<String, Object?> row) dbInsertPost;
   final Future<Map<String, Object?>?> Function(String postId) dbLoadPost;
+  final Future<Map<String, Object?>?> Function(String, DateTime)?
+  dbLoadRetainedIncomingPost;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
   dbLoadPostsByIds;
   final Future<List<Map<String, Object?>>> Function() dbLoadPostsFeed;
@@ -189,6 +191,7 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
     this.dbRecordIncomingThoughtView,
     required this.dbInsertPost,
     required this.dbLoadPost,
+    this.dbLoadRetainedIncomingPost,
     this.dbLoadPostsByIds,
     required this.dbLoadPostsFeed,
     this.dbLoadRetryableOutgoingPosts,
@@ -335,6 +338,15 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   @override
   Future<PostModel?> getPost(String postId) async {
     final row = await dbLoadPost(postId);
+    return row == null ? null : PostModel.fromMap(row);
+  }
+
+  @override
+  Future<PostModel?> getRetainedIncomingPost(
+    String postId,
+    DateTime expiredAfter,
+  ) async {
+    final row = await dbLoadRetainedIncomingPost?.call(postId, expiredAfter);
     return row == null ? null : PostModel.fromMap(row);
   }
 

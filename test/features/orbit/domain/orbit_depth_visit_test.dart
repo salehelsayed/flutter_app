@@ -69,21 +69,19 @@ void main() {
     });
   }
 
-  test('a typed reply closes the composer, clears its draft and trims', () {
-    final open = visit
-        .openComposer('post-1')
-        .closeComposer('draft one')
-        .openComposer('post-1');
-    expect(open.composingPostId, 'post-1');
-    expect(open.drafts, {'post-1': 'draft one'});
-    final sent = open.reply('post-1', '  hi there  ', 'm1')!;
-    expect(sent.send.text, 'hi there');
-    expect(sent.send.reaction, isNull);
-    expect(sent.visit.composingPostId, isNull);
-    expect(sent.visit.drafts, isEmpty);
-    expect(open.reply('post-1', '   ', 'm2'), isNull);
-    expect(sent.visit.reply('post-1', 'again', 'm3'), isNull);
-  });
+  test(
+    'a typed reply closes the composer and trims surrounding whitespace',
+    () {
+      final open = visit.openComposer('post-1');
+      expect(open.composingPostId, 'post-1');
+      final sent = open.reply('post-1', '  hi there  ', 'm1')!;
+      expect(sent.send.text, 'hi there');
+      expect(sent.send.reaction, isNull);
+      expect(sent.visit.composingPostId, isNull);
+      expect(open.reply('post-1', '   ', 'm2'), isNull);
+      expect(sent.visit.reply('post-1', 'again', 'm3'), isNull);
+    },
+  );
 
   test('the latest send on a thought is the one its status line shows', () {
     final both = visit
@@ -98,13 +96,10 @@ void main() {
     expect(retried.latestFor('post-1')!.messageId, 'm1');
   });
 
-  test('closing the composer keeps its draft per thought', () {
-    final drafts = visit
-        .openComposer('post-1')
-        .closeComposer('for one')
-        .openComposer('post-2')
-        .closeComposer('');
-    expect(drafts.composingPostId, isNull);
-    expect(drafts.drafts, {'post-1': 'for one'});
+  test('closing the composer preserves dispatched answers', () {
+    final answered = visit.react('post-1', ThoughtReaction.love, 'm1')!.visit;
+    final closed = answered.openComposer('post-1').closeComposer();
+    expect(closed.composingPostId, isNull);
+    expect(closed.sends, answered.sends);
   });
 }

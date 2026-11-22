@@ -982,7 +982,7 @@ void main() {
       await tester.tap(ownCard());
       await rest(tester);
       expect(opened, ['own-post']);
-      expect(find.byKey(const ValueKey('orbit-depth-composer')), findsNothing);
+      expect(find.byKey(const ValueKey('thought-reply-dock')), findsNothing);
       await finish(tester);
     });
 

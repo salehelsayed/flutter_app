@@ -150,6 +150,7 @@ class PostListener {
         postRepo: postRepo,
         mediaFileManager: mediaFileManager,
         earlyRetractions: earlyRetractions,
+        nowProvider: now,
       );
       if (result == HandleIncomingPostRetractResult.thoughtDeleted &&
           postId != null) {

@@ -18,6 +18,7 @@ import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import '../../../shared/fakes/fake_just_audio.dart';
@@ -53,6 +55,10 @@ void main() {
   reactionStatuses;
   late List<({String text, String postId, String messageId})> reactions;
   late ThoughtReplyStatus reactionResult;
+  late List<
+    ({ThoughtStickerSelection selection, String postId, String messageId})
+  >
+  stickers;
 
   setUp(() {
     now = initialNow;
@@ -64,6 +70,7 @@ void main() {
     originalAudioPlatform = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
     reactions = [];
+    stickers = [];
     reactionResult = ThoughtReplyStatus.sent;
     reactionStatuses = StreamController.broadcast();
     answers = OrbitDepthAnswers(statusChanges: reactionStatuses.stream);
@@ -140,6 +147,16 @@ void main() {
                       messageId: messageId,
                     ));
                     return reactionResult;
+                  }
+                : null,
+            onStickerReply: canReply
+                ? (selection, postId, messageId) async {
+                    stickers.add((
+                      selection: selection,
+                      postId: postId,
+                      messageId: messageId,
+                    ));
+                    return ThoughtReplyStatus.sent;
                   }
                 : null,
             loadCurrentThought:
@@ -283,6 +300,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.text('This thought has ended'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const ValueKey('thought-reply-send')))
+          .onPressed,
+      isNull,
+    );
     expect(reactions, isEmpty);
     await finish(tester);
   });
@@ -290,6 +313,7 @@ void main() {
   testWidgets('the sticker chip opens the picker over the thought', (
     tester,
   ) async {
+    SharedPreferences.setMockInitialValues({});
     final thought = _thought(initialNow);
     await posts.savePost(thought);
     await openCard(tester, thought);
@@ -300,9 +324,37 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 
-    expect(find.byType(BundledStickerPanel), findsOneWidget);
+    final panel = find.byType(BundledStickerPanel);
+    expect(panel, findsOneWidget);
     expect(find.byType(ThoughtCardScreen), findsOneWidget);
+
+    const entry = StickerEntry(
+      id: 'orbit_crew.planet.angry',
+      assetPath: 'assets/stickers/orbit_crew/planet/angry.webp',
+    );
+    tester.widget<BundledStickerPanel>(panel).onSend(entry);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    final sentSticker = find.byKey(const ValueKey('thought-sticker-sent'));
+    expect(sentSticker, findsOneWidget);
+    expect(
+      find.descendant(of: sentSticker, matching: find.byType(Image)),
+      findsOneWidget,
+    );
+    expect(stickerChip, findsNothing);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(stickers.single.selection.entry, same(entry));
+    expect(stickers.single.postId, thought.id);
     expect(reactions, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('thought-close')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await openCard(tester, thought);
+    expect(sentSticker, findsOneWidget);
+    expect(stickerChip, findsNothing);
+    expect(stickers, hasLength(1));
     await finish(tester);
   });
 

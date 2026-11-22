@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 
-/// One reaction or typed reply sent from the 3D view, as an ordinary quoted
+/// One answer sent from either Thought view, as an ordinary quoted
 /// chat reply. Retry reuses [messageId], so the chat never holds two copies.
 @immutable
 class OrbitDepthSend {
@@ -13,6 +13,7 @@ class OrbitDepthSend {
     required this.postId,
     required this.text,
     this.reaction,
+    this.sticker,
     this.inFlight = true,
     this.status,
   });
@@ -21,8 +22,9 @@ class OrbitDepthSend {
   final String postId;
   final String text;
 
-  /// Null for a typed reply.
   final ThoughtReaction? reaction;
+  final ThoughtStickerSelection? sticker;
+  bool get isText => reaction == null && sticker == null;
   final bool inFlight;
 
   /// The last known delivery state; null until the first answer.
@@ -36,6 +38,7 @@ class OrbitDepthSend {
         postId: postId,
         text: text,
         reaction: reaction,
+        sticker: sticker,
         inFlight: inFlight,
         status: status ?? this.status,
       );
@@ -44,38 +47,26 @@ class OrbitDepthSend {
 /// A send the caller must now dispatch, and the visit that records it.
 typedef OrbitDepthDispatch = ({OrbitDepthVisit visit, OrbitDepthSend send});
 
-/// What the user has answered on the ring's thoughts during one visit to the
-/// 3D view. Drafts and composer end with that visit; the wired host can retain
-/// its answers for the full-screen card through [OrbitDepthAnswers].
+/// What the user has answered on either Thought view. The depth surface keeps
+/// the open composer separately from answers it shares with the full card.
 ///
 /// [sends] is the one ledger, in the order they started; which emoji is
 /// pressed and which status a thought shows are read from it.
 @immutable
 class OrbitDepthVisit {
-  const OrbitDepthVisit._({
-    this.sends = const {},
-    this.drafts = const {},
-    this.composingPostId,
-  });
+  const OrbitDepthVisit._({this.sends = const {}, this.composingPostId});
 
   static const empty = OrbitDepthVisit._();
 
   /// By message id.
   final Map<String, OrbitDepthSend> sends;
 
-  /// Unsent text per thought, kept while the composer is closed.
-  final Map<String, String> drafts;
-
   /// The thought whose composer is open, if any.
   final String? composingPostId;
 
-  /// Share answers with the full-screen card without replacing the dial's
-  /// unsent drafts or opening/closing its composer.
-  OrbitDepthVisit withAnswersFrom(OrbitDepthVisit other) => OrbitDepthVisit._(
-    sends: other.sends,
-    drafts: drafts,
-    composingPostId: composingPostId,
-  );
+  /// Share answers without opening or closing the dial's composer.
+  OrbitDepthVisit withAnswersFrom(OrbitDepthVisit other) =>
+      OrbitDepthVisit._(sends: other.sends, composingPostId: composingPostId);
 
   OrbitDepthSend? latestFor(String postId) =>
       sends.values.where((send) => send.postId == postId).lastOrNull;
@@ -84,6 +75,26 @@ class OrbitDepthVisit {
       .values
       .where((send) => send.postId == postId && send.reaction == reaction)
       .firstOrNull;
+
+  OrbitDepthSend? stickerFor(String postId) => sends.values
+      .where((send) => send.postId == postId && send.sticker != null)
+      .firstOrNull;
+
+  OrbitDepthDispatch? sticker(
+    String postId,
+    ThoughtStickerSelection selection,
+    String messageId,
+  ) {
+    if (stickerFor(postId) != null) return null;
+    return _start(
+      OrbitDepthSend(
+        messageId: messageId,
+        postId: postId,
+        text: '',
+        sticker: selection,
+      ),
+    );
+  }
 
   /// Whether [reaction] shows pressed on [postId]: sent, or on its way.
   bool pressed(String postId, ThoughtReaction reaction) {
@@ -121,8 +132,7 @@ class OrbitDepthVisit {
     final trimmed = text.trim();
     if (trimmed.isEmpty ||
         sends.values.any(
-          (send) =>
-              send.postId == postId && send.reaction == null && send.inFlight,
+          (send) => send.postId == postId && send.isText && send.inFlight,
         )) {
       return null;
     }
@@ -141,7 +151,6 @@ class OrbitDepthVisit {
     return (
       visit: OrbitDepthVisit._(
         sends: {...next, messageId: again},
-        drafts: drafts,
         composingPostId: composingPostId,
       ),
       send: again,
@@ -166,28 +175,20 @@ class OrbitDepthVisit {
           status: send.status == ThoughtReplyStatus.sent ? null : status,
         ),
       },
-      drafts: drafts,
       composingPostId: composingPostId,
     );
   }
 
   OrbitDepthVisit openComposer(String postId) =>
-      OrbitDepthVisit._(sends: sends, drafts: drafts, composingPostId: postId);
+      OrbitDepthVisit._(sends: sends, composingPostId: postId);
 
-  OrbitDepthVisit closeComposer(String draft) {
-    final postId = composingPostId;
-    if (postId == null) return this;
-    final next = {...drafts}..remove(postId);
-    if (draft.isNotEmpty) next[postId] = draft;
-    return OrbitDepthVisit._(sends: sends, drafts: next);
-  }
+  OrbitDepthVisit closeComposer() => OrbitDepthVisit._(sends: sends);
 
   OrbitDepthDispatch _start(OrbitDepthSend send, {String? composerClosed}) {
     final closing = composerClosed != null;
     return (
       visit: OrbitDepthVisit._(
         sends: {...sends, send.messageId: send},
-        drafts: closing ? ({...drafts}..remove(composerClosed)) : drafts,
         composingPostId: closing ? null : composingPostId,
       ),
       send: send,
@@ -212,20 +213,27 @@ class OrbitDepthAnswers extends ValueNotifier<OrbitDepthVisit> {
   _statuses;
   bool _disposed = false;
 
-  Future<void> dispatch(
+  Future<ThoughtReplyStatus?> dispatch(
     OrbitDepthDispatch? dispatch,
-    ThoughtReplySender sender,
-  ) async {
-    if (_disposed || dispatch == null) return;
+    ThoughtReplySender sender, {
+    ThoughtStickerReplySender? onSticker,
+  }) async {
+    if (_disposed || dispatch == null) return null;
     value = dispatch.visit;
     final send = dispatch.send;
     ThoughtReplyStatus status;
     try {
-      status = await sender(send.text, send.postId, send.messageId);
+      final sticker = send.sticker;
+      status = sticker == null
+          ? await sender(send.text, send.postId, send.messageId)
+          : await onSticker?.call(sticker, send.postId, send.messageId) ??
+                ThoughtReplyStatus.failed;
     } catch (_) {
       status = ThoughtReplyStatus.failed;
     }
-    if (!_disposed) value = value.settle(send.messageId, status);
+    if (_disposed) return null;
+    value = value.settle(send.messageId, status);
+    return value.sends[send.messageId]?.status;
   }
 
   @override
