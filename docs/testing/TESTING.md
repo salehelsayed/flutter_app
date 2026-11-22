@@ -6813,6 +6813,24 @@ visible and cannot become an ordinary first-attempt PASS.
   and visible sticker playback. A matched prior build and VoiceOver traversal
   were outside this run. Evidence: `.codex-test-logs/s132-306-20261121/` and
   mailbox `m-ee650763`.
+  Removing the idle artwork ticker exposed four widget tests that relied on
+  unrelated scheduled frames. A fixed 300 ms pump could produce the
+  permission sheet's first frame, leaving both actions below the 800×600 test
+  viewport. A single idle pump could also deliver the relayed state or reaction
+  completion after checking whether a frame was scheduled. The navigator
+  sheet retains its own frame scheduling and the original motion policy.
+  The first `0648ffc7` affected-media run had 1,812 passes and four failures.
+  The exact pre-BL54 `7494c3c4` and BL53 `147d072e` anchors showed the same
+  misses and assertions. Earlier `d2c5cc92`, BL51 and BL52 passed the four
+  isolated cases. Retain completed timeouts and witnessed misses followed by
+  cancellation as distinct results. The test-only `bb28d31c` waits for both
+  real button hit targets, sheet dismissal, keyed offline-banner visibility,
+  and the exact committed reaction ID. All four focused runs passed on their
+  first attempt. The final composed affected-media run remains open.
+  The original and matched receipts are under
+  `~/.codex/investigations/bl50-native-adoption-codex2-20261122/`,
+  `~/.codex/investigations/bl50-mic-ancestry-codex2-20261122/`, and
+  `~/.codex/investigations/bl50-media-combined-codex2-20261122/`.
   Settings integration tests
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
