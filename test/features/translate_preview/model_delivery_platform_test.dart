@@ -5,11 +5,14 @@ import 'dart:io';
 import 'package:background_downloader/background_downloader.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_platform.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -211,6 +214,167 @@ void main() {
       createHttpClient: (_) => throw StateError('IO setup failed'),
     );
     expect(result?.status, TaskStatus.paused);
+  });
+
+  group('BL60 native download failures in the translator sheet', () {
+    const bound = Duration(seconds: 3);
+    final manifest = _manifest(bytes: 10 * 1024 * 1024);
+    final deliveredBytes = (.42 * manifest.bytes).round();
+
+    Future<PersistentModelDeliveryController> startDownload(
+      _Downloader downloader, {
+      required int Function() availableBytes,
+      _ResumeStorage? checkpoints,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance().timeout(bound);
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        preferences: () async => preferences,
+        diskSpace: DiskSpaceChannel(invoker: (_, _) async => availableBytes()),
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+      );
+      final controller = PersistentModelDeliveryController(
+        storage: storage,
+        network: _StorageTestNetwork(manifest),
+        transport: createTransport(
+          downloader: downloader,
+          resumeStorage: checkpoints,
+          isIOS: false,
+        ),
+        appBuild: () async => 129,
+        supported: true,
+        spaceReserveBytes: 1024 * 1024,
+      );
+      addTearDown(() => controller.dispose().timeout(bound));
+      await controller.start(allowMobileData: false).timeout(bound);
+      final task = downloader.enqueued.single;
+      expect(task.requiresWiFi, isTrue);
+      downloader.emit(task, TaskStatus.running);
+      downloader.progressCallback!(
+        TaskProgressUpdate(task, .42, manifest.bytes),
+      );
+      await controller.setAllowMobileData(false).timeout(bound);
+      expect(
+        controller.state.value,
+        isA<ModelDownloading>().having(
+          (state) => state.receivedBytes,
+          'received bytes',
+          deliveredBytes,
+        ),
+      );
+      return controller;
+    }
+
+    Future<void> pumpSheet(
+      WidgetTester tester,
+      ModelDeliveryController controller,
+    ) => tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PrivateTranslatorSheet(
+                controller: controller,
+                onFreeUpSpace: () {},
+              ),
+            ),
+          ),
+        )
+        .timeout(bound);
+
+    testWidgets('native HTTP 503 offers the server retry in the sheet', (
+      tester,
+    ) async {
+      final downloader = _Downloader();
+      final controller = (await tester.runAsync(() async {
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => 2 * manifest.bytes,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        downloader.emit(task, TaskStatus.waitingToRetry);
+        await controller.setAllowMobileData(false).timeout(bound);
+        expect(downloader.resumed, isEmpty);
+        expect(downloader.enqueued, hasLength(1));
+
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task.copyWith(retriesRemaining: 0),
+            TaskStatus.failed,
+            TaskHttpException('fixture server failure', 503),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        return controller;
+      }))!;
+
+      await pumpSheet(tester, controller);
+      expect(find.text("Our download server isn't answering"), findsOneWidget);
+      expect(
+        find.textContaining("This is on our side. We'll try again in "),
+        findsOneWidget,
+      );
+      expect(find.text('Try now'), findsOneWidget);
+      expect(find.textContaining('fixture server failure'), findsNothing);
+    });
+
+    testWidgets('native write failure after disk exhaustion offers Continue', (
+      tester,
+    ) async {
+      final downloader = _Downloader();
+      final checkpoints = _ResumeStorage();
+      var availableBytes = 2 * manifest.bytes;
+      final controller = (await tester.runAsync(() async {
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => availableBytes,
+          checkpoints: checkpoints,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        final partial = File(
+          '${destinations.path}/com.bbflight.background_downloader123',
+        );
+        final file = await partial.open(mode: FileMode.write).timeout(bound);
+        try {
+          await file.truncate(deliveredBytes).timeout(bound);
+        } finally {
+          await file.close().timeout(bound);
+        }
+        checkpoints.records[task.taskId] = ResumeData(
+          task,
+          partial.path,
+          deliveredBytes,
+          '"v1"',
+        );
+        downloader.emit(task, TaskStatus.waitingToRetry);
+        expect(await partial.length().timeout(bound), deliveredBytes);
+        await controller.setAllowMobileData(false).timeout(bound);
+
+        availableBytes = 512 * 1024;
+        checkpoints.records.remove(task.taskId);
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task.copyWith(retriesRemaining: 0),
+            TaskStatus.failed,
+            TaskFileSystemException('fixture storage write failed'),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        expect(downloader.resumed, isEmpty);
+        expect(downloader.enqueued, hasLength(1));
+        return controller;
+      }))!;
+
+      await pumpSheet(tester, controller);
+      expect(find.text('Your phone is full'), findsOneWidget);
+      expect(find.text('Free up space'), findsOneWidget);
+      expect(find.text('Continue'), findsOneWidget);
+      expect(find.textContaining('Your 42% is kept.'), findsNothing);
+    });
   });
 
   test(
@@ -1130,6 +1294,7 @@ class _Downloader extends Fake implements FileDownloader {
   final resumed = <DownloadTask>[];
   final canceled = <String>[];
   TaskStatusCallback? statusCallback;
+  TaskProgressCallback? progressCallback;
   String? registeredGroup;
   String? trackedGroup;
   String? notificationGroup;
@@ -1152,6 +1317,7 @@ class _Downloader extends Fake implements FileDownloader {
   }) {
     registeredGroup = group;
     statusCallback = taskStatusCallback;
+    progressCallback = taskProgressCallback;
     return this;
   }
 
@@ -1226,10 +1392,21 @@ class _Downloader extends Fake implements FileDownloader {
     return true;
   }
 
-  void emit(Task task, TaskStatus status) {
+  void emit(Task task, TaskStatus status) =>
+      emitUpdate(TaskStatusUpdate(task, status));
+
+  void emitUpdate(TaskStatusUpdate update) {
+    final task = update.task;
+    final status = update.status;
     if (status.isFinalState) active.remove(task.taskId);
-    db.records[task.taskId] = TaskRecord(task, status, 0, 100);
-    statusCallback?.call(TaskStatusUpdate(task, status));
+    db.records[task.taskId] = TaskRecord(
+      task,
+      status,
+      0,
+      100,
+      update.exception,
+    );
+    statusCallback?.call(update);
   }
 }
 
