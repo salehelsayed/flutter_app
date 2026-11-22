@@ -342,6 +342,41 @@ void main() {
     expect(_myGrid(tester), ['create', 'a', 'c']);
   });
 
+  testWidgets(
+    'a brief press on the sticker delete badge removes that sticker',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      final library = FakeCustomStickerLibrary(ids: ['a', 'b', 'c']);
+      final harness = await _pump(tester, library).timeout(bound);
+      final sticker = _sticker('b');
+
+      await tester.longPress(sticker).timeout(bound);
+      await tester.pump().timeout(bound);
+      final badge = find.byKey(const ValueKey('my-sticker-delete-b'));
+      expect(badge.hitTestable(), findsOneWidget);
+
+      final touch = await tester
+          .startGesture(tester.getCenter(badge))
+          .timeout(bound);
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(sticker, findsOneWidget);
+      await touch.up().timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.pump().timeout(bound);
+
+      expect(
+        sticker,
+        findsNothing,
+        reason:
+            'releasing a stationary touch on the visible X removes the tile',
+      );
+      expect(_myGrid(tester), ['a', 'c']);
+      expect(library.ids, ['a', 'c']);
+      expect(library.reorderCalls, isEmpty);
+      expect(harness.sent, isEmpty);
+    },
+  );
+
   testWidgets('dragging a sticker onto another reorders the library', (
     tester,
   ) async {
