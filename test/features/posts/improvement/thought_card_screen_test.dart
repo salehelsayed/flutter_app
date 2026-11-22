@@ -18,6 +18,7 @@ import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
@@ -101,6 +102,7 @@ void main() {
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
     bool playVideoAtOnce = false,
+    bool canReply = true,
     double? textScale,
   }) async {
     await tester.pumpWidget(
@@ -130,10 +132,16 @@ void main() {
             authorName: authorName,
             postRepo: posts,
             answers: answers,
-            onReply: (text, postId, messageId) async {
-              reactions.add((text: text, postId: postId, messageId: messageId));
-              return reactionResult;
-            },
+            onReply: canReply
+                ? (text, postId, messageId) async {
+                    reactions.add((
+                      text: text,
+                      postId: postId,
+                      messageId: messageId,
+                    ));
+                    return reactionResult;
+                  }
+                : null,
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
             replyChanges: replyChanges,
@@ -191,31 +199,110 @@ void main() {
     },
   );
 
-  testWidgets("a friend's card shows reactions without a reply field or "
-      'microphone, with its header and Close', (tester) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
+  testWidgets(
+    "a friend's card shows the reply dock with its header and Close",
+    (tester) async {
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
 
-    await openCard(tester, thought);
-    await tester.pumpAndSettle();
+      await openCard(tester, thought);
 
-    expect(find.text('Alice'), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-age')), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
-    expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-age')), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
+      expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+      for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
+        expect(
+          find.byKey(ValueKey('thought-react-$reaction')).hitTestable(),
+          findsOneWidget,
+        );
+      }
+      expect(find.text('❤️'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-reply-dock')), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
       expect(
-        find.byKey(ValueKey('thought-react-$reaction')).hitTestable(),
+        find.byKey(const ValueKey('thought-reply-stickers')).hitTestable(),
         findsOneWidget,
       );
-    }
-    expect(find.text('❤️'), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
-    expect(find.byType(TextField), findsNothing);
-    expect(find.text('Reply to Alice…'), findsNothing);
-    expect(find.byIcon(Icons.mic), findsNothing);
-    expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
-    expect(find.byKey(const ValueKey('thought-activity-open')), findsNothing);
+      expect(find.text('Only Alice sees your reply'), findsOneWidget);
+      expect(find.byIcon(Icons.mic), findsNothing);
+      expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
+      expect(find.byKey(const ValueKey('thought-activity-open')), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'a visible incoming thought without reply capability is read-only',
+    (tester) async {
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+
+      await openCard(tester, thought, canReply: false);
+
+      expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+      expect(find.text('Only contacts can reply'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-reply-dock')), findsNothing);
+      expect(find.byType(TextField), findsNothing);
+      expect(reactions, isEmpty);
+      await finish(tester);
+    },
+  );
+
+  testWidgets('an active text reply survives expiry for exactly one minute', (
+    tester,
+  ) async {
+    final expiry = initialNow.add(const Duration(seconds: 5));
+    final thought = _thought(
+      initialNow,
+    ).copyWith(expiresAt: expiry.toIso8601String());
+    await posts.savePost(thought);
+    await openCard(tester, thought);
+    final field = find.byKey(const ValueKey('thought-reply-field'));
+    await tester.tap(field);
+    await tester.enterText(field, 'I was still writing');
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(const ValueKey('thought-reply-quote')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+
+    now = expiry;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(find.text('I was still writing'), findsOneWidget);
+    expect(
+      find.text('This thought just ended. You can still send for 60 s'),
+      findsOneWidget,
+    );
+    expect(reactions, isEmpty);
+
+    now = expiry.add(const Duration(seconds: 60));
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('This thought has ended'), findsOneWidget);
+    expect(reactions, isEmpty);
+    await finish(tester);
+  });
+
+  testWidgets('the sticker chip opens the picker over the thought', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    await openCard(tester, thought);
+
+    final stickerChip = find.byKey(const ValueKey('thought-reply-stickers'));
+    expect(stickerChip.hitTestable(), findsOneWidget);
+    await tester.tap(stickerChip);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byType(BundledStickerPanel), findsOneWidget);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(reactions, isEmpty);
     await finish(tester);
   });
 

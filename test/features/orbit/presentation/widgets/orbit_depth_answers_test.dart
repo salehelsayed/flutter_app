@@ -133,6 +133,16 @@ void main() {
     of: composer,
     matching: find.byType(TextField),
   );
+  final dockField = find.descendant(
+    of: find.byKey(const ValueKey('thought-reply-field')),
+    matching: find.byType(TextField),
+    matchRoot: true,
+  );
+  Finder replyEntry() =>
+      dockField.evaluate().isNotEmpty ? dockField : replyButton;
+  Finder replyField() =>
+      dockField.evaluate().isNotEmpty ? dockField : composerField;
+  final typingQuote = find.byKey(const ValueKey('thought-reply-quote'));
   final status = find.byKey(const ValueKey('orbit-depth-answer-status'));
   final retry = find.byKey(const ValueKey('orbit-depth-answer-retry'));
 
@@ -473,49 +483,56 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('tapping outside closes the composer and keeps the draft for '
-      'this visit only', (tester) async {
+  testWidgets('tapping outside closes the composer and discards its reply', (
+    tester,
+  ) async {
     await mount(tester);
     await enter(tester);
-    await tap(tester, replyButton);
-    await tester.enterText(composerField, 'half a thought');
+    await tap(tester, replyEntry());
+    await tester.enterText(replyField(), 'half a thought');
     await tester.pump();
     await tap(
       tester,
       find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
     );
     expect(composer, findsNothing);
+    expect(typingQuote, findsNothing);
     expect(sent, isEmpty);
     expect(opened, isEmpty);
-    await tap(tester, replyButton);
-    expect(
-      tester.widget<TextField>(composerField).controller!.text,
-      'half a thought',
-    );
+    await tap(tester, replyEntry());
+    expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
     await tap(
       tester,
       find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
     );
     await leave(tester);
     await enter(tester);
-    await tap(tester, replyButton);
-    expect(tester.widget<TextField>(composerField).controller!.text, '');
+    await tap(tester, replyEntry());
+    expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
     await finish(tester);
   });
 
-  testWidgets('hiding the keyboard closes the composer', (tester) async {
-    await mount(tester);
-    await enter(tester);
-    await tap(tester, replyButton);
-    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
-    await rest(tester);
-    expect(composer, findsOneWidget);
-    tester.view.viewInsets = FakeViewPadding.zero;
-    await rest(tester);
-    expect(composer, findsNothing);
-    tester.view.resetViewInsets();
-    await finish(tester);
-  });
+  testWidgets(
+    'hiding the keyboard closes the composer and discards its reply',
+    (tester) async {
+      await mount(tester);
+      await enter(tester);
+      await tap(tester, replyEntry());
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await rest(tester);
+      expect(tester.testTextInput.isVisible, isTrue);
+      await tester.enterText(replyField(), 'unsent reply');
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await rest(tester);
+      expect(composer, findsNothing);
+      expect(typingQuote, findsNothing);
+      expect(sent, isEmpty);
+      await tap(tester, replyEntry());
+      expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
+      tester.view.resetViewInsets();
+      await finish(tester);
+    },
+  );
 
   for (final (how, hide) in <(String, void Function(WidgetTester))>[
     (
@@ -528,27 +545,26 @@ void main() {
     ),
   ]) {
     testWidgets('a system Back in the same frame as $how closes only the '
-        'composer: 3D stays and the draft is kept', (tester) async {
+        'composer and discards its reply', (tester) async {
       await mount(tester);
       await enter(tester);
-      await tap(tester, replyButton);
+      await tap(tester, replyEntry());
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await rest(tester);
-      await tester.enterText(composerField, 'half a thought');
+      await tester.enterText(replyField(), 'half a thought');
       await tester.pump();
       hide(tester);
-      await tester.binding.handlePopRoute();
+      await tester.binding.handlePopRoute().timeout(const Duration(seconds: 3));
       await rest(tester);
       tester.view.viewInsets = FakeViewPadding.zero;
       await rest(tester);
       expect(composer, findsNothing);
+      expect(typingQuote, findsNothing);
       expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
       expect(bar(0), findsOneWidget);
-      await tap(tester, replyButton);
-      expect(
-        tester.widget<TextField>(composerField).controller!.text,
-        'half a thought',
-      );
+      expect(sent, isEmpty);
+      await tap(tester, replyEntry());
+      expect(tester.widget<TextField>(replyField()).controller!.text, isEmpty);
       tester.view.resetViewInsets();
       await finish(tester);
     });

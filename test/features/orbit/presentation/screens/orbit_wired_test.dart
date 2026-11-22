@@ -107,6 +107,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_no
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as p2p_connection;
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -1447,15 +1448,13 @@ void main() {
     );
 
     testWidgets(
-      'a 3D typed reply goes through the same quoted-reply path and opens '
-      'nothing',
+      'a 3D typed reply does not open chat without delivery confirmation',
       (tester) async {
         await enterDepthWithThought(tester);
-        expect(find.byKey(const ValueKey('orbit-depth-reply')), findsOneWidget);
         final navigator = tester.state<NavigatorState>(
           find.byType(Navigator).first,
         );
-        await tester.tap(find.byKey(const ValueKey('orbit-depth-reply')));
+        await tester.tap(_depthReplyEntry);
         await pumpOrbitFrames(tester, count: 4);
         expect(find.byIcon(Icons.mic), findsNothing);
         await tester.enterText(_depthReplyField, 'count me in');
@@ -1481,18 +1480,88 @@ void main() {
       },
     );
 
-    testWidgets('a tap on the 3D thought opens its card with friend reactions', (
+    for (final (surface, fullScreen) in [
+      ('depth', false),
+      ('the full-screen card', true),
+    ]) {
+      testWidgets(
+        'a delivered typed reply from $surface opens the author chat once '
+        'and Back returns to Orbit',
+        (tester) async {
+          const bound = Duration(seconds: 3);
+          p2pService.sendMessageWithReplyResult = const SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: 'ack',
+          );
+          await enterDepthWithThought(tester, online: true);
+          if (fullScreen) {
+            await tester.tap(
+              find.byKey(const ValueKey('orbit-depth-text-lake')),
+            );
+            await pumpOrbitFrames(tester, count: 24);
+            expect(find.byType(ThoughtCardScreen), findsOneWidget);
+          }
+          await tester.tap(
+            fullScreen ? _thoughtReplyTextField : _depthReplyEntry,
+          );
+          await pumpOrbitFrames(tester, count: 8);
+          await tester.enterText(
+            fullScreen ? _thoughtReplyTextField : _depthReplyField,
+            'count me in',
+          );
+          await tester.pump();
+          await tester.tap(fullScreen ? _thoughtReplySubmit : _depthReplySend);
+          await pumpOrbitFrames(tester, count: 24);
+
+          final replies = await messageRepo
+              .getMessagesForContact(testContact.peerId)
+              .timeout(bound);
+          expect(replies, hasLength(1));
+          final reply = replies.single;
+          expect(reply.text, 'count me in');
+          expect(reply.quotedMessageId, 'thought:lake');
+          expect(['delivered', 'read', 'inboxed'], contains(reply.status));
+          final chat = find.byType(ConversationWired);
+          expect(chat, findsOneWidget);
+          expect(
+            tester.widget<ConversationWired>(chat).contact.peerId,
+            testContact.peerId,
+          );
+          expect(
+            find.byKey(const ValueKey('thought-quote-block')),
+            findsOneWidget,
+          );
+          expect(find.text('count me in'), findsOneWidget);
+
+          expect(await tester.binding.handlePopRoute().timeout(bound), isTrue);
+          await pumpOrbitFrames(tester, count: 24);
+          expect(chat, findsNothing);
+          expect(find.byType(ThoughtCardScreen), findsNothing);
+          expect(
+            find.byKey(const ValueKey('orbit-depth-stage')),
+            findsOneWidget,
+          );
+          await finishThoughtCase(tester);
+        },
+      );
+    }
+
+    testWidgets('depth and full-screen Thought expose the same reply dock', (
       tester,
     ) async {
       await enterDepthWithThought(tester);
+      expect(_thoughtReplyDock, findsOneWidget);
+      expect(_thoughtReplyTextField, findsOneWidget);
+      expect(_thoughtReplyStickers, findsOneWidget);
+      expect(find.byKey(const ValueKey('orbit-depth-reply')), findsNothing);
       await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
-      await pumpOrbitFrames(tester, count: 8);
+      await pumpOrbitFrames(tester, count: 24);
       expect(find.byType(ThoughtCardScreen), findsOneWidget);
       expect(find.byKey(const ValueKey('thought-react-love')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('thought-reply-composer')),
-        findsNothing,
-      );
+      expect(_thoughtReplyDock, findsOneWidget);
+      expect(_thoughtReplyTextField, findsOneWidget);
+      expect(_thoughtReplyStickers, findsOneWidget);
       expect(find.byIcon(Icons.mic), findsNothing);
       expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
       await finishThoughtCase(tester);
@@ -3339,7 +3408,7 @@ void main() {
         const Duration(seconds: 1),
       );
       await pumpOrbitFrames(tester, count: 30);
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-reply')));
+      await tester.tap(_depthReplyEntry);
       await pumpOrbitFrames(tester, count: 4);
       await tester.enterText(_depthReplyField, text);
       await tester.pump();
@@ -14229,15 +14298,34 @@ class _CountingCallActivitySource implements OrbitCallActivitySource {
   }
 }
 
-Finder get _depthReplyField => find.descendant(
-  of: find.byKey(const ValueKey('orbit-depth-composer')),
+final _thoughtReplyDock = find.byKey(const ValueKey('thought-reply-dock'));
+final _thoughtReplyStickers = find.byKey(
+  const ValueKey('thought-reply-stickers'),
+);
+final _thoughtReplySubmit = find.byKey(const ValueKey('thought-reply-send'));
+final _thoughtReplyTextField = find.descendant(
+  of: find.byKey(const ValueKey('thought-reply-field')),
   matching: find.byType(TextField),
+  matchRoot: true,
 );
 
-Finder get _depthReplySend => find.descendant(
-  of: find.byKey(const ValueKey('orbit-depth-composer')),
-  matching: find.byIcon(Icons.arrow_upward_rounded),
-);
+Finder get _depthReplyEntry => _thoughtReplyTextField.evaluate().isNotEmpty
+    ? _thoughtReplyTextField
+    : find.byKey(const ValueKey('orbit-depth-reply'));
+
+Finder get _depthReplyField => _thoughtReplyTextField.evaluate().isNotEmpty
+    ? _thoughtReplyTextField
+    : find.descendant(
+        of: find.byKey(const ValueKey('orbit-depth-composer')),
+        matching: find.byType(TextField),
+      );
+
+Finder get _depthReplySend => _thoughtReplySubmit.evaluate().isNotEmpty
+    ? _thoughtReplySubmit
+    : find.descendant(
+        of: find.byKey(const ValueKey('orbit-depth-composer')),
+        matching: find.byIcon(Icons.arrow_upward_rounded),
+      );
 
 /// Who wrote back to a Thought, as the test sets it.
 class _WroteBackMessageRepository extends InMemoryMessageRepository
