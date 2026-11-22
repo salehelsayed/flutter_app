@@ -7624,6 +7624,17 @@ visible and cannot become an ordinary first-attempt PASS.
   Keep app-side timestamps, actual visible observation and driver latency
   separate. The pending phase markers were exercised on Pixel. Evidence is
   in `.codex-test-logs/f132d-20261122/` and mailbox `m-9074764f`.
+  The test-only `2d930cb6` reproduces the wait on the production create
+  route. It fails the assertion for editor removal and a usable chat and
+  pending tile by 200 ms while export is held. `206adc93` caps the approved
+  clip Save reverse transition at 150 ms and passes the same case. A separate
+  case verifies the default Cancel transition, zero extraction requests and
+  an empty pending tray. The one scoped Mac host run passed the focused case,
+  57 creation-enabled cases and 296 affected sticker cases without skips.
+  Four other wrapper rows were outside this run. See mailbox `m-f37258c2`
+  and `flutter_app-ui-update/.audit/bl55/evidence/` for the first receipts.
+  This timing proof uses the widget clock. Installed-app timing on both
+  phones requires the normal signed build 317 run.
   Host evidence is in mailbox
   `m-f6160225` and `m-5516061f`, with the corresponding first results under
   `~/.codex/investigations/bl55-pending-latency-codex2-20261122/` and
