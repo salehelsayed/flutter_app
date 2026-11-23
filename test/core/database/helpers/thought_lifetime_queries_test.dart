@@ -8,9 +8,12 @@ import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/handle_incoming_post_retract_use_case.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -51,6 +54,8 @@ void main() {
       },
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (id) => dbLoadPost(db, id, nowProvider: () => now),
+      dbLoadRetainedIncomingPost: (id, cutoff) =>
+          dbLoadRetainedIncomingPost(db, id, cutoff),
       dbLoadPostsFeed: () => dbLoadPostsFeed(db, nowProvider: () => now),
       dbLoadExpiredPosts: (iso) => dbLoadExpiredPosts(db, iso),
       dbDeletePostCascade: (id) => dbDeletePostCascade(db, id),
@@ -255,6 +260,128 @@ void main() {
       );
     },
   );
+
+  for (final (label, expiredFor, hidden) in [
+    ('past reply grace', const Duration(minutes: 5), false),
+    ('hidden locally', const Duration(seconds: 30), true),
+  ]) {
+    test(
+      'only the author retracts a retained incoming thought $label',
+      () async {
+        const bound = Duration(seconds: 3);
+        const target = 'retained-target';
+        const other = 'retained-other';
+        const author = 'friend';
+        final expiry = now.subtract(expiredFor);
+        final created = expiry.subtract(const Duration(hours: 24));
+        final directory = await Directory.systemTemp
+            .createTemp('incoming-thought-retract-')
+            .timeout(bound);
+        final originalPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _ThoughtHistoryPathProvider(
+          directory.path,
+        );
+        addTearDown(() async {
+          PathProviderPlatform.instance = originalPathProvider;
+          await directory.delete(recursive: true).timeout(bound);
+        });
+
+        final files = <String, File>{};
+        for (final id in [target, other]) {
+          await seed(
+            id,
+            created,
+            incoming: true,
+            author: author,
+            status: 'delivered',
+          ).timeout(bound);
+          final relative = 'post_media/$id/image.jpg';
+          final file = files[id] = File('${directory.path}/$relative');
+          await file.parent.create(recursive: true).timeout(bound);
+          await file.writeAsBytes([7, 8, 9]).timeout(bound);
+          await db
+              .insert(
+                'post_media_attachments',
+                PostMediaAttachmentModel(
+                  mediaId: 'media-$id',
+                  postId: id,
+                  blobId: 'blob-$id',
+                  kind: 'image',
+                  mime: 'image/jpeg',
+                  sizeBytes: 3,
+                  localPath: relative,
+                  downloadStatus: 'done',
+                  createdAt: created.toIso8601String(),
+                ).toMap(),
+              )
+              .timeout(bound);
+        }
+        if (hidden) {
+          await db
+              .update(
+                'post_feed_state',
+                {'is_hidden': 1},
+                where: 'post_id = ?',
+                whereArgs: [target],
+              )
+              .timeout(bound);
+        }
+        final posts = repository();
+        final media = MediaFileManager();
+        Future<(HandleIncomingPostRetractResult, String?)> retract(
+          String sender,
+        ) => handleIncomingPostRetract(
+          message: ChatMessage(
+            from: sender,
+            to: 'me',
+            content: PostRetractEnvelope(
+              eventId: 'evt-retract-$sender',
+              createdAt: now,
+              postId: target,
+              postCreatedAt: created,
+            ).toJson(),
+            timestamp: now.toIso8601String(),
+            isIncoming: true,
+          ),
+          postRepo: posts,
+          mediaFileManager: media,
+          nowProvider: () => now,
+        ).timeout(bound);
+
+        Future<List<Map<String, Object?>>> rows(String table, String id) => db
+            .query(table, where: 'post_id = ?', whereArgs: [id])
+            .timeout(bound);
+        Future<void> expectStored(String id) async {
+          expect(await rows('posts', id), hasLength(1));
+          expect(await rows('post_media_attachments', id), hasLength(1));
+          expect(await files[id]!.readAsBytes().timeout(bound), [7, 8, 9]);
+        }
+
+        expect(await posts.getPost(target).timeout(bound), isNull);
+        expect(
+          await dbLoadNextPostExpiry(db, nowProvider: () => now).timeout(bound),
+          expiry.add(const Duration(hours: 48)),
+        );
+        await expectStored(target);
+        await expectStored(other);
+
+        expect(
+          (await retract('non-author')).$1,
+          isNot(HandleIncomingPostRetractResult.thoughtDeleted),
+        );
+        await expectStored(target);
+
+        expect(await retract(author), (
+          HandleIncomingPostRetractResult.thoughtDeleted,
+          target,
+        ));
+        expect(await rows('posts', target), isEmpty);
+        expect(await rows('post_media_attachments', target), isEmpty);
+        expect(await files[target]!.exists().timeout(bound), isFalse);
+        await expectStored(other);
+      },
+    );
+  }
 
   test(
     'next expiry ignores retained own history and keeps incoming deadline',
