@@ -24,7 +24,7 @@ import sys
 import time
 import urllib.request
 
-BASE = "http://host.docker.internal:4725"
+BASE = os.environ.get("AP_BASE", "http://host.docker.internal:4725")
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = os.path.join(HERE, "apa_sessions.json")
 PKG = "com.mknoon.app"
@@ -82,6 +82,8 @@ def main():
                 "appium:noReset": True, "appium:autoLaunch": False, "appium:newCommandTimeout": 3600,
                 "appium:systemPort": 8231 + (int(serial[9:]) - 5552 if re.fullmatch(r"emulator-\d+", serial) else 0), "appium:disableWindowAnimation": False,
                 "appium:settings[waitForIdleTimeout]": 0}
+        if os.environ.get("APA_KEEP_A11Y") == "1":  # keep TalkBack bound while the session is open
+            caps["appium:disableSuppressAccessibilityService"] = True
         v = req("POST", "/session", {"capabilities": {"alwaysMatch": caps}}, timeout=600)
         try:
             st = json.load(open(STORE))

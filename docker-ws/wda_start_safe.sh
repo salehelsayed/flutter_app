@@ -6,7 +6,7 @@
 set -uo pipefail
 U=${1:?udid}; LP=${2:?local port}; L="/Volumes/CrucialX9/flutter_app/${3:?log dir}"; shift 3; mkdir -p "$L"
 D="$HOME/Library/Developer/Xcode/DerivedData/WebDriverAgent-gkkiiuvnweforsdihdsaljhfmztm/Build/Products"
-X=$(ls -t "$D"/WebDriverAgentRunner_iphoneos*.xctestrun 2>/dev/null | head -1)
+X=${WDA_XCTESTRUN:+$D/$WDA_XCTESTRUN}; X=${X:-$(ls -t "$D"/WebDriverAgentRunner_iphoneos*.xctestrun 2>/dev/null | head -1)}
 [ -n "$X" ] || { echo "STOP no WDA xctestrun"; exit 2; }
 if ps -axo command | grep -v grep | grep -q "WebDriverAgent.*id=$U"; then echo "STOP a WDA xcodebuild for this device already runs"; exit 3; fi
 DP=$(grep -A1 "<key>USE_PORT</key>" "$X" | sed -n "s:.*<string>\([0-9]*\)</string>.*:\1:p" | head -1); DP=${DP:-8100}
@@ -19,7 +19,7 @@ if ! lsof -nP -iTCP:"$LP" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "iproxy pid=$!"
 else echo "port $LP already forwarded"; fi
 for i in $(seq 1 84); do
-  s=$(curl -s -m 4 "http://127.0.0.1:$LP/status" | head -c 300)
+  s=$(curl -s -m 4 "http://127.0.0.1:$LP/status" | head -c 4000)
   case "$s" in *'"ready"'*|*'"state"'*) echo "WDA ready after $((i*5)) s"; exit 0;; esac
   sleep 5
 done

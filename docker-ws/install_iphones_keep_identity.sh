@@ -7,7 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 BUNDLE_ID=com.mknoon.app
-APP=build/ios/iphoneos/Runner.app
+APP=${1:-build/ios/iphoneos/Runner.app}
 . docker-ws/_device_targets.sh
 mknoon_load_iphone_targets "$PWD" || exit 2
 RESULT_FILE="build/device-install/install_iphones_keep_identity_result.txt"

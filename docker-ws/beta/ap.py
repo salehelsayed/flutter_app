@@ -133,7 +133,10 @@ def main():
         req("DELETE", f"/session/{sid(phone)}")
         s = sessions(); s.pop(phone, None); json.dump(s, open(STORE, "w")); print("closed")
     elif cmd == "shot":
-        picker_guard(cmd, args, source(phone))
+        x = source(phone)
+        picker_guard(cmd, args, x)
+        if "XCUIElementTypeAlert" in x:
+            raise SystemExit("SYSTEM OR APP ALERT ON SCREEN, no screenshot")
         st = req("POST", f"/session/{sid(phone)}/execute/sync",
                  {"script": "mobile: queryAppState", "args": [{"bundleId": BUNDLE}]})
         if st != 4:

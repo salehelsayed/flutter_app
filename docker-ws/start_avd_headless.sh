@@ -1,14 +1,18 @@
 #!/bin/bash
 # Start ONE disposable AVD headless (-no-window) on a fixed console port, then wait for boot. Headless qemu is not a
 # windowed app, so macOS App Nap should not drop it to priority 4 (check with docker-ws/qemu_prio_now.sh).
-#   host-run bash docker-ws/start_avd_headless.sh <avd-name> <even-port 5554..5584>
+#   host-run bash docker-ws/start_avd_headless.sh <avd-name> <even-port 5554..5584> [wipe]
 set -uo pipefail
 AVD="${1:?avd}"; PORT="${2:?port}"
 [[ "$PORT" =~ ^55(5[4-9]|[6-8][0-9])$ ]] || { echo "refused port" >&2; exit 2; }
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"; SERIAL="emulator-$PORT"
 if adb devices | grep -q "^$SERIAL"; then echo "$SERIAL already attached"; exit 0; fi
-nohup "$SDK/emulator/emulator" -avd "$AVD" -port "$PORT" -no-window -no-audio -no-snapshot-load -no-boot-anim \
-  -netdelay none -netspeed full > "/tmp/emulator_${AVD}_$PORT.log" 2>&1 < /dev/null &
+# Optional 3rd arg "wipe": first boot of a fresh disposable AVD; recreates /data at config disk.dataPartition.size.
+EXTRA=""; [ "${3:-}" = wipe ] && EXTRA="-wipe-data"
+# Optional 4th arg: guest clock base for clock-skew tests, e.g. 2026-10-29T19:40:00 (set auto_time 0 in the guest first).
+QEMU=""; [ -n "${4:-}" ] && QEMU="-qemu -rtc base=$4"
+nohup "$SDK/emulator/emulator" -avd "$AVD" -port "$PORT" -no-window -no-audio -no-snapshot-load -no-boot-anim $EXTRA \
+  -netdelay none -netspeed full $QEMU > "/tmp/emulator_${AVD}_$PORT.log" 2>&1 < /dev/null &
 echo "launched $AVD pid=$!"
 for i in $(seq 1 72); do
   sleep 5
