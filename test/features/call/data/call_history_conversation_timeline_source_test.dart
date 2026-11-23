@@ -20,6 +20,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_tim
 void main() {
   CallHistoryEntry entry(String id) {
     final startedAt = DateTime.utc(2026, 2, 9, 15, 30);
+    final recordedAt = startedAt.subtract(const Duration(minutes: 2));
     return CallHistoryEntry(
       callId: CallId.parse('a2f0a1d6-0000-4000-8000-00000000000$id'),
       contactAccountPeerId: '12D3KooWTestPeerId1234567890',
@@ -29,8 +30,8 @@ void main() {
       startedAt: startedAt,
       endedAt: startedAt.add(const Duration(seconds: 20)),
       transportRoute: null,
-      createdAt: startedAt,
-      updatedAt: startedAt,
+      createdAt: recordedAt,
+      updatedAt: recordedAt,
     );
   }
 
@@ -97,18 +98,22 @@ void main() {
   test('TC-405-42 rows still project after a change signal', () async {
     final controller = StreamController<void>.broadcast();
     addTearDown(controller.close);
+    final history = entry('1');
     final source = CallHistoryConversationTimelineSource(
-      _Repository([entry('1')]),
+      _Repository([history]),
       changes: controller.stream,
     );
 
-    final rows = await source.listCallsForContact(
-      '12D3KooWTestPeerId1234567890',
-    );
+    final rows = await source
+        .listCallsForContact(history.contactAccountPeerId)
+        .timeout(const Duration(seconds: 3));
 
     expect(rows, hasLength(1));
     expect(rows.single.status, ConversationCallStatus.cancelled);
     expect(rows.single.direction, ConversationCallDirection.incoming);
+    expect(rows.single.recordedAt, history.createdAt);
+    expect(rows.single.startedAt, history.startedAt);
+    expect(rows.single.endedAt, history.endedAt);
   });
 }
 

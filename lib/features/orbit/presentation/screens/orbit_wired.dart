@@ -3754,12 +3754,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             history: source is CallHistoryAccess
                 ? source as CallHistoryAccess
                 : null,
-            onMessage: (peerId) async {
+            onMessage: (peerId, callId) async {
               final contact = await widget.contactRepo.getContact(peerId);
               if (!mounted || contact == null) return;
               await _openConversationForContact(
                 contact,
-                offerCallMessageSuggestion: true,
+                callMessageSuggestionId: callId,
               );
             },
             redial: CallRedialController(
@@ -3906,7 +3906,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     ContactModel contact, {
     String? initialText,
     ThoughtReply? thoughtReply,
-    bool offerCallMessageSuggestion = false,
+    String? callMessageSuggestionId,
   }) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
@@ -3927,7 +3927,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 widget.directRouteAuthority.resolvedCallTimelineSource,
             contact: contact,
             initialText: initialText,
-            offerCallMessageSuggestion: offerCallMessageSuggestion,
+            callMessageSuggestionId: callMessageSuggestionId,
             initialThoughtReply: thoughtReply,
             // The card's reactions and chat's typed answers use the same
             // quoted-reply path.

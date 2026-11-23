@@ -125,7 +125,7 @@ void main() {
   });
   Widget app({
     bool withHistory = true,
-    Future<void> Function(String)? onMessage,
+    Future<void> Function(String, String)? onMessage,
   }) => MaterialApp(
     locale: const Locale('en'),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -253,9 +253,11 @@ void main() {
     final video = row(_id, 'Alice', mediaKind: CallMediaKind.video);
     browser.page = CallHistoryPage(rows: [video], total: 1, missed: 1);
     history.recent = [video.entry];
-    final messages = <String>[];
+    final messages = <(String, String)>[];
 
-    await tester.pumpWidget(app(onMessage: (peer) async => messages.add(peer)));
+    await tester.pumpWidget(
+      app(onMessage: (peer, callId) async => messages.add((peer, callId))),
+    );
     await tester.pump();
 
     final name = find.text('Alice');
@@ -268,7 +270,7 @@ void main() {
 
     await tester.tap(name);
     await tester.pump();
-    expect(messages, ['synthetic-contact']);
+    expect(messages, [('synthetic-contact', _id.value)]);
     expect(owner.starts, isEmpty);
     expect(owner.videoStarts, isEmpty);
 
@@ -276,7 +278,7 @@ void main() {
     await tester.pump();
     expect(owner.videoStarts, ['synthetic-contact']);
     expect(owner.starts, isEmpty);
-    expect(messages, ['synthetic-contact']);
+    expect(messages, [('synthetic-contact', _id.value)]);
   });
 
   testWidgets('BL61 historical calls with unknown media use generic rows', (

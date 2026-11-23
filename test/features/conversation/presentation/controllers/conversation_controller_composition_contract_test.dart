@@ -108,7 +108,7 @@ const _controllerTestPaths = <String>[
 // BL29: one approved optional borrowed reporter field, `activityReporter`,
 // and its optional constructor parameter. No controller or screen handoff change.
 // BL-61 adds the optional call-origin suggestion flag, defaulting to false.
-const _expectedDirectApiFingerprint = '192b8bfd';
+const _expectedDirectApiFingerprint = '0e9190ef';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 // Composer drafts (owner, 11-01): the same optional `composerDraftStore`
@@ -178,7 +178,7 @@ const _expectedGroupApiFingerprint = '6d5b10df';
 // Wired APIs and the group handoff are unchanged; without it the fingerprint
 // is the previous 80f91789.
 // BL-61 supplies only the call-origin composer suggestion action here.
-const _expectedDirectHandoffFingerprint = '30159737';
+const _expectedDirectHandoffFingerprint = '25b88d3e';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing

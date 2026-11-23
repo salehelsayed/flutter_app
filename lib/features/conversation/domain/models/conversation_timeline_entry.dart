@@ -48,10 +48,12 @@ final class ConversationCallTimelineEntry extends ConversationTimelineEntry {
     required this.status,
     required DateTime startedAt,
     required DateTime endedAt,
+    DateTime? recordedAt,
     this.duration,
     this.mediaKind,
   }) : startedAt = startedAt.toUtc(),
-       endedAt = endedAt.toUtc() {
+       endedAt = endedAt.toUtc(),
+       recordedAt = recordedAt?.toUtc() {
     if (callId.trim().isEmpty || contactPeerId.trim().isEmpty) {
       throw ArgumentError('call timeline identity must be non-empty');
     }
@@ -69,6 +71,9 @@ final class ConversationCallTimelineEntry extends ConversationTimelineEntry {
   final DateTime endedAt;
   final Duration? duration;
   final CallMediaKind? mediaKind;
+
+  /// When this device first recorded the terminal call in local history.
+  final DateTime? recordedAt;
 
   /// An incoming call the user did not take, the projection of
   /// `isMissedIncomingCall` on the durable history row. Such a row may start a

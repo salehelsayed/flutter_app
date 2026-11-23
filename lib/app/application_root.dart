@@ -2124,7 +2124,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         // the contact lookup so suppression is a pure routing decision; when
         // the registry is current, the contact necessarily exists. A call
         // follow-up opens with its own temporary composer.
-        if (!routeTarget.offerCallMessageSuggestion &&
+        if (routeTarget.callMessageSuggestionId == null &&
             isNotificationRouteTargetAlreadyActive(
               routeTarget: routeTarget,
               appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
@@ -2159,7 +2159,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           navigator: navigator,
           contact: contact,
           notificationTappedAt: context.tappedAt,
-          offerCallMessageSuggestion: routeTarget.offerCallMessageSuggestion,
+          callMessageSuggestionId: routeTarget.callMessageSuggestionId,
         );
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.post:
@@ -2236,14 +2236,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openCallConversation(String peerId) async {
+  Future<void> _openCallConversation(String peerId, String callId) async {
     final contact = await widget.contactRepository.getContact(peerId);
     final navigator = MyApp.navigatorKey.currentState;
     if (!mounted || contact == null || navigator == null) return;
     await _openConversationForContact(
       navigator: navigator,
       contact: contact,
-      offerCallMessageSuggestion: true,
+      callMessageSuggestionId: callId,
     );
   }
 
@@ -2251,7 +2251,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     required NavigatorState navigator,
     required ContactModel contact,
     DateTime? notificationTappedAt,
-    bool offerCallMessageSuggestion = false,
+    String? callMessageSuggestionId,
   }) async {
     await navigator.push(
       buildConversationRoute(
@@ -2289,7 +2289,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           forwardGroupConversationTracker: widget.groupConversationTracker,
           appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
-          offerCallMessageSuggestion: offerCallMessageSuggestion,
+          callMessageSuggestionId: callMessageSuggestionId,
           transportMetrics: widget.transportMetrics,
           privateMediaOutboxE2EController:
               widget.privateMediaOutboxE2EController,

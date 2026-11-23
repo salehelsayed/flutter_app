@@ -279,7 +279,8 @@ const _applicationRootNormalizedSha256 =
     // BL-29 notification group navigation forwards the existing reporter;
     // the app retains composition ownership and all relocation URI rewrites.
     // BL61 allows the temporary call follow-up through the same-chat guard.
-    '4da6d0a10eafd8d243956677043399f3f996374c023685fa0ff406843ac76f4d';
+    // The same follow-up passes its originating call ID through that route.
+    '8cf5bd08d00920c27fddaaf5e88f18f9174c1b3f8554705f82d839fb6df17d8d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

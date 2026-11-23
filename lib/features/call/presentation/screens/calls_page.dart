@@ -23,7 +23,7 @@ class CallsPage extends StatefulWidget {
   final CallHistoryBrowser browser;
   final Stream<void> changes;
   final CallRedialController redial;
-  final Future<void> Function(String peerId)? onMessage;
+  final Future<void> Function(String peerId, String callId)? onMessage;
 
   /// Proves a missed-call row is still the contact's newest call. Without it
   /// such rows refuse to dial.
@@ -110,7 +110,10 @@ class _CallsPageState extends State<CallsPage> {
 
   Future<void> _openMissedCallChat(CallHistoryEntry entry) async {
     try {
-      await widget.onMessage?.call(entry.contactAccountPeerId);
+      await widget.onMessage?.call(
+        entry.contactAccountPeerId,
+        entry.callId.value,
+      );
     } on Object {
       // Leaving the local call list open preserves its current position.
     }

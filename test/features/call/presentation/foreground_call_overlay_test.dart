@@ -2170,7 +2170,7 @@ Widget _vui7App(
   double scale = 1,
   ForegroundCallBackGuard? backGuard,
   MicPermissionGateway? micPermission,
-  Future<void> Function(String peerId)? onMessage,
+  Future<void> Function(String peerId, String callId)? onMessage,
 }) => MaterialApp(
   locale: Locale(language),
   localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -2183,7 +2183,7 @@ Widget _vui7App(
   home: ForegroundCallOverlay(
     capability: capability,
     onCallAgain: retry.call,
-    onMessage: onMessage ?? (_) async {},
+    onMessage: onMessage ?? (_, _) async {},
     backGuard: backGuard,
     micPermission: micPermission,
     loadContactDisplayName: (_) async => 'Layla',
@@ -2205,7 +2205,7 @@ Future<void> _vui7With(
   double scale = 1,
   ForegroundCallBackGuard? backGuard,
   MicPermissionGateway? micPermission,
-  Future<void> Function(String peerId)? onMessage,
+  Future<void> Function(String peerId, String callId)? onMessage,
 }) async {
   final cap = _Vui7Foreground();
   final retry = _Vui7Retry();
@@ -2496,7 +2496,7 @@ void _bl61OutcomeTests() {
   testWidgets(
     'BL61 Message closes before navigation and rejects duplicate taps',
     (tester) async {
-      final opened = <String>[];
+      final opened = <(String, String)>[];
       final navigation = Completer<void>();
       try {
         await _vui7With(
@@ -2513,7 +2513,7 @@ void _bl61OutcomeTests() {
             open();
             open();
             await _vui7Draw(tester);
-            expect(opened, ['vui7-peer']);
+            expect(opened, [('vui7-peer', _activeId.value)]);
             expect(terminalNotice, findsNothing);
             expect(
               find.text('VUI7 retained route').hitTestable(),
@@ -2524,8 +2524,8 @@ void _bl61OutcomeTests() {
             navigation.complete();
             await _vui7Draw(tester);
           },
-          onMessage: (peer) {
-            opened.add(peer);
+          onMessage: (peer, callId) {
+            opened.add((peer, callId));
             return navigation.future.timeout(const Duration(seconds: 3));
           },
         );

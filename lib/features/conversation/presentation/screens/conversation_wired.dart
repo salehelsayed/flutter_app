@@ -494,7 +494,7 @@ class ConversationWired extends StatefulWidget {
   final List<File>? initialAttachments;
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
-  final bool offerCallMessageSuggestion;
+  final String? callMessageSuggestionId;
 
   /// Keeps the unsent draft across leaving the chat. Null uses
   /// [ComposerDraftStore.shared].
@@ -660,7 +660,7 @@ class ConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
-    this.offerCallMessageSuggestion = false,
+    this.callMessageSuggestionId,
     this.composerDraftStore,
     this.initialThoughtReply,
     this.initialThoughtVoiceReply,
@@ -1563,7 +1563,7 @@ class _ConversationWiredState extends State<ConversationWired>
   @override
   void initState() {
     super.initState();
-    _callMessageSuggestionOpenedAt = widget.offerCallMessageSuggestion
+    _callMessageSuggestionOpenedAt = widget.callMessageSuggestionId != null
         ? DateTime.now().toUtc()
         : null;
     WidgetsBinding.instance.addObserver(this);
@@ -1598,7 +1598,7 @@ class _ConversationWiredState extends State<ConversationWired>
     final tracker = widget.conversationTracker;
     // A follow-up over the same chat shares the underlying route's tracker.
     _ownsConversationTracking =
-        !widget.offerCallMessageSuggestion ||
+        widget.callMessageSuggestionId == null ||
         !(tracker?.isViewing(widget.contact.peerId) ?? false);
     if (_ownsConversationTracking) tracker?.setActive(widget.contact.peerId);
     // A cold notification launch can construct this route while Flutter still
@@ -1641,7 +1641,7 @@ class _ConversationWiredState extends State<ConversationWired>
       _updateComposerState(privateMediaPolicy: debugInitialPrivateMediaPolicy);
     }
     // A call follow-up can open above a chat with its own saved draft.
-    if (!widget.offerCallMessageSuggestion) {
+    if (widget.callMessageSuggestionId == null) {
       if ((widget.initialText?.isNotEmpty ?? false) ||
           (widget.initialAttachments?.isNotEmpty ?? false) ||
           (widget.initialPendingMedia?.isNotEmpty ?? false) ||
@@ -8878,10 +8878,24 @@ class _ConversationWiredState extends State<ConversationWired>
     setState(() {
       _callEntries = List<ConversationCallTimelineEntry>.unmodifiable(entries);
       final openedAt = _callMessageSuggestionOpenedAt;
+      final originId = widget.callMessageSuggestionId;
       if (!_callMessageSuggestionConsumed &&
           openedAt != null &&
-          entries.any((entry) => entry.endedAt.isAfter(openedAt))) {
-        _callMessageSuggestionConsumed = true;
+          originId != null) {
+        final originRecordedAt = entries
+            .where((entry) => entry.callId == originId)
+            .firstOrNull
+            ?.recordedAt;
+        final cutoff =
+            originRecordedAt != null && originRecordedAt.isBefore(openedAt)
+            ? originRecordedAt
+            : openedAt;
+        _callMessageSuggestionConsumed = entries.any((entry) {
+          final recordedAt = entry.recordedAt;
+          return entry.callId != originId &&
+              recordedAt != null &&
+              recordedAt.isAfter(cutoff);
+        });
       }
     });
   }
@@ -8898,6 +8912,7 @@ class _ConversationWiredState extends State<ConversationWired>
           previous.mediaKind != next.mediaKind ||
           previous.startedAt != next.startedAt ||
           previous.endedAt != next.endedAt ||
+          previous.recordedAt != next.recordedAt ||
           previous.duration != next.duration) {
         return false;
       }
@@ -9700,7 +9715,7 @@ class _ConversationWiredState extends State<ConversationWired>
           composerStateListenable: _composerController,
           initialText: _draftText,
           composerSuggestion:
-              widget.offerCallMessageSuggestion &&
+              widget.callMessageSuggestionId != null &&
                   !_callMessageSuggestionConsumed &&
                   _draftText.isEmpty
               ? (

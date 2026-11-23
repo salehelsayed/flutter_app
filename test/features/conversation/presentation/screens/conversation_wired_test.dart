@@ -2146,7 +2146,7 @@ void main() {
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
     ComposerDraftStore? composerDraftStore,
-    bool offerCallMessageSuggestion = false,
+    String? callMessageSuggestionId,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2211,7 +2211,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           composerDraftStore: composerDraftStore,
-          offerCallMessageSuggestion: offerCallMessageSuggestion,
+          callMessageSuggestionId: callMessageSuggestionId,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           conversationTracker: conversationTracker,
           autoDownloadDecider: autoDownloadDecider,
@@ -2230,13 +2230,13 @@ void main() {
   group('BL61 after a call', () {
     const suggestion = 'Tried to call you';
     const bound = Duration(seconds: 3);
+    const originId = 'a2f0a1d6-0000-4000-8000-000000000405';
 
     testWidgets('a remote clock ahead keeps the originating call suggestion', (
       tester,
     ) async {
       final messages = FakeMessageRepository();
-      final first = _callEntry(contactPeerId: makeContact().peerId);
-      final source = _FakeCallTimelineSource(calls: [first]);
+      final source = _FakeCallTimelineSource(calls: []);
       addTearDown(source.dispose);
       await pumpScreen(
         tester,
@@ -2249,10 +2249,23 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         callTimelineSource: source,
-        offerCallMessageSuggestion: true,
+        callMessageSuggestionId: originId,
       ).timeout(bound);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(chip, findsOneWidget);
+
+      final localRecordTime = DateTime.now().toUtc();
+      source.calls.add(
+        _callEntry(
+          contactPeerId: makeContact().peerId,
+          startedAt: localRecordTime,
+          recordedAt: localRecordTime,
+        ),
+      );
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
       expect(find.byType(CallTimelineRow), findsOneWidget);
-      expect(find.widgetWithText(ActionChip, suggestion), findsOneWidget);
+      expect(chip, findsOneWidget);
     });
 
     testWidgets('a later call retires the chip with a remote clock behind', (
@@ -2260,9 +2273,13 @@ void main() {
     ) async {
       final messages = FakeMessageRepository();
       final peerId = makeContact().peerId;
+      final originalTime = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 1),
+      );
       final first = _callEntry(
         contactPeerId: peerId,
-        startedAt: DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
+        startedAt: originalTime,
+        recordedAt: originalTime,
       );
       final source = _FakeCallTimelineSource(calls: [first]);
       addTearDown(source.dispose);
@@ -2277,7 +2294,7 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         callTimelineSource: source,
-        offerCallMessageSuggestion: true,
+        callMessageSuggestionId: originId,
       ).timeout(bound);
       final chip = find.widgetWithText(ActionChip, suggestion);
       expect(find.byType(CallTimelineRow), findsOneWidget);
@@ -2287,14 +2304,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
       expect(chip, findsOneWidget);
 
+      final localRecordTime = DateTime.now().toUtc();
       source.calls.add(
         _callEntry(
           contactPeerId: peerId,
           callId: 'a2f0a1d6-0000-4000-8000-000000000406',
           status: ConversationCallStatus.declined,
-          startedAt: DateTime.now().toUtc().subtract(
-            const Duration(seconds: 30),
-          ),
+          startedAt: localRecordTime.subtract(const Duration(seconds: 30)),
+          recordedAt: localRecordTime,
         ),
       );
       source.announceWritten();
@@ -2318,7 +2335,7 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         composerDraftStore: InMemoryComposerDraftStore(),
-        offerCallMessageSuggestion: true,
+        callMessageSuggestionId: originId,
       ).timeout(bound);
       final field = find.byType(EditableText);
       final chip = find.widgetWithText(ActionChip, suggestion);
@@ -2348,7 +2365,7 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         composerDraftStore: InMemoryComposerDraftStore(),
-        offerCallMessageSuggestion: true,
+        callMessageSuggestionId: originId,
       ).timeout(bound);
       final field = find.byType(EditableText);
       final chip = find.widgetWithText(ActionChip, suggestion);
@@ -2389,7 +2406,7 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         composerDraftStore: drafts,
-        offerCallMessageSuggestion: fromCall,
+        callMessageSuggestionId: fromCall ? originId : null,
       ).timeout(bound);
 
       await open(fromCall: true);
@@ -22121,6 +22138,7 @@ ConversationCallTimelineEntry _callEntry({
   ConversationCallStatus status = ConversationCallStatus.missed,
   Duration? duration,
   DateTime? startedAt,
+  DateTime? recordedAt,
 }) {
   final openedAt = startedAt ?? DateTime.now().toUtc();
   return ConversationCallTimelineEntry(
@@ -22130,6 +22148,7 @@ ConversationCallTimelineEntry _callEntry({
     status: status,
     startedAt: openedAt,
     endedAt: openedAt.add(const Duration(seconds: 20)),
+    recordedAt: recordedAt,
     duration: duration,
   );
 }

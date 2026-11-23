@@ -14,7 +14,7 @@ void main() {
 
       expect(target?.kind, NotificationRouteTargetKind.conversation);
       expect(target?.peerId, 'synthetic-contact');
-      expect(target?.offerCallMessageSuggestion, isTrue);
+      expect(target?.callMessageSuggestionId, missed.callId);
     });
 
     test('BL61 malformed local missed-call payload fails closed', () {
@@ -34,7 +34,7 @@ void main() {
       expect(routeTarget, isNotNull);
       expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
       expect(routeTarget.peerId, 'peer-123');
-      expect(routeTarget.offerCallMessageSuggestion, isFalse);
+      expect(routeTarget.callMessageSuggestionId, isNull);
     });
 
     test(

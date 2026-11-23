@@ -406,7 +406,8 @@ void main() {
             final followUp = find.byWidgetPredicate(
               (widget) =>
                   widget is ConversationWired &&
-                  widget.offerCallMessageSuggestion,
+                  widget.callMessageSuggestionId ==
+                      'a2f0a1d6-0000-4000-8000-000000000409',
             );
             final chip = find.descendant(
               of: followUp,

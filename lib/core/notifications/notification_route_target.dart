@@ -21,7 +21,7 @@ class NotificationRouteTarget {
   final String? messageId;
   final String? postId;
   final String? commentId;
-  final bool offerCallMessageSuggestion;
+  final String? callMessageSuggestionId;
 
   const NotificationRouteTarget._({
     required this.kind,
@@ -30,18 +30,18 @@ class NotificationRouteTarget {
     this.messageId,
     this.postId,
     this.commentId,
-    this.offerCallMessageSuggestion = false,
+    this.callMessageSuggestionId,
   });
 
   const NotificationRouteTarget.conversation(
     String peerId, {
     String? messageId,
-    bool offerCallMessageSuggestion = false,
+    String? callMessageSuggestionId,
   }) : this._(
          kind: NotificationRouteTargetKind.conversation,
          peerId: peerId,
          messageId: messageId,
-         offerCallMessageSuggestion: offerCallMessageSuggestion,
+         callMessageSuggestionId: callMessageSuggestionId,
        );
 
   const NotificationRouteTarget.contactRequest(String peerId)
@@ -115,7 +115,7 @@ class NotificationRouteTarget {
           ? null
           : NotificationRouteTarget.conversation(
               missed.contactPeerId,
-              offerCallMessageSuggestion: true,
+              callMessageSuggestionId: missed.callId,
             );
     }
     if (payload == 'intros') {

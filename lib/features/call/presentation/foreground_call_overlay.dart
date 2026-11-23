@@ -82,7 +82,7 @@ final class ForegroundCallOverlay extends StatefulWidget {
   final ForegroundCallCapability? capability;
   final ContactDisplayNameLoader loadContactDisplayName;
   final TerminalCallRetry? onCallAgain;
-  final Future<void> Function(String peerId)? onMessage;
+  final Future<void> Function(String peerId, String callId)? onMessage;
   final Widget child;
   final DateTime Function()? now;
 
@@ -1630,14 +1630,16 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
   ) async {
     final message = widget.onMessage;
     final peer = terminal.session.contactPeerId;
+    final callId = terminal.session.callId;
     if (message == null ||
         peer == null ||
+        callId == null ||
         !_terminalOwnerMatches(epoch, terminal)) {
       return;
     }
     setState(_invalidateTerminal);
     try {
-      await message(peer);
+      await message(peer, callId.value);
     } catch (_) {
       // Navigation and contact admission belong to the message action.
     }
