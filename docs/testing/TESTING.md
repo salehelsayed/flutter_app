@@ -679,6 +679,17 @@ controlled restart to apply init. Preserve their conversation IDs and review
 running work before stopping them. Evidence:
 `.codex-test-logs/docker-child-cleanup-20261028/`.
 
+Internal-disk inventories must exclude `~/OrbStack` explicitly and stay on each
+local filesystem; a home wildcard passes that NFS mount as its own scan root.
+On 2026-11-11, two concurrent home-size scans included this view during recurring
+NFS stalls. The guest kernel confirmed a global out-of-memory kill of the
+flutter_app Claude process, with about 11.2 GiB of slab caches in a 16 GiB VM.
+The scans are a likely contributor; the original NFS stall trigger remains
+unconfirmed. The local inventory script now excludes the mount and uses `du -x`.
+Shell syntax and isolated fixtures passed for normal paths with spaces and a
+home containing only the virtual share; the latter must not scan the current
+directory by default. Evidence: `.codex-test-logs/nfs-inventory-20261111/`.
+
 The SIMS shell adapter is tracked at `scripts/run_with_devices.sh`; isolated
 checkouts and the detached launcher use that path. This supersedes restoring an
 ignored `.claude/skills/sims/scripts/run_with_devices.sh` before running contracts.
