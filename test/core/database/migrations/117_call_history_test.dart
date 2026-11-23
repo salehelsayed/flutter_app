@@ -64,6 +64,7 @@ void main() {
         'updated_at',
         // 410: v118 adds read state to the same table.
         'read_at',
+        'media_kind',
       ]);
       for (final forbidden in <String>[
         'sdp',
