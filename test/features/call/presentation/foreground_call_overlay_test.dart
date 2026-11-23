@@ -15,10 +15,12 @@ import 'package:flutter_app/features/call/domain/call_audio_output_device.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
 import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
 import 'package:flutter_app/features/call/presentation/screens/active_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/incoming_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/push/application/push_registration_health_notifier.dart';
 import 'package:flutter_app/features/push/domain/push_registration_health.dart';
 import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_surface.dart';
@@ -29,6 +31,7 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 
 void main() {
+  _bl61OutcomeTests();
   _vui7Tests();
   const fallbackName = 'Unknown contact';
   final now = DateTime.utc(2026, 8, 30, 12);
@@ -2164,6 +2167,8 @@ Widget _vui7App(
   _Vui7Retry retry, {
   String language = 'en',
   double scale = 1,
+  ForegroundCallBackGuard? backGuard,
+  MicPermissionGateway? micPermission,
 }) => MaterialApp(
   locale: Locale(language),
   localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -2176,6 +2181,8 @@ Widget _vui7App(
   home: ForegroundCallOverlay(
     capability: capability,
     onCallAgain: retry.call,
+    backGuard: backGuard,
+    micPermission: micPermission,
     loadContactDisplayName: (_) async => 'Layla',
     now: () => _vui7Now,
     child: const Scaffold(body: Text('VUI7 retained route')),
@@ -2193,14 +2200,24 @@ Future<void> _vui7With(
   Future<void> Function(_Vui7Foreground, _Vui7Retry, AppLocalizations) body, {
   String language = 'en',
   double scale = 1,
+  ForegroundCallBackGuard? backGuard,
+  MicPermissionGateway? micPermission,
 }) async {
   final cap = _Vui7Foreground();
   final retry = _Vui7Retry();
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(320, 844);
+  backGuard?.attach();
   try {
     await tester.pumpWidget(
-      _vui7App(cap, retry, language: language, scale: scale),
+      _vui7App(
+        cap,
+        retry,
+        language: language,
+        scale: scale,
+        backGuard: backGuard,
+        micPermission: micPermission,
+      ),
     );
     await _vui7Draw(tester);
     await body(cap, retry, lookupAppLocalizations(Locale(language)));
@@ -2210,6 +2227,7 @@ Future<void> _vui7With(
       retry.held!.complete(OutgoingCallStartResult.canceled);
     }
     await tester.pumpWidget(const SizedBox.shrink());
+    backGuard?.detach();
     await tester.runAsync(
       () => cap.dispose().timeout(const Duration(seconds: 5)),
     );
@@ -2229,6 +2247,274 @@ ButtonStyleButton _vui7Button(WidgetTester tester, String label) {
   );
   expect(concrete, findsOneWidget);
   return tester.widget<ButtonStyleButton>(concrete);
+}
+
+void _bl61OutcomeTests() {
+  final terminalNotice = find.byKey(
+    const ValueKey('foreground-call-terminal-notice'),
+  );
+
+  for (final media in CallMediaKind.values) {
+    testWidgets(
+      'BL61 ${media.name} end uses the call profile and same-type retry',
+      (tester) async {
+        await _vui7With(tester, (cap, retry, l10n) async {
+          cap.terminal(_vui7Terminal(media: media));
+          await _vui7Draw(tester);
+
+          final status = l10n.call_row_with_duration(l10n.call_ended, '01:05');
+          expect(find.text(status), findsOneWidget);
+          expect(find.text(l10n.call_ended), findsNothing);
+          expect(find.text(l10n.call_end_ended), findsNothing);
+          expect(find.text('01:05'), findsNothing);
+          final avatar = find.descendant(
+            of: terminalNotice,
+            matching: find.byType(UserAvatar),
+          );
+          expect(tester.widget<UserAvatar>(avatar).peerId, 'vui7-peer');
+          expect(tester.getSize(avatar), const Size.square(112));
+          expect(find.byType(Texture), findsNothing);
+          if (media == CallMediaKind.video) {
+            expect(
+              Theme.of(tester.element(avatar)).brightness,
+              Brightness.dark,
+            );
+          }
+
+          final again = find.text(l10n.call_video_call_again).hitTestable();
+          expect(again, findsOneWidget);
+          await tester.tap(again);
+          await _vui7Draw(tester);
+          expect(retry.calls, [('vui7-peer', media)]);
+          expect(cap.actions, isEmpty);
+        });
+      },
+    );
+  }
+
+  testWidgets('BL61 normal end closes in four seconds on the retained route', (
+    tester,
+  ) async {
+    await _vui7With(tester, (cap, _, _) async {
+      cap.terminal(_vui7Terminal());
+      await _vui7Draw(tester);
+      expect(terminalNotice, findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(terminalNotice, findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(terminalNotice, findsNothing);
+      expect(find.text('VUI7 retained route').hitTestable(), findsOneWidget);
+      expect(cap.actions, isEmpty);
+    });
+  });
+
+  testWidgets('BL61 screen reader pauses the remaining normal end countdown', (
+    tester,
+  ) async {
+    final dispatcher = tester.platformDispatcher;
+    addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+    await _vui7With(tester, (cap, _, _) async {
+      cap.terminal(_vui7Terminal());
+      await _vui7Draw(tester);
+      await tester.pump(const Duration(seconds: 1));
+
+      dispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 6));
+      expect(terminalNotice, findsOneWidget);
+
+      dispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 2999));
+      expect(terminalNotice, findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(terminalNotice, findsNothing);
+    });
+  });
+
+  testWidgets('BL61 Back dismisses the end screen inside the app', (
+    tester,
+  ) async {
+    var backgrounds = 0;
+    final backGuard = ForegroundCallBackGuard(
+      moveAppToBackground: () async {
+        backgrounds++;
+      },
+      publishCallOwnsBack: (_) async {},
+    );
+    await _vui7With(tester, (cap, _, _) async {
+      cap.terminal(_vui7Terminal());
+      await _vui7Draw(tester);
+      expect(terminalNotice, findsOneWidget);
+
+      expect(
+        await tester.binding.handlePopRoute().timeout(
+          const Duration(seconds: 3),
+        ),
+        isTrue,
+      );
+      await _vui7Draw(tester);
+      expect(terminalNotice, findsNothing);
+      expect(find.text('VUI7 retained route').hitTestable(), findsOneWidget);
+      expect(backgrounds, 0);
+    }, backGuard: backGuard);
+  });
+
+  for (final (reason, connected, status, actions) in [
+    (
+      CallEndReason.noAnswer,
+      false,
+      'No answer',
+      ['Call again', 'Message', 'Close'],
+    ),
+    (
+      CallEndReason.busy,
+      false,
+      'On another call',
+      ['Message', 'Call again', 'Close'],
+    ),
+    (CallEndReason.declined, false, 'Call declined', ['Message', 'Close']),
+    (
+      CallEndReason.mediaFailed,
+      true,
+      'Call dropped · 01:05',
+      ['Call again', 'Message', 'Close'],
+    ),
+    (
+      CallEndReason.signalingFailed,
+      false,
+      'Call could not connect.',
+      ['Call again', 'Close'],
+    ),
+  ]) {
+    testWidgets('BL61 ${reason.name} stays and offers the approved actions', (
+      tester,
+    ) async {
+      await _vui7With(tester, (cap, _, l10n) async {
+        cap.terminal(_vui7Terminal(reason: reason, connected: connected));
+        await _vui7Draw(tester);
+        await tester.pump(const Duration(seconds: 5));
+        expect(terminalNotice, findsOneWidget);
+        expect(find.text(status), findsOneWidget);
+        expect(find.text(l10n.call_ended), findsNothing);
+
+        for (final label in ['Call again', 'Message', 'Close']) {
+          final action = find
+              .descendant(of: terminalNotice, matching: find.text(label))
+              .hitTestable();
+          expect(
+            action,
+            actions.contains(label) ? findsOneWidget : findsNothing,
+          );
+        }
+
+        for (var index = 1; index < actions.length; index++) {
+          final previous = tester.getCenter(find.text(actions[index - 1]));
+          final current = tester.getCenter(find.text(actions[index]));
+          expect(current.dx, greaterThan(previous.dx));
+        }
+
+        await tester.tap(find.text(l10n.call_video_close));
+        await _vui7Draw(tester);
+        expect(terminalNotice, findsNothing);
+      });
+    });
+  }
+
+  testWidgets('BL61 permanently denied local mic offers Settings and Close', (
+    tester,
+  ) async {
+    final gateway = FakeMicPermissionGateway()
+      ..currentStatus = MicPermissionStatus.permanentlyDenied;
+    await _vui7With(tester, (cap, retry, l10n) async {
+      cap.terminal(
+        _vui7Terminal(connected: false, reason: CallEndReason.permissionDenied),
+      );
+      await _vui7Draw(tester);
+      await tester.pump(const Duration(seconds: 5));
+      expect(find.text('Microphone is off'), findsOneWidget);
+      expect(find.text(l10n.call_end_permission_settings), findsOneWidget);
+      final settings = find.text(l10n.call_video_open_settings).hitTestable();
+      expect(settings, findsOneWidget);
+      expect(find.text(l10n.call_video_call_again), findsNothing);
+      expect(
+        tester.getCenter(settings).dx,
+        lessThan(tester.getCenter(find.text(l10n.call_video_close)).dx),
+      );
+      await tester.tap(settings);
+      await _vui7Draw(tester);
+      expect(gateway.openAppSettingsCallCount, 1);
+      expect(gateway.requestCallCount, 0);
+      expect(retry.calls, isEmpty);
+    }, micPermission: gateway);
+  });
+
+  testWidgets('BL61 minimized end shows a four-second banner without a modal', (
+    tester,
+  ) async {
+    await _vui7With(tester, (cap, _, l10n) async {
+      cap.emit(
+        _projection(
+          now: _vui7Now,
+          callId: _activeId,
+          peerId: 'vui7-peer',
+          direction: CallDirection.outgoing,
+          state: CallState.connected,
+          connectedAt: _vui7Now.subtract(const Duration(seconds: 65)),
+          audio: _audio(),
+        ),
+      );
+      await _vui7Draw(tester);
+      await tester.tap(find.byKey(const ValueKey('call-minimize')));
+      await _vui7Draw(tester);
+      final liveBar = find.byKey(const ValueKey('call-return-bar'));
+      expect(liveBar, findsOneWidget);
+      final liveBarRect = tester.getRect(liveBar);
+
+      cap.terminal(_vui7Terminal());
+      await _vui7Draw(tester);
+      final status = l10n.call_row_with_duration(l10n.call_ended, '01:05');
+      final banner = find.text('Layla · $status');
+      expect(banner, findsOneWidget);
+      expect(
+        tester.getRect(banner).center.dy,
+        closeTo(liveBarRect.center.dy, 1),
+      );
+      expect(terminalNotice, findsNothing);
+      expect(find.text('VUI7 retained route').hitTestable(), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 3999));
+      expect(banner, findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(banner, findsNothing);
+      expect(cap.actions, isEmpty);
+    });
+  });
+
+  testWidgets('BL61 an older end timer cannot dismiss a successor outcome', (
+    tester,
+  ) async {
+    await _vui7With(tester, (cap, _, l10n) async {
+      cap.terminal(_vui7Terminal());
+      await _vui7Draw(tester);
+      await tester.pump(const Duration(seconds: 2));
+
+      cap.terminal(
+        _vui7Terminal(
+          id: _incomingId,
+          connected: false,
+          reason: CallEndReason.noAnswer,
+        ),
+      );
+      await _vui7Draw(tester);
+      await tester.pump(const Duration(seconds: 3));
+      expect(terminalNotice, findsOneWidget);
+      expect(find.text(l10n.call_row_no_answer), findsOneWidget);
+    });
+  });
 }
 
 void _vui7Tests() {

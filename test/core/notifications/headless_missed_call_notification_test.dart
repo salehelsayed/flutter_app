@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/headless_missed_call_notification.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 
 /// 408: post the missed-call card from the killed-app isolate.
 ///
@@ -101,6 +102,36 @@ void main() {
       mknoonCallsChannelId,
     );
   });
+
+  test(
+    'BL61 missed-call notification from the killed-app notifier offers both actions',
+    () async {
+      installHandler();
+      const missed = MissedCallActionPayload(
+        contactPeerId,
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      );
+
+      await HeadlessMissedCallNotification()
+          .show(
+            contactAccountPeerId: missed.contactPeerId,
+            title: 'Alice',
+            body: 'Missed voice call',
+            callId: missed.callId,
+          )
+          .timeout(const Duration(seconds: 3));
+
+      final show =
+          log.lastWhere((call) => call.method == 'show').arguments as Map;
+      final details = show['platformSpecifics'] as Map;
+      final actions = (details['actions'] as List).cast<Map>();
+      expect(actions.map((action) => action['id']), [
+        missedCallBackActionId,
+        'mknoon_call_message',
+      ]);
+      expect(show['payload'], missed.encode());
+    },
+  );
 
   test('TC-408-03 a second card does not re-initialize the plugin', () async {
     installHandler();
