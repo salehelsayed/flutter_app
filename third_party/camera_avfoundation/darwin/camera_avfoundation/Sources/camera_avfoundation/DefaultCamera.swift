@@ -46,6 +46,8 @@ final class DefaultCamera: NSObject, Camera {
 
   /// A wrapper for AVCaptureDevice creation to allow for dependency injection in tests.
   private let videoCaptureDeviceFactory: VideoCaptureDeviceFactory
+  private let videoRotationAngleProviderFactory: (CaptureDevice) -> VideoRotationAngleProvider?
+  private var videoRotationAngleProvider: VideoRotationAngleProvider?
   private let audioCaptureDeviceFactory: AudioCaptureDeviceFactory
   private let captureDeviceInputFactory: CaptureDeviceInputFactory
   private let assetWriterFactory: AssetWriterFactory
@@ -94,6 +96,7 @@ final class DefaultCamera: NSObject, Camera {
 
   private var videoRecordingPath: String?
   private(set) var isRecording = false
+  private var recordingCaptureOrientation = UIDeviceOrientation.unknown
   private var isRecordingPaused = false
   private var isFirstVideoSample = false
   private var isAudioSetup = false
@@ -174,6 +177,7 @@ final class DefaultCamera: NSObject, Camera {
     videoCaptureSession = configuration.videoCaptureSession
     audioCaptureSession = configuration.audioCaptureSession
     videoCaptureDeviceFactory = configuration.videoCaptureDeviceFactory
+    videoRotationAngleProviderFactory = configuration.videoRotationAngleProviderFactory
     audioCaptureDeviceFactory = configuration.audioCaptureDeviceFactory
     captureDeviceInputFactory = configuration.captureDeviceInputFactory
     assetWriterFactory = configuration.assetWriterFactory
@@ -181,7 +185,9 @@ final class DefaultCamera: NSObject, Camera {
     videoDimensionsConverter = configuration.videoDimensionsConverter
     deviceOrientationProvider = configuration.deviceOrientationProvider
 
-    captureDevice = videoCaptureDeviceFactory(configuration.initialCameraName)
+    let initialDevice = videoCaptureDeviceFactory(configuration.initialCameraName)
+    captureDevice = initialDevice
+    videoRotationAngleProvider = videoRotationAngleProviderFactory(initialDevice)
     flashMode = captureDevice.hasFlash ? .auto : .off
 
     capturePhotoOutput = AVCapturePhotoOutput()
@@ -605,6 +611,7 @@ final class DefaultCamera: NSObject, Camera {
       return
     }
     isFirstVideoSample = true
+    recordingCaptureOrientation = captureOrientation
     isRecording = true
     isRecordingPaused = false
     isRecordingDisconnected = false
@@ -864,30 +871,50 @@ final class DefaultCamera: NSObject, Camera {
     return file
   }
 
+  private var captureOrientation: UIDeviceOrientation {
+    lockedCaptureOrientation == .unknown ? deviceOrientation : lockedCaptureOrientation
+  }
+
   private func updateOrientation() {
     guard !isRecording else { return }
 
-    let orientation =
-      (lockedCaptureOrientation != .unknown)
-      ? lockedCaptureOrientation
-      : deviceOrientation
-
+    let orientation = captureOrientation
     updateOrientation(orientation, forCaptureOutput: capturePhotoOutput)
-    updateOrientation(orientation, forCaptureOutput: captureVideoOutput)
+    updateOrientation(
+      orientation, forCaptureOutput: captureVideoOutput,
+      deviceAngle: rotationAngleForVideoData(orientation))
   }
 
   private func updateOrientation(
-    _ orientation: UIDeviceOrientation, forCaptureOutput captureOutput: CaptureOutput
+    _ orientation: UIDeviceOrientation, forCaptureOutput captureOutput: CaptureOutput,
+    deviceAngle: CGFloat? = nil
   ) {
     guard let connection = captureOutput.connection(with: .video) else { return }
 
     if #available(iOS 17.0, *) {
-      let angle = videoRotationAngle(forDeviceOrientation: orientation)
-      if connection.isVideoRotationAngleSupported(angle) {
-        connection.videoRotationAngle = angle
-      }
+      applyVideoRotationAngle(
+        deviceAngle, fallback: videoRotationAngle(forDeviceOrientation: orientation),
+        to: connection)
     } else if connection.isVideoOrientationSupported {
       connection.videoOrientation = videoOrientation(forDeviceOrientation: orientation)
+    }
+  }
+
+  private func rotationAngleForVideoData(_ orientation: UIDeviceOrientation) -> CGFloat? {
+    videoRotationAngleProvider?(
+      videoOrientation(forDeviceOrientation: orientation),
+      videoRotationAngle(forDeviceOrientation: orientation)
+        - videoRotationAngle(forDeviceOrientation: deviceOrientation))
+  }
+
+  @available(iOS 17.0, *)
+  private func applyVideoRotationAngle(
+    _ deviceAngle: CGFloat?, fallback: CGFloat?, to connection: CaptureConnection
+  ) {
+    if let deviceAngle, connection.isVideoRotationAngleSupported(deviceAngle) {
+      connection.videoRotationAngle = deviceAngle
+    } else if let fallback, connection.isVideoRotationAngleSupported(fallback) {
+      connection.videoRotationAngle = fallback
     }
   }
 
@@ -1281,20 +1308,14 @@ final class DefaultCamera: NSObject, Camera {
     let oldInput = captureVideoInput
     let oldOutput = captureVideoOutput
     let oldConnection = oldOutput.connection(with: .video)
+    let oldRotation: (angle: CGFloat?, orientation: AVCaptureVideoOrientation?)
+    if #available(iOS 17.0, *) {
+      oldRotation = (oldConnection?.videoRotationAngle, nil)
+    } else {
+      oldRotation = (nil, oldConnection?.videoOrientation)
+    }
     let oldConnections = videoCaptureSession.connections.filter {
       $0.output === oldOutput.avOutput || $0.output === capturePhotoOutput.avOutput
-    }
-
-    // Keep the same orientation the old connections had.
-    if let oldConnection = oldConnection {
-      if #available(iOS 17.0, *) {
-        let angle = oldConnection.videoRotationAngle
-        if newConnection.isVideoRotationAngleSupported(angle) {
-          newConnection.videoRotationAngle = angle
-        }
-      } else if newConnection.isVideoOrientationSupported {
-        newConnection.videoOrientation = oldConnection.videoOrientation
-      }
     }
 
     oldOutput.setSampleBufferDelegate(nil, queue: nil)
@@ -1344,6 +1365,14 @@ final class DefaultCamera: NSObject, Camera {
     }
     videoCaptureSession.addConnection(newConnection)
     captureDevice = nextDevice
+    videoRotationAngleProvider = videoRotationAngleProviderFactory(nextDevice)
+    if #available(iOS 17.0, *) {
+      applyVideoRotationAngle(
+        rotationAngleForVideoData(recordingCaptureOrientation), fallback: oldRotation.angle,
+        to: newConnection)
+    } else if let oldOrientation = oldRotation.orientation, newConnection.isVideoOrientationSupported {
+      newConnection.videoOrientation = oldOrientation
+    }
     captureVideoInput = nextInput
     captureVideoOutput = nextOutput
     nextOutput.setSampleBufferDelegate(self, queue: captureSessionQueue)
