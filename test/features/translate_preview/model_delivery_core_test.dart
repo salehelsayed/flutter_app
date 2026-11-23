@@ -6,6 +6,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
@@ -708,6 +709,79 @@ void main() {
       expect(h.storage.record!.verification!.identity, _fileIdentity());
     },
   );
+
+  for (final hasCachedManifest in [false, true]) {
+    test(
+      hasCachedManifest
+          ? 'BL70 adopts a complete legacy model offline with a cached manifest'
+          : 'BL70 adopts a complete legacy model without a delivery record',
+      () async {
+        const bound = Duration(seconds: 3);
+        final manifest = ModelDeliveryManifest.fromJson({
+          ..._manifest.toJson(),
+          'bytes': gemmaModelBytes,
+        });
+        const identity = ModelDeliveryFileIdentity(
+          canonicalPath: '/owned/$modelDeliveryDirectory/$gemmaModelFileName',
+          sizeBytes: gemmaModelBytes,
+          modifiedMicros: 1,
+          changedMicros: 1,
+        );
+        final verification = Completer<bool>();
+        final storage = _Storage()
+          ..record = hasCachedManifest
+              ? ModelDeliveryRecord(manifest: manifest)
+              : null
+          ..length = gemmaModelBytes
+          ..identity = identity
+          ..freeBytes = gemmaModelBytes + 100
+          ..verification = verification;
+        final network = _Network()
+          ..manifest = manifest.toJson()
+          ..offline = hasCachedManifest
+          ..failFetch = hasCachedManifest;
+        final transport = _Transport();
+        final controller = PersistentModelDeliveryController(
+          storage: storage,
+          network: network,
+          transport: transport,
+          appBuild: () async => 132,
+          supported: true,
+          spaceReserveBytes: 20,
+        );
+        final h = _Harness(controller, storage, network, transport);
+        addTearDown(() => h.dispose().timeout(bound));
+        addTearDown(() {
+          if (!verification.isCompleted) verification.complete(false);
+        });
+        final states = <ModelDeliveryState>[];
+        controller.state.addListener(() => states.add(controller.state.value));
+
+        await controller.initialize().timeout(bound);
+        expect(controller.state.value, isA<ModelChecking>());
+        final ready = _nextState<ModelReady>(controller.state);
+        verification.complete(true);
+        expect((await ready).sizeBytes, gemmaModelBytes);
+
+        expect(
+          states,
+          everyElement(anyOf(isA<ModelChecking>(), isA<ModelReady>())),
+        );
+        expect(
+          await controller.verifiedModelPath().timeout(bound),
+          identity.canonicalPath,
+        );
+        expect(network.fetches, hasCachedManifest ? 0 : 1);
+        expect(storage.verifications, 1);
+        expect(storage.removals, 0);
+        expect(storage.record!.phase, ModelDeliveryPhase.ready);
+        expect(storage.record!.verification?.expectedSha256, manifest.sha256);
+        expect(storage.record!.verification?.identity, identity);
+        expect(transport.enqueues, isEmpty);
+        expect(transport.resumes, isEmpty);
+      },
+    );
+  }
 
   for (final identity in [
     _fileIdentity(modified: 2),
