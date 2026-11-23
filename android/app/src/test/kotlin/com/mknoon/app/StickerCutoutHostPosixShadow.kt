@@ -9,6 +9,7 @@ import java.io.IOException
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.lang.reflect.Field
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
@@ -48,6 +49,12 @@ class StickerCutoutHostPosixShadow : ShadowLinux() {
     public override fun fstat(fd: FileDescriptor): StructStat {
         if (!fd.valid()) throw ErrnoException("fstat", OsConstants.EBADF)
         return HostDescriptors.fstat(fd)
+    }
+
+    @Implementation
+    public override fun pread(fd: FileDescriptor, bytes: ByteArray, start: Int, count: Int, offset: Long): Int {
+        val channel = ownedChannels[fd] ?: throw ErrnoException("pread", OsConstants.EBADF)
+        return channel.read(ByteBuffer.wrap(bytes, start, count), offset).coerceAtLeast(0)
     }
 
     @Implementation
@@ -138,6 +145,8 @@ class StickerCutoutHostPosixShadow : ShadowLinux() {
     companion object {
         private val ownedChannels = ConcurrentHashMap<FileDescriptor, FileChannel>()
         private val ownedDuplicates = ConcurrentHashMap.newKeySet<FileDescriptor>()
+
+        internal fun openDescriptorCount(): Int = ownedChannels.size
 
         // BlockGuardOs intercepts Os.close before Linux on Robolectric 4.13.
         // Both fixture entry points must release the same real descriptor owner.

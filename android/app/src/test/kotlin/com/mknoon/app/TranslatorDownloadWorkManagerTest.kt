@@ -32,7 +32,6 @@ import com.bbflight.background_downloader.TaskStatus
 import com.bbflight.background_downloader.Updates
 import java.io.Closeable
 import java.io.File
-import java.io.FileInputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -244,16 +243,19 @@ class TranslatorDownloadWorkManagerTest {
                 val destination = File(task.filePath(app))
                 assertArrayEquals(server.payload, destination.readBytes())
                 assertEquals(listOf(initial.id), scheduled().map { it.id })
+                assertEquals("worker closed its verification file", 0, StickerCutoutHostPosixShadow.openDescriptorCount())
                 if (checksumMatches) {
                     val stat = Os.lstat(destination.canonicalPath)
                     assertTrue("fixture identifies the destination as a regular file", OsConstants.S_ISREG(stat.st_mode))
                     val descriptor = Os.open(destination.canonicalPath, OsConstants.O_RDONLY, 0)
-                    FileInputStream(descriptor).use { input ->
-                        val fdStat = Os.fstat(input.fd)
+                    try {
+                        val fdStat = Os.fstat(descriptor)
                         assertEquals("fixture sees the same file length", server.payload.size.toLong(), fdStat.st_size)
                         assertEquals("fixture sees the same file inode", stat.st_ino, fdStat.st_ino)
                         assertEquals("fixture sees the same modification time", stat.st_mtim, fdStat.st_mtim)
                         assertEquals("fixture sees the same change time", stat.st_ctim, fdStat.st_ctim)
+                    } finally {
+                        Os.close(descriptor)
                     }
                 }
                 assertEquals(
@@ -330,7 +332,7 @@ class TranslatorDownloadWorkManagerTest {
     }
 
     private class RangeFixture : Closeable {
-        val payload = ByteArray(4 * PREFIX_BYTES) { (it % 251).toByte() }
+        val payload = ByteArray(12 * PREFIX_BYTES) { (it % 251).toByte() }
         val requests = CopyOnWriteArrayList<Map<String, String>>()
         val releasePrefix = CountDownLatch(1)
         val releaseResume = CountDownLatch(1)
