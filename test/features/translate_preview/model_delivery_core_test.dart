@@ -1782,6 +1782,27 @@ void main() {
       expect(notices, hasLength(1));
     });
 
+    test('Remove while Ready is committing suppresses the notice', () async {
+      final notices = <ModelDeliveryState>[];
+      final h = await _Harness.create(
+        publishBackgroundStatus: (state) async => notices.add(state),
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      final write = holdRecordWrite(h.storage, ModelDeliveryPhase.ready);
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await write.started.timeout(bound);
+      expect(notices, isEmpty);
+
+      final remove = h.controller.remove();
+      write.release();
+      await remove.timeout(bound);
+
+      expect(h.controller.state.value, isA<ModelNotDownloaded>());
+      expect(notices.whereType<ModelReady>(), isEmpty);
+    });
+
     test(
       'acknowledged Pause publishes once after owned progress commits',
       () async {
