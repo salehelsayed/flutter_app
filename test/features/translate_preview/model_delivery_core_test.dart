@@ -783,6 +783,34 @@ void main() {
     );
   }
 
+  test(
+    'BL70 failed local verification leaves the file for explicit repair',
+    () async {
+      const bound = Duration(seconds: 3);
+      final verification = Completer<bool>();
+      final h = await _Harness.create(
+        record: ModelDeliveryRecord(manifest: _manifest),
+        modelLength: _manifest.bytes,
+        verification: verification,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      addTearDown(() {
+        if (!verification.isCompleted) verification.complete(false);
+      });
+      expect(h.controller.state.value, isA<ModelChecking>());
+      final idle = _nextState<ModelNotDownloaded>(h.controller.state);
+      verification.complete(false);
+      await idle;
+
+      expect(h.storage.verifications, 1);
+      expect(h.storage.removals, 0);
+      expect(h.storage.length, _manifest.bytes);
+      expect(h.storage.record!.verification, isNull);
+      expect(h.network.fetches, 0);
+      expect(h.transport.enqueues, isEmpty);
+    },
+  );
+
   for (final identity in [
     _fileIdentity(modified: 2),
     _fileIdentity(changed: 2),
