@@ -2347,7 +2347,7 @@ void _bl61OutcomeTests() {
       moveAppToBackground: () async {
         backgrounds++;
       },
-      publishCallOwnsBack: (_) async {},
+      publishCallOwnsBack: (_, {String? minimizeCallId}) async {},
     );
     await _vui7With(tester, (cap, _, _) async {
       cap.terminal(_vui7Terminal());

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart'
     show
+        MethodCall,
         MethodChannel,
         MissingPluginException,
         PlatformException,
@@ -18,14 +19,18 @@ const MethodChannel foregroundCallTaskChannel = MethodChannel(
 Future<void> moveAppToBackgroundForCall() =>
     _invokeCallTask('moveToBackground');
 
-/// Tells Android whether a call surface owns Back. While it does, Android
-/// moves the task to the back on Back (key or predictive swipe) before
-/// Flutter's own back callback runs, so no hidden route is popped.
-Future<void> setAndroidCallOwnsBack(bool owns) =>
-    _invokeCallTask('setCallOwnsBack', <String, Object?>{'owns': owns});
+/// Gives Android priority over the Flutter routes covered by the call.
+Future<void> setAndroidCallOwnsBack(bool owns, {String? minimizeCallId}) =>
+    _invokeCallTask('setCallOwnsBack', <String, Object?>{
+      'owns': owns,
+      'minimizeCallId': ?minimizeCallId,
+    });
+
+bool get _usesAndroidCallTaskChannel =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
 Future<void> _invokeCallTask(String method, [Object? arguments]) async {
-  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  if (!_usesAndroidCallTaskChannel) return;
   try {
     await foregroundCallTaskChannel.invokeMethod<bool>(method, arguments);
   } on MissingPluginException {
@@ -44,11 +49,10 @@ Future<void> _invokeCallTask(String method, [Object? arguments]) async {
 /// at the root route, `SystemNavigator.pop` finishes the Android activity. The
 /// activity teardown then ends the call with `appShutdown` (beta 2026-09-24).
 ///
-/// While a call surface shows, Back sends the app to the background, like
-/// other calling apps, and the call keeps running (beta 2026-09-25). Android
-/// handles Back first while [surfaceOwnsBack] is true. This guard handles a
-/// Back that still reaches Flutter. The overlay also keeps Flutter's Android
-/// back callback registered, so the system never closes the task itself.
+/// Android handles Back first for a live call surface. An expanded active or
+/// outgoing call minimizes in the app. Other guarded live surfaces background
+/// the task and keep the call running. The overlay keeps the Flutter Back
+/// callback registered as a fallback.
 ///
 /// [WidgetsBinding.handlePopRoute] asks observers in registration order and
 /// the app's `WidgetsApp` registers its own navigator observer when it is
@@ -57,46 +61,98 @@ Future<void> _invokeCallTask(String method, [Object? arguments]) async {
 final class ForegroundCallBackGuard with WidgetsBindingObserver {
   ForegroundCallBackGuard({
     Future<void> Function()? moveAppToBackground,
-    Future<void> Function(bool owns)? publishCallOwnsBack,
+    Future<void> Function(bool owns, {String? minimizeCallId})?
+    publishCallOwnsBack,
   }) : _moveAppToBackground = moveAppToBackground ?? moveAppToBackgroundForCall,
        _publishCallOwnsBack = publishCallOwnsBack ?? setAndroidCallOwnsBack;
 
+  static ForegroundCallBackGuard? _androidChannelOwner;
   final Future<void> Function() _moveAppToBackground;
-  final Future<void> Function(bool owns) _publishCallOwnsBack;
+  final Future<void> Function(bool owns, {String? minimizeCallId})
+  _publishCallOwnsBack;
   bool _attached = false;
   VoidCallback? _gestureAction;
   bool _surfaceOwnsBack = false;
+  ({String callId, VoidCallback action})? _minimizeTarget;
 
   /// A finished call has a Flutter-only Back action.
   VoidCallback? dismissTerminal;
 
-  /// Whether an incoming, outgoing, or active call surface is showing.
-  bool get surfaceOwnsBack => _surfaceOwnsBack;
-
-  set surfaceOwnsBack(bool owns) {
-    if (_surfaceOwnsBack == owns) return;
+  void setSurfaceBackAction(
+    bool owns, {
+    ({String callId, VoidCallback action})? minimize,
+  }) {
+    final previousCallId = _minimizeTarget?.callId;
+    _minimizeTarget = owns && _usesAndroidCallTaskChannel ? minimize : null;
+    final minimizeCallId = _minimizeTarget?.callId;
+    if (_surfaceOwnsBack == owns && previousCallId == minimizeCallId) return;
     _surfaceOwnsBack = owns;
-    if (!owns) _gestureAction = null;
-    _run(() => _publishCallOwnsBack(owns));
+    if (!owns || previousCallId != minimizeCallId) _gestureAction = null;
+    _publishSurfaceBack();
+  }
+
+  void _publishSurfaceBack() {
+    if (_androidChannelOwner != null &&
+        !identical(_androidChannelOwner, this)) {
+      return;
+    }
+    _run(
+      () => _publishCallOwnsBack(
+        _surfaceOwnsBack,
+        minimizeCallId: _minimizeTarget?.callId,
+      ),
+    );
   }
 
   void attach() {
     if (_attached) return;
     _attached = true;
+    if (_usesAndroidCallTaskChannel) {
+      final previous = _androidChannelOwner;
+      previous?._gestureAction = null;
+      _androidChannelOwner = this;
+      foregroundCallTaskChannel.setMethodCallHandler(_handleAndroidBack);
+      if (previous?._surfaceOwnsBack == true || _surfaceOwnsBack) {
+        _publishSurfaceBack();
+      }
+    }
     WidgetsBinding.instance.addObserver(this);
   }
 
   void detach() {
     if (!_attached) return;
     _attached = false;
-    surfaceOwnsBack = false;
+    setSurfaceBackAction(false);
+    if (identical(_androidChannelOwner, this)) {
+      _androidChannelOwner = null;
+      foregroundCallTaskChannel.setMethodCallHandler(null);
+    }
     _gestureAction = null;
     dismissTerminal = null;
     WidgetsBinding.instance.removeObserver(this);
   }
 
-  VoidCallback? get _backAction =>
-      dismissTerminal ?? (_surfaceOwnsBack ? _backgroundLiveCall : null);
+  Future<void> _handleAndroidBack(MethodCall call) async {
+    if (!identical(_androidChannelOwner, this) ||
+        call.method != 'minimizeCall') {
+      return;
+    }
+    final target = _minimizeTarget;
+    final callId = call.arguments;
+    if (target != null && callId is String && callId == target.callId) {
+      target.action();
+    }
+  }
+
+  VoidCallback? get _backAction {
+    if (_androidChannelOwner != null &&
+        !identical(_androidChannelOwner, this)) {
+      return null;
+    }
+    return dismissTerminal ??
+        _minimizeTarget?.action ??
+        (_surfaceOwnsBack ? _backgroundLiveCall : null);
+  }
 
   void _backgroundLiveCall() => _run(_moveAppToBackground);
 

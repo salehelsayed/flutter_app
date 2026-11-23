@@ -66,6 +66,8 @@ class _CallReturnBarState extends State<CallReturnBar> {
     final l10n = AppLocalizations.of(context)!;
     final status = switch (widget.state) {
       CallState.ended => l10n.call_ended,
+      CallState.preparing || CallState.inviting => l10n.call_status_calling,
+      CallState.ringing => l10n.call_status_ringing,
       CallState.reconnecting => l10n.call_status_reconnecting,
       CallState.connected => l10n.call_status_connected,
       _ => l10n.call_status_connecting,
@@ -82,10 +84,10 @@ class _CallReturnBarState extends State<CallReturnBar> {
         : '${seconds >= 3600 ? '${seconds ~/ 3600}:' : ''}'
               '${((seconds ~/ 60) % 60).toString().padLeft(2, '0')}:'
               '${(seconds % 60).toString().padLeft(2, '0')}';
-    final subtitle = _ended
-        ? (duration.isEmpty
-              ? status
-              : l10n.call_row_with_duration(status, duration))
+    final subtitle = duration.isEmpty
+        ? status
+        : _ended
+        ? l10n.call_row_with_duration(status, duration)
         : '$status $duration';
     final label = [
       _ended ? l10n.call_dismiss_status : l10n.call_return,

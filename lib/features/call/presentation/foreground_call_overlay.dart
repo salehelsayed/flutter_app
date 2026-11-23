@@ -90,9 +90,7 @@ final class ForegroundCallOverlay extends StatefulWidget {
   /// activity may attach this host without ever receiving a rendered frame.
   final VoidCallback? onAttached;
 
-  /// Told whether a live call surface owns the screen, so the system Back
-  /// action sends the app to the background instead of popping the hidden
-  /// routes or finishing the activity under the call.
+  /// Routes system Back to the action for the call surface above the navigator.
   final ForegroundCallBackGuard? backGuard;
 
   /// Tells a microphone denial the system will no longer prompt for apart
@@ -201,7 +199,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
   void didUpdateWidget(covariant ForegroundCallOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.backGuard, widget.backGuard)) {
-      oldWidget.backGuard?.surfaceOwnsBack = false;
+      oldWidget.backGuard?.setSurfaceBackAction(false);
       oldWidget.backGuard?.dismissTerminal = null;
     }
     if (!identical(oldWidget.capability, widget.capability)) {
@@ -227,7 +225,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
     _invalidateTerminal();
     _clearUpgradeNotice();
     _lockedProjection.dispose();
-    widget.backGuard?.surfaceOwnsBack = false;
+    widget.backGuard?.setSurfaceBackAction(false);
     super.dispose();
   }
 
@@ -299,8 +297,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
       final surfaceKind = _surfaceKind(session);
       final wasMinimized =
           _minimizedCallId != null && _minimizedCallId == session?.callId;
-      if (surfaceKind != _ForegroundCallSurface.active ||
-          _minimizedCallId != session?.callId) {
+      if (!surfaceKind.canMinimize || _minimizedCallId != session?.callId) {
         _minimizedCallId = null;
       }
       if (surfaceKind != _ForegroundCallSurface.active ||
@@ -501,10 +498,9 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
     final callId = session?.callId;
     final peerId = session?.contactPeerId;
     final capability = widget.capability;
+    final capabilityGeneration = _capabilityGeneration;
     final minimized =
-        surfaceKind == _ForegroundCallSurface.active &&
-        callId != null &&
-        _minimizedCallId == callId;
+        surfaceKind.canMinimize && callId != null && _minimizedCallId == callId;
     final endedBanner = _terminalNoticeVisible && _terminalWasMinimized;
     final showReturnBar = minimized || endedBanner;
     final terminalEpoch = _terminalEpoch;
@@ -517,7 +513,6 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
         peerId != null) {
       final video = _visibleVideo(projection, capability);
       pictureInPictureVideo = _pictureInPictureVideo(projection, capability);
-      final capabilityGeneration = _capabilityGeneration;
       final ValueChanged<CallVideoIntent>? onVideoIntent = video == null
           ? null
           : (intent) => _runVideoIntent(
@@ -669,7 +664,13 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
         backGuard != null &&
         ((modal && surfaceKind != _ForegroundCallSurface.terminal) ||
             (minimized && !_navigatorCanHandlePop));
-    backGuard?.surfaceOwnsBack = ownsBack;
+    final minimizeTarget = modal && surfaceKind.canMinimize && callId != null
+        ? (
+            callId: callId.value,
+            action: () => _minimizeCall(callId, capabilityGeneration),
+          )
+        : null;
+    backGuard?.setSurfaceBackAction(ownsBack, minimize: minimizeTarget);
     final dismissTerminal =
         modal &&
             surfaceKind == _ForegroundCallSurface.terminal &&
@@ -807,11 +808,7 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
                                 tooltip: AppLocalizations.of(
                                   context,
                                 )!.call_minimize,
-                                onPressed: () => setState(() {
-                                  _pickerCallId = null;
-                                  _minimizedCallId = callId;
-                                  _pictureInPictureOffset = null;
-                                }),
+                                onPressed: minimizeTarget?.action,
                                 icon: const Icon(Icons.keyboard_arrow_down),
                               ),
                             ),
@@ -839,6 +836,30 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay>
           ),
       ],
     );
+  }
+
+  void _minimizeCall(CallId callId, int capabilityGeneration) {
+    final session = _projection?.session;
+    if (!mounted ||
+        capabilityGeneration != _capabilityGeneration ||
+        session?.callId != callId ||
+        !_surfaceKind(session).canMinimize ||
+        _minimizedCallId == callId) {
+      return;
+    }
+    try {
+      final current = widget.capability?.current?.session;
+      if (current?.callId != callId || !_surfaceKind(current).canMinimize) {
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+    setState(() {
+      _pickerCallId = null;
+      _minimizedCallId = callId;
+      _pictureInPictureOffset = null;
+    });
   }
 
   ForegroundCallVideoProjection? _pictureInPictureVideo(
@@ -1953,7 +1974,15 @@ class _CallPictureInPictureTileState extends State<_CallPictureInPictureTile> {
   }
 }
 
-enum _ForegroundCallSurface { hidden, incoming, outgoing, active, terminal }
+enum _ForegroundCallSurface {
+  hidden,
+  incoming,
+  outgoing,
+  active,
+  terminal;
+
+  bool get canMinimize => this == active || this == outgoing;
+}
 
 _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
   if (session == null || session.isIdle) {

@@ -190,8 +190,6 @@ class MainActivity : FlutterActivity() {
         callNativeBridge = MknoonCallRuntime.get(applicationContext).createBridge(
             flutterEngine.dartExecutor.binaryMessenger,
         )
-        // F4 (beta 2026-09-25): Back during a call sends the app to the
-        // background and the call keeps running.
         val taskHandler = MknoonCallTaskChannelHandler(
             isDeviceUnlocked = {
                 val keyguard = getSystemService(android.app.KeyguardManager::class.java)
@@ -199,6 +197,11 @@ class MainActivity : FlutterActivity() {
             },
             moveTaskToBack = { moveTaskToBack(true) },
             registerBack = MknoonCallTaskChannelHandler.overlayBackRegistrar(this),
+            onMinimizeCall = { callId ->
+                if (incomingCallPresentation?.handleBack() != true) {
+                    callTaskChannel?.invokeMethod(MknoonCallTaskChannelHandler.MINIMIZE_CALL, callId)
+                }
+            },
         )
         callTaskHandler = taskHandler
         callTaskChannel = MethodChannel(

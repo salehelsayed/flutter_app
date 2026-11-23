@@ -144,6 +144,48 @@ class MknoonCallTaskChannelHandlerTest {
         assertEquals(0, moves)
     }
 
+    @Test fun `BL65 the registered Back follows the current call and action`() {
+        val firstCall = "33333333-3333-4333-8333-333333333333"
+        val nextCall = "44444444-4444-4444-8444-444444444444"
+        val minimizeRequests = mutableListOf<String>()
+        val callbacks = mutableListOf<() -> Unit>()
+        var moves = 0
+        var releases = 0
+        val handler = MknoonCallTaskChannelHandler(
+            registerBack = { action ->
+                callbacks += action
+                ({ releases += 1 })
+            },
+            onMinimizeCall = { minimizeRequests += it },
+            moveTaskToBack = { moves += 1; true },
+        )
+        fun publish(owns: Boolean, callId: String? = null) {
+            val arguments = mutableMapOf<String, Any>("owns" to owns)
+            if (callId != null) arguments["minimizeCallId"] = callId
+            val result = TaskResult()
+            handler.onMethodCall(MethodCall("setCallOwnsBack", arguments), result)
+            assertEquals(true, result.value)
+        }
+
+        publish(true, firstCall)
+        assertTrue(handler.handleBackPressed())
+        publish(true, nextCall)
+        callbacks.single().invoke()
+        assertEquals(listOf(firstCall, nextCall), minimizeRequests)
+        assertEquals(0, moves)
+
+        publish(true)
+        callbacks.single().invoke()
+        assertEquals(1, moves)
+        assertEquals(0, releases)
+        publish(false)
+        assertFalse(handler.handleBackPressed())
+        callbacks.single().invoke()
+        assertEquals(1, moves)
+        assertEquals(1, releases)
+        assertEquals(listOf(firstCall, nextCall), minimizeRequests)
+    }
+
     @Test fun `dispose releases the overlay back callback`() {
         var unregistered = 0
         val handler = MknoonCallTaskChannelHandler(
