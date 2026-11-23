@@ -2117,16 +2117,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.conversation:
         // 139: mirror the group already-active guard. When the user taps a
-        // fresh notification for a peer whose 1:1 conversation is already the
+        // message notification for a peer whose 1:1 conversation is already the
         // active (backgrounded) screen, do NOT push a second ConversationWired
         // — the mounted screen re-fetches the new message on resume
         // (conversation_wired.dart didChangeAppLifecycleState). Decided before
         // the contact lookup so suppression is a pure routing decision; when
-        // the registry is current, the contact necessarily exists.
-        if (isNotificationRouteTargetAlreadyActive(
-          routeTarget: routeTarget,
-          appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
-        )) {
+        // the registry is current, the contact necessarily exists. A call
+        // follow-up opens with its own temporary composer.
+        if (!routeTarget.offerCallMessageSuggestion &&
+            isNotificationRouteTargetAlreadyActive(
+              routeTarget: routeTarget,
+              appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
+            )) {
           emitFlowEvent(
             layer: 'FL',
             event: 'CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE',

@@ -1960,7 +1960,8 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
     return _ForegroundCallSurface.hidden;
   }
   if (session.direction == CallDirection.incoming &&
-      !session.incomingValidated) {
+      (!session.incomingValidated ||
+          (session.isTerminal && session.endReason == CallEndReason.noAnswer))) {
     return _ForegroundCallSurface.hidden;
   }
   if (session.isTerminal) return _ForegroundCallSurface.terminal;

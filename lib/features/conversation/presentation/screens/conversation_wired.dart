@@ -855,6 +855,7 @@ class _ConversationWiredState extends State<ConversationWired>
   String? _editingOriginalText;
   String _draftText = '';
   bool _usedCallMessageSuggestion = false;
+  late final bool _ownsConversationTracking;
   late final _composerDraft = ComposerDraftAutosave(
     store: widget.composerDraftStore ?? ComposerDraftStore.shared,
     key: ComposerDraftKey.direct(widget.contact.peerId),
@@ -1590,7 +1591,12 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _draftText = widget.initialText ?? '';
     widget.appShellController?.addListener(_onAppShellChanged);
-    widget.conversationTracker?.setActive(widget.contact.peerId);
+    final tracker = widget.conversationTracker;
+    // A follow-up over the same chat shares the underlying route's tracker.
+    _ownsConversationTracking =
+        !widget.offerCallMessageSuggestion ||
+        !(tracker?.isViewing(widget.contact.peerId) ?? false);
+    if (_ownsConversationTracking) tracker?.setActive(widget.contact.peerId);
     // A cold notification launch can construct this route while Flutter still
     // reports `inactive`, then publish `resumed` before this State registers as
     // an observer. Re-check after the first rendered frame; the shared strict
@@ -8731,7 +8737,9 @@ class _ConversationWiredState extends State<ConversationWired>
         outboxEndpointToken,
       );
     }
-    widget.conversationTracker?.clearIfActive(widget.contact.peerId);
+    if (_ownsConversationTracking) {
+      widget.conversationTracker?.clearIfActive(widget.contact.peerId);
+    }
     widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
