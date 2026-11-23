@@ -5401,6 +5401,7 @@
       ],
       "investigate": [
         "lib/features/translate_preview/",
+        "third_party/background_downloader/",
         "lib/features/posts/presentation/screens/thought_card_screen.dart",
         "lib/features/conversation/presentation/screens/conversation_screen.dart",
         "lib/features/conversation/presentation/widgets/letter_card.dart",
@@ -7396,6 +7397,7 @@
       "patterns": [
         "lib/features/translate_preview/*",
         "test/features/translate_preview/*",
+        "third_party/background_downloader/*",
         "lib/features/posts/presentation/screens/thought_card_screen.dart",
         "lib/features/conversation/presentation/screens/conversation_screen.dart",
         "lib/features/conversation/presentation/widgets/letter_card.dart",
@@ -7407,7 +7409,7 @@
       "checks": [
         "affected-translate-preview"
       ],
-      "why": "The preview module, persisted-result composition and exact Thought/Orbit/direct-voice entrypoints require preview and existing widget/audio preservation tests"
+      "why": "The preview module, pinned translator downloader, persisted-result composition and exact Thought/Orbit/direct-voice entrypoints require preview and existing widget/audio preservation tests"
     },
     {
       "id": "stickers",

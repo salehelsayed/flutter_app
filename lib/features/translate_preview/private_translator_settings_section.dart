@@ -35,7 +35,7 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               onFreeUpSpace: onFreeUpSpace,
             ),
           );
-          final (String subtitle, _RowAction action) = switch (state) {
+          final (String subtitle, _RowAction? action) = switch (state) {
             ModelUnsupported() => (
               l10n.translator_settings_unsupported,
               (
@@ -51,11 +51,63 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               l10n.translator_sheet_needs(translatorSize(context, neededBytes)),
               (l10n.translator_get, openSheet),
             ),
+            ModelAwaitingConnection() => (
+              l10n.translator_offline_start_title,
+              (
+                l10n.btn_cancel,
+                () => unawaited(controller.cancelPendingStart()),
+              ),
+            ),
+            ModelUpdateRequired() => (
+              l10n.translator_update_title(translatorAppName(context)),
+              (
+                l10n.update_available_action,
+                () => openTranslatorUpdateStore(context),
+              ),
+            ),
+            ModelChecking() => (l10n.translator_checking_title, null),
+            ModelIntegrityRepair(:final needsManualRetry, :final canPause) => (
+              l10n.translator_integrity_title,
+              needsManualRetry
+                  ? (l10n.translator_try_again, openSheet)
+                  : canPause
+                  ? (l10n.translator_pause, () => unawaited(controller.pause()))
+                  : null,
+            ),
+            ModelWaitingForConnection() => (
+              l10n.translator_connection_title,
+              (l10n.translator_pause, () => unawaited(controller.pause())),
+            ),
+            ModelServerRetry(:final retryAt) => (
+              l10n.translator_server_title,
+              (
+                retryAt == null
+                    ? l10n.translator_try_again
+                    : l10n.translator_try_now,
+                openSheet,
+              ),
+            ),
+            ModelDownloadNeedsSpace() => (
+              l10n.translator_transfer_full_title,
+              (l10n.translator_continue, openSheet),
+            ),
+            ModelStorageWriteFailed() => (
+              l10n.translator_transfer_save_title,
+              (l10n.translator_try_again, openSheet),
+            ),
+            ModelRestartRequired() => (
+              l10n.translator_failed_title,
+              (l10n.translator_try_again, openSheet),
+            ),
             ModelDownloading(:final receivedBytes, :final totalBytes) => (
               l10n.translator_settings_downloading(
                 translatorAmount(context, receivedBytes, totalBytes),
               ),
               (l10n.translator_pause, () => unawaited(controller.pause())),
+            ),
+            ModelWaitingForWifi(canUseMobileData: false) => (
+              l10n.translator_waiting_title,
+              null,
             ),
             ModelWaitingForWifi() || ModelPaused() => (
               l10n.translator_settings_paused,
@@ -78,14 +130,16 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
             icon: Icons.translate,
             label: l10n.translator_settings_title,
             subtitle: subtitle,
-            trailing: TextButton(
-              onPressed: action.$2,
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(action.$1),
-            ),
+            trailing: action == null
+                ? null
+                : TextButton(
+                    onPressed: action.$2,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(action.$1),
+                  ),
           );
           if (state is ModelUnsupported) return row;
           final divider = Divider(

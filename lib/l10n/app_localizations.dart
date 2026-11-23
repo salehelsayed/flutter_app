@@ -8243,8 +8243,212 @@ abstract class AppLocalizations {
   /// Sheet line while downloading.
   ///
   /// In en, this message translates to:
-  /// **'You can close this. It keeps going, even if you leave Mknoon.'**
+  /// **'You can leave this screen. Your download can continue in the background and picks up where it stopped.'**
   String get translator_progress_keeps_going;
+
+  /// No description provided for @translator_checking_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the download'**
+  String get translator_checking_title;
+
+  /// No description provided for @translator_checking_line.
+  ///
+  /// In en, this message translates to:
+  /// **'Making sure the file arrived complete. This may take a moment.'**
+  String get translator_checking_line;
+
+  /// No description provided for @translator_offline_start_title.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re offline'**
+  String get translator_offline_start_title;
+
+  /// No description provided for @translator_offline_start_wifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to Wi-Fi. The download starts by itself as soon as you\'re online.'**
+  String get translator_offline_start_wifi;
+
+  /// No description provided for @translator_offline_start_mobile.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to Wi-Fi or mobile data. The download starts by itself as soon as you\'re online.'**
+  String get translator_offline_start_mobile;
+
+  /// Translator model needs a newer app build. appName is the app title.
+  ///
+  /// In en, this message translates to:
+  /// **'Update {appName} to use the translator'**
+  String translator_update_title(String appName);
+
+  /// No description provided for @translator_update_line.
+  ///
+  /// In en, this message translates to:
+  /// **'This version can\'t use the newest translator. Update to continue.'**
+  String get translator_update_line;
+
+  /// No description provided for @translator_integrity_title.
+  ///
+  /// In en, this message translates to:
+  /// **'The file was damaged'**
+  String get translator_integrity_title;
+
+  /// No description provided for @translator_integrity_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'We\'re downloading the file again. Nothing for you to do.'**
+  String get translator_integrity_retry;
+
+  /// No description provided for @translator_integrity_exhausted.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again to download a new copy.'**
+  String get translator_integrity_exhausted;
+
+  /// No description provided for @translator_connection_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for a connection'**
+  String get translator_connection_title;
+
+  /// Connection explanation
+  ///
+  /// In en, this message translates to:
+  /// **'Your download is safe at {percent}%. It continues by itself when you\'re back online.'**
+  String translator_connection_kept(String percent);
+
+  /// No description provided for @translator_connection_unmeasured.
+  ///
+  /// In en, this message translates to:
+  /// **'We\'ll try to continue your download when you\'re back online.'**
+  String get translator_connection_unmeasured;
+
+  /// Kept bytes below progress
+  ///
+  /// In en, this message translates to:
+  /// **'{amount} kept'**
+  String translator_kept_amount(String amount);
+
+  /// No description provided for @translator_server_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Our download server isn\'t answering'**
+  String get translator_server_title;
+
+  /// Server while retry is scheduled
+  ///
+  /// In en, this message translates to:
+  /// **'This is on our side. We\'ll try again in {time}, and your {percent}% is kept.'**
+  String translator_server_retry(String time, String percent);
+
+  /// Server while retry is scheduled, count unavailable
+  ///
+  /// In en, this message translates to:
+  /// **'This is on our side. We\'ll try again in {time}.'**
+  String translator_server_retry_unmeasured(String time);
+
+  /// Server when automatic retries end
+  ///
+  /// In en, this message translates to:
+  /// **'This is on our side. Your {percent}% is kept. Try again to continue.'**
+  String translator_server_exhausted(String percent);
+
+  /// No description provided for @translator_server_exhausted_unmeasured.
+  ///
+  /// In en, this message translates to:
+  /// **'This is on our side. Try again to continue.'**
+  String get translator_server_exhausted_unmeasured;
+
+  /// Retry time, seconds
+  ///
+  /// In en, this message translates to:
+  /// **'{count} sec'**
+  String translator_retry_seconds(String count);
+
+  /// Retry time, minutes
+  ///
+  /// In en, this message translates to:
+  /// **'{count} min'**
+  String translator_retry_minutes(String count);
+
+  /// No description provided for @translator_try_now.
+  ///
+  /// In en, this message translates to:
+  /// **'Try now'**
+  String get translator_try_now;
+
+  /// No description provided for @translator_transfer_full_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Your phone is full'**
+  String get translator_transfer_full_title;
+
+  /// Out of space explanation
+  ///
+  /// In en, this message translates to:
+  /// **'Free up {size} to finish. Your {percent}% is kept.'**
+  String translator_transfer_full_kept(String size, String percent);
+
+  /// Out of space, additional size known and no kept percentage to display
+  ///
+  /// In en, this message translates to:
+  /// **'Free up {size} to finish.'**
+  String translator_transfer_full_size(String size);
+
+  /// No description provided for @translator_transfer_full_unmeasured.
+  ///
+  /// In en, this message translates to:
+  /// **'Free up some space, then continue the download.'**
+  String get translator_transfer_full_unmeasured;
+
+  /// No description provided for @translator_continue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get translator_continue;
+
+  /// No description provided for @translator_transfer_save_title.
+  ///
+  /// In en, this message translates to:
+  /// **'The download can\'t be saved'**
+  String get translator_transfer_save_title;
+
+  /// No description provided for @translator_transfer_save_line.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your phone\'s storage, then try again.'**
+  String get translator_transfer_save_line;
+
+  /// No description provided for @translator_resume_lost.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved progress couldn\'t be kept. The download will start over.'**
+  String get translator_resume_lost;
+
+  /// No description provided for @translator_notification_ready_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translation is ready'**
+  String get translator_notification_ready_title;
+
+  /// No description provided for @translator_notification_ready_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in other languages can now be translated on your phone.'**
+  String get translator_notification_ready_body;
+
+  /// No description provided for @translator_notification_paused_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Translator download paused'**
+  String get translator_notification_paused_title;
+
+  /// Paused notification body
+  ///
+  /// In en, this message translates to:
+  /// **'{reason}. Your {percent}% is kept.'**
+  String translator_notification_paused_body(String reason, String percent);
 
   /// Closes the sheet; the download continues.
   ///

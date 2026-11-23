@@ -24,6 +24,30 @@ final class ModelNotDownloaded extends ModelDeliveryState {
   final bool onWifi;
 }
 
+final class ModelAwaitingConnection extends ModelDeliveryState {
+  const ModelAwaitingConnection({required this.allowMobileData});
+
+  final bool allowMobileData;
+}
+
+final class ModelUpdateRequired extends ModelDeliveryState {
+  const ModelUpdateRequired();
+}
+
+final class ModelChecking extends ModelDeliveryState {
+  const ModelChecking();
+}
+
+final class ModelIntegrityRepair extends ModelDeliveryState {
+  const ModelIntegrityRepair({
+    required this.needsManualRetry,
+    this.canPause = false,
+  });
+
+  final bool needsManualRetry;
+  final bool canPause;
+}
+
 final class ModelNotEnoughSpace extends ModelDeliveryState {
   const ModelNotEnoughSpace({
     required this.totalBytes,
@@ -69,12 +93,80 @@ final class ModelWaitingForWifi extends ModelDeliveryInProgress {
   const ModelWaitingForWifi({
     required super.receivedBytes,
     required super.totalBytes,
+    this.canUseMobileData = true,
   });
+
+  final bool canUseMobileData;
 }
 
 /// Stopped by the user, or by a restart, with the part already received kept.
 final class ModelPaused extends ModelDeliveryInProgress {
-  const ModelPaused({required super.receivedBytes, required super.totalBytes});
+  const ModelPaused({
+    required super.receivedBytes,
+    required super.totalBytes,
+    this.confirmedReceivedBytes,
+  });
+
+  final int? confirmedReceivedBytes;
+}
+
+sealed class ModelRetainedDownload extends ModelDeliveryState {
+  const ModelRetainedDownload({
+    required this.retainedBytes,
+    required this.totalBytes,
+  });
+
+  final int? retainedBytes;
+  final int totalBytes;
+
+  int? get retainedPercent => switch (retainedBytes) {
+    final int bytes when totalBytes > 0 => (bytes * 100 ~/ totalBytes).clamp(
+      0,
+      100,
+    ),
+    _ => null,
+  };
+}
+
+final class ModelWaitingForConnection extends ModelRetainedDownload {
+  const ModelWaitingForConnection({
+    required super.retainedBytes,
+    required super.totalBytes,
+  });
+}
+
+final class ModelServerRetry extends ModelRetainedDownload {
+  const ModelServerRetry({
+    required super.retainedBytes,
+    required super.totalBytes,
+    required this.retryAt,
+    required this.restartsFromZero,
+  });
+
+  final DateTime? retryAt;
+  final bool restartsFromZero;
+}
+
+final class ModelDownloadNeedsSpace extends ModelRetainedDownload {
+  const ModelDownloadNeedsSpace({
+    required super.retainedBytes,
+    required super.totalBytes,
+    required this.additionalBytes,
+    required this.restartsFromZero,
+  });
+
+  final int? additionalBytes;
+  final bool restartsFromZero;
+}
+
+final class ModelStorageWriteFailed extends ModelDeliveryState {
+  const ModelStorageWriteFailed({required this.restartsFromZero});
+
+  final bool restartsFromZero;
+}
+
+final class ModelRestartRequired extends ModelDeliveryState {
+  const ModelRestartRequired();
 }
 
 /// The silent retries ran out (broken file or server error).
@@ -123,6 +215,8 @@ abstract class ModelDeliveryController {
   Future<void> refresh();
 
   Future<void> start({required bool allowMobileData});
+
+  Future<void> cancelPendingStart();
 
   Future<void> pause();
 

@@ -5,11 +5,14 @@ import 'dart:io';
 import 'package:background_downloader/background_downloader.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_platform.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,6 +36,32 @@ void main() {
     destinations = await Directory.systemTemp.createTemp('translator-cancel-');
   });
   tearDown(() => destinations.delete(recursive: true));
+  const checkpointBound = Duration(seconds: 3);
+  Future<File> retainAndroidCheckpoint(
+    _ResumeStorage storage,
+    DownloadTask task,
+    int bytes,
+  ) async {
+    final partial = File(
+      '${destinations.path}/com.bbflight.background_downloader123',
+    );
+    final file = await partial
+        .open(mode: FileMode.write)
+        .timeout(checkpointBound);
+    try {
+      await file.truncate(bytes).timeout(checkpointBound);
+    } finally {
+      await file.close().timeout(checkpointBound);
+    }
+    storage.records[task.taskId] = ResumeData(
+      task,
+      partial.path,
+      bytes,
+      '"v1"',
+    );
+    return partial;
+  }
+
   BackgroundModelDeliveryTransport createTransport({
     required FileDownloader downloader,
     PersistentStorage? resumeStorage,
@@ -85,7 +114,9 @@ void main() {
       expect(task.group, modelDeliveryGroup);
       expect(task.allowPause, isTrue);
       expect(task.requiresWiFi, isTrue);
-      expect(task.retries, 3);
+      expect(task.retries, 0);
+      expect(task.retriesRemaining, 0);
+      expect(task.options?.appManagedRecovery, isTrue);
       expect(task.priority, 5);
       expect(task.transferHints, contains(TransferHint.largeFile));
       final events = <ModelTransferEvent>[];
@@ -95,6 +126,34 @@ void main() {
       expect(events, isEmpty);
       downloader.emit(task, TaskStatus.running);
       expect(events.single.taskId, 'owned');
+      for (final (exception, failure) in [
+        (
+          TaskConnectionException('connection'),
+          ModelTransferFailure.connection,
+        ),
+        (TaskHttpException('busy', 429), ModelTransferFailure.server),
+        (TaskHttpException('unavailable', 503), ModelTransferFailure.server),
+        (TaskHttpException('forbidden', 403), null),
+        (
+          TaskStorageFullException('disk full'),
+          ModelTransferFailure.storageFull,
+        ),
+        (TaskFileSystemException('write'), ModelTransferFailure.storageWrite),
+        (
+          TaskResumeException('bad range'),
+          ModelTransferFailure.invalidCheckpoint,
+        ),
+      ]) {
+        downloader.emitUpdate(
+          TaskStatusUpdate(task, TaskStatus.failed, exception),
+        );
+        expect(events.last.failure, failure);
+        expect(
+          (await transport.restore(task.taskId).timeout(checkpointBound))
+              ?.failure,
+          failure,
+        );
+      }
     },
   );
 
@@ -213,11 +272,261 @@ void main() {
     expect(result?.status, TaskStatus.paused);
   });
 
+  group('BL60 native download failures in the translator sheet', () {
+    const bound = Duration(seconds: 3);
+    final manifest = _manifest(bytes: 10000000);
+    final deliveredBytes = manifest.bytes * 42 ~/ 100;
+
+    Future<PersistentModelDeliveryController> startDownload(
+      _Downloader downloader, {
+      required int Function() availableBytes,
+      _ResumeStorage? checkpoints,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance().timeout(bound);
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        preferences: () async => preferences,
+        diskSpace: DiskSpaceChannel(invoker: (_, _) async => availableBytes()),
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+      );
+      final controller = PersistentModelDeliveryController(
+        storage: storage,
+        network: _StorageTestNetwork(manifest),
+        transport: createTransport(
+          downloader: downloader,
+          resumeStorage: checkpoints,
+          isIOS: false,
+        ),
+        appBuild: () async => 129,
+        supported: true,
+        spaceReserveBytes: 1024 * 1024,
+      );
+      addTearDown(() => controller.dispose().timeout(bound));
+      await controller.start(allowMobileData: false).timeout(bound);
+      final task = downloader.enqueued.single;
+      expect(task.requiresWiFi, isTrue);
+      downloader.emit(task, TaskStatus.running);
+      downloader.progressCallback!(
+        TaskProgressUpdate(task, .42, manifest.bytes),
+      );
+      await controller.setAllowMobileData(false).timeout(bound);
+      expect(
+        controller.state.value,
+        isA<ModelDownloading>().having(
+          (state) => state.receivedBytes,
+          'received bytes',
+          deliveredBytes,
+        ),
+      );
+      return controller;
+    }
+
+    Future<void> pumpSheet(
+      WidgetTester tester,
+      ModelDeliveryController controller,
+    ) => tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PrivateTranslatorSheet(
+                controller: controller,
+                onFreeUpSpace: () {},
+              ),
+            ),
+          ),
+        )
+        .timeout(bound);
+
+    testWidgets('native HTTP 503 offers the server retry in the sheet', (
+      tester,
+    ) async {
+      final downloader = _Downloader();
+      final checkpoints = _ResumeStorage();
+      final controller = (await tester.runAsync(() async {
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => 2 * manifest.bytes,
+          checkpoints: checkpoints,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        await retainAndroidCheckpoint(checkpoints, task, deliveredBytes);
+        expect(downloader.resumed, isEmpty);
+        expect(downloader.enqueued, hasLength(1));
+
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task,
+            TaskStatus.failed,
+            TaskHttpException('fixture server failure', 503),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        expect(
+          controller.state.value,
+          isA<ModelServerRetry>().having(
+            (state) => state.retainedBytes,
+            'confirmed retained bytes',
+            deliveredBytes,
+          ),
+        );
+        return controller;
+      }))!;
+
+      await pumpSheet(tester, controller);
+      expect(find.text("Our download server isn't answering"), findsOneWidget);
+      expect(
+        find.textContaining("This is on our side. We'll try again in "),
+        findsOneWidget,
+      );
+      expect(find.textContaining('your 42% is kept.'), findsOneWidget);
+      expect(find.text('Try now'), findsOneWidget);
+      expect(find.textContaining('fixture server failure'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+    });
+
+    test(
+      'Android system stop retries the same retained translator checkpoint',
+      () async {
+        final downloader = _Downloader();
+        final checkpoints = _ResumeStorage();
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => 2 * manifest.bytes,
+          checkpoints: checkpoints,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        final partial = await retainAndroidCheckpoint(
+          checkpoints,
+          task,
+          deliveredBytes,
+        );
+
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task,
+            TaskStatus.failed,
+            TaskException('Task was stopped by the system'),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        await controller.retry().timeout(bound);
+
+        expect(
+          downloader.enqueued,
+          hasLength(1),
+          reason: 'The system stop must not enqueue a new transfer from zero.',
+        );
+        expect(downloader.resumed.map((task) => task.taskId), [task.taskId]);
+        expect(downloader.canceled, isEmpty);
+        expect(await partial.length().timeout(bound), deliveredBytes);
+        expect(
+          checkpoints.records[task.taskId]?.requiredStartByte,
+          deliveredBytes,
+        );
+      },
+    );
+
+    testWidgets('native write failure after disk exhaustion offers Continue', (
+      tester,
+    ) async {
+      final downloader = _Downloader();
+      final checkpoints = _ResumeStorage();
+      var availableBytes = 2 * manifest.bytes;
+      final controller = (await tester.runAsync(() async {
+        final controller = await startDownload(
+          downloader,
+          availableBytes: () => availableBytes,
+          checkpoints: checkpoints,
+        ).timeout(bound);
+        final task = downloader.enqueued.single;
+        final partial = await retainAndroidCheckpoint(
+          checkpoints,
+          task,
+          deliveredBytes,
+        );
+        expect(await partial.length().timeout(bound), deliveredBytes);
+
+        availableBytes = 512 * 1024;
+        checkpoints.records.remove(task.taskId);
+        downloader.emitUpdate(
+          TaskStatusUpdate(
+            task,
+            TaskStatus.failed,
+            TaskFileSystemException('fixture storage write failed'),
+          ),
+        );
+        await controller.setAllowMobileData(false).timeout(bound);
+        expect(downloader.resumed, isEmpty);
+        expect(downloader.enqueued, hasLength(1));
+        return controller;
+      }))!;
+
+      await pumpSheet(tester, controller);
+      expect(find.text('Your phone is full'), findsOneWidget);
+      expect(find.text('Free up space'), findsOneWidget);
+      expect(find.text('Continue'), findsOneWidget);
+      expect(find.textContaining('Your 42% is kept.'), findsNothing);
+    });
+  });
+
+  test(
+    'Android readiness pause with no partial re-enqueues the owned task',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final downloader = _Downloader()..resumeAccepted = false;
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(() => transport.dispose().timeout(deadline));
+      await transport.initialize(null).timeout(deadline);
+      await transport
+          .enqueue(taskId: 'one', manifest: _manifest(), requiresWiFi: true)
+          .timeout(deadline);
+      final task = downloader.enqueued.single;
+      final origin = _RecoveringOrigin(recoverOnProbe: false);
+      fakeAsync((clock) {
+        TaskStatusUpdate? readinessPause;
+        unawaited(
+          HttpOverrides.runZoned(
+            () => task.options!.beforeTaskStartCallBack!(task),
+            createHttpClient: (_) => _OriginClient(origin),
+          ).then<void>((update) {
+            readinessPause = update;
+          }),
+        );
+        clock.elapse(const Duration(seconds: 20));
+        expect(readinessPause?.status, TaskStatus.paused);
+        expect(readinessPause?.task.taskId, task.taskId);
+      });
+
+      downloader.emit(task, TaskStatus.paused);
+      expect(
+        await transport
+            .resume(task.taskId, requiresWiFi: true)
+            .timeout(deadline),
+        isTrue,
+      );
+      expect(downloader.resumed, isEmpty);
+      expect(downloader.enqueued, hasLength(2));
+      expect(downloader.enqueued.last.taskId, task.taskId);
+      expect(downloader.enqueued.last.requiresWiFi, isTrue);
+      expect(downloader.canceled, isEmpty);
+    },
+  );
+
   test(
     'iOS unchanged policy resumes partial; changed policy requests scoped restart',
     () async {
       final downloader = _Downloader();
-      final transport = createTransport(downloader: downloader, isIOS: true);
+      final checkpoints = _ResumeStorage();
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: checkpoints,
+        isIOS: true,
+      );
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -225,6 +534,13 @@ void main() {
         manifest: _manifest(),
         requiresWiFi: false,
       );
+      final task = downloader.enqueued.single;
+      checkpoints.records[task.taskId] = ResumeData(task, 'AQID');
+      final checkpoint = await transport
+          .checkpoint(task.taskId)
+          .timeout(checkpointBound);
+      expect(checkpoint, isNotNull);
+      expect(checkpoint?.retainedBytes, isNull);
       expect(await transport.resume('one', requiresWiFi: false), isTrue);
       expect(downloader.resumed.single.requiresWiFi, isFalse);
       expect(await transport.resume('one', requiresWiFi: true), isFalse);
@@ -234,6 +550,11 @@ void main() {
         downloader.enqueued.single.options?.beforeTaskStartCallBack,
         isNull,
       );
+      checkpoints.records[task.taskId] = ResumeData(task, '!invalid!');
+      expect(
+        await transport.checkpoint(task.taskId).timeout(checkpointBound),
+        isNull,
+      );
     },
   );
 
@@ -241,7 +562,12 @@ void main() {
     'Android resume changes native requiresWiFi on the same partial task',
     () async {
       final downloader = _Downloader();
-      final transport = createTransport(downloader: downloader, isIOS: false);
+      final checkpoints = _ResumeStorage();
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: checkpoints,
+        isIOS: false,
+      );
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -249,9 +575,33 @@ void main() {
         manifest: _manifest(),
         requiresWiFi: false,
       );
+      final task = downloader.enqueued.single;
+      final partial = await retainAndroidCheckpoint(checkpoints, task, 80);
+      expect(
+        (await transport.checkpoint(task.taskId).timeout(checkpointBound))
+            ?.retainedBytes,
+        80,
+      );
       expect(await transport.resume('one', requiresWiFi: true), isTrue);
       expect(downloader.resumed.single.taskId, 'one');
       expect(downloader.resumed.single.requiresWiFi, isTrue);
+      checkpoints.records[task.taskId] = ResumeData(
+        task,
+        partial.path,
+        80,
+        'W/"v1"',
+      );
+      expect(
+        await transport.checkpoint(task.taskId).timeout(checkpointBound),
+        isNull,
+      );
+      expect(
+        await transport
+            .resume(task.taskId, requiresWiFi: true)
+            .timeout(checkpointBound),
+        isFalse,
+      );
+      expect(downloader.resumed, hasLength(1));
     },
   );
 
@@ -259,20 +609,33 @@ void main() {
     'legacy restored Android partial gains the gate on explicit resume',
     () async {
       final downloader = _Downloader();
-      final task = _ownedTask('legacy');
+      final checkpoints = _ResumeStorage();
+      final task = _ownedTask(
+        'legacy',
+      ).copyWith(retries: 3, retriesRemaining: 2);
       downloader.db.records[task.taskId] = TaskRecord(
         task,
         TaskStatus.paused,
         .8,
         100,
       );
-      final transport = createTransport(downloader: downloader, isIOS: false);
+      await retainAndroidCheckpoint(checkpoints, task, 80);
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: checkpoints,
+        isIOS: false,
+      );
       addTearDown(transport.dispose);
       await transport.initialize(task.taskId);
+      expect(downloader.db.records[task.taskId]?.task.options, isNull);
+      expect(downloader.db.records[task.taskId]?.task.retriesRemaining, 2);
       expect(await transport.resume(task.taskId, requiresWiFi: true), isTrue);
       final resumed = downloader.resumed.single;
       expect(resumed.taskId, task.taskId);
       expect(resumed.requiresWiFi, isTrue);
+      expect(resumed.options?.appManagedRecovery, isTrue);
+      expect(resumed.retries, 0);
+      expect(resumed.retriesRemaining, 0);
       final origin = _RecoveringOrigin()..ready = true;
       final result = await HttpOverrides.runZoned(
         () async => resumed.options?.beforeTaskStartCallBack?.call(resumed),
@@ -280,6 +643,93 @@ void main() {
       );
       expect(result, isNull);
       expect(origin.probes, 1);
+    },
+  );
+
+  test(
+    'queued mobile revocation stays unapplied when native cancel returns false after canceled',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance().timeout(
+        checkpointBound,
+      );
+      final manifest = _manifest();
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        preferences: () async => preferences,
+        diskSpace: DiskSpaceChannel(invoker: (_, _) async => 1000),
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+      );
+      final downloader = _Downloader();
+      final checkpoints = _ResumeStorage();
+      final task = _ownedTask(
+        'legacy-mobile-resume',
+      ).copyWith(requiresWiFi: false);
+      downloader.active[task.taskId] = task;
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.enqueued,
+        0,
+        manifest.bytes,
+      );
+      final partial = await retainAndroidCheckpoint(checkpoints, task, 80);
+      await storage
+          .saveRecord(
+            ModelDeliveryRecord(
+              manifest: manifest,
+              taskId: task.taskId,
+              receivedBytes: 80,
+              phase: ModelDeliveryPhase.resumeRequested,
+              allowMobileData: true,
+            ),
+          )
+          .timeout(checkpointBound);
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: checkpoints,
+        isIOS: false,
+      );
+      final controller = PersistentModelDeliveryController(
+        storage: storage,
+        network: _StorageTestNetwork(manifest),
+        transport: transport,
+        appBuild: () async => 129,
+        supported: true,
+        spaceReserveBytes: 20,
+      );
+      addTearDown(() => controller.dispose().timeout(checkpointBound));
+      await controller.initialize().timeout(checkpointBound);
+      expect(controller.allowMobileData.value, isTrue);
+      expect(
+        (await transport.checkpoint(task.taskId).timeout(checkpointBound))
+            ?.retainedBytes,
+        80,
+      );
+      downloader.onCancel = (id) async {
+        expect(id, task.taskId);
+        downloader.emit(task, TaskStatus.canceled);
+        expect(downloader.active[id], isNull);
+        return false;
+      };
+
+      await controller.setAllowMobileData(false).timeout(checkpointBound);
+
+      expect(downloader.canceled, [task.taskId]);
+      expect(
+        controller.allowMobileData.value,
+        isTrue,
+        reason:
+            'A canceled callback cannot confirm a rejected native cancellation.',
+      );
+      final persisted = await storage.readRecord().timeout(checkpointBound);
+      expect(persisted?.allowMobileData, isTrue);
+      expect(persisted?.taskId, task.taskId);
+      expect(persisted?.phase, isNot(ModelDeliveryPhase.restartRequired));
+      expect(controller.state.value, isNot(isA<ModelRestartRequired>()));
+      expect(downloader.enqueued, isEmpty);
+      expect(downloader.resumed, isEmpty);
+      expect(await partial.length().timeout(checkpointBound), 80);
     },
   );
 
@@ -770,11 +1220,22 @@ void main() {
       addTearDown(transport.dispose);
       await transport.initialize(null);
       for (final resume in [
-        ResumeData(task, foreign.path, 7),
-        ResumeData(task, plain.path, 5),
-        ResumeData(task.copyWith(group: 'smart_downloads'), wrongTask.path, 12),
-        ResumeData(task.copyWith(taskId: 'other'), wrongTask.path, 12),
-        ResumeData(task, link.path, 7),
+        ResumeData(task, foreign.path, 7, '"v1"'),
+        ResumeData(task, plain.path, 5, '"v1"'),
+        ResumeData(
+          task.copyWith(group: 'smart_downloads'),
+          wrongTask.path,
+          12,
+          '"v1"',
+        ),
+        ResumeData(task.copyWith(taskId: 'other'), wrongTask.path, 12, '"v1"'),
+        ResumeData(
+          task.copyWith(url: _manifest(digest: 'b' * 64).url.toString()),
+          wrongTask.path,
+          12,
+          '"v1"',
+        ),
+        ResumeData(task, link.path, 7, '"v1"'),
       ]) {
         storage.records[task.taskId] = resume;
         downloader.db.records[task.taskId] = TaskRecord(
@@ -784,6 +1245,10 @@ void main() {
           100,
         );
         downloader.active[task.taskId] = task;
+        expect(
+          await transport.checkpoint(task.taskId).timeout(checkpointBound),
+          isNull,
+        );
         await transport.cancel(task.taskId);
         await transport.forget(task.taskId);
       }
@@ -795,7 +1260,7 @@ void main() {
   );
 
   test(
-    'persisted file identity skips adapter hashing after restart and rejects changed bytes',
+    'persisted identity skips hashing after restart and refetches changed bytes',
     () async {
       SharedPreferences.setMockInitialValues({});
       final preferences = await SharedPreferences.getInstance();
@@ -870,7 +1335,7 @@ void main() {
       restarted.state.addListener(() => states.add(restarted.state.value));
       await restarted.initialize();
       expect(restarted.state.value, isA<ModelReady>());
-      expect(states.whereType<ModelDownloading>(), isEmpty);
+      expect(states.whereType<ModelChecking>(), isEmpty);
       expect(hashes, 1);
       await restarted.dispose();
       active.remove(restarted);
@@ -878,10 +1343,20 @@ void main() {
       await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(1000));
       final changed = controller();
       await changed.initialize();
-      await _waitForState<ModelNotDownloaded>(changed);
+      await _waitForState<ModelIntegrityRepair>(changed);
+      await changed
+          .setAllowMobileData(false)
+          .timeout(const Duration(seconds: 3));
       expect(hashes, 2);
       expect(await file.exists(), isFalse);
-      expect((await storage.readRecord())!.verification, isNull);
+      final replacement = (await storage.readRecord())!;
+      expect(replacement.verification, isNull);
+      expect(replacement.phase, ModelDeliveryPhase.active);
+      expect(replacement.taskId, isNot('one'));
+      await expectLater(
+        changed.verifiedModelPath().timeout(const Duration(seconds: 3)),
+        throwsStateError,
+      );
     },
   );
 
@@ -1087,12 +1562,14 @@ class _Downloader extends Fake implements FileDownloader {
   final resumed = <DownloadTask>[];
   final canceled = <String>[];
   TaskStatusCallback? statusCallback;
+  TaskProgressCallback? progressCallback;
   String? registeredGroup;
   String? trackedGroup;
   String? notificationGroup;
   TaskNotification? completeNotification;
   bool? markDownloadedComplete;
   bool resumedBackground = false;
+  bool resumeAccepted = true;
   Future<bool> Function(String)? onCancel;
   Future<Task?> Function(String)? onTaskForId;
   @override
@@ -1108,6 +1585,7 @@ class _Downloader extends Fake implements FileDownloader {
   }) {
     registeredGroup = group;
     statusCallback = taskStatusCallback;
+    progressCallback = taskProgressCallback;
     return this;
   }
 
@@ -1159,7 +1637,7 @@ class _Downloader extends Fake implements FileDownloader {
   @override
   Future<bool> resume(Task task) async {
     resumed.add(task as DownloadTask);
-    return true;
+    return resumeAccepted;
   }
 
   @override
@@ -1173,7 +1651,10 @@ class _Downloader extends Fake implements FileDownloader {
   }) async =>
       active.values.where((task) => allGroups || task.group == group).toList();
   @override
-  Future<bool> cancelTaskWithId(String taskId) async {
+  Future<bool> cancelTaskWithId(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     canceled.add(taskId);
     final action = onCancel;
     if (action != null) return action(taskId);
@@ -1182,10 +1663,21 @@ class _Downloader extends Fake implements FileDownloader {
     return true;
   }
 
-  void emit(Task task, TaskStatus status) {
+  void emit(Task task, TaskStatus status) =>
+      emitUpdate(TaskStatusUpdate(task, status));
+
+  void emitUpdate(TaskStatusUpdate update) {
+    final task = update.task;
+    final status = update.status;
     if (status.isFinalState) active.remove(task.taskId);
-    db.records[task.taskId] = TaskRecord(task, status, 0, 100);
-    statusCallback?.call(TaskStatusUpdate(task, status));
+    db.records[task.taskId] = TaskRecord(
+      task,
+      status,
+      0,
+      100,
+      update.exception,
+    );
+    statusCallback?.call(update);
   }
 }
 
@@ -1253,6 +1745,14 @@ class _ResumeStorage extends Fake implements PersistentStorage {
   @override
   Future<ResumeData?> retrieveResumeData(String taskId) async =>
       onRetrieve == null ? records[taskId] : await onRetrieve!(taskId);
+  @override
+  Future<void> removeResumeData(String? taskId) async {
+    if (taskId == null) {
+      records.clear();
+    } else {
+      records.remove(taskId);
+    }
+  }
 }
 
 Future<void> _waitForState<T extends ModelDeliveryState>(
@@ -1277,7 +1777,9 @@ class _StorageTestNetwork implements ModelDeliveryNetwork {
   @override
   Future<Map<String, Object?>> fetchManifest() async => manifest.toJson();
   @override
-  Future<bool> checkWifi() async => true;
+  Future<ModelDeliveryConnection> checkConnection() async =>
+      ModelDeliveryConnection.wifi;
   @override
-  Stream<bool> get wifiChanges => const Stream<bool>.empty();
+  Stream<ModelDeliveryConnection> get connectionChanges =>
+      const Stream<ModelDeliveryConnection>.empty();
 }

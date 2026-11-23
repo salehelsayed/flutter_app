@@ -5040,7 +5040,143 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get translator_progress_keeps_going =>
-      'يمكنك إغلاق هذا. يستمر التنزيل حتى لو غادرت مكنون.';
+      'يمكنك مغادرة هذه الشاشة. يمكن أن يستمر التنزيل في الخلفية ويُستأنف من حيث توقف.';
+
+  @override
+  String get translator_checking_title => 'جارٍ التحقق من التنزيل';
+
+  @override
+  String get translator_checking_line =>
+      'نتحقق من اكتمال الملف. قد يستغرق ذلك لحظة.';
+
+  @override
+  String get translator_offline_start_title => 'أنت غير متصل بالإنترنت';
+
+  @override
+  String get translator_offline_start_wifi =>
+      'اتصل بشبكة واي فاي. يبدأ التنزيل تلقائيًا عند عودة الاتصال.';
+
+  @override
+  String get translator_offline_start_mobile =>
+      'اتصل بشبكة واي فاي أو فعّل بيانات الهاتف. يبدأ التنزيل تلقائيًا عند عودة الاتصال.';
+
+  @override
+  String translator_update_title(String appName) {
+    return 'حدّث $appName لاستخدام المترجم';
+  }
+
+  @override
+  String get translator_update_line =>
+      'لا يمكن لهذا الإصدار استخدام أحدث نسخة من المترجم. حدّث التطبيق للمتابعة.';
+
+  @override
+  String get translator_integrity_title => 'الملف تالف';
+
+  @override
+  String get translator_integrity_retry =>
+      'ننزّل الملف مجددًا. لا يلزمك فعل شيء.';
+
+  @override
+  String get translator_integrity_exhausted => 'حاول مجددًا لتنزيل نسخة جديدة.';
+
+  @override
+  String get translator_connection_title => 'بانتظار الاتصال';
+
+  @override
+  String translator_connection_kept(String percent) {
+    return 'تم حفظ $percent٪ من التنزيل. سيُستأنف تلقائيًا عند عودة الاتصال.';
+  }
+
+  @override
+  String get translator_connection_unmeasured =>
+      'سنحاول متابعة التنزيل عند عودة الاتصال.';
+
+  @override
+  String translator_kept_amount(String amount) {
+    return 'تم حفظ $amount';
+  }
+
+  @override
+  String get translator_server_title => 'خادم التنزيل لا يستجيب';
+
+  @override
+  String translator_server_retry(String time, String percent) {
+    return 'المشكلة من جانبنا. سنحاول مجددًا خلال $time. تم حفظ $percent٪ من التنزيل.';
+  }
+
+  @override
+  String translator_server_retry_unmeasured(String time) {
+    return 'المشكلة من جانبنا. سنحاول مجددًا خلال $time.';
+  }
+
+  @override
+  String translator_server_exhausted(String percent) {
+    return 'المشكلة من جانبنا. تم حفظ $percent٪ من التنزيل. حاول مجددًا للمتابعة.';
+  }
+
+  @override
+  String get translator_server_exhausted_unmeasured =>
+      'المشكلة من جانبنا. حاول مجددًا للمتابعة.';
+
+  @override
+  String translator_retry_seconds(String count) {
+    return '$count ث';
+  }
+
+  @override
+  String translator_retry_minutes(String count) {
+    return '$count د';
+  }
+
+  @override
+  String get translator_try_now => 'حاول الآن';
+
+  @override
+  String get translator_transfer_full_title => 'مساحة هاتفك ممتلئة';
+
+  @override
+  String translator_transfer_full_kept(String size, String percent) {
+    return 'أفرغ $size لإكمال التنزيل. تم حفظ $percent٪ من التنزيل.';
+  }
+
+  @override
+  String translator_transfer_full_size(String size) {
+    return 'أفرغ $size لإكمال التنزيل.';
+  }
+
+  @override
+  String get translator_transfer_full_unmeasured =>
+      'أفرغ بعض المساحة، ثم تابع التنزيل.';
+
+  @override
+  String get translator_continue => 'متابعة';
+
+  @override
+  String get translator_transfer_save_title => 'تعذّر حفظ التنزيل';
+
+  @override
+  String get translator_transfer_save_line =>
+      'تحقق من مساحة التخزين على هاتفك، ثم حاول مجددًا.';
+
+  @override
+  String get translator_resume_lost =>
+      'تعذّر الاحتفاظ بتقدّم التنزيل. سيبدأ التنزيل من جديد.';
+
+  @override
+  String get translator_notification_ready_title => 'الترجمة جاهزة';
+
+  @override
+  String get translator_notification_ready_body =>
+      'يمكنك الآن ترجمة الرسائل بلغات أخرى على هاتفك.';
+
+  @override
+  String get translator_notification_paused_title =>
+      'توقف تنزيل المترجم مؤقتًا';
+
+  @override
+  String translator_notification_paused_body(String reason, String percent) {
+    return '$reason. تم حفظ $percent٪ من التنزيل.';
+  }
 
   @override
   String get translator_close => 'إغلاق';

@@ -317,7 +317,8 @@ void main() {
     expect(find.text('about 6 min left'), findsOneWidget);
     expect(
       find.text(
-        'You can close this. It keeps going, even if you leave Mknoon.',
+        'You can leave this screen. Your download can continue in the '
+        'background and picks up where it stopped.',
       ),
       findsOneWidget,
     );
@@ -335,6 +336,42 @@ void main() {
     expect(find.text('Getting translation ready'), findsNothing);
     expect(controller.calls, ['pause']);
   });
+
+  testWidgets(
+    'download explains background resume and keeps progress on reopen',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      final controller = await _openSheet(
+        tester,
+        const ModelDownloading(receivedBytes: 1100000000, totalBytes: _total),
+      ).timeout(bound);
+      final progress = find.byType(LinearProgressIndicator);
+      expect(tester.widget<LinearProgressIndicator>(progress).value, 0.42);
+
+      await tester.tap(find.text('Close')).timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
+      expect(progress, findsNothing);
+
+      await tester.tap(find.text('open')).timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.pump(const Duration(milliseconds: 350)).timeout(bound);
+      expect(tester.widget<LinearProgressIndicator>(progress).value, 0.42);
+      expect(controller.calls, isEmpty);
+
+      await tester.tap(find.text('Pause')).timeout(bound);
+      expect(controller.calls, ['pause']);
+      expect(
+        find.text(
+          'You can leave this screen. Your download can continue in the '
+          'background and picks up where it stopped.',
+        ),
+        findsOneWidget,
+        reason:
+            'the download sheet explains background continuation and resume',
+      );
+    },
+  );
 
   testWidgets(
     '3c waiting for Wi-Fi: Use mobile data continues on mobile data',

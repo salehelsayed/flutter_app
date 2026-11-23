@@ -2,13 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,6 +115,73 @@ void main() {
     },
   );
 
+  test('readiness pause resumes the same owned partial task', () {
+    fakeAsync((clock) {
+      late _Harness h;
+      unawaited(
+        _Harness.create(canRecoverUnexpectedPauses: true).then((harness) async {
+          h = harness;
+          await h.controller.start(allowMobileData: false);
+          await h.event(ModelTransferStatus.running, bytes: 40);
+          await h.event(ModelTransferStatus.paused);
+        }),
+      );
+      clock.flushMicrotasks();
+      try {
+        final id = h.id;
+        clock.elapse(const Duration(milliseconds: 4999));
+        expect(h.transport.resumes, isEmpty);
+        clock.elapse(const Duration(milliseconds: 1));
+        expect(h.transport.resumes, [(taskId: id, requiresWiFi: true)]);
+        expect(h.transport.enqueues, hasLength(1));
+        expect(h.transport.cancels, isEmpty);
+        expect(h.transport.forgets, isEmpty);
+        expect(h.storage.record!.receivedBytes, 40);
+      } finally {
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      }
+    });
+  });
+
+  test('rejected readiness resume retains the partial and backs off', () {
+    fakeAsync((clock) {
+      late _Harness h;
+      unawaited(
+        _Harness.create(canRecoverUnexpectedPauses: true).then((harness) async {
+          h = harness;
+          await h.controller.start(allowMobileData: false);
+          await h.event(ModelTransferStatus.running, bytes: 40);
+          h.network.failFetch = true;
+          h.transport.resumeAccepted = false;
+          await h.event(ModelTransferStatus.paused);
+        }),
+      );
+      clock.flushMicrotasks();
+      try {
+        final id = h.id;
+        const delaysInSeconds = [5, 15, 45, 135, 405, 600, 600];
+        for (final (index, seconds) in delaysInSeconds.indexed) {
+          clock.elapse(Duration(milliseconds: seconds * 1000 - 1));
+          expect(h.transport.resumes, hasLength(index));
+          clock.elapse(const Duration(milliseconds: 1));
+          expect(h.transport.resumes, hasLength(index + 1));
+          expect(h.transport.resumes.last, (taskId: id, requiresWiFi: true));
+          expect(h.id, id);
+          expect(h.storage.record!.receivedBytes, 40);
+          expect(h.storage.removals, 0);
+        }
+        expect(h.network.fetches, 1);
+        expect(h.transport.enqueues, hasLength(1));
+        expect(h.transport.cancels, isEmpty);
+        expect(h.transport.forgets, isEmpty);
+      } finally {
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      }
+    });
+  });
+
   test(
     'mobile opt-in is persisted without starting on initialization or toggle',
     () async {
@@ -176,6 +247,132 @@ void main() {
   );
 
   test(
+    'mobile consent keeps a queued resume with a confirmed partial',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(
+        canRecoverUnexpectedPauses: true,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+      await h.controller.pause().timeout(bound);
+      const checkpoint = ModelResumeCheckpoint(retainedBytes: 42);
+      h.transport.checkpoints[taskId] = checkpoint;
+      await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+
+      h.network.changeWifi(false);
+      await h.flush().timeout(bound);
+      await h.controller.resume().timeout(bound);
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: true)]);
+      await h.event(ModelTransferStatus.enqueued, bytes: 42).timeout(bound);
+      expect(h.controller.state.value, isA<ModelWaitingForWifi>());
+      final confirmed = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(confirmed?.retainedBytes, 42);
+
+      await h.controller.setAllowMobileData(true).timeout(bound);
+
+      expect(
+        h.transport.cancels,
+        isEmpty,
+        reason: 'enabling mobile data preserves a queued confirmed checkpoint',
+      );
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.queuedPolicyUpdates, [
+        (taskId: taskId, requiresWiFi: false),
+      ]);
+      expect(h.transport.ownedTasks, {taskId});
+      expect(h.storage.record!.allowMobileData, isTrue);
+      expect(h.id, taskId);
+      expect(h.storage.record!.receivedBytes, 42);
+      final retained = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(retained?.retainedBytes, 42);
+
+      await h.controller.setAllowMobileData(false).timeout(bound);
+      expect(h.transport.queuedPolicyUpdates, [
+        (taskId: taskId, requiresWiFi: false),
+        (taskId: taskId, requiresWiFi: true),
+      ]);
+      expect(h.storage.record!.allowMobileData, isFalse);
+      expect(h.transport.cancels, isEmpty);
+      expect(h.id, taskId);
+    },
+  );
+
+  test(
+    'revoking mobile data durably cancels an unreconfigurable queued resume',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(
+        wifi: false,
+        canRecoverUnexpectedPauses: true,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      await h.controller.start(allowMobileData: true).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+      await h.controller.pause().timeout(bound);
+      h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
+        retainedBytes: 42,
+      );
+      await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+      await h.controller.resume().timeout(bound);
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: false)]);
+      await h.event(ModelTransferStatus.enqueued, bytes: 42).timeout(bound);
+      final checkpoint = await h.transport.checkpoint(taskId).timeout(bound);
+      expect(checkpoint?.retainedBytes, 42);
+
+      final cancellationStarted = Completer<void>();
+      final cancellation = Completer<void>();
+      h.transport
+        ..restored = ModelTransferSnapshot(
+          taskId: taskId,
+          status: ModelTransferStatus.enqueued,
+          receivedBytes: 42,
+          requiresWiFi: false,
+        )
+        ..queuedPolicyUpdateResult = ModelQueuedPolicyUpdate.unavailable
+        ..cancellationStarted = cancellationStarted
+        ..cancellation = cancellation;
+      final revoke = h.controller.setAllowMobileData(false);
+
+      try {
+        final cancelStarted = await Future.any([
+          cancellationStarted.future.then((_) => true),
+          revoke.then((_) => false),
+        ]).timeout(bound);
+        expect(h.transport.queuedPolicyUpdates, [
+          (taskId: taskId, requiresWiFi: true),
+        ]);
+        expect(
+          cancelStarted,
+          isTrue,
+          reason:
+              'revocation must durably stop the queued mobile task before returning',
+        );
+        expect(h.transport.cancels, [taskId]);
+        expect(h.transport.ownedTasks, {taskId});
+        expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: false)]);
+        expect(h.controller.allowMobileData.value, isTrue);
+        expect(h.storage.record!.allowMobileData, isTrue);
+      } finally {
+        cancellation.complete();
+      }
+      await revoke.timeout(bound);
+
+      expect(h.controller.allowMobileData.value, isFalse);
+      expect(h.storage.record!.allowMobileData, isFalse);
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, [taskId]);
+      expect(h.transport.ownedTasks, isEmpty);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: false)]);
+    },
+  );
+
+  test(
     'explicit mobile start replaces a never-started Wi-Fi task without waiting for pause',
     () async {
       final h = await _Harness.create(wifi: false);
@@ -193,6 +390,53 @@ void main() {
       expect(h.transport.ownedTasks, {h.id});
       expect(h.id, isNot(oldId));
       expect(h.controller.state.value, isA<ModelDownloading>());
+    },
+  );
+
+  test(
+    'cancel still stops offline start while the active record is being saved',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(wifi: false).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      h.network.offline = true;
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      expect(h.controller.state.value, isA<ModelAwaitingConnection>());
+      expect(h.transport.enqueues, isEmpty);
+
+      final activeWriteStarted = Completer<void>();
+      final releaseActiveWrite = Completer<void>();
+      h.storage.beforeSaveRecord = (record) async {
+        if (record.phase != ModelDeliveryPhase.active ||
+            activeWriteStarted.isCompleted) {
+          return;
+        }
+        activeWriteStarted.complete();
+        await releaseActiveWrite.future.timeout(bound);
+      };
+      h.network.changeWifi(true);
+
+      late Future<void> cancel;
+      try {
+        await activeWriteStarted.future.timeout(bound);
+        expect(h.controller.state.value, isA<ModelAwaitingConnection>());
+        expect(h.storage.record!.phase, ModelDeliveryPhase.awaitingConnection);
+        expect(h.transport.enqueues, isEmpty);
+        cancel = h.controller.cancelPendingStart();
+      } finally {
+        releaseActiveWrite.complete();
+      }
+      await cancel.timeout(bound);
+      await h.flush().timeout(bound);
+
+      expect(
+        h.transport.enqueues,
+        isEmpty,
+        reason: 'cancel during the active record write prevents native enqueue',
+      );
+      expect(h.controller.state.value, isA<ModelNotDownloaded>());
+      expect(h.storage.record!.phase, ModelDeliveryPhase.idle);
+      expect(h.storage.record!.taskId, isNull);
     },
   );
 
@@ -287,7 +531,7 @@ void main() {
   );
 
   test(
-    'policy resume rejection restarts only owned task and rechecks full space',
+    'policy resume rejection explains restart and rechecks full space on retry',
     () async {
       final h = await _Harness.create(wifi: false);
       addTearDown(h.dispose);
@@ -299,16 +543,31 @@ void main() {
       h.transport.resumeAccepted = false;
       await h.controller.setAllowMobileData(false);
       await h.event(ModelTransferStatus.paused, bytes: 80);
+      expect(h.transport.resumes.single.requiresWiFi, isTrue);
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, isEmpty);
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+      expect(h.transport.enqueues, hasLength(1));
+
+      await h.controller.retry();
+      expect(
+        h.controller.state.value,
+        isA<ModelDownloadNeedsSpace>()
+            .having((state) => state.additionalBytes, 'additional bytes', 60)
+            .having(
+              (state) => state.restartsFromZero,
+              'restarts from zero',
+              true,
+            ),
+      );
+      expect(h.transport.enqueues, hasLength(1));
+
+      h.storage.freeBytes = 200;
+      await h.controller.retry();
       expect(h.transport.cancels, [oldId]);
       expect(h.transport.forgets, [oldId]);
       expect(h.storage.removals, 1);
-      expect(h.transport.enqueues, hasLength(1));
-      expect(
-        (h.controller.state.value as ModelNotEnoughSpace).neededBytes,
-        120,
-      );
-      h.storage.freeBytes = 200;
-      await h.controller.retry();
       expect(h.transport.enqueues, hasLength(2));
       expect(h.transport.enqueues.last.requiresWiFi, isTrue);
       expect(h.id, isNot(oldId));
@@ -316,7 +575,7 @@ void main() {
   );
 
   test(
-    'silent native retries preserve progress; exhausted failure is retryable',
+    'legacy retries show progress and explain restart when no checkpoint remains',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
@@ -325,7 +584,8 @@ void main() {
       await h.event(ModelTransferStatus.waitingToRetry, bytes: 30);
       expect((h.controller.state.value as ModelDownloading).receivedBytes, 30);
       await h.event(ModelTransferStatus.failed);
-      expect(h.controller.state.value, isA<ModelFailed>());
+      expect(h.controller.state.value, isA<ModelRestartRequired>());
+      expect(h.transport.cancels, isEmpty);
       await h.controller.retry();
       expect(h.transport.cancels, [oldId]);
       expect(h.transport.enqueues, hasLength(2));
@@ -385,7 +645,7 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       final ready = _nextState<ModelReady>(h.controller.state);
       verification.complete(true);
       await ready;
@@ -408,7 +668,7 @@ void main() {
           verification: verification,
         );
         addTearDown(h.dispose);
-        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.controller.state.value, isA<ModelChecking>());
         final ready = _nextState<ModelReady>(h.controller.state);
         verification.complete(true);
         await ready;
@@ -449,7 +709,7 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       final ready = _nextState<ModelReady>(h.controller.state);
       verification.complete(true);
       await ready;
@@ -505,14 +765,14 @@ void main() {
   );
 
   test(
-    'completion stays downloading until size/checksum verification succeeds',
+    'completion shows Checking until size/checksum verification succeeds',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       await h.controller.start(allowMobileData: false);
       h.storage.verification = Completer<bool>();
       await h.event(ModelTransferStatus.complete);
-      expect((h.controller.state.value as ModelDownloading).receivedBytes, 100);
+      expect(h.controller.state.value, isA<ModelChecking>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
       final ready = _nextState<ModelReady>(h.controller.state);
       h.storage.verification!.complete(true);
@@ -555,12 +815,14 @@ void main() {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       await h.controller.start(allowMobileData: false);
+      final damagedTask = h.id;
       h.storage.valid = false;
-      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
+      final refetching = _nextState<ModelIntegrityRepair>(h.controller.state);
       await h.event(ModelTransferStatus.complete);
-      await offer;
+      await refetching;
+      await h.flush();
       expect(h.storage.removals, 1);
-      expect(h.transport.forgets, [h.transport.enqueues.single.taskId]);
+      expect(h.transport.forgets, [damagedTask]);
       expect(h.storage.record!.verification, isNull);
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
     },
@@ -630,11 +892,12 @@ void main() {
         verification: verification,
       );
       addTearDown(h.dispose);
-      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.controller.state.value, isA<ModelChecking>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
-      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
+      final refetching = _nextState<ModelIntegrityRepair>(h.controller.state);
       verification.complete(false);
-      await offer;
+      await refetching;
+      await h.flush();
       expect(h.storage.removals, 1);
     },
   );
@@ -743,13 +1006,13 @@ void main() {
   });
 
   test(
-    'manifest build floor projects Unsupported without a native task',
+    'manifest build floor requires an update without a native task',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
       h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
       await h.controller.start(allowMobileData: false);
-      expect(h.controller.state.value, isA<ModelUnsupported>());
+      expect(h.controller.state.value, isA<ModelUpdateRequired>());
       expect(h.transport.enqueues, isEmpty);
     },
   );
@@ -1438,6 +1701,154 @@ void main() {
     }
   });
 
+  group('BL60 committed background notices', () {
+    const bound = Duration(seconds: 3);
+
+    ({Future<void> started, VoidCallback release}) holdRecordWrite(
+      _Storage storage,
+      ModelDeliveryPhase phase,
+    ) {
+      final started = Completer<void>();
+      final proceed = Completer<void>();
+      storage.beforeSaveRecord = (record) async {
+        if (record.phase != phase || started.isCompleted) return;
+        started.complete();
+        await proceed.future.timeout(bound);
+      };
+
+      void release() {
+        if (!proceed.isCompleted) proceed.complete();
+      }
+
+      addTearDown(release);
+      return (started: started.future, release: release);
+    }
+
+    test('verified Ready publishes once after its record commits', () async {
+      final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
+      _Storage? storage;
+      final h = await _Harness.create(
+        publishBackgroundStatus: (state) async =>
+            notices.add((state, storage?.record)),
+      ).timeout(bound);
+      storage = h.storage;
+      addTearDown(() => h.dispose().timeout(bound));
+
+      final checking = Completer<bool>();
+      final checkingStarted = Completer<void>();
+      h.storage
+        ..verification = checking
+        ..verificationStarted = checkingStarted;
+      addTearDown(() {
+        if (!checking.isCompleted) checking.complete(false);
+      });
+      final write = holdRecordWrite(h.storage, ModelDeliveryPhase.ready);
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      final taskId = h.id;
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await checkingStarted.future.timeout(bound);
+      expect(notices, isEmpty, reason: 'transport complete is still checking');
+
+      checking.complete(true);
+      await write.started.timeout(bound);
+      expect(h.storage.record!.phase, ModelDeliveryPhase.verifying);
+      expect(
+        notices,
+        isEmpty,
+        reason: 'the verified record is still being saved',
+      );
+      write.release();
+      await h.flush().timeout(bound);
+
+      expect(
+        notices,
+        hasLength(1),
+        reason:
+            'the committed verified record publishes exactly one Ready notice',
+      );
+      final (state, record) = notices.single;
+      expect(
+        state,
+        isA<ModelReady>().having((s) => s.sizeBytes, 'sizeBytes', 100),
+      );
+      expect(record?.phase, ModelDeliveryPhase.ready);
+      expect(record?.taskId, taskId);
+      expect(record?.verification?.expectedSha256, _manifest.sha256);
+      expect(record?.verification?.identity, _fileIdentity());
+
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await h.controller.refresh().timeout(bound);
+      expect(notices, hasLength(1));
+    });
+
+    test(
+      'acknowledged Pause publishes once after owned progress commits',
+      () async {
+        final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
+        _Storage? storage;
+        final h = await _Harness.create(
+          publishBackgroundStatus: (state) async =>
+              notices.add((state, storage?.record)),
+        ).timeout(bound);
+        storage = h.storage;
+        addTearDown(() => h.dispose().timeout(bound));
+
+        await h.controller.start(allowMobileData: false).timeout(bound);
+        final taskId = h.id;
+        await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+        await h.controller.pause().timeout(bound);
+        expect(h.transport.pauses, [taskId]);
+        expect(h.storage.record!.phase, ModelDeliveryPhase.pauseRequested);
+        expect(
+          notices,
+          isEmpty,
+          reason: 'a pause request awaits acknowledgement',
+        );
+
+        h.transport.checkpoints[taskId] = const ModelResumeCheckpoint(
+          retainedBytes: 42,
+        );
+        final write = holdRecordWrite(h.storage, ModelDeliveryPhase.userPaused);
+        final acknowledgement = h.event(ModelTransferStatus.paused, bytes: 42);
+        await write.started.timeout(bound);
+        expect(h.storage.record!.phase, ModelDeliveryPhase.pauseRequested);
+        expect(
+          notices,
+          isEmpty,
+          reason: 'the acknowledged pause is still being saved',
+        );
+        write.release();
+        await acknowledgement.timeout(bound);
+
+        expect(
+          notices,
+          hasLength(1),
+          reason:
+              'the committed pause publishes exactly one owned progress notice',
+        );
+        final (state, record) = notices.single;
+        expect(
+          state,
+          isA<ModelPaused>()
+              .having((s) => s.percent, 'percent', 42)
+              .having((s) => s.confirmedReceivedBytes, 'confirmed bytes', 42),
+        );
+        expect(record?.phase, ModelDeliveryPhase.userPaused);
+        expect(record?.taskId, taskId);
+        expect(record?.receivedBytes, 42);
+
+        await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+        h.transport.eventsController.add(
+          ModelTransferEvent(taskId: taskId, receivedBytes: 43),
+        );
+        await h.flush().timeout(bound);
+        expect(notices, hasLength(1));
+        expect(h.storage.record!.receivedBytes, 42);
+      },
+    );
+  });
+
   group('BL15 transcription tail', () {
     Uint8List samples(List<int> values) {
       final data = ByteData(values.length * 2);
@@ -1783,6 +2194,274 @@ void main() {
       });
     }
   });
+
+  group('BL60 translator download sheet states', () {
+    const bound = Duration(seconds: 3);
+
+    Future<T> runController<T>(
+      WidgetTester tester,
+      Future<T> Function() action,
+    ) async {
+      final result = await tester.runAsync(
+        () async => (value: await action().timeout(bound)),
+      );
+      return result!.value;
+    }
+
+    void testSheet(
+      String description,
+      Future<void> Function(WidgetTester tester, _Harness h) body, {
+      Future<_Harness> Function()? create,
+    }) {
+      testWidgets(description, (tester) async {
+        final h = await runController(tester, create ?? _Harness.create);
+        try {
+          await body(tester, h);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await runController(tester, () async {
+            final verification = h.storage.verification;
+            if (verification != null && !verification.isCompleted) {
+              verification.complete(true);
+              await h.flush();
+            }
+            await h.dispose();
+          });
+        }
+      });
+    }
+
+    Future<void> pressSheetButton(
+      WidgetTester tester,
+      _Harness h,
+      String label,
+    ) {
+      final button = tester.widget<ButtonStyleButton>(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is ButtonStyleButton,
+          ),
+        ),
+      );
+      expect(button.onPressed, isNotNull);
+      return runController(tester, () async {
+        button.onPressed!();
+        await h.flush();
+      });
+    }
+
+    Future<void> pumpSheet(
+      WidgetTester tester,
+      ModelDeliveryController controller,
+    ) => tester
+        .pumpWidget(
+          MaterialApp(
+            title: 'mknoon',
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PrivateTranslatorSheet(controller: controller),
+            ),
+          ),
+        )
+        .timeout(bound);
+
+    testSheet('checking hides Pause while verification is pending', (
+      tester,
+      h,
+    ) async {
+      await runController(tester, () async {
+        final started = Completer<void>();
+        h.storage
+          ..verification = Completer<bool>()
+          ..verificationStarted = started;
+        await h.controller.start(allowMobileData: false);
+        await h.event(ModelTransferStatus.complete);
+        await started.future;
+      });
+      await pumpSheet(tester, h.controller);
+
+      expect(
+        find.text('Checking the download'),
+        findsOneWidget,
+        reason:
+            'the sheet shows download checking while the checksum is pending',
+      );
+      expect(find.text('Pause'), findsNothing);
+    });
+
+    testSheet(
+      'the first offline download tap explains the wait without enqueuing',
+      (tester, h) async {
+        h.network.offline = true;
+
+        await pumpSheet(tester, h.controller);
+        await pressSheetButton(tester, h, 'Download when on Wi-Fi');
+        await tester.pump().timeout(bound);
+
+        expect(h.transport.enqueues, isEmpty);
+        expect(h.network.fetches, 0);
+        expect(
+          find.text("You're offline"),
+          findsOneWidget,
+          reason: 'the sheet explains offline on the first download request',
+        );
+        await pressSheetButton(tester, h, 'Cancel');
+        await runController(tester, () async {
+          h.network.changeWifi(true);
+          await h.flush();
+        });
+        expect(h.transport.enqueues, isEmpty);
+
+        await runController(tester, () async {
+          h.network.changeWifi(false, offline: true);
+          await h.flush();
+        });
+        await tester.pump().timeout(bound);
+        await pressSheetButton(tester, h, 'Download when on Wi-Fi');
+        await runController(tester, () async {
+          h.network.changeWifi(false);
+          await h.flush();
+        });
+        expect(h.transport.enqueues, isEmpty);
+        await runController(tester, () async {
+          h.network.changeWifi(true);
+          await h.flush();
+        });
+        expect(h.transport.enqueues, [(taskId: h.id, requiresWiFi: true)]);
+      },
+      create: () => _Harness.create(
+        wifi: false,
+        freeBytes: 3000000000,
+        record: const ModelDeliveryRecord(),
+      ),
+    );
+
+    testSheet('a newer required build offers Update without enqueuing', (
+      tester,
+      h,
+    ) async {
+      h.network.manifest = {..._manifest.toJson(), 'minAppBuild': 130};
+
+      await pumpSheet(tester, h.controller);
+      await pressSheetButton(tester, h, 'Download on Wi-Fi');
+      await tester.pump().timeout(bound);
+
+      expect(h.network.fetches, 1);
+      expect(h.transport.enqueues, isEmpty);
+      expect(
+        find.text('Update mknoon to use the translator'),
+        findsOneWidget,
+        reason:
+            'the sheet offers a branded update when the manifest requires a newer build',
+      );
+      expect(find.text('Update'), findsOneWidget);
+    });
+
+    testSheet('connection loss keeps progress and resumes the owned task', (
+      tester,
+      h,
+    ) async {
+      final taskId = await runController(tester, () async {
+        await h.controller.start(allowMobileData: false);
+        final id = h.id;
+        await h.event(ModelTransferStatus.running, bytes: 42);
+        h.transport.checkpoints[id] = const ModelResumeCheckpoint(
+          retainedBytes: 42,
+        );
+        h.network.changeWifi(false, offline: true);
+        await h.event(ModelTransferStatus.paused);
+        return id;
+      });
+      await pumpSheet(tester, h.controller);
+
+      expect(h.transport.pauses, isEmpty);
+      expect(h.transport.resumes, isEmpty);
+      expect(
+        find.text('Waiting for a connection'),
+        findsOneWidget,
+        reason:
+            'an interrupted download explains that it is waiting for a connection',
+      );
+      expect(
+        find.text(
+          "Your download is safe at 42%. It continues by itself when you're "
+          'back online.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Pause'), findsOneWidget);
+
+      await runController(tester, () async {
+        h.network.changeWifi(true);
+        await h.flush();
+      });
+
+      expect(h.transport.resumes, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.enqueues, [(taskId: taskId, requiresWiFi: true)]);
+      expect(h.transport.cancels, isEmpty);
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.record!.receivedBytes, 42);
+    });
+
+    testSheet('a checksum mismatch automatically refetches only once', (
+      tester,
+      h,
+    ) async {
+      await runController(
+        tester,
+        () => h.controller.start(allowMobileData: false),
+      );
+      final rejected = h.id;
+      h.storage.valid = false;
+      await pumpSheet(tester, h.controller);
+
+      Future<void> finishWithBadChecksum() async {
+        await runController(tester, () async {
+          final requestedRemoval = Completer<void>();
+          h.storage.onRemove = () async => requestedRemoval.complete();
+          await h.event(ModelTransferStatus.complete);
+          await requestedRemoval.future;
+          await h.flush();
+        });
+        await tester.pump().timeout(bound);
+      }
+
+      await finishWithBadChecksum();
+      expect(
+        h.transport.enqueues,
+        hasLength(2),
+        reason:
+            'the first failed checksum requests one replacement automatically',
+      );
+      final replacement = h.transport.enqueues.last;
+      expect(replacement.taskId, isNot(rejected));
+      expect(replacement.requiresWiFi, isTrue);
+      expect(h.storage.removals, 1);
+      expect(h.transport.forgets, [rejected]);
+      expect(find.text('The file was damaged'), findsOneWidget);
+      expect(
+        find.text("We're downloading the file again. Nothing for you to do."),
+        findsOneWidget,
+      );
+      await runController(
+        tester,
+        () => expectLater(h.controller.verifiedModelPath(), throwsStateError),
+      );
+
+      await finishWithBadChecksum();
+      expect(h.transport.enqueues, hasLength(2));
+      expect(h.storage.removals, 2);
+      expect(h.transport.forgets, [rejected, replacement.taskId]);
+      expect(find.text('Try again to download a new copy.'), findsOneWidget);
+      await runController(
+        tester,
+        () => expectLater(h.controller.verifiedModelPath(), throwsStateError),
+      );
+    });
+  });
 }
 
 class _Bl15Documents extends PathProviderPlatform {
@@ -1828,6 +2507,7 @@ class _Harness {
 
   static Future<_Harness> create({
     bool supported = true,
+    bool canRecoverUnexpectedPauses = false,
     bool wifi = true,
     int freeBytes = 1000,
     ModelDeliveryRecord? record,
@@ -1840,6 +2520,7 @@ class _Harness {
     Future<bool> Function()? readAvailableMemory,
     Future<({bool supported, bool insufficientMemory})> Function()?
     readCapability,
+    Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
@@ -1849,7 +2530,8 @@ class _Harness {
       ..verification = verification;
     if (identity != null) storage.identity = identity;
     final network = _Network()..wifi = wifi;
-    final transport = _Transport();
+    final transport = _Transport()
+      ..canRecoverUnexpectedPauses = canRecoverUnexpectedPauses;
     if (restoredStatus != null) {
       transport.restored = ModelTransferSnapshot(
         taskId: record!.taskId!,
@@ -1870,6 +2552,7 @@ class _Harness {
           () async => (supported: supported, insufficientMemory: false),
       spaceReserveBytes: 20,
       newTaskId: () => 'task-${++next}',
+      publishBackgroundStatus: publishBackgroundStatus,
     );
     await controller.initialize();
     return _Harness(controller, storage, network, transport);
@@ -1926,10 +2609,12 @@ class _Storage implements ModelDeliveryStorage {
   Completer<bool>? verification;
   Completer<void>? verificationStarted;
   Future<void> Function()? onRemove;
+  Future<void> Function(ModelDeliveryRecord)? beforeSaveRecord;
   @override
   Future<ModelDeliveryRecord?> readRecord() async => record;
   @override
   Future<void> saveRecord(ModelDeliveryRecord value) async {
+    if (beforeSaveRecord case final beforeSave?) await beforeSave(value);
     record = value;
   }
 
@@ -2009,14 +2694,22 @@ class _MemorySession extends Fake implements InferenceModelSession {
 
 class _Network implements ModelDeliveryNetwork {
   bool wifi = true;
+  bool offline = false;
   bool failFetch = false;
   int fetches = 0;
   Map<String, Object?> manifest = _manifest.toJson();
-  final changes = StreamController<bool>.broadcast(sync: true);
+  final changes = StreamController<ModelDeliveryConnection>.broadcast(
+    sync: true,
+  );
+  ModelDeliveryConnection get _connection => offline
+      ? ModelDeliveryConnection.offline
+      : wifi
+      ? ModelDeliveryConnection.wifi
+      : ModelDeliveryConnection.other;
   @override
-  Stream<bool> get wifiChanges => changes.stream;
+  Stream<ModelDeliveryConnection> get connectionChanges => changes.stream;
   @override
-  Future<bool> checkWifi() async => wifi;
+  Future<ModelDeliveryConnection> checkConnection() async => _connection;
   @override
   Future<Map<String, Object?>> fetchManifest() async {
     fetches++;
@@ -2024,24 +2717,32 @@ class _Network implements ModelDeliveryNetwork {
     return manifest;
   }
 
-  void changeWifi(bool value) {
+  void changeWifi(bool value, {bool offline = false}) {
     wifi = value;
-    changes.add(value);
+    this.offline = offline;
+    changes.add(_connection);
   }
 }
 
 class _Transport implements ModelDeliveryTransport {
+  @override
+  bool canRecoverUnexpectedPauses = false;
+
   final eventsController = StreamController<ModelTransferEvent>.broadcast(
     sync: true,
   );
   final enqueues = <({String taskId, bool requiresWiFi})>[];
   final resumes = <({String taskId, bool requiresWiFi})>[];
+  final queuedPolicyUpdates = <({String taskId, bool requiresWiFi})>[];
   final pauses = <String>[];
   final cancels = <String>[];
   final forgets = <String>[];
   final ownedTasks = <String>{};
+  final checkpoints = <String, ModelResumeCheckpoint>{};
   int peakOwnedTasks = 0;
   bool resumeAccepted = true;
+  ModelQueuedPolicyUpdate queuedPolicyUpdateResult =
+      ModelQueuedPolicyUpdate.applied;
   bool failCancel = false;
   Completer<void>? cancellationStarted;
   Completer<void>? cancellation;
@@ -2053,6 +2754,18 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<ModelTransferSnapshot?> restore(String taskId) async =>
       restored?.taskId == taskId ? restored : null;
+  @override
+  Future<ModelResumeCheckpoint?> checkpoint(String taskId) async =>
+      checkpoints[taskId];
+  @override
+  Future<ModelQueuedPolicyUpdate> updateQueuedPolicy(
+    String taskId, {
+    required bool requiresWiFi,
+  }) async {
+    queuedPolicyUpdates.add((taskId: taskId, requiresWiFi: requiresWiFi));
+    return queuedPolicyUpdateResult;
+  }
+
   @override
   Future<bool> enqueue({
     required String taskId,
@@ -2072,13 +2785,20 @@ class _Transport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<bool> resume(String taskId, {required bool requiresWiFi}) async {
+  Future<bool> resume(
+    String taskId, {
+    required bool requiresWiFi,
+    bool allowZeroByteRestart = true,
+  }) async {
     resumes.add((taskId: taskId, requiresWiFi: requiresWiFi));
     return resumeAccepted;
   }
 
   @override
-  Future<void> cancel(String taskId) async {
+  Future<void> cancel(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     cancels.add(taskId);
     if (failCancel) throw StateError('cancellation rejected');
     cancellationStarted?.complete();
@@ -2089,6 +2809,7 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<void> forget(String taskId) async {
     forgets.add(taskId);
+    checkpoints.remove(taskId);
   }
 
   @override

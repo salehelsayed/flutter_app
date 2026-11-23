@@ -14,6 +14,7 @@ import 'package:flutter_app/core/storage/exclude_from_backup.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_notifications.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -21,16 +22,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 PersistentModelDeliveryController createProductionModelDeliveryController() {
   final service = GemmaPreviewService.instance;
+  final resumeStorage = LocalStorePersistentStorage();
+  final notices = ModelDeliveryNotifications();
   final controller = PersistentModelDeliveryController(
     storage: AppSupportModelDeliveryStorage(
       removeModel: service.removeDownloadedModel,
     ),
     network: HttpModelDeliveryNetwork(),
-    transport: BackgroundModelDeliveryTransport(),
+    transport: BackgroundModelDeliveryTransport(
+      downloader: FileDownloader(persistentStorage: resumeStorage),
+      resumeStorage: resumeStorage,
+    ),
     appBuild: () async =>
         int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ?? 0,
     readAvailableMemory: readTranslationMemoryAvailability,
     readCapability: readTranslationCapabilityFacts,
+    publishBackgroundStatus: notices.publish,
+    clearBackgroundStatus: notices.clear,
   );
   service.setInferenceSafetyController(controller);
   service.setDownloadedModelPathResolver(controller.verifiedModelPath);
@@ -72,13 +80,22 @@ final class HttpModelDeliveryNetwork implements ModelDeliveryNetwork {
   }
 
   @override
-  Future<bool> checkWifi() async => (await _connectivity.checkConnectivity())
-      .contains(ConnectivityResult.wifi);
+  Future<ModelDeliveryConnection> checkConnection() async =>
+      _connection(await _connectivity.checkConnectivity());
 
   @override
-  Stream<bool> get wifiChanges => _connectivity.onConnectivityChanged
-      .map((results) => results.contains(ConnectivityResult.wifi))
-      .distinct();
+  Stream<ModelDeliveryConnection> get connectionChanges =>
+      _connectivity.onConnectivityChanged.map(_connection).distinct();
+
+  static ModelDeliveryConnection _connection(List<ConnectivityResult> results) {
+    if (results.contains(ConnectivityResult.wifi)) {
+      return ModelDeliveryConnection.wifi;
+    }
+    if (results.any((result) => result != ConnectivityResult.none)) {
+      return ModelDeliveryConnection.other;
+    }
+    return ModelDeliveryConnection.offline;
+  }
 }
 
 final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
@@ -298,7 +315,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   final _tasks = <String, DownloadTask>{};
   final _sizes = <String, int>{};
   final _cancellations = <String, Completer<TaskStatus>>{};
-  final _settledStatuses = <String, TaskStatus>{};
+  final _settledUpdates = <String, TaskStatusUpdate>{};
   final _partialPaths = <String, Set<String>>{};
   final _partialCaptures = <String, Future<void>>{};
   Future<List<String>>? _partialRoots;
@@ -328,14 +345,23 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     return roots.contains(resolved.parent.path) ? canonical : null;
   }
 
-  Future<void> _rememberPartial(DownloadTask task) async {
-    if (!_useAndroidGate || !_owns(task)) return;
+  Future<ResumeData?> _ownedResumeData(DownloadTask task) async {
     await _downloader.ready;
     await _resumeStorage.initialize();
     final resume = await _resumeStorage.retrieveResumeData(task.taskId);
-    if (resume == null || resume.taskId != task.taskId || !_owns(resume.task)) {
-      return;
+    if (resume == null ||
+        resume.taskId != task.taskId ||
+        !_owns(resume.task) ||
+        resume.task.url != task.url) {
+      return null;
     }
+    return resume;
+  }
+
+  Future<void> _rememberPartial(DownloadTask task) async {
+    if (!_useAndroidGate) return;
+    final resume = await _ownedResumeData(task);
+    if (resume == null) return;
     final path = await _safePartialPath(resume.tempFilepath);
     if (path != null) {
       (_partialPaths[task.taskId] ??= <String>{}).add(path);
@@ -354,6 +380,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
+  bool get canRecoverUnexpectedPauses => _useAndroidGate;
+
+  @override
   Stream<ModelTransferEvent> get events => _events.stream;
 
   bool _owns(Task task) =>
@@ -362,6 +391,59 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       task.baseDirectory == BaseDirectory.applicationSupport &&
       task.directory == modelDeliveryDirectory &&
       task.filename == gemmaModelFileName;
+
+  TaskOptions get _taskOptions => TaskOptions(
+    appManagedRecovery: true,
+    beforeTaskStart: _useAndroidGate ? _beforeAndroidModelDeliveryStart : null,
+  );
+
+  @override
+  Future<ModelResumeCheckpoint?> checkpoint(String taskId) async {
+    final task = await _task(taskId);
+    if (task == null ||
+        _failure(_settledUpdates[taskId]?.exception) ==
+            ModelTransferFailure.invalidCheckpoint) {
+      return null;
+    }
+    return _validatedCheckpoint(task, await _ownedResumeData(task));
+  }
+
+  Future<ModelResumeCheckpoint?> _validatedCheckpoint(
+    DownloadTask task,
+    ResumeData? resume,
+  ) async {
+    if (resume == null) return null;
+    if (_isIOS) {
+      try {
+        return base64Decode(resume.data).isEmpty
+            ? null
+            : const ModelResumeCheckpoint(retainedBytes: null);
+      } on FormatException {
+        return null;
+      }
+    }
+    final offset = resume.requiredStartByte;
+    final validator = resume.eTag;
+    if (!_useAndroidGate ||
+        offset <= 0 ||
+        offset >= (_sizes[task.taskId] ?? gemmaModelBytes) ||
+        validator == null ||
+        validator.length < 2 ||
+        !validator.startsWith('"') ||
+        !validator.endsWith('"')) {
+      return null;
+    }
+    try {
+      final path = await _safePartialPath(resume.tempFilepath);
+      if (path != null && await File(path).length() == offset) {
+        (_partialPaths[task.taskId] ??= <String>{}).add(path);
+        return ModelResumeCheckpoint(retainedBytes: offset);
+      }
+    } on FileSystemException {
+      return null;
+    }
+    return null;
+  }
 
   @override
   Future<void> initialize(String? ownedTaskId) async {
@@ -406,18 +488,26 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   Future<ModelTransferSnapshot?> restore(String taskId) async {
     final record = await _downloader.database.recordForId(taskId);
     if (record == null) {
-      if (await _task(taskId) == null) return null;
-      final status = _settledStatuses[taskId];
+      final task = await _task(taskId);
+      if (task == null) return null;
+      final lastUpdate = _settledUpdates[taskId];
+      final status = lastUpdate?.status;
       return ModelTransferSnapshot(
         taskId: taskId,
         status: status == null ? ModelTransferStatus.enqueued : _status(status),
         receivedBytes: status == TaskStatus.complete
             ? _sizes[taskId] ?? gemmaModelBytes
             : 0,
+        failure: _failure(lastUpdate?.exception),
+        requiresWiFi: task.requiresWiFi,
       );
     }
     if (!_owns(record.task)) return null;
-    _tasks[taskId] = record.task as DownloadTask;
+    final recordedTask = record.task as DownloadTask;
+    final task = record.status == TaskStatus.enqueued
+        ? _tasks[taskId] ?? recordedTask
+        : recordedTask;
+    _tasks[taskId] = task;
     final total = record.expectedFileSize > 0
         ? record.expectedFileSize
         : _sizes[taskId] ?? gemmaModelBytes;
@@ -427,7 +517,40 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       receivedBytes: record.progress < 0
           ? 0
           : (record.progress.clamp(0, 1) * total).round(),
+      failure: _failure(record.exception),
+      requiresWiFi: task.requiresWiFi,
     );
+  }
+
+  @override
+  Future<ModelQueuedPolicyUpdate> updateQueuedPolicy(
+    String taskId, {
+    required bool requiresWiFi,
+  }) async {
+    if (_isIOS) return ModelQueuedPolicyUpdate.unavailable;
+    final task = await _task(taskId);
+    if (task == null || task.options?.appManagedRecovery != true) {
+      return ModelQueuedPolicyUpdate.unavailable;
+    }
+    final resumeData = await _ownedResumeData(task);
+    if (resumeData == null ||
+        await _validatedCheckpoint(task, resumeData) == null) {
+      return ModelQueuedPolicyUpdate.unavailable;
+    }
+    final updated = task.copyWith(requiresWiFi: requiresWiFi);
+    final result = await _downloader.updateQueuedManagedDownload(
+      updated,
+      resumeData,
+    );
+    if (result == ManagedQueuePolicyUpdate.applied) {
+      _tasks[taskId] = updated;
+    }
+    return switch (result) {
+      ManagedQueuePolicyUpdate.applied => ModelQueuedPolicyUpdate.applied,
+      ManagedQueuePolicyUpdate.running => ModelQueuedPolicyUpdate.running,
+      ManagedQueuePolicyUpdate.unavailable =>
+        ModelQueuedPolicyUpdate.unavailable,
+    };
   }
 
   @override
@@ -447,15 +570,13 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       requiresWiFi: requiresWiFi,
       allowPause: true,
       priority: 5,
-      retries: 3,
+      retries: 0,
       transferHints: {TransferHint.largeFile},
       headers: {'Accept-Encoding': 'identity'},
-      options: _useAndroidGate
-          ? TaskOptions(beforeTaskStart: _beforeAndroidModelDeliveryStart)
-          : null,
+      options: _taskOptions,
     );
     _tasks[taskId] = task;
-    _settledStatuses.remove(taskId);
+    _settledUpdates.remove(taskId);
     _sizes[taskId] = manifest.bytes;
     final accepted = await _downloader.enqueue(task);
     if (!accepted) {
@@ -481,51 +602,97 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<bool> resume(String taskId, {required bool requiresWiFi}) async {
+  Future<bool> resume(
+    String taskId, {
+    required bool requiresWiFi,
+    bool allowZeroByteRestart = true,
+  }) async {
     final task = await _task(taskId);
     if (task == null) return false;
     // iOS resumes from opaque resumeData, which retains the old request policy.
     // Returning false asks the owner to cancel and create a fresh scoped task.
     if (_isIOS && task.requiresWiFi != requiresWiFi) return false;
-    await _rememberPartial(task);
+    if (_failure(_settledUpdates[taskId]?.exception) ==
+        ModelTransferFailure.invalidCheckpoint) {
+      return false;
+    }
+    final hasCheckpoint =
+        await _validatedCheckpoint(task, await _ownedResumeData(task)) != null;
+    if (!hasCheckpoint) {
+      if (!_useAndroidGate || !allowZeroByteRestart) return false;
+      // A first-start readiness pause has neither a checkpoint nor a partial.
+      await _awaitPartialCaptures(taskId);
+      final record = await _downloader.database.recordForId(taskId);
+      final data = await _resumeStorage.retrieveResumeData(taskId);
+      if (record == null ||
+          !_owns(record.task) ||
+          record.task.url != task.url ||
+          record.status != TaskStatus.paused ||
+          record.progress != 0 ||
+          data != null ||
+          (_partialPaths[taskId]?.isNotEmpty ?? false)) {
+        return false;
+      }
+    }
     final resumed = task.copyWith(
       requiresWiFi: requiresWiFi,
-      options:
-          task.options ??
-          (_useAndroidGate
-              ? TaskOptions(beforeTaskStart: _beforeAndroidModelDeliveryStart)
-              : null),
+      retries: 0,
+      retriesRemaining: 0,
+      options: _taskOptions,
     );
-    _settledStatuses.remove(taskId);
+    final lastUpdate = _settledUpdates.remove(taskId);
     _tasks[taskId] = resumed;
-    return _downloader.resume(resumed);
+    final accepted = hasCheckpoint
+        ? await _downloader.resume(resumed)
+        : await _downloader.enqueue(resumed);
+    if (!accepted && identical(_tasks[taskId], resumed)) {
+      _tasks[taskId] = task;
+      if (lastUpdate != null) _settledUpdates[taskId] = lastUpdate;
+    }
+    return accepted;
   }
 
   @override
-  Future<void> cancel(String taskId) async {
+  Future<void> cancel(
+    String taskId, {
+    bool requireConfirmedStop = false,
+  }) async {
     var settled = Completer<TaskStatus>();
     // Observe before even looking up the task: an inspection can race completion.
     _cancellations[taskId] = settled;
     try {
       final task = await _task(taskId);
-      if (task == null) return;
+      if (task == null) {
+        if (requireConfirmedStop) {
+          throw StateError('Translator cancellation could not be confirmed');
+        }
+        return;
+      }
       // Cancellation clears SDK resume metadata, sometimes without its file.
       await _rememberPartial(task);
       for (var attempt = 0; attempt < 2; attempt++) {
         final native = await _downloader.taskForId(taskId);
         final record = await _downloader.database.recordForId(taskId);
-        var status = _settledStatuses[taskId] ?? record?.status;
-        if (native == null && status != null && status.isFinalState) {
+        var status = _settledUpdates[taskId]?.status ?? record?.status;
+        if (!requireConfirmedStop &&
+            native == null &&
+            status != null &&
+            status.isFinalState) {
           await _settleCanceledWriter(task, status);
           return;
         }
-        final accepted = await _downloader.cancelTaskWithId(taskId);
+        final accepted = await _downloader.cancelTaskWithId(
+          taskId,
+          requireConfirmedStop:
+              _useAndroidGate && requireConfirmedStop && attempt == 0,
+        );
         final current = await _downloader.database.recordForId(taskId);
         final absent = await _downloader.taskForId(taskId) == null;
-        status = _settledStatuses[taskId] ?? current?.status;
+        status = _settledUpdates[taskId]?.status ?? current?.status;
         if (!accepted &&
-            !settled.isCompleted &&
-            !(absent && status != null && status.isFinalState)) {
+            (requireConfirmedStop ||
+                !settled.isCompleted &&
+                    !(absent && status != null && status.isFinalState))) {
           throw StateError('Translator cancellation was not accepted');
         }
         if (!(absent && status != null && status.isFinalState)) {
@@ -537,7 +704,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
         }
         // A racing pause can leave resume data; cancel that settled paused task
         // once more so the SDK clears its own staging state.
-        _settledStatuses.remove(taskId);
+        _settledUpdates.remove(taskId);
         settled = Completer<TaskStatus>();
         _cancellations[taskId] = settled;
       }
@@ -613,13 +780,21 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   @override
   Future<void> forget(String taskId) async {
     await _awaitPartialCaptures(taskId);
-    if (await _task(taskId) != null) {
+    final task = await _task(taskId);
+    if (task != null) {
+      final status =
+          _settledUpdates[taskId]?.status ??
+          (await _downloader.database.recordForId(taskId))?.status;
+      if ((status == TaskStatus.failed || status == TaskStatus.notFound) &&
+          await _ownedResumeData(task) != null) {
+        await _resumeStorage.removeResumeData(taskId);
+      }
       await _downloader.database.deleteRecordWithId(taskId);
     }
     await _awaitPartialCaptures(taskId);
     _tasks.remove(taskId);
     _sizes.remove(taskId);
-    _settledStatuses.remove(taskId);
+    _settledUpdates.remove(taskId);
     _partialPaths.remove(taskId);
   }
 
@@ -636,7 +811,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
           (_) => capture,
         );
     if (update.status.isFinalState || update.status == TaskStatus.paused) {
-      _settledStatuses[update.task.taskId] = update.status;
+      _settledUpdates[update.task.taskId] = update;
     }
     final cancellation = _cancellations[update.task.taskId];
     if (cancellation != null &&
@@ -648,6 +823,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       ModelTransferEvent(
         taskId: update.task.taskId,
         status: _status(update.status),
+        failure: _failure(update.exception),
       ),
     );
   }
@@ -675,6 +851,19 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     TaskStatus.failed || TaskStatus.notFound => ModelTransferStatus.failed,
     TaskStatus.canceled => ModelTransferStatus.canceled,
   };
+
+  ModelTransferFailure? _failure(TaskException? exception) =>
+      switch (exception) {
+        TaskConnectionException() => ModelTransferFailure.connection,
+        TaskHttpException(:final httpResponseCode)
+            when httpResponseCode == 429 ||
+                (httpResponseCode >= 500 && httpResponseCode < 600) =>
+          ModelTransferFailure.server,
+        TaskStorageFullException() => ModelTransferFailure.storageFull,
+        TaskFileSystemException() => ModelTransferFailure.storageWrite,
+        TaskResumeException() => ModelTransferFailure.invalidCheckpoint,
+        _ => null,
+      };
 
   @override
   Future<void> dispose() async {
