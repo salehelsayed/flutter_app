@@ -15525,6 +15525,13 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   The test-only `fff4b816` first showed a stale Ready notice after Remove
   invalidated the in-flight verification. Keep that causal run and the
   initial 457-pass, three-failure transport run (`m-a45f6c14`, `m-756b0bae`).
+  A later regression holds the native Android permission reply and the
+  Remove record write at the same time. The test-only `4f32c2dd` trace shows
+  a `show` call after the task was retired. That invocation also relabeled
+  the same local downloader dependency in the lock. Preserve the assertion
+  and the lock metadata mismatch together (`m-0a4ffe5a`). The no-pub run on
+  `8220377d` kept the exact lock and passed all 461 affected cases, including
+  the unchanged permission test, with zero skips or gaps (`m-1c6beb12`).
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
