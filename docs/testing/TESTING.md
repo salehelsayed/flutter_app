@@ -15532,6 +15532,31 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   and the lock metadata mismatch together (`m-0a4ffe5a`). The no-pub run on
   `8220377d` kept the exact lock and passed all 461 affected cases, including
   the unchanged permission test, with zero skips or gaps (`m-1c6beb12`).
+  On the Pixel, internal 335 from `8220377d` kept the same WorkRequest and
+  task after Wi-Fi was lost in the background. At 19% it stayed scheduled.
+  Five seconds after Wi-Fi returned the same WorkRequest began resuming,
+  advanced from 21% through 95%, and completed before the app was opened.
+  The handset exposed task and progress continuity. The JVM test records
+  the exact HTTP resume offset. The app froze during Checking and posted
+  Ready after opening. Build 132 accepts that fallback. Background integrity
+  verification is tracked as BL-60c. The first physical run also exposed a
+  paused notice that outlasted the successful transfer. Retain
+  `.codex-test-logs/bl60c-20261123/` and report `m-9eed5e5b`.
+  The WorkManager fixture checks notification ownership while the resumed
+  response is held. Baseline `b3fb3638` retained the translator's paused
+  notice alongside a control with the same numeric ID and another tag.
+  `52c59ad3` cleared the paused notice and preserved the control before
+  completing the same byte-range transfer (`m-aaa4b6ba`, `m-6000de86`).
+  The same source passed all 461 affected translator cases, including the
+  scheduled-resume clear and both approved Wi-Fi copy branches
+  (`m-a9e44c24`).
+  Pixel internal 337 from `52c59ad3` kept the same WorkRequest and task at
+  20% while in the background. After Wi-Fi returned, the first resumed
+  progress sample showed 21% and the paused notice was gone. Subsequent
+  samples showed only the downloader's progress through 93%. The transfer
+  finished before reopening the app. The next foreground produced verified
+  Ready, and the phone was restored to the prior source with data kept.
+  Evidence is in `.codex-test-logs/bl60d-20261123/` and `m-d1ff611b`.
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
