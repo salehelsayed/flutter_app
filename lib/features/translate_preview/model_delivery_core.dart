@@ -557,7 +557,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final ValueNotifier<bool> _supported;
   ModelDeliveryConnection _connection = ModelDeliveryConnection.offline;
   bool _disposed = false;
-  int _build = 0;
+  int? _build;
   int _freeBytes = 0;
   int _generation = 0;
   String? _verifiedPath;
@@ -600,7 +600,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     try {
       _record = await _storage.readRecord() ?? const ModelDeliveryRecord();
       _allowMobileData.value = _record.allowMobileData;
-      _build = await _appBuild();
+      final build = await _appBuild();
+      if (build <= 0) throw StateError('Translator app build is unavailable');
+      _build = build;
       await _storage.prepare();
       _safety = await _storage.readSafety() ?? const ModelSafetyRecord();
       if (_safety.inferenceInProgress) {
@@ -1171,6 +1173,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _generation++;
     _resetRecoveryDelay();
     return _perform(() async {
+      if (_build == null) {
+        _initialization = null;
+        await initialize();
+        if (_disposed || _build == null || _state.value is! ModelFailed) return;
+      }
       if (_record.phase == ModelDeliveryPhase.removing) {
         await _remove();
       } else {
@@ -2006,14 +2013,22 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _record.phase == ModelDeliveryPhase.awaitingConnection &&
       _connectionEligible;
   bool get _eligibleDevice => _supported.value && _safety.blockedReason == null;
-  bool get _requiresUpdate => (_record.manifest?.minAppBuild ?? 0) > _build;
-  bool get _canRun => _eligibleDevice && !_requiresUpdate;
+  bool get _requiresUpdate {
+    final build = _build;
+    return build != null && (_record.manifest?.minAppBuild ?? 0) > build;
+  }
+
+  bool get _canRun => _eligibleDevice && _build != null && !_requiresUpdate;
 
   void _render() {
     if (_disposed) return;
     _updateRecoveryTimer();
     if (!_eligibleDevice) {
       _state.value = const ModelUnsupported();
+      return;
+    }
+    if (_build == null) {
+      _state.value = const ModelFailed();
       return;
     }
     if (_requiresUpdate) {
