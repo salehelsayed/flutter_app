@@ -13,6 +13,7 @@ import '../data/call_history_repository.dart';
 import '../data/call_history_repository_impl.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 
@@ -64,76 +65,85 @@ final class ActiveCallHistoryCheckpoint {
     return tables.length == 5;
   }
 
-  Future<void> save(CallSessionSnapshot snapshot) => _mutate(() async {
-    if (snapshot.isTerminal ||
-        snapshot.callId == null ||
-        snapshot.startedAt == null ||
-        snapshot.direction == null ||
-        (snapshot.direction == CallDirection.incoming &&
-            !snapshot.incomingValidated)) {
-      return;
-    }
-    final context = readContext(snapshot.callId!);
-    if (context == null) return; // Outgoing preparation has not bound a handle.
-    if (!await _available()) {
-      return; // Legacy host fixtures have partial schemas.
-    }
-    if (context.localAccountPeerId != localIdentity.peerId ||
-        context.remoteAccountPeerId != snapshot.contactPeerId) {
-      throw StateError('call checkpoint binding changed');
-    }
-    final authority = await dbWriteTransaction(
-      database,
-      (tx) => _authority(
-        tx,
-        context.remoteAccountPeerId,
-        context.remoteDevicePeerId,
-      ),
-    );
-    final admissionAuthority = context.admissionAuthority;
-    if (authority == null ||
-        admissionAuthority == null ||
-        authority['remote_fingerprint'] != admissionAuthority.fingerprint ||
-        authority['relationship_revision'] !=
-            admissionAuthority.relationshipRevision) {
-      throw StateError('call checkpoint authority revoked');
-    }
-    final prior = await _read();
-    var observedAt = snapshot.observedAt;
-    if (prior != null) {
-      if (prior['call_id'] != snapshot.callId!.value) {
-        await _settle(prior);
-      } else if (!_matchesAuthority(prior, authority) ||
-          prior['call_handle'] != context.callHandle ||
-          prior['contact'] != context.remoteAccountPeerId ||
-          prior['remote_device'] != context.remoteDevicePeerId) {
-        throw StateError('call checkpoint authority changed');
-      } else {
-        // A delayed state event cannot shorten a newer live observation.
-        final priorObservation = DateTime.parse(
-          prior['observed_at']! as String,
-        );
-        if (priorObservation.isAfter(observedAt)) {
-          observedAt = priorObservation;
+  Future<void> save(CallSessionSnapshot snapshot, {CallMediaKind? mediaKind}) =>
+      _mutate(() async {
+        if (snapshot.isTerminal ||
+            snapshot.callId == null ||
+            snapshot.startedAt == null ||
+            snapshot.direction == null ||
+            (snapshot.direction == CallDirection.incoming &&
+                !snapshot.incomingValidated)) {
+          return;
         }
-      }
-    }
-    await secureKeyStore.write(
-      activeCallHistoryCheckpointKey,
-      jsonEncode({
-        'version': 1,
-        'call_id': snapshot.callId!.value,
-        'call_handle': context.callHandle,
-        'contact': context.remoteAccountPeerId,
-        'remote_device': context.remoteDevicePeerId,
-        ...authority,
-        'direction': snapshot.direction!.name,
-        'started_at': snapshot.startedAt!.toIso8601String(),
-        'connected_at': snapshot.connectedAt?.toIso8601String(),
-        'observed_at': observedAt.toIso8601String(),
-      }),
-    );
-  });
+        final context = readContext(snapshot.callId!);
+        if (context == null) {
+          return; // Outgoing preparation has not bound a handle.
+        }
+        if (!await _available()) {
+          return; // Legacy host fixtures have partial schemas.
+        }
+        if (context.localAccountPeerId != localIdentity.peerId ||
+            context.remoteAccountPeerId != snapshot.contactPeerId) {
+          throw StateError('call checkpoint binding changed');
+        }
+        final authority = await dbWriteTransaction(
+          database,
+          (tx) => _authority(
+            tx,
+            context.remoteAccountPeerId,
+            context.remoteDevicePeerId,
+          ),
+        );
+        final admissionAuthority = context.admissionAuthority;
+        if (authority == null ||
+            admissionAuthority == null ||
+            authority['remote_fingerprint'] != admissionAuthority.fingerprint ||
+            authority['relationship_revision'] !=
+                admissionAuthority.relationshipRevision) {
+          throw StateError('call checkpoint authority revoked');
+        }
+        final prior = await _read();
+        var observedAt = snapshot.observedAt;
+        if (prior != null) {
+          if (prior['call_id'] != snapshot.callId!.value) {
+            await _settle(prior);
+          } else if (!_matchesAuthority(prior, authority) ||
+              prior['call_handle'] != context.callHandle ||
+              prior['contact'] != context.remoteAccountPeerId ||
+              prior['remote_device'] != context.remoteDevicePeerId) {
+            throw StateError('call checkpoint authority changed');
+          } else {
+            // A delayed state event cannot shorten a newer live observation.
+            final priorObservation = DateTime.parse(
+              prior['observed_at']! as String,
+            );
+            if (priorObservation.isAfter(observedAt)) {
+              observedAt = priorObservation;
+            }
+          }
+        }
+        final previousMediaName =
+            prior != null && prior['call_id'] == snapshot.callId!.value
+            ? prior['media_kind']
+            : null;
+        final mediaName = mediaKind?.name ?? previousMediaName;
+        await secureKeyStore.write(
+          activeCallHistoryCheckpointKey,
+          jsonEncode({
+            'version': 1,
+            'call_id': snapshot.callId!.value,
+            'call_handle': context.callHandle,
+            'contact': context.remoteAccountPeerId,
+            'remote_device': context.remoteDevicePeerId,
+            ...authority,
+            'direction': snapshot.direction!.name,
+            'started_at': snapshot.startedAt!.toIso8601String(),
+            'connected_at': snapshot.connectedAt?.toIso8601String(),
+            'observed_at': observedAt.toIso8601String(),
+            'media_kind': ?mediaName,
+          }),
+        );
+      });
 
   /// Runs before native attach and mailbox intake, even without a native journal.
   Future<void> recover() => _mutate(() async {
@@ -232,6 +242,11 @@ final class ActiveCallHistoryCheckpoint {
           endedAt: endedAt,
           endReason: CallEndReason.mediaFailed,
         ),
+        mediaKind: switch (record['media_kind']) {
+          'audio' => CallMediaKind.audio,
+          'video' => CallMediaKind.video,
+          _ => null,
+        },
       );
     });
     final announcement = projected;
@@ -319,7 +334,10 @@ final class ActiveCallHistoryCheckpoint {
       'started_at',
       'observed_at',
     ];
-    if (record.length != 12 ||
+    final mediaKind = record['media_kind'];
+    final hasMediaKind = record.containsKey('media_kind');
+    if (record.length != (hasMediaKind ? 13 : 12) ||
+        (hasMediaKind && mediaKind != 'audio' && mediaKind != 'video') ||
         !record.containsKey('connected_at') ||
         record['version'] != 1 ||
         strings.any(

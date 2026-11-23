@@ -143,6 +143,9 @@ final class FlutterWebRtcPeerConnectionAdapter
   final void Function(CallStatsSample, CallRtpProgressSample)?
   onDiagnosticSample;
   final CallRtpProgressSampler _rtpProgressSampler = CallRtpProgressSampler();
+  final CallAudioRttSampler _audioRttSampler = CallAudioRttSampler();
+  int _nextStatsRead = 0;
+  int _latestQualityRead = 0;
 
   final int _eventBufferCapacity;
   final Duration _snapshotReadTimeout;
@@ -276,6 +279,7 @@ final class FlutterWebRtcPeerConnectionAdapter
         throw const WebRtcAdapterException(WebRtcFailureReason.closed);
       }
       _peerConnection = connection;
+      _audioRttSampler.reset();
       _installCallbacks(connection);
       if (configuration.captureAudio) {
         final localStream = await _failureStageGuard.run(
@@ -569,6 +573,7 @@ final class FlutterWebRtcPeerConnectionAdapter
       await _requireConnection().restartIce();
       _iceGeneration += 1;
       _rtpProgressSampler.reset();
+      _audioRttSampler.reset();
     } catch (error) {
       throw _diagnosedFailure('restartIce', error);
     }
@@ -710,6 +715,7 @@ final class FlutterWebRtcPeerConnectionAdapter
           break;
         }
       }
+      final statsRead = ++_nextStatsRead;
       final stats = await _failureStageGuard.runWithTimeoutFallback(
         FlutterWebRtcFailureStage.snapshotStats,
         connection.getStats,
@@ -745,6 +751,23 @@ final class FlutterWebRtcPeerConnectionAdapter
       _inboundAudioRtpObserved |= sample.inboundAudioRtpObserved;
       _outboundAudioRtpObserved |= sample.outboundAudioRtpObserved;
 
+      final connectionState = _mapNullableConnectionState(
+        connection.connectionState,
+      );
+      var quality = WebRtcQualityBand.unknown;
+      int? qualityObservation;
+      if (!_closed &&
+          identical(connection, _peerConnection) &&
+          observationGeneration == _iceGeneration &&
+          statsRead > _latestQualityRead) {
+        _latestQualityRead = statsRead;
+        if (connectionState == WebRtcConnectionState.connected) {
+          (quality, qualityObservation) = _audioRttSampler.sample(
+            diagnosticRecords,
+          );
+        }
+      }
+
       return WebRtcPeerConnectionSnapshot(
         isClosed: _closed,
         iceTransportPolicy:
@@ -754,9 +777,9 @@ final class FlutterWebRtcPeerConnectionAdapter
         localVideoCaptureTrackCount: localVideoCaptureTrackCount,
         audioReceiveTransceiverCount: audioReceiveTransceiverCount,
         videoTransceiverCount: videoTransceiverCount,
-        connectionState: _mapNullableConnectionState(
-          connection.connectionState,
-        ),
+        connectionState: connectionState,
+        quality: quality,
+        qualityObservation: qualityObservation,
         iceChecklistFailed:
             connection.connectionState ==
                 webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
@@ -886,6 +909,7 @@ final class FlutterWebRtcPeerConnectionAdapter
     _pendingDisconnect = null;
     _peerConnectionPendingClose = _peerConnection;
     _peerConnection = null;
+    _audioRttSampler.reset();
     _peerConnectionCloseCompleted = false;
     _peerConnectionDisposeCompleted = false;
     _configuration = null;
@@ -1621,6 +1645,7 @@ final class FlutterWebRtcCallEngine
       transportPolicy: _transportPolicy ?? CallTransportPolicy.relayOnly,
       transport: transport,
       quality: _mapAdapterQuality(snapshot.quality),
+      qualityObservation: snapshot.qualityObservation,
       localAudioCaptureTrackCount: snapshot.localAudioCaptureTrackCount,
       localVideoCaptureTrackCount: snapshot.localVideoCaptureTrackCount,
       audioReceiveTransceiverCount: snapshot.audioReceiveTransceiverCount,

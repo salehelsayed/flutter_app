@@ -453,7 +453,7 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 132);
+        expect(currentIdentityDatabaseVersion, 133);
         expect(manifest.databaseVersion, currentIdentityDatabaseVersion);
         final result =
             await MigrationDatabaseActiveImporter(

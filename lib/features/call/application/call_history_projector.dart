@@ -1,5 +1,6 @@
 import '../data/call_history_repository.dart';
 import '../domain/call_end_reason.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 
@@ -24,7 +25,10 @@ final class CallHistoryProjector {
 
   final DateTime Function() _clock;
 
-  Future<CallHistoryEntry> projectTerminal(CallSessionSnapshot snapshot) async {
+  Future<CallHistoryEntry> projectTerminal(
+    CallSessionSnapshot snapshot, {
+    CallMediaKind? mediaKind,
+  }) async {
     if (snapshot.state != CallState.ended ||
         snapshot.callId == null ||
         snapshot.contactPeerId == null ||
@@ -46,6 +50,7 @@ final class CallHistoryProjector {
       direction: snapshot.direction!,
       terminalReason: snapshot.endReason!,
       status: _status(snapshot),
+      mediaKind: mediaKind,
       startedAt: snapshot.startedAt!,
       connectedAt: snapshot.connectedAt,
       endedAt: snapshot.endedAt!,

@@ -245,6 +245,9 @@ void main() {
         });
 
         await repository.upsertTerminal(entry).timeout(deadline);
+        await repository
+            .upsertTerminal(CallHistoryEntry.fromMap(serialized))
+            .timeout(deadline);
         final stored = await repository
             .getByCallId(entry.callId)
             .timeout(deadline);

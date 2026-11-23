@@ -2146,6 +2146,7 @@ void main() {
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
     ComposerDraftStore? composerDraftStore,
+    bool offerCallMessageSuggestion = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2210,6 +2211,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           composerDraftStore: composerDraftStore,
+          offerCallMessageSuggestion: offerCallMessageSuggestion,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           conversationTracker: conversationTracker,
           autoDownloadDecider: autoDownloadDecider,
@@ -2224,6 +2226,79 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('BL61 after a call', () {
+    const suggestion = 'Tried to call you';
+    const bound = Duration(seconds: 3);
+
+    testWidgets('the chip fills an empty field and Send owns delivery', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: InMemoryComposerDraftStore(),
+        offerCallMessageSuggestion: true,
+      ).timeout(bound);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsOneWidget);
+      expect(messages.store, isEmpty);
+
+      await tester.tap(chip);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(chip, findsNothing);
+      expect(tester.widget<EditableText>(field).controller.text, suggestion);
+      expect(messages.store, isEmpty);
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(messages.store.values.single.text, suggestion);
+    });
+
+    testWidgets('opening a call suggestion keeps an untouched saved draft', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final drafts = InMemoryComposerDraftStore();
+      final saved = ComposerDraftKey.direct(makeContact().peerId);
+      await drafts
+          .save(saved, ComposerDraft(text: 'Older draft'))
+          .timeout(bound);
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: drafts,
+        offerCallMessageSuggestion: true,
+      ).timeout(bound);
+
+      final field = tester.widget<EditableText>(find.byType(EditableText));
+      expect(field.controller.text, isEmpty);
+      expect(find.widgetWithText(ActionChip, suggestion), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(drafts.drafts[saved]?.text, 'Older draft');
+      expect(messages.store, isEmpty);
+    });
+  });
 
   group('BL11 requester key readiness', () {
     const labels = {
@@ -2405,7 +2480,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(CallTimelineRow), findsOneWidget);
-      expect(find.text('Missed voice call'), findsOneWidget);
+      expect(find.text('Missed'), findsOneWidget);
     });
 
     testWidgets('TC-405-31 the exact contact is the only one asked for', (
@@ -2503,7 +2578,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(CallTimelineRow), findsOneWidget);
-      expect(find.text('Missed voice call'), findsOneWidget);
+      expect(find.text('Missed'), findsOneWidget);
     });
 
     testWidgets('TC-405-33 no call source leaves the chat message-only', (

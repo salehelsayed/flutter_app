@@ -959,6 +959,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       // can legitimately suppress the card.
       isSuppressed: (_) async => false,
       missedBody: localizedMissedCallBody(),
+      missedVideoBody: localizedMissedCallBody(video: true),
       unknownCallerTitle: localizedMissedCallUnknownCaller(),
     );
     final recordTerminalCallHistory =

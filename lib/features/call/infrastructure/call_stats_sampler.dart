@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../domain/call_engine.dart';
+import 'webrtc_types.dart' show WebRtcQualityBand;
 
 /// Packet-counter progress contains no statistics identifiers or addresses.
 final class CallRtpProgressSample {
@@ -74,11 +75,72 @@ final class CallRtpProgressSampler {
   }
 }
 
+/// Classifies fresh RTT measurements from the peer's audio receiver reports.
+final class CallAudioRttSampler {
+  // The weak boundary borrows Microsoft's 500 ms CQD audio RTT threshold.
+  // https://learn.microsoft.com/en-us/microsoftteams/stream-classification-in-call-quality-dashboard
+  static const _thresholdSeconds = (weak: 0.5, healthy: 0.4);
+  static const _unavailable = (WebRtcQualityBand.unknown, null);
+
+  ({String id, int measurements, WebRtcQualityBand quality, int? observation})?
+  _previous;
+  int _nextObservation = 0;
+
+  void reset() => _previous = null;
+
+  (WebRtcQualityBand, int?) sample(Iterable<CallStatsRecord> records) {
+    CallStatsRecord? audio;
+    for (final record in records) {
+      if (record.type != 'remote-inbound-rtp' ||
+          record.values['kind'] != 'audio') {
+        continue;
+      }
+      if (audio != null) return _unavailable;
+      audio = record;
+    }
+    if (audio == null || audio.id.isEmpty) return _unavailable;
+
+    final seconds = audio.values['roundTripTime'];
+    final measurements = audio.values['roundTripTimeMeasurements'];
+    if (seconds is! num ||
+        !seconds.isFinite ||
+        seconds <= 0 ||
+        measurements is! num ||
+        !measurements.isFinite ||
+        measurements <= 0 ||
+        measurements > 9007199254740991 ||
+        measurements != measurements.truncateToDouble()) {
+      return _unavailable;
+    }
+
+    int? observation;
+    final previous = _previous;
+    if (previous != null && previous.id == audio.id) {
+      if (measurements < previous.measurements) return _unavailable;
+      if (measurements == previous.measurements) {
+        return (previous.quality, previous.observation);
+      }
+      observation = ++_nextObservation;
+    }
+    final quality = seconds > _thresholdSeconds.weak
+        ? WebRtcQualityBand.poor
+        : seconds <= _thresholdSeconds.healthy
+        ? WebRtcQualityBand.good
+        : WebRtcQualityBand.degraded;
+    _previous = (
+      id: audio.id,
+      measurements: measurements.toInt(),
+      quality: quality,
+      observation: observation,
+    );
+    return (quality, observation);
+  }
+}
+
 /// A plugin-independent copy of one WebRTC statistics row.
 ///
-/// Only fixed fields needed for readiness and coarse route classification are
-/// read. Addresses, identifiers, SDP, and counters are never retained in the
-/// returned sample.
+/// Samplers read only fixed fields and leave addresses, identifiers, SDP and
+/// counters out of their results.
 final class CallStatsRecord {
   const CallStatsRecord({
     required this.id,

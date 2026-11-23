@@ -1,3 +1,4 @@
+import '../../../call/domain/call_media.dart';
 import 'conversation_message.dart';
 
 /// A typed row in a conversation timeline.
@@ -48,6 +49,7 @@ final class ConversationCallTimelineEntry extends ConversationTimelineEntry {
     required DateTime startedAt,
     required DateTime endedAt,
     this.duration,
+    this.mediaKind,
   }) : startedAt = startedAt.toUtc(),
        endedAt = endedAt.toUtc() {
     if (callId.trim().isEmpty || contactPeerId.trim().isEmpty) {
@@ -66,6 +68,7 @@ final class ConversationCallTimelineEntry extends ConversationTimelineEntry {
   final DateTime startedAt;
   final DateTime endedAt;
   final Duration? duration;
+  final CallMediaKind? mediaKind;
 
   /// An incoming call the user did not take, the projection of
   /// `isMissedIncomingCall` on the durable history row. Such a row may start a

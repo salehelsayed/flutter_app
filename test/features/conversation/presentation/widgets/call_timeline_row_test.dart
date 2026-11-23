@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
@@ -23,6 +24,7 @@ void main() {
     contactPeerId: '12D3KooWTestPeerId1234567890',
     direction: direction,
     status: status,
+    mediaKind: CallMediaKind.audio,
     startedAt: DateTime.utc(2026, 2, 9, 15, 30),
     endedAt: DateTime.utc(2026, 2, 9, 15, 32, 5),
     duration: duration,

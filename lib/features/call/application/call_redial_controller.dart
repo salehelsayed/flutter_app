@@ -243,6 +243,7 @@ class CallBackActionHandler {
           id,
           await redial.start(
             entry.contactAccountPeerId,
+            media: entry.mediaKind ?? CallMediaKind.audio,
             isCurrent: isCurrent,
             isEligible: () async {
               final current = await source.recentCallsForContact(

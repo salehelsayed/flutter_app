@@ -13443,9 +13443,11 @@ void _vui7JoinedBridgeTests() {
           await tester.tap(again);
           await _vui7JoinedPumpUntil(tester, () => contactEntered, 'contact preflight');
           expect(graph.coordinator.activeSession, isNull);
-          final button = find.ancestor(of: again,
-            matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton));
-          expect(tester.widget<ButtonStyleButton>(button).onPressed, isNull);
+          final button = find.descendant(
+            of: find.byKey(const ValueKey('foreground-call-again')),
+            matching: find.byType(IconButton),
+          );
+          expect(tester.widget<IconButton>(button).onPressed, isNull);
           if (closeDuringPreflight) {
             await tester.ensureVisible(close);
             await tester.tap(close);

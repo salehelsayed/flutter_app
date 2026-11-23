@@ -4606,6 +4606,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_end_unavailable => 'Voice calling is unavailable.';
 
   @override
+  String get call_outcome_busy => 'On another call';
+
+  @override
+  String get call_outcome_dropped => 'Call dropped';
+
+  @override
+  String get call_outcome_mic_off => 'Microphone is off';
+
+  @override
+  String get call_status_weak_network => 'Weak connection';
+
+  @override
+  String call_end_closes_in(int seconds) {
+    return 'Closes in $seconds s';
+  }
+
+  @override
+  String get call_suggestion_tried_to_call => 'Tried to call you';
+
+  @override
+  String get call_row_missed_video => 'Missed video call';
+
+  @override
+  String get call_row_video_call => 'Video call';
+
+  @override
   String get call_end_ended => 'Call ended.';
 
   @override

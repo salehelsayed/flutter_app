@@ -62,25 +62,30 @@ const mknoonMissedCallNotificationDetails = NotificationDetails(
   ),
 );
 
-String localizedCallBackLabel() {
+Map<String, String> _missedCallActionLabels() {
   final locale = PlatformDispatcher.instance.locale;
-  return lookupAppLocalizations(
+  final l10n = lookupAppLocalizations(
     AppLocalizations.delegate.isSupported(locale) ? locale : const Locale('en'),
-  ).call_back;
+  );
+  return {
+    missedCallBackActionId: l10n.call_back,
+    missedCallMessageActionId: l10n.contact_profile_message_button,
+  };
 }
 
 List<DarwinNotificationCategory> missedCallActionCategories() => [
   DarwinNotificationCategory(
     missedCallActionCategoryId,
     actions: [
-      DarwinNotificationAction.plain(
-        missedCallBackActionId,
-        localizedCallBackLabel(),
-        options: {
-          DarwinNotificationActionOption.foreground,
-          DarwinNotificationActionOption.authenticationRequired,
-        },
-      ),
+      for (final action in _missedCallActionLabels().entries)
+        DarwinNotificationAction.plain(
+          action.key,
+          action.value,
+          options: {
+            DarwinNotificationActionOption.foreground,
+            DarwinNotificationActionOption.authenticationRequired,
+          },
+        ),
     ],
   ),
 ];
@@ -95,12 +100,13 @@ NotificationDetails missedCallDetailsWithAction() => NotificationDetails(
     category: AndroidNotificationCategory.missedCall,
     audioAttributesUsage: mknoonMessageAudioAttributesUsage,
     actions: [
-      AndroidNotificationAction(
-        missedCallBackActionId,
-        localizedCallBackLabel(),
-        showsUserInterface: true,
-        cancelNotification: true,
-      ),
+      for (final action in _missedCallActionLabels().entries)
+        AndroidNotificationAction(
+          action.key,
+          action.value,
+          showsUserInterface: true,
+          cancelNotification: true,
+        ),
     ],
   ),
   iOS: const DarwinNotificationDetails(

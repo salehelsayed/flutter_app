@@ -2157,6 +2157,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           navigator: navigator,
           contact: contact,
           notificationTappedAt: context.tappedAt,
+          offerCallMessageSuggestion: routeTarget.offerCallMessageSuggestion,
         );
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.post:
@@ -2233,10 +2234,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openCallConversation(String peerId) async {
+    final contact = await widget.contactRepository.getContact(peerId);
+    final navigator = MyApp.navigatorKey.currentState;
+    if (!mounted || contact == null || navigator == null) return;
+    await _openConversationForContact(
+      navigator: navigator,
+      contact: contact,
+      offerCallMessageSuggestion: true,
+    );
+  }
+
   Future<void> _openConversationForContact({
     required NavigatorState navigator,
     required ContactModel contact,
     DateTime? notificationTappedAt,
+    bool offerCallMessageSuggestion = false,
   }) async {
     await navigator.push(
       buildConversationRoute(
@@ -2274,6 +2287,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           forwardGroupConversationTracker: widget.groupConversationTracker,
           appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
+          offerCallMessageSuggestion: offerCallMessageSuggestion,
           transportMetrics: widget.transportMetrics,
           privateMediaOutboxE2EController:
               widget.privateMediaOutboxE2EController,
@@ -3626,6 +3640,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   media: media,
                   isCurrent: isCurrent,
                 ),
+            onMessage: _openCallConversation,
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: updateGate,

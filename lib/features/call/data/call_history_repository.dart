@@ -1,5 +1,6 @@
 import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 
 enum CallHistoryStatus { completed, missed, declined, busy, cancelled, failed }
@@ -37,6 +38,7 @@ final class CallHistoryEntry {
     DateTime? connectedAt,
     required DateTime endedAt,
     required this.transportRoute,
+    this.mediaKind,
     required DateTime createdAt,
     required DateTime updatedAt,
   }) : startedAt = startedAt.toUtc(),
@@ -66,6 +68,7 @@ final class CallHistoryEntry {
   final DateTime? connectedAt;
   final DateTime endedAt;
   final CallRouteClass? transportRoute;
+  final CallMediaKind? mediaKind;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -91,6 +94,11 @@ final class CallHistoryEntry {
         transportRoute: map['transport_route_class'] == null
             ? null
             : CallRouteClassWire.parse(map['transport_route_class']! as String),
+        mediaKind: switch (map['media_kind']) {
+          'audio' => CallMediaKind.audio,
+          'video' => CallMediaKind.video,
+          _ => null,
+        },
         createdAt: DateTime.parse(map['created_at']! as String),
         updatedAt: DateTime.parse(map['updated_at']! as String),
       );
@@ -105,6 +113,7 @@ final class CallHistoryEntry {
     'connected_at': connectedAt?.toIso8601String(),
     'ended_at': endedAt.toIso8601String(),
     'transport_route_class': transportRoute?.wireName,
+    if (mediaKind case final kind?) 'media_kind': kind.name,
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
   };

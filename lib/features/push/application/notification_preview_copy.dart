@@ -126,8 +126,10 @@ String capNotificationPreview(String text, {int maxScalars = 140}) {
 
 /// 406: missed-call card copy. Resolved without a BuildContext because the
 /// projection that triggers it can run in a background isolate.
-String localizedMissedCallBody({Locale? locale}) =>
-    notificationPreviewLocalizations(locale: locale).call_row_missed;
+String localizedMissedCallBody({Locale? locale, bool video = false}) {
+  final l10n = notificationPreviewLocalizations(locale: locale);
+  return video ? l10n.call_row_missed_video : l10n.call_row_missed;
+}
 
 String localizedMissedCallUnknownCaller({Locale? locale}) =>
     notificationPreviewLocalizations(

@@ -26,6 +26,7 @@ class ActiveCallScreen extends StatefulWidget {
     required this.connectedAt,
     required this.now,
     required this.controls,
+    this.weakConnection = false,
     this.videoPresentation,
     this.onVideoIntent,
     this.videoViews,
@@ -39,6 +40,7 @@ class ActiveCallScreen extends StatefulWidget {
   final DateTime? connectedAt;
   final DateTime Function() now;
   final CallControls controls;
+  final bool weakConnection;
   final CallVideoPresentation? videoPresentation;
   final ValueChanged<CallVideoIntent>? onVideoIntent;
   final Widget? videoViews;
@@ -140,38 +142,14 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               );
             }
 
-            if (useCompactLandscape) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildProfile(
-                        colors,
-                        formattedDuration,
-                        compact: true,
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(child: widget.controls),
-                  ],
-                ),
-              );
-            }
-
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
-              child: Column(
-                children: [
-                  const Spacer(),
-                  _buildProfile(colors, formattedDuration),
-                  const Spacer(),
-                  widget.controls,
-                ],
+            return buildCallProfileLayout(
+              compact: useCompactLandscape,
+              profile: _buildProfile(
+                colors,
+                formattedDuration,
+                compact: useCompactLandscape,
               ),
+              controls: widget.controls,
             );
           },
         ),
@@ -182,8 +160,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       data: Theme.of(context).copyWith(
         brightness: Brightness.dark,
         extensions: [
-          ...Theme.of(context).extensions.values
-              .where((extension) => extension is! BackgroundReadableColors),
+          ...Theme.of(context).extensions.values.where(
+            (extension) => extension is! BackgroundReadableColors,
+          ),
           BackgroundReadableColors.dark,
         ],
       ),
@@ -217,8 +196,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       data: Theme.of(context).copyWith(
         brightness: Brightness.dark,
         extensions: [
-          ...Theme.of(context).extensions.values
-              .where((extension) => extension is! BackgroundReadableColors),
+          ...Theme.of(context).extensions.values.where(
+            (extension) => extension is! BackgroundReadableColors,
+          ),
           BackgroundReadableColors.dark,
         ],
       ),
@@ -276,6 +256,18 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                            if (widget.weakConnection &&
+                                widget.state == CallState.connected) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                _status(l10n),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFE4E6EB),
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
                             if (duration != null) ...[
                               const SizedBox(height: 3),
                               Text(
@@ -466,23 +458,106 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     BackgroundReadableColors colors,
     String? formattedDuration, {
     bool compact = false,
-  }) {
+  }) => CallProfile(
+    contactPeerId: widget.contactPeerId,
+    contactName: widget.contactUsername,
+    status: _status(AppLocalizations.of(context)!),
+    colors: colors,
+    statusColor: widget.state == CallState.connected
+        ? colors.connectedHeading
+        : colors.textSecondary,
+    duration: formattedDuration,
+    trailing: widget.upgradeNotice,
+    compact: compact,
+  );
+
+  String _status(AppLocalizations l10n) => switch (widget.state) {
+    CallState.reconnecting => l10n.call_status_reconnecting,
+    CallState.connected when widget.weakConnection =>
+      '${l10n.call_status_connected} · ${l10n.call_status_weak_network}',
+    CallState.connected => l10n.call_status_connected,
+    CallState.ending || CallState.ended => l10n.call_status_ending,
+    _ => l10n.call_status_connecting,
+  };
+
+  String get _formattedDuration {
+    final connectedAt = widget.connectedAt;
+    if (connectedAt == null) return '00:00';
+    final difference = widget.now().toUtc().difference(connectedAt.toUtc());
+    final elapsed = difference.isNegative ? Duration.zero : difference;
+    final hours = elapsed.inHours;
+    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours == 0
+        ? '$minutes:$seconds'
+        : '${hours.toString().padLeft(2, '0')}:$minutes:$seconds';
+  }
+}
+
+/// Shared profile and button placement for active and finished calls.
+Widget buildCallProfileLayout({
+  required bool compact,
+  required Widget profile,
+  required Widget controls,
+}) {
+  if (compact) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Row(
+        children: [
+          Expanded(child: profile),
+          const SizedBox(width: 24),
+          Expanded(child: controls),
+        ],
+      ),
+    );
+  }
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+    child: Column(
+      children: [const Spacer(), profile, const Spacer(), controls],
+    ),
+  );
+}
+
+class CallProfile extends StatelessWidget {
+  const CallProfile({
+    super.key,
+    required this.contactPeerId,
+    required this.contactName,
+    required this.status,
+    required this.colors,
+    required this.statusColor,
+    required this.compact,
+    this.duration,
+    this.trailing,
+  });
+
+  final String contactPeerId;
+  final String contactName;
+  final String status;
+  final BackgroundReadableColors colors;
+  final Color statusColor;
+  final bool compact;
+  final String? duration;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final status = _status(l10n);
-    // The overlay hosts this screen outside any route scope: explicit child
-    // nodes keep the name, the status and the duration separate elements.
+    // Explicit nodes keep the name, status and duration independently readable.
     return Semantics(
       container: true,
       explicitChildNodes: true,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          UserAvatar(peerId: widget.contactPeerId, size: compact ? 88 : 112),
+          UserAvatar(peerId: contactPeerId, size: compact ? 88 : 112),
           SizedBox(height: compact ? 12 : 24),
           Semantics(
             container: true,
             child: Text(
-              widget.contactUsername,
+              contactName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -502,22 +577,21 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             excludeSemantics: true,
             child: Text(
               status,
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: widget.state == CallState.connected
-                    ? colors.connectedHeading
-                    : colors.textSecondary,
+                color: statusColor,
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
             ),
           ),
-          if (formattedDuration != null) ...[
+          if (duration case final value?) ...[
             SizedBox(height: compact ? 6 : 8),
             Semantics(
               container: true,
               child: Text(
-                formattedDuration,
-                semanticsLabel: l10n.call_duration(formattedDuration),
+                value,
+                semanticsLabel: l10n.call_duration(value),
                 style: TextStyle(
                   color: colors.textPrimary,
                   fontSize: 18,
@@ -526,32 +600,12 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               ),
             ),
           ],
-          if (widget.upgradeNotice != null) ...[
+          if (trailing case final detail?) ...[
             const SizedBox(height: 16),
-            widget.upgradeNotice!,
+            detail,
           ],
         ],
       ),
     );
-  }
-
-  String _status(AppLocalizations l10n) => switch (widget.state) {
-    CallState.reconnecting => l10n.call_status_reconnecting,
-    CallState.connected => l10n.call_status_connected,
-    CallState.ending || CallState.ended => l10n.call_status_ending,
-    _ => l10n.call_status_connecting,
-  };
-
-  String get _formattedDuration {
-    final connectedAt = widget.connectedAt;
-    if (connectedAt == null) return '00:00';
-    final difference = widget.now().toUtc().difference(connectedAt.toUtc());
-    final elapsed = difference.isNegative ? Duration.zero : difference;
-    final hours = elapsed.inHours;
-    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours == 0
-        ? '$minutes:$seconds'
-        : '${hours.toString().padLeft(2, '0')}:$minutes:$seconds';
   }
 }

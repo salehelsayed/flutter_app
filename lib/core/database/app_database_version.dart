@@ -101,4 +101,6 @@
 // ordering. The schema exists even when custom-sticker actions are disabled.
 // BL-24(C): nullable local terminal-auto-retry reason; no historical backfill.
 // v132 retains delivery/mutation receipt envelopes across transport failures.
-const int currentIdentityDatabaseVersion = 132;
+// v133 adds nullable local call_history.media_kind. Historical types remain
+// unknown.
+const int currentIdentityDatabaseVersion = 133;

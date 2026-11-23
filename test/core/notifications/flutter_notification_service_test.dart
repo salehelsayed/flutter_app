@@ -208,7 +208,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(tapped, [missed.callBackPayload]);
       await _sendNotificationResponse(payload: missed.encode());
-      expect(tapped.last, 'synthetic-contact');
+      expect(tapped.last, missed.encode());
       await _sendNotificationResponse(
         payload: 'peer-456',
         actionId: missedCallBackActionId,
@@ -224,8 +224,10 @@ void main() {
       final show =
           log.firstWhere((call) => call.method == 'show').arguments as Map;
       final details = show['platformSpecifics'] as Map;
-      expect((details['actions'] as List).single['id'], missedCallBackActionId);
-      expect((details['actions'] as List).single['showsUserInterface'], isTrue);
+      final callBack = (details['actions'] as List).cast<Map>().singleWhere(
+        (action) => action['id'] == missedCallBackActionId,
+      );
+      expect(callBack['showsUserInterface'], isTrue);
       expect(
         MissedCallActionPayload.parse(show['payload'] as String)?.callId,
         missed.callId,
@@ -255,8 +257,9 @@ void main() {
     () {
       final category = missedCallActionCategories().single;
       expect(category.identifier, missedCallActionCategoryId);
-      final action = category.actions.single;
-      expect(action.identifier, missedCallBackActionId);
+      final action = category.actions.singleWhere(
+        (action) => action.identifier == missedCallBackActionId,
+      );
       expect(
         action.options,
         containsAll([
@@ -387,7 +390,7 @@ void main() {
         actionId: messageAction,
       ).timeout(deadline);
       await _sendNotificationResponse(
-        payload: '${missedCallPayloadPrefix}{',
+        payload: '$missedCallPayloadPrefix{',
         actionId: messageAction,
       ).timeout(deadline);
 

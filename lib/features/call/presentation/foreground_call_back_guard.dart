@@ -64,8 +64,11 @@ final class ForegroundCallBackGuard with WidgetsBindingObserver {
   final Future<void> Function() _moveAppToBackground;
   final Future<void> Function(bool owns) _publishCallOwnsBack;
   bool _attached = false;
-  bool _gestureClaimed = false;
+  VoidCallback? _gestureAction;
   bool _surfaceOwnsBack = false;
+
+  /// A finished call has a Flutter-only Back action.
+  VoidCallback? dismissTerminal;
 
   /// Whether an incoming, outgoing, or active call surface is showing.
   bool get surfaceOwnsBack => _surfaceOwnsBack;
@@ -73,7 +76,7 @@ final class ForegroundCallBackGuard with WidgetsBindingObserver {
   set surfaceOwnsBack(bool owns) {
     if (_surfaceOwnsBack == owns) return;
     _surfaceOwnsBack = owns;
-    if (!owns) _gestureClaimed = false;
+    if (!owns) _gestureAction = null;
     _run(() => _publishCallOwnsBack(owns));
   }
 
@@ -87,35 +90,39 @@ final class ForegroundCallBackGuard with WidgetsBindingObserver {
     if (!_attached) return;
     _attached = false;
     surfaceOwnsBack = false;
-    _gestureClaimed = false;
+    _gestureAction = null;
+    dismissTerminal = null;
     WidgetsBinding.instance.removeObserver(this);
   }
 
+  VoidCallback? get _backAction =>
+      dismissTerminal ?? (_surfaceOwnsBack ? _backgroundLiveCall : null);
+
+  void _backgroundLiveCall() => _run(_moveAppToBackground);
+
   @override
   Future<bool> didPopRoute() {
-    if (!_surfaceOwnsBack) return SynchronousFuture<bool>(false);
-    _run(_moveAppToBackground);
-    return SynchronousFuture<bool>(true);
+    final action = _backAction;
+    action?.call();
+    return SynchronousFuture<bool>(action != null);
   }
 
-  /// Claims a predictive back swipe that still reaches Flutter.
   @override
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
-    _gestureClaimed = _surfaceOwnsBack;
-    return _gestureClaimed;
+    _gestureAction = _backAction;
+    return _gestureAction != null;
   }
 
-  /// A committed swipe is a Back press.
   @override
   void handleCommitBackGesture() {
-    if (!_gestureClaimed) return;
-    _gestureClaimed = false;
-    _run(_moveAppToBackground);
+    final action = _gestureAction;
+    _gestureAction = null;
+    action?.call();
   }
 
   @override
   void handleCancelBackGesture() {
-    _gestureClaimed = false;
+    _gestureAction = null;
   }
 
   static void _run(Future<void> Function() action) {

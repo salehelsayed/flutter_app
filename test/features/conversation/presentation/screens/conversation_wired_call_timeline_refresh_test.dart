@@ -184,7 +184,7 @@ void main() {
     await openChat(tester);
     source.initialRead.complete([_call()]);
     await pumpRefresh(tester);
-    expect(find.text('Missed voice call'), findsOneWidget);
+    expect(find.text('Missed'), findsOneWidget);
 
     final completed = _call(
       status: ConversationCallStatus.completed,
@@ -193,7 +193,7 @@ void main() {
     source.refreshWith([completed]);
     await pumpRefresh(tester);
     expect(screen(tester).callEntries.single, same(completed));
-    expect(find.text('Missed voice call'), findsNothing);
+    expect(find.text('Missed'), findsNothing);
 
     source.refreshWith([completed, _call(callId: 'call-2')]);
     await pumpRefresh(tester);

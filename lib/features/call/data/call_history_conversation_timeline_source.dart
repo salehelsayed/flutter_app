@@ -90,4 +90,5 @@ ConversationCallTimelineEntry projectCallTimelineEntry(CallHistoryEntry row) =>
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       duration: row.duration,
+      mediaKind: row.mediaKind,
     );

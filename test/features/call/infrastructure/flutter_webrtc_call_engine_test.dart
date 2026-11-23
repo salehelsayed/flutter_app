@@ -958,6 +958,55 @@ void main() {
       expect(observed, readings.map((reading) => reading.quality));
     });
 
+    test('keeps measurement tokens stable and resets on ICE restart', () async {
+      const readings = [
+        (seconds: 0.6, measurements: 1),
+        (seconds: 0.6, measurements: 2),
+        (seconds: 0.3, measurements: 2),
+        (seconds: 0.9, measurements: 1),
+        (seconds: 0.3, measurements: 3),
+        (seconds: 0.3, measurements: 3),
+        (seconds: 0.3, measurements: 4),
+      ];
+      final adapter = await adapterFor([
+        for (final (index, reading) in readings.indexed)
+          [
+            report(
+              receivedAt: (index + 1).toDouble(),
+              seconds: reading.seconds,
+              measurements: reading.measurements,
+            ),
+          ],
+      ]);
+      final originalEvents = adapter.recentEvents;
+      Future<WebRtcPeerConnectionSnapshot> read() =>
+          adapter.snapshot().timeout(limit);
+
+      expect((await read()).qualityObservation, isNull);
+      final poor = await read();
+      expect(poor.quality, WebRtcQualityBand.poor);
+      expect(poor.qualityObservation, isNotNull);
+
+      final duplicate = await read();
+      expect(duplicate.quality, poor.quality);
+      expect(duplicate.qualityObservation, poor.qualityObservation);
+      final regressed = await read();
+      expect(regressed.quality, WebRtcQualityBand.unknown);
+      expect(regressed.qualityObservation, isNull);
+
+      final good = await read();
+      expect(good.quality, WebRtcQualityBand.good);
+      expect(good.qualityObservation, greaterThan(poor.qualityObservation!));
+
+      await adapter.restartIce().timeout(limit);
+      expect((await read()).qualityObservation, isNull);
+      expect(
+        (await read()).qualityObservation,
+        greaterThan(good.qualityObservation!),
+      );
+      expect(adapter.recentEvents, originalEvents);
+    });
+
     test('ignores malformed RTT, video RTT, and ICE pair RTT', () async {
       const malformed = [
         (seconds: null, measurements: 1),

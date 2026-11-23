@@ -2,6 +2,7 @@ import 'package:flutter_app/features/call/application/locked_call_presentation.d
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/widgets.dart';
@@ -21,6 +22,7 @@ import '../../core/services/incoming_message_router.dart';
 import '../../core/services/network_path_source.dart';
 import '../../core/services/p2p_service.dart';
 import '../../features/call/application/call_network_path_binding.dart';
+import '../../features/call/application/weak_call_connection.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
@@ -561,8 +563,12 @@ final class ProductionCallSignalingGraph
   CallId? _endObservationCallId;
   _CallEndObservation? _endObservation;
   CallId? _diagnosticMediaVerifiedCallId;
-  Timer? _diagnosticSampleTimer;
-  bool _diagnosticSampleInFlight = false;
+  Timer? _connectionSampleTimer;
+  bool _connectionSampleInFlight = false;
+  final _connectionQuality = WeakCallConnection();
+  final _connectionQualityClock = clock.stopwatch()..start();
+  CallId? _connectedQualityCallId;
+  int _connectionQualityGeneration = 0;
   CallAudioController? _observedAudioController;
   CallId? _activeConnectionSnapshotCallId;
   Future<CallConnectionSnapshot> Function()? _activeConnectionSnapshotReader;
@@ -2391,7 +2397,7 @@ final class ProductionCallSignalingGraph
     return mediaOwner.currentAudioController(callId);
   }
 
-  CallMediaKind? _terminalMediaFor(CallSessionSnapshot session) {
+  CallMediaKind? _callMediaFor(CallSessionSnapshot session) {
     final callId = session.callId;
     if (callId == null) return null;
     final settled = _lastSettledMedia;
@@ -2412,7 +2418,7 @@ final class ProductionCallSignalingGraph
     // Coordinator snapshots are synchronous and precede terminal effects and
     // context cleanup. The current machine is already unavailable at terminal;
     // preserve its last observed settlement across reconnect until this point.
-    final terminalMedia = session.isTerminal ? _terminalMediaFor(session) : null;
+    final terminalMedia = session.isTerminal ? _callMediaFor(session) : null;
     if (session.isTerminal || _lastSettledMedia?.callId != session.callId) {
       _lastSettledMedia = null;
     }
@@ -2448,6 +2454,7 @@ final class ProductionCallSignalingGraph
       if (!_shuttingDown && session.isTerminal) _retryDeferredAdvertisement();
       return;
     }
+    _syncConnectionSampling(session);
     final callId = session.callId!;
     final controller = mediaOwner.currentAudioController(callId);
     if (!identical(_observedAudioController, controller)) {
@@ -2649,8 +2656,6 @@ final class ProductionCallSignalingGraph
       },
     );
     if (session.isTerminal) {
-      _diagnosticSampleTimer?.cancel();
-      _diagnosticSampleTimer = null;
       final verified = _diagnosticMediaVerifiedCallId == callId;
       final failed = switch (session.endReason) {
         CallEndReason.signalingFailed ||
@@ -2698,28 +2703,6 @@ final class ProductionCallSignalingGraph
       );
       _outgoingDiagnosticTraceId = null;
       return;
-    }
-    if (session.state == CallState.connected &&
-        _diagnosticSampleTimer == null) {
-      _diagnosticSampleTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-        if (!diagnostics.enabled ||
-            _shuttingDown ||
-            coordinator.activeSession?.callId != callId ||
-            coordinator.activeSession?.isTerminal != false) {
-          _diagnosticSampleTimer?.cancel();
-          _diagnosticSampleTimer = null;
-          return;
-        }
-        if (_diagnosticSampleInFlight) return;
-        final reader = _activeConnectionSnapshotReader;
-        if (reader == null) return;
-        _diagnosticSampleInFlight = true;
-        unawaited(
-          reader()
-              .then<void>((_) {}, onError: (Object _, StackTrace _) {})
-              .whenComplete(() => _diagnosticSampleInFlight = false),
-        );
-      });
     }
   }
 
@@ -2790,8 +2773,15 @@ final class ProductionCallSignalingGraph
     if (bundle == null) {
       _clearConnectionSnapshotReader();
     } else {
-      _activeConnectionSnapshotCallId = bundle.callId;
-      _activeConnectionSnapshotReader = bundle.engine.snapshot;
+      final reader = bundle.engine.snapshot;
+      if (_activeConnectionSnapshotCallId != bundle.callId ||
+          _activeConnectionSnapshotReader != reader) {
+        _activeConnectionSnapshotCallId = bundle.callId;
+        _activeConnectionSnapshotReader = reader;
+        _connectionQualityGeneration++;
+        _connectionQuality.reset();
+      }
+      _syncConnectionSampling(session);
     }
     final controller = bundle?.audioController;
     _bindAudio(callId, controller);
@@ -2856,20 +2846,92 @@ final class ProductionCallSignalingGraph
     if (subscription != null) unawaited(subscription.cancel());
   }
 
+  void _syncConnectionSampling(CallSessionSnapshot session) {
+    final connectedCallId = session.state == CallState.connected
+        ? session.callId
+        : null;
+    if (connectedCallId != _connectedQualityCallId) {
+      _connectedQualityCallId = connectedCallId;
+      _connectionQualityGeneration++;
+      _connectionQuality.reset();
+    }
+    if (connectedCallId != null) {
+      _connectionSampleTimer ??= Timer.periodic(const Duration(seconds: 3), (
+        _,
+      ) {
+        unawaited(_sampleCallConnection());
+      });
+    }
+  }
+
+  Future<void> _sampleCallConnection() async {
+    final session = coordinator.activeSession;
+    if (_shuttingDown ||
+        session == null ||
+        session.callId == null ||
+        session.isTerminal ||
+        (session.state != CallState.connected &&
+            !CallDiagnostics.instance.enabled)) {
+      _connectionSampleTimer?.cancel();
+      _connectionSampleTimer = null;
+      return;
+    }
+    if (_connectionSampleInFlight) return;
+    final callId = session.callId;
+    final generation = _connectionQualityGeneration;
+    _connectionSampleInFlight = true;
+    CallConnectionSnapshot? snapshot;
+    try {
+      snapshot = await readActiveConnectionSnapshot();
+    } on Object {
+      // A failed observation cannot establish or refresh a weak connection.
+    } finally {
+      _connectionSampleInFlight = false;
+    }
+
+    if (_shuttingDown ||
+        generation != _connectionQualityGeneration ||
+        callId != _connectedQualityCallId) {
+      return;
+    }
+    final changed = _connectionQuality.observe(
+      quality: snapshot?.quality ?? CallQualityBand.unknown,
+      observation: snapshot?.qualityObservation,
+      elapsed: _connectionQualityClock.elapsed,
+    );
+    final projection = _foregroundCurrent;
+    if (changed &&
+        projection?.session.callId == callId &&
+        projection?.session.state == CallState.connected) {
+      _publishForeground(projection);
+    }
+  }
+
   void _clearConnectionSnapshotReader() {
-    _diagnosticSampleTimer?.cancel();
-    _diagnosticSampleTimer = null;
+    _connectionSampleTimer?.cancel();
+    _connectionSampleTimer = null;
     _activeConnectionSnapshotCallId = null;
     _activeConnectionSnapshotReader = null;
+    _connectedQualityCallId = null;
+    _connectionQualityGeneration++;
+    _connectionQuality.reset();
   }
 
   void _publishForeground(ForegroundCallProjection? projection) {
-    if (videoEnabled && projection != null && !projection.session.isTerminal) {
-      _bindVideoSource(videoOwners?[projection.session.callId]?.videoSession);
+    if (projection != null && !projection.session.isTerminal) {
+      if (videoEnabled) {
+        _bindVideoSource(videoOwners?[projection.session.callId]?.videoSession);
+      }
       projection = ForegroundCallProjection(
         session: projection.session,
         audio: projection.audio,
-        video: _projectVideo(projection.session),
+        video: videoEnabled
+            ? _projectVideo(projection.session)
+            : projection.video,
+        weakConnection:
+            projection.session.state == CallState.connected &&
+            projection.session.callId == _connectedQualityCallId &&
+            _connectionQuality.isWeak,
       );
     }
     final lease = _pip?.current;
@@ -3711,9 +3773,14 @@ CallSignalingComposition createProductionCallSignalingComposition({
           CallHistoryRepositoryImpl(database),
           onTerminalProjected: onCallHistoryProjected,
         ),
+        resolveTerminalMedia: (snapshot) =>
+            diagnosticGraph?._callMediaFor(snapshot),
         persistActiveCall: (snapshot) {
           diagnosticGraph?._observeCallActivity();
-          return historyCheckpoint.save(snapshot);
+          return historyCheckpoint.save(
+            snapshot,
+            mediaKind: diagnosticGraph?._callMediaFor(snapshot),
+          );
         },
         clearActiveCall: historyCheckpoint.clear,
         effectExecutor: boundEffects,

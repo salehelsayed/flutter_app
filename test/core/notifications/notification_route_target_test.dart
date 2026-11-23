@@ -4,20 +4,18 @@ import 'package:flutter_app/core/notifications/notification_route_target.dart';
 
 void main() {
   group('NotificationRouteTarget', () {
-    test(
-      'BL61 local missed-call payload opens the authenticated peer route',
-      () {
-        const missed = MissedCallActionPayload(
-          'synthetic-contact',
-          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        );
+    test('BL61 local missed-call payload opens its conversation route', () {
+      const missed = MissedCallActionPayload(
+        'synthetic-contact',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      );
 
-        final target = NotificationRouteTarget.fromPayload(missed.encode());
+      final target = NotificationRouteTarget.fromPayload(missed.encode());
 
-        expect(target?.kind, NotificationRouteTargetKind.conversation);
-        expect(target?.peerId, 'synthetic-contact');
-      },
-    );
+      expect(target?.kind, NotificationRouteTargetKind.conversation);
+      expect(target?.peerId, 'synthetic-contact');
+      expect(target?.offerCallMessageSuggestion, isTrue);
+    });
 
     test('BL61 malformed local missed-call payload fails closed', () {
       final target = NotificationRouteTarget.fromPayload(
@@ -36,6 +34,7 @@ void main() {
       expect(routeTarget, isNotNull);
       expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
       expect(routeTarget.peerId, 'peer-123');
+      expect(routeTarget.offerCallMessageSuggestion, isFalse);
     });
 
     test(

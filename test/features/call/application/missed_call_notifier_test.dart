@@ -4,6 +4,7 @@ import 'package:flutter_app/features/call/application/missed_call_notifier.dart'
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 
 /// 406: a call the user never took must leave a notification.
@@ -19,6 +20,7 @@ void main() {
     CallDirection direction = CallDirection.incoming,
     CallHistoryStatus status = CallHistoryStatus.missed,
     CallEndReason reason = CallEndReason.callerCancelled,
+    CallMediaKind mediaKind = CallMediaKind.audio,
     String id = '1',
   }) {
     final startedAt = DateTime.utc(2026, 2, 9, 15, 30);
@@ -31,6 +33,7 @@ void main() {
       startedAt: startedAt,
       endedAt: startedAt.add(const Duration(seconds: 20)),
       transportRoute: null,
+      mediaKind: mediaKind,
       createdAt: startedAt,
       updatedAt: startedAt,
     );
@@ -63,6 +66,7 @@ void main() {
       },
       isSuppressed: (peerId) async => suppressed,
       missedBody: 'Missed voice call',
+      missedVideoBody: 'Missed video call',
       unknownCallerTitle: 'Someone',
     );
     return (notifier: notifier, posted: posted);
@@ -82,6 +86,19 @@ void main() {
       expect(rig.posted.single['body'], 'Missed voice call');
     },
   );
+
+  test('BL61 a missed video call posts the video notification copy', () async {
+    final rig = build();
+
+    final posted = await rig.notifier
+        .notifyTerminal(entry(mediaKind: CallMediaKind.video), inserted: true)
+        .timeout(const Duration(seconds: 3));
+
+    expect(posted, isTrue);
+    expect(rig.posted, [
+      {'contact': contactPeerId, 'title': 'Alice', 'body': 'Missed video call'},
+    ]);
+  });
 
   test(
     'TC-406-02 a cancelled incoming call is a missed call to the callee',

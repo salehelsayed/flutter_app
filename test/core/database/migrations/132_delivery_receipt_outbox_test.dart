@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 import 'dart:io';
 
-import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -41,7 +40,7 @@ void main() {
       });
       final original = (await prior.query('messages')).single;
       await prior.close();
-      final upgraded = await open(currentIdentityDatabaseVersion);
+      final upgraded = await open(132);
       addTearDown(upgraded.close);
       expect(await upgraded.getVersion(), 132);
       expect((await upgraded.query('messages')).single, original);

@@ -291,6 +291,33 @@ void main() {
     expect(fixture.capability.actions, isEmpty);
   });
 
+  testWidgets('a live predictive gesture cannot dismiss the finished call', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final fixture = await pumpApp(tester);
+    fixture.capability.emit(_projection(state: CallState.connected));
+    await tester.pump();
+
+    await backGesture('startBackGesture', <String, Object?>{
+      'touchOffset': <double>[5, 300],
+      'progress': 0.0,
+      'swipeEdge': 0,
+    });
+    fixture.capability.emit(
+      _projection(state: CallState.ended, endReason: CallEndReason.localHangup),
+    );
+    await tester.pump();
+    await backGesture('commitBackGesture');
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('foreground-call-terminal-notice')),
+      findsOneWidget,
+    );
+    expect(taskCalls, isEmpty);
+  });
+
   testWidgets('Back works normally once the call surface is gone', (
     tester,
   ) async {
@@ -301,11 +328,16 @@ void main() {
     expect(await pressBack(tester), isTrue);
     expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
 
-    // Ended call: the terminal notice is informational and must not trap Back.
     fixture.capability.emit(
       _projection(state: CallState.ended, endReason: CallEndReason.localHangup),
     );
     await tester.pump();
+    expect(await pressBack(tester), isTrue);
+    expect(
+      find.byKey(const ValueKey('foreground-call-terminal-notice')),
+      findsNothing,
+    );
+    expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
     expect(await pressBack(tester), isTrue);
     expect(fixture.navigatorKey.currentState!.canPop(), isFalse);
 

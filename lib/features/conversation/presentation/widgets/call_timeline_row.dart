@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -31,16 +32,24 @@ String callTimelineStatusLabel(
   AppLocalizations l10n,
 ) {
   final isIncoming = entry.direction == ConversationCallDirection.incoming;
+  if (entry.isMissedIncoming) {
+    return switch (entry.mediaKind) {
+      CallMediaKind.audio => l10n.call_row_missed,
+      CallMediaKind.video => l10n.call_row_missed_video,
+      null => l10n.calls_missed,
+    };
+  }
   return switch (entry.status) {
-    ConversationCallStatus.completed => l10n.call_row_voice_call,
-    ConversationCallStatus.missed =>
-      isIncoming ? l10n.call_row_missed : l10n.call_row_no_answer,
+    ConversationCallStatus.completed => switch (entry.mediaKind) {
+      CallMediaKind.audio => l10n.call_row_voice_call,
+      CallMediaKind.video => l10n.call_row_video_call,
+      null => l10n.call_ended,
+    },
+    ConversationCallStatus.missed => l10n.call_row_no_answer,
     ConversationCallStatus.declined =>
       isIncoming ? l10n.call_row_you_declined : l10n.call_row_declined,
-    ConversationCallStatus.busy =>
-      isIncoming ? l10n.call_row_missed : l10n.call_row_busy,
-    ConversationCallStatus.cancelled =>
-      isIncoming ? l10n.call_row_missed : l10n.call_row_cancelled,
+    ConversationCallStatus.busy => l10n.call_row_busy,
+    ConversationCallStatus.cancelled => l10n.call_row_cancelled,
     ConversationCallStatus.failed => l10n.call_row_failed,
     ConversationCallStatus.notConnected => l10n.call_end_signaling_failed,
     ConversationCallStatus.microphoneOff => l10n.call_row_microphone_off,
