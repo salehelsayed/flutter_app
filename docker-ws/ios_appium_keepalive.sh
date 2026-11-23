@@ -6,8 +6,9 @@
 cd /workspace/docker-ws/beta || exit 2
 declare -A fails=([11]=0 [13]=0)
 while true; do
-  for p in 11 13; do
+  for p in ${KA_PHONES:-11 13}; do
     st=$(timeout 60 python3 ap.py "$p" app state 2>&1 | tail -1)
+    if ! [[ "$st" =~ ^[0-9]+$ ]]; then sleep 20; st=$(timeout 60 python3 ap.py "$p" app state 2>&1 | tail -1); fi
     if [[ "$st" =~ ^[0-9]+$ ]]; then fails[$p]=0; echo "$(date -u +%T) iPhone $p alive state=$st"; continue; fi
     echo "$(date -u +%T) iPhone $p session down ($st), reopening"
     # Never reopen through Appium's own xcodebuild: a failing WDA test run spawns sudo (owner prompt, 11-02).
