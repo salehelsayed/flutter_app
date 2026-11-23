@@ -2266,7 +2266,7 @@ void main() {
       expect(messages.store.values.single.text, suggestion);
     });
 
-    testWidgets('opening a call suggestion keeps an untouched saved draft', (
+    testWidgets('using a call suggestion preserves the saved draft on reopen', (
       tester,
     ) async {
       final messages = FakeMessageRepository();
@@ -2276,7 +2276,7 @@ void main() {
           .save(saved, ComposerDraft(text: 'Older draft'))
           .timeout(bound);
 
-      await pumpScreen(
+      Future<void> open({required bool fromCall}) => pumpScreen(
         tester,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         messageRepo: messages,
@@ -2287,15 +2287,20 @@ void main() {
         ),
         sendFn: _instantSuccessSendFn,
         composerDraftStore: drafts,
-        offerCallMessageSuggestion: true,
+        offerCallMessageSuggestion: fromCall,
       ).timeout(bound);
 
-      final field = tester.widget<EditableText>(find.byType(EditableText));
-      expect(field.controller.text, isEmpty);
-      expect(find.widgetWithText(ActionChip, suggestion), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      expect(drafts.drafts[saved]?.text, 'Older draft');
+      await open(fromCall: true);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsOneWidget);
+      await tester.tap(chip).timeout(bound);
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(tester.widget<EditableText>(field).controller.text, suggestion);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+      await open(fromCall: false);
+      expect(tester.widget<EditableText>(field).controller.text, 'Older draft');
       expect(messages.store, isEmpty);
     });
   });
