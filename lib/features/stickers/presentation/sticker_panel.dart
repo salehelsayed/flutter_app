@@ -795,6 +795,7 @@ class _CustomStickerImage extends StatelessWidget {
         posterPath: asset.posterPath,
         frameCount: asset.frameCount,
         autoPlay: autoPlay,
+        skipIdenticalAutoplay: true,
         replay: replay,
       );
     }

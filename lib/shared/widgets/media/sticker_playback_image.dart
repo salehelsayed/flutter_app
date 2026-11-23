@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -18,6 +20,7 @@ class StickerPlaybackImage extends StatefulWidget {
     this.fit = BoxFit.contain,
     this.decodeWidth = 256,
     this.autoPlay = true,
+    this.skipIdenticalAutoplay = false,
     this.replay = StickerReplay.none,
     this.frameCount,
     this.placeholder,
@@ -30,6 +33,7 @@ class StickerPlaybackImage extends StatefulWidget {
   final BoxFit fit;
   final int decodeWidth;
   final bool autoPlay;
+  final bool skipIdenticalAutoplay;
   final StickerReplay replay;
 
   /// Admitted sticker metadata. With a poster this avoids opening the animation
@@ -75,6 +79,12 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
   bool get _wantsMotion =>
       widget.autoPlay || widget.replay != StickerReplay.none;
   bool get _canPlay => _visible && _scopeAllowsMotion && _playback.appActive;
+  bool get _canAutoplay =>
+      widget.autoPlay &&
+      !_reduceMotion &&
+      _canPlay &&
+      _animated == true &&
+      !_failed;
 
   @override
   void initState() {
@@ -128,6 +138,7 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
       _still = null;
       _loadStill();
     } else if (widget.autoPlay != oldWidget.autoPlay ||
+        widget.skipIdenticalAutoplay != oldWidget.skipIdenticalAutoplay ||
         widget.replay != oldWidget.replay) {
       _autoplayAttempted = false;
       _stop(rebuild: false);
@@ -201,11 +212,7 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
         return;
       }
       _visible = true;
-      if (widget.autoPlay &&
-          !_reduceMotion &&
-          !_autoplayAttempted &&
-          _animated == true &&
-          !_failed) {
+      if (_canAutoplay && !_autoplayAttempted) {
         _autoplayAttempted = true;
         _play(explicit: false);
       }
@@ -235,7 +242,7 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
 
   void _play({required bool explicit}) {
     if (!_canPlay || _animated != true || _failed) return;
-    _stop();
+    if (explicit) _stop();
     final lease = _playback.claim(this, explicit: explicit);
     if (lease == null) return;
     _autoplayAttempted = true;
@@ -252,6 +259,11 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
         _stop();
         if (_animated == true) setState(() => _animated = false);
         return;
+      }
+      if (lease.checkingMotion) {
+        final identicalFrames = sequence.hasMotion == false;
+        _playback.finishMotionCheck(lease, identicalFrames: identicalFrames);
+        if (identicalFrames) return;
       }
       setState(() {
         _sequence = sequence;
@@ -425,6 +437,46 @@ class _StickerSequence {
 
   final List<_StickerFrame> frames;
   final int bytes;
+  bool? hasMotion;
+
+  Future<void> checkMotion(bool Function() isCurrent) async {
+    if (hasMotion != null || !isCurrent()) return;
+    try {
+      final firstImage = frames.first.image;
+      final first = await _framePixels(firstImage);
+      if (first == null) return;
+      for (final frame in frames.skip(1)) {
+        if (!isCurrent()) return;
+        final image = frame.image;
+        if (image.width != firstImage.width ||
+            image.height != firstImage.height) {
+          hasMotion = true;
+          return;
+        }
+        final other = await _framePixels(image);
+        if (other == null || !isCurrent()) return;
+        if (!listEquals(first, other)) {
+          hasMotion = true;
+          return;
+        }
+      }
+      if (isCurrent()) hasMotion = false;
+    } on Object {
+      // Keep autoplay if the engine cannot read the pixels.
+    }
+  }
+
+  Future<Uint32List?> _framePixels(ui.Image image) async {
+    final retained = image.clone();
+    try {
+      final rgba = await retained.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      return rgba == null ? null : Uint32List.sublistView(rgba);
+    } finally {
+      retained.dispose();
+    }
+  }
 
   void dispose() {
     for (final frame in frames) {
@@ -436,10 +488,15 @@ class _StickerSequence {
 int _imageBytes(ui.Image image) => image.width * image.height * 4;
 
 class _PlaybackLease {
-  _PlaybackLease(this.owner, {required this.explicit});
+  _PlaybackLease(
+    this.owner, {
+    required this.explicit,
+    required this.checkingMotion,
+  });
 
   final _StickerPlaybackImageState owner;
   final bool explicit;
+  bool checkingMotion;
   _StickerSequence? sequence;
 }
 
@@ -457,10 +514,14 @@ class _StickerPlaybackPool with WidgetsBindingObserver {
 
   final _states = <_StickerPlaybackImageState>{};
   final _leases = <_StickerPlaybackImageState, _PlaybackLease>{};
+  final _deniedAutoplay = <_StickerPlaybackImageState>{};
   final _cache = <_StickerFile, _StickerSequence>{};
   Future<void>? _decodeTail;
   int _cachedBytes = 0;
   bool _observing = false;
+
+  bool get _checkingMotion =>
+      _leases.values.any((lease) => lease.checkingMotion);
 
   bool get appActive {
     final state = WidgetsBinding.instance.lifecycleState;
@@ -481,19 +542,48 @@ class _StickerPlaybackPool with WidgetsBindingObserver {
     _StickerPlaybackImageState state, {
     required bool explicit,
   }) {
+    final checkingMotion = !explicit && state.widget.skipIdenticalAutoplay;
     if (_leases.length == _maxActiveAnimations) {
-      if (!explicit) return null;
+      if (!explicit) {
+        if (checkingMotion && _checkingMotion) _deniedAutoplay.add(state);
+        return null;
+      }
       final victim = _leases.values.firstWhere(
         (lease) => !lease.explicit,
         orElse: () => _leases.values.first,
       );
       victim.owner._stop();
     }
-    return _leases[state] = _PlaybackLease(state, explicit: explicit);
+    return _leases[state] = _PlaybackLease(
+      state,
+      explicit: explicit,
+      checkingMotion: checkingMotion,
+    );
   }
 
   void release(_StickerPlaybackImageState state) {
+    _deniedAutoplay.remove(state);
     _leases.remove(state);
+    if (!_checkingMotion) _deniedAutoplay.clear();
+  }
+
+  void finishMotionCheck(
+    _PlaybackLease lease, {
+    required bool identicalFrames,
+  }) {
+    lease.checkingMotion = false;
+    if (identicalFrames) {
+      _leases.remove(lease.owner);
+      while (_deniedAutoplay.isNotEmpty) {
+        final next = _deniedAutoplay.first;
+        _deniedAutoplay.remove(next);
+        if (next.mounted && next._canAutoplay && next._hasPaintArea()) {
+          next._play(explicit: false);
+          break;
+        }
+      }
+    }
+    if (!_checkingMotion) _deniedAutoplay.clear();
   }
 
   bool holds(_PlaybackLease lease) => identical(_leases[lease.owner], lease);
@@ -592,6 +682,7 @@ class _StickerPlaybackPool with WidgetsBindingObserver {
       if (cached != null) {
         _cache[key] = cached;
         lease.sequence = cached;
+        if (lease.checkingMotion) await cached.checkMotion(isCurrent);
         return cached;
       }
       while (_cache.length >= _maxSequences ||
@@ -637,10 +728,14 @@ class _StickerPlaybackPool with WidgetsBindingObserver {
           duration: _playbackTick * math.max(1, ticks),
         ));
       }
+      codec.dispose();
+      codec = null;
+      if (!isCurrent()) return null;
+      final sequence = _StickerSequence(frames);
+      if (lease.checkingMotion) await sequence.checkMotion(isCurrent);
       if (!isCurrent()) return null;
       final loadedIdentity = await _fileIdentity(path, width);
       if (loadedIdentity != key || !isCurrent()) return null;
-      final sequence = _StickerSequence(frames);
       _cache[key] = sequence;
       _cachedBytes += sequence.bytes;
       lease.sequence = sequence;
