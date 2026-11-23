@@ -382,12 +382,12 @@ void main() {
             const oldDraft = 'Unsent message before the call';
             const suggestion = 'Tried to call you';
             final chatRoute = find.byType(ConversationWired);
-            final field = find.descendant(
-              of: chatRoute,
+            final original = tester.widget<ConversationWired>(chatRoute);
+            final originalField = find.descendant(
+              of: find.byWidget(original),
               matching: find.byType(EditableText),
             );
-            final original = tester.widget<ConversationWired>(chatRoute);
-            await waitForRoute(tester.enterText(field, oldDraft));
+            await waitForRoute(tester.enterText(originalField, oldDraft));
             await waitForRoute(tester.pump());
 
             notifications.onNotificationTap!('peer-photo');
@@ -403,22 +403,39 @@ void main() {
             );
             await waitForRoute(tester.pump());
             await waitForRoute(tester.pump(const Duration(milliseconds: 400)));
-            final chip = find.widgetWithText(ActionChip, suggestion);
+            final followUp = find.byWidgetPredicate(
+              (widget) =>
+                  widget is ConversationWired &&
+                  widget.offerCallMessageSuggestion,
+            );
+            final chip = find.descendant(
+              of: followUp,
+              matching: find.widgetWithText(ActionChip, suggestion),
+            );
             expect(chip, findsOneWidget);
-            expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+            expect(ModalRoute.of(tester.element(followUp))?.isCurrent, isTrue);
+            final followUpField = find.descendant(
+              of: followUp,
+              matching: find.byType(EditableText),
+            );
+            expect(
+              tester.widget<EditableText>(followUpField).controller.text,
+              isEmpty,
+            );
 
             await waitForRoute(tester.tap(chip));
             await waitForRoute(tester.pump());
             expect(
-              tester.widget<EditableText>(field).controller.text,
+              tester.widget<EditableText>(followUpField).controller.text,
               suggestion,
             );
             MyApp.navigatorKey.currentState!.pop();
             await waitForRoute(tester.pump());
             await waitForRoute(tester.pump(const Duration(milliseconds: 400)));
+            expect(followUp, findsNothing);
             expect(tester.widget<ConversationWired>(chatRoute), same(original));
             expect(
-              tester.widget<EditableText>(field).controller.text,
+              tester.widget<EditableText>(originalField).controller.text,
               oldDraft,
             );
             expect(conversationTracker.isViewing('peer-photo'), isTrue);
