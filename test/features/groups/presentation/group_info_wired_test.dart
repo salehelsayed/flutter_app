@@ -5809,6 +5809,137 @@ void main() {
       },
     );
 
+    for (final (name, status, actionKey) in [
+      (
+        'pending role sync',
+        GroupExitIntentRequestStatus.pendingRoleSync,
+        'group-exit-leave-when-synced',
+      ),
+      (
+        'queued leave',
+        GroupExitIntentRequestStatus.queued,
+        'group-exit-cancel-queued',
+      ),
+    ]) {
+      testWidgets('Group Info $name Close stays fully below the status bar', (
+        tester,
+      ) async {
+        const bound = Duration(seconds: 3);
+        tester.view.devicePixelRatio = 3;
+        tester.view.physicalSize = const Size(375, 667) * 3;
+        const topInset = FakeViewPadding(top: 128);
+        tester.view.viewPadding = topInset;
+        tester.view.padding = topInset;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group).timeout(bound);
+        await _saveGroupReplayKey(groupRepo).timeout(bound);
+        final self = makeMember(
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+        );
+        await groupRepo.saveMember(self).timeout(bound);
+        await groupRepo
+            .saveMember(
+              makeMember(
+                peerId: 'peer-other-admin',
+                username: 'Other Admin',
+                role: MemberRole.admin,
+              ),
+            )
+            .timeout(bound);
+        final pending = status == GroupExitIntentRequestStatus.pendingRoleSync;
+        final roleRow = GroupPendingBroadcast(
+          id: 'compact-sheet-role',
+          groupId: group.id,
+          kind: groupPendingBroadcastKindMemberRoleUpdated,
+          sysText: '{"kind":"member_role_updated"}',
+          recipientPeerIds: const ['peer-other-admin'],
+          eventAt: group.createdAt,
+          sourceMessageId: 'compact-sheet-role-source',
+          createdAt: group.createdAt,
+          updatedAt: group.createdAt,
+        );
+        setGroupExitIntentActionSinks(
+          resolveSnapshot: (groupId) => resolveGroupExitSnapshot(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            selfPeerId: testIdentity.peerId,
+            loadPendingBroadcasts: (_) async => pending ? [roleRow] : [],
+          ),
+          requestLeave: (_) async => GroupExitIntentRequestResult(
+            status: status,
+            intent: pending
+                ? null
+                : GroupExitIntent(
+                    groupId: group.id,
+                    intentId: 'compact-sheet-exit',
+                    selfPeerId: self.peerId,
+                    selfJoinedAt: self.joinedAt,
+                    state: GroupExitIntentState.queued,
+                    pendingBroadcastId: 'compact-sheet-leave-notice',
+                    createdAt: group.createdAt,
+                    updatedAt: group.createdAt,
+                  ),
+          ),
+        );
+        await tester
+            .pumpWidget(
+              _localizedMaterialApp(
+                home: GroupInfoWired(
+                  group: group,
+                  groupRepo: groupRepo,
+                  contactRepo: InMemoryContactRepository(),
+                  bridge: FakeBridge(),
+                  identityRepo: FakeIdentityRepository(identity: testIdentity),
+                  p2pService: FakeP2PService(),
+                ),
+              ),
+            )
+            .timeout(bound);
+        await pumpFrames(tester).timeout(bound);
+        final leave = find.byKey(const ValueKey('group-leave-button'));
+        await tester
+            .scrollUntilVisible(
+              leave,
+              200,
+              scrollable: find.byType(Scrollable).first,
+              maxScrolls: 12,
+            )
+            .timeout(bound);
+        await tester.tap(leave).timeout(bound);
+        await pumpFrames(tester).timeout(bound);
+        final confirm = find.text('Leave & Delete');
+        if (pending) {
+          expect(confirm, findsNothing);
+        } else {
+          await tester.tap(confirm).timeout(bound);
+          await pumpFrames(tester).timeout(bound);
+        }
+        expect(find.byKey(ValueKey(actionKey)), findsOneWidget);
+
+        tester.platformDispatcher.textScaleFactorTestValue = 3.1;
+        await pumpFrames(tester).timeout(bound);
+        final close = find.byKey(const ValueKey('group-exit-close'));
+        final bounds = tester.getRect(close);
+        expect(
+          bounds.top,
+          greaterThanOrEqualTo(topInset.top / tester.view.devicePixelRatio),
+          reason: 'the Close hit area $bounds must clear the status bar',
+        );
+        await tester
+            .tapAt(Offset(bounds.center.dx, bounds.top + 1))
+            .timeout(bound);
+        await pumpFrames(tester).timeout(bound);
+        expect(close, findsNothing);
+        expect(find.byType(GroupInfoWired), findsOneWidget);
+      });
+    }
+
     testWidgets(
       'PB266-09 Group Info codes every applicable outcome in its accepted container',
       (tester) async {
