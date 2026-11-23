@@ -275,6 +275,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final chosen = await showModalBottomSheet<Set<String>>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => ThoughtPeoplePickerSheet(
         contacts: _eligible,
