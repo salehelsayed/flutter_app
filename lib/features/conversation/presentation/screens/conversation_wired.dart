@@ -854,7 +854,8 @@ class _ConversationWiredState extends State<ConversationWired>
   String? _editingMessageId;
   String? _editingOriginalText;
   String _draftText = '';
-  bool _usedCallMessageSuggestion = false;
+  late final DateTime? _callMessageSuggestionOpenedAt;
+  bool _callMessageSuggestionConsumed = false;
   late final bool _ownsConversationTracking;
   late final _composerDraft = ComposerDraftAutosave(
     store: widget.composerDraftStore ?? ComposerDraftStore.shared,
@@ -1562,6 +1563,9 @@ class _ConversationWiredState extends State<ConversationWired>
   @override
   void initState() {
     super.initState();
+    _callMessageSuggestionOpenedAt = widget.offerCallMessageSuggestion
+        ? DateTime.now().toUtc()
+        : null;
     WidgetsBinding.instance.addObserver(this);
     _appLifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
@@ -4308,6 +4312,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
       if (mounted) {
         setState(() {
+          _callMessageSuggestionConsumed = true;
           _upsertMessageById(optimisticMessage);
         });
         _scrollToBottom();
@@ -5563,8 +5568,8 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   void _useCallMessageSuggestion() {
-    if (_usedCallMessageSuggestion || _draftText.isNotEmpty) return;
-    _usedCallMessageSuggestion = true;
+    if (_callMessageSuggestionConsumed || _draftText.isNotEmpty) return;
+    _callMessageSuggestionConsumed = true;
     _onDraftChanged(
       AppLocalizations.of(context)!.call_suggestion_tried_to_call,
     );
@@ -6747,6 +6752,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     if (mounted) {
       setState(() {
+        _callMessageSuggestionConsumed = true;
         _upsertMessageById(optimisticMessage);
       });
       _updateComposerState(isUploading: true);
@@ -8871,6 +8877,12 @@ class _ConversationWiredState extends State<ConversationWired>
     if (_sameCallTimeline(entries)) return;
     setState(() {
       _callEntries = List<ConversationCallTimelineEntry>.unmodifiable(entries);
+      final openedAt = _callMessageSuggestionOpenedAt;
+      if (!_callMessageSuggestionConsumed &&
+          openedAt != null &&
+          entries.any((entry) => entry.endedAt.isAfter(openedAt))) {
+        _callMessageSuggestionConsumed = true;
+      }
     });
   }
 
@@ -9689,7 +9701,7 @@ class _ConversationWiredState extends State<ConversationWired>
           initialText: _draftText,
           composerSuggestion:
               widget.offerCallMessageSuggestion &&
-                  !_usedCallMessageSuggestion &&
+                  !_callMessageSuggestionConsumed &&
                   _draftText.isEmpty
               ? (
                   label: AppLocalizations.of(

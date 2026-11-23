@@ -30,16 +30,14 @@ typedef MissedCallNotificationSuppressed =
     Future<bool> Function(String contactAccountPeerId);
 
 final class MissedCallNotifier {
-  MissedCallNotifier({
+  const MissedCallNotifier({
     required this.post,
     required this.resolveContactName,
     required this.isSuppressed,
-    required String Function({required bool video}) missedBody,
-    required String Function() unknownCallerTitle,
+    required this.missedBody,
+    required this.unknownCallerTitle,
     this.postWithAction,
-  }) : _missedBody = missedBody(video: false),
-       _missedVideoBody = missedBody(video: true),
-       _unknownCallerTitle = unknownCallerTitle();
+  });
 
   final PostMissedCallNotification post;
   final Future<void> Function(
@@ -51,11 +49,10 @@ final class MissedCallNotifier {
   final ResolveMissedCallContactName resolveContactName;
   final MissedCallNotificationSuppressed isSuppressed;
 
-  /// Localized copy, resolved by the composition root: this runs in
-  /// background isolates with no widget tree to read a delegate from.
-  final String _missedBody;
-  final String _missedVideoBody;
-  final String _unknownCallerTitle;
+  /// The composition root supplies copy for the current locale, including in
+  /// background isolates with no widget tree.
+  final String Function({required bool video}) missedBody;
+  final String Function() unknownCallerTitle;
 
   /// Statuses that mean "the user never took this call". `declined` is
   /// deliberately absent: the user acted, and telling them about their own
@@ -96,14 +93,11 @@ final class MissedCallNotifier {
     } catch (_) {
       name = null;
     }
-    final title = (name == null || name.trim().isEmpty)
-        ? _unknownCallerTitle
-        : name.trim();
-
-    final body = entry.mediaKind == CallMediaKind.video
-        ? _missedVideoBody
-        : _missedBody;
     try {
+      final title = (name == null || name.trim().isEmpty)
+          ? unknownCallerTitle()
+          : name.trim();
+      final body = missedBody(video: entry.mediaKind == CallMediaKind.video);
       if (postWithAction != null) {
         await postWithAction!(entry, title, body);
       } else {

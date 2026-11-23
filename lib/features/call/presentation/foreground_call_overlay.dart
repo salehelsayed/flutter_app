@@ -1988,10 +1988,16 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
   if (session == null || session.isIdle) {
     return _ForegroundCallSurface.hidden;
   }
-  if (session.direction == CallDirection.incoming &&
-      (!session.incomingValidated ||
-          (session.isTerminal && session.endReason == CallEndReason.noAnswer))) {
-    return _ForegroundCallSurface.hidden;
+  if (session.direction == CallDirection.incoming) {
+    final quietMissedCall =
+        session.isTerminal &&
+        (session.endReason == CallEndReason.noAnswer ||
+            (session.endReason == CallEndReason.callerCancelled &&
+                session.acceptedAt == null &&
+                session.connectedAt == null));
+    if (!session.incomingValidated || quietMissedCall) {
+      return _ForegroundCallSurface.hidden;
+    }
   }
   if (session.isTerminal) return _ForegroundCallSurface.terminal;
 
