@@ -31,6 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
@@ -66,19 +67,18 @@ class TranslatorDownloadWorkManagerTest {
         shadowOf(connectivity).setNetworkCapabilities(network, capabilities)
 
         val executor = Executors.newSingleThreadExecutor()
-        val taskExecutor = Executors.newSingleThreadExecutor()
         val factory = DownloadWorkers()
         val workClock = AtomicLong(System.currentTimeMillis())
         val configuration = Configuration.Builder()
             .setExecutor(executor)
-            .setTaskExecutor(taskExecutor)
             .setWorkerFactory(factory)
             .setClock { workClock.get() }
             .build()
+        // With the task executor unset, the helper runs WorkManager scheduling inline.
         WorkManagerTestInitHelper.initializeTestWorkManager(
             app,
             configuration,
-            WorkManagerTestInitHelper.ExecutorsMode.PRESERVE_EXECUTORS,
+            WorkManagerTestInitHelper.ExecutorsMode.LEGACY_OVERRIDE_WITH_SYNCHRONOUS_EXECUTORS,
         )
         val manager = WorkManager.getInstance(app)
         val driver = checkNotNull(WorkManagerTestInitHelper.getTestDriver(app))
@@ -101,9 +101,18 @@ class TranslatorDownloadWorkManagerTest {
                     options = TaskOptions(null, null, null, null, appManagedRecovery = true),
                     taskType = "DownloadTask",
                 )
-                val enqueued = executor.submit<Boolean> {
+                val enqueue = FutureTask {
                     runBlocking { BDPlugin.doEnqueue(app, task, null, null) }
-                }.awaitOnMain("the actual download request to enqueue")
+                }
+                val enqueueThread = Thread(enqueue, "translator-test-enqueue").apply {
+                    isDaemon = true
+                    start()
+                }
+                val enqueued = try {
+                    enqueue.awaitOnMain("the actual download request to enqueue", enqueueThread)
+                } finally {
+                    if (!enqueue.isDone) enqueue.cancel(true)
+                }
                 assertTrue("the actual download request was accepted", enqueued)
                 val initial = scheduled().single()
                 assertEquals(NetworkType.CONNECTED, initial.constraints.requiredNetworkType)
@@ -161,7 +170,6 @@ class TranslatorDownloadWorkManagerTest {
             } finally {
                 WorkManagerTestInitHelper.closeWorkDatabase()
                 executor.shutdownNow()
-                taskExecutor.shutdownNow()
             }
         }
     }
@@ -182,8 +190,16 @@ class TranslatorDownloadWorkManagerTest {
         throw AssertionError("Timed out waiting for $description")
     }
 
-    private fun <T> Future<T>.awaitOnMain(description: String): T {
-        await(description) { isDone }
+    private fun <T> Future<T>.awaitOnMain(description: String, caller: Thread? = null): T {
+        try {
+            await(description) { isDone }
+        } catch (failure: AssertionError) {
+            if (caller == null) throw failure
+            val boundary = caller.stackTrace.take(14).joinToString("\n") {
+                "${it.className}.${it.methodName}:${it.lineNumber}"
+            }
+            throw AssertionError("${failure.message}\nEnqueue caller ${caller.state}:\n$boundary", failure)
+        }
         return get(0, TimeUnit.SECONDS)
     }
 
