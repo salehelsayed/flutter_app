@@ -688,6 +688,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (_) => GroupExitRecoverySheet.pendingRoleSync(
         groupName: _group.name,
         diagnosticGroupId: _group.id,
@@ -731,6 +732,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (_) => GroupExitRecoverySheet.queuedLeave(
         groupName: _group.name,
         diagnosticGroupId: _group.id,

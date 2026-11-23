@@ -4790,6 +4790,17 @@ described in the microphone preflight guidance below. Focused verification and
 the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+A full-height Flutter modal bottom sheet needs route-level safe-area handling
+when its controls can reach the top edge. The default route strips top
+`MediaQuery` padding before the child sees it. The BL-63 widget cases use the
+real route and check the entire hit rectangle before tapping near the top.
+Pick People Cancel and Done started at y=20 logical pixels on baseline
+`b499600d`. On a compact viewport with large text, both Group Info recovery
+sheets put Close at y=12 on `d58f0269`. The simulated 128 px status bar at DPR 3
+ended at y=42.67. The regressions retain the resulting audience selection and
+the return to Group Info after Close.
+
+
 Expired author Thoughts now keep their stored rows and media as own history;
 the expiry sweep removes only incoming friend copies. The next sweep deadline
 also selects only incoming rows so retained past author deadlines cannot loop
