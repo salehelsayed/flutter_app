@@ -1779,10 +1779,11 @@ void main() {
       final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
       _Storage? storage;
       final h = await _Harness.create(
-        publishBackgroundStatus: (state, {required allowForeground}) async {
-          expect(allowForeground, isFalse);
-          notices.add((state, storage?.record));
-        },
+        publishBackgroundStatus:
+            (state, {required allowForeground, required isCurrent}) async {
+              expect(allowForeground, isFalse);
+              notices.add((state, storage?.record));
+            },
       ).timeout(bound);
       storage = h.storage;
       addTearDown(() => h.dispose().timeout(bound));
@@ -1838,8 +1839,9 @@ void main() {
     test('Remove while Ready is committing suppresses the notice', () async {
       final notices = <ModelDeliveryState>[];
       final h = await _Harness.create(
-        publishBackgroundStatus: (state, {required allowForeground}) async =>
-            notices.add(state),
+        publishBackgroundStatus:
+            (state, {required allowForeground, required isCurrent}) async =>
+                notices.add(state),
       ).timeout(bound);
       addTearDown(() => h.dispose().timeout(bound));
       final write = holdRecordWrite(h.storage, ModelDeliveryPhase.ready);
@@ -1927,12 +1929,13 @@ void main() {
             foregroundWindowEnded.complete();
           }
         },
-        publishBackgroundStatus: (state, {required allowForeground}) async {
-          expect(state, isA<ModelReady>());
-          expect(allowForeground, isTrue);
-          events.add('ready');
-          readyPosted.complete();
-        },
+        publishBackgroundStatus:
+            (state, {required allowForeground, required isCurrent}) async {
+              expect(state, isA<ModelReady>());
+              expect(allowForeground, isTrue);
+              events.add('ready');
+              readyPosted.complete();
+            },
       ).timeout(bound);
       addTearDown(() => h.dispose().timeout(bound));
       final checking = Completer<bool>();
@@ -1975,8 +1978,9 @@ void main() {
         final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
         _Storage? storage;
         final h = await _Harness.create(
-          publishBackgroundStatus: (state, {required allowForeground}) async =>
-              notices.add((state, storage?.record)),
+          publishBackgroundStatus:
+              (state, {required allowForeground, required isCurrent}) async =>
+                  notices.add((state, storage?.record)),
         ).timeout(bound);
         storage = h.storage;
         addTearDown(() => h.dispose().timeout(bound));

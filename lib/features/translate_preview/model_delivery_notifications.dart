@@ -30,8 +30,10 @@ final class ModelDeliveryNotifications {
   Future<void> publish(
     ModelDeliveryState state, {
     required bool allowForeground,
+    required bool Function() isCurrent,
   }) async {
-    bool canPublish() => isBackground || allowForeground && state is ModelReady;
+    bool canPublish() =>
+        isCurrent() && (isBackground || allowForeground && state is ModelReady);
     if (!canPublish()) return;
     final revision = ++_revision;
     final bool enabled = switch (defaultTargetPlatform) {

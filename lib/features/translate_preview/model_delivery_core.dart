@@ -472,6 +472,7 @@ typedef ModelDeliveryNoticePublisher =
     Future<void> Function(
       ModelDeliveryState state, {
       required bool allowForeground,
+      required bool Function() isCurrent,
     });
 
 final class PersistentModelDeliveryController extends ModelDeliveryController {
@@ -1565,10 +1566,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _ => false,
     };
     if (!stable) return;
+    final generation = _generation;
     var status = _state.value;
     if (status case final ModelPaused paused) {
       final id = _record.taskId;
-      final generation = _generation;
       int? confirmed;
       try {
         if (id != null) {
@@ -1586,7 +1587,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         confirmedReceivedBytes: confirmed,
       );
     }
-    unawaited(_runNotice(() => publish(status, allowForeground: false)));
+    unawaited(
+      _runNotice(
+        () => publish(
+          status,
+          allowForeground: false,
+          isCurrent: () => !_disposed && generation == _generation,
+        ),
+      ),
+    );
   }
 
   Future<void> _runNotice(Future<void> Function()? action) async {
@@ -1871,7 +1880,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           final publish = _publishBackgroundStatus;
           if (publish != null) {
             notice = _runNotice(
-              () => publish(ready, allowForeground: allowForeground),
+              () => publish(
+                ready,
+                allowForeground: allowForeground,
+                isCurrent: () => !_disposed && generation == _generation,
+              ),
             );
           }
         }
