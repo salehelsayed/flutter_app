@@ -1917,6 +1917,80 @@ void main() {
       }
     });
 
+    test(
+      'restores native Ready before a stale running transport snapshot',
+      () async {
+        final identity = _fileIdentity();
+        final verified = ModelDeliveryVerification(
+          expectedSha256: _manifest.sha256,
+          identity: identity,
+        );
+        final receiptReads = <String>[];
+        final notices = <ModelDeliveryState>[];
+        final consumed = Completer<String>();
+        final h = await _Harness.create(
+          record: ModelDeliveryRecord(
+            manifest: _manifest,
+            taskId: 'native-ready',
+            receivedBytes: 42,
+            phase: ModelDeliveryPhase.active,
+          ),
+          restoredStatus: ModelTransferStatus.running,
+          restoredBytes: 42,
+          identity: identity,
+          readNativeVerification: (taskId) async {
+            receiptReads.add(taskId);
+            return (verification: verified, noticePosted: true);
+          },
+          publishBackgroundStatus:
+              (state, {required allowForeground, required isCurrent}) async =>
+                  notices.add(state),
+          finishVerificationWindow: (taskId) async => consumed.complete(taskId),
+        ).timeout(bound);
+        addTearDown(() => h.dispose().timeout(bound));
+
+        await _nextState<ModelReady>(h.controller.state).timeout(bound);
+        expect(await consumed.future.timeout(bound), 'native-ready');
+        expect(receiptReads, ['native-ready']);
+        expect(h.storage.record!.phase, ModelDeliveryPhase.ready);
+        expect(h.storage.record!.receivedBytes, _manifest.bytes);
+        expect(h.storage.record!.verification?.identity, identity);
+        expect(h.storage.verifications, 0);
+        expect(h.transport.enqueues, isEmpty);
+        expect(notices, isEmpty);
+      },
+    );
+
+    test(
+      'native receipt for a changed file still needs Dart verification',
+      () async {
+        final stale = ModelDeliveryVerification(
+          expectedSha256: _manifest.sha256,
+          identity: _fileIdentity(modified: 0),
+        );
+        final posted = Completer<ModelDeliveryState>();
+        final h = await _Harness.create(
+          record: ModelDeliveryRecord(
+            manifest: _manifest,
+            taskId: 'changed-file',
+            phase: ModelDeliveryPhase.active,
+          ),
+          restoredStatus: ModelTransferStatus.complete,
+          identity: _fileIdentity(),
+          readNativeVerification: (_) async =>
+              (verification: stale, noticePosted: true),
+          publishBackgroundStatus:
+              (state, {required allowForeground, required isCurrent}) async =>
+                  posted.complete(state),
+        ).timeout(bound);
+        addTearDown(() => h.dispose().timeout(bound));
+
+        expect(await posted.future.timeout(bound), isA<ModelReady>());
+        expect(h.storage.verifications, 1);
+        expect(h.storage.record!.verification?.identity, _fileIdentity());
+      },
+    );
+
     test('Ready on foreground follows a deferred background check', () async {
       var background = true;
       final firstWindowEnded = Completer<void>();
@@ -2720,6 +2794,8 @@ class _Harness {
     Future<void> Function()? clearBackgroundStatus,
     bool Function()? isAppBackground,
     Future<void> Function(String taskId)? finishVerificationWindow,
+    Future<NativeModelDeliveryVerification?> Function(String taskId)?
+    readNativeVerification,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
@@ -2755,6 +2831,7 @@ class _Harness {
       clearBackgroundStatus: clearBackgroundStatus,
       isAppBackground: isAppBackground,
       finishVerificationWindow: finishVerificationWindow,
+      readNativeVerification: readNativeVerification,
     );
     await controller.initialize();
     return _Harness(controller, storage, network, transport);

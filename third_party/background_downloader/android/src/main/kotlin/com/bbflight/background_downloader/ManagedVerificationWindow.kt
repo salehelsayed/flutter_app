@@ -21,18 +21,6 @@ internal class ManagedVerificationWindow private constructor(
         withTimeoutOrNull(expiresAt - SystemClock.elapsedRealtime()) { finished.await() }
     }
 
-    fun persistCompletion(
-        prefs: SharedPreferences,
-        edit: SharedPreferences.Editor,
-        update: TaskStatusUpdate,
-    ): Boolean {
-        // Dart may receive completion and then lose the engine before persisting its result.
-        val statuses = storedStatuses(prefs)
-        statuses[taskId] = bdJson.encodeToString(update)
-        return edit.putString(completedWorkKey, workId.toString())
-            .putString(BDPlugin.keyStatusUpdateMap, bdJson.encodeToString(statuses)).commit()
-    }
-
     fun close() {
         synchronized(windows) {
             if (windows[taskId] === this) windows.remove(taskId)
@@ -44,6 +32,19 @@ internal class ManagedVerificationWindow private constructor(
         const val completedWorkKey = "com.bbflight.background_downloader.completedManagedWork"
         private val windows = mutableMapOf<String, ManagedVerificationWindow>()
         private val appChannels = mutableSetOf<MethodChannel>()
+
+        fun persistCompletion(
+            prefs: SharedPreferences,
+            edit: SharedPreferences.Editor,
+            update: TaskStatusUpdate,
+            workId: UUID,
+        ): Boolean {
+            // Dart may receive completion and lose the engine before persisting it.
+            val statuses = storedStatuses(prefs)
+            statuses[update.task.taskId] = bdJson.encodeToString(update)
+            return edit.putString(completedWorkKey, workId.toString())
+                .putString(BDPlugin.keyStatusUpdateMap, bdJson.encodeToString(statuses)).commit()
+        }
 
         fun attachAppChannel(channel: MethodChannel) {
             synchronized(windows) { appChannels.add(channel) }

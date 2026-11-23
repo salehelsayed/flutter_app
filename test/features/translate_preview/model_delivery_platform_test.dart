@@ -69,6 +69,7 @@ void main() {
     bool? isIOS,
     Duration cancellationTimeout = const Duration(seconds: 30),
     Future<String> Function(DownloadTask)? destinationPath,
+    ({String title, String body}) Function()? nativeReadyCopy,
   }) => BackgroundModelDeliveryTransport(
     downloader: downloader,
     resumeStorage: resumeStorage ?? _ResumeStorage(),
@@ -79,6 +80,44 @@ void main() {
     destinationPath:
         destinationPath ??
         (task) async => '${destinations.path}/${task.filename}',
+    nativeReadyCopy: nativeReadyCopy,
+  );
+
+  test(
+    'only Android enqueues the manifest proof and approved Ready copy',
+    () async {
+      final manifest = _manifest();
+      for (final isIOS in [false, true]) {
+        final downloader = _Downloader();
+        final transport = createTransport(
+          downloader: downloader,
+          isIOS: isIOS,
+          nativeReadyCopy: () =>
+              (title: 'Approved title', body: 'Approved body'),
+        );
+        addTearDown(() => transport.dispose().timeout(checkpointBound));
+        expect(
+          await transport
+              .enqueue(taskId: 'owned', manifest: manifest, requiresWiFi: true)
+              .timeout(checkpointBound),
+          isTrue,
+        );
+        final task = downloader.enqueued.single;
+        if (isIOS) {
+          expect(task.metaData, isEmpty);
+        } else {
+          expect(jsonDecode(task.metaData), {
+            'translatorVerification': {
+              'version': 1,
+              'expectedSha256': manifest.sha256,
+              'sizeBytes': manifest.bytes,
+              'readyTitle': 'Approved title',
+              'readyBody': 'Approved body',
+            },
+          });
+        }
+      }
+    },
   );
 
   test(

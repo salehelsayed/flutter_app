@@ -613,6 +613,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
 
         private fun discardManagedPartial(context: Context, prefs: SharedPreferences, taskId: String, work: WorkInfo) {
             ManagedVerificationWindow.cancel(prefs, taskId, work.id)
+            ManagedModelVerification.cancel(context, prefs, taskId, work.id)
             val attempt = ManagedDownloadHold.forget(prefs, taskId, work.id) ?: return
             attempt.partialPath?.let { ManagedDownloadHold.ownedPartial(context, it)?.delete() }
         }
@@ -801,6 +802,13 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     "enqueue" -> methodEnqueue(call)
                     "updateQueuedManagedDownload" -> methodUpdateQueuedManagedDownload(call)
                     "heldManagedDownloadBytes" -> methodHeldManagedDownloadBytes(call)
+                    "readManagedVerification" -> {
+                        val taskId = call.arguments as? String
+                        taskId?.let {
+                            val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+                            ManagedModelVerification.readReceipt(prefs, it)
+                        }
+                    }
                     "finishManagedVerification" -> {
                         val taskId = call.arguments as? String
                         val owner = backgroundChannel

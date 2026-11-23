@@ -38,6 +38,7 @@ import java.net.UnknownHostException
 import java.net.URL
 import java.net.URLDecoder
 import java.net.MalformedURLException
+import java.util.UUID
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 import androidx.core.content.edit
@@ -161,6 +162,7 @@ open class TaskRunner(
             charSet: String? = null,
             context: Context,
             verificationWindow: ManagedVerificationWindow? = null,
+            completedWorkId: UUID? = null,
         ) {
             // Intercept status updates resulting from re-enqueue request, which
             // themselves are triggered by a change in WiFi requirement
@@ -315,8 +317,10 @@ open class TaskRunner(
                         BDPlugin.keyTasksMap,
                         bdJson.encodeToString<MutableMap<String, Task>>(tasksMap)
                     )
-                    if (completionWindow != null) {
-                        completionWindow.persistCompletion(prefs, edit, taskStatusUpdate)
+                    val workId = completionWindow?.workId
+                        ?: completedWorkId.takeIf { modifiedStatus == TaskStatus.complete }
+                    if (workId != null) {
+                        ManagedVerificationWindow.persistCompletion(prefs, edit, taskStatusUpdate, workId)
                     } else {
                         edit.apply()
                         false
@@ -499,6 +503,8 @@ open class TaskRunner(
         get() = !hasDeliveredResult && context.isActive
 
     lateinit var prefs: SharedPreferences
+    internal var managedVerification: ManagedModelVerification? = null
+        private set
 
     /**
      * Runner execution entrypoint
@@ -518,7 +524,18 @@ open class TaskRunner(
             var status = TaskStatus.failed
             var started = false
             var returnedFromStartCallback = false
+            var verificationInterrupted = false
             try {
+                val modelWorker = context as? TaskWorker
+                managedVerification = modelWorker?.let {
+                    ManagedModelVerification.create(context.appContext, task, it.id)
+                }
+                if (managedVerification?.hasStagedFile(prefs) == true) {
+                    started = true
+                    status = TaskStatus.complete
+                    managedVerification?.verify()
+                    return@withContext
+                }
                 if (waitForManagedNetwork()) {
                     status = TaskStatus.waitingToRetry
                     return@withContext
@@ -556,9 +573,12 @@ open class TaskRunner(
                 }
                 context.updateNotification(task, TaskStatus.running)
                 status = doTask()
+                if (status == TaskStatus.complete) managedVerification?.verify()
             } catch (e: Exception) {
                 Log.w(TAG, "TaskRunner.run execution failed for taskId ${task.taskId}: $e")
                 if (e is CancellationException) {
+                    verificationInterrupted = status == TaskStatus.complete &&
+                        managedVerification != null
                     if (BDPlugin.cancelUpdateSentForTaskId.contains(task.taskId)) {
                         status = TaskStatus.canceled
                     }
@@ -568,13 +588,18 @@ open class TaskRunner(
             } finally {
                 timeoutJob.cancel()
                 withContext(NonCancellable) {
+                    if (verificationInterrupted) return@withContext
                     val managed = context is TaskWorker && ManagedDownloadHold.appliesTo(task)
                     suspend fun settle() {
                         status = finishDownloadAttempt(status, started) ?: return
                         retrySameWork = managed && status == TaskStatus.waitingToRetry
                         val worker = (context as? TaskWorker)?.takeIf { managed }
                         if (started && status == TaskStatus.complete && task.providesStatusUpdates()) {
-                            worker?.openVerificationWindow(prefs)
+                            if (managedVerification == null) {
+                                worker?.openVerificationWindow(prefs)
+                            } else if (task.taskId !in BDPlugin.canceledTaskIds) {
+                                managedVerification?.complete(context.appContext, prefs)
+                            }
                         }
                         // A pause request that was not acted upon must not affect a later run.
                         BDPlugin.pausedTaskIds.remove(task.taskId)
@@ -590,7 +615,13 @@ open class TaskRunner(
                             charSet,
                             context.appContext,
                             worker?.verificationWindow,
+                            worker?.id.takeIf { managedVerification != null },
                         )
+                        if (worker != null &&
+                            prefs.getString(ManagedVerificationWindow.completedWorkKey, null) == worker.id.toString()
+                        ) {
+                            ManagedModelVerification.forgetStage(prefs, task.taskId, worker.id)
+                        }
                         if (started && (status != TaskStatus.failed || task.retriesRemaining == 0)) {
                             context.updateNotification(task, if (retrySameWork) TaskStatus.paused else status)
                         }

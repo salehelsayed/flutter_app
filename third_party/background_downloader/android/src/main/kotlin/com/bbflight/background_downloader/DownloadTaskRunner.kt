@@ -9,7 +9,9 @@ import androidx.core.net.toFile
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import com.bbflight.background_downloader.UriUtils.unpack
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
@@ -321,7 +323,9 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                         if (!dir.exists()) {
                             dir.mkdirs()
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        if (moveStagedModel(tempFile, destFile)) {
+                            setFileOwnership(destFile)
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             withContext(Dispatchers.IO) {
                                 try {
                                     Files.move(
@@ -676,6 +680,29 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
     private fun checkpointRejected(description: String): TaskStatus {
         taskException = TaskException(ExceptionType.resume, description = description)
         return TaskStatus.failed
+    }
+
+    private suspend fun moveStagedModel(partial: File, destination: File): Boolean {
+        val verification = managedVerification ?: return false
+        val worker = managedWorker ?: return false
+        return withContext(NonCancellable) {
+            BDPlugin.managedQueuePolicyMutex.withLock {
+                if (task.taskId in BDPlugin.canceledTaskIds) {
+                    throw CancellationException("Managed download was canceled")
+                }
+                if (!verification.stage(prefs, partial)) return@withLock false
+                try {
+                    Files.move(
+                        partial.toPath(), destination.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                    )
+                    true
+                } catch (_: java.nio.file.FileSystemException) {
+                    ManagedModelVerification.forgetStage(prefs, task.taskId, worker.id)
+                    false
+                }
+            }
+        }
     }
 
     private fun managedAttempt(worker: TaskWorker): ManagedDownloadHold {
