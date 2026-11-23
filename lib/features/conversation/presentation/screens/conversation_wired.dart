@@ -181,11 +181,7 @@ typedef SendChatMessageFn =
       required String senderUsername,
       String? messageId,
       required bool preassignedMessageIdIsFresh,
-      ({
-        ActiveIdentityReporter? reporter,
-        ActiveIdentityReporterCapture? capture,
-      })?
-      capturedActivity,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
       String? authoredTextIntentToken,
       String? timestamp,
       Bridge? bridge,
@@ -241,11 +237,7 @@ typedef SendVoiceMessageFn =
       EncryptedMediaArtifact? preparedArtifact,
       DirectMediaFanoutAdmission? mediaAdmission,
       bool preassignedMessageIdIsFresh,
-      ({
-        ActiveIdentityReporter? reporter,
-        ActiveIdentityReporterCapture? capture,
-      })?
-      capturedActivity,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
     });
 
 typedef SendReactionFn =
@@ -259,11 +251,7 @@ typedef SendReactionFn =
       required String senderPeerId,
       required String recipientMlKemPublicKey,
       DirectEventFanoutAuthoring? directEventFanout,
-      ({
-        ActiveIdentityReporter? reporter,
-        ActiveIdentityReporterCapture? capture,
-      })?
-      capturedActivity,
+      ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
     });
 
 typedef RemoveReactionFn =
@@ -3887,11 +3875,7 @@ class _ConversationWiredState extends State<ConversationWired>
     String text, {
     ({String id, PendingComposerMedia media})? sticker,
     VoidCallback? onStickerMediaAdopted,
-    ({
-      ActiveIdentityReporter? reporter,
-      ActiveIdentityReporterCapture? capture,
-    })?
-    capturedActivity,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     final identity = _identity;
     if (identity == null) return;
@@ -3908,12 +3892,8 @@ class _ConversationWiredState extends State<ConversationWired>
         // Optional observation must never prevent authoring.
       }
     }
-    final activityObservation = (
-      reporter: activityReporter,
-      capture: activityCapture,
-    );
-    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})
-    finalizationActivity = activityObservation;
+    final activityObservation = (reporter: activityReporter, capture: activityCapture);
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture}) finalizationActivity = activityObservation;
     final messenger = ScaffoldMessenger.maybeOf(context);
     // Captured pre-gap: the failure snackbar below runs after awaits, when
     // this State may already be unmounted.
@@ -4866,10 +4846,7 @@ class _ConversationWiredState extends State<ConversationWired>
               // already-persisted generation into a late refusal.
               final routedSnapshot = mediaAdmission?.snapshot;
               if (sticker != null) {
-                finalizationActivity = (
-                  reporter: activityReporter,
-                  capture: null,
-                );
+                finalizationActivity = (reporter: activityReporter, capture: null);
               }
               if (mediaAdmission != null &&
                   mediaAdmission.requiresLinkedFanout &&
@@ -4881,9 +4858,7 @@ class _ConversationWiredState extends State<ConversationWired>
                       contactAccountPeerId: _contact.peerId,
                       snapshot: routedSnapshot,
                       expectedParent: manifestFailureParent,
-                      capturedActivity: sticker == null
-                          ? null
-                          : activityObservation,
+                      capturedActivity: sticker == null ? null : activityObservation,
                       sources: preparedUploads
                           .map(
                             (plan) => PreparedDirectMediaBlobSource(
@@ -4916,9 +4891,7 @@ class _ConversationWiredState extends State<ConversationWired>
                   identityPeerId: identity.peerId,
                   recipientPeerId: _contact.peerId,
                   expectedParent: manifestFailureParent,
-                  capturedActivity: sticker == null
-                      ? null
-                      : activityObservation,
+                  capturedActivity: sticker == null ? null : activityObservation,
                   sources: preparedUploads
                       .map(
                         (plan) => PreparedDirectMediaBlobSource(
@@ -6101,11 +6074,7 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
     if (!mounted) return;
-    await _onSend(
-      '',
-      sticker: (id: sticker.id, media: media),
-      capturedActivity: capturedActivity,
-    );
+    await _onSend('', sticker: (id: sticker.id, media: media), capturedActivity: capturedActivity);
   }
 
   /// Null hides the received-sticker action: flag off, no library or no
@@ -6556,24 +6525,16 @@ class _ConversationWiredState extends State<ConversationWired>
     AudioRecording recording,
     List<double> waveform, {
     ConversationVoiceCaptureOutcome? captureOutcome,
-    ({
-      ActiveIdentityReporter? reporter,
-      ActiveIdentityReporterCapture? capture,
-    })?
-    capturedActivity,
+    ({ActiveIdentityReporter? reporter, ActiveIdentityReporterCapture? capture})? capturedActivity,
   }) async {
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
-    final reporter = capturedActivity == null
-        ? widget.activityReporter
-        : capturedActivity.reporter;
+    final reporter = capturedActivity == null ? widget.activityReporter : capturedActivity.reporter;
     ActiveIdentityReporterCapture? capture = capturedActivity?.capture;
     if (capturedActivity == null) {
       try {
-        capture = reporter?.captureOwner(
-          expectedAccountPeerId: identity.peerId,
-        );
+        capture = reporter?.captureOwner(expectedAccountPeerId: identity.peerId);
       } catch (_) {}
     }
     final activityObservation = (reporter: reporter, capture: capture);

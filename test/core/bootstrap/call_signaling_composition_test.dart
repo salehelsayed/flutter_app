@@ -29,6 +29,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/migrations/133_call_history_media_kind.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -2808,6 +2809,89 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'production graph publishes only fresh weak-connection samples for its connected episode',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      const sampleInterval = Duration(seconds: 3);
+      final fixture = await _createProductionSpeakerRouteFixture().timeout(
+        bound,
+      );
+      final graph = fixture.graph;
+      final engine = fixture.engine;
+      final releaseOldRead = Completer<void>();
+      Future<void> dispatch(CallEventType type) async {
+        await graph.coordinator
+            .dispatch(
+              CallEvent(
+                type: type,
+                eventId: 'quality-${type.name}',
+                occurredAt: graph.coordinator.clock(),
+                callId: _callA,
+                contactPeerId: 'remote-account',
+              ),
+            )
+            .timeout(bound);
+      }
+
+      try {
+        for (final type in [
+          CallEventType.incomingValidated,
+          CallEventType.systemUiPresented,
+          CallEventType.answer,
+          CallEventType.negotiationReady,
+          CallEventType.mediaConnected,
+        ]) {
+          await dispatch(type);
+        }
+        expect(graph.current!.session.state, CallState.connected);
+
+        engine.snapshotQualityObservation = 1;
+        await tester.pump(sampleInterval);
+        engine.snapshotQuality = CallQualityBand.poor;
+        engine.snapshotQualityObservation = 2;
+        await tester.pump(sampleInterval);
+        expect(graph.current!.weakConnection, isFalse);
+        await tester.pump(sampleInterval * 2);
+        expect(graph.current!.weakConnection, isFalse);
+
+        engine.snapshotQualityObservation = 3;
+        await tester.pump(sampleInterval);
+        expect(graph.current!.weakConnection, isTrue);
+
+        var oldReadStarted = false;
+        engine.snapshotQualityObservation = 4;
+        engine.beforeSnapshotReturns = () {
+          oldReadStarted = true;
+          return releaseOldRead.future.timeout(bound);
+        };
+        await tester.pump(sampleInterval);
+        expect(oldReadStarted, isTrue);
+        engine.beforeSnapshotReturns = null;
+
+        await dispatch(CallEventType.audioInterrupted);
+        expect(graph.current!.session.state, CallState.reconnecting);
+        expect(graph.current!.weakConnection, isFalse);
+        await dispatch(CallEventType.mediaRecovered);
+        expect(graph.current!.session.state, CallState.connected);
+        releaseOldRead.complete();
+        await tester.pump();
+
+        for (final observation in [5, 6, 7]) {
+          engine.snapshotQualityObservation = observation;
+          await tester.pump(sampleInterval);
+          expect(graph.current!.weakConnection, isFalse);
+        }
+        engine.snapshotQualityObservation = 8;
+        await tester.pump(sampleInterval);
+        expect(graph.current!.weakConnection, isTrue);
+      } finally {
+        if (!releaseOldRead.isCompleted) releaseOldRead.complete();
+        await graph.shutdown().timeout(bound);
+      }
+    },
+  );
 
   test(
     'production graph reports media progress and preserves caller intent at terminal',
@@ -11526,6 +11610,7 @@ Future<void> _configureCancellationEndpoint(
 
 final class _ProductionIosFixture {
   const _ProductionIosFixture({
+    required this.database,
     required this.composition,
     required this.bridge,
     required this.lifecycleMethods,
@@ -11537,6 +11622,7 @@ final class _ProductionIosFixture {
     required this.p2p,
   });
 
+  final Database database;
   final CallSignalingComposition composition;
   final _Bridge bridge;
   final List<String> lifecycleMethods;
@@ -11790,6 +11876,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     addTearDown(() => composition.shutdown().timeout(cleanupTimeout));
   }
   return _ProductionIosFixture(
+    database: database,
     composition: composition,
     bridge: bridge,
     lifecycleMethods: lifecycleMethods,
@@ -12001,6 +12088,9 @@ class _ProductionSpeakerRouteEngine implements CallEngine {
   bool closed = false;
   CallConnectionConfiguration? configuration;
   final List<CallAudioOutputRoute> routeRequests = <CallAudioOutputRoute>[];
+  CallQualityBand snapshotQuality = CallQualityBand.good;
+  int? snapshotQualityObservation;
+  Future<void> Function()? beforeSnapshotReturns;
 
   @override
   Stream<CallEngineEvent> get events => const Stream<CallEngineEvent>.empty();
@@ -12050,24 +12140,30 @@ class _ProductionSpeakerRouteEngine implements CallEngine {
   }
 
   @override
-  Future<CallConnectionSnapshot> snapshot() async => CallConnectionSnapshot(
-    state: CallConnectionState.connected,
-    transportPolicy:
-        configuration?.transportPolicy ?? CallTransportPolicy.relayOnly,
-    transport: CallTransportClass.turnUdp,
-    quality: CallQualityBand.good,
-    localAudioCaptureTrackCount: 1,
-    localVideoCaptureTrackCount: 0,
-    audioReceiveTransceiverCount: 1,
-    videoTransceiverCount: 0,
-    audioSessionActive: audioSessionActive,
-    localAudioSenderAttached: true,
-    localAudioTrackLive: true,
-    remoteAudioReceiverAttached: true,
-    remoteAudioTrackLive: true,
-    localAudioEnabled: localAudioEnabled,
-    outputRoute: outputRoute,
-  );
+  Future<CallConnectionSnapshot> snapshot() async {
+    final snapshot = CallConnectionSnapshot(
+      state: CallConnectionState.connected,
+      transportPolicy:
+          configuration?.transportPolicy ?? CallTransportPolicy.relayOnly,
+      transport: CallTransportClass.turnUdp,
+      quality: snapshotQuality,
+      qualityObservation: snapshotQualityObservation,
+      localAudioCaptureTrackCount: 1,
+      localVideoCaptureTrackCount: 0,
+      audioReceiveTransceiverCount: 1,
+      videoTransceiverCount: 0,
+      audioSessionActive: audioSessionActive,
+      localAudioSenderAttached: true,
+      localAudioTrackLive: true,
+      remoteAudioReceiverAttached: true,
+      remoteAudioTrackLive: true,
+      localAudioEnabled: localAudioEnabled,
+      outputRoute: outputRoute,
+    );
+    final waitToReturn = beforeSnapshotReturns;
+    if (waitToReturn != null) await waitToReturn();
+    return snapshot;
+  }
 
   @override
   Future<void> close() async {
@@ -13299,6 +13395,9 @@ void _vui7JoinedBridgeTests() {
         final connected = await tester.runAsync(
           () => _connectedGraphVideo(
             cleanupTimeout: _vui7Bound,
+            beforeCall: (fixture) => runCallHistoryMediaKindMigration(
+              fixture.database,
+            ).timeout(_vui7Bound),
             permission: () async {
               cameraPermissions++;
               return true;
@@ -13435,6 +13534,12 @@ void _vui7JoinedBridgeTests() {
           expect(terminalProjection!.terminalMedia, CallMediaKind.video);
           expect(terminalProjection!.video, isNull);
           expect(capability.current, isNull);
+          final history = await tester.runAsync(
+            () => CallHistoryRepositoryImpl(
+              fixture.database,
+            ).getByCallId(oldId).timeout(_vui7Bound),
+          );
+          expect(history?.mediaKind, CallMediaKind.video);
           final l10n = lookupAppLocalizations(const Locale('en'));
           final again = find.text(l10n.call_video_call_again);
           final close = find.text(l10n.call_video_close);
