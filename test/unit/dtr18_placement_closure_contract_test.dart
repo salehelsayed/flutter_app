@@ -266,7 +266,8 @@ const _relocations = <String, List<String>>{
     // retire callbacks to the same adapter; placement and imports are
     // unchanged.
     // BL-58 f7a05ac2a adds the retained-Thought lookup for replies.
-    '25bc2c071bfe8fb6ed8b3cfb061a33e67d372d1545f3f9d0cd480f2fb65e3a00',
+    // BL-64 admits exact retained rows for author retraction.
+    '5dd04c41fa3573a00a16c29e44f0dcb7fc48677edec48955ddf020724ec0b9cc',
   ],
 };
 
