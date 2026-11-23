@@ -1630,15 +1630,17 @@ class _ConversationWiredState extends State<ConversationWired>
       _privateMediaPolicy = debugInitialPrivateMediaPolicy!;
       _updateComposerState(privateMediaPolicy: debugInitialPrivateMediaPolicy);
     }
-    if (widget.offerCallMessageSuggestion ||
-        (widget.initialText?.isNotEmpty ?? false) ||
-        (widget.initialAttachments?.isNotEmpty ?? false) ||
-        (widget.initialPendingMedia?.isNotEmpty ?? false) ||
-        widget.initialThoughtReply != null ||
-        widget.initialThoughtVoiceReply != null) {
-      _composerDraft.startWithoutRestore();
-    } else {
-      unawaited(_composerDraft.restore(_applyComposerDraft));
+    // A call follow-up can open above a chat with its own saved draft.
+    if (!widget.offerCallMessageSuggestion) {
+      if ((widget.initialText?.isNotEmpty ?? false) ||
+          (widget.initialAttachments?.isNotEmpty ?? false) ||
+          (widget.initialPendingMedia?.isNotEmpty ?? false) ||
+          widget.initialThoughtReply != null ||
+          widget.initialThoughtVoiceReply != null) {
+        _composerDraft.startWithoutRestore();
+      } else {
+        unawaited(_composerDraft.restore(_applyComposerDraft));
+      }
     }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
