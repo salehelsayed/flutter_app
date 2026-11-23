@@ -454,6 +454,9 @@ abstract base class NativeDownloader extends BaseDownloader {
     }
   }
 
+  Future<String?> readManagedVerification(String taskId) =>
+      methodChannel.invokeMethod<String>('readManagedVerification', taskId);
+
   Future<void> finishManagedVerification(String taskId) =>
       methodChannel.invokeMethod<void>('finishManagedVerification', taskId);
 

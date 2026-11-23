@@ -475,6 +475,11 @@ typedef ModelDeliveryNoticePublisher =
       required bool Function() isCurrent,
     });
 
+typedef NativeModelDeliveryVerification = ({
+  ModelDeliveryVerification verification,
+  bool noticePosted,
+});
+
 final class PersistentModelDeliveryController extends ModelDeliveryController {
   PersistentModelDeliveryController({
     required ModelDeliveryStorage storage,
@@ -489,9 +494,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     String Function()? newTaskId,
     ModelDeliveryNoticePublisher? publishBackgroundStatus,
     Future<void> Function()? clearBackgroundStatus,
+    Future<void> Function()? clearWaitingBackgroundStatus,
     bool Function()? isAppBackground,
     Future<bool> Function(String taskId)? verificationWasBackgrounded,
     Future<void> Function(String taskId)? finishVerificationWindow,
+    Future<NativeModelDeliveryVerification?> Function(String taskId)?
+    readNativeVerification,
   }) : _storage = storage,
        _network = network,
        _transport = transport,
@@ -502,9 +510,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _spaceReserveBytes = spaceReserveBytes,
        _publishBackgroundStatus = publishBackgroundStatus,
        _clearBackgroundStatus = clearBackgroundStatus,
+       _clearWaitingBackgroundStatus =
+           clearWaitingBackgroundStatus ?? clearBackgroundStatus,
        _isAppBackground = isAppBackground,
        _verificationWasBackgrounded = verificationWasBackgrounded,
        _finishVerificationWindow = finishVerificationWindow,
+       _readNativeVerification = readNativeVerification,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
     _connectionSubscription = _network.connectionChanges.listen(
@@ -522,9 +533,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final int _spaceReserveBytes;
   final ModelDeliveryNoticePublisher? _publishBackgroundStatus;
   final Future<void> Function()? _clearBackgroundStatus;
+  final Future<void> Function()? _clearWaitingBackgroundStatus;
   final bool Function()? _isAppBackground;
   final Future<bool> Function(String taskId)? _verificationWasBackgrounded;
   final Future<void> Function(String taskId)? _finishVerificationWindow;
+  final Future<NativeModelDeliveryVerification?> Function(String taskId)?
+  _readNativeVerification;
   final String Function() _newTaskId;
   final _state = ValueNotifier<ModelDeliveryState>(const ModelUnsupported());
   final _allowMobileData = ValueNotifier(false);
@@ -638,6 +652,31 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       final id = _record.taskId;
       if (id != null) {
+        if (manifest != null &&
+            switch (_record.phase) {
+              ModelDeliveryPhase.active ||
+              ModelDeliveryPhase.resumeRequested ||
+              ModelDeliveryPhase.waitingToRetry ||
+              ModelDeliveryPhase.scheduledWaitingForConnection ||
+              ModelDeliveryPhase.policyPauseRequested ||
+              ModelDeliveryPhase.verifying => true,
+              _ => false,
+            }) {
+          final native = await _nativeVerificationFor(id);
+          if (native != null) {
+            final identity = await _storage.modelIdentity();
+            if (generation == _generation &&
+                native.verification.matches(manifest, identity)) {
+              _record = _record.copyWith(
+                receivedBytes: manifest.bytes,
+                phase: ModelDeliveryPhase.verifying,
+              );
+              _render();
+              _beginVerification(resuming: true, nativeVerification: native);
+              return;
+            }
+          }
+        }
         final recovered = await _transport.restore(id);
         if (recovered != null) {
           _queuedRequiresWifi =
@@ -1310,7 +1349,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (accepted || recovering && !managedRecovery) {
         if (accepted) _queuedRequiresWifi = !_record.allowMobileData;
         _render();
-        if (accepted) unawaited(_runNotice(_clearBackgroundStatus));
+        if (accepted) unawaited(_runNotice(_clearWaitingBackgroundStatus));
         return;
       }
       if (resumeCheckpoint != null || _record.receivedBytes > 0) {
@@ -1358,6 +1397,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     _queuedRequiresWifi = !_record.allowMobileData;
     _render();
+    unawaited(_runNotice(_clearBackgroundStatus));
     if (!await _transport.enqueue(
       taskId: id,
       manifest: manifest,
@@ -1365,7 +1405,6 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     )) {
       throw StateError('Translator task was not accepted');
     }
-    unawaited(_runNotice(_clearBackgroundStatus));
   }
 
   Future<bool> _deferOfflineStart() async {
@@ -1465,7 +1504,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (previousPhase == ModelDeliveryPhase.scheduledWaitingForConnection &&
           (event.status == ModelTransferStatus.running ||
               event.status == ModelTransferStatus.complete)) {
-        unawaited(_runNotice(_clearBackgroundStatus));
+        unawaited(_runNotice(_clearWaitingBackgroundStatus));
       }
       if (event.status == ModelTransferStatus.running) {
         _queuedRequiresWifi = false;
@@ -1796,7 +1835,20 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     await _startOrResume(recoveryGeneration: generation);
   }
 
-  void _beginVerification({bool resuming = false}) {
+  Future<NativeModelDeliveryVerification?> _nativeVerificationFor(
+    String taskId,
+  ) async {
+    try {
+      return await _readNativeVerification?.call(taskId);
+    } on Object {
+      return null;
+    }
+  }
+
+  void _beginVerification({
+    bool resuming = false,
+    NativeModelDeliveryVerification? nativeVerification,
+  }) {
     final manifest = _record.manifest;
     final id = _record.taskId;
     if (manifest == null || id == null || !_canRun) return;
@@ -1816,19 +1868,27 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       var valid = false;
       var damaged = false;
+      var noticePosted = false;
       ModelDeliveryFileIdentity? verifiedIdentity;
       try {
         await _storage.prepare();
         final before = await _storage.modelIdentity();
         if (before != null) {
+          final native = nativeVerification ?? await _nativeVerificationFor(id);
+          final verifiedByNative =
+              native?.verification.matches(manifest, before) ?? false;
           valid =
               (_record.verification?.matches(manifest, before) ?? false) ||
+              verifiedByNative ||
               await _storage.verify(manifest);
           final after = await _storage.modelIdentity();
           final stable = before.sizeBytes == manifest.bytes && before == after;
           damaged = stable && !valid;
           valid = stable && valid;
-          if (valid) verifiedIdentity = after;
+          if (valid) {
+            verifiedIdentity = after;
+            noticePosted = verifiedByNative && native?.noticePosted == true;
+          }
         }
       } on Object {
         valid = false;
@@ -1881,7 +1941,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         if (_disposed || generation != _generation) return;
         _render();
         if (_state.value case final ModelReady ready
-            when id != _previouslyReadyTaskId) {
+            when !noticePosted && id != _previouslyReadyTaskId) {
           final publish = _publishBackgroundStatus;
           if (publish != null) {
             notice = _runNotice(

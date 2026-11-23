@@ -15604,6 +15604,17 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   those constructors explicitly and preserves their parameters, fields,
   singleton factory and const notification constructor. The full strict
   preflight passed with the existing suppression inventory and lock.
+  BL-60c's Android fixture runs the actual downloader worker with no Flutter
+  activity. The test-only `dafb0ecf` completed the same ranged request and file
+  without posting Ready (`m-4db575dd`). The first patched run hit a host test
+  mismatch. Robolectric uses synthetic file types, so passing raw Unix mode
+  bits caused the regular-file check to fail. The corrected `3ee6763f` fixture
+  reuses the existing host POSIX descriptor shadows. It posts the approved
+  Ready notice for the matching digest and withholds it for a wrong digest
+  (`m-723297d6`, `m-96d4d4c7`). With the same product source, the Linux
+  translator lane passed all 464 cases. It includes adopting a matching
+  durable receipt despite a stale running transport record, re-verifying a
+  changed file, and retaining the iOS fallback (`m-520c2f21`).
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native

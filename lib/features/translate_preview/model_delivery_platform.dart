@@ -35,6 +35,7 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
     transport: BackgroundModelDeliveryTransport(
       downloader: downloader,
       resumeStorage: resumeStorage,
+      nativeReadyCopy: Platform.isAndroid ? notices.readyCopy : null,
     ),
     appBuild: () async =>
         int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ?? 0,
@@ -42,7 +43,11 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
     readCapability: readTranslationCapabilityFacts,
     publishBackgroundStatus: notices.publish,
     clearBackgroundStatus: notices.clear,
+    clearWaitingBackgroundStatus: notices.clearWaiting,
     isAppBackground: () => notices.isBackground,
+    readNativeVerification: Platform.isAndroid
+        ? (taskId) => _readNativeVerification(downloader, taskId)
+        : null,
     verificationWasBackgrounded: Platform.isIOS
         ? (taskId) async =>
               await verificationChannel.invokeMethod<bool>(
@@ -64,6 +69,26 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
   service.setDownloadedModelPathResolver(controller.verifiedModelPath);
   unawaited(controller.initialize());
   return controller;
+}
+
+Future<NativeModelDeliveryVerification?> _readNativeVerification(
+  FileDownloader downloader,
+  String taskId,
+) async {
+  final encoded = await downloader.readManagedVerification(taskId);
+  if (encoded == null) return null;
+  final decoded = jsonDecode(encoded);
+  if (decoded is! Map<String, Object?> ||
+      decoded['version'] != 1 ||
+      decoded['taskId'] != taskId) {
+    return null;
+  }
+  final noticePosted = decoded['noticePosted'];
+  final verification = ModelDeliveryVerification.tryFromJson(
+    decoded['verification'],
+  );
+  if (verification == null || noticePosted is! bool) return null;
+  return (verification: verification, noticePosted: noticePosted);
 }
 
 final class HttpModelDeliveryNetwork implements ModelDeliveryNetwork {
@@ -323,6 +348,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     Duration cancellationTimeout = const Duration(seconds: 30),
     Duration cancellationSettleInterval = const Duration(seconds: 1),
     Future<String> Function(DownloadTask)? destinationPath,
+    ({String title, String body}) Function()? nativeReadyCopy,
   }) : _downloader = downloader ?? FileDownloader(),
        _resumeStorage = resumeStorage ?? LocalStorePersistentStorage(),
        _partialDirectories = partialDirectories ?? _androidPartialDirectories,
@@ -330,7 +356,8 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
        _useAndroidGate = isIOS == null ? Platform.isAndroid : !isIOS,
        _cancellationTimeout = cancellationTimeout,
        _cancellationSettleInterval = cancellationSettleInterval,
-       _destinationPath = destinationPath ?? ((task) => task.filePath());
+       _destinationPath = destinationPath ?? ((task) => task.filePath()),
+       _nativeReadyCopy = nativeReadyCopy;
 
   final FileDownloader _downloader;
   final PersistentStorage _resumeStorage;
@@ -340,6 +367,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   final Duration _cancellationTimeout;
   final Duration _cancellationSettleInterval;
   final Future<String> Function(DownloadTask) _destinationPath;
+  final ({String title, String body}) Function()? _nativeReadyCopy;
   final _events = StreamController<ModelTransferEvent>.broadcast(sync: true);
   final _tasks = <String, DownloadTask>{};
   final _sizes = <String, int>{};
@@ -605,6 +633,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     required ModelDeliveryManifest manifest,
     required bool requiresWiFi,
   }) async {
+    final ready = _useAndroidGate ? _nativeReadyCopy?.call() : null;
     final task = DownloadTask(
       taskId: taskId,
       url: manifest.url.toString(),
@@ -619,6 +648,17 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       retries: 0,
       transferHints: {TransferHint.largeFile},
       headers: {'Accept-Encoding': 'identity'},
+      metaData: ready == null
+          ? ''
+          : jsonEncode({
+              'translatorVerification': {
+                'version': 1,
+                'expectedSha256': manifest.sha256,
+                'sizeBytes': manifest.bytes,
+                'readyTitle': ready.title,
+                'readyBody': ready.body,
+              },
+            }),
       options: _taskOptions,
     );
     _tasks[taskId] = task;

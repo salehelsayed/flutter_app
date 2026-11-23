@@ -1061,6 +1061,17 @@ interface class FileDownloader {
     return downloader.heldManagedDownloadBytes(taskId);
   }
 
+  /// Reads the durable Android verification receipt for this download.
+  Future<String?> readManagedVerification(String taskId) async {
+    final downloader = _downloader;
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        downloader is! NativeDownloader) {
+      return null;
+    }
+    return downloader.readManagedVerification(taskId);
+  }
+
   /// Releases the Android worker waiting for this download's Dart verification.
   Future<void> finishManagedVerification(String taskId) async {
     final downloader = _downloader;
