@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -79,20 +81,70 @@ Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
   WidgetTester tester, {
   required int count,
   bool expectFullyVisible = false,
-  int frameDurationMs = 80,
+  ({int first, int second}) frameDurationsMs = (first: 80, second: 80),
+  bool identicalFramesFirst = false,
 }) async {
   final directory = Directory.systemTemp.createTempSync('animated-tray-');
   addTearDown(() => directory.deleteSync(recursive: true));
-  final animation =
-      img.Image(width: 8, height: 8, frameDuration: frameDurationMs)
-        ..clear(img.ColorRgb8(255, 0, 0))
-        ..addFrame(
-          img.Image(width: 8, height: 8, frameDuration: frameDurationMs)
-            ..clear(img.ColorRgb8(0, 0, 255)),
-        );
-  final bytes = img.WebPEncoder().encode(animation);
+  Uint8List encode(img.ColorRgb8 secondColor) {
+    final animation =
+        img.Image(width: 8, height: 8, frameDuration: frameDurationsMs.first)
+          ..clear(img.ColorRgb8(255, 0, 0))
+          ..addFrame(
+            img.Image(
+              width: 8,
+              height: 8,
+              frameDuration: frameDurationsMs.second,
+            )..clear(secondColor),
+          );
+    return img.WebPEncoder().encode(animation);
+  }
+
+  final movingBytes = encode(img.ColorRgb8(0, 0, 255));
+  final identicalBytes = identicalFramesFirst
+      ? encode(img.ColorRgb8(255, 0, 0))
+      : null;
+  if (identicalBytes != null) {
+    final frames = (await tester
+        .runAsync(() async {
+          final codec = await ui
+              .instantiateImageCodec(identicalBytes)
+              .timeout(_motionBound);
+          try {
+            final frames = <Uint8List>[];
+            for (var index = 0; index < codec.frameCount; index++) {
+              final frame = await codec.getNextFrame().timeout(_motionBound);
+              try {
+                final rgba = await frame.image
+                    .toByteData(format: ui.ImageByteFormat.rawRgba)
+                    .timeout(_motionBound);
+                frames.add(
+                  rgba!.buffer.asUint8List(
+                    rgba.offsetInBytes,
+                    rgba.lengthInBytes,
+                  ),
+                );
+              } finally {
+                frame.image.dispose();
+              }
+            }
+            return frames;
+          } finally {
+            codec.dispose();
+          }
+        })
+        .timeout(_motionBound))!;
+    expect(frames, hasLength(2));
+    expect(frames.last, frames.first);
+  }
+
   final library = FakeCustomStickerLibrary();
   for (var index = 0; index < count; index++) {
+    final bytes = identicalBytes == null
+        ? movingBytes
+        : index == count - 1
+        ? identicalBytes
+        : encode(img.ColorRgb8(0, 40 * index, 255));
     final file = File('${directory.path}/$index.webp')..writeAsBytesSync(bytes);
     await library
         .admit(
@@ -104,7 +156,7 @@ Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
             width: 8,
             height: 8,
             frameCount: 2,
-            durationMs: frameDurationMs * 2,
+            durationMs: frameDurationsMs.first + frameDurationsMs.second,
           ),
         )
         .timeout(_motionBound);
@@ -131,7 +183,7 @@ Future<({List<String> ids, _Harness harness})> _pumpAnimatedTray(
   return (ids: ids, harness: harness);
 }
 
-Object? _currentTrayFrame(WidgetTester tester, String id) => tester
+ui.Image? _currentTrayFrame(WidgetTester tester, String id) => tester
     .widgetList<RawImage>(
       find.descendant(of: _sticker(id), matching: find.byType(RawImage)),
     )
@@ -423,7 +475,7 @@ void main() {
       tester,
       count: 5,
       expectFullyVisible: true,
-      frameDurationMs: 300,
+      frameDurationsMs: (first: 300, second: 300),
     ).timeout(_motionBound);
     final moving = await _movingTrayStickers(
       tester,
@@ -440,6 +492,74 @@ void main() {
       hasLength(3),
       reason:
           'The crowded tray gives its three autoplay slots to visible stickers.',
+    );
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
+  });
+
+  testWidgets('identical sticker frames leave three tray slots for motion', (
+    tester,
+  ) async {
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(420, 900);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final started = tester.binding.clock.now();
+    final tray = await _pumpAnimatedTray(
+      tester,
+      count: 5,
+      expectFullyVisible: true,
+      frameDurationsMs: (first: 100, second: 500),
+      identicalFramesFirst: true,
+    ).timeout(_motionBound);
+    expect(_myGrid(tester), ['create', ...tray.ids]);
+    const poster = 0xff0000ff;
+    final colors = Map<ui.Image, int>.identity();
+    var mostChanging = 0;
+    for (var sample = 0; sample < 42; sample++) {
+      await _pumpTrayFrame(tester).timeout(_motionBound);
+      final frames = [
+        for (final id in tray.ids) _currentTrayFrame(tester, id)!,
+      ];
+      final unknown = frames.where((frame) => !colors.containsKey(frame));
+      if (unknown.isNotEmpty) {
+        await tester
+            .runAsync(() async {
+              for (final frame in unknown) {
+                final rgba = await frame
+                    .toByteData(format: ui.ImageByteFormat.rawRgba)
+                    .timeout(_motionBound);
+                colors[frame] = rgba!.getUint32(0);
+              }
+            })
+            .timeout(_motionBound);
+      }
+      expect(colors[frames.first], poster);
+      final changing = frames.where((frame) => colors[frame] != poster).length;
+      if (changing > mostChanging) mostChanging = changing;
+    }
+    expect(
+      tester.binding.clock.now().difference(started),
+      lessThan(const Duration(milliseconds: 1800)),
+      reason: 'The observation stays within the initial three loops.',
+    );
+    expect(
+      mostChanging,
+      3,
+      reason: 'Three visibly changing stickers share the tray at once.',
+    );
+
+    await tester.pump(const Duration(milliseconds: 1800)).timeout(_motionBound);
+    expect(
+      await _movingTrayStickers(
+        tester,
+        tray.ids,
+        samples: 30,
+      ).timeout(_motionBound),
+      isEmpty,
+      reason: 'Tray playback settles after three loops.',
     );
     await tester.pumpWidget(const SizedBox.shrink()).timeout(_motionBound);
   });
