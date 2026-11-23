@@ -413,7 +413,9 @@ void main() {
               matching: find.widgetWithText(ActionChip, suggestion),
             );
             expect(chip, findsOneWidget);
-            expect(ModalRoute.of(tester.element(followUp))?.isCurrent, isTrue);
+            final route = ModalRoute.of(tester.element(followUp))!;
+            expect(route.isCurrent, isTrue);
+            await waitForRoute(tester.pump(route.transitionDuration));
             final followUpField = find.descendant(
               of: followUp,
               matching: find.byType(EditableText),
@@ -429,9 +431,11 @@ void main() {
               tester.widget<EditableText>(followUpField).controller.text,
               suggestion,
             );
+            final reverseDuration = route.reverseTransitionDuration;
             MyApp.navigatorKey.currentState!.pop();
             await waitForRoute(tester.pump());
-            await waitForRoute(tester.pump(const Duration(milliseconds: 400)));
+            await waitForRoute(tester.pump(reverseDuration));
+            await waitForRoute(tester.pump());
             expect(followUp, findsNothing);
             expect(tester.widget<ConversationWired>(chatRoute), same(original));
             expect(
