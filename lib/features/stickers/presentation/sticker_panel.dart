@@ -242,26 +242,31 @@ class _StickerPanelState extends State<StickerPanel> {
                 _buildGroupFaces(l10n, colors, selection),
               if (_managing) _buildManageBar(l10n, colors),
               Expanded(
-                child: GestureDetector(
-                  key: const ValueKey('sticker-grid'),
-                  behavior: HitTestBehavior.opaque,
-                  onHorizontalDragEnd: _managing ? null : _onSwipe,
-                  child: GridView.count(
-                    crossAxisCount: 4,
-                    scrollCacheExtent:
-                        selection is MyStickersSelection &&
-                            !MediaQuery.accessibleNavigationOf(context)
-                        ? const ScrollCacheExtent.pixels(0)
-                        : null,
-                    padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 8, 8),
-                    children: switch (selection) {
-                      MyStickersSelection() => _buildMyStickers(l10n, colors),
-                      RecentStickersSelection() => _buildCells(l10n, _recent),
-                      PackGroupSelection(:final group) => _buildCells(
-                        l10n,
-                        group.stickers,
-                      ),
-                    },
+                // Keep the grid's native accessibility parent when manage
+                // mode disables horizontal swiping.
+                child: Semantics(
+                  container: true,
+                  child: GestureDetector(
+                    key: const ValueKey('sticker-grid'),
+                    behavior: HitTestBehavior.opaque,
+                    onHorizontalDragEnd: _managing ? null : _onSwipe,
+                    child: GridView.count(
+                      crossAxisCount: 4,
+                      scrollCacheExtent:
+                          selection is MyStickersSelection &&
+                              !MediaQuery.accessibleNavigationOf(context)
+                          ? const ScrollCacheExtent.pixels(0)
+                          : null,
+                      padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 8, 8),
+                      children: switch (selection) {
+                        MyStickersSelection() => _buildMyStickers(l10n, colors),
+                        RecentStickersSelection() => _buildCells(l10n, _recent),
+                        PackGroupSelection(:final group) => _buildCells(
+                          l10n,
+                          group.stickers,
+                        ),
+                      },
+                    ),
                   ),
                 ),
               ),
