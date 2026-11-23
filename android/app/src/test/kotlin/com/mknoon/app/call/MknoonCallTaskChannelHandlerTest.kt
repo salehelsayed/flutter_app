@@ -119,6 +119,31 @@ class MknoonCallTaskChannelHandlerTest {
         assertEquals(1, moves)
     }
 
+    @Test fun `BL65 expanded back ownership does not move the task`() {
+        var moves = 0
+        val callbacks = mutableListOf<() -> Unit>()
+        val handler = MknoonCallTaskChannelHandler(
+            registerBack = { action ->
+                callbacks += action
+                ({})
+            },
+            moveTaskToBack = { moves += 1; true },
+        )
+        val result = TaskResult()
+        handler.onMethodCall(
+            MethodCall(
+                "setCallOwnsBack",
+                mapOf("owns" to true, "minimizeCallId" to "33333333-3333-4333-8333-333333333333"),
+            ),
+            result,
+        )
+
+        assertEquals(true, result.value)
+        assertTrue(handler.handleBackPressed())
+        callbacks.single().invoke()
+        assertEquals(0, moves)
+    }
+
     @Test fun `dispose releases the overlay back callback`() {
         var unregistered = 0
         val handler = MknoonCallTaskChannelHandler(

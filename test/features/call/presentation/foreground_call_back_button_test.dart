@@ -23,7 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 // framework does not handle Back while a call shows. On Android 13+ that
 // unregisters Flutter's OnBackInvokedCallback, so the FIRST Back closed the
 // task (WindowManager `type = CLOSE` at 19:34:43.850) and teardown ended the
-// call. Back must stay with Flutter and send the app to the background.
+// call. Back must preserve the call and avoid popping a covered route.
 
 final _callId = CallId.parse('33333333-3333-4333-8333-333333333333');
 final _now = DateTime.utc(2026, 9, 24, 21, 15);
@@ -33,13 +33,16 @@ void main() {
   late List<Object?> frameworkHandlesBack;
   late List<String> taskCalls;
   late List<Object?> nativeBackOwner;
+  late List<String?> nativeMinimizeCallIds;
   const callTaskChannel = MethodChannel('mknoon/call_task');
+  const bound = Duration(seconds: 3);
 
   setUp(() {
     platformCalls = <String>[];
     frameworkHandlesBack = <Object?>[];
     taskCalls = <String>[];
     nativeBackOwner = <Object?>[];
+    nativeMinimizeCallIds = <String?>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           platformCalls.add(call.method);
@@ -51,7 +54,9 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(callTaskChannel, (call) async {
           if (call.method == 'setCallOwnsBack') {
-            nativeBackOwner.add((call.arguments as Map)['owns']);
+            final arguments = call.arguments as Map;
+            nativeBackOwner.add(arguments['owns']);
+            nativeMinimizeCallIds.add(arguments['minimizeCallId'] as String?);
           } else {
             taskCalls.add(call.method);
           }
@@ -66,13 +71,23 @@ void main() {
         .setMockMethodCallHandler(callTaskChannel, null);
   });
 
+  Future<void> settle(WidgetTester tester) => tester
+      .pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 2),
+      )
+      .timeout(bound);
+
   Future<_Fixture> pumpApp(WidgetTester tester) async {
     final capability = _Capability();
-    addTearDown(capability.dispose);
+    addTearDown(() => capability.dispose().timeout(bound));
     final navigatorKey = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(
-      _GuardedApp(capability: capability, navigatorKey: navigatorKey),
-    );
+    await tester
+        .pumpWidget(
+          _GuardedApp(capability: capability, navigatorKey: navigatorKey),
+        )
+        .timeout(bound);
     return _Fixture(capability, navigatorKey);
   }
 
@@ -84,92 +99,127 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await settle(tester);
   }
 
   Future<bool> pressBack(WidgetTester tester) async {
-    final handled = await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
+    final handled = await tester.binding.handlePopRoute().timeout(bound);
+    await settle(tester);
     return handled;
   }
 
-  Future<Object?> backGesture(String method, [Object? arguments]) async {
-    final codec = SystemChannels.backGesture.codec;
+  Future<Object?> platformCall(
+    MethodChannel channel,
+    String method, [
+    Object? arguments,
+  ]) async {
+    final codec = channel.codec;
     final reply = Completer<ByteData?>();
     await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .handlePlatformMessage(
-          SystemChannels.backGesture.name,
+          channel.name,
           codec.encodeMethodCall(MethodCall(method, arguments)),
           reply.complete,
-        );
-    final data = await reply.future;
+        )
+        .timeout(bound);
+    final data = await reply.future.timeout(bound);
     return data == null ? null : codec.decodeEnvelope(data);
   }
 
+  Future<Object?> backGesture(String method, [Object? arguments]) =>
+      platformCall(SystemChannels.backGesture, method, arguments);
+
   testWidgets(
-    'Back during a connected call sends the app to the background and keeps '
-    'the retained route',
+    'BL65 Back during a connected call minimizes and the bar restores it',
     (tester) async {
       final fixture = await pumpApp(tester);
       await pushConversation(tester, fixture);
       fixture.capability.emit(_projection(state: CallState.connected));
-      await tester.pump();
+      await settle(tester);
 
-      for (var press = 0; press < 3; press++) {
-        expect(await pressBack(tester), isTrue);
-      }
+      expect(await pressBack(tester), isTrue);
+      final returnBar = find.byKey(const ValueKey('call-return-bar'));
+      expect(returnBar, findsOneWidget);
+      expect(find.text('conversation route').hitTestable(), findsOneWidget);
+      expect(taskCalls, isEmpty);
+      expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
 
-      expect(taskCalls, <String>[
-        'moveToBackground',
-        'moveToBackground',
-        'moveToBackground',
-      ]);
+      await tester.tap(returnBar).timeout(bound);
+      await settle(tester);
+      expect(returnBar, findsNothing);
+      expect(find.byKey(const ValueKey('call-minimize')), findsOneWidget);
       expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
       expect(platformCalls, isNot(contains('SystemNavigator.pop')));
       expect(fixture.capability.actions, isEmpty);
     },
   );
 
+  testWidgets('BL65 native Back minimizes the matching outgoing call', (
+    tester,
+  ) async {
+    final fixture = await pumpApp(tester);
+    await pushConversation(tester, fixture);
+    fixture.capability.emit(_projection(state: CallState.ringing));
+    await settle(tester);
+    final returnBar = find.byKey(const ValueKey('call-return-bar'));
+    expect(find.text('Ringing'), findsOneWidget);
+
+    await platformCall(callTaskChannel, 'minimizeCall', 'retired-call');
+    await settle(tester);
+    expect(returnBar, findsNothing);
+
+    await platformCall(callTaskChannel, 'minimizeCall', _callId.value);
+    await settle(tester);
+    expect(returnBar, findsOneWidget);
+    expect(find.textContaining('Ringing'), findsOneWidget);
+    expect(find.text('conversation route').hitTestable(), findsOneWidget);
+
+    fixture.capability.emit(_projection(state: CallState.connected));
+    await settle(tester);
+    expect(returnBar, findsOneWidget);
+    await tester.tap(returnBar).timeout(bound);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('call-minimize')), findsOneWidget);
+    expect(fixture.capability.actions, isEmpty);
+    expect(taskCalls, isEmpty);
+  });
+
+  testWidgets('BL65 expanded call gives Android a call-scoped Back target', (
+    tester,
+  ) async {
+    final fixture = await pumpApp(tester);
+    await pushConversation(tester, fixture);
+    expect(nativeBackOwner, isEmpty);
+
+    fixture.capability.emit(_projection(state: CallState.connected));
+    await settle(tester);
+    expect(nativeBackOwner, <Object?>[true]);
+    expect(nativeMinimizeCallIds, <String?>[_callId.value]);
+
+    fixture.capability.emit(_projection(state: CallState.reconnecting));
+    await settle(tester);
+    expect(nativeBackOwner, <Object?>[true]);
+
+    // The terminal notice is informational: Back returns to Flutter.
+    fixture.capability.emit(
+      _projection(
+        state: CallState.ended,
+        endReason: CallEndReason.remoteHangup,
+      ),
+    );
+    await settle(tester);
+    expect(nativeBackOwner, <Object?>[true, false]);
+    expect(nativeMinimizeCallIds, <String?>[_callId.value, null]);
+    expect(taskCalls, isEmpty);
+  });
+
   testWidgets(
-    'a call surface hands Back to Android while it shows, so a predictive '
-    'swipe never reaches the hidden routes',
-    (tester) async {
-      final fixture = await pumpApp(tester);
-      await pushConversation(tester, fixture);
-      expect(nativeBackOwner, isEmpty);
-
-      // MainActivity then registers an overlay-priority back callback that
-      // moves the task to the back. Flutter's page routes never see the
-      // swipe, so the conversation route under the call stays.
-      fixture.capability.emit(_projection(state: CallState.connected));
-      await tester.pumpAndSettle();
-      expect(nativeBackOwner, <Object?>[true]);
-
-      fixture.capability.emit(_projection(state: CallState.reconnecting));
-      await tester.pumpAndSettle();
-      expect(nativeBackOwner, <Object?>[true]);
-
-      // The terminal notice is informational: Back returns to Flutter.
-      fixture.capability.emit(
-        _projection(
-          state: CallState.ended,
-          endReason: CallEndReason.remoteHangup,
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(nativeBackOwner, <Object?>[true, false]);
-      expect(taskCalls, isEmpty);
-    },
-  );
-
-  testWidgets(
-    'a predictive back swipe that still reaches Flutter during a call sends '
-    'the app to the background',
+    'BL65 a predictive commit at the root minimizes the current call',
     (tester) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       final fixture = await pumpApp(tester);
       fixture.capability.emit(_projection(state: CallState.connected));
-      await tester.pumpAndSettle();
+      await settle(tester);
 
       final started = await backGesture('startBackGesture', <String, Object?>{
         'touchOffset': <double>[5, 300],
@@ -178,36 +228,29 @@ void main() {
       });
       expect(started, isTrue);
       await backGesture('commitBackGesture');
-      await tester.pumpAndSettle();
+      await settle(tester);
 
-      expect(taskCalls, <String>['moveToBackground']);
+      expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
+      expect(taskCalls, isEmpty);
       expect(platformCalls, isNot(contains('SystemNavigator.pop')));
       expect(fixture.capability.actions, isEmpty);
     },
   );
 
-  testWidgets('Back at the root route during a call never exits the app', (
+  testWidgets('Back on the incoming ringing screen backgrounds the live call', (
     tester,
   ) async {
     final fixture = await pumpApp(tester);
-    for (final state in <CallState>[
-      CallState.ringing,
-      CallState.connected,
-      CallState.reconnecting,
-    ]) {
-      fixture.capability.emit(
-        _projection(
-          state: state,
-          direction: state == CallState.ringing
-              ? CallDirection.incoming
-              : CallDirection.outgoing,
-        ),
-      );
-      await tester.pump();
-      expect(await pressBack(tester), isTrue, reason: '$state');
-    }
-
-    expect(taskCalls, List<String>.filled(3, 'moveToBackground'));
+    fixture.capability.emit(
+      _projection(state: CallState.ringing, direction: CallDirection.incoming),
+    );
+    await settle(tester);
+    expect(find.text('Answer'), findsOneWidget);
+    expect(await pressBack(tester), isTrue);
+    expect(find.byKey(const ValueKey('call-return-bar')), findsNothing);
+    expect(nativeBackOwner, <Object?>[true]);
+    expect(nativeMinimizeCallIds, <String?>[null]);
+    expect(taskCalls, ['moveToBackground']);
     expect(platformCalls, isNot(contains('SystemNavigator.pop')));
     expect(fixture.capability.actions, isEmpty);
   });
@@ -325,7 +368,6 @@ void main() {
     await pushConversation(tester, fixture);
     fixture.capability.emit(_projection(state: CallState.connected));
     await tester.pump();
-    expect(await pressBack(tester), isTrue);
     expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
 
     fixture.capability.emit(
@@ -345,8 +387,7 @@ void main() {
     await tester.pump();
     await pressBack(tester);
     expect(platformCalls, contains('SystemNavigator.pop'));
-    // Only the live call surface sends the app to the background.
-    expect(taskCalls, <String>['moveToBackground']);
+    expect(taskCalls, isEmpty);
   });
 }
 
