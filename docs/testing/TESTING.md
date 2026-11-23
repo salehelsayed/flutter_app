@@ -15557,6 +15557,14 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   finished before reopening the app. The next foreground produced verified
   Ready, and the phone was restored to the prior source with data kept.
   Evidence is in `.codex-test-logs/bl60d-20261123/` and `m-d1ff611b`.
+  The first composed 132 preflight stopped before the full regression rounds.
+  Dart 3.13.2 accepted the vendored downloader, while the suppression guard's
+  locked analyzer 9.0.0 rejected the constructor declarations in four of its
+  47 Dart files. Keep the strict failure and complete parser probe
+  (`m-d549a70b`, `m-f8bc2915`, `m-1cf15e76`). Commit `2a5e9b6d` expresses
+  those constructors explicitly and preserves their parameters, fields,
+  singleton factory and const notification constructor. The full strict
+  preflight passed with the existing suppression inventory and lock.
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
