@@ -9,8 +9,10 @@ import UIKit
 @testable import camera_avfoundation
 
 struct CameraSetDeviceOrientationTests {
-  private func createCamera() -> (Camera, [MockCaptureConnection]) {
-    let camera = CameraTestUtils.createTestCamera()
+  private func createCamera(
+    _ configuration: CameraConfiguration = CameraTestUtils.createTestCameraConfiguration()
+  ) -> (Camera, [MockCaptureConnection]) {
+    let camera = CameraTestUtils.createTestCamera(configuration)
 
     let mockCapturePhotoOutput = MockCapturePhotoOutput()
     let mockPhotoCaptureConnection = MockCaptureConnection()
@@ -29,6 +31,37 @@ struct CameraSetDeviceOrientationTests {
     camera.captureVideoOutput = mockCaptureVideoDataOutput
 
     return (camera, [mockPhotoCaptureConnection, mockVideoCaptureConnection])
+  }
+
+  private func portraitVideoAngles(lens: String, sensorAngle: CGFloat) -> [CGFloat] {
+    let configuration = CameraTestUtils.createTestCameraConfiguration()
+    let device = configuration.videoCaptureDeviceFactory(configuration.initialCameraName)
+      as! MockCaptureDevice
+    device.uniqueID = lens
+    configuration.orientation = .landscapeLeft
+    configuration.videoRotationAngleProviderFactory = { device in
+      guard device.uniqueID == lens else { return nil }
+      return { _, _ in sensorAngle }
+    }
+
+    let (camera, connections) = createCamera(configuration)
+    var angles: [CGFloat] = []
+    connections[1].setVideoRotationAngleStub = { angles.append($0) }
+    camera.deviceOrientation = .portrait
+    return angles
+  }
+
+  @available(iOS 17.0, *)
+  @Test func setDeviceOrientation_usesPortraitMountedFrontSensorAngle() {
+    let angles = portraitVideoAngles(lens: "portrait-mounted-front", sensorAngle: 0)
+    #expect(angles == [0], "BL67 portrait-mounted front video angle")
+  }
+
+  @available(iOS 17.0, *)
+  @Test(arguments: ["landscape-mounted-front", "landscape-mounted-back"])
+  func setDeviceOrientation_preservesLandscapeMountedSensorAngle(lens: String) {
+    let angles = portraitVideoAngles(lens: lens, sensorAngle: 90)
+    #expect(angles == [90], "BL67 landscape-mounted video angle")
   }
 
   private func stubOrientationUpdates(

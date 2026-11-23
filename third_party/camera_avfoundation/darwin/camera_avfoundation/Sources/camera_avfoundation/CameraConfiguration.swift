@@ -9,6 +9,9 @@ import UIKit
 /// Factory block returning an FLTCaptureDevice.
 /// Used in tests to inject a video capture device into DefaultCamera.
 typealias VideoCaptureDeviceFactory = (_ cameraName: String) -> CaptureDevice
+typealias VideoRotationAngleProvider = (
+  _ orientation: AVCaptureVideoOrientation, _ deltaFromCurrentOrientation: CGFloat
+) -> CGFloat
 
 typealias AudioCaptureDeviceFactory = () -> CaptureDevice
 
@@ -29,6 +32,7 @@ class CameraConfiguration {
   var videoCaptureSession: CaptureSession
   var audioCaptureSession: CaptureSession
   var videoCaptureDeviceFactory: VideoCaptureDeviceFactory
+  var videoRotationAngleProviderFactory: (CaptureDevice) -> VideoRotationAngleProvider? = { _ in nil }
   let audioCaptureDeviceFactory: AudioCaptureDeviceFactory
   let captureDeviceInputFactory: CaptureDeviceInputFactory
   var assetWriterFactory: AssetWriterFactory
