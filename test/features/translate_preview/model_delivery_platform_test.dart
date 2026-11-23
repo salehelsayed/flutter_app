@@ -215,7 +215,7 @@ void main() {
   );
 
   test(
-    'unready origin exhausts the full budget and pauses without native entry',
+    'unready connection reaches the full budget and keeps the task scheduled',
     () async {
       final downloader = _Downloader();
       final transport = createTransport(downloader: downloader, isIOS: false);
@@ -246,7 +246,7 @@ void main() {
         expect(partial.lengthSync(), 80);
         clock.elapse(const Duration(seconds: 1));
         expect(completed, isTrue);
-        expect(result?.status, TaskStatus.paused);
+        expect(result?.status, TaskStatus.waitingToRetry);
         expect(result?.task.taskId, task.taskId);
         expect(partial.lengthSync(), 80);
         expect(origin.closedClients, origin.probes);
@@ -475,7 +475,7 @@ void main() {
   });
 
   test(
-    'Android readiness pause with no partial re-enqueues the owned task',
+    'Android task paused before any bytes re-enqueues the owned task',
     () async {
       const deadline = Duration(seconds: 3);
       final downloader = _Downloader()..resumeAccepted = false;
@@ -486,22 +486,6 @@ void main() {
           .enqueue(taskId: 'one', manifest: _manifest(), requiresWiFi: true)
           .timeout(deadline);
       final task = downloader.enqueued.single;
-      final origin = _RecoveringOrigin(recoverOnProbe: false);
-      fakeAsync((clock) {
-        TaskStatusUpdate? readinessPause;
-        unawaited(
-          HttpOverrides.runZoned(
-            () => task.options!.beforeTaskStartCallBack!(task),
-            createHttpClient: (_) => _OriginClient(origin),
-          ).then<void>((update) {
-            readinessPause = update;
-          }),
-        );
-        clock.elapse(const Duration(seconds: 20));
-        expect(readinessPause?.status, TaskStatus.paused);
-        expect(readinessPause?.task.taskId, task.taskId);
-      });
-
       downloader.emit(task, TaskStatus.paused);
       expect(
         await transport
@@ -1160,7 +1144,10 @@ void main() {
   test(
     'restores the native held offset and rebinds a zero-byte hold',
     () async {
-      final task = _ownedTask('held');
+      final task = _ownedTask('held').copyWith(
+        requiresWiFi: true,
+        options: TaskOptions(appManagedRecovery: true),
+      );
       final downloader = _Downloader()
         ..active[task.taskId] = task
         ..heldBytes[task.taskId] = 42

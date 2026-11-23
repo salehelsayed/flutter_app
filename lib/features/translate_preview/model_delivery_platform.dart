@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 PersistentModelDeliveryController createProductionModelDeliveryController() {
   final service = GemmaPreviewService.instance;
   final resumeStorage = LocalStorePersistentStorage();
+  final downloader = FileDownloader(persistentStorage: resumeStorage);
   final notices = ModelDeliveryNotifications();
   const verificationChannel = MethodChannel('mknoon/gemma_preview');
   final controller = PersistentModelDeliveryController(
@@ -32,7 +33,7 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
     ),
     network: HttpModelDeliveryNetwork(),
     transport: BackgroundModelDeliveryTransport(
-      downloader: FileDownloader(persistentStorage: resumeStorage),
+      downloader: downloader,
       resumeStorage: resumeStorage,
     ),
     appBuild: () async =>
@@ -55,6 +56,8 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
             'finishTranslatorVerification',
             taskId,
           )
+        : Platform.isAndroid
+        ? downloader.finishManagedVerification
         : null,
   );
   service.setInferenceSafetyController(controller);

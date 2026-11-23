@@ -454,6 +454,9 @@ abstract base class NativeDownloader extends BaseDownloader {
     }
   }
 
+  Future<void> finishManagedVerification(String taskId) =>
+      methodChannel.invokeMethod<void>('finishManagedVerification', taskId);
+
   @override
   Future<bool> requireWiFi(
     RequireWiFi requirement,

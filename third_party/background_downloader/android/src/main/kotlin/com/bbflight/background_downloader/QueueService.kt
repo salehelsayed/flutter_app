@@ -1,6 +1,7 @@
 package com.bbflight.background_downloader
 
 import android.util.Log
+import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +69,12 @@ object QueueService {
                         } else {
                             argList.add(bgPost.arg)
                         }
-                        val bgChannel = BDPlugin.backgroundChannel(taskId = bgPost.task.taskId)
+                        val targetChannel = bgPost.targetChannel
+                        val bgChannel = if (targetChannel == null) {
+                            BDPlugin.backgroundChannel(taskId = bgPost.task.taskId)
+                        } else {
+                            targetChannel.takeIf { ManagedVerificationWindow.isLiveAppChannel(it) }
+                        }
                         if (bgChannel != null) {
                             bgChannel.invokeMethod(
                                 bgPost.method, argList, FlutterBooleanResultHandler(success)
@@ -130,5 +136,6 @@ data class BackgroundPost(
     val task: Task,
     val method: String,
     val arg: Any,
-    val onFail: (suspend () -> Unit)? = null
+    val onFail: (suspend () -> Unit)? = null,
+    val targetChannel: MethodChannel? = null,
 )

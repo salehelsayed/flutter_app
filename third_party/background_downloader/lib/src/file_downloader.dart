@@ -1061,6 +1061,16 @@ interface class FileDownloader {
     return downloader.heldManagedDownloadBytes(taskId);
   }
 
+  /// Releases the Android worker waiting for this download's Dart verification.
+  Future<void> finishManagedVerification(String taskId) async {
+    final downloader = _downloader;
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        downloader is NativeDownloader) {
+      await downloader.finishManagedVerification(taskId);
+    }
+  }
+
   /// Resume all paused tasks, or those in [tasks], or paused tasks in
   /// group [group]
   ///

@@ -7,6 +7,7 @@ import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
@@ -26,6 +27,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.bbflight.background_downloader.BDPlugin.Companion.backgroundChannel
+import com.bbflight.background_downloader.TaskRunner.Companion.processResumeData
 import com.bbflight.background_downloader.TaskWorker.Companion.processStatusUpdate
 import com.bbflight.background_downloader.TaskWorker.Companion.taskToJsonString
 import io.flutter.embedding.engine.FlutterEngine
@@ -113,7 +115,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         var notificationButtonText =
             Collections.synchronizedMap(mutableMapOf<String, String>()) // for localization
         var firstBackgroundChannel: MethodChannel? = null
-        var bgChannelByTaskId = Collections.synchronizedMap(mutableMapOf<String, MethodChannel>())
+        val bgChannelByTaskId = Collections.synchronizedMap(mutableMapOf<String, MethodChannel>())
         var flutterEngineByTaskId =
             Collections.synchronizedMap(mutableMapOf<String, FlutterEngine>())
         var requireWifi = RequireWiFi.asSetByTask // global setting
@@ -610,6 +612,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         }
 
         private fun discardManagedPartial(context: Context, prefs: SharedPreferences, taskId: String, work: WorkInfo) {
+            ManagedVerificationWindow.cancel(prefs, taskId, work.id)
             val attempt = ManagedDownloadHold.forget(prefs, taskId, work.id) ?: return
             attempt.partialPath?.let { ManagedDownloadHold.ownedPartial(context, it)?.delete() }
         }
@@ -779,8 +782,10 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         defaultScope.cancel()
         channel?.setMethodCallHandler(null)
         channel = null
-        bgChannelByTaskId =
-            bgChannelByTaskId.filter { it.value != backgroundChannel } as MutableMap
+        backgroundChannel?.let { owner ->
+            ManagedVerificationWindow.detachAppChannel(owner)
+            synchronized(bgChannelByTaskId) { bgChannelByTaskId.entries.removeAll { it.value === owner } }
+        }
         if (firstBackgroundChannel == backgroundChannel) {
             firstBackgroundChannel = null
         }
@@ -796,6 +801,17 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     "enqueue" -> methodEnqueue(call)
                     "updateQueuedManagedDownload" -> methodUpdateQueuedManagedDownload(call)
                     "heldManagedDownloadBytes" -> methodHeldManagedDownloadBytes(call)
+                    "finishManagedVerification" -> {
+                        val taskId = call.arguments as? String
+                        val owner = backgroundChannel
+                        if (taskId != null && owner != null) {
+                            withContext(Dispatchers.IO) {
+                                val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+                                ManagedVerificationWindow.acknowledge(prefs, taskId, owner)
+                            }
+                        }
+                        null
+                    }
                     "enqueueAll" -> methodEnqueueAll(call)
                     "reset" -> methodReset(call)
                     "allTasks" -> methodAllTasks(call)
@@ -1980,6 +1996,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     private fun attach(binding: ActivityPluginBinding) {
         detach()
         activity = binding.activity
+        backgroundChannel?.let { ManagedVerificationWindow.attachAppChannel(it) }
         binding.addRequestPermissionsResultListener(this)
         binding.addActivityResultListener(this)
         binding.addOnNewIntentListener(fun(intent: Intent?): Boolean {

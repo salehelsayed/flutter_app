@@ -15,6 +15,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.serialization.json.Json
 import android.util.Log
+import java.util.UUID
 import kotlinx.coroutines.sync.withLock
 
 /**
@@ -146,6 +147,25 @@ open class TaskWorker(
     internal fun hasLiveManagedWork(): Boolean =
         WorkManager.getInstance(appContext).getWorkInfoById(id).get()?.state?.isFinished == false
 
+    internal var verificationWindow: ManagedVerificationWindow? = null
+
+    internal fun openVerificationWindow(prefs: SharedPreferences) {
+        // This worker owns the same destination as any preceding managed worker.
+        // Keep its completion marker intact until WorkManager finishes that request.
+        val previous = prefs.getString(ManagedVerificationWindow.completedWorkKey, null)
+        if (previous != null && previous != id.toString()) {
+            val previousIsLive = try {
+                WorkManager.getInstance(appContext).getWorkInfoById(UUID.fromString(previous))
+                    .get()?.state?.isFinished == false
+            } catch (e: Exception) {
+                Log.w(BDPlugin.TAG, "Could not check previous managed completion", e)
+                true
+            }
+            if (previousIsLive) return
+        }
+        verificationWindow = ManagedVerificationWindow.open(task.taskId, id)
+    }
+
     override suspend fun doWork(): Result {
         try {
             // Initialize task and notificationConfig from inputData
@@ -165,7 +185,15 @@ open class TaskWorker(
 
             val runner = createRunner()
             if (ManagedDownloadHold.appliesTo(task)) {
-                ManagedDownloadHold.writerMutex.withLock { runner.run() }
+                ManagedDownloadHold.writerMutex.withLock {
+                    val prefs = PreferenceManager.getDefaultSharedPreferences(appContext)
+                    // A constraint can stop the worker after the file is already handed off.
+                    if (prefs.getString(ManagedVerificationWindow.completedWorkKey, null) == id.toString()) {
+                        return Result.success()
+                    }
+                    runner.run()
+                    verificationWindow?.awaitAcknowledgement()
+                }
             } else {
                 runner.run()
             }
@@ -173,6 +201,8 @@ open class TaskWorker(
             return if (runner.retrySameWork) Result.retry() else Result.success()
         } catch (e: Exception) {
             return Result.failure()
+        } finally {
+            verificationWindow?.close()
         }
     }
 
