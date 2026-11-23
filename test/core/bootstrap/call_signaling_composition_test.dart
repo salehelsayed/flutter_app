@@ -16,6 +16,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 
+import 'package:clock/clock.dart' show withClock;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
@@ -2810,86 +2811,113 @@ void main() {
     );
   }
 
-  testWidgets(
+  test(
     'production graph publishes only fresh weak-connection samples for its connected episode',
-    (tester) async {
+    () async {
       const bound = Duration(seconds: 3);
       const sampleInterval = Duration(seconds: 3);
-      final fixture = await _createProductionSpeakerRouteFixture().timeout(
-        bound,
-      );
-      final graph = fixture.graph;
-      final engine = fixture.engine;
-      final releaseOldRead = Completer<void>();
-      Future<void> dispatch(CallEventType type) async {
-        await graph.coordinator
-            .dispatch(
-              CallEvent(
-                type: type,
-                eventId: 'quality-${type.name}',
-                occurredAt: graph.coordinator.clock(),
-                callId: _callA,
-                contactPeerId: 'remote-account',
+      final pollTime = FakeAsync();
+      Future<void> drain() =>
+          Future<void>.delayed(Duration.zero).timeout(bound);
+      Future<void> tick() async {
+        pollTime.elapse(sampleInterval);
+        await drain();
+      }
+
+      await runZoned(
+        () => withClock(pollTime.getClock(_callNow), () async {
+          final fixture = await _createProductionSpeakerRouteFixture().timeout(
+            bound,
+          );
+          final graph = fixture.graph;
+          final engine = fixture.engine;
+          final releaseOldRead = Completer<void>();
+          Future<void> dispatch(CallEventType type) async {
+            await graph.coordinator
+                .dispatch(
+                  CallEvent(
+                    type: type,
+                    eventId: 'quality-${type.name}',
+                    occurredAt: graph.coordinator.clock(),
+                    callId: _callA,
+                    contactPeerId: 'remote-account',
+                  ),
+                )
+                .timeout(bound);
+          }
+
+          try {
+            for (final type in [
+              CallEventType.incomingValidated,
+              CallEventType.systemUiPresented,
+              CallEventType.answer,
+              CallEventType.negotiationReady,
+              CallEventType.mediaConnected,
+            ]) {
+              await dispatch(type);
+            }
+            expect(graph.current!.session.state, CallState.connected);
+
+            engine.snapshotQualityObservation = 1;
+            await tick();
+            engine.snapshotQuality = CallQualityBand.poor;
+            engine.snapshotQualityObservation = 2;
+            await tick();
+            expect(graph.current!.weakConnection, isFalse);
+            await tick();
+            await tick();
+            expect(graph.current!.weakConnection, isFalse);
+
+            engine.snapshotQualityObservation = 3;
+            await tick();
+            expect(graph.current!.weakConnection, isTrue);
+
+            var oldReadStarted = false;
+            engine.snapshotQualityObservation = 4;
+            engine.beforeSnapshotReturns = () {
+              oldReadStarted = true;
+              return releaseOldRead.future.timeout(bound);
+            };
+            await tick();
+            expect(oldReadStarted, isTrue);
+            engine.beforeSnapshotReturns = null;
+
+            await dispatch(CallEventType.audioInterrupted);
+            expect(graph.current!.session.state, CallState.reconnecting);
+            expect(graph.current!.weakConnection, isFalse);
+            await dispatch(CallEventType.mediaRecovered);
+            expect(graph.current!.session.state, CallState.connected);
+            releaseOldRead.complete();
+            await drain();
+
+            for (final observation in [5, 6, 7]) {
+              engine.snapshotQualityObservation = observation;
+              await tick();
+              expect(graph.current!.weakConnection, isFalse);
+            }
+            engine.snapshotQualityObservation = 8;
+            await tick();
+            expect(graph.current!.weakConnection, isTrue);
+          } finally {
+            if (!releaseOldRead.isCompleted) releaseOldRead.complete();
+            await graph.shutdown().timeout(bound);
+          }
+        }),
+        zoneSpecification: ZoneSpecification(
+          createPeriodicTimer: (_, parent, zone, interval, callback) {
+            // Keep fixture work and one-shot deadlines on real time.
+            if (interval != sampleInterval) {
+              return parent.createPeriodicTimer(zone, interval, callback);
+            }
+            return pollTime.run(
+              (_) => Timer.periodic(
+                interval,
+                (timer) => zone.runUnaryGuarded(callback, timer),
               ),
-            )
-            .timeout(bound);
-      }
-
-      try {
-        for (final type in [
-          CallEventType.incomingValidated,
-          CallEventType.systemUiPresented,
-          CallEventType.answer,
-          CallEventType.negotiationReady,
-          CallEventType.mediaConnected,
-        ]) {
-          await dispatch(type);
-        }
-        expect(graph.current!.session.state, CallState.connected);
-
-        engine.snapshotQualityObservation = 1;
-        await tester.pump(sampleInterval);
-        engine.snapshotQuality = CallQualityBand.poor;
-        engine.snapshotQualityObservation = 2;
-        await tester.pump(sampleInterval);
-        expect(graph.current!.weakConnection, isFalse);
-        await tester.pump(sampleInterval * 2);
-        expect(graph.current!.weakConnection, isFalse);
-
-        engine.snapshotQualityObservation = 3;
-        await tester.pump(sampleInterval);
-        expect(graph.current!.weakConnection, isTrue);
-
-        var oldReadStarted = false;
-        engine.snapshotQualityObservation = 4;
-        engine.beforeSnapshotReturns = () {
-          oldReadStarted = true;
-          return releaseOldRead.future.timeout(bound);
-        };
-        await tester.pump(sampleInterval);
-        expect(oldReadStarted, isTrue);
-        engine.beforeSnapshotReturns = null;
-
-        await dispatch(CallEventType.audioInterrupted);
-        expect(graph.current!.session.state, CallState.reconnecting);
-        expect(graph.current!.weakConnection, isFalse);
-        await dispatch(CallEventType.mediaRecovered);
-        expect(graph.current!.session.state, CallState.connected);
-        releaseOldRead.complete();
-        await tester.pump();
-
-        for (final observation in [5, 6, 7]) {
-          engine.snapshotQualityObservation = observation;
-          await tester.pump(sampleInterval);
-          expect(graph.current!.weakConnection, isFalse);
-        }
-        engine.snapshotQualityObservation = 8;
-        await tester.pump(sampleInterval);
-        expect(graph.current!.weakConnection, isTrue);
-      } finally {
-        if (!releaseOldRead.isCompleted) releaseOldRead.complete();
-        await graph.shutdown().timeout(bound);
-      }
+            );
+          },
+        ),
+      );
     },
   );
 
