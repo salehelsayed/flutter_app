@@ -7556,13 +7556,23 @@ visible and cannot become an ordinary first-attempt PASS.
 
   The separate physical depth-dock check measured the actual sent thumbnail
   on the same candidate. Pixel showed automatic motion, motion on tap and a
-  stable frame after replay. The iPhone thumbnail showed no measured motion
-  in samples starting three seconds after its tap. The shared thumbnail
-  supplies a tap-to-replay handler. Tap delivery and early replay frames on
-  the iPhone remain unverified. Tray and picker replay worked on both phones.
-  Kayan accepted the iPhone depth-thumbnail gap for 132 (`m-27bd5b10`). Keep
-  the first device results under `.codex-test-logs/bl62f-20261122/depth/`
-  (`m-39ef54c3`).
+  stable frame after replay. The initial iPhone samples started three seconds
+  after the tap and used a brightness threshold that missed subtle color
+  changes. Keep those first results under
+  `.codex-test-logs/bl62f-20261122/depth/` (`m-39ef54c3`). The iPhone 13
+  diagnostic at `104ff368`, a logging-only descendant of `5f7b2e49`, traced
+  three loops from first appearance and another three after a tap. The 28 pt
+  thumbnail painted the decoded frames. With an RGB comparison, 0.20–0.64%
+  of thumbnail pixels changed across the 12 sampled playback intervals.
+  The thumbnail settled to the stable poster. In the same run, the tray
+  granted three automatic playback slots and stopped all three after three
+  loops. Two tiles changed visibly. The remaining asset contained 20
+  identical decoded frames. The diagnostic and earlier missed measurements
+  are recorded in `.codex-test-logs/bl62c-20261123/` and `m-1d337ff3`.
+  Three still-room camera fixtures did not sustain visible motion long enough
+  to qualify for a second tray measurement (`m-9e8cf133`). The three-lease
+  trace and the Pixel's three visibly moving tiles closed the investigation
+  (`m-b0f7f166`).
 
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
