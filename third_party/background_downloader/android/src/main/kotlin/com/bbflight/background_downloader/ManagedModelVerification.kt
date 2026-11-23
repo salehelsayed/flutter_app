@@ -15,7 +15,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import java.io.File
-import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.UUID
 import kotlin.concurrent.read
@@ -73,23 +72,29 @@ internal class ManagedModelVerification private constructor(
             if (file.canonicalPath != file.path) return
             val pathBefore = Os.lstat(file.path)
             if (!OsConstants.S_ISREG(pathBefore.st_mode) || pathBefore.st_size != sizeBytes) return
-            val descriptor = Os.open(file.path, OsConstants.O_RDONLY or OsConstants.O_CLOEXEC or OsConstants.O_NOFOLLOW, 0)
-            FileInputStream(descriptor).use { input ->
-                val opened = Os.fstat(input.fd)
+            val flags = OsConstants.O_RDONLY or OsConstants.O_CLOEXEC or OsConstants.O_NOFOLLOW
+            val descriptor = Os.open(file.path, flags, 0)
+            try {
+                val opened = Os.fstat(descriptor)
                 if (!sameFile(pathBefore, opened)) return
                 val digest = MessageDigest.getInstance("SHA-256")
                 val bytes = ByteArray(256 * 1024)
-                while (true) {
+                var offset = 0L
+                while (offset < sizeBytes) {
                     currentCoroutineContext().ensureActive()
-                    val count = input.read(bytes)
-                    if (count < 0) break
+                    val remaining = minOf(bytes.size.toLong(), sizeBytes - offset).toInt()
+                    val count = Os.pread(descriptor, bytes, 0, remaining, offset)
+                    if (count <= 0) return
                     digest.update(bytes, 0, count)
+                    offset += count
                 }
                 opened.takeIf {
-                    sameFile(it, Os.fstat(input.fd)) && sameFile(it, Os.lstat(file.path)) &&
+                    sameFile(it, Os.fstat(descriptor)) && sameFile(it, Os.lstat(file.path)) &&
                         digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) } ==
                         expectedSha256
                 }
+            } finally {
+                Os.close(descriptor)
             }
         } catch (e: CancellationException) {
             throw e
