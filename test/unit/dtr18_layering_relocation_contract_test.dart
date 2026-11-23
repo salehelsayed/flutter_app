@@ -278,7 +278,8 @@ const _applicationRootNormalizedSha256 =
     // BL29 B4 disposal is composed with bb8 main's existing app owner.
     // BL-29 notification group navigation forwards the existing reporter;
     // the app retains composition ownership and all relocation URI rewrites.
-    '7e080389bb454c08868748b6b7a4086efc7c770f3b436963dca316920a507677';
+    // BL61 allows the temporary call follow-up through the same-chat guard.
+    '4da6d0a10eafd8d243956677043399f3f996374c023685fa0ff406843ac76f4d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
