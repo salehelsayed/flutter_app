@@ -2110,14 +2110,17 @@ ForegroundCallProjection _vui7Terminal({
   CallId? id,
   bool connected = true,
   CallEndReason reason = CallEndReason.remoteHangup,
+  CallDirection direction = CallDirection.outgoing,
 }) => ForegroundCallProjection(
   session: CallSessionSnapshot.active(
     callId: id ?? _activeId,
     contactPeerId: 'vui7-peer',
-    direction: CallDirection.outgoing,
+    direction: direction,
     state: CallState.ended,
-    callerAccountPeerId: 'local',
-    callerDeviceId: 'device',
+    callerAccountPeerId: direction == CallDirection.incoming
+        ? 'vui7-peer'
+        : 'local',
+    callerDeviceId: direction == CallDirection.incoming ? 'remote' : 'device',
     startedAt: _vui7Now.subtract(const Duration(minutes: 3)),
     ringingAt: _vui7Now.subtract(const Duration(minutes: 2)),
     connectedAt: connected
@@ -2125,6 +2128,7 @@ ForegroundCallProjection _vui7Terminal({
         : null,
     endedAt: _vui7Now,
     endReason: reason,
+    incomingValidated: direction == CallDirection.incoming,
   ),
   audio: CallAudioControlState.idle,
   terminalMedia: media,
@@ -2423,6 +2427,40 @@ void _bl61OutcomeTests() {
       });
     });
   }
+
+  testWidgets('BL61 a missed incoming call quietly dismisses its ring screen', (
+    tester,
+  ) async {
+    const bound = Duration(seconds: 3);
+    await _vui7With(tester, (cap, _, l10n) async {
+      cap.emit(
+        _projection(
+          now: _vui7Now,
+          callId: _incomingId,
+          peerId: 'vui7-peer',
+          direction: CallDirection.incoming,
+          state: CallState.ringing,
+          incomingValidated: true,
+        ),
+      );
+      await _vui7Draw(tester).timeout(bound);
+      expect(find.text(l10n.call_answer), findsOneWidget);
+
+      cap.terminal(
+        _vui7Terminal(
+          id: _incomingId,
+          media: CallMediaKind.audio,
+          connected: false,
+          reason: CallEndReason.noAnswer,
+          direction: CallDirection.incoming,
+        ),
+      );
+      await _vui7Draw(tester).timeout(bound);
+      expect(find.text(l10n.call_answer), findsNothing);
+      expect(terminalNotice, findsNothing);
+      expect(find.text('VUI7 retained route').hitTestable(), findsOneWidget);
+    }).timeout(bound);
+  });
 
   testWidgets('BL61 in-flight retry pauses the normal end countdown', (
     tester,
