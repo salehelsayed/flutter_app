@@ -895,6 +895,111 @@ void main() {
     expect(laterEmptySample.toString(), isNot(contains('654321')));
   });
 
+  group('adapter audio RTT', () {
+    const limit = Duration(seconds: 3);
+
+    webrtc.StatsReport report({
+      required double receivedAt,
+      required Object? seconds,
+      required Object? measurements,
+      String kind = 'audio',
+    }) => webrtc.StatsReport('remote-$kind', 'remote-inbound-rtp', receivedAt, {
+      'kind': kind,
+      'roundTripTime': ?seconds,
+      'roundTripTimeMeasurements': ?measurements,
+    });
+
+    Future<FlutterWebRtcPeerConnectionAdapter> adapterFor(
+      List<List<webrtc.StatsReport>> samples,
+    ) async {
+      final peer = _StatsPeerConnection(samples);
+      final adapter = FlutterWebRtcPeerConnectionAdapter(
+        configureAndroidAudioFocus: () async {},
+        peerConnectionFactory: (_) async => peer,
+      );
+      addTearDown(() => adapter.close().timeout(limit));
+      await adapter
+          .create(
+            const WebRtcPeerConnectionConfiguration(
+              iceTransportPolicy: WebRtcIceTransportPolicy.all,
+              receiveAudio: true,
+              receiveVideo: false,
+              captureAudio: false,
+              captureVideo: false,
+              iceServers: <CallIceServer>[],
+            ),
+          )
+          .timeout(limit);
+      return adapter;
+    }
+
+    test('classifies validated audio RTT in seconds', () async {
+      const readings = [
+        (seconds: 0.501, quality: WebRtcQualityBand.poor),
+        (seconds: 0.4, quality: WebRtcQualityBand.good),
+        (seconds: 0.401, quality: WebRtcQualityBand.degraded),
+        (seconds: 0.5, quality: WebRtcQualityBand.degraded),
+      ];
+      final adapter = await adapterFor([
+        for (final (index, reading) in readings.indexed)
+          [
+            report(
+              receivedAt: (index + 1).toDouble(),
+              seconds: reading.seconds,
+              measurements: index + 1,
+            ),
+          ],
+      ]);
+      final observed = <WebRtcQualityBand>[];
+      for (var index = 0; index < readings.length; index++) {
+        observed.add((await adapter.snapshot().timeout(limit)).quality);
+      }
+
+      expect(observed, readings.map((reading) => reading.quality));
+    });
+
+    test('ignores malformed RTT, video RTT, and ICE pair RTT', () async {
+      const malformed = [
+        (seconds: null, measurements: 1),
+        (seconds: double.nan, measurements: 2),
+        (seconds: double.infinity, measurements: 3),
+        (seconds: -0.7, measurements: 4),
+        (seconds: 0.0, measurements: 5),
+        (seconds: 0.7, measurements: null),
+        (seconds: 0.7, measurements: 0),
+        (seconds: 0.7, measurements: 1.5),
+      ];
+      final adapter = await adapterFor([
+        for (final (index, reading) in malformed.indexed)
+          [
+            report(
+              receivedAt: (index + 1).toDouble(),
+              seconds: reading.seconds,
+              measurements: reading.measurements,
+            ),
+            report(
+              receivedAt: (index + 1).toDouble(),
+              seconds: 0.9,
+              measurements: index + 1,
+              kind: 'video',
+            ),
+            webrtc.StatsReport(
+              'ice-pair',
+              'candidate-pair',
+              (index + 1).toDouble(),
+              {'currentRoundTripTime': 0.9, 'responsesReceived': index + 1},
+            ),
+          ],
+      ]);
+      final observed = <WebRtcQualityBand>[];
+      for (var index = 0; index < malformed.length; index++) {
+        observed.add((await adapter.snapshot().timeout(limit)).quality);
+      }
+
+      expect(observed, everyElement(WebRtcQualityBand.unknown));
+    });
+  });
+
   test(
     'incomplete native observation never retains partial readiness proof',
     () async {
