@@ -94,9 +94,11 @@ final class ModelWaitingForWifi extends ModelDeliveryInProgress {
     required super.receivedBytes,
     required super.totalBytes,
     this.canUseMobileData = true,
+    this.resumesInBackground = false,
   });
 
   final bool canUseMobileData;
+  final bool resumesInBackground;
 }
 
 /// Stopped by the user, or by a restart, with the part already received kept.

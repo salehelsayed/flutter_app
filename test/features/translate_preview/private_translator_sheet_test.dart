@@ -376,27 +376,38 @@ void main() {
   testWidgets(
     '3c waiting for Wi-Fi: Use mobile data continues on mobile data',
     (tester) async {
+      const bound = Duration(seconds: 3);
       final controller = await _openSheet(
         tester,
         const ModelWaitingForWifi(
           receivedBytes: 1100000000,
           totalBytes: _total,
         ),
-      );
+      ).timeout(bound);
       expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
       expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
       expect(find.text('paused'), findsOneWidget);
       expect(
+        find.textContaining("when you're back online to check your download."),
+        findsOneWidget,
+      );
+      controller.state.value = const ModelWaitingForWifi(
+        receivedBytes: 1100000000,
+        totalBytes: _total,
+        resumesInBackground: true,
+      );
+      await tester.pump().timeout(bound);
+      expect(
         find.text(
-          "Your download is safe at 42%. Open mknoon when you're back "
-          'online to check your download.',
+          'Your download is safe at 42%. It continues by itself when '
+          "you're back online.",
         ),
         findsOneWidget,
       );
-      await tester.tap(find.text('Use mobile data'));
+      await tester.tap(find.text('Use mobile data')).timeout(bound);
       expect(controller.calls, ['start(allowMobileData: true)']);
-      await tester.tap(find.text('Close'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.text('Close')).timeout(bound);
+      await tester.pumpAndSettle().timeout(bound);
       expect(find.text('Waiting for Wi-Fi'), findsNothing);
     },
   );

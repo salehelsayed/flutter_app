@@ -1462,6 +1462,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         return;
       }
       final previousPhase = _record.phase;
+      if (previousPhase == ModelDeliveryPhase.scheduledWaitingForConnection &&
+          (event.status == ModelTransferStatus.running ||
+              event.status == ModelTransferStatus.complete)) {
+        unawaited(_runNotice(_clearBackgroundStatus));
+      }
       if (event.status == ModelTransferStatus.running) {
         _queuedRequiresWifi = false;
       }
@@ -2010,6 +2015,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           receivedBytes: _record.receivedBytes,
           totalBytes: _totalBytes,
           canUseMobileData: !_record.allowMobileData,
+          resumesInBackground: true,
         ),
       ModelDeliveryPhase.scheduledWaitingForConnection =>
         ModelWaitingForConnection(

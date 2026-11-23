@@ -58,6 +58,23 @@ String _additionalSpace(BuildContext context, int bytes) => switch (bytes) {
 String translatorAppName(BuildContext context) =>
     context.findAncestorWidgetOfExactType<MaterialApp>()?.title ?? '';
 
+String _connectionWaitLine(
+  BuildContext context, {
+  required int? retainedPercent,
+  required bool resumesInBackground,
+}) {
+  final l10n = AppLocalizations.of(context)!;
+  return switch (retainedPercent) {
+    final int percent when resumesInBackground =>
+      l10n.translator_connection_automatic('$percent'),
+    final int percent => l10n.translator_connection_kept(
+      '$percent',
+      translatorAppName(context),
+    ),
+    null => l10n.translator_connection_unmeasured,
+  };
+}
+
 void openTranslatorUpdateStore(BuildContext context) {
   final platform = Theme.of(context).platform == TargetPlatform.iOS
       ? UpdatePlatform.ios
@@ -213,15 +230,11 @@ class PrivateTranslatorSheet extends StatelessWidget {
       ),
       final ModelWaitingForConnection waiting => _SheetLayout(
         title: l10n.translator_connection_title,
-        line: switch (waiting.retainedPercent) {
-          final int percent when waiting.resumesInBackground =>
-            l10n.translator_connection_automatic('$percent'),
-          final int percent => l10n.translator_connection_kept(
-            '$percent',
-            translatorAppName(context),
-          ),
-          null => l10n.translator_connection_unmeasured,
-        },
+        line: _connectionWaitLine(
+          context,
+          retainedPercent: waiting.retainedPercent,
+          resumesInBackground: waiting.resumesInBackground,
+        ),
         progress: _retainedProgress(context, waiting),
         primary: (l10n.translator_close, close),
         secondary: (l10n.translator_pause, () => unawaited(controller.pause())),
@@ -354,7 +367,11 @@ class PrivateTranslatorSheet extends StatelessWidget {
           translatorAmount(context, waiting.receivedBytes, waiting.totalBytes),
           l10n.translator_paused_word,
         ),
-        line: l10n.translator_waiting_line,
+        line: _connectionWaitLine(
+          context,
+          retainedPercent: waiting.percent > 0 ? waiting.percent : null,
+          resumesInBackground: waiting.resumesInBackground,
+        ),
         primary: waiting.canUseMobileData
             ? (
                 l10n.translator_use_mobile_data,
