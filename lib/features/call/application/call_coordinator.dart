@@ -8,6 +8,7 @@ import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_cleanup_coordinator.dart';
@@ -129,6 +130,7 @@ final class CallCoordinator {
     this.onTimerScheduled,
     this.persistActiveCall,
     this.clearActiveCall,
+    this.resolveTerminalMedia,
   }) : _timerScheduler = timerScheduler ?? const DartCallTimerScheduler(),
        _monotonicNow = monotonicNow ?? _recoveryClock() {
     if (maxPendingEvents <= 0 ||
@@ -152,6 +154,7 @@ final class CallCoordinator {
   final CallReducer reducer;
   final CallCleanupCoordinator cleanupCoordinator;
   final CallHistoryProjector historyProjector;
+  final CallMediaKind? Function(CallSessionSnapshot)? resolveTerminalMedia;
   final CallEffectExecutor effectExecutor;
   final DateTime Function() clock;
   final CallId Function() idSource;
@@ -515,6 +518,14 @@ final class CallCoordinator {
     } catch (_) {
       // An admission observer cannot change canonical call handling.
     }
+    CallMediaKind? terminalMedia;
+    if (snapshot.isTerminal) {
+      try {
+        terminalMedia = resolveTerminalMedia?.call(snapshot);
+      } on Object {
+        // A failed history observation cannot interrupt call termination.
+      }
+    }
     _snapshots.add(snapshot);
 
     Object? firstEffectError;
@@ -593,7 +604,7 @@ final class CallCoordinator {
           try {
             var budgetExpired = false;
             await historyProjector
-                .projectTerminal(snapshot)
+                .projectTerminal(snapshot, mediaKind: terminalMedia)
                 .then<void>((_) async {
                   await clearActiveCall?.call(snapshot.callId!);
                 })

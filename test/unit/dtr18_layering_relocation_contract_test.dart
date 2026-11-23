@@ -278,7 +278,9 @@ const _applicationRootNormalizedSha256 =
     // BL29 B4 disposal is composed with bb8 main's existing app owner.
     // BL-29 notification group navigation forwards the existing reporter;
     // the app retains composition ownership and all relocation URI rewrites.
-    '327fd88212e6599874095983241d66e50ad7c46849e2fea2439e37df9c56f42b';
+    // BL61 allows the temporary call follow-up through the same-chat guard.
+    // The same follow-up passes its originating call ID through that route.
+    '8cf5bd08d00920c27fddaaf5e88f18f9174c1b3f8554705f82d839fb6df17d8d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -509,7 +511,8 @@ const _productionBootstrapNormalizedSha256 =
     // d777d04c6 and 4b206563e. Reversing both diffs restores the 6969bc352 pins.
     // BL-58 adds the dbLoadRetainedIncomingPost binding for Thought replies.
     // Removing those two lines restores both previous bootstrap digests.
-    '1b7e0423ccd8e229bfb480413900be31fff2bbacdefd53a659ecd68ef7f4c2d7';
+    // BL61 passes current-locale copy resolvers to the existing call notifier.
+    '3fdf1f9ea45150d4d3bc644dfa64425c174c3cbba47ceeefe5849743f2368989';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -558,8 +561,9 @@ const _productionBootstrapNormalizedSha256 =
 // The same BL-30 R2 background write window leaves the historical callback exact.
 // BL-29 receipt admission only changes the surrounding owner wiring.
 // The BL-58 binding also leaves the historical callback exact.
+// The BL61 copy resolvers leave the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '6ae235a87d90e5dc2cf0bbfafc95e42590029dbc12e3ff5d73c7c0bdba9a4ca7';
+    'a116ac7dc5a94d383576698523ca33b4715c82ac6b701319e0f81cba0340c02e';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

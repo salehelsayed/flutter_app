@@ -3,6 +3,7 @@ import 'dart:convert';
 const missedCallPayloadPrefix = 'mknoon.missed_call.v1:';
 const callBackPayloadPrefix = 'mknoon.call_back.v1:';
 const missedCallBackActionId = 'mknoon_call_back';
+const missedCallMessageActionId = 'mknoon_call_message';
 const missedCallActionCategoryId = 'mknoon_missed_call';
 final _callIdGrammar = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

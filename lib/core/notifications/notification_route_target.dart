@@ -1,5 +1,7 @@
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 
+import 'missed_call_action_payload.dart';
+
 enum NotificationRouteTargetKind {
   conversation,
   contactRequest,
@@ -19,6 +21,7 @@ class NotificationRouteTarget {
   final String? messageId;
   final String? postId;
   final String? commentId;
+  final String? callMessageSuggestionId;
 
   const NotificationRouteTarget._({
     required this.kind,
@@ -27,14 +30,19 @@ class NotificationRouteTarget {
     this.messageId,
     this.postId,
     this.commentId,
+    this.callMessageSuggestionId,
   });
 
-  const NotificationRouteTarget.conversation(String peerId, {String? messageId})
-    : this._(
-        kind: NotificationRouteTargetKind.conversation,
-        peerId: peerId,
-        messageId: messageId,
-      );
+  const NotificationRouteTarget.conversation(
+    String peerId, {
+    String? messageId,
+    String? callMessageSuggestionId,
+  }) : this._(
+         kind: NotificationRouteTargetKind.conversation,
+         peerId: peerId,
+         messageId: messageId,
+         callMessageSuggestionId: callMessageSuggestionId,
+       );
 
   const NotificationRouteTarget.contactRequest(String peerId)
     : this._(kind: NotificationRouteTargetKind.contactRequest, peerId: peerId);
@@ -100,6 +108,15 @@ class NotificationRouteTarget {
     final payload = rawPayload?.trim();
     if (payload == null || payload.isEmpty) {
       return null;
+    }
+    if (payload.startsWith(missedCallPayloadPrefix)) {
+      final missed = MissedCallActionPayload.parse(payload);
+      return missed == null
+          ? null
+          : NotificationRouteTarget.conversation(
+              missed.contactPeerId,
+              callMessageSuggestionId: missed.callId,
+            );
     }
     if (payload == 'intros') {
       return const NotificationRouteTarget.intros();

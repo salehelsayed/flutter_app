@@ -11,18 +11,22 @@ import io.flutter.plugin.common.MethodChannel
  *
  * Back during a call used to close the task, and the teardown ended the call
  * (beta 2026-09-25, F4). While Dart reports that a call surface owns Back
- * (`setCallOwnsBack`), an overlay-priority back callback moves the whole task
- * to the back, like other calling apps, and the call keeps running in its
- * foreground service. It runs before Flutter's own callback, so a predictive
- * swipe never pops the routes hidden under the call. `moveToBackground` is
- * the same action for a Back that still reaches Dart.
+ * (`setCallOwnsBack`), the overlay-priority callback handles Back before
+ * Flutter's covered routes can receive it. The callback either requests
+ * in-app minimization for the reported call or backgrounds the live task.
  */
 internal class MknoonCallTaskChannelHandler(
     private val registerBack: ((() -> Unit) -> (() -> Unit))? = null,
     private val isDeviceUnlocked: () -> Boolean = { false },
+    private val onMinimizeCall: (String) -> Unit = {},
     private val moveTaskToBack: () -> Boolean,
 ) : MethodChannel.MethodCallHandler {
-    private var callOwnsBack = false
+    private sealed interface BackAction {
+        object Background : BackAction
+        class Minimize(val callId: String) : BackAction
+    }
+
+    private var backAction: BackAction? = null
     private var unregisterBack: (() -> Unit)? = null
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -43,35 +47,49 @@ internal class MknoonCallTaskChannelHandler(
             }
             SET_CALL_OWNS_BACK -> {
                 val arguments = call.arguments as? Map<*, *>
-                val owns = arguments?.takeIf { it.keys == setOf("owns") }?.get("owns") as? Boolean
-                if (owns == null) {
-                    result.error("bad_args", "setCallOwnsBack takes {owns: bool}", null)
+                val owns = arguments?.get("owns") as? Boolean
+                val minimizeCallId = arguments?.get("minimizeCallId") as? String
+                if (arguments == null || owns == null ||
+                    arguments.keys.any { it != "owns" && it != "minimizeCallId" } ||
+                    ("minimizeCallId" in arguments && (!owns || minimizeCallId.isNullOrBlank()))
+                ) {
+                    result.error("bad_args", "setCallOwnsBack takes owns and an optional minimizeCallId", null)
                     return
                 }
-                setCallOwnsBack(owns)
+                setBackAction(
+                    when {
+                        !owns -> null
+                        minimizeCallId == null -> BackAction.Background
+                        else -> BackAction.Minimize(minimizeCallId)
+                    },
+                )
                 result.success(true)
             }
             else -> result.notImplemented()
         }
     }
 
-    /** Back before Android 13 arrives through Activity.onBackPressed. */
+    /** Shared by Activity.onBackPressed and the overlay callback. */
     fun handleBackPressed(): Boolean {
-        if (!callOwnsBack) return false
-        moveToBackground()
+        when (val action = backAction) {
+            BackAction.Background -> moveToBackground()
+            is BackAction.Minimize -> runCatching { onMinimizeCall(action.callId) }
+            null -> return false
+        }
         return true
     }
 
     fun dispose() {
-        setCallOwnsBack(false)
+        setBackAction(null)
     }
 
-    private fun setCallOwnsBack(owns: Boolean) {
-        if (owns == callOwnsBack) return
-        callOwnsBack = owns
-        if (owns) {
+    private fun setBackAction(action: BackAction?) {
+        val wasOwned = backAction != null
+        backAction = action
+        if (wasOwned == (action != null)) return
+        if (action != null) {
             unregisterBack = runCatching {
-                registerBack?.invoke { moveToBackground() }
+                registerBack?.invoke { handleBackPressed() }
             }.getOrNull()
         } else {
             val release = unregisterBack
@@ -87,6 +105,7 @@ internal class MknoonCallTaskChannelHandler(
         const val CHANNEL = "mknoon/call_task"
         const val MOVE_TO_BACKGROUND = "moveToBackground"
         const val SET_CALL_OWNS_BACK = "setCallOwnsBack"
+        const val MINIMIZE_CALL = "minimizeCall"
 
         /** Android 13+: Back and predictive swipes reach this before Flutter. */
         fun overlayBackRegistrar(activity: Activity): ((() -> Unit) -> (() -> Unit))? =

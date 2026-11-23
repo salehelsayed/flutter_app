@@ -372,6 +372,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onMakeIntroductions;
   final VoidCallback? onMaybeLater;
   final String? initialText;
+  final ({String label, VoidCallback onTap})? composerSuggestion;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged;
   final ValueChanged<String>? onQuoteReply;
@@ -504,6 +505,7 @@ class ConversationScreen extends StatefulWidget {
     this.onMakeIntroductions,
     this.onMaybeLater,
     this.initialText,
+    this.composerSuggestion,
     this.onDraftChanged,
     this.onPrivateMediaPolicyChanged,
     this.onQuoteReply,
@@ -1094,6 +1096,19 @@ class _ConversationScreenState extends State<ConversationScreen>
           _EditModeBanner(
             key: ConversationScreen.editModeBannerKey,
             onCancel: widget.onCancelEdit!,
+          ),
+        if (widget.composerSuggestion case final suggestion?
+            when !widget.isEditingMessage &&
+                composerState.recordingState == VoiceRecordingState.idle)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(start: 12, end: 12),
+              child: ActionChip(
+                label: Text(suggestion.label),
+                onPressed: suggestion.onTap,
+              ),
+            ),
           ),
         ComposeArea(
           compact: compact,

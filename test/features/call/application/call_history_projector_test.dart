@@ -141,7 +141,7 @@ void main() {
           projectCallTimelineEntry(entry),
           AppLocalizationsEn(),
         ),
-        'Missed voice call',
+        'Missed',
       );
     },
   );

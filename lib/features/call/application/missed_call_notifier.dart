@@ -1,5 +1,6 @@
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// 406: tells the user about a call they never took.
@@ -48,10 +49,10 @@ final class MissedCallNotifier {
   final ResolveMissedCallContactName resolveContactName;
   final MissedCallNotificationSuppressed isSuppressed;
 
-  /// Localized copy, resolved by the composition root: this runs in
-  /// background isolates with no widget tree to read a delegate from.
-  final String missedBody;
-  final String unknownCallerTitle;
+  /// The composition root supplies copy for the current locale, including in
+  /// background isolates with no widget tree.
+  final String Function({required bool video}) missedBody;
+  final String Function() unknownCallerTitle;
 
   /// Statuses that mean "the user never took this call". `declined` is
   /// deliberately absent: the user acted, and telling them about their own
@@ -92,18 +93,18 @@ final class MissedCallNotifier {
     } catch (_) {
       name = null;
     }
-    final title = (name == null || name.trim().isEmpty)
-        ? unknownCallerTitle
-        : name.trim();
-
     try {
+      final title = (name == null || name.trim().isEmpty)
+          ? unknownCallerTitle()
+          : name.trim();
+      final body = missedBody(video: entry.mediaKind == CallMediaKind.video);
       if (postWithAction != null) {
-        await postWithAction!(entry, title, missedBody);
+        await postWithAction!(entry, title, body);
       } else {
         await post(
           contactAccountPeerId: contactAccountPeerId,
           title: title,
-          body: missedBody,
+          body: body,
         );
       }
     } catch (error) {

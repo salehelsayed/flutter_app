@@ -8,6 +8,7 @@ import 'package:flutter_app/features/call/application/outgoing_call_capability.d
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
 
@@ -18,6 +19,7 @@ CallHistoryListRow row(
   String? name, {
   CallDirection direction = CallDirection.incoming,
   CallHistoryStatus status = CallHistoryStatus.missed,
+  CallMediaKind? mediaKind,
 }) => CallHistoryListRow(
   CallHistoryEntry(
     callId: id,
@@ -29,6 +31,7 @@ CallHistoryListRow row(
     connectedAt: null,
     endedAt: DateTime.utc(2026, 10, 13, 0, 0, 30),
     transportRoute: null,
+    mediaKind: mediaKind,
     createdAt: DateTime.utc(2026, 10, 13),
     updatedAt: DateTime.utc(2026, 10, 13),
   ),
@@ -72,8 +75,22 @@ class _History implements CallHistoryAccess {
   ];
 }
 
-class _Capability implements OutgoingCallCapability {
+class _Capability implements OutgoingVideoCallCapability {
   final starts = <String>[];
+  final videoStarts = <String>[];
+  @override
+  bool get isOutgoingVideoCallAvailable => true;
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(String id) async => true;
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String id, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    videoStarts.add(id);
+    return OutgoingCallStartResult.started;
+  }
+
   @override
   bool get isOutgoingCallAvailable => true;
   @override
@@ -106,7 +123,10 @@ void main() {
   tearDown(() async {
     await changes.close();
   });
-  Widget app({bool withHistory = true}) => MaterialApp(
+  Widget app({
+    bool withHistory = true,
+    Future<void> Function(String, String)? onMessage,
+  }) => MaterialApp(
     locale: const Locale('en'),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
@@ -114,6 +134,7 @@ void main() {
       browser: browser,
       changes: changes.stream,
       history: withHistory ? history : null,
+      onMessage: onMessage,
       redial: CallRedialController(
         capability: () => owner,
         contactAllowed: (_) async => allowed,
@@ -225,6 +246,66 @@ void main() {
     history.recent = [for (final r in rows) r.entry];
     return tester.pumpWidget(app()).then((_) => tester.pumpAndSettle());
   }
+
+  testWidgets('BL61 missed video row offers Message and calls back as video', (
+    tester,
+  ) async {
+    final video = row(_id, 'Alice', mediaKind: CallMediaKind.video);
+    browser.page = CallHistoryPage(rows: [video], total: 1, missed: 1);
+    history.recent = [video.entry];
+    final messages = <(String, String)>[];
+
+    await tester.pumpWidget(
+      app(onMessage: (peer, callId) async => messages.add((peer, callId))),
+    );
+    await tester.pump();
+
+    final name = find.text('Alice');
+    expect(find.textContaining('Missed video call\n'), findsOneWidget);
+    expect(
+      tester.widget<Text>(name).style?.color,
+      Theme.of(tester.element(name)).colorScheme.error,
+    );
+    expect(find.byIcon(Icons.videocam_outlined), findsOneWidget);
+
+    await tester.tap(name);
+    await tester.pump();
+    expect(messages, [('synthetic-contact', _id.value)]);
+    expect(owner.starts, isEmpty);
+    expect(owner.videoStarts, isEmpty);
+
+    await tester.tap(callBack(_id));
+    await tester.pump();
+    expect(owner.videoStarts, ['synthetic-contact']);
+    expect(owner.starts, isEmpty);
+    expect(messages, [('synthetic-contact', _id.value)]);
+  });
+
+  testWidgets('BL61 historical calls with unknown media use generic rows', (
+    tester,
+  ) async {
+    browser.page = CallHistoryPage(
+      rows: [
+        row(_id, 'Legacy missed'),
+        row(
+          _other,
+          'Legacy completed',
+          direction: CallDirection.outgoing,
+          status: CallHistoryStatus.completed,
+        ),
+      ],
+      total: 2,
+      missed: 1,
+    );
+
+    await tester.pumpWidget(app());
+    await tester.pump();
+
+    expect(find.textContaining('Missed\n'), findsOneWidget);
+    expect(find.textContaining('Call ended\n'), findsOneWidget);
+    expect(find.textContaining('voice call'), findsNothing);
+    expect(find.textContaining('video call'), findsNothing);
+  });
 
   testWidgets(
     'older incoming missed row refuses and points at the newer call',

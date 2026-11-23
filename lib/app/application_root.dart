@@ -2117,16 +2117,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.conversation:
         // 139: mirror the group already-active guard. When the user taps a
-        // fresh notification for a peer whose 1:1 conversation is already the
+        // message notification for a peer whose 1:1 conversation is already the
         // active (backgrounded) screen, do NOT push a second ConversationWired
         // — the mounted screen re-fetches the new message on resume
         // (conversation_wired.dart didChangeAppLifecycleState). Decided before
         // the contact lookup so suppression is a pure routing decision; when
-        // the registry is current, the contact necessarily exists.
-        if (isNotificationRouteTargetAlreadyActive(
-          routeTarget: routeTarget,
-          appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
-        )) {
+        // the registry is current, the contact necessarily exists. A call
+        // follow-up opens with its own temporary composer.
+        if (routeTarget.callMessageSuggestionId == null &&
+            isNotificationRouteTargetAlreadyActive(
+              routeTarget: routeTarget,
+              appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
+            )) {
           emitFlowEvent(
             layer: 'FL',
             event: 'CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
@@ -2157,6 +2159,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           navigator: navigator,
           contact: contact,
           notificationTappedAt: context.tappedAt,
+          callMessageSuggestionId: routeTarget.callMessageSuggestionId,
         );
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.post:
@@ -2233,10 +2236,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openCallConversation(String peerId, String callId) async {
+    final contact = await widget.contactRepository.getContact(peerId);
+    final navigator = MyApp.navigatorKey.currentState;
+    if (!mounted || contact == null || navigator == null) return;
+    await _openConversationForContact(
+      navigator: navigator,
+      contact: contact,
+      callMessageSuggestionId: callId,
+    );
+  }
+
   Future<void> _openConversationForContact({
     required NavigatorState navigator,
     required ContactModel contact,
     DateTime? notificationTappedAt,
+    String? callMessageSuggestionId,
   }) async {
     await navigator.push(
       buildConversationRoute(
@@ -2274,6 +2289,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           forwardGroupConversationTracker: widget.groupConversationTracker,
           appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
+          callMessageSuggestionId: callMessageSuggestionId,
           transportMetrics: widget.transportMetrics,
           privateMediaOutboxE2EController:
               widget.privateMediaOutboxE2EController,
@@ -3626,6 +3642,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   media: media,
                   isCurrent: isCurrent,
                 ),
+            onMessage: _openCallConversation,
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: updateGate,

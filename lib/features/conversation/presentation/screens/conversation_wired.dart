@@ -74,6 +74,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
@@ -493,6 +494,7 @@ class ConversationWired extends StatefulWidget {
   final List<File>? initialAttachments;
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
+  final String? callMessageSuggestionId;
 
   /// Keeps the unsent draft across leaving the chat. Null uses
   /// [ComposerDraftStore.shared].
@@ -658,6 +660,7 @@ class ConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
+    this.callMessageSuggestionId,
     this.composerDraftStore,
     this.initialThoughtReply,
     this.initialThoughtVoiceReply,
@@ -851,6 +854,9 @@ class _ConversationWiredState extends State<ConversationWired>
   String? _editingMessageId;
   String? _editingOriginalText;
   String _draftText = '';
+  late final DateTime? _callMessageSuggestionOpenedAt;
+  bool _callMessageSuggestionConsumed = false;
+  late final bool _ownsConversationTracking;
   late final _composerDraft = ComposerDraftAutosave(
     store: widget.composerDraftStore ?? ComposerDraftStore.shared,
     key: ComposerDraftKey.direct(widget.contact.peerId),
@@ -1557,6 +1563,9 @@ class _ConversationWiredState extends State<ConversationWired>
   @override
   void initState() {
     super.initState();
+    _callMessageSuggestionOpenedAt = widget.callMessageSuggestionId != null
+        ? DateTime.now().toUtc()
+        : null;
     WidgetsBinding.instance.addObserver(this);
     _appLifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
@@ -1586,7 +1595,12 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _draftText = widget.initialText ?? '';
     widget.appShellController?.addListener(_onAppShellChanged);
-    widget.conversationTracker?.setActive(widget.contact.peerId);
+    final tracker = widget.conversationTracker;
+    // A follow-up over the same chat shares the underlying route's tracker.
+    _ownsConversationTracking =
+        widget.callMessageSuggestionId == null ||
+        !(tracker?.isViewing(widget.contact.peerId) ?? false);
+    if (_ownsConversationTracking) tracker?.setActive(widget.contact.peerId);
     // A cold notification launch can construct this route while Flutter still
     // reports `inactive`, then publish `resumed` before this State registers as
     // an observer. Re-check after the first rendered frame; the shared strict
@@ -1626,14 +1640,17 @@ class _ConversationWiredState extends State<ConversationWired>
       _privateMediaPolicy = debugInitialPrivateMediaPolicy!;
       _updateComposerState(privateMediaPolicy: debugInitialPrivateMediaPolicy);
     }
-    if ((widget.initialText?.isNotEmpty ?? false) ||
-        (widget.initialAttachments?.isNotEmpty ?? false) ||
-        (widget.initialPendingMedia?.isNotEmpty ?? false) ||
-        widget.initialThoughtReply != null ||
-        widget.initialThoughtVoiceReply != null) {
-      _composerDraft.startWithoutRestore();
-    } else {
-      unawaited(_composerDraft.restore(_applyComposerDraft));
+    // A call follow-up can open above a chat with its own saved draft.
+    if (widget.callMessageSuggestionId == null) {
+      if ((widget.initialText?.isNotEmpty ?? false) ||
+          (widget.initialAttachments?.isNotEmpty ?? false) ||
+          (widget.initialPendingMedia?.isNotEmpty ?? false) ||
+          widget.initialThoughtReply != null ||
+          widget.initialThoughtVoiceReply != null) {
+        _composerDraft.startWithoutRestore();
+      } else {
+        unawaited(_composerDraft.restore(_applyComposerDraft));
+      }
     }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
@@ -4295,6 +4312,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
       if (mounted) {
         setState(() {
+          _callMessageSuggestionConsumed = true;
           _upsertMessageById(optimisticMessage);
         });
         _scrollToBottom();
@@ -5549,6 +5567,14 @@ class _ConversationWiredState extends State<ConversationWired>
     return resolved;
   }
 
+  void _useCallMessageSuggestion() {
+    if (_callMessageSuggestionConsumed || _draftText.isNotEmpty) return;
+    _callMessageSuggestionConsumed = true;
+    _onDraftChanged(
+      AppLocalizations.of(context)!.call_suggestion_tried_to_call,
+    );
+  }
+
   void _onDraftChanged(String text) {
     if (_draftText == text) return;
     final endsVoiceText = _endsVoiceText(text);
@@ -6726,6 +6752,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     if (mounted) {
       setState(() {
+        _callMessageSuggestionConsumed = true;
         _upsertMessageById(optimisticMessage);
       });
       _updateComposerState(isUploading: true);
@@ -8716,7 +8743,9 @@ class _ConversationWiredState extends State<ConversationWired>
         outboxEndpointToken,
       );
     }
-    widget.conversationTracker?.clearIfActive(widget.contact.peerId);
+    if (_ownsConversationTracking) {
+      widget.conversationTracker?.clearIfActive(widget.contact.peerId);
+    }
     widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
@@ -8848,6 +8877,26 @@ class _ConversationWiredState extends State<ConversationWired>
     if (_sameCallTimeline(entries)) return;
     setState(() {
       _callEntries = List<ConversationCallTimelineEntry>.unmodifiable(entries);
+      final openedAt = _callMessageSuggestionOpenedAt;
+      final originId = widget.callMessageSuggestionId;
+      if (!_callMessageSuggestionConsumed &&
+          openedAt != null &&
+          originId != null) {
+        final originRecordedAt = entries
+            .where((entry) => entry.callId == originId)
+            .firstOrNull
+            ?.recordedAt;
+        final cutoff =
+            originRecordedAt != null && originRecordedAt.isBefore(openedAt)
+            ? originRecordedAt
+            : openedAt;
+        _callMessageSuggestionConsumed = entries.any((entry) {
+          final recordedAt = entry.recordedAt;
+          return entry.callId != originId &&
+              recordedAt != null &&
+              recordedAt.isAfter(cutoff);
+        });
+      }
     });
   }
 
@@ -8860,8 +8909,10 @@ class _ConversationWiredState extends State<ConversationWired>
           previous.contactPeerId != next.contactPeerId ||
           previous.direction != next.direction ||
           previous.status != next.status ||
+          previous.mediaKind != next.mediaKind ||
           previous.startedAt != next.startedAt ||
           previous.endedAt != next.endedAt ||
+          previous.recordedAt != next.recordedAt ||
           previous.duration != next.duration) {
         return false;
       }
@@ -8888,7 +8939,10 @@ class _ConversationWiredState extends State<ConversationWired>
     ConversationCallTimelineEntry row,
     OutgoingCallCapability capability,
   ) async {
-    if (!row.isMissedIncoming) return _startOutgoingCall(capability);
+    final video = row.mediaKind == CallMediaKind.video;
+    if (!row.isMissedIncoming) {
+      return _startOutgoingCall(capability, video: video);
+    }
     final source = widget.callTimelineSource;
     final history = source is CallHistoryAccess
         ? source as CallHistoryAccess
@@ -8901,6 +8955,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     await _startOutgoingCall(
       capability,
+      video: video,
       isEligible: () async {
         final latest = await history.recentCallsForContact(row.contactPeerId);
         return latest.isNotEmpty && latest.first.callId.value == row.callId;
@@ -9659,6 +9714,17 @@ class _ConversationWiredState extends State<ConversationWired>
               : null,
           composerStateListenable: _composerController,
           initialText: _draftText,
+          composerSuggestion:
+              widget.callMessageSuggestionId != null &&
+                  !_callMessageSuggestionConsumed &&
+                  _draftText.isEmpty
+              ? (
+                  label: AppLocalizations.of(
+                    context,
+                  )!.call_suggestion_tried_to_call,
+                  onTap: _useCallMessageSuggestion,
+                )
+              : null,
           onDraftChanged: _onDraftChanged,
           onPrivateMediaPolicyChanged: _setPrivateMediaPolicy,
           reactions: _reactionProjectionController.reactions,

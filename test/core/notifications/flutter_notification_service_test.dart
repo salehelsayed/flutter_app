@@ -208,7 +208,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(tapped, [missed.callBackPayload]);
       await _sendNotificationResponse(payload: missed.encode());
-      expect(tapped.last, 'synthetic-contact');
+      expect(tapped.last, missed.encode());
       await _sendNotificationResponse(
         payload: 'peer-456',
         actionId: missedCallBackActionId,
@@ -224,8 +224,10 @@ void main() {
       final show =
           log.firstWhere((call) => call.method == 'show').arguments as Map;
       final details = show['platformSpecifics'] as Map;
-      expect((details['actions'] as List).single['id'], missedCallBackActionId);
-      expect((details['actions'] as List).single['showsUserInterface'], isTrue);
+      final callBack = (details['actions'] as List).cast<Map>().singleWhere(
+        (action) => action['id'] == missedCallBackActionId,
+      );
+      expect(callBack['showsUserInterface'], isTrue);
       expect(
         MissedCallActionPayload.parse(show['payload'] as String)?.callId,
         missed.callId,
@@ -255,8 +257,9 @@ void main() {
     () {
       final category = missedCallActionCategories().single;
       expect(category.identifier, missedCallActionCategoryId);
-      final action = category.actions.single;
-      expect(action.identifier, missedCallBackActionId);
+      final action = category.actions.singleWhere(
+        (action) => action.identifier == missedCallBackActionId,
+      );
       expect(
         action.options,
         containsAll([
@@ -270,6 +273,141 @@ void main() {
       );
     },
   );
+
+  group('BL61 missed-call notification', () {
+    const deadline = Duration(seconds: 3);
+    const messageAction = 'mknoon_call_message';
+    const missed = MissedCallActionPayload(
+      'synthetic-contact',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+
+    test('Android publishes Call back and Message on the same card', () async {
+      final service = buildService();
+      await service.initialize().timeout(deadline);
+      await service
+          .showMissedCallNotification(
+            contactAccountPeerId: missed.contactPeerId,
+            callId: missed.callId,
+            title: 'Synthetic caller',
+            body: 'Missed call',
+          )
+          .timeout(deadline);
+
+      final show =
+          log.firstWhere((call) => call.method == 'show').arguments as Map;
+      final details = show['platformSpecifics'] as Map;
+      final actions = (details['actions'] as List).cast<Map>();
+      expect(actions.map((action) => action['id']), [
+        missedCallBackActionId,
+        messageAction,
+      ]);
+      expect(
+        actions.every((action) => action['showsUserInterface'] == true),
+        isTrue,
+      );
+      expect(show['payload'], missed.encode());
+    });
+
+    test('iOS registers both foreground authenticated actions', () {
+      final category = missedCallActionCategories().single;
+      expect(category.identifier, missedCallActionCategoryId);
+      expect(category.actions.map((action) => action.identifier), [
+        missedCallBackActionId,
+        messageAction,
+      ]);
+      for (final action in category.actions) {
+        expect(
+          action.options,
+          containsAll([
+            DarwinNotificationActionOption.foreground,
+            DarwinNotificationActionOption.authenticationRequired,
+          ]),
+        );
+      }
+    });
+
+    for (final (label, actionId) in [
+      ('card body', null),
+      ('Message action', messageAction),
+    ]) {
+      test('warm $label preserves the local call origin', () async {
+        final service = buildService();
+        final tapped = <String>[];
+        service.onNotificationTap = tapped.add;
+        await service.initialize().timeout(deadline);
+
+        await _sendNotificationResponse(
+          payload: missed.encode(),
+          actionId: actionId,
+        ).timeout(deadline);
+
+        expect(tapped, [missed.encode()]);
+      });
+
+      test('cold $label preserves the local call origin once', () async {
+        launchPayload = missed.encode();
+        launchActionId = actionId;
+        final service = buildService();
+        final tapped = <String>[];
+        service.onNotificationTap = tapped.add;
+        await service.initialize().timeout(deadline);
+
+        final initial = await service.consumeInitialPayload().timeout(deadline);
+        await _sendNotificationResponse(
+          payload: launchPayload,
+          notificationId: launchNotificationId,
+          actionId: actionId,
+        ).timeout(deadline);
+
+        expect(initial, missed.encode());
+        expect(tapped, isEmpty);
+        expect(await service.consumeInitialPayload().timeout(deadline), isNull);
+      });
+    }
+
+    test('warm Message waits for the notification route handler', () async {
+      final service = buildService();
+      await service.initialize().timeout(deadline);
+      await _sendNotificationResponse(
+        payload: missed.encode(),
+        actionId: messageAction,
+      ).timeout(deadline);
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+      await Future<void>.delayed(Duration.zero).timeout(deadline);
+
+      expect(tapped, [missed.encode()]);
+    });
+
+    test('warm Message requires a valid local missed-call payload', () async {
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+      await service.initialize().timeout(deadline);
+      await _sendNotificationResponse(
+        payload: 'peer-456',
+        actionId: messageAction,
+      ).timeout(deadline);
+      await _sendNotificationResponse(
+        payload: '$missedCallPayloadPrefix{',
+        actionId: messageAction,
+      ).timeout(deadline);
+
+      await _sendNotificationResponse(payload: 'peer-456').timeout(deadline);
+
+      expect(tapped, ['peer-456']);
+    });
+
+    test('cold Message rejects a plain conversation payload', () async {
+      launchPayload = 'peer-456';
+      launchActionId = messageAction;
+      final service = buildService();
+      await service.initialize().timeout(deadline);
+
+      expect(await service.consumeInitialPayload().timeout(deadline), isNull);
+    });
+  });
 
   test('initialize wires the plugin, channel, and launch payload', () async {
     final service = buildService();
@@ -2253,7 +2391,10 @@ Future<void> _sendNotificationResponse({
             'actionId': actionId,
             'input': null,
             'notificationResponseType':
-                NotificationResponseType.selectedNotification.index,
+                (actionId == null
+                        ? NotificationResponseType.selectedNotification
+                        : NotificationResponseType.selectedNotificationAction)
+                    .index,
             'payload': payload,
           }),
         ),

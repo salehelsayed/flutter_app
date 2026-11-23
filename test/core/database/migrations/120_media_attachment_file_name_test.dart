@@ -76,7 +76,7 @@ void main() {
   test(
     'v120 appears once before v121 and Thoughts v122 in both registries',
     () {
-      expect(currentIdentityDatabaseVersion, 132);
+      expect(currentIdentityDatabaseVersion, 133);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -89,7 +89,7 @@ void main() {
         expect(entry.run, same(runMediaAttachmentFileNameMigration));
         expect(registry[index120 + 1].version, 121);
         expect(registry[index120 + 2].version, 122);
-        expect(registry.last.version, 132);
+        expect(registry.last.version, 133);
       }
     },
   );

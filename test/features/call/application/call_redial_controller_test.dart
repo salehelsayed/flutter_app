@@ -16,20 +16,24 @@ import 'package:flutter_app/features/call/domain/call_state.dart';
 
 final _id = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 final _otherId = CallId.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-CallHistoryEntry _row(CallId id, {String peer = 'synthetic-contact'}) =>
-    CallHistoryEntry(
-      callId: id,
-      contactAccountPeerId: peer,
-      direction: CallDirection.incoming,
-      terminalReason: CallEndReason.noAnswer,
-      status: CallHistoryStatus.missed,
-      startedAt: DateTime.utc(2026, 10, 13),
-      endedAt: DateTime.utc(2026, 10, 13, 0, 0, 30),
-      connectedAt: null,
-      transportRoute: null,
-      createdAt: DateTime.utc(2026, 10, 13),
-      updatedAt: DateTime.utc(2026, 10, 13),
-    );
+CallHistoryEntry _row(
+  CallId id, {
+  String peer = 'synthetic-contact',
+  CallMediaKind? mediaKind,
+}) => CallHistoryEntry(
+  callId: id,
+  contactAccountPeerId: peer,
+  direction: CallDirection.incoming,
+  terminalReason: CallEndReason.noAnswer,
+  status: CallHistoryStatus.missed,
+  startedAt: DateTime.utc(2026, 10, 13),
+  endedAt: DateTime.utc(2026, 10, 13, 0, 0, 30),
+  connectedAt: null,
+  transportRoute: null,
+  mediaKind: mediaKind,
+  createdAt: DateTime.utc(2026, 10, 13),
+  updatedAt: DateTime.utc(2026, 10, 13),
+);
 
 class _History implements CallHistoryAccess {
   CallHistoryEntry? row = _row(_id);
@@ -217,6 +221,26 @@ void main() {
       expect(owner.starts, ['synthetic-contact']);
       expect(owner.lookups, 1);
       expect(results, [OutgoingCallStartResult.started]);
+    },
+  );
+  test(
+    'BL61 notification Call back resolves a fresh video call once',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final videoOwner = _Vui7VideoCapability();
+      addTearDown(() => videoOwner.coordinator.dispose().timeout(deadline));
+      owner = videoOwner;
+      history.row = _row(_id, mediaKind: CallMediaKind.video);
+
+      await actions.submit(_id).timeout(deadline);
+      await actions.submit(_id).timeout(deadline);
+
+      expect(results, [OutgoingCallStartResult.started]);
+      expect(videoOwner.audioEntries, 0);
+      expect(videoOwner.videoEntries, 1);
+      expect(videoOwner.starts, ['synthetic-contact']);
+      expect(videoOwner.videoRequests.single.isAdmitted, isTrue);
+      expect(videoOwner.coordinator.activeSession!.callId, isNot(_id));
     },
   );
   test('explicit redial recovers contact endpoint before admission', () async {

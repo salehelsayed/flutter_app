@@ -43,7 +43,7 @@ void main() {
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
       );
-      expect(currentIdentityDatabaseVersion, 132);
+      expect(currentIdentityDatabaseVersion, 133);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       expect(await db.query(kCallHistoryTable), isEmpty);
 
@@ -64,6 +64,7 @@ void main() {
         'updated_at',
         // 410: v118 adds read state to the same table.
         'read_at',
+        'media_kind',
       ]);
       for (final forbidden in <String>[
         'sdp',

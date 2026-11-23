@@ -7622,6 +7622,54 @@ abstract class AppLocalizations {
   /// **'Voice calling is unavailable.'**
   String get call_end_unavailable;
 
+  /// No description provided for @call_outcome_busy.
+  ///
+  /// In en, this message translates to:
+  /// **'On another call'**
+  String get call_outcome_busy;
+
+  /// No description provided for @call_outcome_dropped.
+  ///
+  /// In en, this message translates to:
+  /// **'Call dropped'**
+  String get call_outcome_dropped;
+
+  /// No description provided for @call_outcome_mic_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone is off'**
+  String get call_outcome_mic_off;
+
+  /// No description provided for @call_status_weak_network.
+  ///
+  /// In en, this message translates to:
+  /// **'Weak connection'**
+  String get call_status_weak_network;
+
+  /// No description provided for @call_end_closes_in.
+  ///
+  /// In en, this message translates to:
+  /// **'Closes in {seconds} s'**
+  String call_end_closes_in(int seconds);
+
+  /// No description provided for @call_suggestion_tried_to_call.
+  ///
+  /// In en, this message translates to:
+  /// **'Tried to call you'**
+  String get call_suggestion_tried_to_call;
+
+  /// No description provided for @call_row_missed_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Missed video call'**
+  String get call_row_missed_video;
+
+  /// No description provided for @call_row_video_call.
+  ///
+  /// In en, this message translates to:
+  /// **'Video call'**
+  String get call_row_video_call;
+
   /// No description provided for @call_end_ended.
   ///
   /// In en, this message translates to:

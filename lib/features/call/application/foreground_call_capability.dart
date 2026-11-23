@@ -43,12 +43,14 @@ final class ForegroundCallProjection {
     required this.audio,
     this.video,
     this.terminalMedia,
+    this.weakConnection = false,
   });
 
   final CallSessionSnapshot session;
   final CallAudioControlState audio;
   final ForegroundCallVideoProjection? video;
   final CallMediaKind? terminalMedia;
+  final bool weakConnection;
 }
 
 /// Detail-free outcome for every foreground call command.

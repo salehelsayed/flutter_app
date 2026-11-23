@@ -230,6 +230,53 @@ void main() {
     );
   }
 
+  group('BL61 call history media', () {
+    const deadline = Duration(seconds: 3);
+
+    for (final kind in ['audio', 'video']) {
+      test('retains $kind through terminal storage and browsing', () async {
+        final serialized = row(
+          id: '12345678-1234-4234-8234-1234567890ab',
+          startedAt: DateTime.utc(2026, 11, 23, 10),
+        ).toMap();
+        final entry = CallHistoryEntry.fromMap({
+          ...serialized,
+          'media_kind': kind,
+        });
+
+        await repository.upsertTerminal(entry).timeout(deadline);
+        await repository
+            .upsertTerminal(CallHistoryEntry.fromMap(serialized))
+            .timeout(deadline);
+        final stored = await repository
+            .getByCallId(entry.callId)
+            .timeout(deadline);
+        final page = await (repository as CallHistoryBrowser).browse().timeout(
+          deadline,
+        );
+
+        expect(stored?.toMap()['media_kind'], kind);
+        expect(page.rows.single.entry.toMap()['media_kind'], kind);
+      });
+    }
+
+    test('leaves legacy and malformed media unknown', () {
+      final legacy = row(
+        id: '12345678-1234-4234-8234-1234567890ab',
+        startedAt: DateTime.utc(2026, 11, 23, 10),
+      ).toMap()..remove('media_kind');
+
+      expect(CallHistoryEntry.fromMap(legacy).toMap()['media_kind'], isNull);
+      for (final unrecognized in [null, 'Video', 'screen', 42]) {
+        final entry = CallHistoryEntry.fromMap({
+          ...legacy,
+          'media_kind': unrecognized,
+        });
+        expect(entry.toMap()['media_kind'], isNull);
+      }
+    });
+  });
+
   test('one monotonic row is retained per call id', () async {
     final original = row(
       id: '66666666-6666-4666-8666-666666666666',

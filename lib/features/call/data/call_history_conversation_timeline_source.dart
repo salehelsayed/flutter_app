@@ -89,5 +89,7 @@ ConversationCallTimelineEntry projectCallTimelineEntry(CallHistoryEntry row) =>
       },
       startedAt: row.startedAt,
       endedAt: row.endedAt,
+      recordedAt: row.createdAt,
       duration: row.duration,
+      mediaKind: row.mediaKind,
     );

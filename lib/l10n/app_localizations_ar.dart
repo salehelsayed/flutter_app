@@ -4679,6 +4679,32 @@ class AppLocalizationsAr extends AppLocalizations {
   String get call_end_unavailable => 'المكالمات الصوتية غير متاحة.';
 
   @override
+  String get call_outcome_busy => 'في مكالمة أخرى';
+
+  @override
+  String get call_outcome_dropped => 'انقطعت المكالمة';
+
+  @override
+  String get call_outcome_mic_off => 'الميكروفون مغلق';
+
+  @override
+  String get call_status_weak_network => 'اتصال ضعيف';
+
+  @override
+  String call_end_closes_in(int seconds) {
+    return 'يُغلق خلال $seconds ث';
+  }
+
+  @override
+  String get call_suggestion_tried_to_call => 'حاولت الاتصال بك';
+
+  @override
+  String get call_row_missed_video => 'مكالمة فيديو فائتة';
+
+  @override
+  String get call_row_video_call => 'مكالمة فيديو';
+
+  @override
   String get call_end_ended => 'انتهت المكالمة.';
 
   @override

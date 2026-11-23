@@ -1,5 +1,6 @@
 import '../data/call_history_repository.dart';
 import '../domain/call_end_reason.dart';
+import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
 import '../domain/call_state.dart';
@@ -48,6 +49,7 @@ Future<void> recordHeadlessTerminalCall({
       endedAt: DateTime.fromMillisecondsSinceEpoch(endedAtMs, isUtc: true),
       endReason: reason,
     ),
+    mediaKind: CallMediaKind.audio,
   );
 
   await notifier.notifyTerminal(entry, inserted: !alreadyStored);

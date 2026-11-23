@@ -223,7 +223,7 @@ void main() {
     await pumpFrames(tester);
 
     expect(find.byType(EmptyConversationState), findsNothing);
-    expect(find.text('Voice call · 2:05'), findsOneWidget);
+    expect(find.text('Call ended · 2:05'), findsOneWidget);
   });
 
   testWidgets('TC-405-25 a new call list rebuilds the memoized display items', (

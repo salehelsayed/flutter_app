@@ -114,7 +114,7 @@ class CallControls extends StatelessWidget {
               for (final control in leadingVideoControls)
                 Expanded(child: control),
               _fitControl(
-                _Control(
+                CallControlButton(
                   identifier: 'call_mute',
                   videoStyle: _videoStyle,
                   tooltip: muteTooltip,
@@ -147,7 +147,7 @@ class CallControls extends StatelessWidget {
                 ),
               ),
               _fitControl(
-                _Control(
+                CallControlButton(
                   identifier: 'call_speaker',
                   videoStyle: _videoStyle,
                   tooltip: speakerTooltip,
@@ -178,7 +178,7 @@ class CallControls extends StatelessWidget {
                 ),
               ),
               _fitControl(
-                _Control(
+                CallControlButton(
                   identifier: 'call_end',
                   videoStyle: _videoStyle,
                   tooltip: l10n.call_end,
@@ -243,8 +243,9 @@ class CallControls extends StatelessWidget {
   }
 }
 
-class _Control extends StatelessWidget {
-  const _Control({
+class CallControlButton extends StatelessWidget {
+  const CallControlButton({
+    super.key,
     required this.identifier,
     required this.tooltip,
     required this.label,
@@ -255,6 +256,7 @@ class _Control extends StatelessWidget {
     this.semanticsEnabled = true,
     this.constrainLabel = false,
     this.videoStyle = false,
+    this.tapLabel = false,
   });
 
   final String identifier;
@@ -263,24 +265,26 @@ class _Control extends StatelessWidget {
   final IconData icon;
   final Color backgroundColor;
   final Color foregroundColor;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool semanticsEnabled;
   final bool constrainLabel;
   final bool videoStyle;
+  final bool tapLabel;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = semanticsEnabled && onPressed != null;
     return Semantics(
       container: true,
       identifier: identifier,
       button: true,
-      enabled: semanticsEnabled,
+      enabled: enabled,
       label: semanticsEnabled ? label : '$label. $tooltip',
-      onTap: semanticsEnabled ? onPressed : null,
+      onTap: enabled ? onPressed : null,
       excludeSemantics: true,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: videoStyle ? onPressed : null,
+        onTap: videoStyle || tapLabel ? onPressed : null,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -307,7 +311,7 @@ class _Control extends StatelessWidget {
                   : null,
               textAlign: constrainLabel ? TextAlign.center : null,
               style: TextStyle(
-                color: semanticsEnabled
+                color: enabled
                     ? context.backgroundReadableColors.textSecondary
                     : context.backgroundReadableColors.disabledForeground,
                 fontSize: 12,

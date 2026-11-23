@@ -110,16 +110,16 @@ class FlutterNotificationService
            DurableConversationNotificationIdRegistry.openMobileDefault;
 
   void Function(String payload)? _onNotificationTap;
-  String? _pendingCallBackPayload;
+  String? _pendingMissedCallActionPayload;
   String? _initialActionId;
   @override
   void Function(String payload)? get onNotificationTap => _onNotificationTap;
   @override
   set onNotificationTap(void Function(String payload)? callback) {
     _onNotificationTap = callback;
-    final pending = _pendingCallBackPayload;
+    final pending = _pendingMissedCallActionPayload;
     if (callback != null && pending != null) {
-      _pendingCallBackPayload = null;
+      _pendingMissedCallActionPayload = null;
       scheduleMicrotask(() => callback(pending));
     }
   }
@@ -173,7 +173,8 @@ class FlutterNotificationService
     final launch = _launchTap;
     if (launch != null &&
         launch.id == response.id &&
-        launch.payload == response.payload) {
+        launch.payload == response.payload &&
+        _initialActionId == response.actionId) {
       if (_initialPayloadConsumed) {
         _launchTap = null;
         return;
@@ -185,18 +186,15 @@ class FlutterNotificationService
     }
     final notificationId = response.id;
     final rawPayload = response.payload;
-    if (response.actionId == missedCallBackActionId ||
-        rawPayload?.startsWith(missedCallPayloadPrefix) == true) {
-      final missed = MissedCallActionPayload.parse(rawPayload);
-      if (missed == null) return;
-      final callbackPayload = response.actionId == missedCallBackActionId
-          ? missed.callBackPayload
-          : missed.contactPeerId;
+    final missedCall = _missedCallRoute(rawPayload, response.actionId);
+    if (missedCall != null) {
+      final payload = missedCall.payload;
+      if (payload == null) return;
       final callback = onNotificationTap;
-      if (callback == null && response.actionId == missedCallBackActionId) {
-        _pendingCallBackPayload = callbackPayload;
+      if (callback == null && missedCall.isAction) {
+        _pendingMissedCallActionPayload = payload;
       } else {
-        callback?.call(callbackPayload);
+        callback?.call(payload);
       }
       return;
     }
@@ -253,13 +251,8 @@ class FlutterNotificationService
     final notificationId = _initialNotificationId;
     _initialNotificationId = null;
     final rawPayload = _initialPayload;
-    if (_initialActionId == missedCallBackActionId ||
-        rawPayload?.startsWith(missedCallPayloadPrefix) == true) {
-      final missed = MissedCallActionPayload.parse(rawPayload);
-      return _initialActionId == missedCallBackActionId
-          ? missed?.callBackPayload
-          : missed?.contactPeerId;
-    }
+    final missedCall = _missedCallRoute(rawPayload, _initialActionId);
+    if (missedCall != null) return missedCall.payload;
     final envelope = decodeConversationNotificationPayload(rawPayload);
     if (envelope == null &&
         rawPayload?.trim().startsWith(
@@ -283,6 +276,25 @@ class FlutterNotificationService
       }
     }
     return envelope?.routePayload ?? rawPayload;
+  }
+
+  ({String? payload, bool isAction})? _missedCallRoute(
+    String? rawPayload,
+    String? actionId,
+  ) {
+    final isCallBack = actionId == missedCallBackActionId;
+    final isAction = isCallBack || actionId == missedCallMessageActionId;
+    if (!isAction &&
+        rawPayload?.trim().startsWith(missedCallPayloadPrefix) != true) {
+      return null;
+    }
+
+    final missedCall = MissedCallActionPayload.parse(rawPayload);
+    if (missedCall == null) return (payload: null, isAction: isAction);
+    return (
+      payload: isCallBack ? missedCall.callBackPayload : rawPayload,
+      isAction: isAction,
+    );
   }
 
   Future<void> _dismissTypedNotificationGeneration({

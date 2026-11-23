@@ -6,6 +6,7 @@ import '../../application/call_history_access.dart';
 import '../../application/call_redial_controller.dart';
 import '../../application/outgoing_call_capability.dart';
 import '../../data/call_history_repository.dart';
+import '../../domain/call_media.dart';
 import '../../data/call_history_conversation_timeline_source.dart';
 import '../../../conversation/presentation/widgets/call_timeline_row.dart';
 
@@ -17,10 +18,12 @@ class CallsPage extends StatefulWidget {
     required this.changes,
     required this.redial,
     this.history,
+    this.onMessage,
   });
   final CallHistoryBrowser browser;
   final Stream<void> changes;
   final CallRedialController redial;
+  final Future<void> Function(String peerId, String callId)? onMessage;
 
   /// Proves a missed-call row is still the contact's newest call. Without it
   /// such rows refuse to dial.
@@ -105,6 +108,17 @@ class _CallsPageState extends State<CallsPage> {
     }
   }
 
+  Future<void> _openMissedCallChat(CallHistoryEntry entry) async {
+    try {
+      await widget.onMessage?.call(
+        entry.contactAccountPeerId,
+        entry.callId.value,
+      );
+    } on Object {
+      // Leaving the local call list open preserves its current position.
+    }
+  }
+
   Future<void> _redial(CallHistoryListRow row) async {
     if (_redialing) return;
     final entry = row.entry;
@@ -129,6 +143,7 @@ class _CallsPageState extends State<CallsPage> {
       setState(() => _redialing = true);
       result = await widget.redial.start(
         entry.contactAccountPeerId,
+        media: entry.mediaKind ?? CallMediaKind.audio,
         isCurrent: () => mounted,
         isEligible: isEligible,
       );
@@ -247,7 +262,17 @@ class _CallsPageState extends State<CallsPage> {
                         row.contactName?.trim().isNotEmpty == true
                             ? row.contactName!
                             : l10n.call_unknown_contact,
+                        style: isMissedIncomingCall(row.entry)
+                            ? TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              )
+                            : null,
                       ),
+                      onTap:
+                          isMissedIncomingCall(row.entry) &&
+                              widget.onMessage != null
+                          ? () => unawaited(_openMissedCallChat(row.entry))
+                          : null,
                       subtitle: Text(
                         '${callTimelineRowText(projectCallTimelineEntry(row.entry), l10n)}\n'
                         '${DateFormat.yMMMd(Localizations.localeOf(context).toLanguageTag()).add_Hm().format(row.entry.startedAt.toLocal())}',
@@ -255,7 +280,11 @@ class _CallsPageState extends State<CallsPage> {
                       isThreeLine: true,
                       trailing: IconButton(
                         tooltip: l10n.call_back,
-                        icon: const Icon(Icons.call_outlined),
+                        icon: Icon(
+                          row.entry.mediaKind == CallMediaKind.video
+                              ? Icons.videocam_outlined
+                              : Icons.call_outlined,
+                        ),
                         onPressed: _redialing ? null : () => _redial(row),
                       ),
                     ),

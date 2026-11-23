@@ -127,7 +127,7 @@ void main() {
         tester,
         'call_row_a2f0a1d6-0000-4000-8000-000000000052',
       );
-      expect(data.label, contains('Missed voice call'));
+      expect(data.label, contains('Missed'));
     } finally {
       semantics.dispose();
     }

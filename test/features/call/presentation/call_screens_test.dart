@@ -54,6 +54,35 @@ void main() {
   );
 
   group('foreground call screens', () {
+    testWidgets('BL61 weak connection uses the connected status line only', (
+      tester,
+    ) async {
+      final connectedAt = DateTime.utc(2026, 11, 23);
+      Widget screen(CallState state, bool weak) => wrap(
+        ActiveCallScreen(
+          contactPeerId: 'contact-a',
+          contactUsername: 'Alice',
+          state: state,
+          connectedAt: connectedAt,
+          now: () => connectedAt,
+          controls: controls(),
+          weakConnection: weak,
+        ),
+      );
+
+      await tester.pumpWidget(screen(CallState.connected, false));
+      expect(find.text('Connected'), findsOneWidget);
+      expect(find.textContaining('Weak connection'), findsNothing);
+
+      await tester.pumpWidget(screen(CallState.connected, true));
+      expect(find.text('Connected · Weak connection'), findsOneWidget);
+      expect(find.text('Connected'), findsNothing);
+
+      await tester.pumpWidget(screen(CallState.reconnecting, true));
+      expect(find.text('Reconnecting'), findsOneWidget);
+      expect(find.textContaining('Weak connection'), findsNothing);
+    });
+
     testWidgets('VC-024 duration survives thirty minutes and remounts', (
       tester,
     ) async {

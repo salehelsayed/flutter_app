@@ -192,6 +192,7 @@ final class CallConnectionSnapshot {
     required this.localVideoCaptureTrackCount,
     required this.audioReceiveTransceiverCount,
     required this.videoTransceiverCount,
+    this.qualityObservation,
     this.selectedPairSucceeded = false,
     this.selectedPairNominated = false,
     this.selectedRelayProtocol = CallRelayProtocol.unknown,
@@ -211,6 +212,9 @@ final class CallConnectionSnapshot {
   final CallTransportPolicy transportPolicy;
   final CallTransportClass transport;
   final CallQualityBand quality;
+
+  /// Peer-local token. A repeated token represents the same RTT measurement.
+  final int? qualityObservation;
   final int localAudioCaptureTrackCount;
   final int localVideoCaptureTrackCount;
   final int audioReceiveTransceiverCount;

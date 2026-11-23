@@ -18,6 +18,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart' show PresenceSetResult;
@@ -116,21 +117,55 @@ void main() {
   });
 
   for (final scenario in [
-    (isGroup: false, withReporter: false, withCommunication: false),
-    (isGroup: true, withReporter: false, withCommunication: false),
-    (isGroup: false, withReporter: true, withCommunication: false),
-    (isGroup: true, withReporter: true, withCommunication: false),
-    (isGroup: true, withReporter: true, withCommunication: true),
+    (
+      isGroup: false,
+      withReporter: false,
+      withCommunication: false,
+      callFollowUp: false,
+    ),
+    (
+      isGroup: true,
+      withReporter: false,
+      withCommunication: false,
+      callFollowUp: false,
+    ),
+    (
+      isGroup: false,
+      withReporter: true,
+      withCommunication: false,
+      callFollowUp: false,
+    ),
+    (
+      isGroup: true,
+      withReporter: true,
+      withCommunication: false,
+      callFollowUp: false,
+    ),
+    (
+      isGroup: true,
+      withReporter: true,
+      withCommunication: true,
+      callFollowUp: false,
+    ),
+    (
+      isGroup: false,
+      withReporter: false,
+      withCommunication: false,
+      callFollowUp: true,
+    ),
   ]) {
     final isGroup = scenario.isGroup;
     testWidgets(
-      scenario.withCommunication
+      scenario.callFollowUp
+          ? 'BL61 notification Message opens a follow-up above the same active chat'
+          : scenario.withCommunication
           ? 'B15GDI real notification-root group send keeps the original reporter'
           : scenario.withReporter
           ? 'B15GDI notification-root ${isGroup ? 'group' : 'direct'} carries original reporter'
           : 'notification-root ${isGroup ? 'group' : 'direct'} photo preparation honours stored quality',
       (tester) async {
-        Future<T> waitForRoute<T>(Future<T> work) => scenario.withReporter
+        Future<T> waitForRoute<T>(Future<T> work) =>
+            scenario.withReporter || scenario.callFollowUp
             ? work.timeout(const Duration(seconds: 3))
             : work;
         final activityBridge = scenario.withCommunication ? B6ActivityBridge() : null;
@@ -161,6 +196,7 @@ void main() {
           AppLifecycleState.resumed,
         );
         final notifications = _Notifications();
+        final conversationTracker = ActiveConversationTracker();
         final identity = _QualityIdentity()
           ..seed(FakeIdentityRepository.makeIdentity(peerId: 'self'));
         final contacts = _QualityContacts()
@@ -295,7 +331,7 @@ void main() {
               notificationService: notifications,
               appShellController: AppShellController(),
               pendingPostTargetStore: PendingPostTargetStore(),
-              conversationTracker: ActiveConversationTracker(),
+              conversationTracker: conversationTracker,
               groupRepository: groups,
               groupMessageRepository: groupMessages,
               groupInviteDeliveryAttemptRepository:
@@ -341,6 +377,88 @@ void main() {
           );
           for (var i = 0; i < 12; i++) {
             await waitForRoute(tester.pump(const Duration(milliseconds: 100)));
+          }
+          if (scenario.callFollowUp) {
+            const oldDraft = 'Unsent message before the call';
+            const suggestion = 'Tried to call you';
+            final chatRoute = find.byType(ConversationWired);
+            final original = tester.widget<ConversationWired>(chatRoute);
+            final originalField = find.descendant(
+              of: find.byWidget(original),
+              matching: find.byType(EditableText),
+            );
+            await waitForRoute(tester.enterText(originalField, oldDraft));
+            await waitForRoute(tester.pump());
+
+            notifications.onNotificationTap!('peer-photo');
+            await waitForRoute(tester.pump());
+            await waitForRoute(tester.pump(const Duration(milliseconds: 400)));
+            expect(tester.widget<ConversationWired>(chatRoute), same(original));
+
+            notifications.onNotificationTap!(
+              const MissedCallActionPayload(
+                'peer-photo',
+                'a2f0a1d6-0000-4000-8000-000000000409',
+              ).encode(),
+            );
+            await waitForRoute(tester.pump());
+            await waitForRoute(tester.pump(const Duration(milliseconds: 400)));
+            final followUp = find.byWidgetPredicate(
+              (widget) =>
+                  widget is ConversationWired &&
+                  widget.callMessageSuggestionId ==
+                      'a2f0a1d6-0000-4000-8000-000000000409',
+            );
+            final chip = find.descendant(
+              of: followUp,
+              matching: find.widgetWithText(ActionChip, suggestion),
+            );
+            expect(chip, findsOneWidget);
+            final route = ModalRoute.of(tester.element(followUp))!;
+            expect(route.isCurrent, isTrue);
+            await waitForRoute(tester.pump(route.transitionDuration));
+            final followUpField = find.descendant(
+              of: followUp,
+              matching: find.byType(EditableText),
+            );
+            expect(
+              tester.widget<EditableText>(followUpField).controller.text,
+              isEmpty,
+            );
+
+            await waitForRoute(tester.tap(chip));
+            await waitForRoute(tester.pump());
+            expect(
+              tester.widget<EditableText>(followUpField).controller.text,
+              suggestion,
+            );
+            expect(route.isCurrent, isTrue);
+            expect(route.willHandlePopInternally, isFalse);
+            var transitionCompleted = false;
+            unawaited(
+              route.completed.then<void>((_) {
+                transitionCompleted = true;
+              }),
+            );
+            route.navigator!.pop();
+            expect(route.isCurrent, isFalse);
+            for (var frame = 0; frame < 24 && !transitionCompleted; frame++) {
+              await waitForRoute(tester.pump(const Duration(milliseconds: 50)));
+            }
+            expect(
+              transitionCompleted,
+              isTrue,
+              reason: 'Follow-up pop stopped at ${route.animation?.status}',
+            );
+            await waitForRoute(tester.pump());
+            expect(followUp, findsNothing);
+            expect(tester.widget<ConversationWired>(chatRoute), same(original));
+            expect(
+              tester.widget<EditableText>(originalField).controller.text,
+              oldDraft,
+            );
+            expect(conversationTracker.isViewing('peer-photo'), isTrue);
+            return;
           }
           if (isGroup) {
             final route = tester.widget<GroupConversationWired>(
@@ -415,7 +533,7 @@ void main() {
           expect(requested, [100]);
         } finally {
           await waitForRoute(tester.pumpWidget(const SizedBox.shrink()));
-          if (scenario.withReporter) {
+          if (scenario.withReporter || scenario.callFollowUp) {
             for (var i = 0; i < 20; i++) {
               await waitForRoute(tester.pump(const Duration(milliseconds: 500)));
             }

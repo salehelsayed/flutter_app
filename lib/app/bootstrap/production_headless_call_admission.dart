@@ -958,8 +958,8 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       // The app is dead: no conversation can be on screen, so nothing here
       // can legitimately suppress the card.
       isSuppressed: (_) async => false,
-      missedBody: localizedMissedCallBody(),
-      unknownCallerTitle: localizedMissedCallUnknownCaller(),
+      missedBody: localizedMissedCallBody,
+      unknownCallerTitle: localizedMissedCallUnknownCaller,
     );
     final recordTerminalCallHistory =
         createProductionHeadlessCallHistoryRecorder(

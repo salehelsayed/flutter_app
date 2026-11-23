@@ -82,6 +82,7 @@ final class WebRtcPeerConnectionSnapshot {
     this.iceChecklistFailed = false,
     this.transport = WebRtcTransportClass.unknown,
     this.quality = WebRtcQualityBand.unknown,
+    this.qualityObservation,
     this.selectedPairSucceeded = false,
     this.selectedPairNominated = false,
     this.selectedRelayProtocol = WebRtcRelayProtocol.unknown,
@@ -107,6 +108,7 @@ final class WebRtcPeerConnectionSnapshot {
   final bool iceChecklistFailed;
   final WebRtcTransportClass transport;
   final WebRtcQualityBand quality;
+  final int? qualityObservation;
   final bool selectedPairSucceeded;
   final bool selectedPairNominated;
   final WebRtcRelayProtocol selectedRelayProtocol;

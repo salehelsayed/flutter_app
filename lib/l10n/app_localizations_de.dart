@@ -4711,6 +4711,32 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_end_unavailable => 'Sprachanrufe sind nicht verfügbar.';
 
   @override
+  String get call_outcome_busy => 'In einem anderen Anruf';
+
+  @override
+  String get call_outcome_dropped => 'Anruf abgebrochen';
+
+  @override
+  String get call_outcome_mic_off => 'Mikrofon ist aus';
+
+  @override
+  String get call_status_weak_network => 'Schwache Verbindung';
+
+  @override
+  String call_end_closes_in(int seconds) {
+    return 'Schließt in $seconds s';
+  }
+
+  @override
+  String get call_suggestion_tried_to_call => 'Hab versucht, dich anzurufen';
+
+  @override
+  String get call_row_missed_video => 'Verpasster Videoanruf';
+
+  @override
+  String get call_row_video_call => 'Videoanruf';
+
+  @override
   String get call_end_ended => 'Anruf beendet.';
 
   @override

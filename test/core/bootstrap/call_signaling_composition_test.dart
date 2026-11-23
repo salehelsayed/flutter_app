@@ -16,6 +16,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 
+import 'package:clock/clock.dart' show withClock;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
@@ -29,6 +30,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/migrations/133_call_history_media_kind.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -2808,6 +2810,116 @@ void main() {
       },
     );
   }
+
+  test(
+    'production graph publishes only fresh weak-connection samples for its connected episode',
+    () async {
+      const bound = Duration(seconds: 3);
+      const sampleInterval = Duration(seconds: 3);
+      final pollTime = FakeAsync();
+      Future<void> drain() =>
+          Future<void>.delayed(Duration.zero).timeout(bound);
+      Future<void> tick() async {
+        pollTime.elapse(sampleInterval);
+        await drain();
+      }
+
+      await runZoned(
+        () => withClock(pollTime.getClock(_callNow), () async {
+          final fixture = await _createProductionSpeakerRouteFixture().timeout(
+            bound,
+          );
+          final graph = fixture.graph;
+          final engine = fixture.engine;
+          final releaseOldRead = Completer<void>();
+          Future<void> dispatch(CallEventType type) async {
+            await graph.coordinator
+                .dispatch(
+                  CallEvent(
+                    type: type,
+                    eventId: 'quality-${type.name}',
+                    occurredAt: graph.coordinator.clock(),
+                    callId: _callA,
+                    contactPeerId: 'remote-account',
+                  ),
+                )
+                .timeout(bound);
+          }
+
+          try {
+            for (final type in [
+              CallEventType.incomingValidated,
+              CallEventType.systemUiPresented,
+              CallEventType.answer,
+              CallEventType.negotiationReady,
+              CallEventType.mediaConnected,
+            ]) {
+              await dispatch(type);
+            }
+            expect(graph.current!.session.state, CallState.connected);
+
+            engine.snapshotQualityObservation = 1;
+            await tick();
+            engine.snapshotQuality = CallQualityBand.poor;
+            engine.snapshotQualityObservation = 2;
+            await tick();
+            expect(graph.current!.weakConnection, isFalse);
+            await tick();
+            await tick();
+            expect(graph.current!.weakConnection, isFalse);
+
+            engine.snapshotQualityObservation = 3;
+            await tick();
+            expect(graph.current!.weakConnection, isTrue);
+
+            var oldReadStarted = false;
+            engine.snapshotQualityObservation = 4;
+            engine.beforeSnapshotReturns = () {
+              oldReadStarted = true;
+              return releaseOldRead.future.timeout(bound);
+            };
+            await tick();
+            expect(oldReadStarted, isTrue);
+            engine.beforeSnapshotReturns = null;
+
+            await dispatch(CallEventType.audioInterrupted);
+            expect(graph.current!.session.state, CallState.reconnecting);
+            expect(graph.current!.weakConnection, isFalse);
+            await dispatch(CallEventType.mediaRecovered);
+            expect(graph.current!.session.state, CallState.connected);
+            releaseOldRead.complete();
+            await drain();
+
+            for (final observation in [5, 6, 7]) {
+              engine.snapshotQualityObservation = observation;
+              await tick();
+              expect(graph.current!.weakConnection, isFalse);
+            }
+            engine.snapshotQualityObservation = 8;
+            await tick();
+            expect(graph.current!.weakConnection, isTrue);
+          } finally {
+            if (!releaseOldRead.isCompleted) releaseOldRead.complete();
+            await graph.shutdown().timeout(bound);
+          }
+        }),
+        zoneSpecification: ZoneSpecification(
+          createPeriodicTimer: (_, parent, zone, interval, callback) {
+            // Keep fixture work and one-shot deadlines on real time.
+            if (interval != sampleInterval) {
+              return parent.createPeriodicTimer(zone, interval, callback);
+            }
+            return pollTime.run(
+              (_) => Timer.periodic(
+                interval,
+                (timer) => zone.runUnaryGuarded(callback, timer),
+              ),
+            );
+          },
+        ),
+      );
+    },
+  );
 
   test(
     'production graph reports media progress and preserves caller intent at terminal',
@@ -11526,6 +11638,7 @@ Future<void> _configureCancellationEndpoint(
 
 final class _ProductionIosFixture {
   const _ProductionIosFixture({
+    required this.database,
     required this.composition,
     required this.bridge,
     required this.lifecycleMethods,
@@ -11537,6 +11650,7 @@ final class _ProductionIosFixture {
     required this.p2p,
   });
 
+  final Database database;
   final CallSignalingComposition composition;
   final _Bridge bridge;
   final List<String> lifecycleMethods;
@@ -11790,6 +11904,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     addTearDown(() => composition.shutdown().timeout(cleanupTimeout));
   }
   return _ProductionIosFixture(
+    database: database,
     composition: composition,
     bridge: bridge,
     lifecycleMethods: lifecycleMethods,
@@ -12001,6 +12116,9 @@ class _ProductionSpeakerRouteEngine implements CallEngine {
   bool closed = false;
   CallConnectionConfiguration? configuration;
   final List<CallAudioOutputRoute> routeRequests = <CallAudioOutputRoute>[];
+  CallQualityBand snapshotQuality = CallQualityBand.good;
+  int? snapshotQualityObservation;
+  Future<void> Function()? beforeSnapshotReturns;
 
   @override
   Stream<CallEngineEvent> get events => const Stream<CallEngineEvent>.empty();
@@ -12050,24 +12168,30 @@ class _ProductionSpeakerRouteEngine implements CallEngine {
   }
 
   @override
-  Future<CallConnectionSnapshot> snapshot() async => CallConnectionSnapshot(
-    state: CallConnectionState.connected,
-    transportPolicy:
-        configuration?.transportPolicy ?? CallTransportPolicy.relayOnly,
-    transport: CallTransportClass.turnUdp,
-    quality: CallQualityBand.good,
-    localAudioCaptureTrackCount: 1,
-    localVideoCaptureTrackCount: 0,
-    audioReceiveTransceiverCount: 1,
-    videoTransceiverCount: 0,
-    audioSessionActive: audioSessionActive,
-    localAudioSenderAttached: true,
-    localAudioTrackLive: true,
-    remoteAudioReceiverAttached: true,
-    remoteAudioTrackLive: true,
-    localAudioEnabled: localAudioEnabled,
-    outputRoute: outputRoute,
-  );
+  Future<CallConnectionSnapshot> snapshot() async {
+    final snapshot = CallConnectionSnapshot(
+      state: CallConnectionState.connected,
+      transportPolicy:
+          configuration?.transportPolicy ?? CallTransportPolicy.relayOnly,
+      transport: CallTransportClass.turnUdp,
+      quality: snapshotQuality,
+      qualityObservation: snapshotQualityObservation,
+      localAudioCaptureTrackCount: 1,
+      localVideoCaptureTrackCount: 0,
+      audioReceiveTransceiverCount: 1,
+      videoTransceiverCount: 0,
+      audioSessionActive: audioSessionActive,
+      localAudioSenderAttached: true,
+      localAudioTrackLive: true,
+      remoteAudioReceiverAttached: true,
+      remoteAudioTrackLive: true,
+      localAudioEnabled: localAudioEnabled,
+      outputRoute: outputRoute,
+    );
+    final waitToReturn = beforeSnapshotReturns;
+    if (waitToReturn != null) await waitToReturn();
+    return snapshot;
+  }
 
   @override
   Future<void> close() async {
@@ -12591,8 +12715,8 @@ Future<void> _runKilledCallHeadlessTerminal({
             },
         resolveContactName: (_) async => 'Remote contact',
         isSuppressed: (_) async => false,
-        missedBody: 'Missed voice call',
-        unknownCallerTitle: 'Unknown caller',
+        missedBody: ({required video}) => 'Missed voice call',
+        unknownCallerTitle: () => 'Unknown caller',
       ),
     ),
     closeResources: () async => const HeadlessCallAdmissionCleanup(
@@ -13299,6 +13423,9 @@ void _vui7JoinedBridgeTests() {
         final connected = await tester.runAsync(
           () => _connectedGraphVideo(
             cleanupTimeout: _vui7Bound,
+            beforeCall: (fixture) => runCallHistoryMediaKindMigration(
+              fixture.database,
+            ).timeout(_vui7Bound),
             permission: () async {
               cameraPermissions++;
               return true;
@@ -13435,6 +13562,12 @@ void _vui7JoinedBridgeTests() {
           expect(terminalProjection!.terminalMedia, CallMediaKind.video);
           expect(terminalProjection!.video, isNull);
           expect(capability.current, isNull);
+          final history = await tester.runAsync(
+            () => CallHistoryRepositoryImpl(
+              fixture.database,
+            ).getByCallId(oldId).timeout(_vui7Bound),
+          );
+          expect(history?.mediaKind, CallMediaKind.video);
           final l10n = lookupAppLocalizations(const Locale('en'));
           final again = find.text(l10n.call_video_call_again);
           final close = find.text(l10n.call_video_close);
@@ -13443,9 +13576,11 @@ void _vui7JoinedBridgeTests() {
           await tester.tap(again);
           await _vui7JoinedPumpUntil(tester, () => contactEntered, 'contact preflight');
           expect(graph.coordinator.activeSession, isNull);
-          final button = find.ancestor(of: again,
-            matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton));
-          expect(tester.widget<ButtonStyleButton>(button).onPressed, isNull);
+          final button = find.descendant(
+            of: find.byKey(const ValueKey('foreground-call-again')),
+            matching: find.byType(IconButton),
+          );
+          expect(tester.widget<IconButton>(button).onPressed, isNull);
           if (closeDuringPreflight) {
             await tester.ensureVisible(close);
             await tester.tap(close);

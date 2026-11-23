@@ -2146,6 +2146,7 @@ void main() {
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
     ComposerDraftStore? composerDraftStore,
+    String? callMessageSuggestionId,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2210,6 +2211,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           composerDraftStore: composerDraftStore,
+          callMessageSuggestionId: callMessageSuggestionId,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           conversationTracker: conversationTracker,
           autoDownloadDecider: autoDownloadDecider,
@@ -2224,6 +2226,203 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('BL61 after a call', () {
+    const suggestion = 'Tried to call you';
+    const bound = Duration(seconds: 3);
+    const originId = 'a2f0a1d6-0000-4000-8000-000000000405';
+
+    testWidgets('a remote clock ahead keeps the originating call suggestion', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final source = _FakeCallTimelineSource(calls: []);
+      addTearDown(source.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+        callMessageSuggestionId: originId,
+      ).timeout(bound);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(chip, findsOneWidget);
+
+      final localRecordTime = DateTime.now().toUtc();
+      source.calls.add(
+        _callEntry(
+          contactPeerId: makeContact().peerId,
+          startedAt: localRecordTime,
+          recordedAt: localRecordTime,
+        ),
+      );
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(chip, findsOneWidget);
+    });
+
+    testWidgets('a later call retires the chip with a remote clock behind', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final peerId = makeContact().peerId;
+      final originalTime = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 1),
+      );
+      final first = _callEntry(
+        contactPeerId: peerId,
+        startedAt: originalTime,
+        recordedAt: originalTime,
+      );
+      final source = _FakeCallTimelineSource(calls: [first]);
+      addTearDown(source.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+        callMessageSuggestionId: originId,
+      ).timeout(bound);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(chip, findsOneWidget);
+
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(chip, findsOneWidget);
+
+      final localRecordTime = DateTime.now().toUtc();
+      source.calls.add(
+        _callEntry(
+          contactPeerId: peerId,
+          callId: 'a2f0a1d6-0000-4000-8000-000000000406',
+          status: ConversationCallStatus.declined,
+          startedAt: localRecordTime.subtract(const Duration(seconds: 30)),
+          recordedAt: localRecordTime,
+        ),
+      );
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(find.byType(CallTimelineRow), findsNWidgets(2));
+      expect(chip, findsNothing);
+    });
+
+    testWidgets('sending a different message retires an unused suggestion', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: InMemoryComposerDraftStore(),
+        callMessageSuggestionId: originId,
+      ).timeout(bound);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(chip, findsOneWidget);
+
+      await tester.enterText(field, 'Checking in').timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded)).timeout(bound);
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(messages.store.values.single.text, 'Checking in');
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsNothing);
+    });
+
+    testWidgets('the chip fills an empty field and Send owns delivery', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: InMemoryComposerDraftStore(),
+        callMessageSuggestionId: originId,
+      ).timeout(bound);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsOneWidget);
+      expect(messages.store, isEmpty);
+
+      await tester.tap(chip);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(chip, findsNothing);
+      expect(tester.widget<EditableText>(field).controller.text, suggestion);
+      expect(messages.store, isEmpty);
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(messages.store.values.single.text, suggestion);
+    });
+
+    testWidgets('using a call suggestion preserves the saved draft on reopen', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final drafts = InMemoryComposerDraftStore();
+      final saved = ComposerDraftKey.direct(makeContact().peerId);
+      await drafts
+          .save(saved, ComposerDraft(text: 'Older draft'))
+          .timeout(bound);
+
+      Future<void> open({required bool fromCall}) => pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: drafts,
+        callMessageSuggestionId: fromCall ? originId : null,
+      ).timeout(bound);
+
+      await open(fromCall: true);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsOneWidget);
+      await tester.tap(chip).timeout(bound);
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(tester.widget<EditableText>(field).controller.text, suggestion);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+      await open(fromCall: false);
+      expect(tester.widget<EditableText>(field).controller.text, 'Older draft');
+      expect(messages.store, isEmpty);
+    });
+  });
 
   group('BL11 requester key readiness', () {
     const labels = {
@@ -2405,7 +2604,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(CallTimelineRow), findsOneWidget);
-      expect(find.text('Missed voice call'), findsOneWidget);
+      expect(find.text('Missed'), findsOneWidget);
     });
 
     testWidgets('TC-405-31 the exact contact is the only one asked for', (
@@ -2503,7 +2702,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(CallTimelineRow), findsOneWidget);
-      expect(find.text('Missed voice call'), findsOneWidget);
+      expect(find.text('Missed'), findsOneWidget);
     });
 
     testWidgets('TC-405-33 no call source leaves the chat message-only', (
@@ -21934,18 +22133,22 @@ class _FakeCallTimelineSource implements ConversationCallTimelineSource {
 
 ConversationCallTimelineEntry _callEntry({
   required String contactPeerId,
+  String callId = 'a2f0a1d6-0000-4000-8000-000000000405',
   ConversationCallDirection direction = ConversationCallDirection.incoming,
   ConversationCallStatus status = ConversationCallStatus.missed,
   Duration? duration,
+  DateTime? startedAt,
+  DateTime? recordedAt,
 }) {
-  final startedAt = DateTime.now().toUtc();
+  final openedAt = startedAt ?? DateTime.now().toUtc();
   return ConversationCallTimelineEntry(
-    callId: 'a2f0a1d6-0000-4000-8000-000000000405',
+    callId: callId,
     contactPeerId: contactPeerId,
     direction: direction,
     status: status,
-    startedAt: startedAt,
-    endedAt: startedAt.add(const Duration(seconds: 20)),
+    startedAt: openedAt,
+    endedAt: openedAt.add(const Duration(seconds: 20)),
+    recordedAt: recordedAt,
     duration: duration,
   );
 }
