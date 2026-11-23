@@ -637,7 +637,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         _render();
         return;
       }
-      await _stageExistingModelVerification(generation);
+      if (await _startExistingModelVerification(generation)) return;
       final manifest = _record.manifest;
       if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
         _previouslyReadyTaskId = _record.taskId;
@@ -763,27 +763,33 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
   }
 
-  Future<void> _stageExistingModelVerification(int generation) async {
+  Future<bool> _startExistingModelVerification(
+    int generation, {
+    bool missingManifestOnly = false,
+  }) async {
     if (_record.phase != ModelDeliveryPhase.idle || _record.taskId != null) {
-      return;
+      return false;
     }
     var manifest = _record.manifest;
+    if ((missingManifestOnly && manifest != null) ||
+        (manifest == null && _connection == ModelDeliveryConnection.offline)) {
+      return false;
+    }
     final expectedBytes = manifest?.bytes ?? gemmaModelBytes;
-    if (await _storage.modelLength() != expectedBytes) return;
+    if (await _storage.modelLength() != expectedBytes) return false;
     if (manifest == null) {
-      if (_connection == ModelDeliveryConnection.offline) return;
       try {
         manifest = ModelDeliveryManifest.fromJson(
           await _network.fetchManifest(),
         );
       } on Object {
-        return;
+        return false;
       }
     }
     if (_disposed ||
         generation != _generation ||
         manifest.bytes != expectedBytes) {
-      return;
+      return false;
     }
     _record = _record.copyWith(
       manifest: manifest,
@@ -791,6 +797,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       phase: ModelDeliveryPhase.verifying,
       clearVerification: true,
     );
+    _render();
+    resumeVerification();
+    return true;
   }
 
   void setCapability(bool supported, {bool insufficientMemory = false}) {
@@ -996,6 +1005,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         if (_disposed) return;
         _connection = connection;
         _freeBytes = freeBytes;
+        if (await _startExistingModelVerification(
+          _generation,
+          missingManifestOnly: true,
+        )) {
+          return;
+        }
         resumeVerification();
         if (_record.phase == ModelDeliveryPhase.insufficientSpace &&
             _freeBytes >= _neededBytes) {
@@ -1797,6 +1812,13 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             await _recoverTransfer(id, _generation);
             return;
           }
+        }
+        if (generation == _generation &&
+            await _startExistingModelVerification(
+              generation,
+              missingManifestOnly: true,
+            )) {
+          return;
         }
         _render();
       }),

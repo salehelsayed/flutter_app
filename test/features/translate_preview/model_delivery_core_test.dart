@@ -877,6 +877,7 @@ void main() {
       final idle = _nextState<ModelNotDownloaded>(h.controller.state);
       verification.complete(false);
       await idle;
+      await h.controller.refresh().timeout(bound);
 
       expect(h.storage.verifications, 1);
       expect(h.storage.removals, 0);
