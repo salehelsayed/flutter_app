@@ -387,7 +387,10 @@ void main() {
       expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
       expect(find.text('paused'), findsOneWidget);
       expect(
-        find.text("It picks up where it stopped when you're back on Wi-Fi."),
+        find.text(
+          "Your download is safe at 42%. Open mknoon when you're back "
+          'online to check your download.',
+        ),
         findsOneWidget,
       );
       await tester.tap(find.text('Use mobile data'));

@@ -581,6 +581,7 @@ void main() {
     'a restored scheduled transfer reconnects without a second task',
     () async {
       const bound = Duration(seconds: 3);
+      var clearedNotices = 0;
       final h = await _Harness.create(
         record: ModelDeliveryRecord(
           manifest: _manifest,
@@ -592,6 +593,7 @@ void main() {
         restoredStatus: ModelTransferStatus.scheduledWaitingForConnection,
         restoredBytes: 42,
         wifi: false,
+        clearBackgroundStatus: () async => clearedNotices++,
       ).timeout(bound);
       addTearDown(() => h.dispose().timeout(bound));
 
@@ -611,9 +613,11 @@ void main() {
       await h.controller.resume().timeout(bound);
       expect(h.transport.enqueues, isEmpty);
       expect(h.transport.resumes, isEmpty);
+      expect(clearedNotices, 0);
 
       await h.event(ModelTransferStatus.running, bytes: 60).timeout(bound);
       expect(h.id, 'native-held');
+      expect(clearedNotices, 1);
       expect(
         h.controller.state.value,
         isA<ModelDownloading>().having(

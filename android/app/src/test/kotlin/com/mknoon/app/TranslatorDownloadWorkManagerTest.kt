@@ -1,6 +1,9 @@
 package com.mknoon.app
 
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
@@ -149,6 +152,16 @@ class TranslatorDownloadWorkManagerTest {
                 )
                 assertEquals("the partial is still intact while held", PREFIX_BYTES.toLong(), partial.length())
 
+                val notifications = app.getSystemService(NotificationManager::class.java)
+                val channel = NotificationChannel("translator-test", "Translator test", NotificationManager.IMPORTANCE_LOW)
+                notifications.createNotificationChannel(channel)
+                val notice = Notification.Builder(app, channel.id)
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done).build()
+                notifications.notify("mknoon_translator_download", -41003, notice)
+                notifications.notify("unrelated-notice", -41003, notice)
+                fun visibleTags() = notifications.activeNotifications.map { it.tag }.toSet()
+                assertEquals(setOf("mknoon_translator_download", "unrelated-notice"), visibleTags())
+
                 shadowOf(connectivity).setDefaultNetworkActive(true)
                 workClock.updateAndGet { maxOf(it, held.nextScheduleTimeMillis) }
                 driver.setAllConstraintsMet(initial.id)
@@ -156,6 +169,8 @@ class TranslatorDownloadWorkManagerTest {
                 assertEquals("bytes=$PREFIX_BYTES-", server.requests[1]["range"])
                 assertEquals(VALIDATOR, server.requests[1]["if-range"])
                 assertEquals(listOf(initial.id, initial.id), factory.attempts.map { it.id })
+                assertEquals("resume clears only the translator's paused notice", setOf("unrelated-notice"), visibleTags())
+                server.releaseResume.countDown()
                 await("the resumed worker completed the original request") {
                     scheduled().single().state == WorkInfo.State.SUCCEEDED
                 }
@@ -220,6 +235,7 @@ class TranslatorDownloadWorkManagerTest {
         val payload = ByteArray(4 * PREFIX_BYTES) { (it % 251).toByte() }
         val requests = CopyOnWriteArrayList<Map<String, String>>()
         val releasePrefix = CountDownLatch(1)
+        val releaseResume = CountDownLatch(1)
         // The runner looks up ETag and Accept-Ranges by their exact spelling.
         private val socket = ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"))
         private val executor = Executors.newSingleThreadExecutor()
@@ -249,6 +265,7 @@ class TranslatorDownloadWorkManagerTest {
                     }
                 }
                 requests += headers
+                if (!first) releaseResume.await(WAIT_SECONDS, TimeUnit.SECONDS)
                 val start = if (first) 0 else PREFIX_BYTES
                 val status = if (first) "200 OK" else "206 Partial Content"
                 val range = if (first) "" else "Content-Range: bytes $start-${payload.lastIndex}/${payload.size}\r\n"
@@ -265,6 +282,7 @@ class TranslatorDownloadWorkManagerTest {
 
         override fun close() {
             releasePrefix.countDown()
+            releaseResume.countDown()
             socket.close()
             executor.shutdownNow()
         }
