@@ -14,7 +14,7 @@ Dart retry/disposal could not balance that native configuration. Apple's
 AVCaptureSession header requires commit before stopRunning; app-only cleanup was
 therefore insufficient.
 
-## Allowlisted changes
+## Recording-switch changes
 
 - `DefaultCamera.swift`: only `setDescriptionWhileRecording` changes. Prepare the
   replacement device/input/output/connection before mutating the live graph.
@@ -55,6 +55,28 @@ camera_platform_interface, app production Dart and translations are unchanged fr
 camera candidate `c284cf1c7`. Vendored production Dart changes only by the generated
 header/import normalization above; its executable body is unchanged. No store
 version, signing or deployment changes.
+
+## BL-67 video rotation
+
+The Center Stage front sensor on iPhone 17 Pro Max is mounted in portrait.
+Applying the previous fixed 90° portrait value rotates its live preview before
+recording starts. `CameraConfiguration.swift` supplies a rotation coordinator
+for the selected device on iOS 17 and later. On iOS 27 and later it resolves a
+requested orientation directly. Earlier coordinator versions use the capture
+angle adjusted for the difference between the requested and physical device
+orientation. [Apple's sensor orientation guidance](https://developer.apple.com/videos/play/wwdc2026/341/)
+
+`DefaultCamera.swift` applies the angle to the video data output that supplies
+both the Flutter texture and the writer. It keeps the recording orientation
+fixed while the lens changes and applies the replacement lens's angle before
+attaching its sample delegate. The photo output uses its existing compensation,
+and front-facing video remains mirrored. The iOS 15 and 16 connection path
+continues to use `videoOrientation`. [AVFoundation connection rotation](https://developer.apple.com/documentation/avfoundation/avcaptureconnection/videorotationangle)
+
+`CameraSetDeviceOrientationTests.swift` injects a 0° portrait-mounted front
+sensor and two 90° controls. The native test observes the angle applied by
+`DefaultCamera` to its video connection. These inputs model sensor orientation
+on a simulator. Camera frames on physical devices have a separate check.
 
 ## Native proof boundary and execution
 
