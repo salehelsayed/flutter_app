@@ -17,6 +17,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.system.StructStat
 import android.system.StructTimespec
+import androidx.core.app.NotificationManagerCompat
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.NetworkType
@@ -90,6 +91,10 @@ class TranslatorDownloadWorkManagerTest {
             importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE
         }
         shadowOf(app.getSystemService(ActivityManager::class.java)).setProcesses(listOf(process))
+        val actualProcess = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(actualProcess)
+        assertEquals("worker process is in the background", process.importance, actualProcess.importance)
+        assertTrue("the fixture can post notifications", NotificationManagerCompat.from(app).areNotificationsEnabled())
         val prefs = android.preference.PreferenceManager.getDefaultSharedPreferences(app)
         prefs.edit().putInt(BDPlugin.keyConfigRequestTimeout, WAIT_SECONDS.toInt()).commit()
         val connectivity = app.getSystemService(ConnectivityManager::class.java)
@@ -216,6 +221,17 @@ class TranslatorDownloadWorkManagerTest {
                 val destination = File(task.filePath(app))
                 assertArrayEquals(server.payload, destination.readBytes())
                 assertEquals(listOf(initial.id), scheduled().map { it.id })
+                if (checksumMatches) {
+                    val stat = Os.lstat(destination.canonicalPath)
+                    val descriptor = Os.open(destination.canonicalPath, OsConstants.O_RDONLY, 0)
+                    FileInputStream(descriptor).use { input ->
+                        val fdStat = Os.fstat(input.fd)
+                        assertEquals("fixture sees the same file length", server.payload.size.toLong(), fdStat.st_size)
+                        assertEquals("fixture sees the same file inode", stat.st_ino, fdStat.st_ino)
+                        assertEquals("fixture sees the same modification time", stat.st_mtim, fdStat.st_mtim)
+                        assertEquals("fixture sees the same change time", stat.st_ctim, fdStat.st_ctim)
+                    }
+                }
                 assertEquals(
                     setOf("unrelated-notice"),
                     notifications.activeNotifications.filter { it.id == -41003 }.map { it.tag }.toSet(),
@@ -225,7 +241,10 @@ class TranslatorDownloadWorkManagerTest {
                 }
                 if (checksumMatches) {
                     val extras = ready?.notification?.extras
-                        ?: throw AssertionError("The background worker completed without a verified Ready notice")
+                        ?: throw AssertionError(
+                            "The background worker completed without a verified Ready notice. " +
+                                "Verified receipt: ${prefs.contains("com.bbflight.background_downloader.modelReceipt")}"
+                        )
                     assertEquals(READY_TITLE, extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
                     assertEquals(READY_BODY, extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
                 } else {
@@ -238,6 +257,7 @@ class TranslatorDownloadWorkManagerTest {
                 manager.cancelAllWorkByTag(tag).result.awaitOnMain("the test-owned download to cancel")
             } finally {
                 app.getSystemService(NotificationManager::class.java).cancelAll()
+                TranslatorFileStatShadow.reset()
                 WorkManagerTestInitHelper.closeWorkDatabase()
                 executor.shutdownNow()
             }
