@@ -9,12 +9,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_notifications.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'
+    show AndroidFlutterLocalNotificationsPlugin;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
@@ -1854,6 +1857,60 @@ void main() {
       expect(notices.whereType<ModelReady>(), isEmpty);
     });
 
+    test('Remove during the Ready permission check suppresses show', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      AndroidFlutterLocalNotificationsPlugin.registerWith();
+      const channel = MethodChannel(
+        'dexterous.com/flutter/local_notifications',
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final permissionStarted = Completer<void>();
+      final permission = Completer<bool>();
+      final windowEnded = Completer<void>();
+      final shows = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'areNotificationsEnabled') {
+          permissionStarted.complete();
+          return permission.future.timeout(bound);
+        }
+        if (call.method == 'show') shows.add(call);
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      addTearDown(() {
+        if (!permission.isCompleted) permission.complete(false);
+      });
+      final notices = ModelDeliveryNotifications();
+      final h = await _Harness.create(
+        isAppBackground: () => true,
+        publishBackgroundStatus: notices.publish,
+        clearBackgroundStatus: notices.clear,
+        finishVerificationWindow: (_) async {
+          if (!windowEnded.isCompleted) windowEnded.complete();
+        },
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      final removing = holdRecordWrite(h.storage, ModelDeliveryPhase.removing);
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await permissionStarted.future.timeout(bound);
+      expect(h.controller.state.value, isA<ModelReady>());
+
+      final remove = h.controller.remove();
+      try {
+        await removing.started.timeout(bound);
+        permission.complete(true);
+        await windowEnded.future.timeout(bound);
+        expect(shows, isEmpty, reason: 'Remove has retired this Ready notice');
+      } finally {
+        removing.release();
+        await remove.timeout(bound);
+      }
+    });
+
     test('Ready on foreground follows a deferred background check', () async {
       var background = true;
       final firstWindowEnded = Completer<void>();
@@ -2652,6 +2709,7 @@ class _Harness {
     Future<({bool supported, bool insufficientMemory})> Function()?
     readCapability,
     ModelDeliveryNoticePublisher? publishBackgroundStatus,
+    Future<void> Function()? clearBackgroundStatus,
     bool Function()? isAppBackground,
     Future<void> Function(String taskId)? finishVerificationWindow,
   }) async {
@@ -2686,6 +2744,7 @@ class _Harness {
       spaceReserveBytes: 20,
       newTaskId: () => 'task-${++next}',
       publishBackgroundStatus: publishBackgroundStatus,
+      clearBackgroundStatus: clearBackgroundStatus,
       isAppBackground: isAppBackground,
       finishVerificationWindow: finishVerificationWindow,
     );
