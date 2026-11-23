@@ -129,6 +129,13 @@ void main() {
   Future<Object?> backGesture(String method, [Object? arguments]) =>
       platformCall(SystemChannels.backGesture, method, arguments);
 
+  void clearInactiveBackHistory() {
+    expect(nativeBackOwner, everyElement(isFalse));
+    expect(nativeMinimizeCallIds, everyElement(isNull));
+    nativeBackOwner.clear();
+    nativeMinimizeCallIds.clear();
+  }
+
   testWidgets(
     'BL65 Back during a connected call minimizes and the bar restores it',
     (tester) async {
@@ -189,7 +196,7 @@ void main() {
   ) async {
     final fixture = await pumpApp(tester);
     await pushConversation(tester, fixture);
-    expect(nativeBackOwner, isEmpty);
+    clearInactiveBackHistory();
 
     fixture.capability.emit(_projection(state: CallState.connected));
     await settle(tester);
@@ -241,6 +248,8 @@ void main() {
     tester,
   ) async {
     final fixture = await pumpApp(tester);
+    await settle(tester);
+    clearInactiveBackHistory();
     fixture.capability.emit(
       _projection(state: CallState.ringing, direction: CallDirection.incoming),
     );
