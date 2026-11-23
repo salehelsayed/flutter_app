@@ -231,8 +231,17 @@ Future<Map<String, Object?>?> dbLoadPost(
 Future<Map<String, Object?>?> dbLoadRetainedIncomingPost(
   Database db,
   String postId,
-  DateTime expiredAfter,
+  DateTime? expiredAfter,
 ) async {
+  if (expiredAfter == null) {
+    final rows = await db.query(
+      'posts',
+      where: 'post_id = ? AND is_incoming = 1',
+      whereArgs: [postId],
+      limit: 1,
+    );
+    return rows.firstOrNull;
+  }
   final rows = await db.rawQuery(
     '''
       SELECT p.*

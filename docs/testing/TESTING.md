@@ -4800,6 +4800,14 @@ sheets put Close at y=12 on `d58f0269`. The simulated 128 px status bar at DPR 3
 ended at y=42.67. The regressions retain the resulting audience selection and
 the return to Group Info after Close.
 
+A normal incoming Thought disappears from live reads at 24 hours. BL-14 keeps
+its stored copy for another 48 hours to tolerate receiver clock skew. Explicit
+author retraction must find the exact stored incoming row throughout that
+interval, including a locally hidden copy. The two real SQLite regressions
+in `thought_lifetime_queries_test.dart` hit `unknownPost` before the fix on
+`92f6478a`. They verify author identity, the cascade through attachment rows
+and the owned file, and survival of another Thought by the same author. The
+60-second draft allowance keeps its narrower expiry and visibility checks.
 
 Expired author Thoughts now keep their stored rows and media as own history;
 the expiry sweep removes only incoming friend copies. The next sweep deadline

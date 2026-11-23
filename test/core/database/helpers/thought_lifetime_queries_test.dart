@@ -345,7 +345,6 @@ void main() {
           ),
           postRepo: posts,
           mediaFileManager: media,
-          nowProvider: () => now,
         ).timeout(bound);
 
         Future<List<Map<String, Object?>>> rows(String table, String id) => db

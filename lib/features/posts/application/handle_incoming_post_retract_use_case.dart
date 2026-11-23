@@ -5,7 +5,6 @@ import 'package:flutter_app/features/posts/application/early_thought_retractions
 import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
-import 'package:flutter_app/features/posts/domain/thought_reply_draft.dart';
 
 enum HandleIncomingPostRetractResult {
   thoughtDeleted,
@@ -25,7 +24,6 @@ Future<(HandleIncomingPostRetractResult, String?)> handleIncomingPostRetract({
   required PostRepository postRepo,
   MediaFileManager? mediaFileManager,
   EarlyThoughtRetractions? earlyRetractions,
-  DateTime Function()? nowProvider,
 }) async {
   final envelope = PostRetractEnvelope.fromJson(message.content);
   if (envelope == null) {
@@ -34,10 +32,7 @@ Future<(HandleIncomingPostRetractResult, String?)> handleIncomingPostRetract({
   }
   final post =
       await postRepo.getPost(envelope.postId) ??
-      await postRepo.getRetainedIncomingPost(
-        envelope.postId,
-        (nowProvider ?? DateTime.now)().subtract(ThoughtReplyDraft.grace),
-      );
+      await postRepo.getRetainedIncomingPost(envelope.postId, null);
   if (post == null) {
     earlyRetractions?.record(
       postId: envelope.postId,
