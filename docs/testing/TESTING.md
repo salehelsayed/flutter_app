@@ -7452,6 +7452,18 @@ visible and cannot become an ordinary first-attempt PASS.
   the scroll cache for implicit VoiceOver scrolling. First receipts are under
   `~/.codex/investigations/bl53-tray-animation-codex2-20261121/`.
 
+  On iPhone 13 build 317, the same XCUITest session reported 94-point sticker
+  tiles in normal mode and 32-point tiles in manage mode (`m-19de2906`).
+  Disabling the grid swipe removed its semantics parent. The iOS bridge
+  cleared the reparented viewport's parent pointer and lost the screen-scale
+  transform. A persistent semantics container keeps that parent across mode
+  changes. `my_stickers_ios_frames_test.dart` records the actual Flutter
+  updates and replays iOS parent bookkeeping in two node orders. The RED
+  source `d6e6d2f1` exposed one-third tile and badge frames while managing
+  and one-third tile frames after Done in the reverse order. The test checks
+  frames against paint through a drag and saved reorder in both accessible
+  navigation modes. The physical VoiceOver row covers the native surface.
+
   On exact build-132 source `7267f93f`, internal Pixel build 324 measured
   3% app CPU for a warm static chat with the keyboard and tray closed
   (repeat 2%), 87% with one visible sticker moving (repeat 85%), and 176%
