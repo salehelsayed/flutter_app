@@ -7602,7 +7602,16 @@ visible and cannot become an ordinary first-attempt PASS.
   sticker cases, including manual Play, viewport ownership and the three-loop
   cap (`m-94df4e94`, `m-987f733c`). Only tray autoplay checks the sampled
   frames for equality. A tile with equal frames yields its slot during
-  initial playback so another visible tile can animate.
+  initial playback so another visible tile can animate. The merged sticker
+  source `fddf5af8` passed all 305 affected cases, including both accessibility
+  modes of the iOS frame regression and the visible autoplay regression
+  (`m-238460e6`).
+  Pixel internal 340 from `d4ae095d` showed three moving tiles on opening the
+  tray without tapping Play. The seven sampled tiles were still after the
+  loops. The device library did not supply an approved identical-frame
+  fixture. The Linux fixture provides the slot-replacement proof and the
+  Pixel run provides the playback observation. Kayan accepted those results
+  and closed the separate iPhone row (`m-addd87b3`, `m-1c1a160c`).
 
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
