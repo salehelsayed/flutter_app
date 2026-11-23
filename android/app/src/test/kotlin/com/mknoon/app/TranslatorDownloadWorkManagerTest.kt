@@ -30,7 +30,9 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
@@ -66,10 +68,12 @@ class TranslatorDownloadWorkManagerTest {
         val executor = Executors.newSingleThreadExecutor()
         val taskExecutor = Executors.newSingleThreadExecutor()
         val factory = DownloadWorkers()
+        val workClock = AtomicLong(System.currentTimeMillis())
         val configuration = Configuration.Builder()
             .setExecutor(executor)
             .setTaskExecutor(taskExecutor)
             .setWorkerFactory(factory)
+            .setClock { workClock.get() }
             .build()
         WorkManagerTestInitHelper.initializeTestWorkManager(
             app,
@@ -99,7 +103,7 @@ class TranslatorDownloadWorkManagerTest {
                 )
                 val enqueued = executor.submit<Boolean> {
                     runBlocking { BDPlugin.doEnqueue(app, task, null, null) }
-                }.get(WAIT_SECONDS, TimeUnit.SECONDS)
+                }.awaitOnMain("the actual download request to enqueue")
                 assertTrue("the actual download request was accepted", enqueued)
                 val initial = scheduled().single()
                 assertEquals(NetworkType.CONNECTED, initial.constraints.requiredNetworkType)
@@ -137,6 +141,7 @@ class TranslatorDownloadWorkManagerTest {
                 assertEquals("the partial is still intact while held", PREFIX_BYTES.toLong(), partial.length())
 
                 shadowOf(connectivity).setDefaultNetworkActive(true)
+                workClock.updateAndGet { maxOf(it, held.nextScheduleTimeMillis) }
                 driver.setAllConstraintsMet(initial.id)
                 await("the original request made its resumed HTTP request") { server.requests.size == 2 }
                 assertEquals("bytes=$PREFIX_BYTES-", server.requests[1]["range"])
@@ -151,10 +156,13 @@ class TranslatorDownloadWorkManagerTest {
             }
         } finally {
             shadowOf(connectivity).setDefaultNetworkActive(true)
-            manager.cancelAllWorkByTag(tag).result.get(WAIT_SECONDS, TimeUnit.SECONDS)
-            WorkManagerTestInitHelper.closeWorkDatabase()
-            executor.shutdownNow()
-            taskExecutor.shutdownNow()
+            try {
+                manager.cancelAllWorkByTag(tag).result.awaitOnMain("the test-owned download to cancel")
+            } finally {
+                WorkManagerTestInitHelper.closeWorkDatabase()
+                executor.shutdownNow()
+                taskExecutor.shutdownNow()
+            }
         }
     }
 
@@ -172,6 +180,11 @@ class TranslatorDownloadWorkManagerTest {
             Thread.sleep(10)
         } while (System.nanoTime() < deadline)
         throw AssertionError("Timed out waiting for $description")
+    }
+
+    private fun <T> Future<T>.awaitOnMain(description: String): T {
+        await(description) { isDone }
+        return get(0, TimeUnit.SECONDS)
     }
 
     private class DownloadWorkers : WorkerFactory() {
