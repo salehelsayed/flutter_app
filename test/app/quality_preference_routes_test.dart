@@ -431,10 +431,24 @@ void main() {
               tester.widget<EditableText>(followUpField).controller.text,
               suggestion,
             );
-            final reverseDuration = route.reverseTransitionDuration;
-            MyApp.navigatorKey.currentState!.pop();
-            await waitForRoute(tester.pump());
-            await waitForRoute(tester.pump(reverseDuration));
+            expect(route.isCurrent, isTrue);
+            expect(route.willHandlePopInternally, isFalse);
+            var transitionCompleted = false;
+            unawaited(
+              route.completed.then<void>((_) {
+                transitionCompleted = true;
+              }),
+            );
+            route.navigator!.pop();
+            expect(route.isCurrent, isFalse);
+            for (var frame = 0; frame < 24 && !transitionCompleted; frame++) {
+              await waitForRoute(tester.pump(const Duration(milliseconds: 50)));
+            }
+            expect(
+              transitionCompleted,
+              isTrue,
+              reason: 'Follow-up pop stopped at ${route.animation?.status}',
+            );
             await waitForRoute(tester.pump());
             expect(followUp, findsNothing);
             expect(tester.widget<ConversationWired>(chatRoute), same(original));
