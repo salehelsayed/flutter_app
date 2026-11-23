@@ -5127,8 +5127,8 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_connection_title => 'Warten auf eine Verbindung';
 
   @override
-  String translator_connection_kept(String percent) {
-    return 'Dein Fortschritt von $percent % ist gespeichert. Sobald du wieder online bist, läuft der Download automatisch weiter.';
+  String translator_connection_kept(String percent, String appName) {
+    return 'Dein Fortschritt von $percent % ist gespeichert. Öffne $appName, sobald du wieder online bist, um den Download zu prüfen.';
   }
 
   @override

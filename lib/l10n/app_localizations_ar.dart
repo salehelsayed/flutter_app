@@ -5083,8 +5083,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_connection_title => 'بانتظار الاتصال';
 
   @override
-  String translator_connection_kept(String percent) {
-    return 'تم حفظ $percent٪ من التنزيل. سيُستأنف تلقائيًا عند عودة الاتصال.';
+  String translator_connection_kept(String percent, String appName) {
+    return 'تم حفظ $percent٪ من التنزيل. افتح تطبيق $appName عند عودة الاتصال للتحقق من التنزيل.';
   }
 
   @override

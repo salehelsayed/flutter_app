@@ -5015,8 +5015,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_connection_title => 'Waiting for a connection';
 
   @override
-  String translator_connection_kept(String percent) {
-    return 'Your download is safe at $percent%. It continues by itself when you\'re back online.';
+  String translator_connection_kept(String percent, String appName) {
+    return 'Your download is safe at $percent%. Open $appName when you\'re back online to check your download.';
   }
 
   @override

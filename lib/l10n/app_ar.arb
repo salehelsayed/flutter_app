@@ -2235,7 +2235,7 @@
   "translator_integrity_retry": "ننزّل الملف مجددًا. لا يلزمك فعل شيء.",
   "translator_integrity_exhausted": "حاول مجددًا لتنزيل نسخة جديدة.",
   "translator_connection_title": "بانتظار الاتصال",
-  "translator_connection_kept": "تم حفظ {percent}٪ من التنزيل. سيُستأنف تلقائيًا عند عودة الاتصال.",
+  "translator_connection_kept": "تم حفظ {percent}٪ من التنزيل. افتح تطبيق {appName} عند عودة الاتصال للتحقق من التنزيل.",
   "translator_connection_unmeasured": "سنحاول متابعة التنزيل عند عودة الاتصال.",
   "translator_kept_amount": "تم حفظ {amount}",
   "translator_server_title": "خادم التنزيل لا يستجيب",
