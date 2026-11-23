@@ -12,11 +12,8 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Looper
 import android.os.Process
-import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
-import android.system.StructStat
-import android.system.StructTimespec
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
@@ -35,14 +32,10 @@ import com.bbflight.background_downloader.TaskStatus
 import com.bbflight.background_downloader.Updates
 import java.io.Closeable
 import java.io.File
-import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
-import java.nio.file.Files
-import java.nio.file.LinkOption
-import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -58,23 +51,53 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
 import org.robolectric.annotation.LooperMode
-import org.robolectric.annotation.Resetter
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.util.ReflectionHelpers
 import org.robolectric.shadows.ShadowNetworkCapabilities
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33], application = Application::class, shadows = [TranslatorFileStatShadow::class])
+@Config(
+    sdk = [33],
+    application = Application::class,
+    shadows = [
+        StickerCutoutHostPosixShadow::class,
+        StickerCutoutHostOsConstantsShadow::class,
+        StickerCutoutHostBlockGuardOsShadow::class,
+    ],
+)
 @LooperMode(LooperMode.Mode.PAUSED)
 @Suppress("DEPRECATION")
 class TranslatorDownloadWorkManagerTest {
+    private val libcore = Class.forName("libcore.io.Libcore")
+    private var previousRawOs: Any? = null
+    private var previousOs: Any? = null
+
+    @Before
+    fun installHostFileDescriptors() {
+        previousRawOs = ReflectionHelpers.getStaticField<Any>(libcore, "rawOs")
+        previousOs = ReflectionHelpers.getStaticField<Any>(libcore, "os")
+        Shadow.directInitialize(libcore)
+    }
+
+    @After
+    fun releaseHostFileDescriptors() {
+        try {
+            StickerCutoutHostPosixShadow.reset()
+        } finally {
+            previousRawOs?.let { ReflectionHelpers.setStaticField(libcore, "rawOs", it) }
+            previousOs?.let { ReflectionHelpers.setStaticField(libcore, "os", it) }
+        }
+    }
+
     @Test
     fun `translator resumes the same constrained work from the exact saved offset`() =
         resumeInBackground(checksumMatches = true)
@@ -223,6 +246,7 @@ class TranslatorDownloadWorkManagerTest {
                 assertEquals(listOf(initial.id), scheduled().map { it.id })
                 if (checksumMatches) {
                     val stat = Os.lstat(destination.canonicalPath)
+                    assertTrue("fixture identifies the destination as a regular file", OsConstants.S_ISREG(stat.st_mode))
                     val descriptor = Os.open(destination.canonicalPath, OsConstants.O_RDONLY, 0)
                     FileInputStream(descriptor).use { input ->
                         val fdStat = Os.fstat(input.fd)
@@ -257,7 +281,6 @@ class TranslatorDownloadWorkManagerTest {
                 manager.cancelAllWorkByTag(tag).result.awaitOnMain("the test-owned download to cancel")
             } finally {
                 app.getSystemService(NotificationManager::class.java).cancelAll()
-                TranslatorFileStatShadow.reset()
                 WorkManagerTestInitHelper.closeWorkDatabase()
                 executor.shutdownNow()
             }
@@ -369,66 +392,5 @@ class TranslatorDownloadWorkManagerTest {
         const val VALIDATOR = "\"translator-model-v1\""
         const val READY_TITLE = "Translation is ready"
         const val READY_BODY = "Messages in other languages can now be translated on your phone."
-    }
-}
-
-// Robolectric's stock fstat reports zero bytes for a host file descriptor.
-@Implements(Os::class)
-class TranslatorFileStatShadow {
-    companion object {
-        private val files = mutableMapOf<FileDescriptor, Pair<File, FileInputStream>>()
-
-        @JvmStatic
-        @Implementation
-        fun open(path: String, flags: Int, mode: Int): FileDescriptor {
-            val file = File(path)
-            if (flags and OsConstants.O_NOFOLLOW != 0 && Files.isSymbolicLink(file.toPath())) {
-                throw ErrnoException("open", OsConstants.ELOOP)
-            }
-            val input = FileInputStream(file)
-            synchronized(files) { files[input.fd] = file to input }
-            return input.fd
-        }
-
-        @JvmStatic
-        @Implementation
-        fun fstat(fd: FileDescriptor): StructStat {
-            val (file, input) = synchronized(files) { files[fd] }
-                ?: throw ErrnoException("fstat", OsConstants.EBADF)
-            return stat(file, input.channel.size())
-        }
-
-        @JvmStatic
-        @Implementation
-        fun lstat(path: String): StructStat = stat(File(path))
-
-        @JvmStatic
-        @Resetter
-        fun reset() {
-            synchronized(files) {
-                files.values.forEach { (_, input) -> input.close() }
-                files.clear()
-            }
-        }
-
-        private fun stat(file: File, descriptorSize: Long? = null): StructStat {
-            if (!Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-                throw ErrnoException("lstat", OsConstants.ENOENT)
-            }
-            val attrs = Files.readAttributes(
-                file.toPath(), "unix:dev,ino,mode,size,lastAccessTime,lastModifiedTime,ctime",
-                LinkOption.NOFOLLOW_LINKS,
-            )
-            fun time(key: String): StructTimespec {
-                val instant = (attrs[key] as FileTime).toInstant()
-                return StructTimespec(instant.epochSecond, instant.nano.toLong())
-            }
-            return StructStat(
-                (attrs["dev"] as Number).toLong(), (attrs["ino"] as Number).toLong(),
-                (attrs["mode"] as Number).toInt(), 1, 0, 0, 0,
-                descriptorSize ?: (attrs["size"] as Number).toLong(),
-                time("lastAccessTime"), time("lastModifiedTime"), time("ctime"), 0, 0,
-            )
-        }
     }
 }
