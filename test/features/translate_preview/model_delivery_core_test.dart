@@ -1072,6 +1072,376 @@ void main() {
     },
   );
 
+  group('persisted translator upgrades', () {
+    const bound = Duration(seconds: 3);
+    const oldTask = 'saved-task';
+
+    Future<_Harness> restore(
+      String phase, {
+      String? taskId,
+      int bytes = 0,
+      int freeBytes = 1000,
+      int? modelLength,
+      bool wifi = true,
+      bool offline = false,
+      ModelTransferStatus? nativeStatus,
+      Completer<bool>? verification,
+      ModelResumeCheckpoint? checkpoint,
+      Map<String, Object?> fields = const {},
+    }) async {
+      final record = ModelDeliveryRecord.fromJson({
+        // The original v1 writer predates verification and recovery fields.
+        'version': 1,
+        'manifest': _manifest.toJson(),
+        'taskId': taskId,
+        'receivedBytes': bytes,
+        'phase': phase,
+        'allowMobileData': false,
+        ...fields,
+      });
+      final h = await _Harness.create(
+        record: record,
+        appBuild: () async => 345,
+        wifi: wifi,
+        offline: offline,
+        freeBytes: freeBytes,
+        modelLength: modelLength,
+        restoredStatus: nativeStatus,
+        restoredBytes: bytes,
+        verification: verification,
+        checkpoint: checkpoint,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      return h;
+    }
+
+    test('v1 idle still offers and starts the download', () async {
+      final h = await restore(
+        'idle',
+        fields: {'manifest': null},
+        freeBytes: 4000000000,
+      );
+      expect(h.controller.state.value, isA<ModelNotDownloaded>());
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      expect(h.transport.enqueues, hasLength(1));
+      expect(h.controller.state.value, isA<ModelDownloading>());
+    });
+
+    test(
+      'v1 insufficient space becomes actionable when space is freed',
+      () async {
+        final h = await restore('insufficientSpace', freeBytes: 50);
+        expect(h.controller.state.value, isA<ModelNotEnoughSpace>());
+        expect(h.transport.enqueues, isEmpty);
+        h.storage.freeBytes = 200;
+        await h.controller.refresh().timeout(bound);
+        expect(h.controller.state.value, isA<ModelNotDownloaded>());
+        await h.controller.start(allowMobileData: false).timeout(bound);
+        expect(h.transport.enqueues, hasLength(1));
+      },
+    );
+
+    for (final phase in ['active', 'resumeRequested', 'waitingToRetry']) {
+      test(
+        'v1 $phase keeps ownership of its native partial and can pause',
+        () async {
+          final h = await restore(
+            phase,
+            taskId: oldTask,
+            bytes: 42,
+            nativeStatus: ModelTransferStatus.running,
+          );
+          expect(
+            (h.controller.state.value as ModelDownloading).receivedBytes,
+            42,
+          );
+          await h.controller.pause().timeout(bound);
+          expect(h.transport.pauses, [oldTask]);
+          await h.event(ModelTransferStatus.paused, bytes: 42).timeout(bound);
+          expect((h.controller.state.value as ModelPaused).receivedBytes, 42);
+          expect(h.transport.enqueues, isEmpty);
+        },
+      );
+    }
+
+    for (final phase in [
+      'pauseRequested',
+      'userPaused',
+      'policyPauseRequested',
+    ]) {
+      test('v1 $phase resumes the same acknowledged paused task', () async {
+        final h = await restore(
+          phase,
+          taskId: oldTask,
+          bytes: 42,
+          nativeStatus: ModelTransferStatus.paused,
+        );
+        expect((h.controller.state.value as ModelPaused).receivedBytes, 42);
+        await h.controller.resume().timeout(bound);
+        expect(h.transport.resumes, [(taskId: oldTask, requiresWiFi: true)]);
+        await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+        expect(
+          (h.controller.state.value as ModelDownloading).receivedBytes,
+          42,
+        );
+        expect(h.transport.enqueues, isEmpty);
+      });
+    }
+
+    for (final phase in ['ready', 'verifying']) {
+      test('v1 $phase without a file stamp is verified before use', () async {
+        final verification = Completer<bool>();
+        final h = await restore(
+          phase,
+          taskId: oldTask,
+          bytes: _manifest.bytes,
+          modelLength: _manifest.bytes,
+          verification: verification,
+        );
+        addTearDown(() {
+          if (!verification.isCompleted) verification.complete(false);
+        });
+        expect(h.controller.state.value, isA<ModelChecking>());
+        final ready = _nextState<ModelReady>(h.controller.state);
+        verification.complete(true);
+        await ready;
+        expect(
+          await h.controller.verifiedModelPath().timeout(bound),
+          _fileIdentity().canonicalPath,
+        );
+        expect(h.transport.enqueues, isEmpty);
+      });
+    }
+
+    test('v1 matching file stamp survives unknown optional fields', () async {
+      final h = await restore(
+        'ready',
+        taskId: oldTask,
+        bytes: _manifest.bytes,
+        fields: {
+          'verification': _verifiedRecord().verification!.toJson(),
+          'allowMobileData': true,
+          'extensionFromAnotherWriter': {'version': 1},
+        },
+      );
+      expect(h.controller.state.value, isA<ModelReady>());
+      expect(h.controller.allowMobileData.value, isTrue);
+      expect(
+        await h.controller.verifiedModelPath().timeout(bound),
+        _fileIdentity().canonicalPath,
+      );
+      expect(h.storage.verifications, 0);
+      expect(h.transport.enqueues, isEmpty);
+    });
+
+    test('v1 failed task offers Retry and replaces the stopped task', () async {
+      final h = await restore(
+        'failed',
+        taskId: oldTask,
+        nativeStatus: ModelTransferStatus.canceled,
+      );
+      expect(h.controller.state.value, isA<ModelFailed>());
+      await h.controller.retry().timeout(bound);
+      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.transport.enqueues.single.taskId, isNot(oldTask));
+      expect(h.transport.forgets, [oldTask]);
+    });
+
+    test(
+      'v1 removing finishes ownership cleanup and offers a new download',
+      () async {
+        final h = await restore('removing', taskId: oldTask);
+        expect(h.transport.cancels, [oldTask]);
+        expect(h.storage.removals, 1);
+        expect(h.controller.state.value, isA<ModelNotDownloaded>());
+        await h.controller.start(allowMobileData: false).timeout(bound);
+        expect(h.transport.enqueues, hasLength(1));
+      },
+    );
+
+    test('persisted waiting intent starts when Wi-Fi returns', () async {
+      final h = await restore('awaitingConnection', wifi: false);
+      expect(h.controller.state.value, isA<ModelAwaitingConnection>());
+      expect(h.transport.enqueues, isEmpty);
+      h.network.changeWifi(true);
+      await h.flush().timeout(bound);
+      expect(h.controller.state.value, isA<ModelDownloading>());
+      expect(h.transport.enqueues, hasLength(1));
+    });
+
+    test(
+      'persisted Android scheduled hold preserves the task until it runs',
+      () async {
+        final h = await restore(
+          'scheduledWaitingForConnection',
+          taskId: oldTask,
+          bytes: 42,
+          nativeStatus: ModelTransferStatus.scheduledWaitingForConnection,
+        );
+        final waiting = h.controller.state.value as ModelWaitingForConnection;
+        expect(waiting.retainedBytes, 42);
+        expect(waiting.resumesInBackground, isTrue);
+        await h.event(ModelTransferStatus.running, bytes: 42).timeout(bound);
+        expect(
+          (h.controller.state.value as ModelDownloading).receivedBytes,
+          42,
+        );
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    const partial = ModelResumeCheckpoint(retainedBytes: 42);
+    for (final (phase, expectedState) in [
+      ('serverRetry', isA<ModelServerRetry>()),
+      ('transferNeedsSpace', isA<ModelDownloadNeedsSpace>()),
+      ('storageWriteFailed', isA<ModelStorageWriteFailed>()),
+    ]) {
+      test('persisted $phase Retry reuses its confirmed partial', () async {
+        final h = await restore(
+          phase,
+          taskId: oldTask,
+          bytes: 42,
+          checkpoint: partial,
+          fields: {
+            'recovery': const ModelTransferRecovery(
+              checkpoint: partial,
+            ).toJson(),
+          },
+        );
+        expect(h.controller.state.value, expectedState);
+        await h.controller.retry().timeout(bound);
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.transport.resumes, [(taskId: oldTask, requiresWiFi: true)]);
+        expect(h.transport.enqueues, isEmpty);
+      });
+    }
+
+    test(
+      'persisted connection wait retains progress and resumes on Wi-Fi',
+      () async {
+        final h = await restore(
+          'waitingForConnection',
+          taskId: oldTask,
+          bytes: 42,
+          wifi: false,
+          offline: true,
+          fields: {
+            'recovery': const ModelTransferRecovery(
+              checkpoint: partial,
+            ).toJson(),
+          },
+          checkpoint: partial,
+        );
+        expect(
+          (h.controller.state.value as ModelWaitingForConnection).retainedBytes,
+          42,
+        );
+        h.network.changeWifi(true);
+        await h.flush().timeout(bound);
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.transport.resumes, [(taskId: oldTask, requiresWiFi: true)]);
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    test(
+      'persisted confirmed restart offers and starts a replacement',
+      () async {
+        final h = await restore(
+          'restartRequired',
+          taskId: oldTask,
+          bytes: 42,
+          fields: {
+            'recovery': const ModelTransferRecovery(
+              restartsFromZero: true,
+            ).toJson(),
+          },
+        );
+        expect(h.controller.state.value, isA<ModelRestartRequired>());
+        await h.controller.retry().timeout(bound);
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.transport.cancels, [oldTask]);
+        expect(h.transport.enqueues.single.taskId, isNot(oldTask));
+      },
+    );
+
+    test('persisted integrity repair replaces the damaged task once', () async {
+      final h = await restore(
+        'integrityRepairPending',
+        taskId: oldTask,
+        bytes: _manifest.bytes,
+        fields: {'integrityRepairAttempted': true},
+      );
+      expect(h.controller.state.value, isA<ModelIntegrityRepair>());
+      expect(h.storage.removals, 1);
+      expect(h.transport.forgets, [oldTask]);
+      expect(h.transport.enqueues.single.taskId, isNot(oldTask));
+    });
+
+    test(
+      'persisted exhausted integrity repair can be retried explicitly',
+      () async {
+        final h = await restore(
+          'integrityFailed',
+          fields: {'integrityRepairAttempted': true},
+        );
+        expect(
+          (h.controller.state.value as ModelIntegrityRepair).needsManualRetry,
+          isTrue,
+        );
+        await h.controller.retry().timeout(bound);
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.transport.enqueues, hasLength(1));
+      },
+    );
+
+    test('persisted genuine higher build floor requires an update', () async {
+      final h = await restore(
+        'failed',
+        fields: {
+          'manifest': {..._manifest.toJson(), 'minAppBuild': 346},
+        },
+      );
+      expect(h.controller.state.value, isA<ModelUpdateRequired>());
+      expect(h.transport.enqueues, isEmpty);
+    });
+  });
+
+  for (final (label, readUnavailableBuild) in <(String, int Function())>[
+    ('exception', () => throw StateError('build not available yet')),
+    ('unknown build number', () => 0),
+  ]) {
+    test(
+      'Retry after a transient build lookup failure ($label) starts a compatible download',
+      () async {
+        const bound = Duration(seconds: 3);
+        var reads = 0;
+        final h = await _Harness.create(
+          record: ModelDeliveryRecord.fromJson({
+            'version': 1,
+            'manifest': null,
+            'taskId': null,
+            'receivedBytes': 0,
+            'phase': 'failed',
+            'allowMobileData': false,
+          }),
+          appBuild: () async {
+            if (reads++ == 0) return readUnavailableBuild();
+            return 345;
+          },
+        ).timeout(bound);
+        addTearDown(() => h.dispose().timeout(bound));
+        expect(h.controller.state.value, isA<ModelFailed>());
+        expect(h.transport.enqueues, isEmpty);
+
+        await h.controller.retry().timeout(bound);
+
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        expect(h.transport.enqueues, hasLength(1));
+      },
+    );
+  }
+
   test(
     'persistent record round trips consent, manifest and partial identity',
     () {
@@ -2779,7 +3149,11 @@ class _Harness {
     bool supported = true,
     bool canRecoverUnexpectedPauses = false,
     bool wifi = true,
+    bool offline = false,
     int freeBytes = 1000,
+    int? modelLength,
+    Future<int> Function()? appBuild,
+    ModelResumeCheckpoint? checkpoint,
     ModelDeliveryRecord? record,
     ModelTransferStatus? restoredStatus,
     int restoredBytes = 0,
@@ -2801,10 +3175,13 @@ class _Harness {
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
       ..safety = safety
       ..freeBytes = freeBytes
+      ..length = modelLength
       ..failPrepare = failPrepare
       ..verification = verification;
     if (identity != null) storage.identity = identity;
-    final network = _Network()..wifi = wifi;
+    final network = _Network()
+      ..wifi = wifi
+      ..offline = offline;
     final transport = _Transport()
       ..canRecoverUnexpectedPauses = canRecoverUnexpectedPauses;
     if (restoredStatus != null) {
@@ -2814,12 +3191,15 @@ class _Harness {
         receivedBytes: restoredBytes,
       );
     }
+    if (checkpoint != null) {
+      transport.checkpoints[record!.taskId!] = checkpoint;
+    }
     var next = 0;
     final controller = PersistentModelDeliveryController(
       storage: storage,
       network: network,
       transport: transport,
-      appBuild: () async => 129,
+      appBuild: appBuild ?? (() async => 129),
       supported: supported,
       readAvailableMemory: readAvailableMemory ?? () async => true,
       readCapability:
