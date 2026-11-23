@@ -7501,6 +7501,15 @@ visible and cannot become an ordinary first-attempt PASS.
   passed on `7267f93f` and corrected cap-one `a5deaeb9` in separate exact
   runs (`m-34c8a39c`). The three-slot source passed the 3,171-case
   conversation row, including B15RA-015 and the received-sticker Save case.
+  B15RA-015 holds the first committed SQLite receipt before its caller
+  finishes. The profile switch no longer waits for the optional checkpoint's
+  disk hook. A controlled 1.2-second prepare delay made the original hook
+  miss its guard and reproduced the three-second test timeout. PB264-07
+  synchronizes the real worker's transaction request with the role writer's
+  commit. Holding the writer with a zero worker busy timeout reproduced
+  SQLite result 5 at BEGIN IMMEDIATE. The worker reports its phase, result
+  code and stack as text so a native handle cannot hide the SQLite error.
+  The first broad logs remain in the m-3fb0aaca receipt.
   BL-58's two-line retained-Thought binding changed both DTR-18 bootstrap
   digests. Removing that binding reproduces the prior bootstrap bytes.
   The reviewed test-only `9b537f74` re-pin passed the four unchanged DTR-18

@@ -13,6 +13,7 @@ const _createdAt = '2026-07-21T08:00:00.000Z';
 const _joinedAt = '2026-07-21T08:01:00.000Z';
 const _watermark = '2026-07-21T08:02:00.000Z';
 const _eventAt = '2026-07-21T08:03:00.000Z';
+const _overlapTimeout = Duration(seconds: 5);
 
 Map<String, Object?> _intent(
   String groupId, {
@@ -224,6 +225,114 @@ Future<void> _closeSharedDatabasePair(
   }
 }
 
+/// Lets the test hold the real transaction at its entry point. Reads made
+/// before that point still go directly to the independent SQLite connection.
+class _TransactionGatedDatabase implements Database {
+  _TransactionGatedDatabase(this._database, this._beforeTransaction);
+
+  final Database _database;
+  final Future<void> Function() _beforeTransaction;
+
+  @override
+  Future<T> transaction<T>(
+    Future<T> Function(Transaction txn) action, {
+    bool? exclusive,
+  }) async {
+    await _beforeTransaction();
+    return _database.transaction(action, exclusive: exclusive);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> query(
+    String table, {
+    bool? distinct,
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereArgs,
+    String? groupBy,
+    String? having,
+    String? orderBy,
+    int? limit,
+    int? offset,
+  }) => _database.query(
+    table,
+    distinct: distinct,
+    columns: columns,
+    where: where,
+    whereArgs: whereArgs,
+    groupBy: groupBy,
+    having: having,
+    orderBy: orderBy,
+    limit: limit,
+    offset: offset,
+  );
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) => _database.rawQuery(sql, arguments);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<void> _expectWorkerCommand(
+  StreamIterator<Object?> commands,
+  String command,
+) async {
+  if (!await commands.moveNext().timeout(_overlapTimeout) ||
+      commands.current != command) {
+    throw StateError('Expected the parent to send $command');
+  }
+}
+
+Future<Object?> _receiveWorkerEvent(
+  StreamIterator<Object?> events,
+  String description,
+) async {
+  final received = await events.moveNext().timeout(
+    _overlapTimeout,
+    onTimeout: () => fail('Timed out waiting for $description'),
+  );
+  if (!received) fail('Worker stopped before $description');
+  final event = events.current;
+  if (event is Map<String, Object?> && event['workerError'] != null) {
+    fail(event['workerError'].toString());
+  }
+  return event;
+}
+
+Never _throwExitWorkerError(String phase, Object error, StackTrace stack) {
+  final code = error is DatabaseException ? error.getResultCode() : null;
+  final remote = RemoteError(
+    '$phase: ${error.runtimeType} (SQLite result code $code): $error',
+    stack.toString(),
+  );
+  Error.throwWithStackTrace(remote, remote.stackTrace);
+}
+
+// Keep the spawned closure's lexical scope limited to sendable arguments.
+Future<Map<String, Object?>> _runIsolatedExitClaim({
+  required String path,
+  required Map<String, Object?> expected,
+  required Map<String, Object?> timelineRow,
+  required Map<String, Object?> pendingBroadcastRow,
+  required String updatedAt,
+  required SendPort ready,
+  bool gateTransaction = false,
+}) => Isolate.run(
+  () => _prepareExitOnIsolatedFfiWorker(
+    path: path,
+    expected: expected,
+    timelineRow: timelineRow,
+    pendingBroadcastRow: pendingBroadcastRow,
+    updatedAt: updatedAt,
+    ready: ready,
+    gateTransaction: gateTransaction,
+  ),
+);
+
 Future<Map<String, Object?>> _prepareExitOnIsolatedFfiWorker({
   required String path,
   required Map<String, Object?> expected,
@@ -231,21 +340,42 @@ Future<Map<String, Object?>> _prepareExitOnIsolatedFfiWorker({
   required Map<String, Object?> pendingBroadcastRow,
   required String updatedAt,
   required SendPort ready,
+  bool gateTransaction = false,
 }) async {
-  ready.send('worker-entered');
-  sqfliteFfiInit();
-  final isolatedDb = await databaseFactoryFfiNoIsolate.openDatabase(
-    path,
-    options: OpenDatabaseOptions(singleInstance: false),
-  );
+  var phase = 'initialize FFI';
+  var failed = false;
+  Database? isolatedDb;
+  final control = ReceivePort();
+  final commands = StreamIterator<Object?>(control);
   try {
-    await isolatedDb.execute('PRAGMA busy_timeout = 5000');
-    final start = ReceivePort();
-    ready.send(start.sendPort);
-    await start.first;
-    start.close();
+    ready.send('worker-entered');
+    sqfliteFfiInit();
+    phase = 'open database';
+    final opened = await databaseFactoryFfiNoIsolate.openDatabase(
+      path,
+      options: OpenDatabaseOptions(singleInstance: false),
+    );
+    isolatedDb = opened;
+    phase = 'configure database';
+    await opened.execute('PRAGMA busy_timeout = 5000');
+    phase = 'wait for claim start';
+    ready.send(control.sendPort);
+    if (gateTransaction) {
+      await _expectWorkerCommand(commands, 'start');
+    } else {
+      await commands.moveNext();
+    }
+    phase = 'prepare leave notice';
+    final database = gateTransaction
+        ? _TransactionGatedDatabase(opened, () async {
+            phase = 'wait for transaction release';
+            ready.send('transaction-requested');
+            await _expectWorkerCommand(commands, 'run-transaction');
+            phase = 'prepare leave notice';
+          })
+        : opened;
     final result = await dbPrepareGroupExitLeaveNotice(
-      isolatedDb,
+      database,
       expected: expected,
       timelineRow: timelineRow,
       pendingBroadcastRow: pendingBroadcastRow,
@@ -255,8 +385,17 @@ Future<Map<String, Object?>> _prepareExitOnIsolatedFfiWorker({
       'disposition': result.disposition.name,
       'current': result.current,
     };
+  } catch (error, stack) {
+    failed = true;
+    _throwExitWorkerError(phase, error, stack);
   } finally {
-    await isolatedDb.close();
+    control.close();
+    await commands.cancel();
+    try {
+      await isolatedDb?.close();
+    } catch (error, stack) {
+      if (!failed) _throwExitWorkerError('close database', error, stack);
+    }
   }
 }
 
@@ -1080,68 +1219,74 @@ void main() {
       );
 
       final exitWorkerReady = ReceivePort();
-      addTearDown(exitWorkerReady.close);
       final exitWorkerEvents = StreamIterator<Object?>(exitWorkerReady);
       final workerPath = '${pair.directory.path}/identity.db';
       final workerExpected = Map<String, Object?>.from(queued);
       final workerTimeline = _timeline(groupId);
       final workerPending = _pending(groupId);
       final workerReadyPort = exitWorkerReady.sendPort;
-      var exitSettled = false;
       final exitClaim =
-          Isolate.run(
-                () => _prepareExitOnIsolatedFfiWorker(
-                  path: workerPath,
-                  expected: workerExpected,
-                  timelineRow: workerTimeline,
-                  pendingBroadcastRow: workerPending,
-                  updatedAt: '2026-07-21T08:03:50.000Z',
-                  ready: workerReadyPort,
-                ),
-              )
-              .catchError((Object error, StackTrace stackTrace) {
-                workerReadyPort.send('worker-error: $error');
-                Error.throwWithStackTrace(error, stackTrace);
-              })
-              .whenComplete(() => exitSettled = true);
-      expect(
-        await exitWorkerEvents.moveNext().timeout(const Duration(seconds: 5)),
-        isTrue,
-      );
-      expect(exitWorkerEvents.current, 'worker-entered');
-      expect(
-        await exitWorkerEvents.moveNext().timeout(const Duration(seconds: 5)),
-        isTrue,
-      );
-      final startExitClaim = exitWorkerEvents.current as SendPort;
+          _runIsolatedExitClaim(
+            path: workerPath,
+            expected: workerExpected,
+            timelineRow: workerTimeline,
+            pendingBroadcastRow: workerPending,
+            updatedAt: '2026-07-21T08:03:50.000Z',
+            ready: workerReadyPort,
+            gateTransaction: true,
+          ).catchError((Object error, StackTrace stackTrace) {
+            final failure = <String, Object?>{
+              'workerError': '$error\n$stackTrace',
+            };
+            workerReadyPort.send(failure);
+            return failure;
+          });
 
-      final roleWriterHasLock = Completer<void>();
-      final allowRoleInsert = Completer<void>();
-      final roleInsert = dbWriteTransaction(pair.first, (transaction) async {
-        roleWriterHasLock.complete();
-        await allowRoleInsert.future;
-        await transaction.insert(
-          'pending_group_broadcasts',
-          _pending(
-            groupId,
-            id: 'overlapping-role-$groupId',
-            kind: 'member_role_updated_prepared',
-            source: 'overlapping-role-source-$groupId',
-          ),
+      SendPort? workerControl;
+      late final Map<String, Object?> result;
+      try {
+        expect(
+          await _receiveWorkerEvent(exitWorkerEvents, 'worker entry'),
+          'worker-entered',
         );
-      });
-      await roleWriterHasLock.future;
-      startExitClaim.send(null);
+        final control = await _receiveWorkerEvent(
+          exitWorkerEvents,
+          'the worker database to open',
+        );
+        if (control is! SendPort) fail('Expected a worker control port');
+        workerControl = control;
 
-      // The production claim has been invoked on a second handle while the
-      // role transaction owns SQLite's write lock. It cannot inspect role
-      // absence or settle until that competing transaction commits.
-      await Future<void>.delayed(const Duration(milliseconds: 25));
-      expect(exitSettled, isFalse);
-      allowRoleInsert.complete();
-
-      await roleInsert;
-      final result = await exitClaim;
+        await dbWriteTransaction(pair.first, (transaction) async {
+          // SQLite's role writer owns the lock here. Any check outside the
+          // worker transaction would read role absence before the insert.
+          control.send('start');
+          expect(
+            await _receiveWorkerEvent(
+              exitWorkerEvents,
+              'the production transaction request',
+            ),
+            'transaction-requested',
+          );
+          await transaction.insert(
+            'pending_group_broadcasts',
+            _pending(
+              groupId,
+              id: 'overlapping-role-$groupId',
+              kind: 'member_role_updated_prepared',
+              source: 'overlapping-role-source-$groupId',
+            ),
+          );
+        });
+        // Resume the same claim only after the role transaction has committed.
+        control.send('run-transaction');
+        result = await exitClaim.timeout(_overlapTimeout);
+        if (result['workerError'] case final String failure) fail(failure);
+      } finally {
+        workerControl?.send('cancel');
+        exitWorkerReady.close();
+        await exitWorkerEvents.cancel();
+        await exitClaim.timeout(_overlapTimeout);
+      }
       final roleRows = await pair.first.query(
         'pending_group_broadcasts',
         where: 'group_id = ? AND kind IN (?, ?)',

@@ -323,31 +323,74 @@ void main() {
     expect((jsonDecode(utf8.decode(bytes!)) as Map)['phase'], 'qualified_retained');
   });
 
-  test('B15RA-015 profile ABA cannot apply an old accepted receipt or borrow restored lineage', () async {
-    h.holdCheckpoint();
-    await _bounded(h.admitInitial(flush: false));
-    await _bounded(h.checkpointHold['entered']!.future);
-    try {
-      await _bounded(h.receipt(capturedActivity: h.capture()));
-      h.reporter.observeIdentity(accountPeerId: _account,
-        rootPrivateKeyBase64: 'public-other-profile',
-        profileBinding: 'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-      h.reporter.observeIdentity(accountPeerId: _account,
-        rootPrivateKeyBase64: 'public-test-fixture-not-a-real-private-key',
-        profileBinding: _binding);
-    } finally {
-      h.releaseCheckpoint();
-    }
-    await _bounded(h.reporter.flush());
-    await _bounded(h.receipt(capturedActivity: h.capture()));
-    await _bounded(h.reporter.flush());
-    expect(h.bridge.operations('markWeekly'), isEmpty);
-    final bytes = await _bounded(h.store.read(isCurrent: () => true));
-    if (bytes != null) {
-      final contacts = (jsonDecode(utf8.decode(bytes)) as Map)['contacts'] as List;
-      expect(contacts.where((c) => (c as Map)['deliveredOutgoingSeen'] == true), isEmpty);
-    }
-  });
+  test(
+    'B15RA-015 profile ABA cannot apply an old accepted receipt or borrow restored lineage',
+    () async {
+      final committed = Completer<void>();
+      final releaseReceipt = Completer<void>();
+      final held = await _bounded(
+        _ReceiptHarness.create(
+          afterReceipt: () async {
+            if (committed.isCompleted) return;
+            committed.complete();
+            await _bounded(releaseReceipt.future);
+          },
+        ),
+      );
+      try {
+        // Keep initial lineage unpublished even if optional checkpoint
+        // preparation expires before reaching the store's hold.
+        held.holdCheckpoint();
+        await _bounded(held.admitInitial(flush: false));
+        final receipt = held.receipt(capturedActivity: held.capture());
+        try {
+          await _bounded(Future.any([committed.future, receipt]));
+          expect(
+            committed.isCompleted,
+            isTrue,
+            reason: 'The receipt must reach the committed SQL checkpoint',
+          );
+          final delivered = await _bounded(
+            held.fixture.messageRepo.getMessage(_message),
+          );
+          expect(delivered?.status, 'delivered');
+          held.reporter.observeIdentity(
+            accountPeerId: _account,
+            rootPrivateKeyBase64: 'public-other-profile',
+            profileBinding:
+                'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          );
+          held.reporter.observeIdentity(
+            accountPeerId: _account,
+            rootPrivateKeyBase64: 'public-test-fixture-not-a-real-private-key',
+            profileBinding: _binding,
+          );
+        } finally {
+          held.releaseCheckpoint();
+          releaseReceipt.complete();
+          await _bounded(receipt);
+        }
+        await _bounded(held.reporter.flush());
+        await _bounded(held.receipt(capturedActivity: held.capture()));
+        await _bounded(held.reporter.flush());
+        expect(held.bridge.operations('markWeekly'), isEmpty);
+        final bytes = await _bounded(held.store.read(isCurrent: () => true));
+        if (bytes != null) {
+          final contacts =
+              (jsonDecode(utf8.decode(bytes)) as Map)['contacts'] as List;
+          expect(
+            contacts.where((c) => (c as Map)['deliveredOutgoingSeen'] == true),
+            isEmpty,
+          );
+        }
+      } finally {
+        if (!releaseReceipt.isCompleted) {
+          releaseReceipt.complete();
+        }
+        await _bounded(held.close());
+      }
+    },
+  );
 
   test('B15RA-016 OFF-started real delete invalidates a new-epoch same-id admission after ON', () async {
     final entered = Completer<void>();
