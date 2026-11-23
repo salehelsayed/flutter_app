@@ -1728,8 +1728,10 @@ void main() {
       final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
       _Storage? storage;
       final h = await _Harness.create(
-        publishBackgroundStatus: (state) async =>
-            notices.add((state, storage?.record)),
+        publishBackgroundStatus: (state, {required allowForeground}) async {
+          expect(allowForeground, isFalse);
+          notices.add((state, storage?.record));
+        },
       ).timeout(bound);
       storage = h.storage;
       addTearDown(() => h.dispose().timeout(bound));
@@ -1785,7 +1787,8 @@ void main() {
     test('Remove while Ready is committing suppresses the notice', () async {
       final notices = <ModelDeliveryState>[];
       final h = await _Harness.create(
-        publishBackgroundStatus: (state) async => notices.add(state),
+        publishBackgroundStatus: (state, {required allowForeground}) async =>
+            notices.add(state),
       ).timeout(bound);
       addTearDown(() => h.dispose().timeout(bound));
       final write = holdRecordWrite(h.storage, ModelDeliveryPhase.ready);
@@ -1803,13 +1806,71 @@ void main() {
       expect(notices.whereType<ModelReady>(), isEmpty);
     });
 
+    test('Ready on foreground follows a deferred background check', () async {
+      var background = true;
+      final firstWindowEnded = Completer<void>();
+      final foregroundWindowEnded = Completer<void>();
+      final readyPosted = Completer<void>();
+      final events = <String>[];
+      final h = await _Harness.create(
+        isAppBackground: () => background,
+        finishVerificationWindow: (_) async {
+          events.add('end');
+          if (!firstWindowEnded.isCompleted) {
+            firstWindowEnded.complete();
+          } else {
+            foregroundWindowEnded.complete();
+          }
+        },
+        publishBackgroundStatus: (state, {required allowForeground}) async {
+          expect(state, isA<ModelReady>());
+          expect(allowForeground, isTrue);
+          events.add('ready');
+          readyPosted.complete();
+        },
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+      final checking = Completer<bool>();
+      final checkingStarted = Completer<void>();
+      h.storage
+        ..verification = checking
+        ..verificationStarted = checkingStarted;
+      addTearDown(() {
+        if (!checking.isCompleted) checking.complete(false);
+      });
+
+      await h.controller.start(allowMobileData: false).timeout(bound);
+      await h.event(ModelTransferStatus.complete).timeout(bound);
+      await checkingStarted.future.timeout(bound);
+      h.storage.identity = null;
+      checking.complete(false);
+      await firstWindowEnded.future.timeout(bound);
+
+      expect(h.controller.state.value, isA<ModelChecking>());
+      expect(h.storage.removals, 0);
+      expect(events, ['end']);
+
+      background = false;
+      h.storage
+        ..identity = _fileIdentity()
+        ..verification = null
+        ..verificationStarted = null;
+      h.controller.resumeVerification();
+      await readyPosted.future.timeout(bound);
+      await foregroundWindowEnded.future.timeout(bound);
+
+      expect(h.storage.record!.phase, ModelDeliveryPhase.ready);
+      expect(h.transport.enqueues, hasLength(1));
+      expect(events, ['end', 'ready', 'end']);
+    });
+
     test(
       'acknowledged Pause publishes once after owned progress commits',
       () async {
         final notices = <(ModelDeliveryState, ModelDeliveryRecord?)>[];
         _Storage? storage;
         final h = await _Harness.create(
-          publishBackgroundStatus: (state) async =>
+          publishBackgroundStatus: (state, {required allowForeground}) async =>
               notices.add((state, storage?.record)),
         ).timeout(bound);
         storage = h.storage;
@@ -2542,7 +2603,9 @@ class _Harness {
     Future<bool> Function()? readAvailableMemory,
     Future<({bool supported, bool insufficientMemory})> Function()?
     readCapability,
-    Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
+    ModelDeliveryNoticePublisher? publishBackgroundStatus,
+    bool Function()? isAppBackground,
+    Future<void> Function(String taskId)? finishVerificationWindow,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
@@ -2575,6 +2638,8 @@ class _Harness {
       spaceReserveBytes: 20,
       newTaskId: () => 'task-${++next}',
       publishBackgroundStatus: publishBackgroundStatus,
+      isAppBackground: isAppBackground,
+      finishVerificationWindow: finishVerificationWindow,
     );
     await controller.initialize();
     return _Harness(controller, storage, network, transport);

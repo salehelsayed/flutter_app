@@ -9,6 +9,7 @@ import 'package:clock/clock.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/storage/exclude_from_backup.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
@@ -24,6 +25,7 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
   final service = GemmaPreviewService.instance;
   final resumeStorage = LocalStorePersistentStorage();
   final notices = ModelDeliveryNotifications();
+  const verificationChannel = MethodChannel('mknoon/gemma_preview');
   final controller = PersistentModelDeliveryController(
     storage: AppSupportModelDeliveryStorage(
       removeModel: service.removeDownloadedModel,
@@ -39,6 +41,21 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
     readCapability: readTranslationCapabilityFacts,
     publishBackgroundStatus: notices.publish,
     clearBackgroundStatus: notices.clear,
+    isAppBackground: () => notices.isBackground,
+    verificationWasBackgrounded: Platform.isIOS
+        ? (taskId) async =>
+              await verificationChannel.invokeMethod<bool>(
+                'translatorVerificationWasBackgrounded',
+                taskId,
+              ) ??
+              false
+        : null,
+    finishVerificationWindow: Platform.isIOS
+        ? (taskId) => verificationChannel.invokeMethod<void>(
+            'finishTranslatorVerification',
+            taskId,
+          )
+        : null,
   );
   service.setInferenceSafetyController(controller);
   service.setDownloadedModelPathResolver(controller.verifiedModelPath);

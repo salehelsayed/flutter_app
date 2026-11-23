@@ -9,6 +9,7 @@ import os
 import os.log
 import UIKit
 import UserNotifications
+import background_downloader
 
 private let groupMediaNativeProofLog = OSLog(
   subsystem: "com.mknoon.group-media-269",
@@ -833,6 +834,39 @@ final class IosSetupReadinessEntryCoordinator {
   }
 }
 
+@MainActor
+final class TranslatorVerificationWindow {
+  private struct Completion {
+    let assertion: UIBackgroundTaskIdentifier
+    let wasBackgrounded: Bool
+  }
+
+  private let registry: CriticalTaskRegistry
+  private var completions: [String: Completion] = [:]
+
+  init(registry: CriticalTaskRegistry) {
+    self.registry = registry
+  }
+
+  func recordCompletion(taskId: String, wasBackgrounded: Bool) {
+    guard completions[taskId] == nil else { return }
+    completions[taskId] = Completion(
+      assertion: registry.begin(withName: "mknoon.translatorVerification"),
+      wasBackgrounded: wasBackgrounded
+    )
+  }
+
+  func wasBackgrounded(taskId: String) -> Bool {
+    completions[taskId]?.wasBackgrounded ?? false
+  }
+
+  func finish(taskId: String) {
+    if let completion = completions.removeValue(forKey: taskId) {
+      registry.end(completion.assertion)
+    }
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private static var firebaseConfigured = false
@@ -895,6 +929,7 @@ final class IosSetupReadinessEntryCoordinator {
   private let diskSpaceChannelName = "mknoon/disk_space"
   private var diskSpaceChannel: FlutterMethodChannel?
   private var gemmaPreviewChannel: FlutterMethodChannel?
+  private lazy var translatorVerificationWindow = TranslatorVerificationWindow(registry: .shared)
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
@@ -969,6 +1004,7 @@ final class IosSetupReadinessEntryCoordinator {
     installNotificationCenterDelegate(context: "before_didFinishLaunching_super")
     // BGTaskScheduler requires the handler before launch finishes.
     updateCheckBackground.registerLaunchHandler()
+    installTranslatorVerificationWindow()
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     configureIosNotificationOpenBridgeFromRootViewController()
     installNotificationCenterDelegate(context: "after_didFinishLaunching_super")
@@ -2093,6 +2129,31 @@ final class IosSetupReadinessEntryCoordinator {
     diskSpaceChannel = channel
   }
 
+  private func installTranslatorVerificationWindow() {
+    let previous = BDPlugin.onNativeTaskStatusChange
+    // The downloader exposes the destination enum as the wire index.
+    let applicationSupport = 2
+    BDPlugin.onNativeTaskStatusChange = { [weak self] task, update in
+      if update.taskStatus == .complete,
+         task.taskType == "DownloadTask",
+         task.group == "mknoon_gemma_translation",
+         task.directory == "gemma_translation",
+         task.filename == "gemma-4-E2B-it.litertlm",
+         task.baseDirectory == applicationSupport,
+         !task.taskId.isEmpty {
+        let taskId = task.taskId
+        // This precedes the plugin's status delivery on the same main queue.
+        DispatchQueue.main.async { [weak self] in
+          self?.translatorVerificationWindow.recordCompletion(
+            taskId: taskId,
+            wasBackgrounded: UIApplication.shared.applicationState == .background
+          )
+        }
+      }
+      previous?(task, update)
+    }
+  }
+
   // TRANSLATE_PREVIEW: memory figures, model backup exclusion, and voice messages
   // decoded to mono 16-bit PCM for the on-device model. Dart only calls it when
   // the preview is built in.
@@ -2104,7 +2165,7 @@ final class IosSetupReadinessEntryCoordinator {
       name: "mknoon/gemma_preview",
       binaryMessenger: messenger
     )
-    channel.setMethodCallHandler { call, result in
+    channel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "deviceCapabilities":
         result([
@@ -2113,6 +2174,17 @@ final class IosSetupReadinessEntryCoordinator {
         ])
       case "memory":
         result(Self.gemmaPreviewMemory())
+      case "translatorVerificationWasBackgrounded", "finishTranslatorVerification":
+        guard let taskId = call.arguments as? String, !taskId.isEmpty else {
+          result(FlutterError(code: "bad_args", message: "taskId is required", details: nil))
+          return
+        }
+        if call.method == "translatorVerificationWasBackgrounded" {
+          result(self?.translatorVerificationWindow.wasBackgrounded(taskId: taskId) ?? false)
+        } else {
+          self?.translatorVerificationWindow.finish(taskId: taskId)
+          result(nil)
+        }
       case "excludeFromBackup":
         guard let args = call.arguments as? [String: Any],
               let path = args["path"] as? String, !path.isEmpty else {

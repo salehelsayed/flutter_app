@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_platform.dart';
@@ -20,6 +21,7 @@ ModelDeliveryController? get productionTranslatePreviewDelivery {
 
 PersistentModelDeliveryController _createController() {
   final controller = createProductionModelDeliveryController();
+  AppLifecycleListener(onResume: controller.resumeVerification);
   unawaited(
     readTranslationCapabilityFacts().then((facts) {
       controller.setCapability(

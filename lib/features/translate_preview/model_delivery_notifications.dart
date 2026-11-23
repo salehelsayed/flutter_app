@@ -22,13 +22,17 @@ final class ModelDeliveryNotifications {
     iOS: DarwinNotificationDetails(presentSound: false, presentBadge: false),
   );
 
-  bool get _isBackground => switch (WidgetsBinding.instance.lifecycleState) {
+  bool get isBackground => switch (WidgetsBinding.instance.lifecycleState) {
     AppLifecycleState.hidden || AppLifecycleState.paused => true,
     _ => false,
   };
 
-  Future<void> publish(ModelDeliveryState state) async {
-    if (!_isBackground) return;
+  Future<void> publish(
+    ModelDeliveryState state, {
+    required bool allowForeground,
+  }) async {
+    bool canPublish() => isBackground || allowForeground && state is ModelReady;
+    if (!canPublish()) return;
     final revision = ++_revision;
     final bool enabled = switch (defaultTargetPlatform) {
       TargetPlatform.android =>
@@ -48,7 +52,7 @@ final class ModelDeliveryNotifications {
             false,
       _ => false,
     };
-    if (!enabled || revision != _revision || !_isBackground) return;
+    if (!enabled || revision != _revision || !canPublish()) return;
 
     final locale = WidgetsBinding.instance.platformDispatcher.locale;
     final l10n = lookupAppLocalizations(

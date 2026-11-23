@@ -461,6 +461,12 @@ abstract interface class ModelDeliveryTransport {
   Future<void> dispose();
 }
 
+typedef ModelDeliveryNoticePublisher =
+    Future<void> Function(
+      ModelDeliveryState state, {
+      required bool allowForeground,
+    });
+
 final class PersistentModelDeliveryController extends ModelDeliveryController {
   PersistentModelDeliveryController({
     required ModelDeliveryStorage storage,
@@ -473,8 +479,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     readCapability,
     int spaceReserveBytes = modelDeliverySpaceReserve,
     String Function()? newTaskId,
-    Future<void> Function(ModelDeliveryState)? publishBackgroundStatus,
+    ModelDeliveryNoticePublisher? publishBackgroundStatus,
     Future<void> Function()? clearBackgroundStatus,
+    bool Function()? isAppBackground,
+    Future<bool> Function(String taskId)? verificationWasBackgrounded,
+    Future<void> Function(String taskId)? finishVerificationWindow,
   }) : _storage = storage,
        _network = network,
        _transport = transport,
@@ -485,6 +494,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _spaceReserveBytes = spaceReserveBytes,
        _publishBackgroundStatus = publishBackgroundStatus,
        _clearBackgroundStatus = clearBackgroundStatus,
+       _isAppBackground = isAppBackground,
+       _verificationWasBackgrounded = verificationWasBackgrounded,
+       _finishVerificationWindow = finishVerificationWindow,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
     _connectionSubscription = _network.connectionChanges.listen(
@@ -500,8 +512,11 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final Future<({bool supported, bool insufficientMemory})> Function()?
   _readCapability;
   final int _spaceReserveBytes;
-  final Future<void> Function(ModelDeliveryState)? _publishBackgroundStatus;
+  final ModelDeliveryNoticePublisher? _publishBackgroundStatus;
   final Future<void> Function()? _clearBackgroundStatus;
+  final bool Function()? _isAppBackground;
+  final Future<bool> Function(String taskId)? _verificationWasBackgrounded;
+  final Future<void> Function(String taskId)? _finishVerificationWindow;
   final String Function() _newTaskId;
   final _state = ValueNotifier<ModelDeliveryState>(const ModelUnsupported());
   final _allowMobileData = ValueNotifier(false);
@@ -684,7 +699,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       }
       _render();
       if (_canRun && _record.phase == ModelDeliveryPhase.verifying) {
-        _beginVerification();
+        _beginVerification(resuming: true);
       } else if (_canStartPending) {
         await _startOrResume();
       }
@@ -881,6 +896,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     return path;
   }
 
+  void resumeVerification() {
+    if (!_disposed && _record.phase == ModelDeliveryPhase.verifying) {
+      _beginVerification(resuming: true);
+    }
+  }
+
   @override
   Future<void> refresh() async {
     try {
@@ -891,6 +912,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         if (_disposed) return;
         _connection = connection;
         _freeBytes = freeBytes;
+        resumeVerification();
         if (_record.phase == ModelDeliveryPhase.insufficientSpace &&
             _freeBytes >= _neededBytes) {
           _record = _record.copyWith(
@@ -1260,7 +1282,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       if (accepted || recovering && !managedRecovery) {
         if (accepted) _queuedRequiresWifi = !_record.allowMobileData;
         _render();
-        if (accepted) _runNotice(_clearBackgroundStatus);
+        if (accepted) unawaited(_runNotice(_clearBackgroundStatus));
         return;
       }
       if (resumeCheckpoint != null || _record.receivedBytes > 0) {
@@ -1315,7 +1337,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     )) {
       throw StateError('Translator task was not accepted');
     }
-    _runNotice(_clearBackgroundStatus);
+    unawaited(_runNotice(_clearBackgroundStatus));
   }
 
   Future<bool> _deferOfflineStart() async {
@@ -1381,7 +1403,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _freeBytes = await _storage.availableBytes();
     await _persist();
     _render();
-    _runNotice(_clearBackgroundStatus);
+    unawaited(_runNotice(_clearBackgroundStatus));
   }
 
   Future<void> _cancelOwnedTask({bool requireConfirmedStop = false}) async {
@@ -1389,6 +1411,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     if (id != null) {
       await _transport.cancel(id, requireConfirmedStop: requireConfirmedStop);
       await _transport.forget(id);
+      await _releaseVerificationWindow(id);
     }
   }
 
@@ -1515,12 +1538,16 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         confirmedReceivedBytes: confirmed,
       );
     }
-    _runNotice(() => publish(status));
+    unawaited(_runNotice(() => publish(status, allowForeground: false)));
   }
 
-  void _runNotice(Future<void> Function()? action) {
+  Future<void> _runNotice(Future<void> Function()? action) async {
     if (action == null || _disposed) return;
-    unawaited(Future<void>.sync(action).catchError((Object _) {}));
+    try {
+      await action();
+    } on Object {
+      // Notification delivery does not change the committed download state.
+    }
   }
 
   Future<void> _recoverFromFailure(ModelTransferFailure? failure) async {
@@ -1707,7 +1734,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     await _startOrResume(recoveryGeneration: generation);
   }
 
-  void _beginVerification() {
+  void _beginVerification({bool resuming = false}) {
     final manifest = _record.manifest;
     final id = _record.taskId;
     if (manifest == null || id == null || !_canRun) return;
@@ -1716,6 +1743,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     if (_verification == verification) return;
     _verification = verification;
     unawaited(() async {
+      var allowForeground = resuming || _isAppBackground?.call() == true;
+      if (!allowForeground) {
+        try {
+          allowForeground =
+              await _verificationWasBackgrounded?.call(id) ?? false;
+        } on Object {
+          // The optional native window cannot prevent verification.
+        }
+      }
       var valid = false;
       var damaged = false;
       ModelDeliveryFileIdentity? verifiedIdentity;
@@ -1736,6 +1772,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         valid = false;
       }
       final verified = verifiedIdentity;
+      Future<void>? notice;
       await _queue(() async {
         if (_verification == verification) _verification = null;
         if (_disposed ||
@@ -1745,6 +1782,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             !_canRun) {
           return;
         }
+        if (!valid && !damaged && _isAppBackground?.call() == true) return;
         if (valid && verified != null) {
           _verifiedPath = verified.canonicalPath;
           _record = _record.copyWith(
@@ -1778,11 +1816,16 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           _freeBytes = await _storage.availableBytes();
         }
         await _persist();
+        if (_disposed || generation != _generation) return;
         _render();
         if (_state.value case final ModelReady ready
             when id != _previouslyReadyTaskId) {
           final publish = _publishBackgroundStatus;
-          if (publish != null) _runNotice(() => publish(ready));
+          if (publish != null) {
+            notice = _runNotice(
+              () => publish(ready, allowForeground: allowForeground),
+            );
+          }
         }
       }).catchError((Object _) {
         if (!_disposed && generation == _generation) {
@@ -1790,7 +1833,17 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
           _render();
         }
       });
+      await notice;
+      await _releaseVerificationWindow(id);
     }());
+  }
+
+  Future<void> _releaseVerificationWindow(String taskId) async {
+    try {
+      await _finishVerificationWindow?.call(taskId);
+    } on Object {
+      // The system expires its own assertion if the native channel is lost.
+    }
   }
 
   Future<void> _continueIntegrityRepair() async {

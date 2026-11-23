@@ -269,6 +269,40 @@ final class GoBridgeActivityReporterContractTests: XCTestCase {
 
 final class GoBridgeCriticalTaskTests: XCTestCase {
 
+    @MainActor
+    func testTranslatorCompletionMarkerSurvivesAssertionExpiryOrRefusal() {
+        let scenarios = [
+            (wasBackgrounded: true, refuses: false, expires: false),
+            (wasBackgrounded: true, refuses: false, expires: true),
+            (wasBackgrounded: true, refuses: true, expires: false),
+            (wasBackgrounded: false, refuses: false, expires: false),
+        ]
+        for scenario in scenarios {
+            let manager = FakeBackgroundTaskManager(refuseBegins: scenario.refuses)
+            let window = TranslatorVerificationWindow(
+                registry: CriticalTaskRegistry(backgroundTaskManager: manager)
+            )
+            let taskId = "translator"
+            let assertion = UIBackgroundTaskIdentifier(rawValue: 100)
+
+            window.recordCompletion(taskId: taskId, wasBackgrounded: scenario.wasBackgrounded)
+            window.recordCompletion(taskId: taskId, wasBackgrounded: !scenario.wasBackgrounded)
+            XCTAssertEqual(manager.begunTaskNames, ["mknoon.translatorVerification"])
+            window.finish(taskId: "other-task")
+            XCTAssertTrue(manager.endedTaskIds.isEmpty)
+            XCTAssertEqual(window.wasBackgrounded(taskId: taskId), scenario.wasBackgrounded)
+            XCTAssertFalse(window.wasBackgrounded(taskId: "other-task"))
+
+            if scenario.expires {
+                manager.expire(assertion)
+            }
+            XCTAssertEqual(window.wasBackgrounded(taskId: taskId), scenario.wasBackgrounded)
+            window.finish(taskId: taskId)
+            XCTAssertFalse(window.wasBackgrounded(taskId: taskId))
+            XCTAssertEqual(manager.endedTaskIds, scenario.refuses ? [] : [assertion])
+        }
+    }
+
     // --- Test 1: bgBegin returns a non-empty task ID string ---
     func test_bgBegin_returnsTaskIdString() {
         let manager = FakeBackgroundTaskManager()
