@@ -8318,6 +8318,12 @@ abstract class AppLocalizations {
   /// **'Your download is safe at {percent}%. Open {appName} when you\'re back online to check your download.'**
   String translator_connection_kept(String percent, String appName);
 
+  /// Connection explanation when a scheduled download owns the saved progress
+  ///
+  /// In en, this message translates to:
+  /// **'Your download is safe at {percent}%. It continues by itself when you\'re back online.'**
+  String translator_connection_automatic(String percent);
+
   /// No description provided for @translator_connection_unmeasured.
   ///
   /// In en, this message translates to:

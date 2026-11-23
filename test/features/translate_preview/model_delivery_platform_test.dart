@@ -1158,6 +1158,45 @@ void main() {
   );
 
   test(
+    'restores the native held offset and rebinds a zero-byte hold',
+    () async {
+      final task = _ownedTask('held');
+      final downloader = _Downloader()
+        ..active[task.taskId] = task
+        ..heldBytes[task.taskId] = 42
+        ..reconfigureResult = ManagedQueuePolicyUpdate.applied;
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.running,
+        .7,
+        100,
+      );
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(() => transport.dispose().timeout(checkpointBound));
+      await transport.initialize(task.taskId).timeout(checkpointBound);
+
+      final restored = await transport
+          .restore(task.taskId)
+          .timeout(checkpointBound);
+      expect(
+        restored?.status,
+        ModelTransferStatus.scheduledWaitingForConnection,
+      );
+      expect(restored?.receivedBytes, 42);
+
+      downloader.heldBytes[task.taskId] = 0;
+      final policy = await transport
+          .updateQueuedPolicy(task.taskId, requiresWiFi: false)
+          .timeout(checkpointBound);
+      expect(policy, ModelQueuedPolicyUpdate.applied);
+      expect(downloader.reconfigured.single.task.requiresWiFi, isFalse);
+      expect(downloader.reconfigured.single.resumeData, isNull);
+      expect(downloader.enqueued, isEmpty);
+      expect(downloader.resumed, isEmpty);
+    },
+  );
+
+  test(
     'remembered mapped partial survives SDK metadata loss until cleanup',
     () async {
       final downloader = _Downloader();
@@ -1558,6 +1597,8 @@ class _Database extends Fake implements Database {
 class _Downloader extends Fake implements FileDownloader {
   final db = _Database();
   final active = <String, Task>{};
+  final heldBytes = <String, int>{};
+  final reconfigured = <({DownloadTask task, ResumeData? resumeData})>[];
   final enqueued = <DownloadTask>[];
   final resumed = <DownloadTask>[];
   final canceled = <String>[];
@@ -1570,6 +1611,8 @@ class _Downloader extends Fake implements FileDownloader {
   bool? markDownloadedComplete;
   bool resumedBackground = false;
   bool resumeAccepted = true;
+  ManagedQueuePolicyUpdate reconfigureResult =
+      ManagedQueuePolicyUpdate.unavailable;
   Future<bool> Function(String)? onCancel;
   Future<Task?> Function(String)? onTaskForId;
   @override
@@ -1638,6 +1681,19 @@ class _Downloader extends Fake implements FileDownloader {
   Future<bool> resume(Task task) async {
     resumed.add(task as DownloadTask);
     return resumeAccepted;
+  }
+
+  @override
+  Future<int?> heldManagedDownloadBytes(String taskId) async =>
+      heldBytes[taskId];
+
+  @override
+  Future<ManagedQueuePolicyUpdate> updateQueuedManagedDownload(
+    DownloadTask task,
+    ResumeData? resumeData,
+  ) async {
+    reconfigured.add((task: task, resumeData: resumeData));
+    return reconfigureResult;
   }
 
   @override

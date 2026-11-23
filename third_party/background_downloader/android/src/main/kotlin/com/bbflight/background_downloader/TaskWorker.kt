@@ -3,12 +3,19 @@ package com.bbflight.background_downloader
 import android.app.Notification
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.Build
 import androidx.preference.PreferenceManager
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.serialization.json.Json
 import android.util.Log
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The worker to execute one task
@@ -121,6 +128,23 @@ open class TaskWorker(
         // No-op for TaskWorker
     }
 
+    internal fun managedNetwork(): Network? {
+        val connectivity = applicationContext.getSystemService(ConnectivityManager::class.java) ?: return null
+        val selected = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) network else null)
+            ?: connectivity.activeNetwork ?: return null
+        val capabilities = connectivity.getNetworkCapabilities(selected) ?: return null
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return null
+        return selected.takeIf {
+            !BDPlugin.taskRequiresWifi(task) || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        }
+    }
+
+    internal fun managedNetworkStopped(): Boolean =
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && isStopped &&
+            stopReason == WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY) || managedNetwork() == null
+
+    internal fun hasLiveManagedWork(): Boolean =
+        WorkManager.getInstance(appContext).getWorkInfoById(id).get()?.state?.isFinished == false
 
     override suspend fun doWork(): Result {
         try {
@@ -140,9 +164,13 @@ open class TaskWorker(
             runInForeground = false 
 
             val runner = createRunner()
-            runner.run()
-            
-            return Result.success()
+            if (ManagedDownloadHold.appliesTo(task)) {
+                ManagedDownloadHold.writerMutex.withLock { runner.run() }
+            } else {
+                runner.run()
+            }
+
+            return if (runner.retrySameWork) Result.retry() else Result.success()
         } catch (e: Exception) {
             return Result.failure()
         }

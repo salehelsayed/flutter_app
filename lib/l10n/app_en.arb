@@ -2533,6 +2533,8 @@
   "translator_connection_title": "Waiting for a connection",
   "translator_connection_kept": "Your download is safe at {percent}%. Open {appName} when you're back online to check your download.",
   "@translator_connection_kept": {"description": "Connection explanation", "placeholders": {"percent": {"type": "String"}, "appName": {"type": "String"}}},
+  "translator_connection_automatic": "Your download is safe at {percent}%. It continues by itself when you're back online.",
+  "@translator_connection_automatic": {"description": "Connection explanation when a scheduled download owns the saved progress", "placeholders": {"percent": {"type": "String"}}},
   "translator_connection_unmeasured": "We'll try to continue your download when you're back online.",
   "translator_kept_amount": "{amount} kept",
   "@translator_kept_amount": {"description": "Kept bytes below progress", "placeholders": {"amount": {"type": "String"}}},

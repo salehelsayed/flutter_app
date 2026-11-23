@@ -263,6 +263,7 @@ Future<bool> _verifyModelFile(
 // This runs in the SDK headless engine, so it must not call Flutter plugins.
 @pragma('vm:entry-point')
 Future<TaskStatusUpdate?> _beforeAndroidModelDeliveryStart(Task task) async {
+  var connectionUnavailable = false;
   try {
     final uri = Uri.parse(task.url);
     if (uri.scheme != 'https' || uri.host != 'updates.mknoon.xyz') {
@@ -284,8 +285,13 @@ Future<TaskStatusUpdate?> _beforeAndroidModelDeliveryStart(Task task) async {
           return response.statusCode >= 200 && response.statusCode < 300;
         })().timeout(timeout);
         if (ready) return null;
-      } on Object {
+        connectionUnavailable = false;
+      } on Object catch (error) {
         // Wi-Fi availability can precede usable DNS/TLS/origin connectivity.
+        connectionUnavailable =
+            error is SocketException ||
+            error is TimeoutException ||
+            error is HandshakeException;
       } finally {
         client.close(force: true);
       }
@@ -299,7 +305,10 @@ Future<TaskStatusUpdate?> _beforeAndroidModelDeliveryStart(Task task) async {
   } on Object {
     // The SDK treats a thrown hook as permission to continue. Fail closed.
   }
-  return TaskStatusUpdate(task, TaskStatus.paused);
+  return TaskStatusUpdate(
+    task,
+    connectionUnavailable ? TaskStatus.waitingToRetry : TaskStatus.paused,
+  );
 }
 
 final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
@@ -504,9 +513,21 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   @override
   Future<ModelTransferSnapshot?> restore(String taskId) async {
     final record = await _downloader.database.recordForId(taskId);
+    if (record != null && !_owns(record.task)) return null;
+    final cached = _tasks[taskId] ?? await _task(taskId);
+    if (cached == null) return null;
+    if (_useAndroidGate) {
+      final retained = await _downloader.heldManagedDownloadBytes(taskId);
+      if (retained != null) {
+        return ModelTransferSnapshot(
+          taskId: taskId,
+          status: ModelTransferStatus.scheduledWaitingForConnection,
+          receivedBytes: retained,
+          requiresWiFi: cached.requiresWiFi,
+        );
+      }
+    }
     if (record == null) {
-      final task = await _task(taskId);
-      if (task == null) return null;
       final lastUpdate = _settledUpdates[taskId];
       final status = lastUpdate?.status;
       return ModelTransferSnapshot(
@@ -516,14 +537,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
             ? _sizes[taskId] ?? gemmaModelBytes
             : 0,
         failure: _failure(lastUpdate?.exception),
-        requiresWiFi: task.requiresWiFi,
+        requiresWiFi: cached.requiresWiFi,
       );
     }
-    if (!_owns(record.task)) return null;
     final recordedTask = record.task as DownloadTask;
-    final task = record.status == TaskStatus.enqueued
-        ? _tasks[taskId] ?? recordedTask
-        : recordedTask;
+    final task = record.status == TaskStatus.enqueued ? cached : recordedTask;
     _tasks[taskId] = task;
     final total = record.expectedFileSize > 0
         ? record.expectedFileSize
@@ -534,7 +552,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       receivedBytes: record.progress < 0
           ? 0
           : (record.progress.clamp(0, 1) * total).round(),
-      failure: _failure(record.exception),
+      failure: _useAndroidGate && record.status == TaskStatus.waitingToRetry
+          ? ModelTransferFailure.connection
+          : _failure(record.exception),
       requiresWiFi: task.requiresWiFi,
     );
   }
@@ -549,10 +569,16 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     if (task == null || task.options?.appManagedRecovery != true) {
       return ModelQueuedPolicyUpdate.unavailable;
     }
-    final resumeData = await _ownedResumeData(task);
-    if (resumeData == null ||
-        await _validatedCheckpoint(task, resumeData) == null) {
-      return ModelQueuedPolicyUpdate.unavailable;
+    final held =
+        _useAndroidGate &&
+        await _downloader.heldManagedDownloadBytes(taskId) != null;
+    ResumeData? resumeData;
+    if (!held) {
+      resumeData = await _ownedResumeData(task);
+      if (resumeData == null ||
+          await _validatedCheckpoint(task, resumeData) == null) {
+        return ModelQueuedPolicyUpdate.unavailable;
+      }
     }
     final updated = task.copyWith(requiresWiFi: requiresWiFi);
     final result = await _downloader.updateQueuedManagedDownload(
@@ -839,7 +865,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     _events.add(
       ModelTransferEvent(
         taskId: update.task.taskId,
-        status: _status(update.status),
+        status: _useAndroidGate && update.status == TaskStatus.waitingToRetry
+            ? ModelTransferStatus.scheduledWaitingForConnection
+            : _status(update.status),
         failure: _failure(update.exception),
       ),
     );

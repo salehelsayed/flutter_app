@@ -1035,7 +1035,7 @@ interface class FileDownloader {
   /// Changes the Wi-Fi requirement of an already queued Android resume.
   Future<ManagedQueuePolicyUpdate> updateQueuedManagedDownload(
     DownloadTask task,
-    ResumeData resumeData,
+    ResumeData? resumeData,
   ) async {
     final downloader = _downloader;
     if (kIsWeb ||
@@ -1048,6 +1048,17 @@ interface class FileDownloader {
       withNamespacedGroup(task) as DownloadTask,
       resumeData,
     );
+  }
+
+  /// Returns the durable offset of an Android download held by WorkManager.
+  Future<int?> heldManagedDownloadBytes(String taskId) async {
+    final downloader = _downloader;
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        downloader is! NativeDownloader) {
+      return null;
+    }
+    return downloader.heldManagedDownloadBytes(taskId);
   }
 
   /// Resume all paused tasks, or those in [tasks], or paused tasks in

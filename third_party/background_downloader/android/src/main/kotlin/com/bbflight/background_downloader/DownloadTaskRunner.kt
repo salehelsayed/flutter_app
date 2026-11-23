@@ -17,12 +17,16 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
+import java.net.Proxy
+import java.net.SocketException
+import java.net.URL
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import android.system.Os
 import android.system.ErrnoException
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.absoluteValue
 import kotlin.random.Random
 
@@ -35,6 +39,24 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
     private var taskRangeStartByte = 0L // Start of the Task's download range
     private var eTag: String? = null
     private val appManagedRecovery get() = task.options?.appManagedRecovery == true
+    private val managedWorker get() = (context as? TaskWorker)?.takeIf { ManagedDownloadHold.appliesTo(task) }
+
+    override suspend fun waitForManagedNetwork(): Boolean {
+        val worker = managedWorker ?: return false
+        return BDPlugin.managedQueuePolicyMutex.withLock {
+            task.taskId in BDPlugin.pausedTaskIds || worker.managedNetworkStopped()
+        }
+    }
+
+    override fun openConnection(url: URL, proxy: Proxy): HttpURLConnection {
+        val worker = managedWorker ?: return super.openConnection(url, proxy)
+        val network = worker.managedNetwork() ?: throw SocketException("Translator network unavailable")
+        return if (BDPlugin.taskRequiresWifi(task)) {
+            network.openConnection(url, proxy) as HttpURLConnection
+        } else {
+            super.openConnection(url, proxy)
+        }
+    }
 
     /**
      * Make the request to the [connection] and process the [Task]
@@ -58,9 +80,10 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
         if (result == TaskStatus.canceled) {
             deleteTempFile()
         }
-        if (appManagedRecovery && (result == TaskStatus.failed || result == TaskStatus.notFound)) {
+        if (appManagedRecovery && managedWorker == null &&
+            (result == TaskStatus.failed || result == TaskStatus.notFound)) {
             if (taskException?.type != ExceptionType.resume) saveManagedCheckpoint()
-        } else if (result == TaskStatus.failed) {
+        } else if (!appManagedRecovery && result == TaskStatus.failed) {
             prepResumeAfterFailure()
         }
         return result
@@ -212,6 +235,14 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
                 null
             }
             val outputStream: java.io.OutputStream = if (tempFile != null) {
+                val worker = managedWorker
+                if (worker != null && !ManagedDownloadHold.save(
+                        prefs, task, worker.id, managedAttempt(worker).checkpoint, tempFilePath,
+                        context.getInputString(keyNotificationConfig), held = false,
+                    )) {
+                    taskException = TaskException(ExceptionType.fileSystem, description = "Could not record the owned partial")
+                    return TaskStatus.failed
+                }
                 FileOutputStream(tempFile, isResume)
             } else {
                 // no tempFile, because we have a Uri
@@ -508,6 +539,16 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
      * given [tempFilePath] and [requiredStartByte]
      * */
     override fun determineIfResume(): Boolean {
+        val worker = managedWorker
+        if (worker != null) {
+            val attempt = managedAttempt(worker)
+            val retained = attempt.retainedBytes(context.appContext)
+                ?.takeIf { attempt.owns(task, worker.id) }
+            requiredStartByte = retained ?: -1
+            eTag = attempt.checkpoint?.eTag
+            tempFilePath = attempt.partialPath.orEmpty()
+            return requiredStartByte > 0
+        }
         // set tempFilePath from resume data, or "" if a new tempFile is needed
         requiredStartByte = context.getInputLong(keyStartByte, 0)
         if (requiredStartByte == 0L) {
@@ -519,7 +560,7 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
         val tempFile = File(tempFilePath)
         if (appManagedRecovery) {
             return tempFile.isFile && tempFile.length() == requiredStartByte &&
-                isStrongValidator(eTag)
+                ManagedDownloadHold.strongValidator(eTag)
         }
         if (tempFile.exists()) {
             val tempFileLength = tempFile.length()
@@ -637,32 +678,91 @@ class DownloadTaskRunner(context: TaskJobContext) : TaskRunner(context) {
         return TaskStatus.failed
     }
 
-    private fun isStrongValidator(value: String?): Boolean =
-        value != null && value.length >= 2 && value.first() == '"' && value.last() == '"'
+    private fun managedAttempt(worker: TaskWorker): ManagedDownloadHold {
+        val existing = ManagedDownloadHold.load(prefs, task.taskId)
+        if (existing != null) return existing
+        val offset = context.getInputLong(keyStartByte, 0)
+        val checkpoint = if (offset > 0) {
+            ResumeData(task, context.getInputString(keyResumeDataData).orEmpty(), offset, context.getInputString(keyETag))
+        } else null
+        return ManagedDownloadHold(
+            worker.id.toString(), ManagedDownloadHold.identity(task), checkpoint, checkpoint?.data,
+            context.getInputString(keyNotificationConfig), held = false,
+        )
+    }
+
+    override suspend fun finishDownloadAttempt(status: TaskStatus, started: Boolean): TaskStatus? {
+        val worker = managedWorker ?: return status
+        if (!worker.hasLiveManagedWork()) return null
+        if (task.taskId in BDPlugin.canceledTaskIds || status == TaskStatus.canceled) {
+            ManagedDownloadHold.forget(prefs, task.taskId, worker.id)
+            return TaskStatus.canceled
+        }
+        val failure = taskException?.type
+        val paused = task.taskId in BDPlugin.pausedTaskIds
+        val connectionHold = status == TaskStatus.waitingToRetry ||
+            status == TaskStatus.failed && worker.managedNetworkStopped() &&
+            (failure == null || failure == ExceptionType.connection || failure == ExceptionType.general)
+        if (!connectionHold && !paused) {
+            if (started && failure != ExceptionType.resume &&
+                (status == TaskStatus.failed || status == TaskStatus.notFound)) saveManagedCheckpoint()
+            ManagedDownloadHold.forget(prefs, task.taskId, worker.id)
+            return status
+        }
+        if (status == TaskStatus.complete || status == TaskStatus.paused || failure == ExceptionType.resume) {
+            ManagedDownloadHold.forget(prefs, task.taskId, worker.id)
+            return status
+        }
+
+        val attempt = managedAttempt(worker)
+        val path = tempFilePath.ifEmpty { attempt.partialPath.orEmpty() }.ifEmpty { null }
+        val checkpoint = if (started && tempFilePath.isNotEmpty()) syncManagedCheckpoint() else attempt.checkpoint
+        val next = attempt.copy(checkpoint = checkpoint, partialPath = path, held = !paused)
+        if (!attempt.owns(task, worker.id) || next.retainedBytes(context.appContext) == null) {
+            if (ManagedDownloadHold.forget(prefs, task.taskId, worker.id) != null) {
+                path?.let { ManagedDownloadHold.ownedPartial(context.appContext, it)?.delete() }
+            }
+            return checkpointRejected("Could not retain the owned partial after a network interruption")
+        }
+        if (!paused && !ManagedDownloadHold.save(
+                prefs, task, worker.id, checkpoint, path, next.notification, held = true,
+            )) {
+            taskException = TaskException(ExceptionType.fileSystem, description = "Could not save the owned checkpoint")
+            return TaskStatus.failed
+        }
+        if (checkpoint != null) processResumeData(checkpoint, prefs)
+        if (paused) {
+            ManagedDownloadHold.forget(prefs, task.taskId, worker.id)
+            return TaskStatus.paused
+        }
+        return TaskStatus.waitingToRetry
+    }
 
     private suspend fun saveManagedCheckpoint() {
+        val checkpoint = syncManagedCheckpoint()
+        if (checkpoint != null) {
+            processResumeData(checkpoint, prefs)
+        } else if (!isResume || tempFileLength() != requiredStartByte || !ManagedDownloadHold.strongValidator(eTag)) {
+            deleteTempFile()
+        }
+    }
+
+    private fun syncManagedCheckpoint(): ResumeData? {
         val validator = if (serverAcceptsRanges) eTagHeader else if (isResume) eTag else null
         val length = tempFileLength()
-        if (!isStrongValidator(validator) || length <= 0) {
-            deleteTempFile()
-            return
-        }
+        if (!ManagedDownloadHold.strongValidator(validator) || length <= 0) return null
         val offset = if (serverAcceptsRanges) minOf(length, bytesTotal + startByte) else
             requiredStartByte.takeIf { it == length } ?: 0L
-        if (offset <= 0) {
-            deleteTempFile()
-            return
-        }
+        if (offset <= 0) return null
         try {
             RandomAccessFile(tempFilePath, "rw").use { file ->
                 file.setLength(offset)
                 file.fd.sync()
             }
         } catch (_: IOException) {
-            if (!isResume || tempFileLength() != requiredStartByte) deleteTempFile()
-            return
+            return null
         }
-        processResumeData(ResumeData(task, tempFilePath, offset, validator), prefs)
+        return ResumeData(task, tempFilePath, offset, validator)
     }
 
     /**

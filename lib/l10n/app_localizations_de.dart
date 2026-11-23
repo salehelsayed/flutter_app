@@ -5132,6 +5132,11 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String translator_connection_automatic(String percent) {
+    return 'Dein Fortschritt von $percent % ist gespeichert. Sobald du wieder online bist, läuft der Download automatisch weiter.';
+  }
+
+  @override
   String get translator_connection_unmeasured =>
       'Wir versuchen, den Download fortzusetzen, sobald du wieder online bist.';
 

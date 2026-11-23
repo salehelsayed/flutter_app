@@ -5020,6 +5020,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String translator_connection_automatic(String percent) {
+    return 'Your download is safe at $percent%. It continues by itself when you\'re back online.';
+  }
+
+  @override
   String get translator_connection_unmeasured =>
       'We\'ll try to continue your download when you\'re back online.';
 

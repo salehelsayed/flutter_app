@@ -213,12 +213,15 @@ class PrivateTranslatorSheet extends StatelessWidget {
       ),
       final ModelWaitingForConnection waiting => _SheetLayout(
         title: l10n.translator_connection_title,
-        line: waiting.retainedPercent == null
-            ? l10n.translator_connection_unmeasured
-            : l10n.translator_connection_kept(
-                '${waiting.retainedPercent}',
-                translatorAppName(context),
-              ),
+        line: switch (waiting.retainedPercent) {
+          final int percent when waiting.resumesInBackground =>
+            l10n.translator_connection_automatic('$percent'),
+          final int percent => l10n.translator_connection_kept(
+            '$percent',
+            translatorAppName(context),
+          ),
+          null => l10n.translator_connection_unmeasured,
+        },
         progress: _retainedProgress(context, waiting),
         primary: (l10n.translator_close, close),
         secondary: (l10n.translator_pause, () => unawaited(controller.pause())),

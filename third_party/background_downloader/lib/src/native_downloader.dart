@@ -402,17 +402,20 @@ abstract base class NativeDownloader extends BaseDownloader {
 
   Future<ManagedQueuePolicyUpdate> updateQueuedManagedDownload(
     DownloadTask task,
-    ResumeData resumeData,
+    ResumeData? resumeData,
   ) async {
-    if (resumeData.taskId != task.taskId) {
-      return ManagedQueuePolicyUpdate.unavailable;
-    }
-    final stored = await getManagedResumeData(task);
-    if (stored == null ||
-        stored.data != resumeData.data ||
-        stored.requiredStartByte != resumeData.requiredStartByte ||
-        stored.eTag != resumeData.eTag) {
-      return ManagedQueuePolicyUpdate.unavailable;
+    ResumeData? stored;
+    if (resumeData != null) {
+      if (resumeData.taskId != task.taskId) {
+        return ManagedQueuePolicyUpdate.unavailable;
+      }
+      stored = await getManagedResumeData(task);
+      if (stored == null ||
+          stored.data != resumeData.data ||
+          stored.requiredStartByte != resumeData.requiredStartByte ||
+          stored.eTag != resumeData.eTag) {
+        return ManagedQueuePolicyUpdate.unavailable;
+      }
     }
     final notification = notificationConfigForTask(task);
     try {
@@ -421,9 +424,9 @@ abstract base class NativeDownloader extends BaseDownloader {
         [
           jsonEncode(task.toJson()),
           if (notification == null) null else jsonEncode(notification.toJson()),
-          stored.data,
-          stored.requiredStartByte,
-          stored.eTag,
+          stored?.data,
+          stored?.requiredStartByte,
+          stored?.eTag,
         ],
       );
       return switch (result) {
@@ -435,6 +438,19 @@ abstract base class NativeDownloader extends BaseDownloader {
       return ManagedQueuePolicyUpdate.unavailable;
     } on PlatformException {
       return ManagedQueuePolicyUpdate.unavailable;
+    }
+  }
+
+  Future<int?> heldManagedDownloadBytes(String taskId) async {
+    try {
+      return await methodChannel.invokeMethod<int>(
+        'heldManagedDownloadBytes',
+        taskId,
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
     }
   }
 

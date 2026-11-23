@@ -251,7 +251,7 @@ class NotificationReceiver : BroadcastReceiver() {
             }
 
             actionPause -> {
-                BDPlugin.pauseTaskWithId(taskId)
+                BDPlugin.pauseTaskWithId(context, taskId)
             }
 
             actionResume -> {

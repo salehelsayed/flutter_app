@@ -40,6 +40,7 @@ import kotlin.concurrent.read
 import kotlin.concurrent.write
 import androidx.core.content.edit
 import androidx.work.WorkManager
+import kotlinx.coroutines.sync.withLock
 
 
 /**
@@ -449,6 +450,8 @@ open class TaskRunner(
 
     // additional parameters for final TaskStatusUpdate
     var taskException: TaskException? = null
+    internal var retrySameWork = false
+        private set
     private class ManagedSystemStop : Exception()
     private val managedSystemStopFailure by lazy {
         TaskException(ExceptionType.connection, description = "Task was stopped by the system")
@@ -486,31 +489,27 @@ open class TaskRunner(
                 delay(timeout)
                 isTimedOut = true
             }
-            if (task.options?.hasBeforeStartCallback() == true) {
-                val statusUpdate = Callbacks.invokeBeforeTaskStartCallback(context.appContext, task)
-                if (statusUpdate != null) {
-                    Log.i(
-                        TAG,
-                        "TaskId ${task.taskId} interrupted by beforeTaskStart callback"
-                    )
-                    processStatusUpdate(
-                        task,
-                        statusUpdate.taskStatus,
-                        prefs,
-                        taskException = statusUpdate.exception,
-                        responseBody = statusUpdate.responseBody,
-                        responseHeaders = statusUpdate.responseHeaders,
-                        responseStatusCode = statusUpdate.responseStatusCode,
-                        context = context.appContext
-                    )
-                    BDPlugin.holdingQueue?.taskFinished(task)
-                    timeoutJob.cancel()
-                    return@withContext // task interrupted
-                }
-            }
-
             var status = TaskStatus.failed
+            var started = false
+            var returnedFromStartCallback = false
             try {
+                if (waitForManagedNetwork()) {
+                    status = TaskStatus.waitingToRetry
+                    return@withContext
+                }
+                if (task.options?.hasBeforeStartCallback() == true) {
+                    val update = Callbacks.invokeBeforeTaskStartCallback(context.appContext, task)
+                    if (update != null) {
+                        returnedFromStartCallback = true
+                        status = update.taskStatus
+                        taskException = update.exception
+                        responseBody = update.responseBody
+                        responseHeaders = update.responseHeaders
+                        responseStatusCode = update.responseStatusCode
+                        return@withContext
+                    }
+                }
+                started = true
                 task = getModifiedTask(
                     context = context.appContext,
                     task = task
@@ -543,35 +542,44 @@ open class TaskRunner(
             } finally {
                 timeoutJob.cancel()
                 withContext(NonCancellable) {
-                    // NonCancellable to make sure we clean up even if job is being cancelled
-                    // a pause request that was not acted upon must not affect a later run
-                    BDPlugin.pausedTaskIds.remove(task.taskId)
-                    processStatusUpdate(
-                        task,
-                        status,
-                        prefs,
-                        taskException,
-                        responseBody,
-                        responseHeaders,
-                        responseStatusCode,
-                        mimeType,
-                        charSet,
-                        context.appContext
-                    )
-                    if (status != TaskStatus.failed || task.retriesRemaining == 0) {
-                        // update only if not failed, or no retries remaining
-                        context.updateNotification(task, status)
+                    val managed = context is TaskWorker && ManagedDownloadHold.appliesTo(task)
+                    suspend fun settle() {
+                        status = finishDownloadAttempt(status, started) ?: return
+                        retrySameWork = managed && status == TaskStatus.waitingToRetry
+                        // A pause request that was not acted upon must not affect a later run.
+                        BDPlugin.pausedTaskIds.remove(task.taskId)
+                        processStatusUpdate(
+                            task,
+                            status,
+                            prefs,
+                            taskException,
+                            responseBody,
+                            responseHeaders,
+                            responseStatusCode,
+                            mimeType,
+                            charSet,
+                            context.appContext
+                        )
+                        if (started && (status != TaskStatus.failed || task.retriesRemaining == 0)) {
+                            context.updateNotification(task, if (retrySameWork) TaskStatus.paused else status)
+                        }
+                        if (!retrySameWork && (status != TaskStatus.canceled || returnedFromStartCallback)) {
+                            BDPlugin.holdingQueue?.taskFinished(task)
+                        }
                     }
-                    if (status != TaskStatus.canceled) {
-                        // let the holdingQueue know this task is no longer active
-                        // except TaskStatus.canceled is handled directly in cancellation and reset methods
-                        BDPlugin.holdingQueue?.taskFinished(task)
-                    }
+                    if (managed) BDPlugin.managedQueuePolicyMutex.withLock { settle() } else settle()
                 }
             }
         }
         hasDeliveredResult = true
     }
+
+    protected open suspend fun waitForManagedNetwork(): Boolean = false
+
+    protected open suspend fun finishDownloadAttempt(status: TaskStatus, started: Boolean): TaskStatus? = status
+
+    protected open fun openConnection(url: URL, proxy: Proxy): HttpURLConnection =
+        url.openConnection(proxy) as HttpURLConnection
 
     /** Return true if resume is possible - defaults to false */
     open fun determineIfResume(): Boolean {
@@ -608,8 +616,8 @@ open class TaskRunner(
                 BDPlugin.haveLoggedProxyMessage = true
             }
             with(withContext(Dispatchers.IO) {
-                url.openConnection(proxy ?: Proxy.NO_PROXY)
-            } as HttpURLConnection) {
+                openConnection(url, proxy ?: Proxy.NO_PROXY)
+            }) {
                 activeConnection = this
                 try {
                     requestMethod = task.httpRequestMethod

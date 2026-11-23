@@ -132,7 +132,10 @@ final class ModelWaitingForConnection extends ModelRetainedDownload {
   const ModelWaitingForConnection({
     required super.retainedBytes,
     required super.totalBytes,
+    this.resumesInBackground = false,
   });
+
+  final bool resumesInBackground;
 }
 
 final class ModelServerRetry extends ModelRetainedDownload {

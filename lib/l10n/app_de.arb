@@ -2236,6 +2236,7 @@
   "translator_integrity_exhausted": "Versuche es erneut, um eine neue Kopie zu laden.",
   "translator_connection_title": "Warten auf eine Verbindung",
   "translator_connection_kept": "Dein Fortschritt von {percent} % ist gespeichert. Öffne {appName}, sobald du wieder online bist, um den Download zu prüfen.",
+  "translator_connection_automatic": "Dein Fortschritt von {percent} % ist gespeichert. Sobald du wieder online bist, läuft der Download automatisch weiter.",
   "translator_connection_unmeasured": "Wir versuchen, den Download fortzusetzen, sobald du wieder online bist.",
   "translator_kept_amount": "{amount} gespeichert",
   "translator_server_title": "Unser Downloadserver antwortet nicht",

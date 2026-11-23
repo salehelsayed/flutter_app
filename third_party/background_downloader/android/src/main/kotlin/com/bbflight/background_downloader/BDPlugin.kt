@@ -63,6 +63,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 import androidx.work.OneTimeWorkRequest
+import androidx.work.ExistingWorkPolicy
 
 
 /**
@@ -134,7 +135,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             Collections.synchronizedMap(mutableMapOf<String, String>()) // by taskId
         var forceFailPostOnBackgroundChannel = false
         val prefsLock = ReentrantReadWriteLock()
-        private val managedQueuePolicyMutex = Mutex()
+        internal val managedQueuePolicyMutex = Mutex()
         val remainingBytesToDownload =
             Collections.synchronizedMap(mutableMapOf<String, Long>()) // <taskId, size>
         var haveLoggedProxyMessage = false
@@ -150,6 +151,29 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             resumeData: ResumeData?,
             initialDelayMillis: Long = 0,
             plugin: BDPlugin? = null
+        ): Boolean {
+            if (!ManagedDownloadHold.appliesTo(task)) {
+                return enqueue(context, task, notificationConfigJsonString, resumeData, initialDelayMillis, plugin)
+            }
+            return managedQueuePolicyMutex.withLock {
+                val workManager = WorkManager.getInstance(context)
+                if (workInfoForTask(workManager, task.taskId).any { !it.state.isFinished }) return@withLock false
+                val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+                ManagedDownloadHold.load(prefs, task.taskId)?.let { previous ->
+                    ManagedDownloadHold.forget(prefs, task.taskId, java.util.UUID.fromString(previous.workId))
+                }
+                pausedTaskIds.remove(task.taskId)
+                enqueue(context, task, notificationConfigJsonString, resumeData, initialDelayMillis, plugin)
+            }
+        }
+
+        private suspend fun enqueue(
+            context: Context,
+            task: Task,
+            notificationConfigJsonString: String?,
+            resumeData: ResumeData?,
+            initialDelayMillis: Long,
+            plugin: BDPlugin?,
         ): Boolean {
             val expedited = task.priority < 5 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
             val actualDelayMillis = if (initialDelayMillis > 0 && expedited) {
@@ -270,7 +294,12 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 val workManager = WorkManager.getInstance(context)
                 success = try {
                     val operation = try {
-                        workManager.enqueue(requestBuilder.build())
+                        val request = requestBuilder.build()
+                        if (ManagedDownloadHold.appliesTo(task)) {
+                            workManager.enqueueUniqueWork("managed-download:${task.taskId}", ExistingWorkPolicy.KEEP, request)
+                        } else {
+                            workManager.enqueue(request)
+                        }
                     } catch (e: Exception) {
                          if (expedited) {
                              Log.i(TAG, "Could not enqueue expedited task, falling back to non-expedited")
@@ -430,9 +459,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 val taskIdsRemaining = taskIds.filter { !taskIdsRemovedFromHoldingQueue.contains(it) }
                 var success = true
                 for (taskId in taskIdsRemaining) {
-                    success = success && cancelActiveTaskWithId(
-                        context, taskId, workManager, requireConfirmedStop
-                    )
+                    success = success && cancelActiveTaskWithId(context, taskId, workManager, requireConfirmedStop)
                 }
                 return success
             } finally {
@@ -450,6 +477,15 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             taskId: String,
             workManager: WorkManager,
             requireConfirmedStop: Boolean = false
+        ): Boolean = managedQueuePolicyMutex.withLock {
+            cancelActiveTask(context, taskId, workManager, requireConfirmedStop)
+        }
+
+        private suspend fun cancelActiveTask(
+            context: Context,
+            taskId: String,
+            workManager: WorkManager,
+            requireConfirmedStop: Boolean,
         ): Boolean {
             val prefs = PreferenceManager.getDefaultSharedPreferences(context)
             val taskBeforeStop = if (requireConfirmedStop) getTaskMap(prefs)[taskId] else null
@@ -457,9 +493,13 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             // stop, keep the status and native metadata intact if the OS rejects it.
             val confirmedWorkInfos = if (requireConfirmedStop) {
                 val workInfos = workInfoForTask(workManager, taskId)
+                val marked = taskBeforeStop != null && ManagedDownloadHold.appliesTo(taskBeforeStop) &&
+                    canceledTaskIds.add(taskId)
                 if (workInfos.isNotEmpty() && !cancelWorkManagerTask(workManager, taskId)) {
+                    if (marked) canceledTaskIds.remove(taskId)
                     return false
                 }
+                if (marked && workInfos.isEmpty()) canceledTaskIds.remove(taskId)
                 workInfos
             } else {
                 null
@@ -564,8 +604,14 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 if (!requireConfirmedStop && !cancelWorkManagerTask(workManager, taskId)) {
                     return false
                 }
+                discardManagedPartial(context, prefs, taskId, workInfo)
             }
             return true
+        }
+
+        private fun discardManagedPartial(context: Context, prefs: SharedPreferences, taskId: String, work: WorkInfo) {
+            val attempt = ManagedDownloadHold.forget(prefs, taskId, work.id) ?: return
+            attempt.partialPath?.let { ManagedDownloadHold.ownedPartial(context, it)?.delete() }
         }
 
         private suspend fun workInfoForTask(workManager: WorkManager, taskId: String): List<WorkInfo> =
@@ -617,6 +663,40 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         fun pauseTaskWithId(taskId: String): Boolean {
             pausedTaskIds.add(taskId)
             return true
+        }
+
+        suspend fun pauseTaskWithId(context: Context, taskId: String): Boolean = withContext(Dispatchers.IO) {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+            val task = prefsLock.read { getTaskMap(prefs)[taskId] }
+            if (task == null || !ManagedDownloadHold.appliesTo(task)) return@withContext pauseTaskWithId(taskId)
+            managedQueuePolicyMutex.withLock {
+                val manager = WorkManager.getInstance(context)
+                val work = workInfoForTask(manager, taskId).filter { !it.state.isFinished }.singleOrNull()
+                    ?: return@withLock false
+                val held = ManagedDownloadHold.live(prefs, task, work)
+                val queuedBeforeStart = work.runAttemptCount == 0 && ManagedDownloadHold.load(prefs, taskId) == null
+                if (work.state != WorkInfo.State.ENQUEUED || (held == null && !queuedBeforeStart)) {
+                    return@withLock pauseTaskWithId(taskId)
+                }
+                if (held != null && held.retainedBytes(context) == null) return@withLock false
+                pausedTaskIds.add(taskId)
+                try {
+                    manager.cancelWorkById(work.id).result.get()
+                } catch (_: ExecutionException) {
+                    pausedTaskIds.remove(taskId)
+                    return@withLock false
+                } catch (_: InterruptedException) {
+                    pausedTaskIds.remove(taskId)
+                    Thread.currentThread().interrupt()
+                    return@withLock false
+                }
+                held?.checkpoint?.let { processResumeData(it.copy(task = task), prefs) }
+                processStatusUpdate(task, TaskStatus.paused, prefs, context = context)
+                ManagedDownloadHold.forget(prefs, taskId, work.id)
+                pausedTaskIds.remove(taskId)
+                holdingQueue?.taskFinished(task)
+                true
+            }
         }
 
         /**
@@ -715,6 +795,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 val res: Any? = when (call.method) {
                     "enqueue" -> methodEnqueue(call)
                     "updateQueuedManagedDownload" -> methodUpdateQueuedManagedDownload(call)
+                    "heldManagedDownloadBytes" -> methodHeldManagedDownloadBytes(call)
                     "enqueueAll" -> methodEnqueueAll(call)
                     "reset" -> methodReset(call)
                     "allTasks" -> methodAllTasks(call)
@@ -785,21 +866,24 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             } catch (_: IllegalArgumentException) {
                 return@withContext "unavailable"
             }
-            val path = args[2] as? String ?: return@withContext "unavailable"
-            val offset = when (val value = args[3]) {
-                is Long -> value
-                is Int -> value.toLong()
-                else -> return@withContext "unavailable"
-            }
-            val eTag = args[4] as? String ?: return@withContext "unavailable"
-            if (!isManagedDownload(supplied) || path.isEmpty() || offset <= 0 ||
-                eTag.length < 2 || !eTag.startsWith('"') || !eTag.endsWith('"')) {
-                return@withContext "unavailable"
+            if (!isManagedDownload(supplied)) return@withContext "unavailable"
+            val resume = if (args.subList(2, 5).all { it == null }) null else {
+                val path = args[2] as? String ?: return@withContext "unavailable"
+                val offset = when (val value = args[3]) {
+                    is Long -> value
+                    is Int -> value.toLong()
+                    else -> return@withContext "unavailable"
+                }
+                val eTag = args[4] as? String ?: return@withContext "unavailable"
+                if (path.isEmpty() || offset <= 0 || !ManagedDownloadHold.strongValidator(eTag)) {
+                    return@withContext "unavailable"
+                }
+                ResumeData(supplied, path, offset, eTag)
             }
 
             try {
                 managedQueuePolicyMutex.withLock {
-                    updateQueuedManagedDownload(supplied, args[1] as? String, path, offset, eTag)
+                    updateQueuedManagedDownload(supplied, args[1] as? String, resume)
                 }
             } catch (_: ExecutionException) {
                 "unavailable"
@@ -809,12 +893,29 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             }
         }
 
+    private suspend fun methodHeldManagedDownloadBytes(call: MethodCall): Long? = withContext(Dispatchers.IO) {
+        val id = call.arguments as? String ?: return@withContext null
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        try {
+            managedQueuePolicyMutex.withLock {
+                val task = prefsLock.read { getTaskMap(prefs)[id] } ?: return@withLock null
+                if (!ManagedDownloadHold.appliesTo(task)) return@withLock null
+                val work = workInfoForTask(WorkManager.getInstance(applicationContext), id)
+                    .filter { !it.state.isFinished }.singleOrNull() ?: return@withLock null
+                ManagedDownloadHold.live(prefs, task, work)?.retainedBytes(applicationContext)
+            }
+        } catch (_: ExecutionException) {
+            null
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            null
+        }
+    }
+
     private fun updateQueuedManagedDownload(
         supplied: Task,
         notification: String?,
-        path: String,
-        offset: Long,
-        eTag: String
+        suppliedResume: ResumeData?,
     ): String {
         if (requireWifi != RequireWiFi.asSetByTask) return "unavailable"
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
@@ -828,18 +929,34 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         val manager = WorkManager.getInstance(applicationContext)
         val work = manager.getWorkInfosByTag("taskId=${current.taskId}").get()
             .filter { !it.state.isFinished }.singleOrNull() ?: return "unavailable"
-        val resume = ResumeData(updated, path, offset, eTag)
-        val data = workInput(updated, notification, resume)
-        val resumeTag = managedResumeTag(updated, data) ?: return "unavailable"
-        if (TAG !in work.tags || "group=${current.group}" !in work.tags ||
-            resumeTag !in work.tags) return "unavailable"
+        if (TAG !in work.tags || "group=${current.group}" !in work.tags) return "unavailable"
+        val attempt = ManagedDownloadHold.load(prefs, current.taskId)
+        if (work.state == WorkInfo.State.RUNNING && suppliedResume != null && attempt != null &&
+            attempt.owns(current, work.id) && sameCheckpoint(suppliedResume, attempt.checkpoint)) {
+            return "running"
+        }
+        val held = ManagedDownloadHold.live(prefs, current, work)
+        val data = if (held != null) {
+            if (held.retainedBytes(applicationContext) == null) return "unavailable"
+            val exact = held.checkpoint
+            if (suppliedResume != null && !sameCheckpoint(suppliedResume, exact)) {
+                return "unavailable"
+            }
+            workInput(updated, held.notification, exact)
+        } else {
+            if (suppliedResume == null || attempt != null) return "unavailable"
+            val original = workInput(updated, notification, suppliedResume)
+            val resumeTag = managedResumeTag(updated, original) ?: return "unavailable"
+            if (resumeTag !in work.tags) return "unavailable"
+            original
+        }
         if (work.state == WorkInfo.State.RUNNING) return "running"
         if (work.state != WorkInfo.State.ENQUEUED) return "unavailable"
 
         val request = createRequestBuilder(updated, data, workConstraints(updated.requiresWiFi))
             ?: return "unavailable"
         request.setId(work.id).setInitialDelay(work.initialDelayMillis, TimeUnit.MILLISECONDS)
-        work.tags.forEach { request.addTag(it) }
+        work.tags.filterNot { it.startsWith("managedResume=") }.forEach { request.addTag(it) }
         val result = manager.updateWork(request.build()).get()
         if (result == WorkManager.UpdateResult.APPLIED_FOR_NEXT_RUN) return "running"
         if (result != WorkManager.UpdateResult.APPLIED_IMMEDIATELY) return "unavailable"
@@ -860,6 +977,10 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         return "applied"
     }
 
+    private fun sameCheckpoint(supplied: ResumeData, current: ResumeData?): Boolean =
+        current != null && supplied.data == current.data && supplied.requiredStartByte == current.requiredStartByte &&
+            supplied.eTag == current.eTag
+
 
     /**
      * Starts one task, passed as map of values representing a [Task]
@@ -873,7 +994,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             val args = call.arguments as List<*>
             val taskJsonMapString = args[0] as String
             val task = bdJson.decodeFromString<Task>(taskJsonMapString)
-            pausedTaskIds.remove(task.taskId) // reset flag from an earlier pause
+            if (!ManagedDownloadHold.appliesTo(task)) pausedTaskIds.remove(task.taskId)
             val notificationConfigJsonString = args[1] as String?
             val isResume = args.size == 5
             val resumeData: ResumeData? = if (isResume) {
@@ -943,7 +1064,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     )
                 val results = mutableListOf<Boolean>()
                 for ((index, task) in tasks.withIndex()) {
-                    pausedTaskIds.remove(task.taskId) // reset flag from an earlier pause
+                    if (!ManagedDownloadHold.appliesTo(task)) pausedTaskIds.remove(task.taskId)
                     val notificationConfig = notificationConfigs.getOrNull(index)
                     val notificationConfigJsonString =
                         notificationConfig?.let { bdJson.encodeToString(it) }
@@ -1035,6 +1156,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 }
             }
             workManager.cancelWorkById(workInfo.id)
+            if (tags.isNotEmpty()) discardManagedPartial(applicationContext, prefs, tags.first().substring(7), workInfo)
             counter++
         }
         if (Build.VERSION.SDK_INT >= 34) {
@@ -1218,15 +1340,15 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
      *
      * The pause action is taken in the [TaskWorker]
      */
-    private fun methodPause(call: MethodCall): Boolean {
+    private suspend fun methodPause(call: MethodCall): Boolean {
         val taskId = call.arguments as String
-        return pauseTaskWithId(taskId)
+        return pauseTaskWithId(applicationContext, taskId)
     }
 
     /**
      * Marks all taskIds for pausing
      */
-    private fun methodPauseAll(call: MethodCall): List<Boolean> {
+    private suspend fun methodPauseAll(call: MethodCall): List<Boolean> {
         val taskIds = call.arguments as? List<*> ?: throw MethodCallException(
             "INVALID_ARGUMENT",
             "Expected a list of task IDs",
@@ -1234,7 +1356,7 @@ class BDPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         )
         return taskIds.map { taskId ->
             if (taskId is String) {
-                pauseTaskWithId(taskId)
+                pauseTaskWithId(applicationContext, taskId)
             } else {
                 false
             }

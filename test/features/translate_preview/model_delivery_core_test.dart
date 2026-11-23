@@ -575,6 +575,54 @@ void main() {
   );
 
   test(
+    'a restored scheduled transfer reconnects without a second task',
+    () async {
+      const bound = Duration(seconds: 3);
+      final h = await _Harness.create(
+        record: ModelDeliveryRecord(
+          manifest: _manifest,
+          taskId: 'native-held',
+          phase: ModelDeliveryPhase.active,
+          allowMobileData: true,
+          receivedBytes: 70,
+        ),
+        restoredStatus: ModelTransferStatus.scheduledWaitingForConnection,
+        restoredBytes: 42,
+        wifi: false,
+      ).timeout(bound);
+      addTearDown(() => h.dispose().timeout(bound));
+
+      expect(
+        h.controller.state.value,
+        isA<ModelWaitingForConnection>()
+            .having((state) => state.retainedBytes, 'retainedBytes', 42)
+            .having(
+              (state) => state.resumesInBackground,
+              'scheduled hold',
+              true,
+            ),
+      );
+
+      h.network.changeWifi(true);
+      await h.flush().timeout(bound);
+      await h.controller.resume().timeout(bound);
+      expect(h.transport.enqueues, isEmpty);
+      expect(h.transport.resumes, isEmpty);
+
+      await h.event(ModelTransferStatus.running, bytes: 60).timeout(bound);
+      expect(h.id, 'native-held');
+      expect(
+        h.controller.state.value,
+        isA<ModelDownloading>().having(
+          (state) => state.receivedBytes,
+          'bytes',
+          60,
+        ),
+      );
+    },
+  );
+
+  test(
     'legacy retries show progress and explain restart when no checkpoint remains',
     () async {
       final h = await _Harness.create();

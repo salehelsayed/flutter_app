@@ -5088,6 +5088,11 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String translator_connection_automatic(String percent) {
+    return 'تم حفظ $percent٪ من التنزيل. سيُستأنف تلقائيًا عند عودة الاتصال.';
+  }
+
+  @override
   String get translator_connection_unmeasured =>
       'سنحاول متابعة التنزيل عند عودة الاتصال.';
 
