@@ -15507,6 +15507,24 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   presentation during a delayed read-only space refresh and preserving original
   content. The earlier integration's 330-case workflow pass remains separate;
   workflow was not rerun for the review-fix candidate.
+  The Android translator transfer regression uses the real WorkManager worker
+  on a loopback HTTP origin. A virtual clock advances WorkManager's backoff
+  after the connectivity stop. Baseline `9ba0b9ae` canceled the scheduled
+  request after writing the first 32 KiB. The unchanged fixture on `60321a52`
+  kept that request enqueued, sent the exact `Range` and `If-Range` on the
+  same work ID, and assembled the original bytes (`m-30b9385f`, `m-d3396133`).
+  Preserve the setup failures and the first candidate's missing-import
+  compile failure separately. The iOS focused assertion registry check ran
+  15 cases on `b12b8551`, whose iOS source matches `60321a52`. Its translator
+  case covers normal finish, expiry, refusal, and unrelated task IDs
+  (`m-1790557f`). The JVM and simulator runs establish these boundaries with
+  local fixtures. Physical background execution is a separate proof.
+  The 460-case Linux `affected-translate-preview` rerun on `60321a52` had zero
+  failures, skips or coverage gaps (`m-b563080f`). It includes the scheduled
+  hold and zero-byte policy cases and the exact Ready/Remove regression.
+  The test-only `fff4b816` first showed a stale Ready notice after Remove
+  invalidated the in-flight verification. Keep that causal run and the
+  initial 457-pass, three-failure transport run (`m-a45f6c14`, `m-756b0bae`).
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
