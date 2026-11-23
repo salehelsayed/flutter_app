@@ -12,6 +12,11 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Looper
 import android.os.Process
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructStat
+import android.system.StructTimespec
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.NetworkType
@@ -29,9 +34,14 @@ import com.bbflight.background_downloader.TaskStatus
 import com.bbflight.background_downloader.Updates
 import java.io.Closeable
 import java.io.File
+import java.io.FileDescriptor
+import java.io.FileInputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -53,16 +63,26 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 import org.robolectric.annotation.LooperMode
+import org.robolectric.annotation.Resetter
 import org.robolectric.shadows.ShadowNetworkCapabilities
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33], application = Application::class)
+@Config(sdk = [33], application = Application::class, shadows = [TranslatorFileStatShadow::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 @Suppress("DEPRECATION")
 class TranslatorDownloadWorkManagerTest {
     @Test
-    fun `translator resumes the same constrained work from the exact saved offset`() {
+    fun `translator resumes the same constrained work from the exact saved offset`() =
+        resumeInBackground(checksumMatches = true)
+
+    @Test
+    fun `translator does not post Ready for a complete file with the wrong digest`() =
+        resumeInBackground(checksumMatches = false)
+
+    private fun resumeInBackground(checksumMatches: Boolean) {
         val app: Application = RuntimeEnvironment.getApplication()
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val process = ActivityManager.RunningAppProcessInfo().apply {
@@ -105,7 +125,7 @@ class TranslatorDownloadWorkManagerTest {
                     .joinToString("") { "%02x".format(it.toInt() and 0xff) }
                 val verification = JSONObject()
                     .put("version", 1)
-                    .put("expectedSha256", sha256)
+                    .put("expectedSha256", if (checksumMatches) sha256 else "0".repeat(64))
                     .put("sizeBytes", server.payload.size)
                     .put("readyTitle", READY_TITLE)
                     .put("readyBody", READY_BODY)
@@ -202,16 +222,22 @@ class TranslatorDownloadWorkManagerTest {
                 )
                 val ready = notifications.activeNotifications.singleOrNull {
                     it.tag == "mknoon_translator_download" && it.id == -41004
-                } ?: throw AssertionError("The background worker completed without a verified Ready notice")
-                val extras = ready.notification.extras
-                assertEquals(READY_TITLE, extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-                assertEquals(READY_BODY, extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+                }
+                if (checksumMatches) {
+                    val extras = ready?.notification?.extras
+                        ?: throw AssertionError("The background worker completed without a verified Ready notice")
+                    assertEquals(READY_TITLE, extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+                    assertEquals(READY_BODY, extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+                } else {
+                    assertNull("An incorrect digest must not publish Ready", ready)
+                }
             }
         } finally {
             shadowOf(connectivity).setDefaultNetworkActive(true)
             try {
                 manager.cancelAllWorkByTag(tag).result.awaitOnMain("the test-owned download to cancel")
             } finally {
+                app.getSystemService(NotificationManager::class.java).cancelAll()
                 WorkManagerTestInitHelper.closeWorkDatabase()
                 executor.shutdownNow()
             }
@@ -323,5 +349,66 @@ class TranslatorDownloadWorkManagerTest {
         const val VALIDATOR = "\"translator-model-v1\""
         const val READY_TITLE = "Translation is ready"
         const val READY_BODY = "Messages in other languages can now be translated on your phone."
+    }
+}
+
+// Robolectric's stock fstat reports zero bytes for a host file descriptor.
+@Implements(Os::class)
+class TranslatorFileStatShadow {
+    companion object {
+        private val files = mutableMapOf<FileDescriptor, Pair<File, FileInputStream>>()
+
+        @JvmStatic
+        @Implementation
+        fun open(path: String, flags: Int, mode: Int): FileDescriptor {
+            val file = File(path)
+            if (flags and OsConstants.O_NOFOLLOW != 0 && Files.isSymbolicLink(file.toPath())) {
+                throw ErrnoException("open", OsConstants.ELOOP)
+            }
+            val input = FileInputStream(file)
+            synchronized(files) { files[input.fd] = file to input }
+            return input.fd
+        }
+
+        @JvmStatic
+        @Implementation
+        fun fstat(fd: FileDescriptor): StructStat {
+            val (file, input) = synchronized(files) { files[fd] }
+                ?: throw ErrnoException("fstat", OsConstants.EBADF)
+            return stat(file, input.channel.size())
+        }
+
+        @JvmStatic
+        @Implementation
+        fun lstat(path: String): StructStat = stat(File(path))
+
+        @JvmStatic
+        @Resetter
+        fun reset() {
+            synchronized(files) {
+                files.values.forEach { (_, input) -> input.close() }
+                files.clear()
+            }
+        }
+
+        private fun stat(file: File, descriptorSize: Long? = null): StructStat {
+            if (!Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                throw ErrnoException("lstat", OsConstants.ENOENT)
+            }
+            val attrs = Files.readAttributes(
+                file.toPath(), "unix:dev,ino,mode,size,lastAccessTime,lastModifiedTime,ctime",
+                LinkOption.NOFOLLOW_LINKS,
+            )
+            fun time(key: String): StructTimespec {
+                val instant = (attrs[key] as FileTime).toInstant()
+                return StructTimespec(instant.epochSecond, instant.nano.toLong())
+            }
+            return StructStat(
+                (attrs["dev"] as Number).toLong(), (attrs["ino"] as Number).toLong(),
+                (attrs["mode"] as Number).toInt(), 1, 0, 0, 0,
+                descriptorSize ?: (attrs["size"] as Number).toLong(),
+                time("lastAccessTime"), time("lastModifiedTime"), time("ctime"), 0, 0,
+            )
+        }
     }
 }
