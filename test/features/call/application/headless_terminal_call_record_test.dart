@@ -64,8 +64,8 @@ void main() {
             },
         resolveContactName: (_) async => 'Alice',
         isSuppressed: (_) async => false,
-        missedBody: 'Missed voice call',
-        unknownCallerTitle: 'Someone',
+        missedBody: ({required video}) => 'Missed voice call',
+        unknownCallerTitle: () => 'Someone',
       ),
     );
   }

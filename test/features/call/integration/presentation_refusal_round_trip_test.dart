@@ -176,8 +176,8 @@ Future<_RoundTrip> _refuseAndDeliver() async {
         },
     resolveContactName: (_) async => 'Caller',
     isSuppressed: (_) async => false,
-    missedBody: 'Missed voice call',
-    unknownCallerTitle: 'Someone',
+    missedBody: ({required video}) => 'Missed voice call',
+    unknownCallerTitle: () => 'Someone',
   );
   final contextStore = CallSignalingContextStore();
   final port = _Port();

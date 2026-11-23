@@ -6606,9 +6606,8 @@ final class ProductionApplicationBootstrap
         // same-conversation case its own authority owns.
         return visibility.isForegroundActive || visibility.maySuppress;
       },
-      missedBody: localizedMissedCallBody(),
-      missedVideoBody: localizedMissedCallBody(video: true),
-      unknownCallerTitle: localizedMissedCallUnknownCaller(),
+      missedBody: localizedMissedCallBody,
+      unknownCallerTitle: localizedMissedCallUnknownCaller,
     );
     // 405: one process-wide "a terminal call row is durable" signal. The
     // projector writes the row, then this fires, then any open conversation

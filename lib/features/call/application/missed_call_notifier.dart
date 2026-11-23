@@ -30,15 +30,16 @@ typedef MissedCallNotificationSuppressed =
     Future<bool> Function(String contactAccountPeerId);
 
 final class MissedCallNotifier {
-  const MissedCallNotifier({
+  MissedCallNotifier({
     required this.post,
     required this.resolveContactName,
     required this.isSuppressed,
-    required this.missedBody,
-    required this.unknownCallerTitle,
+    required String Function({required bool video}) missedBody,
+    required String Function() unknownCallerTitle,
     this.postWithAction,
-    this.missedVideoBody,
-  });
+  }) : _missedBody = missedBody(video: false),
+       _missedVideoBody = missedBody(video: true),
+       _unknownCallerTitle = unknownCallerTitle();
 
   final PostMissedCallNotification post;
   final Future<void> Function(
@@ -52,9 +53,9 @@ final class MissedCallNotifier {
 
   /// Localized copy, resolved by the composition root: this runs in
   /// background isolates with no widget tree to read a delegate from.
-  final String missedBody;
-  final String? missedVideoBody;
-  final String unknownCallerTitle;
+  final String _missedBody;
+  final String _missedVideoBody;
+  final String _unknownCallerTitle;
 
   /// Statuses that mean "the user never took this call". `declined` is
   /// deliberately absent: the user acted, and telling them about their own
@@ -96,12 +97,12 @@ final class MissedCallNotifier {
       name = null;
     }
     final title = (name == null || name.trim().isEmpty)
-        ? unknownCallerTitle
+        ? _unknownCallerTitle
         : name.trim();
 
     final body = entry.mediaKind == CallMediaKind.video
-        ? missedVideoBody ?? missedBody
-        : missedBody;
+        ? _missedVideoBody
+        : _missedBody;
     try {
       if (postWithAction != null) {
         await postWithAction!(entry, title, body);

@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
@@ -6,6 +8,7 @@ import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 
 /// 406: a call the user never took must leave a notification.
 ///
@@ -44,7 +47,10 @@ void main() {
     bool suppressed = false,
     Object? postError,
     Object? nameError,
+    Locale Function()? resolveLocale,
   }) {
+    Locale currentLocale() => resolveLocale?.call() ?? const Locale('en');
+
     final posted = <Map<String, String>>[];
     final notifier = MissedCallNotifier(
       post:
@@ -65,9 +71,10 @@ void main() {
         return contactName;
       },
       isSuppressed: (peerId) async => suppressed,
-      missedBody: 'Missed voice call',
-      missedVideoBody: 'Missed video call',
-      unknownCallerTitle: 'Someone',
+      missedBody: ({required video}) =>
+          localizedMissedCallBody(locale: currentLocale(), video: video),
+      unknownCallerTitle: () =>
+          localizedMissedCallUnknownCaller(locale: currentLocale()),
     );
     return (notifier: notifier, posted: posted);
   }
@@ -97,6 +104,52 @@ void main() {
     expect(posted, isTrue);
     expect(rig.posted, [
       {'contact': contactPeerId, 'title': 'Alice', 'body': 'Missed video call'},
+    ]);
+  });
+
+  test('BL61 missed call copy follows locale changes between posts', () async {
+    const bound = Duration(seconds: 3);
+    var locale = const Locale('en');
+    final rig = build(contactName: null, resolveLocale: () => locale);
+
+    expect(
+      await rig.notifier.notifyTerminal(entry(), inserted: true).timeout(bound),
+      isTrue,
+    );
+
+    locale = const Locale('de', 'DE');
+    expect(
+      await rig.notifier
+          .notifyTerminal(entry(id: '2'), inserted: true)
+          .timeout(bound),
+      isTrue,
+    );
+    expect(
+      await rig.notifier
+          .notifyTerminal(
+            entry(id: '3', mediaKind: CallMediaKind.video),
+            inserted: true,
+          )
+          .timeout(bound),
+      isTrue,
+    );
+
+    expect(rig.posted, [
+      {
+        'contact': contactPeerId,
+        'title': 'Someone',
+        'body': 'Missed voice call',
+      },
+      {
+        'contact': contactPeerId,
+        'title': 'Jemand',
+        'body': 'Verpasster Sprachanruf',
+      },
+      {
+        'contact': contactPeerId,
+        'title': 'Jemand',
+        'body': 'Verpasster Videoanruf',
+      },
     ]);
   });
 

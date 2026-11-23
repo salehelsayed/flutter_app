@@ -12715,8 +12715,8 @@ Future<void> _runKilledCallHeadlessTerminal({
             },
         resolveContactName: (_) async => 'Remote contact',
         isSuppressed: (_) async => false,
-        missedBody: 'Missed voice call',
-        unknownCallerTitle: 'Unknown caller',
+        missedBody: ({required video}) => 'Missed voice call',
+        unknownCallerTitle: () => 'Unknown caller',
       ),
     ),
     closeResources: () async => const HeadlessCallAdmissionCleanup(

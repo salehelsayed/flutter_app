@@ -2231,6 +2231,84 @@ void main() {
     const suggestion = 'Tried to call you';
     const bound = Duration(seconds: 3);
 
+    testWidgets('a later call in this chat retires the earlier suggestion', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final peerId = makeContact().peerId;
+      final first = _callEntry(
+        contactPeerId: peerId,
+        startedAt: DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
+      );
+      final source = _FakeCallTimelineSource(calls: [first]);
+      addTearDown(source.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+        offerCallMessageSuggestion: true,
+      ).timeout(bound);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(chip, findsOneWidget);
+
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(chip, findsOneWidget);
+
+      source.calls.add(
+        _callEntry(
+          contactPeerId: peerId,
+          callId: 'a2f0a1d6-0000-4000-8000-000000000406',
+          status: ConversationCallStatus.declined,
+          startedAt: DateTime.now().toUtc().subtract(
+            const Duration(seconds: 20),
+          ),
+        ),
+      );
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(find.byType(CallTimelineRow), findsNWidgets(2));
+      expect(chip, findsNothing);
+    });
+
+    testWidgets('sending a different message retires an unused suggestion', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        composerDraftStore: InMemoryComposerDraftStore(),
+        offerCallMessageSuggestion: true,
+      ).timeout(bound);
+      final field = find.byType(EditableText);
+      final chip = find.widgetWithText(ActionChip, suggestion);
+      expect(chip, findsOneWidget);
+
+      await tester.enterText(field, 'Checking in').timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded)).timeout(bound);
+      await tester.pump(const Duration(milliseconds: 250)).timeout(bound);
+      expect(messages.store.values.single.text, 'Checking in');
+      expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+      expect(chip, findsNothing);
+    });
+
     testWidgets('the chip fills an empty field and Send owns delivery', (
       tester,
     ) async {
@@ -22014,18 +22092,20 @@ class _FakeCallTimelineSource implements ConversationCallTimelineSource {
 
 ConversationCallTimelineEntry _callEntry({
   required String contactPeerId,
+  String callId = 'a2f0a1d6-0000-4000-8000-000000000405',
   ConversationCallDirection direction = ConversationCallDirection.incoming,
   ConversationCallStatus status = ConversationCallStatus.missed,
   Duration? duration,
+  DateTime? startedAt,
 }) {
-  final startedAt = DateTime.now().toUtc();
+  final openedAt = startedAt ?? DateTime.now().toUtc();
   return ConversationCallTimelineEntry(
-    callId: 'a2f0a1d6-0000-4000-8000-000000000405',
+    callId: callId,
     contactPeerId: contactPeerId,
     direction: direction,
     status: status,
-    startedAt: startedAt,
-    endedAt: startedAt.add(const Duration(seconds: 20)),
+    startedAt: openedAt,
+    endedAt: openedAt.add(const Duration(seconds: 20)),
     duration: duration,
   );
 }
