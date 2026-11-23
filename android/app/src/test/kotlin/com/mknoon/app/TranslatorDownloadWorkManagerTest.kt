@@ -1,5 +1,7 @@
 package com.mknoon.app
 
+import android.Manifest
+import android.app.ActivityManager
 import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,6 +11,7 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Looper
+import android.os.Process
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.NetworkType
@@ -29,6 +32,7 @@ import java.io.File
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -60,6 +64,12 @@ class TranslatorDownloadWorkManagerTest {
     @Test
     fun `translator resumes the same constrained work from the exact saved offset`() {
         val app: Application = RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val process = ActivityManager.RunningAppProcessInfo().apply {
+            pid = Process.myPid()
+            importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE
+        }
+        shadowOf(app.getSystemService(ActivityManager::class.java)).setProcesses(listOf(process))
         val prefs = android.preference.PreferenceManager.getDefaultSharedPreferences(app)
         prefs.edit().putInt(BDPlugin.keyConfigRequestTimeout, WAIT_SECONDS.toInt()).commit()
         val connectivity = app.getSystemService(ConnectivityManager::class.java)
@@ -91,6 +101,14 @@ class TranslatorDownloadWorkManagerTest {
 
         try {
             RangeFixture().use { server ->
+                val sha256 = MessageDigest.getInstance("SHA-256").digest(server.payload)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val verification = JSONObject()
+                    .put("version", 1)
+                    .put("expectedSha256", sha256)
+                    .put("sizeBytes", server.payload.size)
+                    .put("readyTitle", READY_TITLE)
+                    .put("readyBody", READY_BODY)
                 val task = Task(
                     taskId = taskId,
                     url = server.url,
@@ -101,6 +119,7 @@ class TranslatorDownloadWorkManagerTest {
                     group = "mknoon_gemma_translation",
                     updates = Updates.statusAndProgress,
                     allowPause = true,
+                    metaData = JSONObject().put("translatorVerification", verification).toString(),
                     options = TaskOptions(null, null, null, null, appManagedRecovery = true),
                     taskType = "DownloadTask",
                 )
@@ -177,6 +196,16 @@ class TranslatorDownloadWorkManagerTest {
                 val destination = File(task.filePath(app))
                 assertArrayEquals(server.payload, destination.readBytes())
                 assertEquals(listOf(initial.id), scheduled().map { it.id })
+                assertEquals(
+                    setOf("unrelated-notice"),
+                    notifications.activeNotifications.filter { it.id == -41003 }.map { it.tag }.toSet(),
+                )
+                val ready = notifications.activeNotifications.singleOrNull {
+                    it.tag == "mknoon_translator_download" && it.id == -41004
+                } ?: throw AssertionError("The background worker completed without a verified Ready notice")
+                val extras = ready.notification.extras
+                assertEquals(READY_TITLE, extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+                assertEquals(READY_BODY, extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
             }
         } finally {
             shadowOf(connectivity).setDefaultNetworkActive(true)
@@ -292,5 +321,7 @@ class TranslatorDownloadWorkManagerTest {
         const val WAIT_SECONDS = 3L
         const val PREFIX_BYTES = 32 * 1024
         const val VALIDATOR = "\"translator-model-v1\""
+        const val READY_TITLE = "Translation is ready"
+        const val READY_BODY = "Messages in other languages can now be translated on your phone."
     }
 }
