@@ -783,6 +783,82 @@ void main() {
     );
   }
 
+  for (final startsOffline in [true, false]) {
+    test(
+      startsOffline
+          ? 'BL70 retries local adoption when Wi-Fi returns'
+          : 'BL70 retries local adoption on refresh after a manifest error',
+      () async {
+        const bound = Duration(seconds: 3);
+        final manifest = ModelDeliveryManifest.fromJson({
+          ..._manifest.toJson(),
+          'bytes': gemmaModelBytes,
+        });
+        const identity = ModelDeliveryFileIdentity(
+          canonicalPath: '/owned/$modelDeliveryDirectory/$gemmaModelFileName',
+          sizeBytes: gemmaModelBytes,
+          modifiedMicros: 1,
+          changedMicros: 1,
+        );
+        final verification = Completer<bool>();
+        final storage = _Storage()
+          ..length = gemmaModelBytes
+          ..identity = identity
+          ..freeBytes = gemmaModelBytes + 100
+          ..verification = verification;
+        final network = _Network()
+          ..manifest = manifest.toJson()
+          ..offline = startsOffline
+          ..failFetch = !startsOffline;
+        final transport = _Transport();
+        final controller = PersistentModelDeliveryController(
+          storage: storage,
+          network: network,
+          transport: transport,
+          appBuild: () async => 132,
+          supported: true,
+          spaceReserveBytes: 20,
+        );
+        final h = _Harness(controller, storage, network, transport);
+        addTearDown(() => h.dispose().timeout(bound));
+        addTearDown(() {
+          if (!verification.isCompleted) verification.complete(false);
+        });
+
+        await controller.initialize().timeout(bound);
+        final initialFetches = startsOffline ? 0 : 1;
+        expect(controller.state.value, isA<ModelNotDownloaded>());
+        expect(network.fetches, initialFetches);
+        expect(storage.verifications, 0);
+
+        if (startsOffline) {
+          network.changeWifi(true);
+          await h.flush().timeout(bound);
+        } else {
+          network.failFetch = false;
+          await controller.refresh().timeout(bound);
+        }
+        expect(network.fetches, initialFetches + 1);
+        expect(controller.state.value, isA<ModelChecking>());
+        final ready = _nextState<ModelReady>(controller.state);
+        verification.complete(true);
+        expect((await ready).sizeBytes, gemmaModelBytes);
+
+        await controller.refresh().timeout(bound);
+        expect(controller.state.value, isA<ModelReady>());
+        expect(network.fetches, initialFetches + 1);
+        expect(storage.verifications, 1);
+        expect(
+          storage.record!.verification?.matches(manifest, identity),
+          isTrue,
+        );
+        expect(storage.removals, 0);
+        expect(transport.enqueues, isEmpty);
+        expect(transport.resumes, isEmpty);
+      },
+    );
+  }
+
   test(
     'BL70 failed local verification leaves the file for explicit repair',
     () async {
