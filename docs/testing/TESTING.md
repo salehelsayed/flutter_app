@@ -7583,6 +7583,15 @@ visible and cannot become an ordinary first-attempt PASS.
   trace and the Pixel's three visibly moving tiles closed the investigation
   (`m-b0f7f166`).
 
+  The later identical-frame regression places a two-frame WebP with equal
+  decoded RGBA before four moving tiles. It measures simultaneous changes in
+  rendered pixels and verifies the tray settles. The test-only `70227325`
+  showed two moving tiles. `d4ae095d` showed three and passed all 303 affected
+  sticker cases, including manual Play, viewport ownership and the three-loop
+  cap (`m-94df4e94`, `m-987f733c`). Only tray autoplay checks the sampled
+  frames for equality. A tile with equal frames yields its slot during
+  initial playback so another visible tile can animate.
+
 - **Custom sticker native registration:** six host contract cases first failed
   on missing registration, then passed with 28 neighboring lifecycle/configuration
   cases. `run_custom_sticker_native_unit_tests.py` requires 47 Android JVM cases:
