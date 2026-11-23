@@ -15615,6 +15615,40 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   translator lane passed all 464 cases. It includes adopting a matching
   durable receipt despite a stale running transport record, re-verifying a
   changed file, and retaining the iOS fallback (`m-520c2f21`).
+  Android's `FileInputStream(FileDescriptor)` leaves the raw descriptor
+  with its caller. The test-only `4ad742b6` observed one descriptor left
+  open after completion. `a621c0df` reads the same bytes by position and
+  closes the descriptor in a `finally` block. Both valid and invalid
+  checksum cases passed with zero open descriptors (`m-e3f41ecb`).
+  The assembled `ce1ec58` source passed strict analysis and both affected
+  Linux lanes, with 305 sticker cases and 464 translator cases and no
+  failures, skips or coverage gaps (`m-b53305bc`).
+  Pixel 345 first showed a failed translator download. Retry started no native
+  task, and the next Settings open showed Update. The first capture did not
+  record the controller's build and manifest values at that comparison.
+  Diagnostic 346 read the saved Ready record and manifest floor 129. Exact
+  uninstrumented 347 opened and reopened to Ready. A same-database 348 to 349
+  upgrade retained a 0.5 GB partial from the pre-BL-60 writer and offered
+  Resume, with the saved phase and build verified in the probe. Evidence is in
+  `.codex-test-logs/bl60f-20261123/`, `bl60p-20261123/`, `bl60q-20261123/`,
+  and `bl60h-20261123/` (`m-ad0093e4`, `m-909f9791`, `m-4c13fef0`,
+  `m-3a67686e`). Store 131 uses identity database 129, so the Pixel fixture
+  used pre-BL-60 source `4b28af0e` with the same record format and database 132.
+  The Linux v1 upgrade matrix at `4a295aec` passed all 23 historical cases.
+  Two simulated unavailable build reads reproduced the failed row, then an
+  Update after Retry fetched a compatible floor and compared it with zero.
+  Commit `b4335350` requires a known installed build for that comparison and
+  reinitializes on Retry. It preserves already restored state and the real
+  higher-floor requirement. Strict analysis and all 489 affected translator
+  cases passed (`m-4ab4d052`, `m-4e437efe`). The source review closed with
+  no required findings (`m-2cfc87c6`).
+  Pixel 350 from `b4335350` preserved the legacy paused record and resumed
+  from 0.5 GB to Ready. After removing that test model, one fresh Wi-Fi
+  WorkRequest completed and posted a single verified Ready notice (-41004)
+  at 10:49:44 UTC with the launcher in front. The first Settings sample
+  after reopening was Ready 1.1 seconds later, and the notice remained
+  single. This run covered a live background process. Evidence is in
+  `.codex-test-logs/bl60r-20261123/` (`m-ce8d29a0`).
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
