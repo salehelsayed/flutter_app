@@ -210,6 +210,62 @@ void main() {
     expect(find.text('all friends'), findsOneWidget);
   });
 
+  for (final (label, key, audience) in [
+    ('Cancel', 'thought-pick-cancel', PostAudience.allFriends()),
+    ('Done', 'thought-pick-done', PostAudience.pickPeople(['peer-omar'])),
+  ]) {
+    testWidgets('Pick People $label stays fully below the status bar', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(412, 915) * 3;
+      const statusBarPadding = FakeViewPadding(top: 128);
+      tester.view.viewPadding = statusBarPadding;
+      tester.view.padding = statusBarPadding;
+      addTearDown(tester.view.reset);
+
+      Future<int> settle() => tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 2),
+      );
+
+      await tester.pumpWidget(scene());
+      await tester.tap(chip());
+      await settle();
+      await tester.tap(find.byKey(const ValueKey('thought-audience-select')));
+      await settle();
+      expect(find.text('Who sees this'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('thought-pick-peer-omar')));
+      await tester.pump();
+      expect(find.text('Done · 1'), findsOneWidget);
+
+      final button = find.byKey(ValueKey(key));
+      expect(button, findsOneWidget);
+      final bounds = tester.getRect(button);
+      final statusBarBottom =
+          tester.view.viewPadding.top / tester.view.devicePixelRatio;
+      // The test view lays out the app but does not intercept OS-owned touches.
+      expect(
+        bounds.top,
+        greaterThanOrEqualTo(statusBarBottom),
+        reason: '$label bounds $bounds must clear the status bar',
+      );
+      await tester.tapAt(
+        Offset(bounds.center.dx, bounds.top + bounds.height / 4),
+      );
+      await settle();
+      expect(find.text('Who sees this'), findsNothing);
+
+      await write(tester, 'back in dahab');
+      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      await settle();
+      expect(shared.single.audience.kind, audience.kind);
+      expect(shared.single.audience.selectedPeerIds, audience.selectedPeerIds);
+    });
+  }
+
   testWidgets('a shared pick shows as one tap under recent picks', (
     tester,
   ) async {
