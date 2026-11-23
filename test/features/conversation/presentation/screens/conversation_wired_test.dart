@@ -2231,7 +2231,31 @@ void main() {
     const suggestion = 'Tried to call you';
     const bound = Duration(seconds: 3);
 
-    testWidgets('a later call in this chat retires the earlier suggestion', (
+    testWidgets('a remote clock ahead keeps the originating call suggestion', (
+      tester,
+    ) async {
+      final messages = FakeMessageRepository();
+      final first = _callEntry(contactPeerId: makeContact().peerId);
+      final source = _FakeCallTimelineSource(calls: [first]);
+      addTearDown(source.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+        offerCallMessageSuggestion: true,
+      ).timeout(bound);
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(find.widgetWithText(ActionChip, suggestion), findsOneWidget);
+    });
+
+    testWidgets('a later call retires the chip with a remote clock behind', (
       tester,
     ) async {
       final messages = FakeMessageRepository();
@@ -2269,7 +2293,7 @@ void main() {
           callId: 'a2f0a1d6-0000-4000-8000-000000000406',
           status: ConversationCallStatus.declined,
           startedAt: DateTime.now().toUtc().subtract(
-            const Duration(seconds: 20),
+            const Duration(seconds: 30),
           ),
         ),
       );
