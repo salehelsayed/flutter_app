@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart';
@@ -22,11 +23,13 @@ void main() {
   ConversationCallTimelineEntry call({
     ConversationCallStatus status = ConversationCallStatus.missed,
     ConversationCallDirection direction = ConversationCallDirection.incoming,
+    CallMediaKind? mediaKind = CallMediaKind.audio,
   }) => ConversationCallTimelineEntry(
     callId: 'a2f0a1d6-0000-4000-8000-000000000409',
     contactPeerId: '12D3KooWTestPeerId1234567890',
     direction: direction,
     status: status,
+    mediaKind: mediaKind,
     startedAt: DateTime.utc(2026, 2, 9, 16),
     endedAt: DateTime.utc(2026, 2, 9, 16, 0, 20),
   );
@@ -87,5 +90,19 @@ void main() {
       l10n.conversation_message_deleted,
     );
     expect(orbitMediaPreviewLabel(l10n: l10n), '');
+  });
+
+  test('BL61 a call with unknown media keeps a generic preview', () {
+    expect(
+      orbitMediaPreviewLabel(l10n: l10n, call: call(mediaKind: null)),
+      'Missed',
+    );
+    expect(
+      orbitMediaPreviewLabel(
+        l10n: l10n,
+        call: call(status: ConversationCallStatus.completed, mediaKind: null),
+      ),
+      'Call ended',
+    );
   });
 }
