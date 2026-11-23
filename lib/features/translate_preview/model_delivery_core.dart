@@ -564,7 +564,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   Duration? _remaining;
   bool _queuedRequiresWifi = false;
   String? _previouslyReadyTaskId;
-  ({String taskId, int generation})? _verification;
+  ({String? taskId, int generation})? _verification;
   Timer? _recoveryTimer;
   int _recoveryDelaySeconds = 5;
   static const _serverRetrySeconds = [5, 15, 45];
@@ -637,6 +637,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         _render();
         return;
       }
+      if (await _startExistingModelVerification(generation)) return;
       final manifest = _record.manifest;
       if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
         _previouslyReadyTaskId = _record.taskId;
@@ -760,6 +761,45 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _record = _record.copyWith(phase: ModelDeliveryPhase.failed);
       _render();
     }
+  }
+
+  Future<bool> _startExistingModelVerification(
+    int generation, {
+    bool missingManifestOnly = false,
+  }) async {
+    if (_record.phase != ModelDeliveryPhase.idle || _record.taskId != null) {
+      return false;
+    }
+    var manifest = _record.manifest;
+    if ((missingManifestOnly && manifest != null) ||
+        (manifest == null && _connection == ModelDeliveryConnection.offline)) {
+      return false;
+    }
+    final expectedBytes = manifest?.bytes ?? gemmaModelBytes;
+    if (await _storage.modelLength() != expectedBytes) return false;
+    if (manifest == null) {
+      try {
+        manifest = ModelDeliveryManifest.fromJson(
+          await _network.fetchManifest(),
+        );
+      } on Object {
+        return false;
+      }
+    }
+    if (_disposed ||
+        generation != _generation ||
+        manifest.bytes != expectedBytes) {
+      return false;
+    }
+    _record = _record.copyWith(
+      manifest: manifest,
+      receivedBytes: expectedBytes,
+      phase: ModelDeliveryPhase.verifying,
+      clearVerification: true,
+    );
+    _render();
+    resumeVerification();
+    return true;
   }
 
   void setCapability(bool supported, {bool insufficientMemory = false}) {
@@ -965,6 +1005,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         if (_disposed) return;
         _connection = connection;
         _freeBytes = freeBytes;
+        if (await _startExistingModelVerification(
+          _generation,
+          missingManifestOnly: true,
+        )) {
+          return;
+        }
         resumeVerification();
         if (_record.phase == ModelDeliveryPhase.insufficientSpace &&
             _freeBytes >= _neededBytes) {
@@ -1767,6 +1813,13 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             return;
           }
         }
+        if (generation == _generation &&
+            await _startExistingModelVerification(
+              generation,
+              missingManifestOnly: true,
+            )) {
+          return;
+        }
         _render();
       }),
     );
@@ -1858,14 +1911,18 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   }) {
     final manifest = _record.manifest;
     final id = _record.taskId;
-    if (manifest == null || id == null || !_canRun) return;
+    if (manifest == null ||
+        _record.phase != ModelDeliveryPhase.verifying ||
+        !_canRun) {
+      return;
+    }
     final generation = _generation;
     final verification = (taskId: id, generation: generation);
     if (_verification == verification) return;
     _verification = verification;
     unawaited(() async {
       var allowForeground = resuming || _isAppBackground?.call() == true;
-      if (!allowForeground) {
+      if (id != null && !allowForeground) {
         try {
           allowForeground =
               await _verificationWasBackgrounded?.call(id) ?? false;
@@ -1881,7 +1938,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         await _storage.prepare();
         final before = await _storage.modelIdentity();
         if (before != null) {
-          final native = nativeVerification ?? await _nativeVerificationFor(id);
+          final native = id == null
+              ? null
+              : nativeVerification ?? await _nativeVerificationFor(id);
           final verifiedByNative =
               native?.verification.matches(manifest, before) ?? false;
           valid =
@@ -1922,6 +1981,12 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
               identity: verified,
             ),
           );
+        } else if (id == null) {
+          _record = _record.copyWith(
+            receivedBytes: 0,
+            phase: ModelDeliveryPhase.idle,
+            clearVerification: true,
+          );
         } else if (damaged && !_record.integrityRepairAttempted) {
           _record = _record.copyWith(
             phase: ModelDeliveryPhase.integrityRepairPending,
@@ -1948,7 +2013,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         if (_disposed || generation != _generation) return;
         _render();
         if (_state.value case final ModelReady ready
-            when !noticePosted && id != _previouslyReadyTaskId) {
+            when id != null && !noticePosted && id != _previouslyReadyTaskId) {
           final publish = _publishBackgroundStatus;
           if (publish != null) {
             notice = _runNotice(
@@ -1967,7 +2032,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         }
       });
       await notice;
-      await _releaseVerificationWindow(id);
+      if (id != null) await _releaseVerificationWindow(id);
     }());
   }
 

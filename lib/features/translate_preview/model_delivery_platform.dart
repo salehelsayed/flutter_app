@@ -535,7 +535,12 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     for (final id in _tasks.keys.toList()) {
       await _rememberPartial(_tasks[id]!);
       if (id == ownedTaskId) continue;
-      await cancel(id);
+      await _cancel(
+        id,
+        retainCompleteDestinationBytes: _useAndroidGate
+            ? _sizes[id] ?? gemmaModelBytes
+            : null,
+      );
       await forget(id);
     }
     await _downloader.resumeFromBackground();
@@ -739,9 +744,13 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   }
 
   @override
-  Future<void> cancel(
+  Future<void> cancel(String taskId, {bool requireConfirmedStop = false}) =>
+      _cancel(taskId, requireConfirmedStop: requireConfirmedStop);
+
+  Future<void> _cancel(
     String taskId, {
     bool requireConfirmedStop = false,
+    int? retainCompleteDestinationBytes,
   }) async {
     var settled = Completer<TaskStatus>();
     // Observe before even looking up the task: an inspection can race completion.
@@ -764,7 +773,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
             native == null &&
             status != null &&
             status.isFinalState) {
-          await _settleCanceledWriter(task, status);
+          await _settleCanceledWriter(
+            task,
+            status,
+            retainCompleteDestinationBytes: retainCompleteDestinationBytes,
+          );
           return;
         }
         final accepted = await _downloader.cancelTaskWithId(
@@ -785,7 +798,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
           status = await settled.future.timeout(_cancellationTimeout);
         }
         if (status != TaskStatus.paused) {
-          await _settleCanceledWriter(task, status);
+          await _settleCanceledWriter(
+            task,
+            status,
+            retainCompleteDestinationBytes: retainCompleteDestinationBytes,
+          );
           return;
         }
         // A racing pause can leave resume data; cancel that settled paused task
@@ -804,14 +821,15 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
 
   Future<void> _settleCanceledWriter(
     DownloadTask task,
-    TaskStatus status,
-  ) async {
+    TaskStatus status, {
+    required int? retainCompleteDestinationBytes,
+  }) async {
     await _awaitPartialCaptures(task.taskId);
     if (_isIOS) return;
     // WorkManager cancel/"canceled" does not join its synchronous file writer.
     // The pinned SDK exposes no join. Use the bounded filesystem-settle fallback:
-    // remove stable owned files, then require two quiet absent samples.
-    // A late recreation resets settlement and is deleted again before returning.
+    // remove stable owned files, then require two quiet samples. Startup alone
+    // may retain a complete destination for the storage layer to verify.
     final destination = status == TaskStatus.complete
         ? null
         : await _destinationPath(task);
@@ -820,11 +838,11 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     }
     final watch = Stopwatch()..start();
     final previous = <String, FileStat>{};
-    var absentSamples = 0;
+    var quietSamples = 0;
     while (watch.elapsed < _cancellationTimeout) {
       await Future<void>.delayed(_cancellationSettleInterval);
       if (await _downloader.taskForId(task.taskId) != null) {
-        absentSamples = 0;
+        quietSamples = 0;
         previous.clear();
         continue;
       }
@@ -833,32 +851,45 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
         ?destination,
         ...(_partialPaths[task.taskId] ?? <String>{}),
       };
-      var allAbsent = true;
+      var allQuiet = true;
       for (final path in paths) {
         final file = File(path);
         final stat = await file.stat();
         if (stat.type == FileSystemEntityType.notFound) {
           previous.remove(path);
-        } else {
-          allAbsent = false;
-          if (previous[path]?.size == stat.size &&
-              previous[path]?.modified == stat.modified) {
-            if (path != destination && await _safePartialPath(path) != path) {
-              throw FileSystemException('Translator partial ownership changed');
-            }
-            await file.delete();
-            previous.remove(path);
-          } else {
-            previous[path] = stat;
+          continue;
+        }
+        final prior = previous[path];
+        final sameSizeAndModified =
+            prior?.size == stat.size && prior?.modified == stat.modified;
+        if (path == destination &&
+            stat.size == retainCompleteDestinationBytes &&
+            stat.type == FileSystemEntityType.file &&
+            await FileSystemEntity.type(path, followLinks: false) ==
+                FileSystemEntityType.file) {
+          if (!sameSizeAndModified || prior?.changed != stat.changed) {
+            allQuiet = false;
           }
+          previous[path] = stat;
+          continue;
+        }
+        allQuiet = false;
+        if (sameSizeAndModified) {
+          if (path != destination && await _safePartialPath(path) != path) {
+            throw FileSystemException('Translator partial ownership changed');
+          }
+          await file.delete();
+          previous.remove(path);
+        } else {
+          previous[path] = stat;
         }
       }
       await _awaitPartialCaptures(task.taskId);
       if (!paths.containsAll(_partialPaths[task.taskId] ?? <String>{})) {
-        allAbsent = false;
+        allQuiet = false;
       }
-      absentSamples = allAbsent ? absentSamples + 1 : 0;
-      if (absentSamples >= 2) return;
+      quietSamples = allQuiet ? quietSamples + 1 : 0;
+      if (quietSamples >= 2) return;
     }
     throw TimeoutException('Translator destination did not settle');
   }

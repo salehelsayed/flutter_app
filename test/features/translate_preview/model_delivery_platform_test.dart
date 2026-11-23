@@ -1045,6 +1045,54 @@ void main() {
   );
 
   test(
+    'BL70 Android startup forgets a failed orphan and preserves its complete destination',
+    () async {
+      final downloader = _Downloader();
+      final resumeStorage = _ResumeStorage();
+      final task = _ownedTask('failed-orphan');
+      final destination = File(
+        '${destinations.path}/${task.directory}/${task.filename}',
+      );
+      final bytes = List.generate(_manifest().bytes, (index) => index);
+      await destination.parent.create(recursive: true).timeout(checkpointBound);
+      await destination.writeAsBytes(bytes).timeout(checkpointBound);
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.failed,
+        .4,
+        bytes.length,
+      );
+      final partial = await retainAndroidCheckpoint(
+        resumeStorage,
+        task,
+        40,
+      ).timeout(checkpointBound);
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: resumeStorage,
+        isIOS: false,
+        destinationPath: (task) async =>
+            '${destinations.path}/${task.directory}/${task.filename}',
+      );
+      addTearDown(() => transport.dispose().timeout(checkpointBound));
+
+      await transport.initialize(null).timeout(checkpointBound);
+
+      expect(downloader.db.deleted, [task.taskId]);
+      expect(downloader.db.records, isEmpty);
+      expect(resumeStorage.records, isEmpty);
+      expect(await partial.exists().timeout(checkpointBound), isFalse);
+      expect(downloader.canceled, isEmpty);
+      expect(
+        await destination.exists().timeout(checkpointBound),
+        isTrue,
+        reason: 'a complete model still requires SHA admission by storage',
+      );
+      expect(await destination.readAsBytes().timeout(checkpointBound), bytes);
+    },
+  );
+
+  test(
     'metadata-only cancellation removes only its mapped Android partial',
     () async {
       final downloader = _Downloader();
