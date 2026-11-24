@@ -41,8 +41,42 @@ func waitWeeklySenderAssertion(t *testing.T, h *b294Harness, action string) week
 		select {
 		case <-h.transport.changed:
 		case <-ctx.Done():
-			t.Fatalf("production flush did not send %s; observed %d exchanges", action, len(h.transport.recorded()))
+			t.Fatalf("reporter did not send %s; observed %d exchanges", action, len(h.transport.recorded()))
 		}
+	}
+}
+
+func TestBL78WeeklySenderSendsFromOrdinaryMarks(t *testing.T) {
+	for _, test := range []struct {
+		op, action  string
+		kinds, want []string
+	}{
+		{"markWeekly", "engagement_identity_v1", []string{"chat", "call", "group"}, []string{"active", "chat", "call", "group"}},
+		{"markFeatureUse", "feature_use_identity_v1", []string{"photo_video"}, []string{"photo_video"}},
+	} {
+		t.Run(test.op, func(t *testing.T) {
+			h := b294New(t)
+			h.ready()
+			h.transport.start(h.transportID, []string{b294Address(h.relayA, 4101)})
+			week := activitycalendar.Week(h.clock.now())
+			fields := map[string]any{"kinds": test.kinds}
+			if test.op == "markWeekly" {
+				fields["week"] = week
+			} else {
+				fields["occurredAtUnixMillis"] = h.clock.now().UnixMilli()
+			}
+			result, err := b29wCall(t, h, test.op, fields)
+			if err != nil || !result.Accepted {
+				t.Fatalf("qualifying mark was refused: %v", err)
+			}
+			packet := waitWeeklySenderAssertion(t, h, test.action)
+			if packet.Week != week || !reflect.DeepEqual(packet.Kinds, test.want) {
+				t.Fatalf("wrong weekly assertion: %+v", packet)
+			}
+			if b294Disk(t, h.config.StatePath).Marked {
+				t.Fatal("weekly-only mark created daily activity")
+			}
+		})
 	}
 }
 

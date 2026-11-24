@@ -76,6 +76,17 @@ import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
+class _HeldIdentityRepository extends FakeIdentityRepository {
+  Future<IdentityModel?> Function()? nextRead;
+
+  @override
+  Future<IdentityModel?> loadIdentity() {
+    final read = nextRead;
+    nextRead = null;
+    return read?.call() ?? super.loadIdentity();
+  }
+}
+
 class _AdmissionFirstMediaRepository extends InMemoryMediaAttachmentRepository
     implements OutgoingDirectLinkedMediaBlobFanoutRepository {
   _AdmissionFirstMediaRepository(this.snapshot);
@@ -241,8 +252,9 @@ void main() {
       var status = ShareBatchTargetStatus.sent;
       var replaceConsentDuringSend = false;
       var wasAlreadySent = false;
+      final identities = _HeldIdentityRepository()..seed(identity);
       final coordinator = DefaultShareBatchDeliveryCoordinator(
-        identityRepository: FakeIdentityRepository()..seed(identity),
+        identityRepository: identities,
         contactRepository: InMemoryContactRepository(),
         messageRepository: InMemoryMessageRepository(),
         mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
@@ -321,6 +333,20 @@ void main() {
       wasAlreadySent = false;
       replaceConsentDuringSend = true;
       expect(await share('jpg'), isEmpty);
+
+      replaceConsentDuringSend = false;
+      final readStarted = Completer<void>();
+      final readResult = Completer<IdentityModel?>();
+      identities.nextRead = () {
+        readStarted.complete();
+        return readResult.future;
+      };
+      final delivery = share('jpg');
+      await readStarted.future.timeout(limit);
+      await setConsent(false, 4);
+      await setConsent(true, 5);
+      readResult.complete(identity);
+      expect(await delivery.timeout(limit), isEmpty);
     },
   );
 
