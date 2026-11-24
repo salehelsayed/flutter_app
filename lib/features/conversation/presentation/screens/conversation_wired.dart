@@ -8944,8 +8944,7 @@ class _ConversationWiredState extends State<ConversationWired>
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return;
     final contactPeerId = widget.contact.peerId;
-    bool stillOnConversation() =>
-        mounted &&
+    bool sameConversation() =>
         route.isCurrent &&
         contactPeerId == widget.contact.peerId &&
         contactPeerId == _contact.peerId &&
@@ -8960,7 +8959,8 @@ class _ConversationWiredState extends State<ConversationWired>
       try {
         await refresh.timeout(const Duration(seconds: 10));
       } on TimeoutException {
-        if (stillOnConversation() &&
+        if (mounted &&
+            sameConversation() &&
             generation == _outgoingCallAvailabilityGeneration) {
           _showOutgoingCallMessage(
             AppLocalizations.of(context)!.call_video_entry_unavailable,
@@ -8968,7 +8968,8 @@ class _ConversationWiredState extends State<ConversationWired>
         }
         return;
       }
-      if (!stillOnConversation() ||
+      if (!mounted ||
+          !sameConversation() ||
           generation != _outgoingCallAvailabilityGeneration ||
           _outgoingVideoCallContactAvailable == null) {
         return;
@@ -8980,6 +8981,7 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    if (!mounted) return;
     final l10n = AppLocalizations.of(context)!;
     final selection = await showDialog<CallMediaKind>(
       context: context,
@@ -9006,7 +9008,7 @@ class _ConversationWiredState extends State<ConversationWired>
         );
       },
     );
-    if (selection == null || !stillOnConversation()) return;
+    if (!mounted || selection == null || !sameConversation()) return;
     await _startOutgoingCall(
       capability,
       video: selection == CallMediaKind.video,
