@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -16,6 +17,77 @@ func TestContactRequestPushCap(t *testing.T) {
 	for _, platform := range []string{"ios", "android"} {
 		t.Run(platform, func(t *testing.T) {
 			testContactRequestPushCap(t, platform)
+		})
+	}
+}
+
+func TestContactRequestPushCapProviderRejection(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		ambiguousFirst    bool
+		wantSecondVisible bool
+	}{
+		{name: "definitive first rejection lets a healthy route alert", wantSecondVisible: true},
+		{name: "ambiguous first attempt retains the slot after rejection", ambiguousFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			redis := miniredis.RunT(t)
+			t.Setenv("RELAY_BACKEND", "redis")
+			t.Setenv("REDIS_URL", "redis://"+redis.Addr())
+			t.Setenv("REDIS_PREFIX", "contact-cap-rejection-test:")
+			t.Setenv("RELAY_CONTACT_REQUEST_PUSH_CAP_ENABLED", "true")
+			t.Setenv("APNS_VOIP_PUSH_ENABLED", "false")
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			stores, err := newControlPlaneStores(ctx, loadBackendConfigFromEnv(), DefaultServerLimits(), "")
+			if err != nil {
+				t.Fatalf("open relay stores: %v", err)
+			}
+			defer stores.Close()
+			const sender, recipient = "synthetic-sender", "synthetic-recipient"
+			if err := stores.Push.RegisterToken(recipient, "expired-token", "ios"); err != nil {
+				t.Fatalf("register expired route: %v", err)
+			}
+
+			attempts := 0
+			var healthyDraft *messaging.Message
+			stores.Push.retryDelays = []time.Duration{0}
+			stores.Push.sender = func(_ context.Context, draft *messaging.Message) (string, error) {
+				if draft.Token == "healthy-token" {
+					healthyDraft = draft
+					return "healthy-provider-acceptance", nil
+				}
+				attempts++
+				if tc.ambiguousFirst && attempts == 1 {
+					return "", context.DeadlineExceeded
+				}
+				return "", errors.New("registration-token-not-registered")
+			}
+			stores.Push.sendStoredNotification(ctx, recipient, sender,
+				`{"type":"contact_request","version":"2","intent":"new_request","msgId":"expired-route"}`, "expired-custody")
+			wantAttempts := 1
+			if tc.ambiguousFirst {
+				wantAttempts = 2
+			}
+			if route, err := stores.Push.selectPushRoute(recipient, ""); err != nil || route != nil || attempts != wantAttempts {
+				t.Fatalf("expired route must be rejected and revoked: route present=%t, attempts=%d, error=%v", route != nil, attempts, err)
+			}
+			if err := stores.Push.RegisterToken(recipient, "healthy-token", "ios"); err != nil {
+				t.Fatalf("re-register healthy route: %v", err)
+			}
+
+			stores.Push.sendStoredNotification(ctx, recipient, sender,
+				`{"type":"contact_request","version":"2","intent":"new_request","msgId":"healthy-route"}`, "healthy-custody")
+			if healthyDraft == nil {
+				t.Fatal("healthy route received no provider payload")
+			}
+			visible := healthyDraft.Data["type"] == "contact_request"
+			if visible != tc.wantSecondVisible {
+				t.Errorf("healthy route visibility = %t, want %t", visible, tc.wantSecondVisible)
+			}
+			if !visible && healthyDraft.Data["quietRecovery"] != "1" {
+				t.Error("retained reservation must use quiet recovery")
+			}
 		})
 	}
 }
