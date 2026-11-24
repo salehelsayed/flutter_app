@@ -58,21 +58,42 @@ String? translateLanguageNativeName(String languageCode) =>
 /// Every language the translator can translate into.
 Iterable<String> get translateLanguageCodes => _languages.keys;
 
+/// How [text] may be translated into [targetLanguageCode].
+enum TranslateOffer {
+  /// Already in the target language or script, or not translatable.
+  none,
+
+  /// Latin text whose language is unknown: offered, but only on a tap, so a
+  /// short message in the target language never runs the model by itself.
+  onTap,
+
+  /// Clearly another language or script.
+  automatic,
+}
+
+TranslateOffer translateOffer(String text, String targetLanguageCode) {
+  final target = _languages[targetLanguageCode.toLowerCase()];
+  if (target == null) return TranslateOffer.none;
+  final script = dominantScript(text);
+  if (script == null) return TranslateOffer.none;
+  if (script != TextScript.latin) {
+    return _sameScriptFamily(script, target.$3)
+        ? TranslateOffer.none
+        : TranslateOffer.automatic;
+  }
+  if (looksLikeArabizi(text)) return TranslateOffer.none;
+  if (target.$3 != TextScript.latin) return TranslateOffer.automatic;
+  final guess = guessLatinLanguage(text);
+  if (guess == null) return TranslateOffer.onTap;
+  return guess == targetLanguageCode.toLowerCase()
+      ? TranslateOffer.none
+      : TranslateOffer.automatic;
+}
+
 /// Whether to show "Translate" for [text] on a phone whose system language is
 /// [targetLanguageCode].
-bool shouldOfferTranslate(String text, String targetLanguageCode) {
-  final target = _languages[targetLanguageCode.toLowerCase()];
-  if (target == null) return false;
-  final script = dominantScript(text);
-  if (script == null) return false;
-  if (script != TextScript.latin) {
-    return !_sameScriptFamily(script, target.$3);
-  }
-  if (looksLikeArabizi(text)) return false;
-  if (target.$3 != TextScript.latin) return true;
-  final guess = guessLatinLanguage(text);
-  return guess != targetLanguageCode.toLowerCase();
-}
+bool shouldOfferTranslate(String text, String targetLanguageCode) =>
+    translateOffer(text, targetLanguageCode) != TranslateOffer.none;
 
 /// Arabic script is shared by Arabic, Persian and Urdu, Han by Chinese and
 /// Japanese; the heuristic cannot tell them apart, so it treats them as one.

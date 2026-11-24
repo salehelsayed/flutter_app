@@ -258,7 +258,8 @@ class MessageTranslation extends StatelessWidget {
         _AiAction(
           identity: (messageId, text),
           targetLanguage: targetLanguage,
-          autoStart: true,
+          autoStart:
+              translateOffer(text, targetLanguage) == TranslateOffer.automatic,
           captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.translation),
           labels: _Labels(
             action: l10n.translator_see_translation,
