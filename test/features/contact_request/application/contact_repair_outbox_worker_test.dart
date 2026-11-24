@@ -209,8 +209,9 @@ void main() {
       expect(preparations, 2);
       expect(a.bridge.encrypts, hasLength(1));
       expect((await a.row(requestId))['envelope_json'], committed);
-      expect(a.inbox(), hasLength(1));
-      final wire = jsonDecode(a.inbox().single) as Map<String, dynamic>;
+      final sent = a.inbox();
+      expect(sent, hasLength(1));
+      final wire = jsonDecode(sent.single) as Map<String, dynamic>;
       expect(wire['type'], 'contact_request');
       expect(wire['intent'], 'key_exchange_retry');
       expect(wire['reciprocalReply'], isTrue);
