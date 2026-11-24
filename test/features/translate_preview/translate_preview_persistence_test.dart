@@ -50,6 +50,94 @@ void main() {
   const voice = PreviewOwner.voiceAttachment('voice', messageId: 'message');
   const thought = PreviewOwner.thought('thought');
 
+  group('chat auto-translation', () {
+    late LocalPreviewFixture fixture;
+    late _Ai ai;
+
+    Future<void> seedMessage(WidgetTester tester, String text) =>
+        tester.runAsync(() async {
+          final iso = DateTime.fromMillisecondsSinceEpoch(
+            fixture.nowMs,
+            isUtc: true,
+          ).toIso8601String();
+          await fixture.db.insert('messages', {
+            'id': 'chat-message',
+            'contact_peer_id': 'contact',
+            'sender_peer_id': 'contact',
+            'text': text,
+            'timestamp': iso,
+            'created_at': iso,
+            'is_incoming': 1,
+          });
+        });
+
+    Widget view(String text) => _host(
+      MessageTranslation(
+        messageId: 'chat-message',
+        text: text,
+        targetLanguage: 'de',
+        ai: ai,
+        persistence: fixture.store,
+      ),
+    );
+
+    setUp(() {
+      fixture = LocalPreviewFixture();
+      ai = _Ai();
+    });
+
+    testWidgets('a Latin message of unknown language waits for a tap', (
+      tester,
+    ) async {
+      const text = 'Super, Mona 👍';
+      await tester.runAsync(fixture.open);
+      addTearDown(fixture.dispose);
+      await seedMessage(tester, text);
+      await tester.pumpWidget(view(text));
+      await fixture.flush(tester);
+      expect(ai.translations, 0);
+      expect(find.text('See translation'), findsOneWidget);
+
+      await tester.tap(find.text('See translation'));
+      await fixture.flush(tester);
+      expect(ai.translations, 1);
+      expect(find.text('German result'), findsOneWidget);
+    });
+
+    testWidgets('a message in a known other language still translates on '
+        'its own', (tester) async {
+      const text = 'Gracias, hasta mañana';
+      await tester.runAsync(fixture.open);
+      addTearDown(fixture.dispose);
+      await seedMessage(tester, text);
+      await tester.pumpWidget(view(text));
+      await fixture.flush(tester);
+      expect(ai.translations, 1);
+      expect(find.text('German result'), findsOneWidget);
+    });
+
+    testWidgets('a saved translation of a tap-only message shows at once', (
+      tester,
+    ) async {
+      const text = 'Super, Mona 👍';
+      await tester.runAsync(fixture.open);
+      addTearDown(fixture.dispose);
+      await seedMessage(tester, text);
+      await tester.runAsync(
+        () => fixture.store.saveTranslation(
+          const PreviewOwner.message('chat-message'),
+          text,
+          'de',
+          'Super, Mona 👍 (saved)',
+        ),
+      );
+      await tester.pumpWidget(view(text));
+      await fixture.flush(tester);
+      expect(find.text('Super, Mona 👍 (saved)'), findsOneWidget);
+      expect(ai.translations, 0);
+    });
+  });
+
   testWidgets(
     'a chat message translation survives a DB restart without a model call',
     (tester) async {
