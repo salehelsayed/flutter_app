@@ -164,6 +164,7 @@ void main() {
     (tester) async {
       const bound = Duration(seconds: 3);
       final videoEligibility = Completer<bool>();
+      final refreshedVideoEligibility = Completer<bool>();
       calls.nextVideoCheck = videoEligibility;
       try {
         await mount(tester).timeout(bound);
@@ -185,12 +186,42 @@ void main() {
         expect(calls.audioStarts, isEmpty);
         expect(calls.videoStarts, isEmpty);
 
+        await tester.binding.handlePopRoute().timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        calls.videoContact = false;
+        calls.changes.add(true);
+        await tester.pump().timeout(bound);
+        expect(find.byTooltip('Start voice call'), findsOneWidget);
+
+        calls.videoContact = true;
+        calls.nextVideoCheck = refreshedVideoEligibility;
+        calls.changes.add(true);
+        await tester.pump().timeout(bound);
+        expect(calls.videoChecks, [_peer, _peer, _peer]);
+        await chooser(tester).timeout(bound);
+        expect(
+          calls.audioStarts,
+          isEmpty,
+          reason: 'A readiness event invalidates the previous video result',
+        );
+        expect(calls.videoStarts, isEmpty);
+        expect(find.text('Video call'), findsNothing);
+        refreshedVideoEligibility.complete(true);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        expect(find.text('Voice call'), findsOneWidget);
+        expect(find.text('Video call'), findsOneWidget);
+
         await tester.tap(find.text('Video call')).timeout(bound);
         await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
         expect(calls.audioStarts, isEmpty);
         expect(calls.videoStarts, [_peer]);
       } finally {
         if (!videoEligibility.isCompleted) videoEligibility.complete(false);
+        if (!refreshedVideoEligibility.isCompleted) {
+          refreshedVideoEligibility.complete(false);
+        }
         await cleanup(tester).timeout(bound);
       }
     },

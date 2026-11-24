@@ -9457,6 +9457,9 @@ class _ConversationWiredState extends State<ConversationWired>
     final generation = ++_outgoingCallAvailabilityGeneration;
     final capability = widget.outgoingCallCapability;
     final contactPeerId = _contact.peerId;
+    if (mounted && _outgoingVideoCallContactAvailable == false) {
+      setState(() => _outgoingVideoCallContactAvailable = null);
+    }
     var available = false;
     if (capability?.isOutgoingCallAvailable ?? false) {
       try {
