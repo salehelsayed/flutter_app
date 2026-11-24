@@ -2,8 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -65,6 +69,46 @@ final class _Calls implements OutgoingVideoCallCapability {
   }
 }
 
+final class _PermissionTestGraph
+    implements CallSignalingGraphLifecycle, CallSignalingVideoAdmission {
+  final starts = <(String, CallMediaKind)>[];
+
+  @override
+  Future<bool> start() async => true;
+  @override
+  Future<void> onResume() async {}
+  @override
+  Future<bool> advertiseCapability() async => true;
+  @override
+  Future<void> shutdown() async {}
+  @override
+  Future<bool> isOutgoingCallAvailableFor(String peer) async => true;
+  @override
+  Future<bool> isOutgoingVideoCallAvailableFor(String peer) async => true;
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peer, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    request?.admit();
+    starts.add((peer, CallMediaKind.audio));
+    return OutgoingCallStartResult.started;
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingVideoCall(
+    String peer, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    request?.admit();
+    starts.add((peer, CallMediaKind.video));
+    return OutgoingCallStartResult.started;
+  }
+}
+
+enum _MicrophonePrompt { grantVoice, grantVideo, deny, background }
+
 void main() {
   late Directory avatars;
   late _Calls calls;
@@ -82,7 +126,10 @@ void main() {
     avatars.deleteSync(recursive: true);
   });
 
-  Future<void> mount(WidgetTester tester) async {
+  Future<void> mount(
+    WidgetTester tester, {
+    OutgoingCallCapability? capability,
+  }) async {
     final contact = ContactModel(
       peerId: _peer,
       publicKey: 'key',
@@ -110,7 +157,7 @@ void main() {
             contactRepo: contacts,
           ),
           p2pService: transport,
-          outgoingCallCapability: calls,
+          outgoingCallCapability: capability ?? calls,
         ),
       ),
     );
@@ -134,6 +181,80 @@ void main() {
 
   Future<void> cleanup(WidgetTester tester) =>
       tester.pumpWidget(const SizedBox.shrink());
+
+  for (final scenario in _MicrophonePrompt.values) {
+    testWidgets('first chat call microphone prompt ${scenario.name}', (
+      tester,
+    ) async {
+      const bound = Duration(seconds: 3);
+      final video = scenario == _MicrophonePrompt.grantVideo;
+      final permission = Completer<MicPermissionStatus>();
+      var permissionRequests = 0;
+      final graph = _PermissionTestGraph();
+      final binding = tester.binding;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final composition = CallSignalingComposition(
+        featureFlags: {
+          'voice_call_capability_v1': true,
+          'voice_call_outgoing_enabled': true,
+          'voice_call_incoming_enabled': true,
+          'voice_call_turn_enabled': true,
+          'video_call_v2_enabled': video,
+        },
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        buildGraph: () async => graph,
+        requestOutgoingMicrophonePermission: () {
+          permissionRequests++;
+          return permission.future.timeout(bound);
+        },
+        isForeground: () => binding.lifecycleState == AppLifecycleState.resumed,
+      );
+      try {
+        await composition.start().timeout(bound);
+        await mount(tester, capability: composition).timeout(bound);
+        await chooser(tester).timeout(bound);
+        if (video) {
+          await tester.tap(find.text('Video call')).timeout(bound);
+          await tester.pump().timeout(bound);
+          await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        }
+        expect(permissionRequests, 1);
+        expect(graph.starts, isEmpty);
+
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        if (scenario == _MicrophonePrompt.background) {
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        }
+        permission.complete(
+          scenario == _MicrophonePrompt.deny
+              ? MicPermissionStatus.denied
+              : MicPermissionStatus.granted,
+        );
+        await tester.pump().timeout(bound);
+        expect(graph.starts, isEmpty, reason: 'No call while inactive');
+
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pump().timeout(bound);
+        expect(permissionRequests, 1);
+        expect(graph.starts, switch (scenario) {
+          _MicrophonePrompt.grantVoice => [(_peer, CallMediaKind.audio)],
+          _MicrophonePrompt.grantVideo => [(_peer, CallMediaKind.video)],
+          _MicrophonePrompt.deny || _MicrophonePrompt.background => isEmpty,
+        });
+      } finally {
+        if (!permission.isCompleted) {
+          permission.complete(MicPermissionStatus.denied);
+        }
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await cleanup(tester).timeout(bound);
+        await composition.shutdown().timeout(bound);
+      }
+    });
+  }
 
   testWidgets(
     'eligible conversation call button offers audio and video without starting either',
