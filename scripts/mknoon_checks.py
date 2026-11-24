@@ -207,6 +207,12 @@ def validate(root, rules, files=None):
         if not re.fullmatch(r'[a-z0-9_.-]+', cid): errors.append('Invalid check id: ' + cid)
         if c.get('kind') not in ('flutter', 'python', 'node', 'go', 'sims', 'manual', 'command'):
             errors.append('Unknown runner kind: ' + cid)
+        builds = c.get('release_builds')
+        if builds is not None and (
+                c.get('kind') != 'manual' or cid not in rules.get('mandatory', [])
+                or not isinstance(builds, list) or not builds
+                or any(not isinstance(build, str) or not re.fullmatch(r'[0-9]+', build) for build in builds)):
+            errors.append('Invalid mandatory manual release build scope: ' + cid)
         if not c.get('boundary') or c.get('timeout_seconds', 0) <= 0:
             errors.append('Missing boundary/timeout: ' + cid)
         for path in c.get('paths', []):
@@ -282,13 +288,19 @@ def validate(root, rules, files=None):
     return files
 
 
-def select(rules, changes, mode, files, root):
+def select(rules, changes, mode, files, root, *, build_label=''):
     selected = {}
     areas = set()
     unmapped = []
     excluded = []
+    label = build_label.strip()
+    versioned_label = re.fullmatch(r'[^()]+\(([0-9]+)\)', label)
+    build = versioned_label[1] if versioned_label else label
     def add(cid, why):
-        if mode != 'release' and rules['checks'][cid]['kind'] == 'manual':
+        check = rules['checks'][cid]
+        if mode != 'release' and check['kind'] == 'manual':
+            return
+        if check.get('release_builds') and build not in check['release_builds']:
             return
         selected.setdefault(cid, []).append(why)
     for cid in rules['fast']: add(cid, 'fast prerequisite')
@@ -881,7 +893,9 @@ def make_plan(args, root, rules, *, capture_toolchains=True):
         raise InvalidPlan('Working tree is dirty; use --local to include it, or an isolated clean candidate checkout')
     changes = changed_files(root, baseline, args.local)
     identity = source_identity(root, files, rules)
-    selection = select(json.loads(json.dumps(rules)), changes, args.mode, files, root)
+    selection = select(
+        json.loads(json.dumps(rules)), changes, args.mode, files, root, build_label=args.build_label,
+    )
     for c in selection['selected']:
         if c['kind'] == 'flutter': c['workers'] = getattr(args, 'flutter_workers', 1)
         c['command'], c['selected_paths'] = command_for(c, root, files)

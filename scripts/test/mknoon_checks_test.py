@@ -443,6 +443,27 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
     def select_path(self, path):
         return checks.select(copy.deepcopy(self.rules), [{'path': path, 'status': 'M'}], 'change', [], self.root)
 
+    def test_signed_video_evidence_is_required_only_for_release_build_133(self):
+        for mode, label, expected in (
+            ('release', '133', True),
+            ('release', '1.0.1(133)', True),
+            ('release', '132', False),
+            ('release', '1.0.1(134)', False),
+            ('release', '', False),
+            ('change', '133', False),
+        ):
+            with self.subTest(mode=mode, label=label):
+                selected = checks.select(copy.deepcopy(self.rules), [], mode, [], self.root, build_label=label)
+                rows = {row['id']: row for row in selected['selected']}
+                self.assertEqual('signed-video' in rows, expected)
+                self.assertEqual('signed-audio' in rows, mode == 'release')
+                if expected:
+                    self.assertEqual(rows['signed-video']['kind'], 'manual')
+                    self.assertEqual(
+                        checks.manual_result(rows['signed-video'], {}, {}, self.root, {})['checkpoint'],
+                        'required_evidence_missing',
+                    )
+
     def test_b29_nested_calendar_changes_select_its_own_go_module(self):
         self.assertIn('go-activity-calendar', self.rules['checks'])
         for path in ('go-mknoon/activitycalendar/week.go',

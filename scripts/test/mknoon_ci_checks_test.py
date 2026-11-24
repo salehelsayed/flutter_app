@@ -297,8 +297,9 @@ class ConsumerSelectionTest(unittest.TestCase):
         self.root = Path(__file__).resolve().parents[2]
         self.rules = json.loads((self.root / checks.RULES).read_text())
 
-    def selected(self, path, mode='change'):
-        return checks.select(copy.deepcopy(self.rules), [{'path': path, 'status': 'M'}], mode, [], self.root)
+    def selected(self, path, mode='change', *, build_label=''):
+        return checks.select(copy.deepcopy(self.rules), [{'path': path, 'status': 'M'}],
+                             mode, [], self.root, build_label=build_label)
 
     def test_shared_bridge_storage_and_lifecycle_select_communication_consumers(self):
         consumers = {'affected-conversation', 'affected-groups', 'affected-media', 'affected-push', 'affected-calls'}
@@ -322,7 +323,7 @@ class ConsumerSelectionTest(unittest.TestCase):
                 self.assertTrue({'affected-conversation', 'affected-groups', 'affected-push',
                                  'affected-calls', 'device-reconnect', 'device-media'}.issubset(ids))
                 self.assertFalse(any(c['kind'] == 'manual' for c in selected['selected']))
-                release_ids = {c['id'] for c in self.selected(path, 'release')['selected']}
+                release_ids = {c['id'] for c in self.selected(path, 'release', build_label='133')['selected']}
                 self.assertTrue(set(self.rules['mandatory']).issubset(release_ids))
 
     def test_isolated_ci_tests_have_exact_mapping_without_narrowing_unknown_infrastructure(self):

@@ -31,6 +31,7 @@
     "signed-notifications",
     "signed-upgrade-compat",
     "signed-audio",
+    "signed-video",
     "signed-full-review",
     "notification-lock-diagnostics",
     "strict-group-media-manifest",
@@ -1117,6 +1118,28 @@
         "docs/testing/TESTING.md"
       ],
       "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed. Development/sandbox and production APNs are separate artifact-bound legs. Attribute the exact system courier connection from complete private native evidence, or explicitly retain unresolved attribution; DNS or another system connection cannot supply its family. Host lifecycle fixes do not prove OS push delivery."
+    },
+    "signed-video": {
+      "kind": "manual",
+      "release_builds": ["133"],
+      "assertions": [
+        "signed_133_artifacts_and_video_flag_verified",
+        "initial_video_both_roles_connected_with_automatic_camera",
+        "bidirectional_video_and_audio_observed",
+        "audio_only_answer_preserves_audio_without_camera",
+        "upgrade_decline_and_cancel_preserve_audio",
+        "explicit_upgrade_accept_establishes_video",
+        "remote_only_picture_in_picture_and_restore_on_both",
+        "audio_downgrade_end_and_camera_audio_cleanup",
+        "first_attempt_evidence_retained"
+      ],
+      "boundary": "Build 133 signed Android and iOS video-call smoke with the tester video flag enabled",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Use the exact signed Build 133 release candidate and attest archive hashes, installed artifact identity and enabled video configuration. Run the physical Pixel and iPhone proof on available authorized targets using plain surfaces. Retain first attempts and record actual audio, video, Picture-in-picture and cleanup. Source-built QA artifacts cannot satisfy this signed gate."
     },
     "go-activity-calendar": {
       "kind": "go",
@@ -5895,6 +5918,10 @@
         "scripts/test/legacy_device_helpers_test.py",
         "docker-ws/_device_targets.sh",
         "docker-ws/_host_paths.sh",
+        "docker-ws/apa.py",
+        "docker-ws/beta/ap.py",
+        "docker-ws/ios_appium_keepalive.sh",
+        "docker-ws/wda_start_safe.sh",
         "docker-ws/start_avd_headless.sh",
         "docker-ws/install_iphones_keep_identity.sh",
         "docker-ws/resign_and_install_iphones.sh",
@@ -8020,6 +8047,7 @@
     {
       "kind": "python",
       "paths": [
+        "scripts/test/glossary_checks_test.py",
         "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
@@ -8056,6 +8084,7 @@
         "-m",
         "unittest",
         "-v",
+        "scripts/test/glossary_checks_test.py",
         "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
