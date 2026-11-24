@@ -5493,6 +5493,84 @@ void main() {
     );
   }
 
+  for (final granted in [true, false]) {
+    test(
+      'BL16 initial camera explicit video consent permission=$granted',
+      () async {
+        var requests = 0;
+        Future<void> expectCameraOff(_ProductionIosFixture fixture) async {
+          expect(requests, 0);
+          expect(
+            fixture.graphs.single.current!.video!.presentation.localCamera,
+            isNot(CallCameraState.on),
+          );
+          expect(
+            fixture.lifecycleMethods.where(
+              (method) => method == 'setLocalCameraActive',
+            ),
+            isEmpty,
+          );
+        }
+
+        final (fixture, engine) = await _b7Bound(
+          _connectedGraphVideo(
+            cleanupTimeout: _b7Limit,
+            permission: () async {
+              requests++;
+              return granted;
+            },
+            whileRinging: expectCameraOff,
+            beforeConnected: expectCameraOff,
+          ),
+        );
+        await _b7Turn();
+        final graph = fixture.graphs.single;
+        expect(engine.video!.cameraStarts, granted ? 1 : 0);
+        expect(
+          requests,
+          1,
+          reason: 'Connected Accept video owns one permission request',
+        );
+        expect(
+          graph.current!.video!.presentation.localCamera,
+          granted ? CallCameraState.on : CallCameraState.off,
+        );
+
+        await _b7Bound(graph.onResume());
+        await _b7Turn();
+        expect(
+          requests,
+          1,
+          reason: 'Refreshing the same call must not repeat permission',
+        );
+        expect(engine.video!.cameraStarts, granted ? 1 : 0);
+      },
+    );
+  }
+
+  for (final nativeAnswerOnly in [false, true]) {
+    test(
+      'BL16 initial camera stays off when nativeAnswerOnly=$nativeAnswerOnly and agreed audio',
+      () async {
+        var requests = 0;
+        final (_, engine) = await _b7Bound(
+          _connectedGraphVideo(
+            cleanupTimeout: _b7Limit,
+            acceptedMedia: CallMediaKind.audio,
+            nativeAnswerOnly: nativeAnswerOnly,
+            permission: () async {
+              requests++;
+              return true;
+            },
+          ),
+        );
+        await _b7Turn();
+        expect(requests, 0);
+        expect(engine.video!.cameraStarts, 0);
+      },
+    );
+  }
+
   for (final platform in [
     CallEndpointPlatform.ios,
     CallEndpointPlatform.android,
