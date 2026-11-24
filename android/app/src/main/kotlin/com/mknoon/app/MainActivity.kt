@@ -117,9 +117,7 @@ class MainActivity : FlutterActivity() {
         intent = ShareIntentReadabilityGuard.sanitize(intent) {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
         }
-        if (savedInstanceState == null) {
-            contactInviteBridge.offer(intent)
-        }
+        contactInviteBridge.consume(intent, deliver = savedInstanceState == null)
         super.onCreate(savedInstanceState)
         setupPermissionResultNormalizer()
         // This exported entry only displays the exact call. Notification Answer
@@ -404,10 +402,10 @@ class MainActivity : FlutterActivity() {
         ShareIntentReadabilityGuard.sanitize(intent) {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
         }
+        contactInviteBridge.consume(intent)
         super.onNewIntent(intent)
         setIntent(intent)
         droppedPushRecoveryBridge?.onWarmIntent(intent)
-        contactInviteBridge.offer(intent)
     }
 
     override fun onResume() {

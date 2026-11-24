@@ -29,14 +29,23 @@ internal class ContactInviteBridge(private val activity: Activity) {
         if (pending != null) wake()
     }
 
-    fun offer(intent: Intent?) {
-        if (intent == null ||
-            intent.action != Intent.ACTION_VIEW ||
-            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
-        ) {
+    fun consume(intent: Intent?, deliver: Boolean = true) {
+        if (intent == null || intent.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val owned = when (uri.scheme) {
+            "https" -> uri.host == "invite.mknoon.xyz" && uri.path == "/i/v1"
+            "mknoon" -> uri.host == "invite"
+            else -> false
+        }
+        if (!owned) return
+        val raw = intent.dataString ?: return
+        // The share plugin also accepts ACTION_VIEW. Give Flutter a plain
+        // launch once the invite bridge has taken ownership of this URI.
+        intent.action = Intent.ACTION_MAIN
+        intent.setDataAndType(null, null)
+        if (!deliver || (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
             return
         }
-        val raw = intent.dataString ?: return
         pending = when {
             raw == PASTE_URL -> mapOf("kind" to "paste")
             inviteFrame.matches(raw) -> mapOf("kind" to "link", "url" to raw)
