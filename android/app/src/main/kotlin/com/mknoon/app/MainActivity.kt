@@ -492,9 +492,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
-        contactInviteBridge.detach()
         closeStickerClipFrameBridge()
         closeStickerCutoutBridge()
+        contactInviteBridge.detach()
         androidCallWakeBridge?.dispose()
         androidCallWakeBridge = null
         updateCheckBackgroundBridge?.dispose()
