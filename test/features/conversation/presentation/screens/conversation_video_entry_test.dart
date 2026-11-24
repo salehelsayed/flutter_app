@@ -256,29 +256,33 @@ void main() {
   testWidgets(
     'U6-entry shared preflight blocks a retained audio action during video check',
     (tester) async {
+      const bound = Duration(seconds: 3);
       final pending = Completer<bool>();
       try {
-        await mount(tester);
+        await mount(tester).timeout(bound);
         final header = tester.widget<ConversationHeader>(
           find.byType(ConversationHeader),
         );
-        await chooser(tester);
+        await chooser(tester).timeout(bound);
         expect(find.text('Video call'), findsOneWidget);
         calls.nextVideoCheck = pending;
-        await tester.tap(find.text('Video call'));
-        await tester.pump(const Duration(milliseconds: 400));
+        await tester.tap(find.text('Video call')).timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        expect(find.byType(SimpleDialog), findsNothing);
         expect(find.byTooltip('Starting video call'), findsOneWidget);
         header.onCall!();
-        await tester.pump();
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
         expect(calls.audioStarts, isEmpty);
         expect(find.text('Voice call'), findsNothing);
         pending.complete(true);
-        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
         expect(calls.videoStarts, [_peer]);
         expect(calls.audioStarts, isEmpty);
       } finally {
         if (!pending.isCompleted) pending.complete(false);
-        await cleanup(tester);
+        await cleanup(tester).timeout(bound);
       }
     },
   );
