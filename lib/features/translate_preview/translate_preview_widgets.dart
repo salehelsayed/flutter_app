@@ -260,6 +260,7 @@ class MessageTranslation extends StatelessWidget {
           targetLanguage: targetLanguage,
           autoStart:
               translateOffer(text, targetLanguage) == TranslateOffer.automatic,
+          restoreOnLanguageChange: true,
           captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.translation),
           labels: _Labels(
             action: l10n.translator_see_translation,
@@ -269,10 +270,12 @@ class MessageTranslation extends StatelessWidget {
           restore: store == null
               ? null
               : () => store.loadTranslation(owner, text, targetLanguage),
-          run: () => ai.translate(
-            text,
-            languageName: translateLanguageName(targetLanguage)!,
-          ),
+          run: () async =>
+              await store?.loadTranslation(owner, text, targetLanguage) ??
+              await ai.translate(
+                text,
+                languageName: translateLanguageName(targetLanguage)!,
+              ),
           save: store == null
               ? null
               : (result) =>
@@ -589,6 +592,7 @@ class _AiAction extends StatefulWidget {
     this.captureUse,
     this.visible = true,
     this.autoStart = false,
+    this.restoreOnLanguageChange = false,
     this.topPadding = 6,
     this.resultLineHeight = 1.3,
   });
@@ -613,6 +617,10 @@ class _AiAction extends StatefulWidget {
 
   /// Runs as soon as it shows instead of waiting for a tap.
   final bool autoStart;
+
+  /// Shows a saved result for a new target language without waiting for a
+  /// tap; a cache miss still waits unless [autoStart].
+  final bool restoreOnLanguageChange;
 
   @override
   State<_AiAction> createState() => _AiActionState();
@@ -661,7 +669,8 @@ class _AiActionState extends State<_AiAction> {
       _phase = const _Idle();
       // A live language change waits for the user's request, then reuses cache.
       if (oldWidget.targetLanguage == widget.targetLanguage ||
-          widget.autoStart) {
+          widget.autoStart ||
+          widget.restoreOnLanguageChange) {
         unawaited(_restore().then(_autoStart));
       }
     }
