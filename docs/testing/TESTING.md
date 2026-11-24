@@ -467,6 +467,19 @@ scanner's request plus a retry about one second later; the owner superseded
 that duplicate-send expectation on 2026-10-24. Original route evidence remains
 in `.codex-test-logs/beta-test-android-20261007/`.
 
+BL-77 Android invite links used the same `ACTION_VIEW` entry as
+`receive_sharing_intent` 1.8.1. QA369 opened Share with on cold launch and
+opened it again after Cancel or Send on warm launch. The invite bridge now
+consumes the registered invite paths before both Flutter lifecycle callbacks.
+The paired host test pins the callback ordering. On source `e1368eacc`, all
+four Android `MainActivityOnNewIntentTest` cases passed, covering invite
+ownership, text shares, and warm notification recovery. A USB Pixel 6 on
+Android 17 passed cold open, warm Cancel, and paste-and-Send on QA371.
+Package-targeted `VIEW` verifies app-side delivery. The platform-verified
+HTTPS re-tap requires the published association files and signed store
+builds. First and corrected device evidence are in
+`.codex-test-logs/bl77-20261124/` and `.codex-test-logs/bl77b-20261124/`.
+
 The build-128 Thoughts hide switch must gate presentation, while the Settings
 scanner still forwards Orbit's underlying `postRepository` to its Feed handoff.
 Passing the nullable `_thoughtPosts` view getter instead added the scanned
