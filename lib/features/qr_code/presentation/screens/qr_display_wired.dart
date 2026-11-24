@@ -16,21 +16,33 @@ final class MyQrRouteSettings extends RouteSettings {
   final ModalRoute<dynamic>? shellRoute;
 }
 
-/// Return from Settings → My QR before opening the newly accepted chat.
-void dismissMyQrForAcceptedContact(BuildContext context) {
+/// Capture the My QR route exposed when the accept dialog closes.
+VoidCallback? captureMyQrDismissalForContactAccept(BuildContext context) {
   final shellRoute = ModalRoute.of(context);
-  if (shellRoute == null || !shellRoute.isActive || shellRoute.isCurrent) return;
+  final navigator = shellRoute?.navigator;
+  if (shellRoute == null ||
+      navigator == null ||
+      !shellRoute.isActive ||
+      shellRoute.isCurrent) {
+    return null;
+  }
 
-  var returningFromMyQr = false;
-  shellRoute.navigator?.popUntil((route) {
-    if (!returningFromMyQr) {
-      final settings = route.settings;
-      returningFromMyQr =
-          settings is MyQrRouteSettings &&
-          identical(settings.shellRoute, shellRoute);
+  Route<dynamic>? myQrRoute;
+  navigator.popUntil((route) {
+    final settings = route.settings;
+    if (settings is MyQrRouteSettings &&
+        identical(settings.shellRoute, shellRoute)) {
+      myQrRoute = route;
     }
-    return !returningFromMyQr || identical(route, shellRoute);
+    return true; // Inspect the top route without popping it.
   });
+  final origin = myQrRoute;
+  if (origin == null) return null;
+
+  return () {
+    if (!origin.isCurrent || !shellRoute.isActive) return;
+    navigator.popUntil((route) => identical(route, shellRoute));
+  };
 }
 
 /// Internal state enum for QRDisplayWired

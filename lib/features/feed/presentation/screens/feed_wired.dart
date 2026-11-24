@@ -1519,6 +1519,7 @@ class _FeedWiredState extends State<FeedWired>
     ContactRequestModel request,
   ) async {
     Navigator.pop(ctx);
+    final dismissMyQr = captureMyQrDismissalForContactAccept(context);
 
     final result = await acceptAndReciprocateContactRequest(
       requestRepo: widget.contactRequestRepository,
@@ -1552,7 +1553,7 @@ class _FeedWiredState extends State<FeedWired>
       // newly-accepted peer. Popping back reveals the connection card upserted
       // above, so the Feed presence is preserved.
       widget.chatMessageListener.emitContactUpdate(contact);
-      dismissMyQrForAcceptedContact(context);
+      dismissMyQr?.call();
       unawaited(_openConversationForContact(contact));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

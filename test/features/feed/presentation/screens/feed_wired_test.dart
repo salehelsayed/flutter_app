@@ -790,6 +790,69 @@ void main() {
       },
     );
 
+    testWidgets('BL-66 preserves My QR opened during a Home accept', (
+      tester,
+    ) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      appShellController.switchTo(AppShellTab.orbit);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'sig'};
+      final deferredContacts = _DeferredAddContactRepository()
+        ..seed([testContact]);
+      contactRepo = deferredContacts;
+      contactRequestRepo.contactRepository = deferredContacts;
+
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
+      );
+      contactRequestRepo.seed([request]);
+      final requestListener = _FakeContactRequestListener(
+        requestRepo: contactRequestRepo,
+        contactRepo: deferredContacts,
+        bridge: bridge,
+      );
+      await tester.pumpWidget(
+        buildFeedWired(contactRequestListener: requestListener),
+      );
+      await pumpFeedFrames(tester);
+
+      requestListener.emitRequest(request);
+      await pumpFeedFrames(tester);
+      await tester.tap(find.text('Accept').hitTestable());
+      await pumpFeedFrames(tester);
+      expect(deferredContacts.addStarted, isTrue);
+      expect(find.byType(ConversationWired), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('orbit-settings-button')));
+      await pumpFeedFrames(tester);
+      await tester.tap(find.byKey(const ValueKey('settings-my-qr-tile')));
+      await pumpFeedFrames(tester);
+      final qr = find.byType(QRDisplayScreen);
+      final openedDuringAccept = tester.state(qr);
+
+      deferredContacts.allowAdd.complete();
+      await pumpFeedFrames(tester);
+      final chat = find.byType(ConversationWired);
+      expect(
+        tester.widget<ConversationWired>(chat).contact.peerId,
+        request.peerId,
+      );
+      // Clear the already-started profile fallback timer in fake time.
+      await tester.pump(const Duration(seconds: 5));
+      Navigator.of(tester.element(chat)).pop();
+      await pumpFeedFrames(tester);
+
+      expect(qr, findsOneWidget);
+      expect(tester.state(qr), same(openedDuringAccept));
+    });
+
     // 215 TC-04: opening the chat must NOT drop the ConnectionFeedItem upsert —
     // popping back from the chat still shows the connection.
     testWidgets('accept keeps the connection in the feed after popping the chat', (
@@ -3395,6 +3458,18 @@ class _FakeChatMessageListener extends ChatMessageListener {
   @override
   void emitContactUpdate(ContactModel contact) =>
       _contactUpdateController.add(contact);
+}
+
+class _DeferredAddContactRepository extends FakeContactRepository {
+  final allowAdd = Completer<void>();
+  var addStarted = false;
+
+  @override
+  Future<void> addContact(ContactModel contact) async {
+    addStarted = true;
+    await allowAdd.future.timeout(const Duration(seconds: 3));
+    await super.addContact(contact);
+  }
 }
 
 /// Fake [ContactRequestListener] with a controllable stream for testing.

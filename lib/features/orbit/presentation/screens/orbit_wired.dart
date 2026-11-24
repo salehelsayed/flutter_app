@@ -3616,6 +3616,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     ContactRequestModel request,
   ) async {
     Navigator.pop(ctx);
+    final dismissMyQr = captureMyQrDismissalForContactAccept(context);
     final result = await acceptAndReciprocateContactRequest(
       requestRepo: widget.contactRequestRepo,
       contactRepo: widget.contactRepo,
@@ -3638,7 +3639,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       // chat for the newly-accepted peer so "say hi" is one tap, not three.
       final contact = await widget.contactRepo.getContact(request.peerId);
       if (!mounted || contact == null || contact.isBlocked) return;
-      dismissMyQrForAcceptedContact(context);
+      dismissMyQr?.call();
       unawaited(_openConversationForContact(contact));
     }
   }
