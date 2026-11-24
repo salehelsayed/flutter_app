@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart' as permissions;
@@ -421,6 +422,7 @@ final class ProductionCallSignalingGraph
     Future<bool> Function()? requestCameraPermission,
     Future<permissions.PermissionStatus> Function()?
     requestCameraPermissionStatus,
+    RequestInitialCallCameraPermission? requestInitialCallCameraPermission,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -436,7 +438,10 @@ final class ProductionCallSignalingGraph
            (() async =>
                await (requestCameraPermission?.call() ?? Future.value(false))
                ? permissions.PermissionStatus.granted
-               : permissions.PermissionStatus.denied) {
+               : permissions.PermissionStatus.denied),
+       _requestInitialCallCameraPermission =
+           requestInitialCallCameraPermission ??
+           ((_) async => permissions.PermissionStatus.denied) {
     final captureActivity = captureCallActivityMark;
     _activityObserver = captureActivity == null
         ? null
@@ -707,6 +712,7 @@ final class ProductionCallSignalingGraph
   final bool Function() _isVideoForeground;
   final Future<permissions.PermissionStatus> Function()
   _requestCameraPermission;
+  final RequestInitialCallCameraPermission _requestInitialCallCameraPermission;
   final Future<bool> Function() _checkCameraPermission;
   CallPictureInPictureController? _pip;
   StreamSubscription<void>? _pipSourceSubscription;
@@ -743,24 +749,34 @@ final class ProductionCallSignalingGraph
   Completer<bool>? _cameraForegroundWait;
   Future<void>? _cameraRelease;
   ({CallId callId, CallMediaKind media})? _publishedNativeMedia;
+  CallId? _initialVideoCameraCallId;
 
   @override
   Future<ForegroundCallActionResult> applyVideoIntent(
     CallId callId, {
     required int generation,
     required CallVideoIntent intent,
+  }) => _applyVideoIntent(callId, generation: generation, intent: intent);
+
+  Future<ForegroundCallActionResult> _applyVideoIntent(
+    CallId callId, {
+    required int generation,
+    required CallVideoIntent intent,
+    bool initialCamera = false,
   }) async {
     ForegroundCallActionResult report(
       ForegroundCallActionResult result,
       CallCameraTapReason reason,
     ) {
-      reportCallCameraTap(
-        intent.action,
-        result.status == ForegroundCallActionStatus.applied
-            ? CallCameraTapOutcome.accepted
-            : CallCameraTapOutcome.refused,
-        reason,
-      );
+      if (!initialCamera) {
+        reportCallCameraTap(
+          intent.action,
+          result.status == ForegroundCallActionStatus.applied
+              ? CallCameraTapOutcome.accepted
+              : CallCameraTapOutcome.refused,
+          reason,
+        );
+      }
       return result;
     }
 
@@ -769,6 +785,12 @@ final class ProductionCallSignalingGraph
         ForegroundCallActionResult.unavailable,
         CallCameraTapReason.staleOwner,
       );
+    }
+    if (!initialCamera &&
+        _initialVideoCameraCallId == callId &&
+        (intent.action == CallVideoAction.turnCameraOn ||
+            intent.action == CallVideoAction.turnCameraOff)) {
+      _initialVideoCameraCallId = null;
     }
     final snapshot = coordinator.activeSession!;
     final presentation = _projectVideo(snapshot)?.presentation;
@@ -896,11 +918,13 @@ final class ProductionCallSignalingGraph
               // Publish the existing pending state before permission/native work
               // awaits, so another tap sees the same readiness as the owner.
               _refreshVideo();
-              reportCallCameraTap(
-                intent.action,
-                CallCameraTapOutcome.pending,
-                CallCameraTapReason.actionStarted,
-              );
+              if (!initialCamera) {
+                reportCallCameraTap(
+                  intent.action,
+                  CallCameraTapOutcome.pending,
+                  CallCameraTapReason.actionStarted,
+                );
+              }
               await _cameraRelease;
               if (!cameraCurrent() || token == null || session == null) {
                 return report(
@@ -910,11 +934,15 @@ final class ProductionCallSignalingGraph
               }
               _applyQualityEnvironment();
               // Switching an already-granted camera needs no new permission prompt.
-              final permission = intent.action == CallVideoAction.switchCamera
-                  ? (identical(_localCameraToken, token)
-                        ? permissions.PermissionStatus.granted
-                        : permissions.PermissionStatus.denied)
-                  : await _requestCameraPermission();
+              final permission = switch (intent.action) {
+                CallVideoAction.switchCamera =>
+                  identical(_localCameraToken, token)
+                      ? permissions.PermissionStatus.granted
+                      : permissions.PermissionStatus.denied,
+                CallVideoAction.turnCameraOn when initialCamera =>
+                  await _requestInitialCallCameraPermission(cameraCurrent),
+                _ => await _requestCameraPermission(),
+              };
               if (permission.isGranted &&
                   intent.action == CallVideoAction.turnCameraOn &&
                   !await _waitForCameraForeground(epoch)) {
@@ -1461,11 +1489,13 @@ final class ProductionCallSignalingGraph
   CallMediaKind _consumeAnswerMedia(CallId callId) {
     final choice = _stagedAnswerMedia;
     _stagedAnswerMedia = null;
-    return choice != null &&
-            choice.callId == callId &&
-            _videoActionCurrent(callId, choice.generation)
-        ? choice.media
-        : CallMediaKind.audio;
+    if (choice == null ||
+        choice.callId != callId ||
+        !_videoActionCurrent(callId, choice.generation)) {
+      return CallMediaKind.audio;
+    }
+    if (choice.media == CallMediaKind.video) _initialVideoCameraCallId = callId;
+    return choice.media;
   }
 
   @override
@@ -1637,6 +1667,7 @@ final class ProductionCallSignalingGraph
         snapshot == null ||
         snapshot.isTerminal) {
       _pip?.invalidate('inactive');
+      _initialVideoCameraCallId = null;
       _pendingCameraRevocation = null;
       return;
     }
@@ -1712,12 +1743,10 @@ final class ProductionCallSignalingGraph
         }
       }
     }
-    final media =
-        owner?.mediaSwitch?.machine.settledMedia ??
-        videoContexts?.read(snapshot.callId!)?.initialAcceptedMedia;
-    if (media != null &&
-        videoContexts?.read(snapshot.callId!)?.wireVersion ==
-            CallWireVersion.v2) {
+    final context = videoContexts?.read(snapshot.callId!);
+    final machine = owner?.mediaSwitch?.machine;
+    final media = machine?.settledMedia ?? context?.initialAcceptedMedia;
+    if (media != null && context?.wireVersion == CallWireVersion.v2) {
       final value = (callId: snapshot.callId!, media: media);
       if (_publishedNativeMedia != value) {
         _publishedNativeMedia = value;
@@ -1739,6 +1768,33 @@ final class ProductionCallSignalingGraph
             CallAudioControlState.idle,
       ),
     );
+    if (_initialVideoCameraCallId != snapshot.callId) return;
+    if (context?.initialAcceptedMedia == CallMediaKind.audio ||
+        (machine != null && machine.settledRevision != 0)) {
+      _initialVideoCameraCallId = null;
+      return;
+    }
+    if (snapshot.state == CallState.connected &&
+        context?.initialAcceptedMedia == CallMediaKind.video &&
+        _videoActionCurrent(snapshot.callId!, _videoGeneration) &&
+        owner?.current == true &&
+        token?.media == CallMediaKind.video &&
+        token?.mediaRevision == 0 &&
+        machine?.settledMedia == CallMediaKind.video &&
+        machine?.videoGatesOpen == true) {
+      final intent = _projectVideo(snapshot)?.presentation
+          .intentFor(CallVideoAction.turnCameraOn);
+      if (intent == null) return;
+      _initialVideoCameraCallId = null;
+      unawaited(
+        _applyVideoIntent(
+          snapshot.callId!,
+          generation: _videoGeneration,
+          intent: intent,
+          initialCamera: true,
+        ).then<void>((_) {}, onError: (_) {}),
+      );
+    }
   }
 
   Future<void> _revokeLocalCamera({
@@ -1865,6 +1921,7 @@ final class ProductionCallSignalingGraph
       request = OutgoingCallStartRequest(
         isCurrent: () => original?.isCanceled != true && _videoForeground,
         onAdmitted: () => original?.admit(),
+        cameraOnConnect: original?.cameraOnConnect ?? false,
       );
     }
     final diagnostics = CallDiagnostics.instance;
@@ -1938,11 +1995,17 @@ final class ProductionCallSignalingGraph
                       CallEndpointResolver.voiceCapability,
                     ) &&
                     endpoint.capabilities.contains('video_call_v2')) {
+                  final callId = reduction.snapshot.callId!;
                   onOutgoingV2Admitted?.call(
-                    coordinator.activeSession!.callId!,
+                    callId,
                     video ? CallMediaKind.video : CallMediaKind.audio,
                     endpoint,
                   );
+                  if (video &&
+                      request?.cameraOnConnect == true &&
+                      _videoForeground) {
+                    _initialVideoCameraCallId = callId;
+                  }
                 }
                 request?.admit();
               }
@@ -2348,6 +2411,7 @@ final class ProductionCallSignalingGraph
     final wasForegroundAllowed = _videoForegroundAllowed;
     _videoForegroundAllowed = false;
     _stagedAnswerMedia = null;
+    _initialVideoCameraCallId = null;
     final lease = _pip?.current;
     if (wasForegroundAllowed &&
         (lease == null ||
@@ -2425,6 +2489,11 @@ final class ProductionCallSignalingGraph
     _recordDiagnosticSession(session);
     _ringback?.onSession(session);
     if (videoEnabled) {
+      if (_initialVideoCameraCallId != session.callId ||
+          session.isTerminal ||
+          session.state == CallState.reconnecting) {
+        _initialVideoCameraCallId = null;
+      }
       if (_videoCallId != session.callId || session.isTerminal) {
         unawaited(_revokeLocalCamera());
         _stagedAnswerMedia = null;
@@ -3488,6 +3557,41 @@ CallAudioOutputRoute? _preferredNonSpeakerRoute(CallAudioControlState state) {
   return null;
 }
 
+typedef RequestInitialCallCameraPermission =
+    Future<permissions.PermissionStatus> Function(bool Function() isCurrent);
+
+const _initialCameraPermissionRequested =
+    'call_initial_video_camera_permission_requested';
+
+Future<permissions.PermissionStatus> _requestInitialCameraPermission(
+  CallEndpointPlatform? platform,
+  bool Function() isCurrent,
+) async {
+  const denied = permissions.PermissionStatus.denied;
+  if (platform == null || !isCurrent()) return denied;
+  const camera = permissions.Permission.camera;
+  final status = await camera.status;
+  if (!isCurrent()) return denied;
+  if (!status.isDenied) return status;
+  if (platform == CallEndpointPlatform.android) {
+    final priorDenial = await camera.shouldShowRequestRationale;
+    if (priorDenial || !isCurrent()) return denied;
+    final preferences = await SharedPreferences.getInstance();
+    if (!isCurrent() ||
+        preferences.getBool(_initialCameraPermissionRequested) == true) {
+      return denied;
+    }
+    // Android can still report denied with no rationale after a dismissed
+    // prompt. Claim the one automatic request before opening the OS dialog.
+    final claimed = await preferences.setBool(
+      _initialCameraPermissionRequested,
+      true,
+    );
+    if (!claimed || !isCurrent()) return denied;
+  }
+  return camera.request();
+}
+
 /// Builds no crypto, coordinator, subscription, or relay authority object until
 /// the default-off [CallSignalingComposition] has passed its feature gates and
 /// the existing identity/contact/database/bridge prerequisites are ready.
@@ -3531,6 +3635,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallTimerScheduler? timerScheduler,
   CallEngine Function(CallId)? callEngineFactory,
   Future<bool> Function()? requestCameraPermission,
+  RequestInitialCallCameraPermission? requestInitialCallCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
   Future<bool> Function()? checkCameraPermission,
@@ -4581,6 +4686,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
         requestCameraPermissionStatus: requestCameraPermission == null
             ? () => permissions.Permission.camera.request()
             : null,
+        requestInitialCallCameraPermission:
+            requestInitialCallCameraPermission ??
+            (isCurrent) => _requestInitialCameraPermission(platform, isCurrent),
         runtime: runtime,
         coordinator: coordinator,
         signalingService: signalingService,

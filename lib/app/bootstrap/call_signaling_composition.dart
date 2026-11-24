@@ -460,6 +460,7 @@ final class CallSignalingComposition
           isOutgoingVideoCallAvailable,
       onAdmitted: () => request?.admit(),
       microphonePermissionPreflight: request?.microphonePermissionPreflight,
+      cameraOnConnect: request?.cameraOnConnect ?? false,
     );
     final diagnostics = CallDiagnostics.instance;
     final traceId = diagnostics.currentTraceId ?? diagnostics.beginAttempt();

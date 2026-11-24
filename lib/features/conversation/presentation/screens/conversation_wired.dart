@@ -9011,9 +9011,11 @@ class _ConversationWiredState extends State<ConversationWired>
       },
     );
     if (!mounted || selection == null || !sameConversation()) return;
+    final video = selection == CallMediaKind.video;
     await _startOutgoingCall(
       capability,
-      video: selection == CallMediaKind.video,
+      video: video,
+      cameraOnConnect: video,
     );
   }
 
@@ -9021,6 +9023,7 @@ class _ConversationWiredState extends State<ConversationWired>
     OutgoingCallCapability capability, {
     Future<bool> Function()? isEligible,
     bool video = false,
+    bool cameraOnConnect = false,
   }) async {
     if (!mounted || !identical(capability, widget.outgoingCallCapability)) {
       return;
@@ -9061,6 +9064,7 @@ class _ConversationWiredState extends State<ConversationWired>
         traceId,
         isEligible: isEligible,
         video: video,
+        cameraOnConnect: cameraOnConnect,
       ),
     );
   }
@@ -9068,6 +9072,7 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _startOutgoingCallInTrace(
     OutgoingCallCapability capability,
     String? traceId, {
+    required bool cameraOnConnect,
     Future<bool> Function()? isEligible,
     bool video = false,
   }) async {
@@ -9127,6 +9132,7 @@ class _ConversationWiredState extends State<ConversationWired>
     request = OutgoingCallStartRequest(
       isCurrent: () =>
           sameConversation() && _appLifecycleGeneration == lifecycleGeneration,
+      cameraOnConnect: cameraOnConnect,
       microphonePermissionPreflight: (requestPermission) async {
         if (_appLifecycleState != AppLifecycleState.resumed) {
           return requestPermission();

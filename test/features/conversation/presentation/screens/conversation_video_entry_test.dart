@@ -31,6 +31,7 @@ final class _Calls implements OutgoingVideoCallCapability {
   Completer<bool>? nextVideoCheck;
   final audioStarts = <String>[];
   final videoStarts = <String>[];
+  final cameraOnConnectPeers = <String>[];
   final videoChecks = <String>[];
   final changes = StreamController<bool>.broadcast(sync: true);
 
@@ -66,6 +67,7 @@ final class _Calls implements OutgoingVideoCallCapability {
   }) async {
     request?.checkPending();
     videoStarts.add(peer);
+    if (request?.cameraOnConnect == true) cameraOnConnectPeers.add(peer);
     return result;
   }
 }
@@ -383,6 +385,7 @@ void main() {
         await tester.tap(find.text('Video call')).timeout(bound);
         await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
         expect(calls.videoStarts, [_peer]);
+        expect(calls.cameraOnConnectPeers, [_peer]);
         expect(calls.audioStarts, isEmpty);
         expect(calls.videoChecks, [_peer, _peer]);
         await menu(tester).timeout(bound);

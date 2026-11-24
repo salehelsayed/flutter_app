@@ -93,6 +93,8 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:permission_handler/permission_handler.dart' as permissions;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../secure_storage/fake_secure_key_store.dart';
@@ -570,7 +572,7 @@ void main() {
     () async {
       const deadline = Duration(seconds: 3);
       final pip = FakeCallPictureInPictureBridge();
-      final (caller, callerEngine) = await _connectedOutgoingGraphAudio()
+      final (caller, callerEngine) = await _connectedOutgoingGraph()
           .timeout(deadline);
       final id = caller.graphs.single.coordinator.activeSession!.callId!;
       final (callee, calleeEngine) = await _connectedGraphVideo(
@@ -4380,7 +4382,7 @@ void main() {
     test(
       'BL16-CANCEL two graphs dismiss peer prompt without consuming revision caller=$callerRequests',
       () async {
-        final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+        final (caller, callerEngine) = await _connectedOutgoingGraph();
         final id = caller.graphs.single.coordinator.activeSession!.callId!;
         final (callee, calleeEngine) = await _connectedGraphVideo(
           acceptedMedia: CallMediaKind.audio,
@@ -4489,7 +4491,7 @@ void main() {
       test(
         'BL16-TERMINAL ${callerEnds ? "caller" : "callee"} retains delivery after cleanup at $boundary',
         () async {
-          final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+          final (caller, callerEngine) = await _connectedOutgoingGraph();
           final id = caller.graphs.single.coordinator.activeSession!.callId!;
           final (callee, calleeEngine) = await _connectedGraphVideo(
             acceptedMedia: CallMediaKind.audio,
@@ -4650,7 +4652,7 @@ void main() {
   test(
     'BL16-UPGRADE no consent times out both graphs after direct and mailbox duplicate',
     () async {
-      final (caller, callerEngine) = await _connectedOutgoingGraphAudio();
+      final (caller, callerEngine) = await _connectedOutgoingGraph();
       final callerGraph = caller.graphs.single;
       final id = callerGraph.coordinator.activeSession!.callId!;
       final (callee, calleeEngine) = await _connectedGraphVideo(
@@ -4796,7 +4798,7 @@ void main() {
   test(
     'VUI3b authenticated explicit decline reaches the requesting graph',
     () async {
-      final (requester, requesterEngine) = await _connectedOutgoingGraphAudio();
+      final (requester, requesterEngine) = await _connectedOutgoingGraph();
       final graph = requester.graphs.single;
       final id = graph.coordinator.activeSession!.callId!;
       final (responder, responderEngine) = await _connectedGraphVideo(
@@ -5048,7 +5050,7 @@ void main() {
       'BL16-UPGRADE graph projects $phase from retained transaction',
       () async {
         final (fixture, engine) = phase == MediaSwitchPhase.acknowledgement
-            ? await _connectedOutgoingGraphAudio()
+            ? await _connectedOutgoingGraph()
             : await _connectedGraphVideo(acceptedMedia: CallMediaKind.audio);
         final graph = fixture.graphs.single;
         final id = graph.coordinator.activeSession!.callId!;
@@ -5515,9 +5517,11 @@ void main() {
         final (fixture, engine) = await _b7Bound(
           _connectedGraphVideo(
             cleanupTimeout: _b7Limit,
-            permission: () async {
+            requestInitialCallCameraPermission: (_) async {
               requests++;
-              return granted;
+              return granted
+                  ? permissions.PermissionStatus.granted
+                  : permissions.PermissionStatus.denied;
             },
             whileRinging: expectCameraOff,
             beforeConnected: expectCameraOff,
@@ -5558,9 +5562,9 @@ void main() {
             cleanupTimeout: _b7Limit,
             acceptedMedia: CallMediaKind.audio,
             nativeAnswerOnly: nativeAnswerOnly,
-            permission: () async {
+            requestInitialCallCameraPermission: (_) async {
               requests++;
-              return true;
+              return permissions.PermissionStatus.granted;
             },
           ),
         );
@@ -5570,6 +5574,153 @@ void main() {
       },
     );
   }
+
+  for (final (explicitChoice, media, starts) in [
+    (true, CallMediaKind.video, 1),
+    (true, CallMediaKind.audio, 0),
+    (false, CallMediaKind.video, 0),
+  ]) {
+    test(
+      'BL16 initial camera outgoing choice=$explicitChoice agreement=${media.name}',
+      () async {
+        var requests = 0;
+        Future<void> expectNoRequest(_ProductionIosFixture fixture) async {
+          expect(requests, 0);
+          expect(
+            fixture.graphs.single.current!.video!.presentation.localCamera,
+            isNot(CallCameraState.on),
+          );
+        }
+
+        final (_, engine) = await _b7Bound(
+          _connectedOutgoingGraph(
+            cleanupTimeout: _b7Limit,
+            acceptedMedia: media,
+            request: OutgoingCallStartRequest(cameraOnConnect: explicitChoice),
+            requestInitialCallCameraPermission: (_) async {
+              requests++;
+              return permissions.PermissionStatus.granted;
+            },
+            whileRinging: expectNoRequest,
+            beforeConnected: expectNoRequest,
+          ),
+        );
+        await _b7Turn();
+        expect(requests, starts);
+        expect(engine.video!.cameraStarts, starts);
+      },
+    );
+  }
+
+  test('BL16 initial camera is retired by background before connect', () async {
+    var requests = 0;
+    final (_, engine) = await _b7Bound(
+      _connectedGraphVideo(
+        cleanupTimeout: _b7Limit,
+        requestInitialCallCameraPermission: (_) async {
+          requests++;
+          return permissions.PermissionStatus.granted;
+        },
+        beforeConnected: (fixture) async {
+          final graph = fixture.graphs.single;
+          await _b7Bound(graph.onBackgrounded());
+          await _b7Bound(graph.onResume());
+        },
+      ),
+    );
+    await _b7Turn();
+    expect(requests, 0);
+    expect(engine.video!.cameraStarts, 0);
+  });
+
+  for (final (status, rationale, starts) in [
+    (permissions.PermissionStatus.granted, false, 1),
+    (permissions.PermissionStatus.denied, true, 0),
+  ]) {
+    test(
+      'BL16 initial camera Android status=${status.name} needs no OS prompt',
+      () async {
+        final calls = <String>[];
+        _fakeInitialCameraPermissionChannel((method) {
+          calls.add(method);
+          return switch (method) {
+            'checkPermissionStatus' => status.index,
+            'shouldShowRequestPermissionRationale' => rationale,
+            _ => throw UnimplementedError(method),
+          };
+        });
+        final (_, engine) = await _b7Bound(
+          _connectedGraphVideo(
+            cleanupTimeout: _b7Limit,
+            platform: CallEndpointPlatform.android,
+            requestInitialCallCameraPermission: null,
+          ),
+        );
+        await _b7Turn();
+        expect(
+          calls,
+          rationale
+              ? [
+                  'checkPermissionStatus',
+                  'shouldShowRequestPermissionRationale',
+                ]
+              : ['checkPermissionStatus'],
+        );
+        expect(engine.video!.cameraStarts, starts);
+      },
+    );
+  }
+
+  test(
+    'BL16 initial camera Android prompts at most once across calls',
+    () async {
+      var requests = 0;
+      _fakeInitialCameraPermissionChannel((method) {
+        switch (method) {
+          case 'checkPermissionStatus':
+            return permissions.PermissionStatus.denied.index;
+          case 'shouldShowRequestPermissionRationale':
+            return false;
+          case 'requestPermissions':
+            requests++;
+            return {
+              permissions.Permission.camera.value:
+                  permissions.PermissionStatus.denied.index,
+            };
+          default:
+            throw UnimplementedError(method);
+        }
+      });
+      SharedPreferences.setMockInitialValues({});
+      addTearDown(() => SharedPreferences.setMockInitialValues({}));
+
+      final (first, firstEngine) = await _b7Bound(
+        _connectedGraphVideo(
+          cleanupTimeout: _b7Limit,
+          platform: CallEndpointPlatform.android,
+          requestInitialCallCameraPermission: null,
+        ),
+      );
+      await _b7Turn();
+      expect(requests, 1);
+      expect(firstEngine.video!.cameraStarts, 0);
+      await _b7Bound(first.composition.shutdown());
+
+      final preferences = await _b7Bound(SharedPreferences.getInstance());
+      await _b7Bound(preferences.reload());
+      final (_, secondEngine) = await _b7Bound(
+        _connectedGraphVideo(
+          cleanupTimeout: _b7Limit,
+          platform: CallEndpointPlatform.android,
+          callId: _callB,
+          requestInitialCallCameraPermission: null,
+        ),
+      );
+      await _b7Turn();
+      expect(requests, 1);
+      expect(secondEngine.video!.cameraStarts, 0);
+    },
+  );
 
   for (final platform in [
     CallEndpointPlatform.ios,
@@ -6035,7 +6186,7 @@ void main() {
   test(
     'BL26-HA caller recovery caps remote lookup across fresh authorization',
     () async {
-      final (fixture, engine) = await _connectedOutgoingGraphAudio();
+      final (fixture, engine) = await _connectedOutgoingGraph();
       engine.video!.recoveryReconciliation =
           CallVideoSdpReconciliationOutcome.alreadyStable;
       final graph = fixture.graphs.single;
@@ -6194,7 +6345,7 @@ void main() {
   test(
     'BL26-HA stalled caller endpoint releases restart within lookup slice',
     () async {
-      final (fixture, engine) = await _connectedOutgoingGraphAudio();
+      final (fixture, engine) = await _connectedOutgoingGraph();
       engine.video!.recoveryReconciliation =
           CallVideoSdpReconciliationOutcome.alreadyStable;
       final graph = fixture.graphs.single;
@@ -10993,6 +11144,22 @@ Future<void> _deliverGraphVideoInvite(
   );
 }
 
+Future<permissions.PermissionStatus> _denyInitialCameraForFixture(
+  bool Function() _,
+) async => permissions.PermissionStatus.denied;
+
+void _fakeInitialCameraPermissionChannel(Object Function(String) handle) {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('flutter.baseflow.com/permissions/methods');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(
+    channel,
+    (call) async => handle(call.method),
+  );
+  addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+}
+
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Duration? cleanupTimeout,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
@@ -11004,6 +11171,8 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   int Function()? clockMs,
   CallId? callId,
   Future<bool> Function()? permission,
+  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+      _denyInitialCameraForFixture,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
   CallScheduledTimerObserver? timerObserver,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
@@ -11036,6 +11205,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     clockMs: clockMs,
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestCameraPermission: permission ?? () async => true,
+    requestInitialCallCameraPermission: requestInitialCallCameraPermission,
     onCallTimerScheduled: timerObserver,
     captureCallActivityMark: captureCallActivityMark,
     monotonicNow: monotonicNow,
@@ -11214,6 +11384,9 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   );
   expect(graph.coordinator.activeSession!.state, CallState.connected);
   expect(graph.current!.video!.presentation.agreedMedia, acceptedMedia);
+  if (requestInitialCallCameraPermission == _denyInitialCameraForFixture) {
+    await _b7Until(() => !graph.current!.video!.presentation.videoActionPending);
+  }
   return (fixture, engine);
 }
 
@@ -11476,7 +11649,7 @@ Future<void> _deliverLegacyRecovery(
 }
 
 Future<(_ProductionIosFixture, _InitialVideoGraphEngine)>
-_connectedOutgoingGraphAudio({
+_connectedOutgoingGraph({
   Duration? cleanupTimeout,
   CaptureCallActivityMark? captureCallActivityMark,
   Duration Function()? monotonicNow,
@@ -11484,6 +11657,10 @@ _connectedOutgoingGraphAudio({
   int Function()? clockMs,
   Database? databaseOverride,
   SecureKeyStore? privacyStore,
+  CallMediaKind acceptedMedia = CallMediaKind.audio,
+  OutgoingCallStartRequest? request,
+  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+      _denyInitialCameraForFixture,
   Future<void> Function(_ProductionIosFixture)? beforeCall,
   Future<void> Function(_ProductionIosFixture)? whileRinging,
   Future<void> Function(_ProductionIosFixture)? beforeConnected,
@@ -11501,6 +11678,7 @@ _connectedOutgoingGraphAudio({
     databaseOverride: databaseOverride,
     privacyStore: privacyStore,
     microphonePermission: const _GrantedCallMicrophonePermission(),
+    requestInitialCallCameraPermission: requestInitialCallCameraPermission,
     outgoingContactAccountPeerId: 'video-contact',
     privacyFlags: const {'video_call_v2_enabled': true},
     callEngineFactory: (_) => engine,
@@ -11577,7 +11755,7 @@ _connectedOutgoingGraphAudio({
   }
   expect(
     await (fixture.composition as OutgoingVideoCallCapability)
-        .startOutgoingVideoCall('video-contact'),
+        .startOutgoingVideoCall('video-contact', request: request),
     OutgoingCallStartResult.started,
   );
   if (whileRinging != null) {
@@ -11602,7 +11780,7 @@ _connectedOutgoingGraphAudio({
   };
   await _deliverUpgradeSignal(
     fixture,
-    remote('accept', 1, {'media': 'audio', 'camera': 'off'}),
+    remote('accept', 1, {'media': acceptedMedia.name, 'camera': 'off'}),
   );
   await _untilGraphVideo(() => _upgradeSignals(fixture, 'offer').isNotEmpty);
   final offer = _upgradeSignals(fixture, 'offer').single;
@@ -11622,7 +11800,7 @@ _connectedOutgoingGraphAudio({
       callId: id,
     ),
   );
-  expect(graph.current!.video!.presentation.agreedMedia, CallMediaKind.audio);
+  expect(graph.current!.video!.presentation.agreedMedia, acceptedMedia);
   return (fixture, engine);
 }
 
@@ -11765,6 +11943,8 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
   Future<bool> Function()? requestCameraPermission,
+  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+      _denyInitialCameraForFixture,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
   Future<bool> Function()? checkCameraPermission,
@@ -11848,6 +12028,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
     requestCameraPermission: requestCameraPermission,
+    requestInitialCallCameraPermission: requestInitialCallCameraPermission,
     pictureInPictureBridgeFactory: pictureInPictureBridgeFactory,
     checkCameraPermission: checkCameraPermission,
     qualityEnvironmentSourceFactory: usePlatformQualityEnvironment
@@ -14021,7 +14202,7 @@ final class _B7ActivityRig {
         nativeOverride: _nativeLifecycle,
       ));
     } else {
-      await _b7Bound(_connectedOutgoingGraphAudio(
+      await _b7Bound(_connectedOutgoingGraph(
         cleanupTimeout: _b7Limit,
         captureCallActivityMark: capture,
         monotonicNow: () => clock.now,
