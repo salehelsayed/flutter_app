@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/database/helpers/local_ai_preview_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
@@ -73,6 +74,8 @@ void main() {
               .timeout(localPreviewBound);
         });
 
+    late List<WeeklyFeatureUse> completedUse;
+
     Widget view(String text, {String target = 'de'}) => _host(
       MessageTranslation(
         messageId: 'chat-message',
@@ -80,12 +83,15 @@ void main() {
         targetLanguage: target,
         ai: ai,
         persistence: fixture.store,
+        captureFeatureUse: (feature) =>
+            () => completedUse.add(feature),
       ),
     );
 
     setUp(() {
       fixture = LocalPreviewFixture();
       ai = _Ai();
+      completedUse = [];
     });
 
     testWidgets('a Latin message of unknown language waits for a tap', (
@@ -128,6 +134,7 @@ void main() {
       await fixture.flush(tester);
       expect(find.text('German result'), findsOneWidget);
       expect(ai.translations, 1);
+      expect(completedUse, [WeeklyFeatureUse.translation]);
     });
 
     testWidgets('a message in a known other language still translates on '
@@ -191,6 +198,7 @@ void main() {
       });
       addTearDown(fixture.dispose);
       final ai = _Ai();
+      final completedUse = <WeeklyFeatureUse>[];
       Widget view() => _host(
         MessageTranslation(
           messageId: 'chat-message',
@@ -198,12 +206,15 @@ void main() {
           targetLanguage: 'de',
           ai: ai,
           persistence: fixture.store,
+          captureFeatureUse: (feature) =>
+              () => completedUse.add(feature),
         ),
       );
       await tester.pumpWidget(view());
       await fixture.flush(tester);
       expect(find.text('German result'), findsOneWidget);
       expect(ai.translations, 1);
+      expect(completedUse, [WeeklyFeatureUse.translation]);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(fixture.reopen);
@@ -211,6 +222,7 @@ void main() {
       await fixture.flush(tester);
       expect(find.text('German result'), findsOneWidget);
       expect(ai.translations, 1);
+      expect(completedUse, [WeeklyFeatureUse.translation]);
     },
   );
 
