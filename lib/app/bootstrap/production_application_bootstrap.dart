@@ -1,5 +1,6 @@
 import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/app/bootstrap/active_identity_reporter_bootstrap.dart';
 import 'dart:async';

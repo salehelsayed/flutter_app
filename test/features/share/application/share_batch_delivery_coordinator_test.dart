@@ -217,7 +217,7 @@ void main() {
       reporter.observeIdentity(
         accountPeerId: identity.peerId,
         rootPrivateKeyBase64: identity.privateKey,
-        profileBinding: 'v1:' + List.filled(64, 'a').join(),
+        profileBinding: 'v1:${List.filled(64, 'a').join()}',
       );
 
       Future<void> setConsent(bool enabled, int epoch) {
