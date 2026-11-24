@@ -20,10 +20,10 @@ enum ContactRepairWorkerStage { claimed, built, committed, transmitted }
 /// Drains the durable repair-reply outbox (Task 12b).
 ///
 /// One worker owns one claim token. Each job is built once, its complete
-/// envelope is committed before the first send, and every retry transmits
-/// those same bytes. Every step re-checks the job's authority, relationship,
-/// local identity and call-wake grant, and every state change is a
-/// compare-and-set on the claim token, so a worker that lost ownership (a new
+/// envelope is committed before the first send, and every retry reuses its
+/// signed payload and message ID. Every step re-checks the job's authority,
+/// relationship, local identity and call-wake grant, and every state change is
+/// a compare-and-set on the claim token, so a worker that lost ownership (a new
 /// owner took over) can neither commit nor send.
 final class ContactRepairOutboxWorker {
   ContactRepairOutboxWorker({
@@ -171,6 +171,7 @@ final class ContactRepairOutboxWorker {
           bridge: _bridge,
           targetPeerId: job.peerId,
           recipientPublicKey: contact.publicKey,
+          intent: ContactRequestSendIntent.keyExchangeReply,
           resolveWakeToken: _resolveWakeToken,
           resolveCallWakeHandle: _resolveCallWakeHandle,
           control: ContactRequestControl.repairReply(
@@ -199,9 +200,7 @@ final class ContactRepairOutboxWorker {
         envelope = built;
         await _debugStageHook?.call(ContactRepairWorkerStage.committed);
       } else {
-        envelope = BuiltContactRequestEnvelope.fromJson(
-          jsonDecode(committedJson) as Map<String, Object?>,
-        );
+        envelope = _restoreReply(job, committedJson);
       }
 
       if (!await _grantStillCurrent(envelope)) {
@@ -241,6 +240,32 @@ final class ContactRepairOutboxWorker {
     } catch (_) {
       await _retry(job, 'error');
     }
+  }
+
+  BuiltContactRequestEnvelope _restoreReply(
+    ContactRepairJob job,
+    String committedJson,
+  ) {
+    final persisted = jsonDecode(committedJson) as Map<String, Object?>;
+    if (persisted['encrypted'] == true &&
+        persisted['targetPeerId'] == job.peerId &&
+        persisted['msgId'] == job.replyId) {
+      final wire = jsonDecode(persisted['messageJson'] as String);
+      if (wire is Map<String, Object?> &&
+          wire['type'] == 'contact_request' &&
+          wire['version'] == '2' &&
+          wire['msgId'] == job.replyId &&
+          wire['intent'] == ContactRequestSendIntent.newRequest.wireValue) {
+        // Correct legacy notification routing on send. The durable record,
+        // ciphertext and ID used for relay deduplication stay intact.
+        persisted['messageJson'] = jsonEncode({
+          ...wire,
+          'intent': ContactRequestSendIntent.keyExchangeReply.wireValue,
+          'reciprocalReply': true,
+        });
+      }
+    }
+    return BuiltContactRequestEnvelope.fromJson(persisted);
   }
 
   Future<bool> _fenceHolds(ContactRepairJob job) async {

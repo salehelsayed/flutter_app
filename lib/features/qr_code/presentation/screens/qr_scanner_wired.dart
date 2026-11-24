@@ -340,6 +340,7 @@ class QRScannerWired extends StatelessWidget {
         await _sendContactRequestInBackground(
           contact.peerId,
           contact.publicKey,
+          intent: ContactRequestSendIntent.newRequest,
         );
         if (!context.mounted) return;
         _showSuccessDialog(context, contact);
@@ -373,6 +374,7 @@ class QRScannerWired extends StatelessWidget {
           await _sendContactRequestInBackground(
             existing.peerId,
             existing.publicKey,
+            intent: ContactRequestSendIntent.keyExchangeReply,
           );
         }
         break;
@@ -387,14 +389,15 @@ class QRScannerWired extends StatelessWidget {
     }
   }
 
-  /// Sends a contact request to the peer in the background.
+  /// Sends a contact request or key reannouncement in the background.
   ///
   /// This enables bidirectional contact exchange - when Bob scans Alice's QR,
   /// Bob automatically sends his info to Alice so she can add him back.
   Future<void> _sendContactRequestInBackground(
     String targetPeerId,
-    String recipientPublicKey,
-  ) async {
+    String recipientPublicKey, {
+    required ContactRequestSendIntent intent,
+  }) async {
     try {
       await queueMlKemReannouncePeer(secureKeyStore, targetPeerId);
       final marked = await shouldMarkContactRequest(targetPeerId);
@@ -405,6 +408,8 @@ class QRScannerWired extends StatelessWidget {
               bridge: bridge,
               targetPeerId: targetPeerId,
               recipientPublicKey: recipientPublicKey,
+              intent: intent,
+              requireFresh: true,
               resolveCallWakeHandle: resolveCallWakeHandle,
               onCallWakeHandleDistributed: onCallWakeHandleDistributed,
               markAsNewRequest: marked,
