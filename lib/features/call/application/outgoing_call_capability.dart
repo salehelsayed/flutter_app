@@ -20,7 +20,6 @@ final class OutgoingCallStartRequest {
     this.onAdmitted,
     this.isCurrent,
     this.microphonePermissionPreflight,
-    this.cameraOnConnect = false,
   });
 
   final void Function()? onAdmitted;
@@ -29,9 +28,6 @@ final class OutgoingCallStartRequest {
     Future<MicPermissionStatus> Function() requestPermission,
   )?
   microphonePermissionPreflight;
-
-  /// The caller explicitly chose Video call for this attempt.
-  final bool cameraOnConnect;
 
   bool _canceled = false;
   bool _admitted = false;

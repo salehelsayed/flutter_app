@@ -5575,13 +5575,12 @@ void main() {
     );
   }
 
-  for (final (explicitChoice, media, starts) in [
-    (true, CallMediaKind.video, 1),
-    (true, CallMediaKind.audio, 0),
-    (false, CallMediaKind.video, 0),
+  for (final (media, starts) in [
+    (CallMediaKind.video, 1),
+    (CallMediaKind.audio, 0),
   ]) {
     test(
-      'BL16 initial camera outgoing choice=$explicitChoice agreement=${media.name}',
+      'BL16 initial camera outgoing agreement=${media.name}',
       () async {
         var requests = 0;
         Future<void> expectNoRequest(_ProductionIosFixture fixture) async {
@@ -5596,7 +5595,7 @@ void main() {
           _connectedOutgoingGraph(
             cleanupTimeout: _b7Limit,
             acceptedMedia: media,
-            request: OutgoingCallStartRequest(cameraOnConnect: explicitChoice),
+            request: OutgoingCallStartRequest(),
             requestInitialCallCameraPermission: (_) async {
               requests++;
               return permissions.PermissionStatus.granted;

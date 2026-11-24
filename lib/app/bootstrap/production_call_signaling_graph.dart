@@ -1926,7 +1926,6 @@ final class ProductionCallSignalingGraph
       request = OutgoingCallStartRequest(
         isCurrent: () => original?.isCanceled != true && _videoForeground,
         onAdmitted: () => original?.admit(),
-        cameraOnConnect: original?.cameraOnConnect ?? false,
       );
     }
     final diagnostics = CallDiagnostics.instance;
@@ -2006,9 +2005,7 @@ final class ProductionCallSignalingGraph
                     video ? CallMediaKind.video : CallMediaKind.audio,
                     endpoint,
                   );
-                  if (video &&
-                      request?.cameraOnConnect == true &&
-                      _videoForeground) {
+                  if (video && _videoForeground) {
                     _initialVideoCameraCallId = callId;
                   }
                 }
