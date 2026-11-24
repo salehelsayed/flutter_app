@@ -6079,6 +6079,7 @@
       ],
       "why": "Native permissions, bundled assets, dependency versions and build flags can invalidate all runtime consumers and signed-artifact proof",
       "exclude_paths": [
+        "scripts/check_glossary.py",
         "scripts/check_reliability_simulation_discovery.sh"
       ]
     },
