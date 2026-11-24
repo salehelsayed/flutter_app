@@ -95,6 +95,7 @@ import 'package:flutter_app/features/posts/application/pending_post_target_store
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'feed_screen.dart';
 
 const _uuid = Uuid();
@@ -1551,6 +1552,7 @@ class _FeedWiredState extends State<FeedWired>
       // newly-accepted peer. Popping back reveals the connection card upserted
       // above, so the Feed presence is preserved.
       widget.chatMessageListener.emitContactUpdate(contact);
+      dismissMyQrForAcceptedContact(context);
       unawaited(_openConversationForContact(contact));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

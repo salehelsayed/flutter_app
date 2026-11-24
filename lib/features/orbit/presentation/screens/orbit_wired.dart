@@ -3638,6 +3638,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       // chat for the newly-accepted peer so "say hi" is one tap, not three.
       final contact = await widget.contactRepo.getContact(request.peerId);
       if (!mounted || contact == null || contact.isBlocked) return;
+      dismissMyQrForAcceptedContact(context);
       unawaited(_openConversationForContact(contact));
     }
   }
@@ -4266,6 +4267,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onMyQR() {
     return Navigator.of(context).push(
       buildConversationRoute(
+        settings: MyQrRouteSettings(ModalRoute.of(context)),
         builder: (_) => QRDisplayWired(
           repo: widget.identityRepo,
           bridgeClient: widget.bridge,

@@ -9,6 +9,30 @@ import '../../application/build_qr_payload_use_case.dart';
 import '../../application/direct_linked_device_qr.dart';
 import 'qr_display_screen.dart';
 
+/// Identifies the My QR screen and the shell that opened it from Settings.
+final class MyQrRouteSettings extends RouteSettings {
+  const MyQrRouteSettings(this.shellRoute);
+
+  final ModalRoute<dynamic>? shellRoute;
+}
+
+/// Return from Settings → My QR before opening the newly accepted chat.
+void dismissMyQrForAcceptedContact(BuildContext context) {
+  final shellRoute = ModalRoute.of(context);
+  if (shellRoute == null || !shellRoute.isActive || shellRoute.isCurrent) return;
+
+  var returningFromMyQr = false;
+  shellRoute.navigator?.popUntil((route) {
+    if (!returningFromMyQr) {
+      final settings = route.settings;
+      returningFromMyQr =
+          settings is MyQrRouteSettings &&
+          identical(settings.shellRoute, shellRoute);
+    }
+    return !returningFromMyQr || identical(route, shellRoute);
+  });
+}
+
 /// Internal state enum for QRDisplayWired
 enum _QRDisplayState { loading, success, noIdentity, error }
 
