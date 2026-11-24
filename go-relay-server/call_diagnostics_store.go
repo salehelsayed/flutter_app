@@ -34,7 +34,7 @@ const callDiagnosticTraceBytes = 3 * (64 << 10)
 const callDiagnosticRecordBytes = 320 << 10
 const callDiagnosticDiscardIDLimit = 256
 
-// Ordinary observations leave room for terminal/first-media evidence. These
+// Ordinary observations leave room for call-end and first-media evidence. These
 // reservations do not raise either hard byte ceiling or evict retained records.
 const callDiagnosticPriorityBytes = 32 << 10
 
@@ -886,13 +886,16 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	}
 	terminal := event["stage"] == "terminal" && event["action"] == "finish"
 	values, _ := event["values"].(map[string]any)
+	endDetail := !server && event["stage"] == "terminal" && event["action"] == "snapshot" &&
+		values["endCause"] != nil && values["endCauseStage"] != nil
 	role, _ := event["role"].(string)
 	mediaKey := diagnosticPrivateKey(actor, "first-verified-media")
 	_, hasMedia := rec.Summaries[mediaKey]
 	firstMedia := !server && !hasMedia && (role == "caller" || role == "callee") && event["stage"] == "media" && (event["outcome"] == "media_flow_verified" || values["mediaFlowVerified"] == true)
+	priority := terminal || firstMedia || endDetail
 	discarded := false
 	if len(rec.Events) >= callDiagnosticTraceEvents || eventBytes+len(raw) > callDiagnosticTraceBytes {
-		if !terminal && !firstMedia {
+		if !priority {
 			discarded = true
 			if len(rec.DiscardedEventIDs) < callDiagnosticDiscardIDLimit {
 				if rec.Dropped == 0 && rec.LegacyDropAttempts == 0 {
@@ -921,10 +924,13 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	if firstMedia {
 		rec.Summaries[mediaKey] = entry
 	}
+	if endDetail {
+		rec.Summaries[diagnosticPrivateKey(actor, event["source"].(string), "end-detail")] = entry
+	}
 	rec.UpdatedAtMs = s.now().UnixMilli()
 	encoded, _ := json.Marshal(rec)
 	reason := s.budgetReasonLocked(key, rec, len(encoded))
-	if reason == "" && !terminal && !firstMedia && !discarded {
+	if reason == "" && !priority && !discarded {
 		delta := len(encoded) - s.sizes[key]
 		if s.usedBytes+delta > s.quota-callDiagnosticPriorityBytes {
 			reason = "global_bytes"

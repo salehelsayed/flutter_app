@@ -68,12 +68,15 @@ func TestCallDiagnosticsCallEndDetailPreservesOriginalSummary(t *testing.T) {
 		t.Fatal("separate detail rejected")
 	}
 	record := s.records[trace]
-	if len(record.Summaries) != 1 || len(record.Events) != 2 {
-		t.Fatal("detail displaced the authoritative terminal summary")
+	if len(record.Summaries) != 2 || len(record.Events) != 2 {
+		t.Fatalf("want two summaries and two events, got %d summaries and %d events", len(record.Summaries), len(record.Events))
 	}
+	foundFinal, foundDetail := false, false
 	for _, summary := range record.Summaries {
-		if !bytes.Equal(summary.Event, final) {
-			t.Fatal("detail replaced the original final bytes")
-		}
+		foundFinal = foundFinal || bytes.Equal(summary.Event, final)
+		foundDetail = foundDetail || bytes.Equal(summary.Event, raw)
+	}
+	if !foundFinal || !foundDetail {
+		t.Fatal("original final and typed detail must have separate summaries with their original bytes")
 	}
 }
