@@ -6,7 +6,7 @@ Look up the product term first, then follow the paths in **Where**. Update the r
 
 | Term | Code names | Where | Means | Not to confuse with |
 | --- | --- | --- | --- | --- |
-| Home | `FeedWired`, `FirstTimeExperienceWired` | `lib/features/feed/presentation/screens/feed_wired.dart`, `lib/features/home/presentation/screens/first_time_experience_wired.dart` | Home includes the main app feed and the experience for adding a first contact. | Thoughts tab |
+| Home | `FeedWired`, `FirstTimeExperienceWired` | `lib/features/feed/presentation/screens/feed_wired.dart`, `lib/features/home/presentation/screens/first_time_experience_wired.dart` | Home opens the app shell on Orbit, or shows first-contact setup when there are no contacts. | Settings |
 | Conversation | `ConversationWired` | `lib/features/conversation/presentation/screens/conversation_wired.dart` | The one-to-one chat screen wires the timeline and composer to the selected contact. | Group conversation |
 | Send message | `sendChatMessage` | `lib/features/conversation/application/send_chat_message_use_case.dart` | The direct send use case authors or submits a chat message and records its outcome. | Send group message |
 | Quoted reply | `ConversationMessage.quotedMessageId` | `lib/features/conversation/domain/models/conversation_message.dart` | A message can carry the ID of the earlier message it quotes. | Thought reply |
@@ -17,7 +17,7 @@ Look up the product term first, then follow the paths in **Where**. Update the r
 
 | Term | Code names | Where | Means | Not to confuse with |
 | --- | --- | --- | --- | --- |
-| Thoughts | `PostsWired`, `PostModel` | `lib/features/posts/presentation/screens/posts_wired.dart`, `lib/features/posts/domain/models/post_model.dart` | Thoughts are audience-scoped posts shown in the Thoughts tab. | Home feed |
+| Thoughts | `OrbitWired`, `ThoughtCardScreen` | `lib/features/orbit/presentation/screens/orbit_wired.dart`, `lib/features/posts/presentation/screens/thought_card_screen.dart` | Thoughts are audience-scoped posts. A note in flat Orbit opens its Thought card. In 3D Orbit, the card appears alongside its author. | Direct message |
 | New Thought | `ComposePostSheet` | `lib/features/posts/presentation/widgets/compose_post_sheet.dart` | The sheet collects the content and audience for a new Thought. | Chat composer |
 | Pick People | `ThoughtPeoplePickerSheet` | `lib/features/posts/presentation/widgets/thought_audience.dart`, `lib/features/posts/presentation/widgets/compose_post_sheet.dart` | The picker selects contacts for the Thought audience. | Group contact picker |
 | Thought reply | `ThoughtReplyDock`, `sendThoughtReply` | `lib/features/posts/presentation/widgets/thought_reply_dock.dart`, `lib/features/posts/application/send_thought_reply_use_case.dart` | A text reply to a Thought goes into a direct conversation with its author. | Quoted reply |
@@ -30,7 +30,7 @@ Look up the product term first, then follow the paths in **Where**. Update the r
 
 | Term | Code names | Where | Means | Not to confuse with |
 | --- | --- | --- | --- | --- |
-| Orbit | `OrbitWired`, `OrbitScreen` | `lib/features/orbit/presentation/screens/orbit_wired.dart`, `lib/features/orbit/presentation/screens/orbit_screen.dart` | Orbit displays peer activity and opens the related conversations or Thoughts. | Thoughts tab |
+| Orbit | `OrbitWired`, `OrbitScreen` | `lib/features/orbit/presentation/screens/orbit_wired.dart`, `lib/features/orbit/presentation/screens/orbit_screen.dart` | Orbit displays peer activity and opens the related conversations or Thoughts. | Feed pane |
 | 3D view | `OrbitDepthSurface`, `MKNOON_ENABLE_ORBIT_DEPTH` | `lib/features/orbit/presentation/widgets/orbit_depth_surface.dart`, `lib/core/config/thoughts_feature_flags.dart` | The depth surface renders Orbit with the 3D interaction controlled by a build define. | Flat Orbit |
 | Depth ring | `OrbitDepthLayer.inner`, `orbit-depth-ring` | `lib/features/orbit/domain/orbit_depth_geometry.dart`, `lib/features/orbit/presentation/widgets/orbit_depth_surface.dart` | The inner depth ring seats friends with a live Thought. | Flat surface |
 | Flat Orbit | `OrbitDepthLayer.flat` | `lib/features/orbit/domain/orbit_depth_geometry.dart`, `lib/features/orbit/presentation/widgets/orbit_depth_surface.dart` | The flat Orbit surface stays mounted beneath the depth controls. | Depth ring |
@@ -128,6 +128,7 @@ Look up the product term first, then follow the paths in **Where**. Update the r
 ## Rename candidates
 
 - Thoughts uses the older names `posts` and `PostModel`. Consider Thought names for this feature's models and screens.
+- `PostsWired` has no production caller. Delete later?
 - Private translator appears under `translate_preview`. Consider aligning the module folder with the product term.
 - Orbit's 3D view also appears as depth in `OrbitDepthSurface` and `MKNOON_ENABLE_ORBIT_DEPTH`. Consider one name for the 3D feature after reviewing define compatibility.
 - Account transfer appears as `account_migration` and `AccountMigrationTransferStep`. Consider matching the product's transfer wording in the flow names.
