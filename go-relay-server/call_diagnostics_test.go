@@ -192,27 +192,38 @@ func TestCallDiagnosticsFullBudgetPreservesBothEndpointMediaAndTerminal(t *testi
 	if s.records[trace].Dropped != dropped {
 		t.Fatal("duplicate overflow retry inflated dropped-event count")
 	}
-	var proofs []json.RawMessage
+	type proof struct {
+		actor string
+		raw   json.RawMessage
+	}
+	var proofs []proof
 	for _, actor := range []string{"caller", "callee"} {
-		for _, stage := range []string{"media", "terminal"} {
-			raw := diagnosticTestEvent(trace, "flutter", stage, "snapshot")
+		cause := "local_hangup"
+		if actor == "callee" {
+			cause = "remote_terminate"
+		}
+		for _, kind := range []string{"media", "terminal", "end detail"} {
+			stage, action, outcome := "terminal", "snapshot", "completed_after_media"
+			values := map[string]any{"mediaFlowVerified": true}
+			switch kind {
+			case "media":
+				stage, outcome = "media", "media_flow_verified"
+			case "terminal":
+				action = "finish"
+			case "end detail":
+				values = map[string]any{"endCause": cause, "endCauseStage": "runtime", "durationMs": 4000}
+			}
 			var event map[string]any
-			_ = json.Unmarshal(raw, &event)
-			event["role"] = actor
-			event["outcome"] = "media_flow_verified"
-			event["values"] = map[string]any{"mediaFlowVerified": true}
-			if stage == "terminal" {
-				event["action"] = "finish"
-				event["outcome"] = "completed_after_media"
-			}
-			raw, _ = json.Marshal(event)
+			_ = json.Unmarshal(diagnosticTestEvent(trace, "flutter", stage, action), &event)
+			event["role"], event["outcome"], event["values"] = actor, outcome, values
+			raw, _ := json.Marshal(event)
 			if !s.appendEvent(actor, raw, false, 1) {
-				t.Fatalf("%s %s proof lost to ordinary trace quota", actor, stage)
+				t.Fatalf("%s %s proof lost to ordinary trace quota", actor, kind)
 			}
-			proofs = append(proofs, raw)
+			proofs = append(proofs, proof{actor: actor, raw: raw})
 		}
 	}
-	if len(s.records[trace].Events) != count || len(s.records[trace].Summaries) != 4 || s.records[trace].Dropped != dropped {
+	if len(s.records[trace].Events) != count || len(s.records[trace].Summaries) != len(proofs) || s.records[trace].Dropped != dropped {
 		t.Fatal("reserved evidence must remain bounded without counting retained proof as dropped")
 	}
 	s.close()
@@ -220,18 +231,14 @@ func TestCallDiagnosticsFullBudgetPreservesBothEndpointMediaAndTerminal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.records[trace].Summaries) != 4 {
+	if len(s.records[trace].Summaries) != len(proofs) {
 		t.Fatal("restart lost endpoint evidence")
 	}
 	if s.appendEvent("caller", overflow, false, 1) || s.records[trace].Dropped != dropped {
 		t.Fatal("restart lost permanent-discard deduplication")
 	}
-	for i, raw := range proofs {
-		actor := "caller"
-		if i >= 2 {
-			actor = "callee"
-		}
-		if !s.appendEvent(actor, raw, false, 1) {
+	for _, proof := range proofs {
+		if !s.appendEvent(proof.actor, proof.raw, false, 1) {
 			t.Fatal("reserved proof retry is not idempotent")
 		}
 	}
