@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:flutter_app/features/translate_preview/language_heuristic.dart';
@@ -150,6 +151,7 @@ class TranslatePreview extends StatelessWidget {
     this.color,
     this.owner,
     this.persistence,
+    this.captureFeatureUse,
   });
 
   final String text;
@@ -161,6 +163,7 @@ class TranslatePreview extends StatelessWidget {
   final Color? color;
   final PreviewOwner? owner;
   final TranslatePreviewPersistence? persistence;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<String?>(
@@ -186,6 +189,7 @@ class TranslatePreview extends StatelessWidget {
       identity: (item, text),
       targetLanguage: target,
       visible: offered,
+      captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.translation),
       labels: _Labels(
         action: l10n.translator_see_translation,
         busy: l10n.translator_translating,
@@ -228,6 +232,7 @@ class MessageTranslation extends StatelessWidget {
     required this.ai,
     this.color,
     this.dividerColor,
+    this.captureFeatureUse,
   });
 
   /// The signed-in account's peer ID, so one account never reads another's
@@ -238,6 +243,7 @@ class MessageTranslation extends StatelessWidget {
   final OnDeviceAi ai;
   final Color? color;
   final Color? dividerColor;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
 
   @override
   Widget build(BuildContext context) {
@@ -249,9 +255,10 @@ class MessageTranslation extends StatelessWidget {
       children: [
         Divider(height: 1, thickness: 1, color: dividerColor),
         _AiAction(
-          identity: text,
+          identity: (account, text),
           targetLanguage: targetLanguage,
           autoStart: true,
+          captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.translation),
           labels: _Labels(
             action: l10n.translator_see_translation,
             busy: l10n.translator_translating,
@@ -296,6 +303,7 @@ class TranscribePreview extends StatelessWidget {
     this.color,
     this.owner,
     this.persistence,
+    this.captureFeatureUse,
   });
 
   final String audioPath;
@@ -305,6 +313,7 @@ class TranscribePreview extends StatelessWidget {
   final Color? color;
   final PreviewOwner? owner;
   final TranslatePreviewPersistence? persistence;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
 
   @override
   Widget build(BuildContext context) {
@@ -316,6 +325,7 @@ class TranscribePreview extends StatelessWidget {
         : Future<String?>.value();
     return _AiAction(
       identity: item ?? audioPath,
+      captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.voiceToText),
       labels: _Labels(
         action: l10n.translator_transcribe,
         busy: l10n.translator_transcribing,
@@ -335,6 +345,7 @@ class TranscribePreview extends StatelessWidget {
         color: color,
         owner: item,
         persistence: store,
+        captureFeatureUse: captureFeatureUse,
       ),
       gate: (child, restore) => _DeliveryGate(
         beforeOpen: restore,
@@ -579,6 +590,7 @@ class _AiAction extends StatefulWidget {
     this.gate,
     this.identity,
     this.targetLanguage,
+    this.captureUse,
     this.visible = true,
     this.autoStart = false,
     this.topPadding = 6,
@@ -598,6 +610,7 @@ class _AiAction extends StatefulWidget {
   final Widget Function(Widget child, Future<bool> Function() restore)? gate;
   final Object? identity;
   final String? targetLanguage;
+  final VoidCallback? Function()? captureUse;
   final bool visible;
   final double topPadding;
   final double resultLineHeight;
@@ -623,15 +636,17 @@ class _AiActionState extends State<_AiAction> {
     if (!restored && widget.autoStart && mounted) unawaited(_start());
   }
 
-  Future<bool> _restore() async {
+  Future<bool> _restore({bool userInitiated = false}) async {
     final restore = widget.restore;
     if (restore == null || !widget.visible) return false;
     final generation = ++_generation;
+    final markUse = userInitiated ? widget.captureUse?.call() : null;
     _phase = const _Restoring();
     try {
       final result = await restore();
       if (!mounted || generation != _generation) return true;
       setState(() => _phase = result == null ? const _Idle() : _Done(result));
+      if (result != null && result.trim().isNotEmpty) markUse?.call();
       return result != null;
     } on Object {
       if (mounted && generation == _generation) {
@@ -659,6 +674,7 @@ class _AiActionState extends State<_AiAction> {
   Future<void> _start() async {
     if (_phase is _Done || _phase is _Running || _phase is _Restoring) return;
     final generation = ++_generation;
+    final markUse = widget.captureUse?.call();
     final run = widget.run;
     final save = widget.save;
     setState(() => _phase = const _Running());
@@ -670,6 +686,7 @@ class _AiActionState extends State<_AiAction> {
       }
       if (mounted && generation == _generation) {
         setState(() => _phase = _Done(result));
+        if (result.trim().isNotEmpty) markUse?.call();
       }
     } on TranslatorMemoryTemporarilyUnavailable {
       if (mounted && generation == _generation) {
@@ -748,7 +765,8 @@ class _AiActionState extends State<_AiAction> {
     );
     return _phase is _Done
         ? result
-        : widget.gate?.call(result, _restore) ?? result;
+        : widget.gate?.call(result, () => _restore(userInitiated: true)) ??
+              result;
   }
 
   Widget _link(String label, Color? color) =>

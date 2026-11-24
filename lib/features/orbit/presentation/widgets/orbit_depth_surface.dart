@@ -24,6 +24,7 @@ import 'package:flutter_app/features/translate_preview/model_delivery_contract.d
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:uuid/uuid.dart';
@@ -56,6 +57,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.onBackActionChanged,
     this.onThoughtDeparted,
     this.onSettled,
+    this.captureFeatureUse,
     this.onThoughtsExpired,
     this.loadMedia,
     this.downloadMedia,
@@ -95,6 +97,7 @@ class OrbitDepthSurface extends StatefulWidget {
   /// Always delivered after the current frame.
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onSettled;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
   final VoidCallback? onThoughtsExpired;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<String>? onThoughtTap;
@@ -142,6 +145,7 @@ typedef _DepthLanding = ({
   bool markDeparture,
   bool byTurn,
   bool fromSwipe,
+  VoidCallback? onOpened,
 });
 
 class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
@@ -536,12 +540,19 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }) async {
     if (!fromSwipe && _pendingLanding?.fromSwipe == true) _guardAfterSwipe();
     final generation = ++_settleGeneration;
+    final onOpened = target == OrbitDepthLayer.flat
+        ? null
+        : _pendingLanding?.onOpened ??
+              (_layer == OrbitDepthLayer.flat
+                  ? widget.captureFeatureUse?.call(WeeklyFeatureUse.view3d)
+                  : null);
     final landing = (
       generation: generation,
       departedPostId: _landedPostId,
       markDeparture: markDeparture,
       byTurn: byTurn,
       fromSwipe: fromSwipe,
+      onOpened: onOpened,
     );
     _pendingLanding = landing;
     if (_layer == OrbitDepthLayer.flat && target != OrbitDepthLayer.flat) {
@@ -594,6 +605,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         widget.onSettled?.call(layer, center?.friend.peerId, landing.byTurn);
+        if (_active && landing.generation == _settleGeneration) {
+          landing.onOpened?.call();
+        }
       }
     });
     final next = center?.thought.id;
@@ -1836,6 +1850,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             delivery: translatePreviewDelivery,
             onFreeUpSpace: translatePreviewOpenStorage,
             color: colors.onSurface,
+            captureFeatureUse: widget.captureFeatureUse,
           )
         : null;
     // A drag on the thought tilts or turns the orbit, so it cannot scroll.

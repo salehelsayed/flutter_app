@@ -95,6 +95,7 @@ class ComposePostSheet extends StatefulWidget {
   /// Completes with null when there is no transcript yet (the model is
   /// still downloading), and throws when transcribing failed.
   final Future<String?> Function(String filePath)? transcribeVoice;
+  final VoidCallback? Function()? captureVoiceToTextUse;
 
   /// Runs once as the sheet goes away: the unshared draft, or null after a
   /// share or when nothing was left to keep.
@@ -106,6 +107,7 @@ class ComposePostSheet extends StatefulWidget {
     this.replacesCurrentThought = false,
     this.recentPicks,
     this.transcribeVoice,
+    this.captureVoiceToTextUse,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,
@@ -685,6 +687,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final recording = _keptRecording;
     final transcribe = widget.transcribeVoice;
     if (recording == null || transcribe == null || _transcribing) return;
+    final markVoiceToText = widget.captureVoiceToTextUse?.call();
     setState(() {
       _transcribing = true;
       _voiceTextFailed = false;
@@ -715,6 +718,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     _textController.selection = TextSelection.collapsed(
       offset: _textController.text.length,
     );
+    markVoiceToText?.call();
     try {
       final file = File(recording.filePath);
       if (file.existsSync()) file.deleteSync();

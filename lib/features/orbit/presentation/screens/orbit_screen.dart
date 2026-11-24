@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
@@ -342,6 +343,7 @@ class OrbitScreen extends StatefulWidget {
   /// The 3D view came to rest on a ring, or back on flat.
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(
     PostMediaAttachmentModel,
@@ -451,6 +453,7 @@ class OrbitScreen extends StatefulWidget {
     this.onDepthBackActionChanged,
     this.onDepthThoughtDeparted,
     this.onDepthSettled,
+    this.captureFeatureUse,
     this.loadDepthMedia,
     this.downloadDepthMedia,
     this.depthPostChanges,
@@ -596,6 +599,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onDepthBackActionChanged: widget.onDepthBackActionChanged,
     onDepthThoughtDeparted: widget.onDepthThoughtDeparted,
     onDepthSettled: widget.onDepthSettled,
+    captureFeatureUse: widget.captureFeatureUse,
     loadDepthMedia: widget.loadDepthMedia,
     downloadDepthMedia: widget.downloadDepthMedia,
     depthPostChanges: widget.depthPostChanges,
@@ -700,6 +704,7 @@ class _OrbitScreenView extends StatelessWidget {
   /// The 3D view came to rest on a ring, or back on flat.
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(
     PostMediaAttachmentModel,
@@ -824,6 +829,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.onDepthBackActionChanged,
     this.onDepthThoughtDeparted,
     this.onDepthSettled,
+    this.captureFeatureUse,
     this.loadDepthMedia,
     this.downloadDepthMedia,
     this.depthPostChanges,
@@ -1406,6 +1412,7 @@ class _OrbitScreenView extends StatelessWidget {
             onBackActionChanged: onDepthBackActionChanged,
             onThoughtDeparted: onDepthThoughtDeparted,
             onSettled: onDepthSettled,
+            captureFeatureUse: captureFeatureUse,
             onThoughtsExpired: onThoughtsExpired,
             loadMedia: loadDepthMedia,
             downloadMedia: downloadDepthMedia,

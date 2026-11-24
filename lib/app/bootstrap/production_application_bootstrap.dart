@@ -6677,11 +6677,18 @@ final class ProductionApplicationBootstrap
         if (capture == null) {
           return null;
         }
-        return () => activeIdentityReporter.markCaptured(
-          capture,
-          occurredAtUnixMillis: DateTime.now().toUtc().millisecondsSinceEpoch,
+        return () => unawaited(
+          activeIdentityReporter.markConnectedCallCaptured(
+            capture,
+            occurredAtUnixMillis: DateTime.now().millisecondsSinceEpoch,
+          ),
         );
       },
+      captureVideoCallActivityMark: (account) =>
+          activeIdentityReporter.captureFeatureUse(
+            WeeklyFeatureUse.videoCall,
+            expectedAccountPeerId: account,
+          ),
       onCallEnvelopeEncoded: debugE2EComposition?.callEnvelopeEncodedObserver,
       onCallTimerScheduled: debugE2EComposition?.callTimerScheduledObserver,
       networkPathOutcomes: networkPathSource.outcomes,

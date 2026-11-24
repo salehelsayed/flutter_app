@@ -143,6 +143,12 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       capturedActivity: finalizationActivity,
       emitTimingEvent: false,
     );
+    if (result == SendChatMessageResult.success && message != null) {
+      reporter?.markFeatureUse(
+        activityObservation.capture,
+        WeeklyFeatureUse.voiceMessage,
+      );
+    }
 
     voiceSendStopwatch.stop();
     final voiceSendMs = voiceSendStopwatch.elapsedMilliseconds;

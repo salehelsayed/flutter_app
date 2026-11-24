@@ -151,6 +151,10 @@ class MediaAttachment {
 
   bool get isAnimated => mime == 'image/gif';
 
+  bool get isPhotoOrVideo =>
+      stickerId == null &&
+      (mediaType == 'video' || (mediaType == 'image' && !isAnimated));
+
   /// Scheme-agnostic ciphertext-custody discriminator: the blob bytes are
   /// ciphertext whenever key material is present, regardless of whether THIS
   /// app version can decrypt them. Routing (`.enc` staging, fail-closed

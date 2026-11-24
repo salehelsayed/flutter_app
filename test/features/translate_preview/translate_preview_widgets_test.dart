@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/startup_loading_gate.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
@@ -373,32 +374,46 @@ void main() {
     'Transcribe: loading, the transcript without a result footer, then '
     'See translation on the transcript',
     (tester) async {
+      const bound = Duration(seconds: 2);
       final ai = _FakeAi();
+      final completedUse = <WeeklyFeatureUse>[];
       await tester.pumpWidget(
-        _host(TranscribePreview(audioPath: '/tmp/voice.m4a', ai: ai)),
-      );
+        _host(
+          TranscribePreview(
+            audioPath: '/tmp/voice.m4a',
+            ai: ai,
+            captureFeatureUse: (feature) => () => completedUse.add(feature),
+          ),
+        ),
+      ).timeout(bound);
 
-      await tester.tap(find.text('Transcribe'));
-      await tester.pump();
+      await tester.tap(find.text('Transcribe')).timeout(bound);
+      await tester.pump().timeout(bound);
       expect(find.text('Transcribing…'), findsOneWidget);
       expect(ai.transcriptions, ['/tmp/voice.m4a']);
+      expect(completedUse, isEmpty);
 
       ai.next.complete('أنا في الطريق');
-      await tester.pump();
+      await tester.pump().timeout(bound);
       expect(find.text('أنا في الطريق'), findsOneWidget);
+      expect(completedUse, [WeeklyFeatureUse.voiceToText]);
       expect(find.text('BETA'), findsNothing);
       expect(find.text('Only on your phone'), findsNothing);
       expect(find.text('Hide'), findsNothing);
 
       ai.next = Completer<String>();
-      await tester.tap(find.text('See translation'));
-      await tester.pump();
+      await tester.tap(find.text('See translation')).timeout(bound);
+      await tester.pump().timeout(bound);
       ai.next.complete("I'm on my way");
-      await tester.pump();
+      await tester.pump().timeout(bound);
       expect(ai.translations, [
         (text: 'أنا في الطريق', languageName: 'English'),
       ]);
       expect(find.text("I'm on my way"), findsOneWidget);
+      expect(completedUse, [
+        WeeklyFeatureUse.voiceToText,
+        WeeklyFeatureUse.translation,
+      ]);
       expect(find.text('BETA'), findsNothing);
       expect(find.text('Only on your phone'), findsNothing);
       expect(find.text('Hide'), findsNothing);

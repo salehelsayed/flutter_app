@@ -5269,6 +5269,16 @@ class _ConversationWiredState extends State<ConversationWired>
                 directPrivateMediaFanout: privateMediaFanoutContext,
               );
         final (result, message) = sendOutcome;
+        if (result == SendChatMessageResult.success &&
+            message != null &&
+            sticker == null &&
+            (uploadedAttachments?.any((media) => media.isPhotoOrVideo) ??
+                false)) {
+          activityReporter?.markFeatureUse(
+            activityCapture,
+            WeeklyFeatureUse.photoVideo,
+          );
+        }
 
         if (preparedUploads.isNotEmpty &&
             uploadedAttachments != null &&
@@ -7142,6 +7152,13 @@ class _ConversationWiredState extends State<ConversationWired>
       await showPrivateTranslatorSheet(context, controller: delivery);
       return;
     }
+    final account = _identity?.peerId;
+    final markVoiceToText = account == null
+        ? null
+        : widget.activityReporter?.captureFeatureUse(
+            WeeklyFeatureUse.voiceToText,
+            expectedAccountPeerId: account,
+          );
     try {
       final text = (await translatePreviewAi.transcribe(
         recording.filePath,
@@ -7155,6 +7172,7 @@ class _ConversationWiredState extends State<ConversationWired>
       final separator =
           _draftText.isEmpty || RegExp(r'\s$').hasMatch(_draftText) ? '' : ' ';
       _onDraftChanged('$_draftText$separator$text');
+      markVoiceToText?.call();
       _updateComposerState(
         recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,
@@ -9749,6 +9767,7 @@ class _ConversationWiredState extends State<ConversationWired>
         _outgoingCallContactAvailable;
 
     final pendingCall = _outgoingCallStartRequest;
+    final account = _identity?.peerId;
     final showPreflight =
         pendingCall != null &&
         !pendingCall.isCanceled &&
@@ -9769,6 +9788,12 @@ class _ConversationWiredState extends State<ConversationWired>
           contactUsername: _contact.username,
           connectionDate: _formatConnectionDate(),
           ownPeerId: _identity?.peerId,
+          captureFeatureUse: account == null
+              ? null
+              : (feature) => widget.activityReporter?.captureFeatureUse(
+                  feature,
+                  expectedAccountPeerId: account,
+                ),
           // Call/live events can arrive before the initial latest page.
           // Reveal the first timeline only when that page is ready.
           messages: _initialLoadDone ? _messages : const [],

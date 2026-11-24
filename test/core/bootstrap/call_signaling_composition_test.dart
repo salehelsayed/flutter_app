@@ -11729,6 +11729,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)>
 _connectedOutgoingGraph({
   Duration? cleanupTimeout,
   CaptureCallActivityMark? captureCallActivityMark,
+  CaptureCallActivityMark? captureVideoCallActivityMark,
   Duration Function()? monotonicNow,
   CallTimerScheduler? timerScheduler,
   int Function()? clockMs,
@@ -11749,6 +11750,7 @@ _connectedOutgoingGraph({
   fixture = await _createProductionIosFixture(
     cleanupTimeout: cleanupTimeout,
     captureCallActivityMark: captureCallActivityMark,
+    captureVideoCallActivityMark: captureVideoCallActivityMark,
     monotonicNow: monotonicNow,
     timerScheduler: timerScheduler,
     clockMs: clockMs,
@@ -12008,6 +12010,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
   CallScheduledTimerObserver? onCallTimerScheduled,
   CaptureCallActivityMark? captureCallActivityMark,
+  CaptureCallActivityMark? captureVideoCallActivityMark,
   Duration Function()? monotonicNow,
   CallTimerScheduler? timerScheduler,
   Map<String, bool> privacyFlags = const {},
@@ -12115,6 +12118,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     onCallHistoryProjected: onCallHistoryProjected,
     onCallTimerScheduled: onCallTimerScheduled,
     captureCallActivityMark: captureCallActivityMark,
+    captureVideoCallActivityMark: captureVideoCallActivityMark,
     monotonicNow: monotonicNow,
     timerScheduler: timerScheduler,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
@@ -14387,6 +14391,31 @@ void _b7ActivityTests() {
       await rig.clock.elapse(const Duration(seconds: 10));
       expect(rig.marks, hasLength(1));
       expect(rig.handoffs, 1);
+    });
+  }
+
+  for (final media in [CallMediaKind.audio, CallMediaKind.video]) {
+    test('BL78 weekly video use counts connected ${media.name} agreement', () async {
+      final clock = _B7Clock();
+      final marks = <String>[];
+      await _b7Bound(
+        _connectedOutgoingGraph(
+          cleanupTimeout: _b7Limit,
+          acceptedMedia: media,
+          captureVideoCallActivityMark: (account) => () => marks.add(account),
+          monotonicNow: () => clock.now,
+          timerScheduler: clock,
+          whileRinging: (_) async {
+            await clock.elapse(const Duration(seconds: 12));
+            expect(marks, isEmpty);
+          },
+        ),
+      );
+      await clock.elapse(const Duration(milliseconds: 9999));
+      expect(marks, isEmpty);
+      await clock.elapse(const Duration(milliseconds: 1));
+      await clock.elapse(const Duration(seconds: 10));
+      expect(marks, media == CallMediaKind.video ? ['local-account'] : isEmpty);
     });
   }
 

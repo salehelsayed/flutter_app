@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart'
     show kCustomStickerMarkerId;
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
@@ -444,6 +445,7 @@ class ConversationScreen extends StatefulWidget {
   final PrivateMediaProtectionCoordinator? protectionCoordinator;
 
   const ConversationScreen({
+    this.captureFeatureUse,
     super.key,
     required this.contactPeerId,
     required this.contactUsername,
@@ -549,6 +551,8 @@ class ConversationScreen extends StatefulWidget {
     this.protectionCoordinator,
   });
 
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
+
   @override
   State<ConversationScreen> createState() => _ConversationScreenState();
 }
@@ -569,6 +573,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       ai: translatePreviewAi,
       delivery: translatePreviewDelivery,
       onFreeUpSpace: translatePreviewOpenStorage,
+      captureFeatureUse: widget.captureFeatureUse,
     );
   }
 
@@ -1793,6 +1798,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                         ai: translatePreviewAi,
                         color: context.backgroundReadableColors.textSecondary,
                         dividerColor: context.backgroundReadableColors.divider,
+                        captureFeatureUse: widget.captureFeatureUse,
                       ),
                 audioFooterBuilder:
                     translatePreviewEnabled &&

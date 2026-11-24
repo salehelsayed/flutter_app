@@ -163,6 +163,7 @@ final class _CallActivityObserver with WidgetsBindingObserver {
     required this.monotonicNow,
     required this.scheduler,
     required bool Function() isForeground,
+    this.qualifies,
   }) {
     try {
       _phase = isForeground()
@@ -186,6 +187,7 @@ final class _CallActivityObserver with WidgetsBindingObserver {
   final CaptureCallActivityMark capture;
   final Duration Function() monotonicNow;
   final CallTimerScheduler scheduler;
+  final bool Function(CallSessionSnapshot)? qualifies;
   _CallActivityLifetime? _current;
   _CallActivityPhase _phase = _CallActivityPhase.paused;
   WidgetsBinding? _binding;
@@ -231,7 +233,7 @@ final class _CallActivityObserver with WidgetsBindingObserver {
       return;
     }
     final now = monotonicNow();
-    if (active.state == CallState.connected) {
+    if (_qualifiesConnected(active)) {
       lifetime.connectedSince ??= now;
       _arm(lifetime, now);
     } else {
@@ -241,6 +243,9 @@ final class _CallActivityObserver with WidgetsBindingObserver {
       lifetime.timer = null;
     }
   }
+
+  bool _qualifiesConnected(CallSessionSnapshot active) =>
+      active.state == CallState.connected && (qualifies?.call(active) ?? true);
 
   Duration _elapsed(_CallActivityLifetime lifetime, Duration now) {
     final since = lifetime.connectedSince;
@@ -279,8 +284,9 @@ final class _CallActivityObserver with WidgetsBindingObserver {
       return;
     }
     final active = readActive();
-    if (active?.callId != lifetime.callId ||
-        active?.state != CallState.connected) {
+    if (active == null ||
+        active.callId != lifetime.callId ||
+        !_qualifiesConnected(active)) {
       observe();
       return;
     }
@@ -400,6 +406,7 @@ final class ProductionCallSignalingGraph
     required this.localDeviceKeyEpoch,
     required this.localIdentity,
     this.captureCallActivityMark,
+    CaptureCallActivityMark? captureVideoCallActivityMark,
     this.monotonicNow,
     this.timerScheduler,
     required this.platform,
@@ -449,15 +456,34 @@ final class ProductionCallSignalingGraph
            requestInitialCallCameraPermission ??
            ((_) async => permissions.PermissionStatus.denied) {
     final captureActivity = captureCallActivityMark;
+    var activityClock = monotonicNow;
+    final activityScheduler = timerScheduler ?? const DartCallTimerScheduler();
     _activityObserver = captureActivity == null
         ? null
         : _CallActivityObserver(
             readActive: () => coordinator.activeSession,
             ownAccountPeerId: localIdentity.peerId,
             capture: captureActivity,
-            monotonicNow: monotonicNow ?? _callActivityMonotonicClock(),
-            scheduler: timerScheduler ?? const DartCallTimerScheduler(),
+            monotonicNow: activityClock ??= _callActivityMonotonicClock(),
+            scheduler: activityScheduler,
             isForeground: _isVideoForeground,
+          );
+    _videoActivityObserver = !videoEnabled || captureVideoCallActivityMark == null
+        ? null
+        : _CallActivityObserver(
+            readActive: () => coordinator.activeSession,
+            ownAccountPeerId: localIdentity.peerId,
+            capture: captureVideoCallActivityMark,
+            monotonicNow: activityClock ??= _callActivityMonotonicClock(),
+            scheduler: activityScheduler,
+            isForeground: _isVideoForeground,
+            qualifies: (session) {
+              final owner = videoOwners?[session.callId];
+              final machine = owner?.mediaSwitch?.machine;
+              return owner?.current == true &&
+                  machine?.settledMedia == CallMediaKind.video &&
+                  machine?.videoGatesOpen == true;
+            },
           );
     if (videoEnabled && pictureInPictureBridge != null) {
       _pip = CallPictureInPictureController(
@@ -526,6 +552,7 @@ final class ProductionCallSignalingGraph
   final Duration Function()? monotonicNow;
   final CallTimerScheduler? timerScheduler;
   late final _CallActivityObserver? _activityObserver;
+  late final _CallActivityObserver? _videoActivityObserver;
   final CallEndpointPlatform platform;
   final CallScopedMediaBundleOwner mediaOwner;
   final AndroidCallLifecycleAdapter? androidCallLifecycleAdapter;
@@ -672,12 +699,16 @@ final class ProductionCallSignalingGraph
   @override
   Future<void> onResume() async {
     final activityGeneration = _activityObserver?.generation;
+    final videoActivityGeneration = _videoActivityObserver?.generation;
     _videoForegroundAllowed = true;
     _completeCameraForegroundWait(true);
     await runtime.onResume();
     try {
       if (activityGeneration != null) {
         _activityObserver?.resume(activityGeneration);
+      }
+      if (videoActivityGeneration != null) {
+        _videoActivityObserver?.resume(videoActivityGeneration);
       }
     } catch (_) {
       // Activity observation cannot change call recovery outcomes.
@@ -2407,6 +2438,7 @@ final class ProductionCallSignalingGraph
   Future<void> onBackgrounded() async {
     try {
       _activityObserver?.pause();
+      _videoActivityObserver?.pause();
     } catch (_) {
       // Activity timer cleanup cannot block call background handling.
     }
@@ -2548,6 +2580,15 @@ final class ProductionCallSignalingGraph
       _activityObserver?.observe();
     } catch (_) {
       // Preserve the original call persistence and signaling outcomes.
+    }
+    _observeVideoCallActivity();
+  }
+
+  void _observeVideoCallActivity() {
+    try {
+      _videoActivityObserver?.observe();
+    } catch (_) {
+      // Video reporting is optional during media negotiation.
     }
   }
 
@@ -3281,6 +3322,7 @@ final class ProductionCallSignalingGraph
     _shuttingDown = true;
     try {
       _activityObserver?.dispose();
+      _videoActivityObserver?.dispose();
     } catch (_) {
       // Activity timer cleanup cannot block call shutdown.
     }
@@ -3651,6 +3693,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   bool Function()? isForeground,
   int Function()? nowMs,
   CaptureCallActivityMark? captureCallActivityMark,
+  CaptureCallActivityMark? captureVideoCallActivityMark,
   Duration Function()? monotonicNow,
   CallTimerScheduler? timerScheduler,
   CallEngine Function(CallId)? callEngineFactory,
@@ -4491,7 +4534,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
                   coordinator.activeSession?.isTerminal == false,
               idSource: () => _newCallId().value,
               videoEnabled: true,
-              onMediaChanged: () => diagnosticGraph?._refreshVideo(),
+              onMediaChanged: () {
+                diagnosticGraph?._observeVideoCallActivity();
+                diagnosticGraph?._refreshVideo();
+              },
             );
             videoOwners![callId] = videoOwner;
           }
@@ -4732,6 +4778,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         localDeviceKeyEpoch: localDeviceKeyEpoch,
         localIdentity: identity,
         captureCallActivityMark: captureCallActivityMark,
+        captureVideoCallActivityMark: captureVideoCallActivityMark,
         monotonicNow: callMonotonicNow,
         timerScheduler: callTimerScheduler,
         platform: endpointPlatform,

@@ -3800,6 +3800,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       if ((result == SendGroupMessageResult.success ||
               result == SendGroupMessageResult.successNoPeers) &&
           message != null) {
+        if (restoredContinuation == null &&
+            (uploadedAttachments?.any((media) => media.isPhotoOrVideo) ??
+                false)) {
+          originalActivity.reporter?.markFeatureUse(
+            originalActivity.capture,
+            WeeklyFeatureUse.photoVideo,
+          );
+        }
         // Resolve uploaded media paths for display
         List<MediaAttachment>? displayMedia;
         if (uploadedAttachments != null && sendLane.mediaFileManager != null) {
@@ -6364,6 +6372,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           if ((result == SendGroupMessageResult.success ||
                   result == SendGroupMessageResult.successNoPeers) &&
               message != null) {
+            if (voiceContinuation == null) {
+              originalVoiceActivity.reporter?.markFeatureUse(
+                originalVoiceActivity.capture,
+                WeeklyFeatureUse.voiceMessage,
+              );
+            }
             List<MediaAttachment>? displayMedia;
             if (mounted) {
               displayMedia = [];
@@ -6729,6 +6743,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       await showPrivateTranslatorSheet(context, controller: delivery);
       return;
     }
+    final account = _ownPeerId;
+    final markVoiceToText = account == null
+        ? null
+        : widget.activityReporter?.captureFeatureUse(
+            WeeklyFeatureUse.voiceToText,
+            expectedAccountPeerId: account,
+          );
     try {
       final text = (await translatePreviewAi.transcribe(
         recording.filePath,
@@ -6740,6 +6761,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final separator =
           _draftText.isEmpty || RegExp(r'\s$').hasMatch(_draftText) ? '' : ' ';
       _onDraftChanged('$_draftText$separator$text');
+      markVoiceToText?.call();
       _updateComposerState(
         recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,

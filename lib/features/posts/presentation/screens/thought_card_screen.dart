@@ -21,6 +21,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/thought_reply_do
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -81,6 +82,7 @@ class ThoughtCardScreen extends StatefulWidget {
     this.onStickerReply,
     this.onTypedReplySent,
     this.validateGrace,
+    this.captureFeatureUse,
   });
 
   final PostModel initialPost;
@@ -92,6 +94,7 @@ class ThoughtCardScreen extends StatefulWidget {
   final ThoughtStickerReplySender? onStickerReply;
   final ValueChanged<String>? onTypedReplySent;
   final Future<bool> Function(ThoughtReplyDraft)? validateGrace;
+  final CaptureWeeklyFeatureUse? captureFeatureUse;
 
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
@@ -842,6 +845,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           delivery: translatePreviewDelivery,
           onFreeUpSpace: translatePreviewOpenStorage,
           color: Colors.white,
+          captureFeatureUse: widget.captureFeatureUse,
         ),
       ],
     );

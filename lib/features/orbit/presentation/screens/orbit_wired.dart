@@ -1219,6 +1219,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           },
           audioRecorderService: widget.audioRecorderService,
           transcribeVoice: _thoughtTranscriber(),
+          captureVoiceToTextUse: () =>
+              widget.directRouteAuthority?.activityReporter?.captureFeatureUse(
+                WeeklyFeatureUse.voiceToText,
+                expectedAccountPeerId: identity.peerId,
+              ),
           onPickMedia: () async {
             try {
               return await pickPostMedia();
@@ -1580,6 +1585,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           contact?.username ?? AppLocalizations.of(context)!.feed_you;
       Widget card(BuildContext _) => ThoughtCardScreen(
         playVideoAtOnce: playVideoAtOnce,
+        captureFeatureUse: (feature) =>
+            widget.directRouteAuthority?.activityReporter?.captureFeatureUse(
+              feature,
+              expectedAccountPeerId: identity.peerId,
+            ),
         initialPost: current,
         authorName: authorName,
         postRepo: repository,
@@ -4552,6 +4562,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final historyBrowser = callSource is CallHistoryBrowsingSource
         ? (callSource as CallHistoryBrowsingSource).callHistoryBrowser
         : null;
+    final activityAccount = _identity?.peerId;
     final orbit = OrbitScreen(
       headerProjectionListenable: _headerProjectionNotifier,
       listProjectionListenable: _listProjectionNotifier,
@@ -4573,6 +4584,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onDepthThoughtDeparted: (postId) =>
           unawaited(_markDepthThoughtSeen(postId)),
       onDepthSettled: _onDepthSettled,
+      captureFeatureUse: (feature) {
+        if (activityAccount == null || !_isOrbitActive) return null;
+        return widget.directRouteAuthority?.activityReporter?.captureFeatureUse(
+          feature,
+          expectedAccountPeerId: activityAccount,
+        );
+      },
       onThoughtsSpread: _onIntroSpread,
       loadDepthMedia: _loadDepthMedia,
       depthPostChanges: _thoughtPosts?.postChanges,
