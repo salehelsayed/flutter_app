@@ -557,7 +557,11 @@ class _RecordingLocalWsServer extends LocalWsServer {
     String fromPeerId,
     String toPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
+    if (authorizeDispatch != null && !await authorizeDispatch()) {
+      return LanSendAck.failed;
+    }
     lastTimeoutMs = timeoutMs;
     lastToPeerId = toPeerId;
     return ack;

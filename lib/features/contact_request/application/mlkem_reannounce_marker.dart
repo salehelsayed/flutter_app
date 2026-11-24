@@ -13,7 +13,12 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 const kMlKemReannouncePendingKey = 'mlkem_reannounce_pending';
 final _mlKemReannounceMutationLock = Lock();
 
-Future<List<String>> readMlKemReannounceMarker(SecureKeyStore store) async {
+Future<List<String>> readMlKemReannounceMarker(SecureKeyStore store) =>
+    _mlKemReannounceMutationLock.synchronized(
+      () => _readMlKemReannounceMarker(store),
+    );
+
+Future<List<String>> _readMlKemReannounceMarker(SecureKeyStore store) async {
   final raw = await store.read(kMlKemReannouncePendingKey);
   if (raw == null || raw.trim().isEmpty) {
     return const [];
@@ -37,6 +42,13 @@ Future<List<String>> readMlKemReannounceMarker(SecureKeyStore store) async {
 Future<void> writeMlKemReannounceMarker(
   SecureKeyStore store,
   List<String> peerIds,
+) => _mlKemReannounceMutationLock.synchronized(
+  () => _writeMlKemReannounceMarker(store, peerIds),
+);
+
+Future<void> _writeMlKemReannounceMarker(
+  SecureKeyStore store,
+  List<String> peerIds,
 ) async {
   if (peerIds.isEmpty) {
     await store.delete(kMlKemReannouncePendingKey);
@@ -46,18 +58,43 @@ Future<void> writeMlKemReannounceMarker(
 }
 
 /// Establishes durable reconnect/resume ownership before starting a request.
-Future<void> queueMlKemReannouncePeer(SecureKeyStore store, String peerId) =>
-    _mlKemReannounceMutationLock.synchronized(() async {
-      final pending = await readMlKemReannounceMarker(store);
-      if (pending.contains(peerId)) return;
-      await writeMlKemReannounceMarker(store, [...pending, peerId]);
-    });
+Future<void> queueMlKemReannouncePeer(
+  SecureKeyStore store,
+  String peerId,
+) async {
+  await tryQueueMlKemReannouncePeer(store, peerId);
+}
+
+/// Establishes or reuses custody if the synchronous guard still allows it.
+Future<bool> tryQueueMlKemReannouncePeer(
+  SecureKeyStore store,
+  String peerId, {
+  bool Function()? canQueue,
+}) => _mlKemReannounceMutationLock.synchronized(() async {
+  if (canQueue?.call() == false) return false;
+  final pending = await _readMlKemReannounceMarker(store);
+  if (canQueue?.call() == false) return false;
+  if (pending.contains(peerId)) return true;
+
+  var current = true;
+  try {
+    await _writeMlKemReannounceMarker(store, [...pending, peerId]);
+  } finally {
+    current = canQueue?.call() ?? true;
+    if (!current) {
+      // Reconnect readers take the same lock. Restore the previous list
+      // before any reader can observe the retired action's new marker.
+      await _writeMlKemReannounceMarker(store, pending);
+    }
+  }
+  return current;
+});
 
 /// Retires one successful retry without overwriting peers queued in flight.
 Future<void> completeMlKemReannouncePeer(SecureKeyStore store, String peerId) =>
     _mlKemReannounceMutationLock.synchronized(() async {
-      final pending = await readMlKemReannounceMarker(store);
-      await writeMlKemReannounceMarker(
+      final pending = await _readMlKemReannounceMarker(store);
+      await _writeMlKemReannounceMarker(
         store,
         pending.where((candidate) => candidate != peerId).toList(),
       );
@@ -73,7 +110,7 @@ Future<int> recordMlKemReannouncePending({
       .where((contact) => !contact.isBlocked)
       .map((contact) => contact.peerId)
       .toList();
-  await writeMlKemReannounceMarker(secureKeyStore, peerIds);
+  await _writeMlKemReannounceMarker(secureKeyStore, peerIds);
   emitFlowEvent(
     layer: 'FL',
     event: 'KEY_REANNOUNCE_MARKED',

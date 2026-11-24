@@ -24,6 +24,7 @@ class FirstTimeExperienceScreen extends StatefulWidget {
   final VoidCallback? onCameraPressed;
   final ValueChanged<String>? onUsernameChanged;
   final VoidCallback? onScanPressed;
+  final Widget? inviteActions;
   final P2PService? p2pService;
   final BackgroundPreference backgroundPreference;
 
@@ -38,6 +39,7 @@ class FirstTimeExperienceScreen extends StatefulWidget {
     this.onCameraPressed,
     this.onUsernameChanged,
     this.onScanPressed,
+    this.inviteActions,
     this.p2pService,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
@@ -211,6 +213,7 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
                             child: ScanFriendCard(onTap: widget.onScanPressed),
                           ),
                         ),
+                        ?widget.inviteActions,
                         SizedBox(height: lowerGap),
                         // Empty circle state (visible immediately)
                         const RepaintBoundary(

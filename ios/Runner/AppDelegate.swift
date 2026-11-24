@@ -900,6 +900,7 @@ final class TranslatorVerificationWindow {
   private var iosCallWakeChannel: FlutterMethodChannel?
   private let iosNotificationOpenChannelName = "mknoon/ios_notification_open"
   private var iosNotificationOpenChannel: FlutterMethodChannel?
+  private var contactInviteBridge: ContactInviteBridge?
   private let iosNotificationRecoveryChannelName =
     "mknoon/ios_notification_recovery"
   private var iosNotificationRecoveryChannel: FlutterMethodChannel?
@@ -1272,6 +1273,13 @@ final class TranslatorVerificationWindow {
     captureFcmMessagingPluginDelegate(registry: engineBridge.pluginRegistry)
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
+    contactInviteBridge?.detach()
+    contactInviteBridge = nil
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ContactInviteBridge") {
+      let bridge = ContactInviteBridge(messenger: registrar.messenger())
+      contactInviteBridge = bridge
+      registrar.addSceneDelegate(bridge)
+    }
     stickerClipFramePlugin?.close()
     stickerClipFramePlugin = nil
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StickerClipFramePlugin") {

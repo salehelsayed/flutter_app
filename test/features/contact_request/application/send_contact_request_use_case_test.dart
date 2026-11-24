@@ -23,9 +23,11 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -51,6 +53,7 @@ class _FakeBridge extends Bridge {
   };
   Map<String, dynamic>? lastEncryptPayload;
   Map<String, dynamic>? lastSignPayload;
+  Map<String, Object?>? Function(String command)? transportResponse;
   bool encryptCalled = false;
 
   @override
@@ -76,7 +79,9 @@ class _FakeBridge extends Bridge {
       lastEncryptPayload = req['payload'] as Map<String, dynamic>?;
       return jsonEncode(encryptResponse);
     }
-    return jsonEncode({'ok': true});
+    return jsonEncode(
+      transportResponse?.call(req['cmd'] as String) ?? {'ok': true},
+    );
   }
 }
 
@@ -88,6 +93,7 @@ class _FakeP2PService implements P2PService {
     reply: 'ack',
   );
   bool dialResult = true;
+  Future<bool> Function()? dialHandler;
   DiscoveredPeer? discoveredPeer;
   bool localPeerResult = false;
   bool localSendResult = false;
@@ -152,7 +158,11 @@ class _FakeP2PService implements P2PService {
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
-  }) async => dialResult;
+  }) async {
+    final dial = dialHandler;
+    if (dial != null) return dial();
+    return dialResult;
+  }
 
   @override
   Future<bool> storeInInbox(
@@ -581,6 +591,132 @@ void main() {
     expect(sent['payload']['sig'], equals('fakeSig'));
     expect(sent['payload']['mlkem'], equals('ownMlKemPub'));
   });
+
+  for (final dialed in [true, false]) {
+    test(
+      'retirement while dialing blocks ${dialed ? 'direct dispatch' : 'inbox fallback'}',
+      () async {
+        const deadline = Duration(seconds: 2);
+        final entered = Completer<void>();
+        final release = Completer<bool>();
+        var authorized = true;
+        p2pService
+          ..storeInInboxResult = true
+          ..dialHandler = () {
+            entered.complete();
+            return release.future.timeout(deadline);
+          };
+        final result = sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          canTransmit: () async => authorized,
+        ).timeout(deadline);
+
+        try {
+          final dialStarted = await Future.any([
+            entered.future.then((_) => true),
+            result.then((_) => false),
+          ]).timeout(deadline);
+          expect(dialStarted, isTrue, reason: 'dial boundary was not reached');
+          authorized = false;
+        } finally {
+          release.complete(dialed);
+        }
+
+        final outcome = await result;
+        expect(
+          (p2pService.sendWithReplyCalls, p2pService.storeInInboxCalls),
+          (0, 0),
+        );
+        expect(outcome, SendContactRequestResult.sendFailed);
+      },
+    );
+  }
+
+  for (final route in ['direct', 'inbox']) {
+    test('retirement at the $route gate stops the bridge command', () async {
+      const deadline = Duration(seconds: 2);
+      const target = 'targetPeer123456789';
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final sent = <String>[];
+      final gateOperation = route == 'direct'
+          ? 'p2p_send_message_with_reply'
+          : 'p2p_store_inbox';
+      bridge.transportResponse = (command) {
+        switch (command) {
+          case 'node:start':
+            return {
+              'ok': true,
+              'peerId': _testIdentity.peerId,
+              'isStarted': true,
+            };
+          case 'rendezvous:discover':
+            return {
+              'ok': true,
+              'peers': [
+                if (route == 'direct')
+                  {'id': target, 'addresses': ['/ip4/127.0.0.1/tcp/4001']},
+              ],
+            };
+          case 'message:send':
+            sent.add(command);
+            return {'ok': true, 'sent': true, 'acked': true};
+          case 'inbox:store':
+            sent.add(command);
+            return {'ok': true};
+          default:
+            return null;
+        }
+      };
+
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        accountMigrationNetworkGate: ({peerId, required operation}) async {
+          if (operation == gateOperation) {
+            entered.complete();
+            await release.future.timeout(deadline);
+          }
+          return true;
+        },
+      );
+      addTearDown(service.dispose);
+      expect(
+        await service
+            .startNodeCore('cHJpdmF0ZWtleXRlc3Q=', _testIdentity.peerId)
+            .timeout(deadline),
+        isTrue,
+      );
+      var authorized = true;
+      final result = sendContactRequest(
+        p2pService: service,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: target,
+        recipientPublicKey: 'recipientPubKey',
+        canTransmit: () async => authorized,
+      ).timeout(deadline);
+
+      try {
+        final gateStarted = await Future.any([
+          entered.future.then((_) => true),
+          result.then((_) => false),
+        ]).timeout(deadline);
+        expect(gateStarted, isTrue, reason: 'production gate was not reached');
+        authorized = false;
+      } finally {
+        release.complete();
+      }
+
+      final outcome = await result;
+      expect(sent, isEmpty);
+      expect(outcome, SendContactRequestResult.sendFailed);
+    });
+  }
 
   test('default intent marks visible requests as new_request', () async {
     final result = await sendContactRequest(

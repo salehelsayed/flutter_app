@@ -9487,6 +9487,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Allow camera access in Settings to turn on your video.'**
   String get call_video_camera_permission_body_without_audio;
+
+  /// No description provided for @contact_invite_share.
+  ///
+  /// In en, this message translates to:
+  /// **'Send my link'**
+  String get contact_invite_share;
+
+  /// No description provided for @contact_invite_share_expiry.
+  ///
+  /// In en, this message translates to:
+  /// **'Share privately. This link expires in 24 hours.'**
+  String get contact_invite_share_expiry;
+
+  /// No description provided for @contact_invite_paste.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste invite link'**
+  String get contact_invite_paste;
+
+  /// No description provided for @contact_invite_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link'**
+  String get contact_invite_title;
+
+  /// No description provided for @contact_invite_continue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get contact_invite_continue;
+
+  /// No description provided for @contact_invite_connect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect with {name}?'**
+  String contact_invite_connect(String name);
+
+  /// No description provided for @contact_invite_send.
+  ///
+  /// In en, this message translates to:
+  /// **'Send request'**
+  String get contact_invite_send;
+
+  /// No description provided for @contact_invite_sent.
+  ///
+  /// In en, this message translates to:
+  /// **'Request sent'**
+  String get contact_invite_sent;
+
+  /// No description provided for @contact_invite_invalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This invite link is invalid.'**
+  String get contact_invite_invalid;
+
+  /// No description provided for @contact_invite_expired.
+  ///
+  /// In en, this message translates to:
+  /// **'This invite link has expired. Ask for a new one.'**
+  String get contact_invite_expired;
+
+  /// No description provided for @contact_invite_send_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t send the request.'**
+  String get contact_invite_send_failed;
+
+  /// No description provided for @contact_invite_create_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t create an invite link.'**
+  String get contact_invite_create_failed;
 }
 
 class _AppLocalizationsDelegate

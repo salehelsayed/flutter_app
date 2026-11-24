@@ -5812,4 +5812,46 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get call_video_camera_permission_body_without_audio =>
       'Erlaube den Kamerazugriff in den Einstellungen, um dein Video einzuschalten.';
+
+  @override
+  String get contact_invite_share => 'Meinen Link teilen';
+
+  @override
+  String get contact_invite_share_expiry =>
+      'Teile den Link privat. Er läuft nach 24 Stunden ab.';
+
+  @override
+  String get contact_invite_paste => 'Einladungslink einfügen';
+
+  @override
+  String get contact_invite_title => 'Einladungslink';
+
+  @override
+  String get contact_invite_continue => 'Weiter';
+
+  @override
+  String contact_invite_connect(String name) {
+    return 'Mit $name verbinden?';
+  }
+
+  @override
+  String get contact_invite_send => 'Anfrage senden';
+
+  @override
+  String get contact_invite_sent => 'Anfrage gesendet';
+
+  @override
+  String get contact_invite_invalid => 'Dieser Einladungslink ist ungültig.';
+
+  @override
+  String get contact_invite_expired =>
+      'Dieser Einladungslink ist abgelaufen. Bitte um einen neuen Link.';
+
+  @override
+  String get contact_invite_send_failed =>
+      'Die Anfrage konnte nicht gesendet werden.';
+
+  @override
+  String get contact_invite_create_failed =>
+      'Der Einladungslink konnte nicht erstellt werden.';
 }

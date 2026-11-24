@@ -2465,5 +2465,17 @@
   "call_video_connection_lost": "Verbindung verloren",
   "call_video_call_again": "Erneut anrufen",
   "call_video_close": "Schließen",
-  "call_video_camera_permission_body_without_audio": "Erlaube den Kamerazugriff in den Einstellungen, um dein Video einzuschalten."
+  "call_video_camera_permission_body_without_audio": "Erlaube den Kamerazugriff in den Einstellungen, um dein Video einzuschalten.",
+  "contact_invite_share": "Meinen Link teilen",
+  "contact_invite_share_expiry": "Teile den Link privat. Er läuft nach 24 Stunden ab.",
+  "contact_invite_paste": "Einladungslink einfügen",
+  "contact_invite_title": "Einladungslink",
+  "contact_invite_continue": "Weiter",
+  "contact_invite_connect": "Mit {name} verbinden?",
+  "contact_invite_send": "Anfrage senden",
+  "contact_invite_sent": "Anfrage gesendet",
+  "contact_invite_invalid": "Dieser Einladungslink ist ungültig.",
+  "contact_invite_expired": "Dieser Einladungslink ist abgelaufen. Bitte um einen neuen Link.",
+  "contact_invite_send_failed": "Die Anfrage konnte nicht gesendet werden.",
+  "contact_invite_create_failed": "Der Einladungslink konnte nicht erstellt werden."
 }

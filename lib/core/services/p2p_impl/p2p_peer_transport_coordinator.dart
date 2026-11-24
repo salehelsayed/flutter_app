@@ -883,6 +883,7 @@ class _P2PPeerTransportCoordinator {
     String message,
     String fromPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     if (_disposed) return LanSendAck.failed;
     final allowed = await _port.allowsAccountNetworkSideEffects(
@@ -903,6 +904,7 @@ class _P2PPeerTransportCoordinator {
       message,
       fromPeerId,
       timeoutMs: timeoutMs,
+      authorizeDispatch: authorizeDispatch,
     );
   }
 
@@ -911,12 +913,14 @@ class _P2PPeerTransportCoordinator {
     String message,
     String fromPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     return await sendLocalMessageDurable(
           peerId,
           message,
           fromPeerId,
           timeoutMs: timeoutMs,
+          authorizeDispatch: authorizeDispatch,
         ) ==
         LanSendAck.committed;
   }

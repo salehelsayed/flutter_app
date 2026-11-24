@@ -167,6 +167,7 @@ Future<ContactRequestTransmitOutcome> _transmitEquivalentContactRequest({
   required String equivalenceKey,
   required bool requireExactCallWakeReceipt,
   required bool requireFresh,
+  Future<bool> Function()? canTransmit,
 }) {
   final attempts = _recentContactRequests[p2pService] ??= {};
   final now = clock.now();
@@ -186,6 +187,7 @@ Future<ContactRequestTransmitOutcome> _transmitEquivalentContactRequest({
         p2pService: p2pService,
         envelope: envelope,
         requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+        canTransmit: canTransmit,
       ).then(
         (outcome) {
           if (outcome.result == SendContactRequestResult.success &&
@@ -258,8 +260,7 @@ Future<SendContactRequestResult> sendContactRequest({
   // Soliciting a new remote reply cannot reuse an earlier acknowledgement.
   bool requireFresh = false,
   bool markAsNewRequest = false,
-  // Event-driven repair may await signing/encryption. Recheck authority and
-  // captured material immediately before joining or starting transmission.
+  // Recheck authority before joining an attempt and when dispatching an envelope.
   Future<bool> Function()? canTransmit,
 }) async {
   final targetPrefix = targetPeerId.length > 10
@@ -311,6 +312,7 @@ Future<SendContactRequestResult> sendContactRequest({
     equivalenceKey: build.equivalenceKey!,
     requireExactCallWakeReceipt: requireExactCallWakeReceipt,
     requireFresh: requireFresh || intent == ContactRequestSendIntent.newRequest,
+    canTransmit: canTransmit,
   );
   if (outcome.exactCallWakeReceipt) {
     await markContactRequestCallWakeHandleDistributed(
@@ -606,6 +608,7 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
   required P2PService p2pService,
   required BuiltContactRequestEnvelope envelope,
   bool requireExactCallWakeReceipt = false,
+  Future<bool> Function()? canTransmit,
 }) async {
   final targetPeerId = envelope.targetPeerId;
   final targetPrefix = targetPeerId.length > 10
@@ -613,6 +616,13 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
       : targetPeerId;
   final messageJson = envelope.messageJson;
   final callWakeReceiptChallenge = envelope.callWakeReceiptChallenge;
+  final guardedTransport =
+      canTransmit != null && p2pService is GuardedMessageDispatch
+      ? p2pService as GuardedMessageDispatch
+      : null;
+  const denied = ContactRequestTransmitOutcome(
+    SendContactRequestResult.sendFailed,
+  );
 
   bool hasExactCallWakeReceipt(SendMessageResult sendResult) {
     if (callWakeReceiptChallenge == null ||
@@ -642,16 +652,24 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
   // exact grant generation, so cwh-bearing requests always use a reply-capable
   // direct transport (then the ordinary inbox fallback when permitted).
   if (envelope.callWakeHandle == null && p2pService.isLocalPeer(targetPeerId)) {
+    if (canTransmit != null && !await canTransmit()) return denied;
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_SEND_LOCAL_ATTEMPT',
       details: {'targetPeerId': targetPrefix},
     );
-    final localSent = await p2pService.sendLocalMessage(
-      targetPeerId,
-      messageJson,
-      envelope.senderPeerId,
-    );
+    final localSent = guardedTransport == null
+        ? await p2pService.sendLocalMessage(
+            targetPeerId,
+            messageJson,
+            envelope.senderPeerId,
+          )
+        : await guardedTransport.sendLocalMessage(
+            targetPeerId,
+            messageJson,
+            envelope.senderPeerId,
+            authorizeDispatch: canTransmit,
+          );
     if (localSent) {
       emitFlowEvent(
         layer: 'FL',
@@ -672,6 +690,7 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
 
   // Single discover → dial → send attempt before inbox fallback.
   try {
+    if (canTransmit != null && !await canTransmit()) return denied;
     final peer = await p2pService.discoverPeer(targetPeerId);
     if (peer == null) {
       emitFlowEvent(
@@ -680,6 +699,7 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
         details: {'targetPeerId': targetPrefix},
       );
     } else {
+      if (canTransmit != null && !await canTransmit()) return denied;
       final dialed = await p2pService.dialPeer(
         targetPeerId,
         addresses: peer.addresses,
@@ -692,10 +712,18 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
           details: {'targetPeerId': targetPrefix},
         );
       } else {
-        final sendResult = await p2pService.sendMessageWithReply(
-          targetPeerId,
-          messageJson,
-        );
+        if (guardedTransport == null &&
+            canTransmit != null &&
+            !await canTransmit()) {
+          return denied;
+        }
+        final sendResult = guardedTransport == null
+            ? await p2pService.sendMessageWithReply(targetPeerId, messageJson)
+            : await guardedTransport.sendMessageWithReply(
+                targetPeerId,
+                messageJson,
+                authorizeDispatch: canTransmit,
+              );
         final messageAccepted = sendResult.sent && sendResult.acknowledged;
         final exactCallWakeReceipt = hasExactCallWakeReceipt(sendResult);
         final deliveryAccepted = requireExactCallWakeReceipt
@@ -744,6 +772,7 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
   }
 
   // All retries exhausted — try offline inbox fallback.
+  if (canTransmit != null && !await canTransmit()) return denied;
   emitFlowEvent(
     layer: 'FL',
     event: 'CONTACT_REQUEST_SEND_INBOX_FALLBACK_START',
@@ -751,10 +780,13 @@ Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
   );
 
   try {
-    final storedInInbox = await p2pService.storeInInbox(
-      targetPeerId,
-      messageJson,
-    );
+    final storedInInbox = guardedTransport == null
+        ? await p2pService.storeInInbox(targetPeerId, messageJson)
+        : await guardedTransport.storeInInbox(
+            targetPeerId,
+            messageJson,
+            authorizeDispatch: canTransmit,
+          );
     if (storedInInbox) {
       emitFlowEvent(
         layer: 'FL',

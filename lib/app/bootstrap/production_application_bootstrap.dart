@@ -320,6 +320,13 @@ import 'package:flutter_app/features/posts/application/pending_post_media_upload
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/confirm_contact_invite_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/contact_invite_intake.dart';
+import 'package:flutter_app/features/qr_code/application/contact_invite_link.dart';
+import 'package:flutter_app/features/qr_code/application/launch_qr_contact_request.dart';
+import 'package:flutter_app/features/qr_code/application/save_invite_contact_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/share_contact_invite.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -523,7 +530,10 @@ final class ProductionApplicationBootstrap
     this.disposableResetOverride,
     this.normalPrepareOverride,
     this.backgroundWriteWindow,
+    this.contactInvites,
   });
+
+  final ContactInviteIntake? contactInvites;
 
   @visibleForTesting
   final bool Function()? disposableProfileOverride;
@@ -1030,6 +1040,10 @@ final class ProductionApplicationBootstrap
     );
     String? activityProfileBinding;
     String? activityBindingAccount;
+    final inviteIntake = contactInvites;
+    final inviteAccount = inviteIntake == null
+        ? null
+        : ValueNotifier<String?>(null);
 
     // 5. Create repository with database helpers + secure key store
     final repository = IdentityRepositoryImpl(
@@ -1058,6 +1072,7 @@ final class ProductionApplicationBootstrap
           ? iosNseInboxTransportProjection.retireAndReadBack
           : null,
       observeLoadedIdentity: (identity) {
+        if (inviteAccount != null) inviteAccount.value = identity?.peerId;
         if (identity == null) {
           activityProfileBinding = null;
           activityBindingAccount = null;
@@ -6059,7 +6074,10 @@ final class ProductionApplicationBootstrap
       oldPhoneCutoverCoordinator: accountMigrationCutoverCoordinator,
       oldPhoneLeaseCleanup: buildBridgeMigrationCutoverLeaseCleanup(
         bridge: bridge,
-        beforeCleanup: activeIdentityReporter.retire,
+        beforeCleanup: () {
+          if (inviteAccount != null) inviteAccount.value = null;
+          return activeIdentityReporter.retire();
+        },
         clearLocalStalePushToken: () async {
           try {
             await iosNotificationRecoveryCoordinator?.clearAccount();
@@ -10459,6 +10477,133 @@ final class ProductionApplicationBootstrap
       );
 
       return MyApp(
+        contactInvite: inviteIntake == null || inviteAccount == null
+            ? null
+            : (
+                intake: inviteIntake,
+                accountPeerId: inviteAccount,
+                preview: (link, ownPeerId) => parseContactInviteLink(
+                  link: link,
+                  bridge: bridge,
+                  ownPeerId: ownPeerId,
+                ),
+                share: (ownPeerId, isCurrent) => shareContactInvite(
+                  isCurrent: isCurrent,
+                  buildQr: () async {
+                    final identity = await repository.loadIdentity();
+                    if (!isCurrent() ||
+                        identity == null ||
+                        identity.peerId != ownPeerId) {
+                      return (BuildQRPayloadResult.noIdentity, null);
+                    }
+                    return buildQRPayload(
+                      repo: repository,
+                      cachedIdentity: identity,
+                      callSign: (payload, key) => callSignPayload(
+                        bridge: bridge,
+                        dataToSign: payload,
+                        privateKey: key,
+                      ),
+                    );
+                  },
+                  present: inviteIntake.presentShare,
+                ),
+                confirm: (link, ownPeerId, isCurrent) async {
+                  Future<bool> allowsInviteAction() =>
+                      allowsAccountRuntimeNetworkSideEffects(
+                        'confirm_contact_invite',
+                      );
+                  if (!isCurrent() ||
+                      !await allowsInviteAction() ||
+                      !isCurrent()) {
+                    return const RejectedContactInvite(
+                      ContactInviteRejection.stale,
+                    );
+                  }
+                  return confirmContactInvite(
+                    link: link,
+                    ownPeerId: ownPeerId,
+                    isAccountCurrent: isCurrent,
+                    bridge: bridge,
+                    loadContact: contactRepository.getContact,
+                    saveIfAbsent: (contact, {required canCommit}) async {
+                      if (!canCommit() ||
+                          !await allowsInviteAction() ||
+                          !canCommit()) {
+                        return InviteContactSave.stale;
+                      }
+                      final result = await saveInviteContactIfAbsent(
+                        database: db,
+                        contact: contact,
+                        ownPeerId: ownPeerId,
+                        canCommit: canCommit,
+                        beforeCreate: () => contactRepository
+                            .prepareContactCreation(contact.peerId),
+                      );
+                      if (result == InviteContactSave.created && canCommit()) {
+                        await contactRepository.publishCommittedContact(
+                          contact.peerId,
+                          isCurrent: canCommit,
+                        );
+                      }
+                      return result;
+                    },
+                    launch:
+                        (
+                          contact, {
+                          required canQueue,
+                          required canTransmit,
+                        }) async {
+                          if (!canQueue() ||
+                              !await allowsInviteAction() ||
+                              !canQueue()) {
+                            return (sendResult: null, retryRetained: false);
+                          }
+                          final launch = await launchQrContactRequest(
+                            secureKeyStore: secureKeyStore,
+                            peerId: contact.peerId,
+                            shouldMarkContactRequest:
+                                contactRepairRolloutEligible,
+                            canQueue: canQueue,
+                            send: (marked) => sendContactRequest(
+                              p2pService: p2pService,
+                              identityRepo: repository,
+                              bridge: bridge,
+                              targetPeerId: contact.peerId,
+                              recipientPublicKey: contact.publicKey,
+                              resolveCallWakeHandle: callSignalingComposition
+                                  .resolveCallWakeHandle,
+                              onCallWakeHandleDistributed:
+                                  (peerId, grant) async {
+                                    if (!isCurrent()) return;
+                                    await callSignalingComposition
+                                        .onCallWakeHandleDistributed(
+                                          peerId,
+                                          grant,
+                                        );
+                                  },
+                              markAsNewRequest: marked,
+                              canTransmit: () async =>
+                                  await allowsInviteAction() &&
+                                  await canTransmit(),
+                            ),
+                          );
+                          final transmission = launch.transmission;
+                          try {
+                            return (
+                              sendResult: await transmission,
+                              retryRetained: launch.retryRetained,
+                            );
+                          } catch (_) {
+                            return (
+                              sendResult: null,
+                              retryRetained: launch.retryRetained,
+                            );
+                          }
+                        },
+                  );
+                },
+              ),
         customStickerLibrary: customStickerLibrary,
         onCustomStickerAccountActivated: customStickerLibrary.activate,
         thoughtNotificationsStore: thoughtNotificationsStore,
@@ -10968,6 +11113,7 @@ final class ProductionApplicationBootstrap
         accountMigrationReceiverEvents:
             accountMigrationTransferRuntime.receiverEvents,
         retireCanonicalNotificationBinding: () async {
+          if (inviteAccount != null) inviteAccount.value = null;
           await activeIdentityReporter.retire();
           await iosNseInboxTransportProjection?.retireAndReadBack();
           await canonicalRuntimeBindingCoordinator?.retireAccount();

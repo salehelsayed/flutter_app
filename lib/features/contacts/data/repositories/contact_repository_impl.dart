@@ -155,10 +155,15 @@ class ContactRepositoryImpl
   }
 
   /// Mirrors a contact accepted by the request repository's atomic SQL write.
-  Future<void> publishCommittedContact(String peerId) async {
-    await _mirrorContactForPush(peerId);
+  Future<void> publishCommittedContact(
+    String peerId, {
+    bool Function()? isCurrent,
+  }) async {
+    if (isCurrent?.call() == false) return;
+    await _mirrorContactForPush(peerId, isCurrent: isCurrent);
+    if (isCurrent?.call() == false) return;
     try {
-      await _republishCommittedTransportAuthority(peerId);
+      await _republishCommittedTransportAuthority(peerId, isCurrent: isCurrent);
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -166,7 +171,7 @@ class ContactRepositoryImpl
         details: {'error': error.toString()},
       );
     }
-    _notifyPushEligibilityChanged();
+    if (isCurrent?.call() != false) _notifyPushEligibilityChanged();
   }
 
   @override
@@ -350,11 +355,13 @@ class ContactRepositoryImpl
   Future<void> _mirrorContactForPush(
     String peerId, {
     bool? forcedBlocked,
+    bool Function()? isCurrent,
   }) async {
     final projection = directReactionProjection;
     if (projection == null) return;
     try {
       final row = await dbLoadContact(peerId);
+      if (isCurrent?.call() == false) return;
       if (row == null) {
         await projection.removeContact(peerId);
         return;
@@ -372,13 +379,18 @@ class ContactRepositoryImpl
     }
   }
 
-  Future<void> _republishCommittedTransportAuthority(String peerId) async {
+  Future<void> _republishCommittedTransportAuthority(
+    String peerId, {
+    bool Function()? isCurrent,
+  }) async {
     final projection = directReactionProjection;
     final loader = loadDirectNotificationAuthorizedTransports;
     if (projection == null || loader == null) return;
+    final authorized = await loader(peerId);
+    if (isCurrent?.call() == false) return;
     await projection.replaceContactTransportAuthority(
       peerId: peerId,
-      authorizedTransportPeerIds: await loader(peerId),
+      authorizedTransportPeerIds: authorized,
     );
   }
 

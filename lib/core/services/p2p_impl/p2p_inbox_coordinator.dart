@@ -2595,11 +2595,13 @@ class _P2PInboxCoordinator {
     String toPeerId,
     String message, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
-    final outcome = await storeInInboxDetailed(
+    final outcome = await _storeInInboxDetailed(
       toPeerId,
       message,
       timeoutMs: timeoutMs,
+      authorizeDispatch: authorizeDispatch,
     );
     return outcome.accepted;
   }
@@ -2654,6 +2656,7 @@ class _P2PInboxCoordinator {
     int? timeoutMs,
     AckCustodyKind? custodyKind,
     int? custodyExpiresAtOrBeforeMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     if (custodyExpiresAtOrBeforeMs != null &&
         (custodyExpiresAtOrBeforeMs <= 0 ||
@@ -2724,6 +2727,9 @@ class _P2PInboxCoordinator {
           // an undelivered message. Keep the default notification behavior.
           suppressNotification = false;
         }
+      }
+      if (authorizeDispatch != null && !await authorizeDispatch()) {
+        return const InboxStoreOutcome(status: InboxStoreStatus.failed);
       }
       final response = await _port.storeInbox(
         toPeerId: toPeerId,

@@ -519,6 +519,7 @@ class LocalWsServer {
     String fromPeerId,
     String toPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     final sendBudget = _resolveSendBudget(timeoutMs);
     final deadline = DateTime.now().add(sendBudget);
@@ -530,6 +531,9 @@ class LocalWsServer {
         port,
         connectTimeout: _remainingBudget(deadline),
       );
+      if (authorizeDispatch != null && !await authorizeDispatch()) {
+        return LanSendAck.failed;
+      }
 
       // Generate a per-message nonce for ack correlation.
       final nonce = DateTime.now().microsecondsSinceEpoch.toRadixString(36);

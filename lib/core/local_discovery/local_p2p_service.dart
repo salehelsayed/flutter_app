@@ -240,6 +240,7 @@ class LocalP2PService {
     String content,
     String fromPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     final peer = _discovery.getLocalPeer(peerId);
     if (peer == null) return LanSendAck.failed;
@@ -251,6 +252,7 @@ class LocalP2PService {
       fromPeerId,
       peerId,
       timeoutMs: timeoutMs,
+      authorizeDispatch: authorizeDispatch,
     );
   }
 

@@ -5687,4 +5687,44 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get call_video_camera_permission_body_without_audio =>
       'Allow camera access in Settings to turn on your video.';
+
+  @override
+  String get contact_invite_share => 'Send my link';
+
+  @override
+  String get contact_invite_share_expiry =>
+      'Share privately. This link expires in 24 hours.';
+
+  @override
+  String get contact_invite_paste => 'Paste invite link';
+
+  @override
+  String get contact_invite_title => 'Invite link';
+
+  @override
+  String get contact_invite_continue => 'Continue';
+
+  @override
+  String contact_invite_connect(String name) {
+    return 'Connect with $name?';
+  }
+
+  @override
+  String get contact_invite_send => 'Send request';
+
+  @override
+  String get contact_invite_sent => 'Request sent';
+
+  @override
+  String get contact_invite_invalid => 'This invite link is invalid.';
+
+  @override
+  String get contact_invite_expired =>
+      'This invite link has expired. Ask for a new one.';
+
+  @override
+  String get contact_invite_send_failed => 'Couldn’t send the request.';
+
+  @override
+  String get contact_invite_create_failed => 'Couldn’t create an invite link.';
 }

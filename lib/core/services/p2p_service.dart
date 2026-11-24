@@ -48,6 +48,31 @@ abstract interface class DurableLanSender {
   });
 }
 
+/// Allows a caller to check current send authority at the transport boundary.
+abstract interface class GuardedMessageDispatch {
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  });
+
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  });
+
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  });
+}
+
 /// FDC-08: the coarse, "online-ish, TTL-lagged" relay presence answer used as a
 /// §6.3 emphasis HINT for the 1:1 send decision (direct-race-with-lazy-inbox vs
 /// inbox-first). [reachable]/[unreachable] are §6.3's `online`/`offline`. It is

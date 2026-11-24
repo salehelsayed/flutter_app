@@ -154,7 +154,11 @@ class FakeLocalP2PService implements LocalP2PService {
     String content,
     String fromPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
+    if (authorizeDispatch != null && !await authorizeDispatch()) {
+      return LanSendAck.failed;
+    }
     sentMessages.add(
       _SentMessage(peerId: peerId, content: content, fromPeerId: fromPeerId),
     );

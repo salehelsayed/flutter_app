@@ -96,6 +96,7 @@ import 'package:flutter_app/features/posts/domain/repositories/contact_presence_
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_host.dart';
 import 'feed_screen.dart';
 
 const _uuid = Uuid();
@@ -3427,7 +3428,12 @@ class _FeedWiredState extends State<FeedWired>
       },
     );
 
-    return Scaffold(resizeToAvoidBottomInset: false, body: body);
+    return ContactInviteHome(
+      ownPeerId: _peerId,
+      onSaved: (invite) =>
+          widget.chatMessageListener.emitContactUpdate(invite.contact),
+      child: Scaffold(resizeToAvoidBottomInset: false, body: body),
+    );
   }
 }
 

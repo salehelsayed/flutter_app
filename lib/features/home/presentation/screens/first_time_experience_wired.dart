@@ -56,6 +56,8 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_actions.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_host.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -280,72 +282,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     if (result == AcceptContactRequestResult.success ||
         result == AcceptContactRequestResult.alreadyAccepted) {
       final navigator = Navigator.of(context);
-      final postRepository = widget.postRepository;
-      final appShellController = widget.appShellController;
-      final pendingPostTargetStore = widget.pendingPostTargetStore;
       // 215: resolve the accepted contact BEFORE navigating so the 1:1 chat can
       // ride on top of the Feed shell (capture navigator first; re-check
       // mounted after the await).
       final contact = await widget.contactRepository.getContact(request.peerId);
       if (!mounted || contact == null || contact.isBlocked) return;
-      navigator.pushReplacement(
-        buildFeedSlideUpRoute(
-          builder: (_) => FeedWired(
-            thoughtNotificationsStore: widget.thoughtNotificationsStore,
-            onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
-            directRouteAuthority: widget.directRouteAuthority,
-            orbitCallActivitySource: widget.orbitCallActivitySource,
-            resolveCallWakeHandle: widget.resolveCallWakeHandle,
-            onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
-            repository: widget.repository,
-            contactRepository: widget.contactRepository,
-            contactRequestRepository: widget.contactRequestRepository,
-            contactRequestListener: widget.contactRequestListener,
-            messageRepository: widget.messageRepository,
-            postRepository: postRepository ?? _missingPostRepository(),
-            mediaAttachmentRepository: widget.mediaAttachmentRepository,
-            chatMessageListener: widget.chatMessageListener,
-            bridge: widget.bridge,
-            p2pService: widget.p2pService,
-            mediaFileManager: widget.mediaFileManager,
-            secureKeyStore: widget.secureKeyStore,
-            imageProcessor: widget.imageProcessor,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepository: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            groupRepository: widget.groupRepository,
-            groupMessageRepository: widget.groupMessageRepository,
-            groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
-            groupInviteDeliveryAttemptRepository:
-                widget.groupInviteDeliveryAttemptRepository,
-            groupReactionReplayOutboxRepository:
-                widget.groupReactionReplayOutboxRepository,
-            groupMessageListener: widget.groupMessageListener,
-            groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
-            groupInviteListener: widget.groupInviteListener,
-            groupConversationTracker: widget.groupConversationTracker,
-            introductionRepository: widget.introductionRepository,
-            introReviewSeenRepository: widget.introReviewSeenRepository,
-            introductionListener: widget.introductionListener,
-            appShellController:
-                appShellController ?? _missingAppShellController(),
-            pendingPostTargetStore:
-                pendingPostTargetStore ?? _missingPendingPostTargetStore(),
-            postsPrivacySettingsRepository:
-                widget.postsPrivacySettingsRepository ??
-                _missingPostsPrivacySettingsRepository(),
-            feedClearedRepository:
-                widget.feedClearedRepository ?? _missingFeedClearedRepository(),
-            contactPresenceSnapshotRepository:
-                widget.contactPresenceSnapshotRepository,
-            nearbyLocationService: widget.nearbyLocationService,
-            transportMetrics: widget.transportMetrics,
-            accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
-            accountMigrationSizeGate: widget.accountMigrationSizeGate,
-          ),
-        ),
-      );
+      navigator.pushReplacement(_buildFeedRoute());
       // 215: push the 1:1 chat ON TOP of the freshly-established Feed shell
       // (back-stack [FeedWired, ConversationWired]) so back-nav returns to the
       // home shell, not a dead chat. Kept BEFORE settleShareIntentFlow so a
@@ -404,6 +346,74 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         ),
       );
     }
+  }
+
+  Route<void> _buildFeedRoute() => buildFeedSlideUpRoute(
+    builder: (_) => FeedWired(
+      thoughtNotificationsStore: widget.thoughtNotificationsStore,
+      onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
+      directRouteAuthority: widget.directRouteAuthority,
+      orbitCallActivitySource: widget.orbitCallActivitySource,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
+      repository: widget.repository,
+      contactRepository: widget.contactRepository,
+      contactRequestRepository: widget.contactRequestRepository,
+      contactRequestListener: widget.contactRequestListener,
+      messageRepository: widget.messageRepository,
+      postRepository: widget.postRepository ?? _missingPostRepository(),
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: widget.mediaFileManager,
+      secureKeyStore: widget.secureKeyStore,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.groupInviteDeliveryAttemptRepository,
+      groupReactionReplayOutboxRepository:
+          widget.groupReactionReplayOutboxRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
+      groupInviteListener: widget.groupInviteListener,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
+      introReviewSeenRepository: widget.introReviewSeenRepository,
+      introductionListener: widget.introductionListener,
+      appShellController:
+          widget.appShellController ?? _missingAppShellController(),
+      pendingPostTargetStore:
+          widget.pendingPostTargetStore ?? _missingPendingPostTargetStore(),
+      postsPrivacySettingsRepository:
+          widget.postsPrivacySettingsRepository ??
+          _missingPostsPrivacySettingsRepository(),
+      feedClearedRepository:
+          widget.feedClearedRepository ?? _missingFeedClearedRepository(),
+      contactPresenceSnapshotRepository:
+          widget.contactPresenceSnapshotRepository,
+      nearbyLocationService: widget.nearbyLocationService,
+      transportMetrics: widget.transportMetrics,
+      accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+      accountMigrationSizeGate: widget.accountMigrationSizeGate,
+    ),
+  );
+
+  void _onInviteSaved() {
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    final navigator = Navigator.of(context);
+    navigator.pushReplacement(_buildFeedRoute());
+    settleShareIntentFlow(
+      shareIntentService: widget.shareIntentService,
+      navigator: navigator,
+      buildRoute: _buildPendingShareRoute,
+    );
   }
 
   Future<void> _declineRequest(
@@ -813,21 +823,30 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: FirstTimeExperienceScreen(
-        qrData: _qrData,
-        qrError: _qrError,
-        onQrRetry: _loadIdentityAndBuildQR,
-        username: _username,
-        avatarBytes: _avatarBytes,
-        peerId: _identity?.peerId,
-        onCameraPressed: _onCameraPressed,
-        onUsernameChanged: _onUsernameChanged,
-        onScanPressed: _onScanPressed,
-        p2pService: widget.p2pService,
-        backgroundPreference:
-            widget.appShellController?.backgroundPreference ??
-            BackgroundPreference.defaultBackground,
+    return ContactInviteHome(
+      ownPeerId: _identity?.peerId,
+      onSaved: (_) => _onInviteSaved(),
+      child: Scaffold(
+        body: FirstTimeExperienceScreen(
+          qrData: _qrData,
+          qrError: _qrError,
+          onQrRetry: _loadIdentityAndBuildQR,
+          username: _username,
+          avatarBytes: _avatarBytes,
+          peerId: _identity?.peerId,
+          onCameraPressed: _onCameraPressed,
+          onUsernameChanged: _onUsernameChanged,
+          onScanPressed: _onScanPressed,
+          inviteActions:
+              _identity != null &&
+                  ContactInviteHost.pasteActionOf(context) != null
+              ? const ContactInviteActions()
+              : null,
+          p2pService: widget.p2pService,
+          backgroundPreference:
+              widget.appShellController?.backgroundPreference ??
+              BackgroundPreference.defaultBackground,
+        ),
       ),
     );
   }

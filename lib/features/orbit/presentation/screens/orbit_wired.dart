@@ -133,6 +133,8 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_exit_reco
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_actions.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_host.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
@@ -4276,6 +4278,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // latch can single-flight the entry; still assignable where a VoidCallback
   // is expected (the display→scan cross-link).
   Future<void> _onMyQR() {
+    final hasInviteActions = ContactInviteHost.pasteActionOf(context) != null;
     return Navigator.of(context).push(
       buildConversationRoute(
         settings: MyQrRouteSettings(ModalRoute.of(context)),
@@ -4284,6 +4287,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           bridgeClient: widget.bridge,
           onClose: () => Navigator.of(context).pop(),
           onScanPressed: _onScanQR,
+          footer: hasInviteActions ? const ContactInviteActions() : null,
           backgroundPreference:
               widget.appShellController?.backgroundPreference ??
               BackgroundPreference.defaultBackground,

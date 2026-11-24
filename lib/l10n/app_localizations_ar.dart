@@ -5758,4 +5758,44 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get call_video_camera_permission_body_without_audio =>
       'اسمح بالوصول إلى الكاميرا من الإعدادات لتشغيل الفيديو.';
+
+  @override
+  String get contact_invite_share => 'إرسال رابطي';
+
+  @override
+  String get contact_invite_share_expiry =>
+      'شارك الرابط بشكل خاص. تنتهي صلاحيته بعد ٢٤ ساعة.';
+
+  @override
+  String get contact_invite_paste => 'لصق رابط الدعوة';
+
+  @override
+  String get contact_invite_title => 'رابط الدعوة';
+
+  @override
+  String get contact_invite_continue => 'متابعة';
+
+  @override
+  String contact_invite_connect(String name) {
+    return 'هل تريد التواصل مع $name؟';
+  }
+
+  @override
+  String get contact_invite_send => 'إرسال الطلب';
+
+  @override
+  String get contact_invite_sent => 'تم إرسال الطلب';
+
+  @override
+  String get contact_invite_invalid => 'رابط الدعوة هذا غير صالح.';
+
+  @override
+  String get contact_invite_expired =>
+      'انتهت صلاحية رابط الدعوة. اطلب رابطًا جديدًا.';
+
+  @override
+  String get contact_invite_send_failed => 'تعذّر إرسال الطلب.';
+
+  @override
+  String get contact_invite_create_failed => 'تعذّر إنشاء رابط الدعوة.';
 }

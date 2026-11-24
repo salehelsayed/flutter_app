@@ -170,6 +170,7 @@ class P2PServiceImpl
         ReadinessProofRecorder,
         P2PFullInboxDrain,
         DurableLanSender,
+        GuardedMessageDispatch,
         RelayPresenceLookup,
         RelayPresenceSet,
         PeerLivenessProbe,
@@ -1399,6 +1400,7 @@ class P2PServiceImpl
     String peerId,
     String message, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_send_message_with_reply',
@@ -1413,6 +1415,9 @@ class P2PServiceImpl
     );
 
     try {
+      if (authorizeDispatch != null && !await authorizeDispatch()) {
+        return const SendMessageResult(sent: false);
+      }
       final response = await callP2PMessageSend(
         _bridge,
         peerId: peerId,
@@ -3177,7 +3182,13 @@ class P2PServiceImpl
     String toPeerId,
     String message, {
     int? timeoutMs,
-  }) => _inboxCoordinator.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    Future<bool> Function()? authorizeDispatch,
+  }) => _inboxCoordinator.storeInInbox(
+    toPeerId,
+    message,
+    timeoutMs: timeoutMs,
+    authorizeDispatch: authorizeDispatch,
+  );
 
   @override
   Future<InboxStoreOutcome> storeInInboxDetailed(
@@ -3529,11 +3540,13 @@ class P2PServiceImpl
     String message,
     String fromPeerId, {
     int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
   }) => _peerTransportCoordinator.sendLocalMessage(
     peerId,
     message,
     fromPeerId,
     timeoutMs: timeoutMs,
+    authorizeDispatch: authorizeDispatch,
   );
 
   @override

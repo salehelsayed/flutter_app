@@ -18,7 +18,6 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
-import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -52,6 +51,7 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/launch_qr_contact_request.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/qr_code/application/scanned_qr_classifier.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -398,51 +398,55 @@ class QRScannerWired extends StatelessWidget {
     String recipientPublicKey, {
     required ContactRequestSendIntent intent,
   }) async {
-    try {
-      await queueMlKemReannouncePeer(secureKeyStore, targetPeerId);
-      final marked = await shouldMarkContactRequest(targetPeerId);
-      unawaited(
-        sendContactRequest(
-              p2pService: p2pService,
-              identityRepo: identityRepository,
-              bridge: bridge,
-              targetPeerId: targetPeerId,
-              recipientPublicKey: recipientPublicKey,
-              intent: intent,
-              requireFresh: true,
-              resolveCallWakeHandle: resolveCallWakeHandle,
-              onCallWakeHandleDistributed: onCallWakeHandleDistributed,
-              markAsNewRequest: marked,
-            )
-            .then<void>((sendResult) {
-              emitFlowEvent(
-                layer: 'FL',
-                event: 'CONTACT_REQUEST_SENT',
-                details: {
-                  'result': sendResult.name,
-                  'targetPeerId': targetPeerId.length > 10
-                      ? targetPeerId.substring(0, 10)
-                      : targetPeerId,
-                },
-              );
-            })
-            .catchError((Object error, StackTrace stackTrace) {
-              emitFlowEvent(
-                layer: 'FL',
-                event: 'CONTACT_REQUEST_SEND_ERROR',
-                details: {'error': error.toString()},
-              );
-            }),
-      );
-    } catch (error) {
-      // No request is launched without custody. The local add still succeeded;
-      // a new QR contact also retains the existing missing-key recovery owner.
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONTACT_REQUEST_QUEUE_ERROR',
-        details: {'error': error.toString()},
-      );
-    }
+    final launch = await launchQrContactRequest(
+      secureKeyStore: secureKeyStore,
+      peerId: targetPeerId,
+      shouldMarkContactRequest: shouldMarkContactRequest,
+      send: (marked) => sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepository,
+        bridge: bridge,
+        targetPeerId: targetPeerId,
+        recipientPublicKey: recipientPublicKey,
+        intent: intent,
+        requireFresh: true,
+        resolveCallWakeHandle: resolveCallWakeHandle,
+        onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+        markAsNewRequest: marked,
+      ),
+      onPreparationError: (error) {
+        // The local add still succeeded and keeps its existing recovery owner.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_QUEUE_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+    final transmission = launch.transmission;
+    if (transmission == null) return;
+    unawaited(
+      transmission
+          .then<void>((sendResult) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONTACT_REQUEST_SENT',
+              details: {
+                'result': sendResult.name,
+                'targetPeerId': targetPeerId.length > 10
+                    ? targetPeerId.substring(0, 10)
+                    : targetPeerId,
+              },
+            );
+          })
+          .catchError((Object error, StackTrace stackTrace) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONTACT_REQUEST_SEND_ERROR',
+              details: {'error': error.toString()},
+            );
+          }),
+    );
   }
 
   /// Downloads the contact's profile picture in the background.

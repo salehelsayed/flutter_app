@@ -78,6 +78,7 @@ class MainActivity : FlutterActivity() {
     private var callPictureInPictureHandler: com.mknoon.app.call.CallPictureInPictureHandler? = null
     private var callVideoQualityEnvironment: MknoonCallVideoQualityEnvironment? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
+    private val contactInviteBridge = ContactInviteBridge(this)
     private var callNativeBridge: MknoonCallNativeBridge? = null
     // F3 (beta 2026-09-25): the bridge's detach ends a live Telecom call
     // without telling Dart. Keep it until Dart's runtime shutdown has ended
@@ -116,6 +117,9 @@ class MainActivity : FlutterActivity() {
         intent = ShareIntentReadabilityGuard.sanitize(intent) {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
         }
+        if (savedInstanceState == null) {
+            contactInviteBridge.offer(intent)
+        }
         super.onCreate(savedInstanceState)
         setupPermissionResultNormalizer()
         // This exported entry only displays the exact call. Notification Answer
@@ -127,6 +131,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        contactInviteBridge.attach(flutterEngine.dartExecutor.binaryMessenger)
         if (BuildConfig.DEBUG) {
             // A FlutterFire background engine can replace plugin singletons.
             // The debug PCM proof binds the actual canonical foreground engine.
@@ -402,6 +407,7 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         droppedPushRecoveryBridge?.onWarmIntent(intent)
+        contactInviteBridge.offer(intent)
     }
 
     override fun onResume() {
@@ -488,6 +494,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        contactInviteBridge.detach()
         closeStickerClipFrameBridge()
         closeStickerCutoutBridge()
         androidCallWakeBridge?.dispose()

@@ -150,6 +150,8 @@ import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_t
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
+import 'package:flutter_app/features/qr_code/application/contact_invite_intake.dart';
+import 'package:flutter_app/features/qr_code/presentation/widgets/contact_invite_host.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/foreground_group_message_notification_resolver.dart';
@@ -406,7 +408,16 @@ Future<bool> settleForegroundConversationReadIfVisible({
   return true;
 }
 
+typedef ContactInviteBindings = ({
+  ContactInviteIntake intake,
+  ValueNotifier<String?> accountPeerId,
+  PreviewContactInviteForAccount preview,
+  ConfirmContactInviteForAccount confirm,
+  ShareContactInviteForAccount share,
+});
+
 class MyApp extends StatefulWidget {
+  final ContactInviteBindings? contactInvite;
   final IdentityRepositoryImpl repository;
   final ContactRepositoryImpl contactRepository;
   final ContactRequestRepositoryImpl contactRequestRepository;
@@ -649,6 +660,7 @@ class MyApp extends StatefulWidget {
 
   const MyApp({
     super.key,
+    this.contactInvite,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -2476,6 +2488,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    widget.contactInvite?.intake.dispose();
     final activityReporterUnarmed = Future<void>.sync(
       () => widget.disposeActiveIdentityReporter?.call(),
     ).timeout(const Duration(seconds: 2)).catchError((Object _) {});
@@ -3604,12 +3617,27 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             retrier: widget.keyExchangeRetrier,
             child: child ?? const SizedBox.shrink(),
           );
+          final invite = widget.contactInvite;
+          final invitedPage = invite == null
+              ? page
+              : ContactInviteHost(
+                  intake: invite.intake,
+                  accountPeerId: invite.accountPeerId,
+                  navigatorKey: MyApp.navigatorKey,
+                  preview: invite.preview,
+                  confirm: invite.confirm,
+                  share: invite.share,
+                  child: page,
+                );
           final routedChild = DirectPrivateMediaRouteObserverScope(
             observer: directPrivateMediaRouteObserver,
             appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
             child: stickerLibrary == null
-                ? page
-                : CustomStickerScope(library: stickerLibrary, child: page),
+                ? invitedPage
+                : CustomStickerScope(
+                    library: stickerLibrary,
+                    child: invitedPage,
+                  ),
           );
           final healthNotifier = widget.pushRegistrationHealthNotifier;
           final appChild = FullScreenCallAccessSurface(

@@ -12,6 +12,7 @@ import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dar
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
 import 'package:flutter_app/core/storage/app_data_backup_exclusion.dart';
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
+import 'package:flutter_app/features/qr_code/application/contact_invite_intake.dart';
 
 export 'package:flutter_app/app/application_root.dart'
     show MyApp, openIntroNotificationOrbitRoute;
@@ -20,6 +21,8 @@ export 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart'
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final contactInvites = ContactInviteIntake();
+  unawaited(contactInvites.start());
   // SE-41 T4a: answers the iOS BG task and the Android worker handoff, and
   // schedules or cancels them. Before the bootstrap on purpose: a background
   // run must not wait for the Go bridge or SQLCipher.
@@ -28,7 +31,8 @@ void main() async {
   await runWithProductionAppDiagnostics(() async {
     await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
     await runApplicationBootstrap(
-      bootstrapFactory: ProductionApplicationBootstrap.new,
+      bootstrapFactory: () =>
+          ProductionApplicationBootstrap(contactInvites: contactInvites),
       host: const FlutterApplicationHost(),
     );
   });

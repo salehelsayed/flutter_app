@@ -2929,5 +2929,24 @@
   "call_video_connection_lost": "Connection lost",
   "call_video_call_again": "Call again",
   "call_video_close": "Close",
-  "call_video_camera_permission_body_without_audio": "Allow camera access in Settings to turn on your video."
+  "call_video_camera_permission_body_without_audio": "Allow camera access in Settings to turn on your video.",
+  "contact_invite_share": "Send my link",
+  "contact_invite_share_expiry": "Share privately. This link expires in 24 hours.",
+  "contact_invite_paste": "Paste invite link",
+  "contact_invite_title": "Invite link",
+  "contact_invite_continue": "Continue",
+  "contact_invite_connect": "Connect with {name}?",
+  "contact_invite_send": "Send request",
+  "contact_invite_sent": "Request sent",
+  "contact_invite_invalid": "This invite link is invalid.",
+  "contact_invite_expired": "This invite link has expired. Ask for a new one.",
+  "contact_invite_send_failed": "Couldn’t send the request.",
+  "contact_invite_create_failed": "Couldn’t create an invite link.",
+  "@contact_invite_connect": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  }
 }
