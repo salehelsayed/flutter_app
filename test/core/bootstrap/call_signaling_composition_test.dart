@@ -5722,6 +5722,70 @@ void main() {
     },
   );
 
+  test(
+    'BL16 initial camera Android honors a dismissed manual prompt',
+    () async {
+      var requests = 0;
+      _fakeInitialCameraPermissionChannel((method) {
+        switch (method) {
+          case 'checkPermissionStatus':
+            return permissions.PermissionStatus.denied.index;
+          case 'shouldShowRequestPermissionRationale':
+            return false;
+          case 'requestPermissions':
+            requests++;
+            return {
+              permissions.Permission.camera.value:
+                  permissions.PermissionStatus.denied.index,
+            };
+          default:
+            throw UnimplementedError(method);
+        }
+      });
+      SharedPreferences.setMockInitialValues({});
+      addTearDown(() => SharedPreferences.setMockInitialValues({}));
+
+      final (first, firstEngine) = await _b7Bound(
+        _connectedGraphVideo(
+          cleanupTimeout: _b7Limit,
+          platform: CallEndpointPlatform.android,
+          permission: null,
+        ),
+      );
+      final graph = first.graphs.single;
+      expect(requests, 0);
+      final result = await _b7Bound(
+        graph.applyVideoIntent(
+          _callA,
+          generation: graph.current!.video!.generation,
+          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+        ),
+      );
+      expect(result.status, ForegroundCallActionStatus.unavailable);
+      expect(requests, 1);
+      expect(firstEngine.video!.cameraStarts, 0);
+      await _b7Bound(first.composition.shutdown());
+
+      final preferences = await _b7Bound(SharedPreferences.getInstance());
+      await _b7Bound(preferences.reload());
+      final (_, secondEngine) = await _b7Bound(
+        _connectedGraphVideo(
+          cleanupTimeout: _b7Limit,
+          platform: CallEndpointPlatform.android,
+          callId: _callB,
+          requestInitialCallCameraPermission: null,
+        ),
+      );
+      await _b7Turn();
+      expect(
+        requests,
+        1,
+        reason: 'The manual call already opened the OS prompt',
+      );
+      expect(secondEngine.video!.cameraStarts, 0);
+    },
+  );
+
   for (final platform in [
     CallEndpointPlatform.ios,
     CallEndpointPlatform.android,
@@ -11148,6 +11212,8 @@ Future<permissions.PermissionStatus> _denyInitialCameraForFixture(
   bool Function() _,
 ) async => permissions.PermissionStatus.denied;
 
+Future<bool> _grantCameraForFixture() async => true;
+
 void _fakeInitialCameraPermissionChannel(Object Function(String) handle) {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('flutter.baseflow.com/permissions/methods');
@@ -11170,7 +11236,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   Future<void> Function(_ProductionIosFixture)? duringNativeAttach,
   int Function()? clockMs,
   CallId? callId,
-  Future<bool> Function()? permission,
+  Future<bool> Function()? permission = _grantCameraForFixture,
   RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
       _denyInitialCameraForFixture,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
@@ -11204,7 +11270,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
     isForeground: isForeground,
     clockMs: clockMs,
     microphonePermission: const _GrantedCallMicrophonePermission(),
-    requestCameraPermission: permission ?? () async => true,
+    requestCameraPermission: permission,
     requestInitialCallCameraPermission: requestInitialCallCameraPermission,
     onCallTimerScheduled: timerObserver,
     captureCallActivityMark: captureCallActivityMark,
