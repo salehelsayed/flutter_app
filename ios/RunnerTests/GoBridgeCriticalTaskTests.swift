@@ -34,6 +34,17 @@ final class GoBridgeActivityReporterContractTests: XCTestCase {
         XCTAssertEqual(fields as NSDictionary, original)
     }
 
+    func testFeatureUseKeepsItsFencedOccurrenceAndRejectsEngagementKinds() throws {
+        let start = String(request(op: "markFeatureUse").dropLast())
+        let time: Int64 = 1_794_902_400_123
+        let fields = try decoded(start + ",\"occurredAtUnixMillis\":\(time),\"kinds\":[\"view_3d\"]}")
+        XCTAssertEqual(fields["occurredAtUnixMillis"] as? Int64, time)
+        XCTAssertEqual(fields["kinds"] as? [String], ["view_3d"])
+        XCTAssertEqual(GoBridge.activityMarkRevision(fields), 1)
+        assertRejected(start + ",\"kinds\":[\"view_3d\"]}")
+        assertRejected(start + ",\"occurredAtUnixMillis\":\(time),\"kinds\":[\"active\"]}")
+    }
+
     func testMarkAcceptsZeroOccurrenceUnchanged() throws {
         try assertOccurrenceUnchanged(0)
     }

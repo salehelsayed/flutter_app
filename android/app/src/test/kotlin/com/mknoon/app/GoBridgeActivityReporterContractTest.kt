@@ -6,6 +6,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -154,6 +155,18 @@ class GoBridgeActivityReporterContractTest {
         val original = fields.toMap()
         assertEquals(1L, GoBridge.activityMarkRevision(fields))
         assertEquals(original, fields)
+    }
+
+    @Test fun featureUseKeepsItsFencedOccurrenceAndRejectsEngagementKinds() {
+        val start = request("markFeatureUse").dropLast(1)
+        val time = 1_794_902_400_123L
+        val fields = decoded("$start,\"occurredAtUnixMillis\":$time,\"kinds\":[\"view_3d\"]}")
+        assertTrue(GoBridge.activityNonConfigurationOperation("markFeatureUse"))
+        assertEquals(time, fields["occurredAtUnixMillis"])
+        assertEquals(listOf("view_3d"), fields["kinds"])
+        assertEquals(1L, GoBridge.activityMarkRevision(fields))
+        assertRejected("$start,\"kinds\":[\"view_3d\"]}")
+        assertRejected("$start,\"occurredAtUnixMillis\":$time,\"kinds\":[\"active\"]}")
     }
 
     @Test fun weeklyMarkRejectsMalformedKindsWeekAndExtraFields() {

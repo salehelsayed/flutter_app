@@ -1271,7 +1271,7 @@ class GoBridgeClient extends Bridge {
         final op = payload['op'];
         final valueKey = switch (op) {
           'configure' => 'configured',
-          'mark' || 'markWeekly' => 'accepted',
+          'mark' || 'markWeekly' || 'markFeatureUse' => 'accepted',
           'flush' => 'queued',
           'weeklyProjection' => 'weekly',
           _ => null,

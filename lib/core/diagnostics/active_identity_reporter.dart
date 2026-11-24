@@ -16,6 +16,21 @@ typedef ActiveIdentityReporterWeek = ({
   int endMilliseconds,
 });
 
+enum WeeklyFeatureUse {
+  voiceMessage('voice_message'),
+  photoVideo('photo_video'),
+  videoCall('video_call'),
+  translation('translation'),
+  voiceToText('voice_to_text'),
+  view3d('view_3d');
+
+  const WeeklyFeatureUse(this.wireValue);
+
+  final String wireValue;
+}
+
+typedef CaptureWeeklyFeatureUse = void Function()? Function(WeeklyFeatureUse);
+
 /// Opaque logical ownership captured before a producer's first await.
 final class ActiveIdentityReporterCapture {
   ActiveIdentityReporterCapture._({
@@ -510,6 +525,64 @@ final class ActiveIdentityReporter {
       'op': 'markWeekly',
       'week': week,
       'kinds': ownedKinds,
+    });
+    return _weeklyReceipt(capture, owner, response)?['accepted'] == true;
+  }
+
+  Future<void> markConnectedCallCaptured(
+    ActiveIdentityReporterCapture capture, {
+    required int occurredAtUnixMillis,
+  }) async {
+    markCaptured(capture, occurredAtUnixMillis: occurredAtUnixMillis);
+    final week = await weeklyProjectionCaptured(capture);
+    if (week == null ||
+        occurredAtUnixMillis < week.startMilliseconds ||
+        occurredAtUnixMillis >= week.endMilliseconds) {
+      return;
+    }
+    await markWeeklyCaptured(capture, week: week.week, kinds: const ['call']);
+  }
+
+  void Function()? captureFeatureUse(
+    WeeklyFeatureUse feature, {
+    required String expectedAccountPeerId,
+  }) {
+    final capture = captureOwner(expectedAccountPeerId: expectedAccountPeerId);
+    if (capture == null) return null;
+    return () => markFeatureUse(capture, feature);
+  }
+
+  void markFeatureUse(
+    ActiveIdentityReporterCapture? capture,
+    WeeklyFeatureUse feature,
+  ) {
+    if (capture == null) return;
+    unawaited(
+      markFeatureUseCaptured(
+        capture,
+        feature,
+        occurredAtUnixMillis: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  Future<bool> markFeatureUseCaptured(
+    ActiveIdentityReporterCapture capture,
+    WeeklyFeatureUse feature, {
+    required int occurredAtUnixMillis,
+  }) async {
+    if (!_validMillis(occurredAtUnixMillis) || occurredAtUnixMillis < 0) {
+      return false;
+    }
+    final owner = await _weeklyOwner(capture);
+    if (owner == null || !_captureCurrent(capture) || !identical(owner, _owner)) {
+      return false;
+    }
+    final response = await _send(capture._bridge, {
+      ...owner,
+      'op': 'markFeatureUse',
+      'occurredAtUnixMillis': occurredAtUnixMillis,
+      'kinds': [feature.wireValue],
     });
     return _weeklyReceipt(capture, owner, response)?['accepted'] == true;
   }

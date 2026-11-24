@@ -100,11 +100,12 @@ class GoBridge internal constructor(
         }
 
         internal fun activityNonConfigurationOperation(op: String?): Boolean =
-            op == "mark" || op == "flush" || op == "weeklyProjection" || op == "markWeekly"
+            op == "mark" || op == "flush" || op == "weeklyProjection" || op == "markWeekly" || op == "markFeatureUse"
 
         internal fun activityMarkRevision(fields: Map<String, Any>): Long? {
+            val op = fields["op"]
             var keys = setOf("version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId")
-            if (fields["op"] == "markWeekly") {
+            if (op == "markWeekly") {
                 val week = fields["week"] as? String ?: return null
                 val kinds = fields["kinds"] as? List<*> ?: return null
                 if (!Regex("[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])").matches(week) ||
@@ -112,9 +113,16 @@ class GoBridge internal constructor(
                     kinds.any { it !in setOf("active", "chat", "call", "group") }) return null
                 keys = keys + setOf("week", "kinds")
             }
-            if (fields.containsKey("occurredAtUnixMillis")) {
+            if (op == "markFeatureUse") {
+                val kinds = fields["kinds"] as? List<*> ?: return null
+                if (kinds.size != 1 || kinds.single() !in setOf(
+                        "voice_message", "photo_video", "video_call", "translation", "voice_to_text", "view_3d"
+                    )) return null
+                keys = keys + "kinds"
+            }
+            if (fields.containsKey("occurredAtUnixMillis") || op == "markFeatureUse") {
                 val occurrence = fields["occurredAtUnixMillis"]
-                if (fields["op"] != "mark" || occurrence !is Long || occurrence < 0) return null
+                if ((op != "mark" && op != "markFeatureUse") || occurrence !is Long || occurrence < 0) return null
                 keys = keys + "occurredAtUnixMillis"
             }
             val revision = fields["revision"] as? Long
@@ -160,7 +168,12 @@ class GoBridge internal constructor(
                 if (raw == null || raw.toByteArray(Charsets.UTF_8).size > 16_384) return activityError("")
                 val answer = JSONObject(raw)
                 if (answer.opt("ok") != true) return activityError(answer.optString("errorCode"))
-                val field = when (op) { "configure" -> "configured"; "mark", "markWeekly" -> "accepted"; "weeklyProjection" -> "weekly"; else -> "queued" }
+                val field = when (op) {
+                    "configure" -> "configured"
+                    "mark", "markWeekly", "markFeatureUse" -> "accepted"
+                    "weeklyProjection" -> "weekly"
+                    else -> "queued"
+                }
                 val data = answer.optJSONObject("data") ?: return activityError("")
                 if (answer.keys().asSequence().toSet() != setOf("ok", "data") ||
                     data.keys().asSequence().toSet() != setOf(field, "revision", "consentEpoch") ||

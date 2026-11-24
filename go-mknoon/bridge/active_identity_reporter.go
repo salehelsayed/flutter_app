@@ -64,6 +64,16 @@ func ActiveIdentityReporterV1(paramsJSON string) string {
 			request.OccurredAtUnixMillis = &at
 		}
 	case "flush", "weeklyProjection":
+	case "markFeatureUse":
+		keys = append(keys, "kinds", "occurredAtUnixMillis")
+		var at int64
+		if bytes.Equal(bytes.TrimSpace(fields["kinds"]), []byte("null")) ||
+			json.Unmarshal(fields["kinds"], &request.Kinds) != nil ||
+			bytes.Equal(bytes.TrimSpace(fields["occurredAtUnixMillis"]), []byte("null")) ||
+			json.Unmarshal(fields["occurredAtUnixMillis"], &at) != nil {
+			return activityReporterError(node.ErrActiveIdentityReporterInput)
+		}
+		request.OccurredAtUnixMillis = &at
 	case "markWeekly", "ackWeekly":
 		keys = append(keys, "week", "kinds")
 		if !activityReporterString(fields["week"], &request.Week) || bytes.Equal(bytes.TrimSpace(fields["kinds"]), []byte("null")) || json.Unmarshal(fields["kinds"], &request.Kinds) != nil {
@@ -90,7 +100,7 @@ func ActiveIdentityReporterV1(paramsJSON string) string {
 	switch request.Op {
 	case "configure":
 		data["configured"] = result.Configured
-	case "mark", "markWeekly", "ackWeekly":
+	case "mark", "markWeekly", "ackWeekly", "markFeatureUse":
 		data["accepted"] = result.Accepted
 	case "weeklyProjection":
 		data["weekly"] = result.Weekly

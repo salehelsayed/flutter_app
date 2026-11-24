@@ -75,6 +75,7 @@ type activeIdentityReporterDisk struct {
 	Marked       bool                              `json:"marked"`
 	Acknowledged []string                          `json:"acknowledged"`
 	Weekly       *activeIdentityReporterWeeklyDisk `json:"weekly,omitempty"`
+	FeatureUse   *activeIdentityReporterWeeklyDisk `json:"feature_use,omitempty"`
 }
 
 // stateMu owns the desired fence and the last durable value; ioMu orders
@@ -90,6 +91,7 @@ type activeIdentityReporter struct {
 	cancel                             context.CancelFunc
 	ctx                                context.Context
 	attempts                           map[string]*activeIdentityReporterAttempt
+	weeklyAttempts                     map[weeklyReporterAttemptKey]*weeklyReporterAttempt
 }
 
 type activeIdentityReporterAttempt struct {
@@ -109,7 +111,8 @@ func newActiveIdentityReporter(deps activeIdentityReporterDeps) *activeIdentityR
 	if deps.write == nil {
 		deps.write = activeIdentityReporterAtomicWrite
 	}
-	return &activeIdentityReporter{deps: deps, attempts: make(map[string]*activeIdentityReporterAttempt)}
+	return &activeIdentityReporter{deps: deps, attempts: make(map[string]*activeIdentityReporterAttempt),
+		weeklyAttempts: make(map[weeklyReporterAttemptKey]*weeklyReporterAttempt)}
 }
 
 func activeIdentityReporterFenceValid(f ActiveIdentityReporterFence) bool {
@@ -171,6 +174,7 @@ func (r *activeIdentityReporter) publishDesired(f ActiveIdentityReporterFence, e
 	r.desired, r.enabled, r.preserve = f, enabled, preserve
 	r.config = nil
 	r.attempts = make(map[string]*activeIdentityReporterAttempt)
+	r.weeklyAttempts = make(map[weeklyReporterAttemptKey]*weeklyReporterAttempt)
 	return f, nil
 }
 
@@ -255,6 +259,9 @@ func (r *activeIdentityReporter) configure(c ActiveIdentityReporterConfig) error
 		}
 		if restored.Weekly != nil && restored.Weekly.Week == activitycalendar.Week(r.deps.now()) {
 			candidate.Weekly = restored.Weekly
+		}
+		if restored.FeatureUse != nil && restored.FeatureUse.Week == activitycalendar.Week(r.deps.now()) {
+			candidate.FeatureUse = restored.FeatureUse
 		}
 	}
 	r.stateMu.Unlock()
@@ -344,6 +351,9 @@ func (r *activeIdentityReporter) updateActivity(f ActiveIdentityReporterFence, m
 			candidate.Weekly = nil
 		}
 	}
+	if candidate.FeatureUse != nil && candidate.FeatureUse.Week < week {
+		candidate.FeatureUse = nil
+	}
 	if day != candidate.Day {
 		candidate.Day, candidate.Marked, candidate.Acknowledged = day, false, []string{}
 	}
@@ -354,7 +364,8 @@ func (r *activeIdentityReporter) updateActivity(f ActiveIdentityReporterFence, m
 		candidate.Weekly = activeIdentityReporterWeekCopy(candidate.Weekly, week)
 		candidate.Weekly.Kinds |= activeIdentityWeeklyActive
 	}
-	if candidate.Day == r.disk.Day && candidate.Marked == r.disk.Marked && candidate.Weekly == r.disk.Weekly {
+	if candidate.Day == r.disk.Day && candidate.Marked == r.disk.Marked &&
+		candidate.Weekly == r.disk.Weekly && candidate.FeatureUse == r.disk.FeatureUse {
 		r.stateMu.Unlock()
 		return markDay || markWeek, nil
 	}
@@ -537,13 +548,18 @@ func activeIdentityReporterRestore(raw []byte, today string) (activeIdentityRepo
 		return disk, false
 	}
 	fields, ok := activeIdentityResponseObject(raw)
-	if !ok || (len(fields) != 6 && len(fields) != 7) {
+	if !ok {
 		return disk, false
 	}
-	if len(fields) == 7 {
-		if _, exists := fields["weekly"]; !exists {
-			return disk, false
+	const required = 6
+	fieldCount := required
+	for _, field := range []string{"weekly", "feature_use"} {
+		if _, exists := fields[field]; exists {
+			fieldCount++
 		}
+	}
+	if len(fields) != fieldCount {
+		return disk, false
 	}
 	for _, key := range []string{"version", "scope_id", "consent_epoch", "day", "marked", "acknowledged"} {
 		value, exists := fields[key]
@@ -574,11 +590,18 @@ func activeIdentityReporterRestore(raw []byte, today string) (activeIdentityRepo
 	}
 	sort.Strings(disk.Acknowledged)
 	if rawWeek, exists := fields["weekly"]; exists {
-		weekly, ok := activeIdentityReporterRestoreWeek(rawWeek, today)
+		weekly, ok := activeIdentityReporterRestoreWeek(rawWeek, today, engagementWeeklyReport)
 		if !ok {
 			return activeIdentityReporterDisk{}, false
 		}
 		disk.Weekly = weekly
+	}
+	if rawWeek, exists := fields["feature_use"]; exists {
+		weekly, ok := activeIdentityReporterRestoreWeek(rawWeek, today, featureUseWeeklyReport)
+		if !ok {
+			return activeIdentityReporterDisk{}, false
+		}
+		disk.FeatureUse = weekly
 	}
 	return disk, true
 }

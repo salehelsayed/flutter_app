@@ -289,8 +289,9 @@ class GoBridge: NSObject {
     }
 
     internal static func activityMarkRevision(_ fields: [String: Any]) -> Int64? {
+        let op = fields["op"] as? String
         var keys: Set<String> = ["version", "op", "revision", "consentEpoch", "profileBinding", "accountPeerId"]
-        if fields["op"] as? String == "markWeekly" {
+        if op == "markWeekly" {
             guard let week = fields["week"] as? String, week.utf8.count == 8,
                   week.range(of: #"^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$"#, options: .regularExpression) != nil,
                   let kinds = fields["kinds"] as? [String], !kinds.isEmpty, kinds.count <= 4,
@@ -298,8 +299,14 @@ class GoBridge: NSObject {
                   kinds.allSatisfy({ ["active", "chat", "call", "group"].contains($0) }) else { return nil }
             keys.formUnion(["week", "kinds"])
         }
-        if let occurrence = fields["occurredAtUnixMillis"] {
-            guard fields["op"] as? String == "mark", type(of: occurrence) == Int64.self,
+        if op == "markFeatureUse" {
+            guard let kinds = fields["kinds"] as? [String], kinds.count == 1,
+                  ["voice_message", "photo_video", "video_call", "translation", "voice_to_text", "view_3d"].contains(kinds[0]) else { return nil }
+            keys.insert("kinds")
+        }
+        if fields["occurredAtUnixMillis"] != nil || op == "markFeatureUse" {
+            guard op == "mark" || op == "markFeatureUse",
+                  let occurrence = fields["occurredAtUnixMillis"], type(of: occurrence) == Int64.self,
                   let timestamp = occurrence as? Int64, timestamp >= 0 else { return nil }
             keys.insert("occurredAtUnixMillis")
         }
@@ -348,13 +355,13 @@ class GoBridge: NSObject {
         let field: String
         switch op {
         case "configure": field = "configured"
-        case "mark", "markWeekly": field = "accepted"
+        case "mark", "markWeekly", "markFeatureUse": field = "accepted"
         case "weeklyProjection": field = "weekly"
         default: field = "queued"
         }
         guard Set(answer.keys) == ["ok", "data"], let data = answer["data"] as? [String: Any],
               Set(data.keys) == Set([field, "revision", "consentEpoch"]) else { return activityError("") }
-        let weekly = op == "markWeekly" || op == "weeklyProjection"
+        let weekly = op == "markWeekly" || op == "weeklyProjection" || op == "markFeatureUse"
         let revision = weekly ? activityWeeklyInteger(data["revision"]) : activityInteger(data["revision"])
         let epoch = weekly ? activityWeeklyInteger(data["consentEpoch"]) : activityInteger(data["consentEpoch"])
         guard let revision, revision > 0, revision == fence.revision,
@@ -452,7 +459,7 @@ class GoBridge: NSObject {
             }
             fence = admitted
             fields["revision"] = fence.revision
-        } else if op == "mark" || op == "flush" || op == "markWeekly" || op == "weeklyProjection" {
+        } else if op == "mark" || op == "flush" || op == "markWeekly" || op == "weeklyProjection" || op == "markFeatureUse" {
             guard let revision = Self.activityMarkRevision(fields) else {
                 result(Self.activityError("INVALID_INPUT")); return
             }

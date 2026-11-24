@@ -15,6 +15,7 @@ import (
 
 const (
 	activeEngagementProtocolAction = "engagement_identity_v1"
+	featureUseProtocolAction       = "feature_use_identity_v1"
 	activeEngagementProtocolLimit  = 2048
 )
 
@@ -35,7 +36,14 @@ var (
 // privateKeyBase64 is padded base64 of the account's raw 64-byte Ed25519 key.
 // The proof binds that account to the caller's authenticated transport identity.
 func buildActiveEngagementRequest(week string, kinds []string, accountPeerID, transportPeerID, privateKeyBase64 string) ([]byte, error) {
-	if _, err := activitycalendar.ParseWeek(week); err != nil || !validActiveEngagementKinds(kinds) {
+	if !validActiveEngagementKinds(kinds) {
+		return nil, errActiveEngagementInvalidRequest
+	}
+	return buildWeeklyActivityRequest(activeEngagementProtocolAction, week, kinds, accountPeerID, transportPeerID, privateKeyBase64)
+}
+
+func buildWeeklyActivityRequest(action, week string, kinds []string, accountPeerID, transportPeerID, privateKeyBase64 string) ([]byte, error) {
+	if _, err := activitycalendar.ParseWeek(week); err != nil {
 		return nil, errActiveEngagementInvalidRequest
 	}
 	if len(accountPeerID) > activeEngagementProtocolLimit || len(transportPeerID) > activeEngagementProtocolLimit ||
@@ -67,7 +75,7 @@ func buildActiveEngagementRequest(week string, kinds []string, accountPeerID, tr
 	if err != nil || root != account {
 		return nil, errActiveEngagementInvalidRequest
 	}
-	proof := []byte("mknoon/activity-account-proof/v1\x00" + activeEngagementProtocolAction + "\x001\x00" + week + "\x00" + strings.Join(kinds, ",") + "\x00" + accountPeerID + "\x00" + transportPeerID)
+	proof := []byte("mknoon/activity-account-proof/v1\x00" + action + "\x001\x00" + week + "\x00" + strings.Join(kinds, ",") + "\x00" + accountPeerID + "\x00" + transportPeerID)
 	signature := ed25519.Sign(ed25519.PrivateKey(rawKey), proof)
 	request := struct {
 		Action        string   `json:"action"`
@@ -76,7 +84,7 @@ func buildActiveEngagementRequest(week string, kinds []string, accountPeerID, tr
 		Kinds         []string `json:"kinds"`
 		AccountPeerID string   `json:"accountPeerId"`
 		Signature     string   `json:"signature"`
-	}{activeEngagementProtocolAction, 1, week, kinds, accountPeerID, base64.StdEncoding.EncodeToString(signature)}
+	}{action, 1, week, kinds, accountPeerID, base64.StdEncoding.EncodeToString(signature)}
 	raw, err := json.Marshal(request)
 	if err != nil || len(raw) > activeEngagementProtocolLimit {
 		return nil, errActiveEngagementInvalidRequest
@@ -85,6 +93,10 @@ func buildActiveEngagementRequest(week string, kinds []string, accountPeerID, tr
 }
 
 func parseActiveEngagementResponse(raw []byte) (activeEngagementProtocolResult, error) {
+	return parseWeeklyActivityResponse(raw, activeEngagementProtocolAction, "ACTIVE_ENGAGEMENT")
+}
+
+func parseWeeklyActivityResponse(raw []byte, action, errorPrefix string) (activeEngagementProtocolResult, error) {
 	if len(raw) > activeEngagementProtocolLimit {
 		return activeEngagementRetryable, errActiveEngagementInvalidResponse
 	}
@@ -126,7 +138,7 @@ func parseActiveEngagementResponse(raw []byte) (activeEngagementProtocolResult, 
 				return activeEngagementRetryable, errActiveEngagementInvalidResponse
 			}
 			code, ok := activeIdentityResponseString(fields["errorCode"])
-			if ok && (code == "ACTIVE_ENGAGEMENT_INVALID_REQUEST" || code == "ACTIVE_ENGAGEMENT_STORAGE_UNAVAILABLE") {
+			if ok && (code == errorPrefix+"_INVALID_REQUEST" || code == errorPrefix+"_STORAGE_UNAVAILABLE") {
 				return activeEngagementRetryable, errActiveEngagementRelayFailure
 			}
 			return activeEngagementRetryable, errActiveEngagementInvalidResponse
@@ -143,7 +155,7 @@ func parseActiveEngagementResponse(raw []byte) (activeEngagementProtocolResult, 
 			}
 		}
 		message, ok := activeIdentityResponseString(fields["error"])
-		if ok && message == "Unknown action: engagement_identity_v1" {
+		if ok && message == "Unknown action: "+action {
 			return activeEngagementUnsupported, nil
 		}
 	}
