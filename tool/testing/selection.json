@@ -682,6 +682,7 @@
     "workflow": {
       "kind": "python",
       "paths": [
+        "scripts/test/glossary_checks_test.py",
         "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
@@ -5861,6 +5862,8 @@
     {
       "id": "workflow",
       "patterns": [
+        "scripts/check_glossary.py",
+        "scripts/test/glossary_checks_test.py",
         "scripts/flutter_native_asset_lock.py",
         "scripts/test/flutter_native_asset_lock_test.py",
         "scripts/test/bl20_native_asset_concurrency_proof.py",
@@ -6163,8 +6166,9 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests execute disposable Python/Git/receipt fixtures only and remain covered by the workflow area; the exact excluded call-soak entrypoint operates only on saved resource evidence and has its own contract check, including blocked and list-scenarios behavior",
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests inspect checkout data or execute disposable Python/Git/receipt fixtures and remain covered by the workflow area; the exact excluded call-soak entrypoint operates only on saved resource evidence and has its own contract check, including blocked and list-scenarios behavior",
       "exclude_paths": [
+        "scripts/test/glossary_checks_test.py",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/testing_inventory_test.py",

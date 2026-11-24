@@ -14,6 +14,8 @@ Owner standing instruction (2026-11-14): always use `@Pstack poteto-mode` for ap
 
 Use targeted `rg`, file discovery, source reading, and test inspection for code navigation.
 
+Use the words in docs/GLOSSARY.md. A new feature folder needs a glossary row (checked by scripts/check_glossary.py).
+
 ## Codex document memory
 
 Use `codex-memory/` for what was specified, decided, refuted, deferred, or superseded. Current source establishes code behavior and relationships.
