@@ -160,6 +160,43 @@ void main() {
   );
 
   testWidgets(
+    'conversation tap waits for pending video eligibility before offering the chooser',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      final videoEligibility = Completer<bool>();
+      calls.nextVideoCheck = videoEligibility;
+      try {
+        await mount(tester).timeout(bound);
+        expect(calls.videoChecks, [_peer]);
+        await chooser(tester).timeout(bound);
+        expect(
+          calls.audioStarts,
+          isEmpty,
+          reason: 'Pending video eligibility must not start an audio call',
+        );
+        expect(calls.videoStarts, isEmpty);
+        expect(find.text('Video call'), findsNothing);
+
+        videoEligibility.complete(true);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        expect(find.text('Voice call'), findsOneWidget);
+        expect(find.text('Video call'), findsOneWidget);
+        expect(calls.audioStarts, isEmpty);
+        expect(calls.videoStarts, isEmpty);
+
+        await tester.tap(find.text('Video call')).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
+        expect(calls.audioStarts, isEmpty);
+        expect(calls.videoStarts, [_peer]);
+      } finally {
+        if (!videoEligibility.isCompleted) videoEligibility.complete(false);
+        await cleanup(tester).timeout(bound);
+      }
+    },
+  );
+
+  testWidgets(
     'U6-entry passive availability lets the header start video once',
     (tester) async {
       const bound = Duration(seconds: 3);
