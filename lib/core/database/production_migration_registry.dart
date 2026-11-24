@@ -133,6 +133,7 @@ import 'migrations/130_custom_stickers.dart';
 import 'migrations/131_message_auto_retry_terminal.dart';
 import 'migrations/132_delivery_receipt_outbox.dart';
 import 'migrations/133_call_history_media_kind.dart';
+import 'migrations/134_local_ai_message_translations.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -771,6 +772,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '133_call_history_media_kind',
     runCallHistoryMediaKindMigration,
   ),
+  ProductionMigrationEntry(
+    134,
+    '134_local_ai_message_translations',
+    runLocalAiMessageTranslationsMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1398,6 +1404,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     133,
     '133_call_history_media_kind',
     runCallHistoryMediaKindMigration,
+  ),
+  ProductionMigrationEntry(
+    134,
+    '134_local_ai_message_translations',
+    runLocalAiMessageTranslationsMigration,
   ),
 ]);
 

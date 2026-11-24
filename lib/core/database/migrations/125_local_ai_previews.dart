@@ -2,6 +2,20 @@
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+/// The message updates after which its local AI results must be gone:
+/// deleted, hidden, or private media that is consumed or expired.
+const localAiMessageTerminalTrigger = '''
+      AFTER UPDATE OF deleted_at, hidden_at, private_media_state,
+        private_media_terminal_at_ms, private_media_clock_high_water_ms,
+        private_media_expires_at_ms ON messages
+      WHEN NEW.deleted_at IS NOT NULL OR NEW.hidden_at IS NOT NULL
+        OR NEW.private_media_state IN ('consumed','expired','unsupported')
+        OR NEW.private_media_terminal_at_ms IS NOT NULL
+        OR (NEW.private_media_mode = 'disappearing'
+          AND NEW.private_media_expires_at_ms IS NOT NULL
+          AND NEW.private_media_clock_high_water_ms >= NEW.private_media_expires_at_ms)
+''';
+
 Future<void> runLocalAiPreviewsMigration(Database db) async {
   final columns = await db.rawQuery('PRAGMA table_info(media_attachments)');
   if (!columns.any((row) => row['name'] == 'local_transcript')) {
@@ -31,18 +45,7 @@ Future<void> runLocalAiPreviewsMigration(Database db) async {
   final triggers = <String, String>{
     'local_ai_message_delete': 'AFTER DELETE ON messages BEGIN $clearVoice END',
     'local_ai_message_terminal':
-        '''
-      AFTER UPDATE OF deleted_at, hidden_at, private_media_state,
-        private_media_terminal_at_ms, private_media_clock_high_water_ms,
-        private_media_expires_at_ms ON messages
-      WHEN NEW.deleted_at IS NOT NULL OR NEW.hidden_at IS NOT NULL
-        OR NEW.private_media_state IN ('consumed','expired','unsupported')
-        OR NEW.private_media_terminal_at_ms IS NOT NULL
-        OR (NEW.private_media_mode = 'disappearing'
-          AND NEW.private_media_expires_at_ms IS NOT NULL
-          AND NEW.private_media_clock_high_water_ms >= NEW.private_media_expires_at_ms)
-      BEGIN $clearVoice END
-    ''',
+        '$localAiMessageTerminalTrigger      BEGIN $clearVoice END\n    ',
     'local_ai_attachment_delete': '''
       AFTER DELETE ON media_attachments BEGIN
         DELETE FROM local_ai_translations

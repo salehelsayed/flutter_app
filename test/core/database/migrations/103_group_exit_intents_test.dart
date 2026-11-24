@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 133);
+      expect(currentIdentityDatabaseVersion, 134);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,

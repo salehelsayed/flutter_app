@@ -123,6 +123,18 @@ Future<String?> _currentSource(
     return (await _liveVoice(txn, id, nowMs, messageId))?['local_transcript']
         as String?;
   }
+  if (kind == 'message') {
+    final rows = await txn.query(
+      'messages',
+      columns: ['text'],
+      where:
+          "id = ? AND is_incoming = 1 AND deleted_at IS NULL AND hidden_at IS NULL "
+          "AND private_media_mode = 'ordinary'",
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.single['text'] as String;
+  }
   if (kind != 'thought') return null;
   final rows = await txn.rawQuery(
     '''

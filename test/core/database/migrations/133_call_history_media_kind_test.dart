@@ -94,7 +94,7 @@ void main() {
 
       final upgraded = await open(path, currentIdentityDatabaseVersion);
       addTearDown(() => upgraded.close().timeout(deadline));
-      expect(await upgraded.getVersion().timeout(deadline), 133);
+      expect(await upgraded.getVersion().timeout(deadline), 134);
       final rows = await upgraded.query(kCallHistoryTable).timeout(deadline);
       expect(rows, [
         {...original, 'media_kind': null},

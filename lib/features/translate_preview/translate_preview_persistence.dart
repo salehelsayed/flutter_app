@@ -1,4 +1,4 @@
-enum PreviewOwnerKind { thought, voiceAttachment }
+enum PreviewOwnerKind { thought, voiceAttachment, message }
 
 final class PreviewOwner {
   const PreviewOwner.thought(this.id)
@@ -6,6 +6,9 @@ final class PreviewOwner {
       messageId = null;
   const PreviewOwner.voiceAttachment(this.id, {required this.messageId})
     : kind = PreviewOwnerKind.voiceAttachment;
+  const PreviewOwner.message(this.id)
+    : kind = PreviewOwnerKind.message,
+      messageId = null;
 
   final PreviewOwnerKind kind;
   final String id;

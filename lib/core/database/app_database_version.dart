@@ -103,4 +103,8 @@
 // v132 retains delivery/mutation receipt envelopes across transport failures.
 // v133 adds nullable local call_history.media_kind. Historical types remain
 // unknown.
-const int currentIdentityDatabaseVersion = 133;
+// v134 (BL-83) adds triggers that remove a received chat message's stored
+// translation when the message is deleted, hidden, expired or edited. No
+// table or column change, no backfill. Downgrade: a v133 build fails closed on
+// a v134 profile like every v96+ downgrade; the triggers are additive.
+const int currentIdentityDatabaseVersion = 134;

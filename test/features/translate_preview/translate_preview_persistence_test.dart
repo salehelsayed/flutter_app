@@ -51,6 +51,52 @@ void main() {
   const thought = PreviewOwner.thought('thought');
 
   testWidgets(
+    'a chat message translation survives a DB restart without a model call',
+    (tester) async {
+      const source = 'انا جاى بعد شوية';
+      final fixture = LocalPreviewFixture();
+      await tester.runAsync(() async {
+        await fixture.open();
+        final iso = DateTime.fromMillisecondsSinceEpoch(
+          fixture.nowMs,
+          isUtc: true,
+        ).toIso8601String();
+        await fixture.db.insert('messages', {
+          'id': 'chat-message',
+          'contact_peer_id': 'contact',
+          'sender_peer_id': 'contact',
+          'text': source,
+          'timestamp': iso,
+          'created_at': iso,
+          'is_incoming': 1,
+        });
+      });
+      addTearDown(fixture.dispose);
+      final ai = _Ai();
+      Widget view() => _host(
+        MessageTranslation(
+          messageId: 'chat-message',
+          text: source,
+          targetLanguage: 'de',
+          ai: ai,
+          persistence: fixture.store,
+        ),
+      );
+      await tester.pumpWidget(view());
+      await fixture.flush(tester);
+      expect(find.text('German result'), findsOneWidget);
+      expect(ai.translations, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.reopen);
+      await tester.pumpWidget(view());
+      await fixture.flush(tester);
+      expect(find.text('German result'), findsOneWidget);
+      expect(ai.translations, 1);
+    },
+  );
+
+  testWidgets(
     'voice transcript and translation survive DB restart without model calls',
     (tester) async {
       final fixture = LocalPreviewFixture();

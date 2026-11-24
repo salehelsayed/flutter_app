@@ -226,21 +226,21 @@ class TranslatePreview extends StatelessWidget {
 class MessageTranslation extends StatelessWidget {
   const MessageTranslation({
     super.key,
-    required this.account,
+    required this.messageId,
     required this.text,
     required this.targetLanguage,
     required this.ai,
+    this.persistence,
     this.color,
     this.dividerColor,
     this.captureFeatureUse,
   });
 
-  /// The signed-in account's peer ID, so one account never reads another's
-  /// cached translations.
-  final String? account;
+  final String messageId;
   final String text;
   final String targetLanguage;
   final OnDeviceAi ai;
+  final TranslatePreviewPersistence? persistence;
   final Color? color;
   final Color? dividerColor;
   final CaptureWeeklyFeatureUse? captureFeatureUse;
@@ -248,14 +248,15 @@ class MessageTranslation extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final key = (account, text, targetLanguage);
+    final store = persistence ?? translatePreviewPersistence;
+    final owner = PreviewOwner.message(messageId);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Divider(height: 1, thickness: 1, color: dividerColor),
         _AiAction(
-          identity: (account, text),
+          identity: (messageId, text),
           targetLanguage: targetLanguage,
           autoStart: true,
           captureUse: () => captureFeatureUse?.call(WeeklyFeatureUse.translation),
@@ -264,19 +265,17 @@ class MessageTranslation extends StatelessWidget {
             busy: l10n.translator_translating,
             failure: l10n.translator_translate_failed,
           ),
-          restore: () async => _messageTranslations[key],
+          restore: store == null
+              ? null
+              : () => store.loadTranslation(owner, text, targetLanguage),
           run: () => ai.translate(
             text,
             languageName: translateLanguageName(targetLanguage)!,
           ),
-          save: (result) async {
-            _messageTranslations.remove(key);
-            _messageTranslations[key] = result;
-            if (_messageTranslations.length > 300) {
-              _messageTranslations.remove(_messageTranslations.keys.first);
-            }
-            return true;
-          },
+          save: store == null
+              ? null
+              : (result) =>
+                    store.saveTranslation(owner, text, targetLanguage, result),
           color: color,
           linksFrom: text,
           topPadding: 8,
@@ -286,10 +285,6 @@ class MessageTranslation extends StatelessWidget {
     );
   }
 }
-
-/// Chat translations stay in memory only: a stored copy would outlive a
-/// message deleted for everyone.
-final _messageTranslations = <(String?, String, String), String>{};
 
 /// A small "Transcribe" link under a received voice message, then the
 /// transcript with "See translation" offered on it.
