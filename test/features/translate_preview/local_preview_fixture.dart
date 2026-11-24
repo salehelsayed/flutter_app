@@ -8,6 +8,9 @@ import 'package:flutter_app/features/translate_preview/translate_preview_persist
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+/// Every real SQLite future in these tests settles within this bound.
+const localPreviewBound = Duration(seconds: 5);
+
 final class LocalPreviewFixture {
   Directory? directory;
   late Database db;
@@ -15,26 +18,30 @@ final class LocalPreviewFixture {
   final pending = <Future<void>>[];
 
   Future<void> open({int version = currentIdentityDatabaseVersion}) async {
-    directory ??= await Directory.systemTemp.createTemp('local-ai-preview-');
-    db = await databaseFactoryFfi.openDatabase(
-      '${directory!.path}/identity.db',
-      options: OpenDatabaseOptions(
-        version: version,
-        singleInstance: false,
-        onCreate: runProductionOnCreate,
-        onUpgrade: runProductionOnUpgrade,
-      ),
-    );
+    directory ??= await Directory.systemTemp
+        .createTemp('local-ai-preview-')
+        .timeout(localPreviewBound);
+    db = await databaseFactoryFfi
+        .openDatabase(
+          '${directory!.path}/identity.db',
+          options: OpenDatabaseOptions(
+            version: version,
+            singleInstance: false,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          ),
+        )
+        .timeout(localPreviewBound);
   }
 
   Future<void> reopen() async {
-    await db.close();
+    await db.close().timeout(localPreviewBound);
     await open();
   }
 
   Future<void> dispose() async {
-    if (db.isOpen) await db.close();
-    await directory?.delete(recursive: true);
+    if (db.isOpen) await db.close().timeout(localPreviewBound);
+    await directory?.delete(recursive: true).timeout(localPreviewBound);
   }
 
   Future<T> _track<T>(Future<T> future) {
@@ -86,7 +93,9 @@ final class LocalPreviewFixture {
       if (pending.isEmpty) return;
       final current = List<Future<void>>.from(pending);
       pending.clear();
-      await tester.runAsync(() => Future.wait(current));
+      await tester.runAsync(
+        () => Future.wait(current).timeout(localPreviewBound),
+      );
       await tester.pump();
     }
     throw StateError('Local preview operations did not settle');

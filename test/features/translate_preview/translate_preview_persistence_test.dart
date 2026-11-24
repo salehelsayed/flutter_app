@@ -60,15 +60,17 @@ void main() {
             fixture.nowMs,
             isUtc: true,
           ).toIso8601String();
-          await fixture.db.insert('messages', {
-            'id': 'chat-message',
-            'contact_peer_id': 'contact',
-            'sender_peer_id': 'contact',
-            'text': text,
-            'timestamp': iso,
-            'created_at': iso,
-            'is_incoming': 1,
-          });
+          await fixture.db
+              .insert('messages', {
+                'id': 'chat-message',
+                'contact_peer_id': 'contact',
+                'sender_peer_id': 'contact',
+                'text': text,
+                'timestamp': iso,
+                'created_at': iso,
+                'is_incoming': 1,
+              })
+              .timeout(localPreviewBound);
         });
 
     Widget view(String text) => _host(
@@ -124,12 +126,14 @@ void main() {
       addTearDown(fixture.dispose);
       await seedMessage(tester, text);
       await tester.runAsync(
-        () => fixture.store.saveTranslation(
-          const PreviewOwner.message('chat-message'),
-          text,
-          'de',
-          'Super, Mona 👍 (saved)',
-        ),
+        () => fixture.store
+            .saveTranslation(
+              const PreviewOwner.message('chat-message'),
+              text,
+              'de',
+              'Super, Mona 👍 (saved)',
+            )
+            .timeout(localPreviewBound),
       );
       await tester.pumpWidget(view(text));
       await fixture.flush(tester);
@@ -149,15 +153,17 @@ void main() {
           fixture.nowMs,
           isUtc: true,
         ).toIso8601String();
-        await fixture.db.insert('messages', {
-          'id': 'chat-message',
-          'contact_peer_id': 'contact',
-          'sender_peer_id': 'contact',
-          'text': source,
-          'timestamp': iso,
-          'created_at': iso,
-          'is_incoming': 1,
-        });
+        await fixture.db
+            .insert('messages', {
+              'id': 'chat-message',
+              'contact_peer_id': 'contact',
+              'sender_peer_id': 'contact',
+              'text': source,
+              'timestamp': iso,
+              'created_at': iso,
+              'is_incoming': 1,
+            })
+            .timeout(localPreviewBound);
       });
       addTearDown(fixture.dispose);
       final ai = _Ai();

@@ -22,15 +22,17 @@ void main() {
       isUtc: true,
     ).toIso8601String();
     for (final (id, incoming) in [('received', 1), ('sent', 0)]) {
-      await fixture.db.insert('messages', {
-        'id': id,
-        'contact_peer_id': 'contact',
-        'sender_peer_id': incoming == 1 ? 'contact' : 'me',
-        'text': _source,
-        'timestamp': iso,
-        'created_at': iso,
-        'is_incoming': incoming,
-      });
+      await fixture.db
+          .insert('messages', {
+            'id': id,
+            'contact_peer_id': 'contact',
+            'sender_peer_id': incoming == 1 ? 'contact' : 'me',
+            'text': _source,
+            'timestamp': iso,
+            'created_at': iso,
+            'is_incoming': incoming,
+          })
+          .timeout(localPreviewBound);
     }
   });
   tearDown(() => fixture.dispose());
@@ -43,7 +45,7 @@ void main() {
     targetLanguage: 'de',
     result: _translation,
     nowMs: fixture.nowMs,
-  );
+  ).timeout(localPreviewBound);
 
   Future<String?> load(String messageId, {String source = _source}) =>
       dbLoadLocalTranslation(
@@ -53,20 +55,23 @@ void main() {
         source: source,
         targetLanguage: 'de',
         nowMs: fixture.nowMs,
-      );
+      ).timeout(localPreviewBound);
 
-  Future<void> seedStoredRow() => fixture.db.insert('local_ai_translations', {
-    'owner_kind': 'message',
-    'owner_id': 'received',
-    'target_language': 'de',
-    'source_sha256': 'stored',
-    'translated_text': _translation,
-  });
+  Future<void> seedStoredRow() => fixture.db
+      .insert('local_ai_translations', {
+        'owner_kind': 'message',
+        'owner_id': 'received',
+        'target_language': 'de',
+        'source_sha256': 'stored',
+        'translated_text': _translation,
+      })
+      .timeout(localPreviewBound);
 
-  Future<int> storedRows() async => (await fixture.db.query(
-    'local_ai_translations',
-    where: "owner_kind = 'message'",
-  )).length;
+  Future<int> storedRows() async =>
+      (await fixture.db
+              .query('local_ai_translations', where: "owner_kind = 'message'")
+              .timeout(localPreviewBound))
+          .length;
 
   test('a received message translation is saved and read back after a '
       'restart', () async {
@@ -75,10 +80,13 @@ void main() {
     expect(await load('received'), _translation);
   });
 
-  test('a saved translation is not shown once the message text changed', () async {
-    expect(await save('received'), isTrue);
-    expect(await load('received', source: 'something else'), isNull);
-  });
+  test(
+    'a saved translation is not shown once the message text changed',
+    () async {
+      expect(await save('received'), isTrue);
+      expect(await load('received', source: 'something else'), isNull);
+    },
+  );
 
   test('an outgoing message is never a translation source', () async {
     expect(await save('sent'), isFalse);
@@ -104,7 +112,7 @@ void main() {
   ]) {
     test('$label removes its stored translation', () async {
       await seedStoredRow();
-      await fixture.db.execute(change);
+      await fixture.db.execute(change).timeout(localPreviewBound);
       expect(await storedRows(), 0);
     });
   }
