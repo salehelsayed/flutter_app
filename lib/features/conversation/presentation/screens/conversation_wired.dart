@@ -9129,8 +9129,17 @@ class _ConversationWiredState extends State<ConversationWired>
           sameConversation() && _appLifecycleGeneration == lifecycleGeneration,
       microphonePermissionPreflight: (requestPermission) async {
         if (_appLifecycleState != AppLifecycleState.resumed) {
-          request.cancel();
-          request.checkPending();
+          return requestPermission();
+        }
+        MicPermissionStatus? permissionStatus;
+        try {
+          permissionStatus = await widget.micPermissionGateway.status();
+        } catch (_) {
+          // Keep the ordinary lifecycle guard when status cannot be read.
+        }
+        request.checkPending();
+        if (permissionStatus != MicPermissionStatus.denied) {
+          return requestPermission();
         }
         final resumed = Completer<void>();
         var lostFocus = false;
