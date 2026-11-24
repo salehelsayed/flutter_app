@@ -1,7 +1,11 @@
 package com.mknoon.app
 
 import android.content.Context
+import android.os.Looper
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -73,6 +77,37 @@ class MainActivityAppVisibilityTest {
         assertTrue(
             checkNotNull(background.snapshot).lifecycleGeneration > activeGeneration,
         )
+    }
+
+    @Test
+    fun `BL-85 pause syncs the visibility record off the main looper`() {
+        val mainThread = Looper.getMainLooper().thread
+        assertEquals(
+            "invoke the lifecycle callback on the main looper",
+            mainThread,
+            Thread.currentThread(),
+        )
+        val bootSession = AppVisibilityBootSessionProvider { "android:7" }
+        val store = AppVisibilitySnapshotStore(context = context, bootSessionProvider = bootSession)
+        assertTrue(store.transitionLifecycle(AppVisibilityLifecycle.FOREGROUND_ACTIVE).committed)
+
+        val pauseReachedSync = CountDownLatch(1)
+        val pauseSyncedOnMain = AtomicBoolean(true)
+        val pauseStore = AppVisibilitySnapshotStore(
+            context = context,
+            bootSessionProvider = bootSession,
+            faults = object : AppVisibilitySnapshotFaultInjector {
+                override fun beforeSync() {
+                    pauseSyncedOnMain.set(Thread.currentThread() == mainThread)
+                    pauseReachedSync.countDown()
+                }
+            },
+        )
+
+        AppVisibilityLifecycleCoordinator(pauseStore).onPause()
+
+        assertTrue("pause must still sync the record", pauseReachedSync.await(2, TimeUnit.SECONDS))
+        assertFalse("pause must not sync on the main looper", pauseSyncedOnMain.get())
     }
 
     @Test
