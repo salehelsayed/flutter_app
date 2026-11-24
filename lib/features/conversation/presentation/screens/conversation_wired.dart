@@ -753,7 +753,9 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceWantsIntroCheck = false;
   bool _outgoingCallStartInFlight = false;
   bool _outgoingCallIsVideo = false;
-  bool _outgoingVideoCallContactAvailable = false;
+  // A null result means this contact's video eligibility is unknown.
+  bool? _outgoingVideoCallContactAvailable;
+  Future<void>? _outgoingCallAvailabilityRefresh;
   OutgoingCallStartRequest? _outgoingCallStartRequest;
   Timer? _outgoingCallPreflightTimer;
   String? _outgoingDiagnosticTraceId;
@@ -8930,7 +8932,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool get _outgoingCallOffersMediaChoice {
     final capability = widget.outgoingCallCapability;
     return !_contact.isBlocked &&
-        _outgoingVideoCallContactAvailable &&
+        _outgoingVideoCallContactAvailable != false &&
         capability is OutgoingVideoCallCapability &&
         capability.isOutgoingVideoCallAvailable;
   }
@@ -8941,12 +8943,43 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return;
+    final contactPeerId = widget.contact.peerId;
+    bool stillOnConversation() =>
+        mounted &&
+        route.isCurrent &&
+        contactPeerId == widget.contact.peerId &&
+        contactPeerId == _contact.peerId &&
+        identical(capability, widget.outgoingCallCapability);
+
+    if (!_outgoingCallStartInFlight &&
+        _outgoingCallOffersMediaChoice &&
+        _outgoingVideoCallContactAvailable == null) {
+      final refresh = _outgoingCallAvailabilityRefresh;
+      if (refresh == null) return;
+      final generation = _outgoingCallAvailabilityGeneration;
+      try {
+        await refresh.timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        if (stillOnConversation() &&
+            generation == _outgoingCallAvailabilityGeneration) {
+          _showOutgoingCallMessage(
+            AppLocalizations.of(context)!.call_video_entry_unavailable,
+          );
+        }
+        return;
+      }
+      if (!stillOnConversation() ||
+          generation != _outgoingCallAvailabilityGeneration ||
+          _outgoingVideoCallContactAvailable == null) {
+        return;
+      }
+    }
+
     if (_outgoingCallStartInFlight || !_outgoingCallOffersMediaChoice) {
       await _startOutgoingCall(capability);
       return;
     }
 
-    final contactPeerId = widget.contact.peerId;
     final l10n = AppLocalizations.of(context)!;
     final selection = await showDialog<CallMediaKind>(
       context: context,
@@ -8973,13 +9006,7 @@ class _ConversationWiredState extends State<ConversationWired>
         );
       },
     );
-    if (!mounted ||
-        selection == null ||
-        !route.isCurrent ||
-        contactPeerId != widget.contact.peerId ||
-        contactPeerId != _contact.peerId) {
-      return;
-    }
+    if (selection == null || !stillOnConversation()) return;
     await _startOutgoingCall(
       capability,
       video: selection == CallMediaKind.video,
@@ -9227,7 +9254,7 @@ class _ConversationWiredState extends State<ConversationWired>
               : _outgoingCallStartDiagnostics(capability),
         );
         if (video
-            ? _outgoingVideoCallContactAvailable
+            ? _outgoingVideoCallContactAvailable != false
             : _outgoingCallContactAvailable) {
           setState(() {
             if (video) {
@@ -9241,7 +9268,7 @@ class _ConversationWiredState extends State<ConversationWired>
         return;
       }
       if (!(video
-          ? _outgoingVideoCallContactAvailable
+          ? _outgoingVideoCallContactAvailable == true
           : _outgoingCallContactAvailable)) {
         setState(() {
           if (video) {
@@ -9295,7 +9322,7 @@ class _ConversationWiredState extends State<ConversationWired>
       if (!shouldShowFailure &&
           mounted &&
           (video
-              ? _outgoingVideoCallContactAvailable
+              ? _outgoingVideoCallContactAvailable != false
               : _outgoingCallContactAvailable)) {
         setState(() {
           if (video) {
@@ -9390,7 +9417,7 @@ class _ConversationWiredState extends State<ConversationWired>
   void _bindOutgoingCallAvailability() {
     _outgoingCallAvailabilityGeneration++;
     _outgoingCallContactAvailable = false;
-    _outgoingVideoCallContactAvailable = false;
+    _outgoingVideoCallContactAvailable = null;
     final previous = _outgoingCallAvailabilitySubscription;
     _outgoingCallAvailabilitySubscription = null;
     if (previous != null) unawaited(previous.cancel());
@@ -9410,16 +9437,21 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _hideOutgoingCallAvailability() {
     _outgoingCallAvailabilityGeneration++;
+    _outgoingCallAvailabilityRefresh = null;
     if (mounted &&
-        (_outgoingCallContactAvailable || _outgoingVideoCallContactAvailable)) {
+        (_outgoingCallContactAvailable ||
+            _outgoingVideoCallContactAvailable != null)) {
       setState(() {
         _outgoingCallContactAvailable = false;
-        _outgoingVideoCallContactAvailable = false;
+        _outgoingVideoCallContactAvailable = null;
       });
     }
   }
 
-  Future<void> _refreshOutgoingCallAvailability() async {
+  Future<void> _refreshOutgoingCallAvailability() =>
+      _outgoingCallAvailabilityRefresh = _loadOutgoingCallAvailability();
+
+  Future<void> _loadOutgoingCallAvailability() async {
     final generation = ++_outgoingCallAvailabilityGeneration;
     final capability = widget.outgoingCallCapability;
     final contactPeerId = _contact.peerId;
@@ -9438,7 +9470,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (_outgoingCallContactAvailable != available) {
       setState(() => _outgoingCallContactAvailable = available);
     }
-    var videoAvailable = false;
+    bool? videoAvailable;
     if (!_contact.isBlocked &&
         capability is OutgoingVideoCallCapability &&
         capability.isOutgoingVideoCallAvailable) {
@@ -9446,7 +9478,9 @@ class _ConversationWiredState extends State<ConversationWired>
         videoAvailable = await capability.isOutgoingVideoCallAvailableFor(
           contactPeerId,
         );
-      } catch (_) {}
+      } catch (_) {
+        videoAvailable = false;
+      }
     }
     if (!mounted ||
         generation != _outgoingCallAvailabilityGeneration ||
