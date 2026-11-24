@@ -263,7 +263,14 @@ func b294New(t *testing.T) *b294Harness {
 	t.Cleanup(func() {
 		h.transport.stop()
 		done := make(chan struct{})
-		go func() { h.reporter.close(); h.workers.Wait(); close(done) }()
+		go func() {
+			h.reporter.close()
+			// Public flush returns before its durable ACK writer completes.
+			h.reporter.ioMu.Lock()
+			h.reporter.ioMu.Unlock()
+			h.workers.Wait()
+			close(done)
+		}()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
