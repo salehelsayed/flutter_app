@@ -30,7 +30,7 @@ EXPECTED_COUNTS = {
     "com.mknoon.app.StickerClipFrameInputTest": 4,
     "com.mknoon.app.NativeRuntimeOwnershipSourceTest": 3,
     "com.mknoon.app.call.MknoonCallBridgeTeardownTest": 3,
-    "com.mknoon.app.MainActivityOnNewIntentTest": 2,
+    "com.mknoon.app.MainActivityOnNewIntentTest": 4,
     "com.mknoon.app.StickerCutoutBridgeTest": 21,
     "com.mknoon.app.StickerCutoutHostPosixShadowTest": 6,
     "com.mknoon.app.StickerCutoutRegistrationTest": 4,
@@ -183,7 +183,8 @@ def main():
                     registration_methods.append(method)
 
         if dict(observed) != EXPECTED_COUNTS:
-            errors.append("Per-class case counts differ from the 4+4+3+3+2+21+6+4 inventory")
+            expected = "+".join(str(count) for count in EXPECTED_COUNTS.values())
+            errors.append(f"Per-class case counts differ from the {expected} inventory")
         if len(selectors) != len(set(selectors)):
             errors.append("Duplicate JUnit testcase selectors")
         if (len(registration_methods) != 4 or

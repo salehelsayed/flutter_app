@@ -29,6 +29,7 @@ const _implements = <String>[
   'ReadinessProofRecorder',
   'P2PFullInboxDrain',
   'DurableLanSender',
+  'GuardedMessageDispatch',
   'RelayPresenceLookup',
   'RelayPresenceSet',
   'PeerLivenessProbe',
@@ -686,7 +687,9 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // Thought replay adds one coordinator-owned registration method; the
 // constructor and all prior public members stay unchanged. Exact AST delta:
 // thought-poor-connection-green-20261107/facade-api-proof.json.
-const _expectedFacadeApiFingerprint = '73c5af07';
+// BL-77 adds the dispatch guard interface and optional authorizeDispatch
+// parameters on sendMessageWithReply, storeInInbox, and sendLocalMessage.
+const _expectedFacadeApiFingerprint = '1246609a';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
