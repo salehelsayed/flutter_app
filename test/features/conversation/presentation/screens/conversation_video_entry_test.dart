@@ -129,6 +129,30 @@ void main() {
       tester.pumpWidget(const SizedBox.shrink());
 
   testWidgets(
+    'eligible conversation call button offers audio and video without starting either',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      try {
+        await mount(tester).timeout(bound);
+        await tester.tap(find.byIcon(Icons.call_outlined)).timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+
+        expect(
+          calls.audioStarts,
+          isEmpty,
+          reason: 'Tapping the call button must wait for a call type selection',
+        );
+        expect(calls.videoStarts, isEmpty);
+        expect(find.text('Voice call'), findsOneWidget);
+        expect(find.text('Video call'), findsOneWidget);
+      } finally {
+        await cleanup(tester).timeout(bound);
+      }
+    },
+  );
+
+  testWidgets(
     'U6-entry passive video availability sends nothing and exposes exact action',
     (tester) async {
       try {
