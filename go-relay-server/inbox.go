@@ -99,6 +99,7 @@ type PushService struct {
 	groupMessageDispatchAdmission      groupMessageDispatchAdmissionBackend
 	directMessageDispatchAdmission     messageDispatchAdmissionBackend
 	directQuietRecovery                directQuietRecoveryBackend
+	contactRequestPushCap              *contactRequestPushCap
 }
 
 type pushMessageFactory func() *messaging.Message
@@ -645,7 +646,11 @@ func (ps *PushService) sendRichPushThroughGatewayWithAdmission(
 				return nil, nil
 			}
 			if len(projectMessage) > 0 && projectMessage[0] != nil {
-				return projectMessage[0](draft, platform), nil
+				projected := projectMessage[0](draft, platform)
+				if projected == nil {
+					return nil, errPushDeliverySuppressed
+				}
+				return projected, nil
 			}
 			return projectPushMessageForPlatform(draft, platform), nil
 		},
@@ -1066,7 +1071,12 @@ func (ps *PushService) sendRichNotification(
 
 	projectMessage := []pushMessageProjector{
 		func(draft *messaging.Message, platform string) *messaging.Message {
-			return projectRichDirectPushMessageForPlatform(draft, platform, fromPeerID, message, custodyID)
+			projected := projectRichDirectPushMessageForPlatform(draft, platform, fromPeerID, message, custodyID)
+			if ps.contactRequestPushCap != nil && custodyID != "" && metadata.ShouldNotify &&
+				metadata.RouteType == "contact_request" && (ps.sender != nil || ps.client != nil) {
+				return ps.contactRequestPushCap.project(ctx, fromPeerID, toPeerID, platform, projected)
+			}
+			return projected
 		},
 	}
 	var admissionIdentity *messageDispatchAdmissionIdentity

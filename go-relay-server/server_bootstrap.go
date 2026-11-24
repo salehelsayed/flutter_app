@@ -15,10 +15,11 @@ const (
 )
 
 type backendConfig struct {
-	Kind                       string
-	RedisURL                   string
-	RedisPrefix                string
-	AckCustodyAdmissionEnabled bool
+	Kind                         string
+	RedisURL                     string
+	RedisPrefix                  string
+	AckCustodyAdmissionEnabled   bool
+	ContactRequestPushCapEnabled bool
 }
 
 // IsDurable reports whether the selected control-plane backend persists state
@@ -78,10 +79,11 @@ func loadBackendConfigFromEnv() backendConfig {
 	}
 
 	return backendConfig{
-		Kind:                       kind,
-		RedisURL:                   strings.TrimSpace(os.Getenv("REDIS_URL")),
-		RedisPrefix:                prefix,
-		AckCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
+		Kind:                         kind,
+		RedisURL:                     strings.TrimSpace(os.Getenv("REDIS_URL")),
+		RedisPrefix:                  prefix,
+		AckCustodyAdmissionEnabled:   loadAckCustodyAdmissionEnabledFromEnv(),
+		ContactRequestPushCapEnabled: loadContactRequestPushCapEnabledFromEnv(),
 	}
 }
 
@@ -106,6 +108,9 @@ func newControlPlaneStores(
 			"%s=true requires RELAY_BACKEND=redis",
 			ackCustodyAdmissionEnabledEnv,
 		)
+	}
+	if cfg.ContactRequestPushCapEnabled && !cfg.IsDurable() {
+		return nil, fmt.Errorf("%s=true requires RELAY_BACKEND=redis", contactRequestPushCapEnabledEnv)
 	}
 	switch cfg.Kind {
 	case backendKindMemory:
@@ -252,6 +257,10 @@ func newControlPlaneStores(
 		stores.Inbox.featureUse = initFeatureUseFromEnvironment()
 		if strings.EqualFold(strings.TrimSpace(os.Getenv("MKNOON_RELAY_STICKER_METRICS_ENABLED")), "true") {
 			stores.Inbox.stickerMetrics = newStickerMetrics(client, cfg.RedisPrefix, time.Now)
+		}
+		if cfg.ContactRequestPushCapEnabled {
+			push.contactRequestPushCap = &contactRequestPushCap{client: client, prefix: cfg.RedisPrefix}
+			log.Print("[CONTACT_REQUEST_PUSH_CAP] enabled=true ttl=24h")
 		}
 		return stores, nil
 	default:
