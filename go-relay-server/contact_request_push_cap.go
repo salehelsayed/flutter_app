@@ -11,7 +11,6 @@ import (
 	"firebase.google.com/go/v4/messaging"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -25,11 +24,6 @@ var contactRequestPushDemotedCounter = promauto.NewCounterVec(prometheus.Counter
 	Help: "Eligible repeat contact request alerts demoted to a quiet wake or suppressed by the pair cap.",
 }, []string{"platform"})
 
-type contactRequestPushCap struct {
-	client *redis.Client
-	prefix string
-}
-
 func loadContactRequestPushCapEnabledFromEnv() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(contactRequestPushCapEnabledEnv))) {
 	case "1", "true":
@@ -39,20 +33,33 @@ func loadContactRequestPushCapEnabledFromEnv() bool {
 	}
 }
 
-func (cap *contactRequestPushCap) project(
-	ctx context.Context,
-	fromPeerID, toPeerID, platform string,
-	visible *messaging.Message,
-) *messaging.Message {
+func newContactRequestPushPairIdentity(fromPeerID, toPeerID string) messageDispatchAdmissionIdentity {
 	digest := sha256.New()
 	writeMessageDispatchAdmissionComponent(digest, contactRequestPushCapNamespace)
 	writeMessageDispatchAdmissionComponent(digest, fromPeerID)
 	writeMessageDispatchAdmissionComponent(digest, toPeerID)
-	key := cap.prefix + contactRequestPushCapNamespace + hex.EncodeToString(digest.Sum(nil))
+	return messageDispatchAdmissionIdentity{
+		contactRequestPair: true,
+		prehashedKey:       hex.EncodeToString(digest.Sum(nil)),
+	}
+}
 
-	first, err := cap.client.SetNX(ctx, key, "1", contactRequestPushCapTTL).Result()
+func (ps *PushService) admitContactRequestPush(
+	ctx context.Context,
+	identity messageDispatchAdmissionIdentity,
+	platform string,
+	visible *messaging.Message,
+) (*messaging.Message, func()) {
+	backend := ps.contactRequestPushCap
+	lease, first, err := backend.TryAcquire(ctx, identity)
 	if err == nil && first {
-		return visible
+		return visible, func() {
+			releaseContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := backend.Release(releaseContext, lease); err != nil {
+				pushSentCounter.WithLabelValues("contact_request_cap_release_failed").Inc()
+			}
+		}
 	}
 
 	platform = strings.ToLower(strings.TrimSpace(platform))
@@ -65,5 +72,5 @@ func (cap *contactRequestPushCap) project(
 		contactRequestPushDemotedCounter.WithLabelValues(platform).Inc()
 	}
 	quiet, _ := buildQuietRecoveryPush(platform)
-	return quiet
+	return quiet, nil
 }

@@ -259,7 +259,9 @@ func newControlPlaneStores(
 			stores.Inbox.stickerMetrics = newStickerMetrics(client, cfg.RedisPrefix, time.Now)
 		}
 		if cfg.ContactRequestPushCapEnabled {
-			push.contactRequestPushCap = &contactRequestPushCap{client: client, prefix: cfg.RedisPrefix}
+			push.contactRequestPushCap = newRedisMessageDispatchAdmissionBackend(
+				client, cfg.RedisPrefix, contactRequestPushCapNamespace, contactRequestPushCapTTL,
+			)
 			log.Print("[CONTACT_REQUEST_PUSH_CAP] enabled=true ttl=24h")
 		}
 		return stores, nil

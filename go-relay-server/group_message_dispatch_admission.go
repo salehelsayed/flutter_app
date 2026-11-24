@@ -25,13 +25,14 @@ const (
 )
 
 type messageDispatchAdmissionIdentity struct {
-	direct          bool
-	senderPeerID    string
-	contentDigest   string
-	recipientPeerID string
-	groupID         string
-	messageID       string
-	prehashedKey    string
+	direct             bool
+	contactRequestPair bool
+	senderPeerID       string
+	contentDigest      string
+	recipientPeerID    string
+	groupID            string
+	messageID          string
+	prehashedKey       string
 }
 
 // Group adapters keep their existing API and Redis identity while ordinary

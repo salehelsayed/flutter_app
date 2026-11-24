@@ -99,7 +99,7 @@ type PushService struct {
 	groupMessageDispatchAdmission      groupMessageDispatchAdmissionBackend
 	directMessageDispatchAdmission     messageDispatchAdmissionBackend
 	directQuietRecovery                directQuietRecoveryBackend
-	contactRequestPushCap              *contactRequestPushCap
+	contactRequestPushCap              messageDispatchAdmissionBackend
 }
 
 type pushMessageFactory func() *messaging.Message
@@ -510,17 +510,25 @@ func (ps *PushService) sendPushRouteThroughGateway(
 			ps.sendWithRetry(ctx, nil, target.Route, allowStrictFallback),
 		)
 	}
-	providerMessage := *draft
-	providerMessage.Token = target.Token
-
 	// Provider-unavailable is definitively pre-attempt and must not strand an
 	// admission claim. Preserve sendWithRetry's incumbent metrics/logging while
 	// keeping the exact key available for a later healthy logical adapter.
 	if ps.sender == nil && ps.client == nil {
 		return pushDeliveryResultError(
-			ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback),
+			ps.sendWithRetry(ctx, draft, target.Route, allowStrictFallback),
 		)
 	}
+
+	var onFirstTokenRejection func()
+	if admissionIdentity != nil && admissionIdentity.contactRequestPair {
+		draft, onFirstTokenRejection = ps.admitContactRequestPush(ctx, *admissionIdentity, target.Platform, draft)
+		if draft == nil {
+			return errPushDeliverySuppressed
+		}
+		admissionIdentity = nil
+	}
+	providerMessage := *draft
+	providerMessage.Token = target.Token
 
 	if admissionIdentity != nil && admissionIdentity.direct && ps.directQuietRecovery != nil {
 		unlock := lockDirectRecovery(*admissionIdentity)
@@ -577,7 +585,7 @@ func (ps *PushService) sendPushRouteThroughGateway(
 		// rather than silently consume this message's only notification attempt.
 	}
 
-	result := ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback)
+	result := ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback, onFirstTokenRejection)
 	if admissionLease != nil &&
 		(result == pushDeliveryPermanent || (directAdmission && result != pushDeliveryAccepted)) {
 		releaseContext := ctx
@@ -646,11 +654,7 @@ func (ps *PushService) sendRichPushThroughGatewayWithAdmission(
 				return nil, nil
 			}
 			if len(projectMessage) > 0 && projectMessage[0] != nil {
-				projected := projectMessage[0](draft, platform)
-				if projected == nil {
-					return nil, errPushDeliverySuppressed
-				}
-				return projected, nil
+				return projectMessage[0](draft, platform), nil
 			}
 			return projectPushMessageForPlatform(draft, platform), nil
 		},
@@ -766,7 +770,11 @@ func (ps *PushService) sendSelectedPushThroughGatewayWithAdmission(
 
 		var err error
 		if selectedOpaque {
-			err = ps.mailboxDirtyWithAdmission(ctx, route, admissionIdentity)
+			opaqueAdmission := admissionIdentity
+			if opaqueAdmission != nil && opaqueAdmission.contactRequestPair {
+				opaqueAdmission = nil
+			}
+			err = ps.mailboxDirtyWithAdmission(ctx, route, opaqueAdmission)
 		} else {
 			err = ps.sendRichPushThroughGatewayWithAdmission(
 				ctx,
@@ -1071,16 +1079,15 @@ func (ps *PushService) sendRichNotification(
 
 	projectMessage := []pushMessageProjector{
 		func(draft *messaging.Message, platform string) *messaging.Message {
-			projected := projectRichDirectPushMessageForPlatform(draft, platform, fromPeerID, message, custodyID)
-			if ps.contactRequestPushCap != nil && custodyID != "" && metadata.ShouldNotify &&
-				metadata.RouteType == "contact_request" && (ps.sender != nil || ps.client != nil) {
-				return ps.contactRequestPushCap.project(ctx, fromPeerID, toPeerID, platform, projected)
-			}
-			return projected
+			return projectRichDirectPushMessageForPlatform(draft, platform, fromPeerID, message, custodyID)
 		},
 	}
 	var admissionIdentity *messageDispatchAdmissionIdentity
-	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
+	if ps.contactRequestPushCap != nil && custodyID != "" &&
+		metadata.ShouldNotify && metadata.RouteType == "contact_request" {
+		identity := newContactRequestPushPairIdentity(fromPeerID, toPeerID)
+		admissionIdentity = &identity
+	} else if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
 		admissionIdentity = &identity
 	} else if identity, valid := newThoughtMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
 		admissionIdentity = &identity
@@ -1253,6 +1260,7 @@ func (ps *PushService) sendWithRetry(
 	msg *messaging.Message,
 	route pushRouteLease,
 	allowStrictFallback bool,
+	onFirstTokenRejection ...func(),
 ) pushDeliveryResult {
 	if ps.sender == nil && ps.client == nil {
 		pushSentCounter.WithLabelValues("provider_unavailable").Inc()
@@ -1288,6 +1296,9 @@ func (ps *PushService) sendWithRetry(
 		}
 
 		if reason := permanentPushErrorReason(err); reason != "" {
+			if providerAttempt == 1 && len(onFirstTokenRejection) > 0 && onFirstTokenRejection[0] != nil {
+				onFirstTokenRejection[0]()
+			}
 			revoked, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
 			pushSentCounter.WithLabelValues("invalid_token").Inc()
 			if revokeErr != nil {
