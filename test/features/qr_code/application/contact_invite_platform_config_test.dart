@@ -114,6 +114,30 @@ void main() {
         );
     expect(optOut.map((entry) => _android(entry, 'value')).toList(), ['false']);
   });
+
+  test(
+    'Android invites are consumed before Flutter sees cold or warm intents',
+    () {
+      const root = 'android/app/src/main/kotlin/com/mknoon/app';
+      final activity = File('$root/MainActivity.kt').readAsStringSync();
+      for (final callback in ['onCreate', 'onNewIntent']) {
+        final start = activity.indexOf('override fun $callback(');
+        expect(start, isNonNegative);
+        final forward = activity.indexOf('super.$callback(', start);
+        expect(forward, greaterThan(start));
+        expect(
+          activity.substring(start, forward),
+          contains('contactInviteBridge.consume('),
+          reason:
+              '$callback must sanitize the invite before Flutter plugins see it',
+        );
+      }
+
+      final bridge = File('$root/ContactInviteBridge.kt').readAsStringSync();
+      expect(bridge, contains('intent.action = Intent.ACTION_MAIN'));
+      expect(bridge, contains('intent.setDataAndType(null, null)'));
+    },
+  );
 }
 
 XmlElement _readXml(String path) =>
