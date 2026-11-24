@@ -92,6 +92,7 @@ type activeIdentityReporter struct {
 	ctx                                context.Context
 	attempts                           map[string]*activeIdentityReporterAttempt
 	weeklyAttempts                     map[weeklyReporterAttemptKey]*weeklyReporterAttempt
+	weeklyWake                         chan struct{}
 }
 
 type activeIdentityReporterAttempt struct {
@@ -175,6 +176,7 @@ func (r *activeIdentityReporter) publishDesired(f ActiveIdentityReporterFence, e
 	r.config = nil
 	r.attempts = make(map[string]*activeIdentityReporterAttempt)
 	r.weeklyAttempts = make(map[weeklyReporterAttemptKey]*weeklyReporterAttempt)
+	r.weeklyWake = nil
 	return f, nil
 }
 
@@ -540,6 +542,7 @@ func (r *activeIdentityReporter) close() {
 		r.cancel()
 	}
 	r.config = nil
+	r.weeklyWake = nil
 }
 
 func activeIdentityReporterRestore(raw []byte, today string) (activeIdentityReporterDisk, bool) {

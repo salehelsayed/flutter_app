@@ -106,9 +106,14 @@ func TestBL78WeeklySenderRestoresFeatureOnlyMarkWithoutActivity(t *testing.T) {
 		t.Fatalf("qualifying feature-only mark was refused: %v", err)
 	}
 	h.reopen()
-	h.ready()
 	h.transport.start(h.transportID, []string{b294Address(h.relayA, 4101)})
-	queueWeeklySenderFixture(t, h)
+	h.publish(h.config.Fence, true, false)
+	result, err = b29wCall(t, h, "configure", map[string]any{
+		"enabled": true, "statePath": h.config.StatePath, "rootPrivateKeyBase64": h.config.RootPrivateKeyBase64,
+	})
+	if err != nil || !result.Configured {
+		t.Fatalf("restore configuration was refused: %v", err)
+	}
 	packet := waitWeeklySenderAssertion(t, h, "feature_use_identity_v1")
 	if packet.Week != activitycalendar.Week(h.clock.now()) || !reflect.DeepEqual(packet.Kinds, want) {
 		t.Fatalf("wrong feature-only weekly assertion: %+v", packet)
@@ -155,12 +160,12 @@ func TestBL78WeeklySenderRetiresFeatureMarksAcrossConsentEpoch(t *testing.T) {
 func TestBL78WeeklySenderOneUnsupportedFamilyPreservesOtherAcknowledgements(t *testing.T) {
 	h := b294New(t)
 	h.ready()
-	h.transport.start(h.transportID, []string{b294Address(h.relayA, 4101)})
-	b29wMark(t, h, "chat")
-	result, err := b29wCall(t, h, "markFeatureUse", map[string]any{
-		"kinds": []string{"translation"}, "occurredAtUnixMillis": h.clock.now().UnixMilli(),
-	})
-	if err != nil || !result.Accepted {
+	// Seed both reports before the controlled flushes so this fixture can
+	// check backoff after the two original responses have been processed.
+	if err := h.reporter.markWeekly(h.config.Fence, activitycalendar.Week(h.clock.now()), []string{"chat"}); err != nil {
+		t.Fatalf("engagement mark failed: %v", err)
+	}
+	if err := h.reporter.markFeatureUse(h.config.Fence, h.clock.now().UnixMilli(), []string{"translation"}); err != nil {
 		t.Fatalf("feature mark failed: %v", err)
 	}
 	h.transport.onExchange(func(_ context.Context, _ RelayInfo, raw []byte) ([]byte, error) {
@@ -173,6 +178,7 @@ func TestBL78WeeklySenderOneUnsupportedFamilyPreservesOtherAcknowledgements(t *t
 		}
 		return []byte(b294ACK), nil
 	})
+	h.transport.start(h.transportID, []string{b294Address(h.relayA, 4101)})
 	flush := func() {
 		t.Helper()
 		_ = b294Result(t, h.async(func() error {

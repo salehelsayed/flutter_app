@@ -92,6 +92,9 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 		}
 		err := reporter.configure(ActiveIdentityReporterConfig{Fence: result.Fence, StatePath: request.StatePath, RootPrivateKeyBase64: request.RootPrivateKeyBase64, PreservePendingOnUnarm: request.PreservePendingOnUnarm})
 		result.Configured = *request.Enabled && result.Fence.AccountPeerID != "" && !request.PreservePendingOnUnarm
+		if err == nil && result.Configured {
+			reporter.queueWeekly(result.Fence)
+		}
 		return result, err
 	case "mark", "flush", "weeklyProjection", "markWeekly", "ackWeekly", "markFeatureUse":
 		if request.Enabled != nil || request.StatePath != "" || request.RootPrivateKeyBase64 != "" || request.PreservePendingOnUnarm {
@@ -115,6 +118,9 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 			}
 			err := reporter.markWeekly(result.Fence, request.Week, request.Kinds)
 			result.Accepted = err == nil
+			if result.Accepted {
+				reporter.queueWeekly(result.Fence)
+			}
 			return result, err
 		}
 		if request.Op == "ackWeekly" {
@@ -128,6 +134,9 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 			}
 			err := reporter.markFeatureUse(result.Fence, *request.OccurredAtUnixMillis, request.Kinds)
 			result.Accepted = err == nil
+			if result.Accepted {
+				reporter.queueWeekly(result.Fence)
+			}
 			return result, err
 		}
 		if request.Op == "mark" {
@@ -148,7 +157,7 @@ func (n *Node) ActiveIdentityReporterV1(request ActiveIdentityReporterLocalReque
 		}
 		// This is a local queue receipt, never a claim about a relay ACK.
 		go func() { _ = reporter.flush(result.Fence) }()
-		go reporter.flushWeekly(result.Fence)
+		reporter.queueWeekly(result.Fence)
 		result.Queued = true
 		return result, nil
 	default:
