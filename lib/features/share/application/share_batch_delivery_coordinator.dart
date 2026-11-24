@@ -609,14 +609,13 @@ class DefaultShareBatchDeliveryCoordinator
       return const ShareBatchDeliveryResult(results: []);
     }
 
+    final bindPhotoVideo = activityReporter
+        ?.captureFeatureUseBeforeIdentityLookup(WeeklyFeatureUse.photoVideo);
     final identity = await identityRepository.loadIdentity();
     if (identity == null) {
       return _failAllTargets(targets, 'Identity unavailable.');
     }
-    final markPhotoVideo = activityReporter?.captureFeatureUse(
-      WeeklyFeatureUse.photoVideo,
-      expectedAccountPeerId: identity.peerId,
-    );
+    final markPhotoVideo = bindPhotoVideo?.call(identity.peerId);
 
     final isInternalForward =
         shareIntent.forwardProvenance != null ||
@@ -1097,14 +1096,13 @@ class DefaultShareBatchDeliveryCoordinator
       return failAll('Source media is unavailable.');
     }
 
+    final bindPhotoVideo = activityReporter
+        ?.captureFeatureUseBeforeIdentityLookup(WeeklyFeatureUse.photoVideo);
     final identity = await identityRepository.loadIdentity();
     if (identity == null) {
       return failAll('Identity unavailable.');
     }
-    final markPhotoVideo = activityReporter?.captureFeatureUse(
-      WeeklyFeatureUse.photoVideo,
-      expectedAccountPeerId: identity.peerId,
-    );
+    final markPhotoVideo = bindPhotoVideo?.call(identity.peerId);
 
     final contactAdmissions = await _preflightDirectMediaAdmissions(
       hasFiles: true,
@@ -1246,14 +1244,13 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
 
+    final bindPhotoVideo = activityReporter
+        ?.captureFeatureUseBeforeIdentityLookup(WeeklyFeatureUse.photoVideo);
     final identity = await identityRepository.loadIdentity();
     if (identity == null) {
       return failAll('Identity unavailable.');
     }
-    final markPhotoVideo = activityReporter?.captureFeatureUse(
-      WeeklyFeatureUse.photoVideo,
-      expectedAccountPeerId: identity.peerId,
-    );
+    final markPhotoVideo = bindPhotoVideo?.call(identity.peerId);
     final groupRepo = groupRepository;
     final groupMsgRepo = groupMessageRepository;
     if (groupRepo == null || groupMsgRepo == null) {

@@ -552,6 +552,17 @@ final class ActiveIdentityReporter {
     return () => markFeatureUse(capture, feature);
   }
 
+  /// Captures the current owner before loading the producer's identity.
+  void Function()? Function(String)? captureFeatureUseBeforeIdentityLookup(
+    WeeklyFeatureUse feature,
+  ) {
+    final account = _identity?.account;
+    if (account == null) return null;
+    final mark = captureFeatureUse(feature, expectedAccountPeerId: account);
+    if (mark == null) return null;
+    return (loadedAccountPeerId) => loadedAccountPeerId == account ? mark : null;
+  }
+
   void markFeatureUse(
     ActiveIdentityReporterCapture? capture,
     WeeklyFeatureUse feature,
