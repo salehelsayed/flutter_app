@@ -210,8 +210,52 @@ void main() {
       expect(a.bridge.encrypts, hasLength(1));
       expect((await a.row(requestId))['envelope_json'], committed);
       expect(a.inbox(), hasLength(1));
+      final wire = jsonDecode(a.inbox().single) as Map<String, dynamic>;
+      expect(wire['type'], 'contact_request');
+      expect(wire['intent'], 'key_exchange_retry');
+      expect(wire['reciprocalReply'], isTrue);
     },
   );
+
+  test('a committed legacy repair reply is replayed quietly with its ID intact',
+      () async {
+    const limit = Duration(seconds: 4);
+    var now = _t0;
+    a = _Replier(a.db, now: () => now);
+    a.network.inboxDisabled = true;
+    final requestId = await a.claim().timeout(limit);
+    final worker = a.worker();
+    await worker.drain().timeout(limit);
+
+    final row = await a.row(requestId).timeout(limit);
+    final committed = jsonDecode(row['envelope_json']! as String)
+        as Map<String, dynamic>;
+    final legacyWire = jsonDecode(committed['messageJson']! as String)
+        as Map<String, dynamic>
+      ..['intent'] = 'new_request'
+      ..remove('reciprocalReply');
+    committed['messageJson'] = jsonEncode(legacyWire);
+    final persisted = jsonEncode(committed);
+    await a.db.update(
+      'contact_repair_requests',
+      {'envelope_json': persisted},
+      where: 'request_id = ?',
+      whereArgs: [requestId],
+    ).timeout(limit);
+
+    now += const Duration(minutes: 1).inMilliseconds;
+    a.network.inboxDisabled = false;
+    await worker.drain().timeout(limit);
+
+    final sent = jsonDecode(a.inbox().single) as Map<String, dynamic>;
+    expect(sent, {
+      ...legacyWire,
+      'intent': 'key_exchange_retry',
+      'reciprocalReply': true,
+    });
+    expect((await a.row(requestId).timeout(limit))['envelope_json'], persisted);
+    expect(a.bridge.encrypts, hasLength(1));
+  });
 
   test(
     'builds one signed repair reply to the stored key and completes',

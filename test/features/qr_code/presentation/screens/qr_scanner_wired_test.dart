@@ -501,6 +501,7 @@ void main() {
       final envelope = jsonDecode(storedMessage!) as Map<String, dynamic>;
       expect(envelope['type'], 'contact_request');
       expect(envelope['version'], '2');
+      expect(envelope['intent'], 'new_request');
       expect(envelope['encrypted'], {
         'ephemeralPublicKey': 'ephPubBase64',
         'ciphertext': 'ctBase64',
@@ -567,7 +568,8 @@ void main() {
                 as Map<String, dynamic>;
         expect(envelope['type'], 'contact_request');
         expect(envelope['version'], '2');
-        expect(envelope['intent'], 'new_request');
+        expect(envelope['intent'], 'key_exchange_retry');
+        expect(envelope['reciprocalReply'], isTrue);
         expect(_contactRequestRecipientKeys(bridge), [
           _fx('existing').publicKey,
         ]);
