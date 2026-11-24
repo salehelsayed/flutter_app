@@ -180,7 +180,8 @@ const _expectedGroupApiFingerprint = '6d5b10df';
 // BL-61 supplies only the call-origin composer suggestion action here.
 // BL-16 routes the header tap through the call chooser and tells the screen
 // when the button offers a media choice.
-const _expectedDirectHandoffFingerprint = 'dfda62d9';
+// BL-78 adds the account-bound captureFeatureUse callback for visible results.
+const _expectedDirectHandoffFingerprint = 'b557143b';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
