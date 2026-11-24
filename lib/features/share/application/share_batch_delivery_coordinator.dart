@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
 import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/media_mime.dart';
@@ -246,11 +247,14 @@ class ShareBatchTargetResult {
   final ShareBatchTargetStatus status;
   final String detail;
 
+  final bool _wasAlreadySent;
+
   const ShareBatchTargetResult({
     required this.target,
     required this.status,
     required this.detail,
-  });
+    bool wasAlreadySent = false,
+  }) : _wasAlreadySent = wasAlreadySent;
 }
 
 class ShareBatchDeliveryResult {
@@ -365,6 +369,7 @@ class DefaultShareBatchDeliveryCoordinator
   groupInviteDeliveryAttemptRepository;
   final Bridge bridge;
   final P2PService p2pService;
+  final ActiveIdentityReporter? activityReporter;
   final MediaFileManager mediaFileManager;
   final ImageProcessor imageProcessor;
   final ImageQualityPreference qualityPreference;
@@ -396,6 +401,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.groupInviteDeliveryAttemptRepository,
     required this.bridge,
     required this.p2pService,
+    this.activityReporter,
     required this.mediaFileManager,
     required this.imageProcessor,
     this.qualityPreference = ImageQualityPreference.compressed,
@@ -603,6 +609,15 @@ class DefaultShareBatchDeliveryCoordinator
       return const ShareBatchDeliveryResult(results: []);
     }
 
+    final identity = await identityRepository.loadIdentity();
+    if (identity == null) {
+      return _failAllTargets(targets, 'Identity unavailable.');
+    }
+    final markPhotoVideo = activityReporter?.captureFeatureUse(
+      WeeklyFeatureUse.photoVideo,
+      expectedAccountPeerId: identity.peerId,
+    );
+
     final isInternalForward =
         shareIntent.forwardProvenance != null ||
         shareIntent.directForwardSourceAuthority != null;
@@ -614,14 +629,12 @@ class DefaultShareBatchDeliveryCoordinator
         shareIntent: shareIntent,
         targets: targets,
         onProgress: onProgress,
+        identity: identity,
+        markPhotoVideo: markPhotoVideo,
         externalOrdinaryShare: true,
       );
     }
 
-    final identity = await identityRepository.loadIdentity();
-    if (identity == null) {
-      return _failAllTargets(targets, 'Identity unavailable.');
-    }
     final targetResolutions = await _authorizeInternalForwardTargets(
       identity: identity,
       targets: targets,
@@ -641,7 +654,8 @@ class DefaultShareBatchDeliveryCoordinator
         shareIntent: shareIntent,
         targets: targets,
         onProgress: onProgress,
-        preloadedIdentity: identity,
+        identity: identity,
+        markPhotoVideo: markPhotoVideo,
         internalForwardTargetResolutions: targetResolutions,
       );
     }
@@ -699,7 +713,8 @@ class DefaultShareBatchDeliveryCoordinator
         shareIntent: lease.shareIntent,
         targets: targets,
         onProgress: onProgress,
-        preloadedIdentity: identity,
+        identity: identity,
+        markPhotoVideo: markPhotoVideo,
         internalForwardTargetResolutions: targetResolutions,
         // 350: the immutable capture above IS the received-direct source gate.
         // Only after it succeeds (and clears the source authority) may a
@@ -717,7 +732,8 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
     ShareBatchDeliveryProgressCallback? onProgress,
-    IdentityModel? preloadedIdentity,
+    required IdentityModel identity,
+    required void Function()? markPhotoVideo,
     List<_InternalForwardTargetResolution>? internalForwardTargetResolutions,
     bool externalOrdinaryShare = false,
     bool sourceGatedInternalForward = false,
@@ -725,22 +741,6 @@ class DefaultShareBatchDeliveryCoordinator
     Map<String, GroupContentAuthoringAdmission>?
     precomputedGroupMediaAdmissions,
   }) async {
-    final identity =
-        preloadedIdentity ?? await identityRepository.loadIdentity();
-    if (identity == null) {
-      return ShareBatchDeliveryResult(
-        results: targets
-            .map(
-              (target) => ShareBatchTargetResult(
-                target: target,
-                status: ShareBatchTargetStatus.failed,
-                detail: 'Identity unavailable.',
-              ),
-            )
-            .toList(growable: false),
-      );
-    }
-
     final targetPlan =
         internalForwardTargetResolutions ??
         targets
@@ -934,6 +934,7 @@ class DefaultShareBatchDeliveryCoordinator
       await progressSubscription?.cancel();
     }
 
+    _markSentPhotoVideo(markPhotoVideo, processedMedia, results);
     return ShareBatchDeliveryResult(
       results: results,
       skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
@@ -941,6 +942,28 @@ class DefaultShareBatchDeliveryCoordinator
       skippedUnsupportedDocumentCount:
           processedBatch.skippedUnsupportedDocumentCount,
     );
+  }
+
+  void _markSentPhotoVideo(
+    void Function()? markPhotoVideo,
+    List<PendingComposerMedia> media,
+    List<ShareBatchTargetResult> results,
+  ) {
+    if (markPhotoVideo == null ||
+        !results.any(
+          (result) =>
+              result.status == ShareBatchTargetStatus.sent &&
+              !result._wasAlreadySent,
+        )) {
+      return;
+    }
+    if (media.any((item) {
+      final mime = mimeFromPath(item.file.path);
+      return mime.startsWith('video/') ||
+          (mime.startsWith('image/') && mime != 'image/gif');
+    })) {
+      markPhotoVideo();
+    }
   }
 
   ShareBatchDeliveryResult _failAllTargets(
@@ -1078,6 +1101,10 @@ class DefaultShareBatchDeliveryCoordinator
     if (identity == null) {
       return failAll('Identity unavailable.');
     }
+    final markPhotoVideo = activityReporter?.captureFeatureUse(
+      WeeklyFeatureUse.photoVideo,
+      expectedAccountPeerId: identity.peerId,
+    );
 
     final contactAdmissions = await _preflightDirectMediaAdmissions(
       hasFiles: true,
@@ -1185,6 +1212,7 @@ class DefaultShareBatchDeliveryCoordinator
       await progressSubscription?.cancel();
     }
 
+    _markSentPhotoVideo(markPhotoVideo, processedMedia, results);
     return ShareBatchDeliveryResult(
       results: results,
       skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
@@ -1222,6 +1250,10 @@ class DefaultShareBatchDeliveryCoordinator
     if (identity == null) {
       return failAll('Identity unavailable.');
     }
+    final markPhotoVideo = activityReporter?.captureFeatureUse(
+      WeeklyFeatureUse.photoVideo,
+      expectedAccountPeerId: identity.peerId,
+    );
     final groupRepo = groupRepository;
     final groupMsgRepo = groupMessageRepository;
     if (groupRepo == null || groupMsgRepo == null) {
@@ -1363,6 +1395,7 @@ class DefaultShareBatchDeliveryCoordinator
         );
       }
 
+      _markSentPhotoVideo(markPhotoVideo, processedMedia, results);
       return ShareBatchDeliveryResult(
         results: results,
         skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
@@ -2442,6 +2475,7 @@ class DefaultShareBatchDeliveryCoordinator
               ? ShareBatchTargetStatus.sent
               : ShareBatchTargetStatus.queued,
           detail: alreadySent ? 'Sent.' : 'Saved locally for existing retry.',
+          wasAlreadySent: alreadySent,
         );
       }
       if (processedMedia.isNotEmpty &&

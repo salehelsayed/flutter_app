@@ -1408,6 +1408,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       p2pService: widget.p2pService,
       mediaFileManager: widget.mediaFileManager,
       imageProcessor: widget.imageProcessor,
+      activityReporter: widget.activityReporter,
       secureKeyStore: widget.secureKeyStore,
       conversationTracker: widget.conversationTracker,
       audioRecorderService: widget.audioRecorderService,

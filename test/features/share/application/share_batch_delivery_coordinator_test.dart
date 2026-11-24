@@ -27,6 +27,7 @@ import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_h
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -201,6 +202,128 @@ class _DissolveAfterFirstGroupUploadBridge extends PassthroughCryptoBridge {
 }
 
 void main() {
+
+  test(
+    'weekly photo/video requires a sent share in the original consent epoch',
+    () async {
+      const limit = Duration(seconds: 2);
+      const command = 'active_identity_reporter_v1';
+      final bridge = FakeBridge();
+      await bridge.initialize().timeout(limit);
+      final identity = _makeIdentity();
+      final reporter = ActiveIdentityReporter(statePath: '/tmp/share-use.json');
+      addTearDown(() => reporter.dispose().timeout(limit));
+      reporter.attachBridge(bridge);
+      reporter.observeIdentity(
+        accountPeerId: identity.peerId,
+        rootPrivateKeyBase64: identity.privateKey,
+        profileBinding: 'v1:' + List.filled(64, 'a').join(),
+      );
+
+      Future<void> setConsent(bool enabled, int epoch) {
+        bridge.responses[command] = {
+          'ok': true,
+          'data': {
+            'configured': enabled,
+            'revision': epoch,
+            'consentEpoch': epoch,
+          },
+        };
+        return reporter
+            .observeConsent((enabled: enabled, consentEpoch: epoch))
+            .timeout(limit);
+      }
+
+      await setConsent(true, 1);
+      final target = ShareTargetSelection.contact(
+        _makeMlKemContact('recipient', 'Recipient'),
+      );
+      var status = ShareBatchTargetStatus.sent;
+      var replaceConsentDuringSend = false;
+      var wasAlreadySent = false;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(identity),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        activityReporter: reporter,
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (intent) async => ProcessedShareMediaBatch(
+          processedMedia: [
+            PendingComposerMedia(
+              file: File(intent.filePaths.single),
+              budgetBytes: 50,
+            ),
+          ],
+        ),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              if (replaceConsentDuringSend) {
+                await setConsent(false, 2);
+                await setConsent(true, 3);
+              }
+              return ShareBatchTargetResult(
+                target: target,
+                status: status,
+                detail: '',
+                wasAlreadySent: wasAlreadySent,
+              );
+            },
+      );
+
+      Future<List<Map<String, dynamic>>> share(String extension) async {
+        bridge.sentMessages.clear();
+        final result = await coordinator
+            .deliver(
+              shareIntent: ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: ['/tmp/shared.$extension'],
+              ),
+              targets: [target],
+            )
+            .timeout(limit);
+        expect(result.results.single.status, status);
+        await Future<void>.delayed(Duration.zero).timeout(limit);
+        return bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((envelope) => envelope['cmd'] == command)
+            .map((envelope) => envelope['payload'] as Map<String, dynamic>)
+            .where((payload) => payload['op'] != 'configure')
+            .toList();
+      }
+
+      status = ShareBatchTargetStatus.queued;
+      expect(await share('jpg'), isEmpty);
+      status = ShareBatchTargetStatus.failed;
+      expect(await share('mp4'), isEmpty);
+      status = ShareBatchTargetStatus.sent;
+      expect(await share('gif'), isEmpty);
+      expect(await share('m4a'), isEmpty);
+      for (final extension in ['jpg', 'mp4']) {
+        final mark = (await share(extension)).single;
+        expect(mark['op'], 'markFeatureUse');
+        expect(mark['kinds'], ['photo_video']);
+        expect(mark['consentEpoch'], 1);
+      }
+      wasAlreadySent = true;
+      expect(await share('jpg'), isEmpty);
+      wasAlreadySent = false;
+      replaceConsentDuringSend = true;
+      expect(await share('jpg'), isEmpty);
+    },
+  );
+
   test('does nothing when no targets are selected', () async {
     final identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
     var processCallCount = 0;

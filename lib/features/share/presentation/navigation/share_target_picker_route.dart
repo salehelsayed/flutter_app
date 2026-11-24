@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -37,6 +38,7 @@ Route<void> buildShareTargetPickerRoute({
   required P2PService p2pService,
   required MediaFileManager mediaFileManager,
   required ImageProcessor imageProcessor,
+  ActiveIdentityReporter? activityReporter,
   SecureKeyStore? secureKeyStore,
   ActiveConversationTracker? conversationTracker,
   AudioRecorderService? audioRecorderService,
@@ -66,6 +68,7 @@ Route<void> buildShareTargetPickerRoute({
       p2pService: p2pService,
       mediaFileManager: mediaFileManager,
       imageProcessor: imageProcessor,
+      activityReporter: activityReporter,
       secureKeyStore: secureKeyStore,
       conversationTracker: conversationTracker,
       audioRecorderService: audioRecorderService,

@@ -7599,6 +7599,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         p2pService: widget.p2pService,
         mediaFileManager: mediaFileManager,
         imageProcessor: imageProcessor,
+        activityReporter: widget.activityReporter,
         groupRepository: widget.groupRepo,
         groupMessageRepository: widget.msgRepo,
         groupInviteDeliveryAttemptRepository: widget.inviteDeliveryAttemptRepo,
@@ -7665,6 +7666,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       p2pService: widget.p2pService,
       mediaFileManager: mediaFileManager,
       imageProcessor: widget.imageProcessor!,
+      activityReporter: widget.activityReporter,
       shareStoredOfflinePromise: AppLocalizations.of(
         context,
       )!.share_stored_offline_promise,

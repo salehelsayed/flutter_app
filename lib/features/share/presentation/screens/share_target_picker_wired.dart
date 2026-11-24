@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -71,6 +72,7 @@ class ShareTargetPickerWired extends StatefulWidget {
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final ShareBatchDeliveryCoordinator? batchShareCoordinator;
+  final ActiveIdentityReporter? activityReporter;
   final AppShellController? appShellController;
   final Future<void> Function(ShareBatchDeliveryResult? result)? onClose;
   final Future<void> Function()? preSendReady;
@@ -109,6 +111,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.batchShareCoordinator,
+    this.activityReporter,
     this.appShellController,
     this.onClose,
     this.preSendReady,
@@ -565,6 +568,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           imageProcessor: widget.imageProcessor,
           qualityPreference: _qualityPreference,
           videoQualityPreference: _videoQualityPreference,
+          activityReporter: widget.activityReporter,
           directEventFanoutResolver: widget.directEventFanoutResolver,
           shareStoredOfflinePromise: AppLocalizations.of(
             context,
