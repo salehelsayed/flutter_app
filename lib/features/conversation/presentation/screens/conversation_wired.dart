@@ -8260,12 +8260,6 @@ class _ConversationWiredState extends State<ConversationWired>
         ? const Color(0xFFB4232F)
         : const Color(0xFFEF4444);
 
-    final videoCapability = widget.outgoingCallCapability;
-    final showVideo =
-        !_contact.isBlocked &&
-        _outgoingVideoCallContactAvailable &&
-        videoCapability is OutgoingVideoCallCapability &&
-        videoCapability.isOutgoingVideoCallAvailable;
     showMenu<String>(
       context: context,
       position: position,
@@ -8275,32 +8269,6 @@ class _ConversationWiredState extends State<ConversationWired>
         side: BorderSide(color: menuBorder),
       ),
       items: [
-        if (showVideo)
-          PopupMenuItem<String>(
-            key: const ValueKey('conversation-video-call-action'),
-            value: 'video_call',
-            enabled: !_outgoingCallStartInFlight,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.videocam_outlined,
-                  size: 18,
-                  color: readable.textPrimary,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    l10n.call_video_status_video,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: readable.textPrimary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         if (!_contact.isBlocked && _hasOtherFriends)
           PopupMenuItem<String>(
             value: 'introduce',
@@ -8384,11 +8352,7 @@ class _ConversationWiredState extends State<ConversationWired>
         ),
       ],
     ).then((value) {
-      if (value == 'video_call') {
-        if (mounted && videoCapability is OutgoingVideoCallCapability) {
-          unawaited(_startOutgoingCall(videoCapability, video: true));
-        }
-      } else if (value == 'introduce') {
+      if (value == 'introduce') {
         _onIntroduce();
       } else if (value == 'shared_media') {
         _openSharedMediaLibrary();
@@ -8960,6 +8924,65 @@ class _ConversationWiredState extends State<ConversationWired>
         final latest = await history.recentCallsForContact(row.contactPeerId);
         return latest.isNotEmpty && latest.first.callId.value == row.callId;
       },
+    );
+  }
+
+  bool get _outgoingCallOffersMediaChoice {
+    final capability = widget.outgoingCallCapability;
+    return !_contact.isBlocked &&
+        _outgoingVideoCallContactAvailable &&
+        capability is OutgoingVideoCallCapability &&
+        capability.isOutgoingVideoCallAvailable;
+  }
+
+  Future<void> _chooseOutgoingCall(OutgoingCallCapability capability) async {
+    if (!mounted || !identical(capability, widget.outgoingCallCapability)) {
+      return;
+    }
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return;
+    if (_outgoingCallStartInFlight || !_outgoingCallOffersMediaChoice) {
+      await _startOutgoingCall(capability);
+      return;
+    }
+
+    final contactPeerId = widget.contact.peerId;
+    final l10n = AppLocalizations.of(context)!;
+    final selection = await showDialog<CallMediaKind>(
+      context: context,
+      useRootNavigator: false,
+      builder: (dialogContext) {
+        final dialogRoute = ModalRoute.of(dialogContext);
+        void select(CallMediaKind media) {
+          if (dialogRoute != null && dialogRoute.isCurrent) {
+            dialogRoute.navigator?.pop(media);
+          }
+        }
+
+        return SimpleDialog(
+          children: [
+            SimpleDialogOption(
+              onPressed: () => select(CallMediaKind.audio),
+              child: Text(l10n.call_row_voice_call),
+            ),
+            SimpleDialogOption(
+              onPressed: () => select(CallMediaKind.video),
+              child: Text(l10n.call_video_status_video),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted ||
+        selection == null ||
+        !route.isCurrent ||
+        contactPeerId != widget.contact.peerId ||
+        contactPeerId != _contact.peerId) {
+      return;
+    }
+    await _startOutgoingCall(
+      capability,
+      video: selection == CallMediaKind.video,
     );
   }
 
@@ -9657,7 +9680,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 const UnavailableDirectContactDeviceTrust(),
           ),
           onCall: outgoingCallAvailable && outgoingCallCapability != null
-              ? () => unawaited(_startOutgoingCall(outgoingCallCapability))
+              ? () => unawaited(_chooseOutgoingCall(outgoingCallCapability))
               : null,
           // A cached negative is advisory. A new user tap can recheck current
           // authority; only the fresh, successful preflight may place a call.
@@ -9672,6 +9695,7 @@ class _ConversationWiredState extends State<ConversationWired>
           showCallAction: outgoingCallCapability != null,
           callActionEnabled:
               outgoingCallAvailable && !_outgoingCallStartInFlight,
+          callActionOffersMediaChoice: _outgoingCallOffersMediaChoice,
           callActionInFlight: _outgoingCallStartInFlight,
           callStartingMessage: _outgoingCallIsVideo
               ? AppLocalizations.of(context)!.call_video_entry_starting

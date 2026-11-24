@@ -125,6 +125,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  Future<void> chooser(WidgetTester tester) async {
+    const bound = Duration(seconds: 3);
+    await tester.tap(find.byIcon(Icons.call_outlined)).timeout(bound);
+    await tester.pump().timeout(bound);
+    await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+  }
+
   Future<void> cleanup(WidgetTester tester) =>
       tester.pumpWidget(const SizedBox.shrink());
 
@@ -153,39 +160,71 @@ void main() {
   );
 
   testWidgets(
-    'U6-entry passive video availability sends nothing and exposes exact action',
+    'U6-entry passive availability lets the header start video once',
     (tester) async {
+      const bound = Duration(seconds: 3);
       try {
         await mount(tester);
         expect(calls.videoChecks, [_peer]);
         expect(calls.videoStarts, isEmpty);
         expect(calls.audioStarts, isEmpty);
-        await menu(tester);
+        expect(find.byTooltip('Voice call / Video call'), findsOneWidget);
+        await chooser(tester).timeout(bound);
         expect(find.text('Video call'), findsOneWidget);
-        await tester.tap(find.text('Video call'));
-        await tester.pump(const Duration(milliseconds: 500));
+        await tester.tap(find.text('Video call')).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
         expect(calls.videoStarts, [_peer]);
         expect(calls.audioStarts, isEmpty);
         expect(calls.videoChecks, [_peer, _peer]);
+        await menu(tester).timeout(bound);
+        expect(find.text('Video call'), findsNothing);
       } finally {
         await cleanup(tester);
       }
     },
   );
 
+  testWidgets('dismissed choice does nothing and Voice call starts audio', (
+    tester,
+  ) async {
+    const bound = Duration(seconds: 3);
+    try {
+      await mount(tester).timeout(bound);
+      await chooser(tester).timeout(bound);
+      await tester.binding.handlePopRoute().timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+      expect(find.text('Video call'), findsNothing);
+      expect(calls.audioStarts, isEmpty);
+      expect(calls.videoStarts, isEmpty);
+
+      await chooser(tester).timeout(bound);
+      await tester.tap(find.text('Voice call')).timeout(bound);
+      await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
+      expect(calls.audioStarts, [_peer]);
+      expect(calls.videoStarts, isEmpty);
+    } finally {
+      await cleanup(tester).timeout(bound);
+    }
+  });
+
   for (final reason in ['gate', 'endpoint']) {
     testWidgets(
-      'U6-entry unavailable $reason hides video and preserves audio',
+      'U6-entry unavailable $reason keeps the header a direct audio action',
       (tester) async {
+        const bound = Duration(seconds: 3);
         calls.videoGate = reason != 'gate';
         calls.videoContact = reason != 'endpoint';
         try {
           await mount(tester);
-          await menu(tester);
-          expect(find.text('Video call'), findsNothing);
-          expect(find.byIcon(Icons.call_outlined), findsOneWidget);
           expect(calls.videoStarts, isEmpty);
           expect(calls.audioStarts, isEmpty);
+          expect(find.byTooltip('Start voice call'), findsOneWidget);
+          await chooser(tester).timeout(bound);
+          expect(find.text('Voice call'), findsNothing);
+          expect(find.text('Video call'), findsNothing);
+          expect(calls.audioStarts, [_peer]);
+          expect(calls.videoStarts, isEmpty);
         } finally {
           await cleanup(tester);
         }
@@ -193,12 +232,12 @@ void main() {
     );
   }
 
-  testWidgets('U6-entry stale menu cannot bypass a withdrawn video gate', (
+  testWidgets('U6-entry stale choice cannot bypass a withdrawn video gate', (
     tester,
   ) async {
     try {
       await mount(tester);
-      await menu(tester);
+      await chooser(tester);
       expect(find.text('Video call'), findsOneWidget);
       calls.videoGate = false;
       await tester.tap(find.text('Video call'));
@@ -223,15 +262,16 @@ void main() {
         final header = tester.widget<ConversationHeader>(
           find.byType(ConversationHeader),
         );
-        await menu(tester);
+        await chooser(tester);
         expect(find.text('Video call'), findsOneWidget);
         calls.nextVideoCheck = pending;
         await tester.tap(find.text('Video call'));
         await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byTooltip('Starting video call'), findsOneWidget);
+        expect(find.byTooltip('Starting video call'), findsOneWidget);
         header.onCall!();
         await tester.pump();
         expect(calls.audioStarts, isEmpty);
+        expect(find.text('Voice call'), findsNothing);
         pending.complete(true);
         await tester.pump(const Duration(milliseconds: 500));
         expect(calls.videoStarts, [_peer]);
@@ -249,7 +289,7 @@ void main() {
       calls.result = OutgoingCallStartResult.failed;
       try {
         await mount(tester);
-        await menu(tester);
+        await chooser(tester);
         expect(find.text('Video call'), findsOneWidget);
         await tester.tap(find.text('Video call'));
         await tester.pump(const Duration(milliseconds: 500));

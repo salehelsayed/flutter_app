@@ -178,7 +178,9 @@ const _expectedGroupApiFingerprint = '6d5b10df';
 // Wired APIs and the group handoff are unchanged; without it the fingerprint
 // is the previous 80f91789.
 // BL-61 supplies only the call-origin composer suggestion action here.
-const _expectedDirectHandoffFingerprint = '25b88d3e';
+// BL-16 routes the header tap through the call chooser and tells the screen
+// when the button offers a media choice.
+const _expectedDirectHandoffFingerprint = 'dfda62d9';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
@@ -885,7 +887,11 @@ void main() {
     expect(
       directHandoffArguments['onCall'],
       'outgoingCallAvailable && outgoingCallCapability != null ? () => '
-      'unawaited(_startOutgoingCall(outgoingCallCapability)) : null',
+      'unawaited(_chooseOutgoingCall(outgoingCallCapability)) : null',
+    );
+    expect(
+      directHandoffArguments['callActionOffersMediaChoice'],
+      '_outgoingCallOffersMediaChoice',
     );
     expect(
       directHandoffArguments['callActionInFlight'],

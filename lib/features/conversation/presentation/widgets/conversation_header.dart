@@ -25,6 +25,7 @@ class ConversationHeader extends StatelessWidget {
   final Widget? translateAction;
   final bool showCallAction;
   final bool callActionEnabled;
+  final bool callActionOffersMediaChoice;
   final bool callActionInFlight;
   final String callStartingMessage;
   final String callUnavailableMessage;
@@ -46,6 +47,7 @@ class ConversationHeader extends StatelessWidget {
     this.translateAction,
     this.showCallAction = false,
     this.callActionEnabled = false,
+    this.callActionOffersMediaChoice = false,
     this.callActionInFlight = false,
     this.callStartingMessage = '',
     this.callUnavailableMessage = '',
@@ -162,6 +164,7 @@ class ConversationHeader extends StatelessWidget {
                     if (showCallAction)
                       _ConversationCallAction(
                         enabled: callActionEnabled && onCall != null,
+                        offersMediaChoice: callActionOffersMediaChoice,
                         inFlight: callActionInFlight,
                         startingMessage: callStartingMessage,
                         unavailableMessage: callUnavailableMessage,
@@ -241,6 +244,7 @@ class ConversationHeader extends StatelessWidget {
 class _ConversationCallAction extends StatelessWidget {
   const _ConversationCallAction({
     required this.enabled,
+    required this.offersMediaChoice,
     required this.inFlight,
     required this.startingMessage,
     required this.unavailableMessage,
@@ -249,6 +253,7 @@ class _ConversationCallAction extends StatelessWidget {
   });
 
   final bool enabled;
+  final bool offersMediaChoice;
   final bool inFlight;
   final String startingMessage;
   final String unavailableMessage;
@@ -265,13 +270,17 @@ class _ConversationCallAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final canRetry = !inFlight && onRetry != null;
+    final enabledLabel = offersMediaChoice
+        ? '${l10n.call_row_voice_call} / ${l10n.call_video_status_video}'
+        : l10n.action_start_voice_call;
     final tooltip = inFlight
         ? startingMessage.isEmpty
-              ? AppLocalizations.of(context)!.action_starting_voice_call
+              ? l10n.action_starting_voice_call
               : startingMessage
         : enabled
-        ? AppLocalizations.of(context)!.action_start_voice_call
+        ? enabledLabel
         : _truthfulUnavailableMessage(context);
 
     return Semantics(
@@ -279,9 +288,7 @@ class _ConversationCallAction extends StatelessWidget {
       identifier: 'chat_call_button',
       button: true,
       enabled: enabled || canRetry,
-      label: enabled
-          ? AppLocalizations.of(context)!.action_start_voice_call
-          : tooltip,
+      label: enabled ? enabledLabel : tooltip,
       onTap: enabled
           ? onCall
           : canRetry

@@ -323,6 +323,7 @@ class ConversationScreen extends StatefulWidget {
   final void Function(ConversationCallTimelineEntry entry)? onCallBack;
   final bool showCallAction;
   final bool callActionEnabled;
+  final bool callActionOffersMediaChoice;
   final bool callActionInFlight;
   final String callStartingMessage;
   final String callUnavailableMessage;
@@ -463,6 +464,7 @@ class ConversationScreen extends StatefulWidget {
     this.onCallBack,
     this.showCallAction = false,
     this.callActionEnabled = false,
+    this.callActionOffersMediaChoice = false,
     this.callActionInFlight = false,
     this.callStartingMessage = '',
     this.callUnavailableMessage = '',
@@ -987,6 +989,8 @@ class _ConversationScreenState extends State<ConversationScreen>
                   callActionInFlight:
                       widget.callActionInFlight ||
                       (!widget.callActionEnabled && widget.onCall != null),
+                  callActionOffersMediaChoice:
+                      widget.callActionOffersMediaChoice,
                   callUnavailableMessage: widget.callUnavailableMessage.isEmpty
                       ? AppLocalizations.of(context)!.voice_call_unavailable
                       : widget.callUnavailableMessage,
