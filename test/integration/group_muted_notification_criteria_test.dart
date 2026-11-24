@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/group_muted_notification_android_criteria.dart';
@@ -956,28 +957,37 @@ void main() {
       expect(calls, 2);
     });
 
-    test('never accepts a SHOWN read after the deadline (Codex probe)',
-        () async {
-      final incomplete =
-          log(received: <String>['warm', 'graded'], shown: <String>['warm']);
-      final complete = log(
-        received: <String>['warm', 'graded'],
-        shown: <String>['warm', 'graded'],
-      );
-      var calls = 0;
-      final started = DateTime.now();
-      final result = await pollKilledTextCardPushBinding(
-        readFlowLog: () async => calls++ == 0 ? incomplete : complete,
-        deadline: started.add(const Duration(milliseconds: 25)),
-      );
+    test('never accepts a SHOWN read after the deadline (Codex probe)', () {
+      fakeAsync((async) {
+        final incomplete = log(
+          received: <String>['warm', 'graded'],
+          shown: <String>['warm'],
+        );
+        final complete = log(
+          received: <String>['warm', 'graded'],
+          shown: <String>['warm', 'graded'],
+        );
+        final clock = async.getClock(DateTime.utc(2026, 1, 1));
+        KilledTextCardPollResult? result;
+        var calls = 0;
+        pollKilledTextCardPushBinding(
+          readFlowLog: () => calls++ == 0
+              ? Future.value(incomplete)
+              : Future.delayed(const Duration(milliseconds: 1), () => complete),
+          deadline: clock.now().add(const Duration(milliseconds: 25)),
+          now: clock.now,
+        ).then((value) => result = value);
 
-      expect(result.binding, isNull);
-      expect(
-        DateTime.now().difference(started),
-        lessThan(const Duration(milliseconds: 400)),
-        reason: 'the wait is capped to the remaining time, not the 500 ms '
-            'default interval',
-      );
+        async.elapse(const Duration(milliseconds: 24));
+        expect(calls, 1);
+        async.elapse(const Duration(milliseconds: 1));
+        expect(calls, 2, reason: 'the next wait is capped to the deadline');
+        expect(result, isNull);
+
+        async.elapse(const Duration(milliseconds: 1));
+        expect(result?.flowLog, complete);
+        expect(result?.binding, isNull);
+      });
     });
 
     test('stays fail-closed when the deadline passes without the graded SHOWN',

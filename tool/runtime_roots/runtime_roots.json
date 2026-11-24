@@ -2306,6 +2306,20 @@
   ],
   "declarations": [
     {
+      "path": "lib/core/constants/network_constants.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "network / QR and contact request fixtures",
+      "reason": "The current rendezvous constant is reachable only from convention tests for network constants, contact relay hints, and QR payloads.",
+      "condition": "Revisit when those fixtures no longer import the constant or a production caller begins importing it.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
       "path": "lib/core/database/helpers/call_history_db_helpers.dart",
       "rootKinds": [],
       "disposition": "explained-root",

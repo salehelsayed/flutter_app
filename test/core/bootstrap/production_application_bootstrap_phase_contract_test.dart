@@ -154,6 +154,13 @@ const _expectedSendChatMessageCallers =
           freshIntent: 'true',
         ),
       ],
+      'lib/features/posts/application/send_thought_sticker_reply_use_case.dart':
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.excludedMedia,
+              mediaAttachments: 'completed',
+            ),
+          ],
       'lib/features/share/application/share_batch_delivery_coordinator.dart': [
         _ExpectedSendChatMessageCaller(
           kind: _SendChatMessageCallerKind.generatedIdFresh,
@@ -1062,6 +1069,7 @@ void main() {
               'retry_incomplete_uploads_use_case.dart',
           'lib/features/conversation/application/'
               'send_chat_message_use_case.dart',
+          'lib/features/posts/application/send_thought_sticker_reply_use_case.dart',
           'lib/features/share/application/share_batch_delivery_coordinator.dart',
         },
         reason:
