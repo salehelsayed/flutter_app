@@ -44,7 +44,8 @@ const _relocations = <String, List<String>>{
     // CONTACT-008 adds the targeted avatar UPDATE to this same adapter;
     // imports and placement are unchanged.
     // BL-29 4b206563e observes receipt authority around contact removals.
-    '51732e365fd0ddc61c234dccd594ae21287cd7379e117d3007b0d092c55ec34e',
+    // BL-77 fences invite contact publication to the current account.
+    '78aefa755ad55a83b96d83725258bd97f4d61699aa9cacc418ead5d857528cfe',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[
