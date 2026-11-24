@@ -5745,6 +5745,20 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       addTearDown(() => SharedPreferences.setMockInitialValues({}));
 
+      Future<ForegroundCallActionResult> requestManually(
+        _ProductionIosFixture fixture,
+        CallId callId,
+      ) {
+        final graph = fixture.graphs.single;
+        return _b7Bound(
+          graph.applyVideoIntent(
+            callId,
+            generation: graph.current!.video!.generation,
+            intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+          ),
+        );
+      }
+
       final (first, firstEngine) = await _b7Bound(
         _connectedGraphVideo(
           cleanupTimeout: _b7Limit,
@@ -5752,15 +5766,8 @@ void main() {
           permission: null,
         ),
       );
-      final graph = first.graphs.single;
       expect(requests, 0);
-      final result = await _b7Bound(
-        graph.applyVideoIntent(
-          _callA,
-          generation: graph.current!.video!.generation,
-          intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
-        ),
-      );
+      final result = await requestManually(first, _callA);
       expect(result.status, ForegroundCallActionStatus.unavailable);
       expect(requests, 1);
       expect(firstEngine.video!.cameraStarts, 0);
@@ -5768,11 +5775,12 @@ void main() {
 
       final preferences = await _b7Bound(SharedPreferences.getInstance());
       await _b7Bound(preferences.reload());
-      final (_, secondEngine) = await _b7Bound(
+      final (second, secondEngine) = await _b7Bound(
         _connectedGraphVideo(
           cleanupTimeout: _b7Limit,
           platform: CallEndpointPlatform.android,
           callId: _callB,
+          permission: null,
           requestInitialCallCameraPermission: null,
         ),
       );
@@ -5782,6 +5790,10 @@ void main() {
         1,
         reason: 'The manual call already opened the OS prompt',
       );
+      expect(secondEngine.video!.cameraStarts, 0);
+      final retry = await requestManually(second, _callB);
+      expect(retry.status, ForegroundCallActionStatus.unavailable);
+      expect(requests, 2, reason: 'An explicit retry still reaches the OS');
       expect(secondEngine.video!.cameraStarts, 0);
     },
   );
@@ -11237,7 +11249,7 @@ Future<(_ProductionIosFixture, _InitialVideoGraphEngine)> _connectedGraphVideo({
   int Function()? clockMs,
   CallId? callId,
   Future<bool> Function()? permission = _grantCameraForFixture,
-  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+  RequestCallCameraPermission? requestInitialCallCameraPermission =
       _denyInitialCameraForFixture,
   Future<Object?> Function(String, Map<String, Object?>)? nativeOverride,
   CallScheduledTimerObserver? timerObserver,
@@ -11725,7 +11737,7 @@ _connectedOutgoingGraph({
   SecureKeyStore? privacyStore,
   CallMediaKind acceptedMedia = CallMediaKind.audio,
   OutgoingCallStartRequest? request,
-  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+  RequestCallCameraPermission? requestInitialCallCameraPermission =
       _denyInitialCameraForFixture,
   Future<void> Function(_ProductionIosFixture)? beforeCall,
   Future<void> Function(_ProductionIosFixture)? whileRinging,
@@ -12009,7 +12021,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
   Future<bool> Function()? requestCameraPermission,
-  RequestInitialCallCameraPermission? requestInitialCallCameraPermission =
+  RequestCallCameraPermission? requestInitialCallCameraPermission =
       _denyInitialCameraForFixture,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,

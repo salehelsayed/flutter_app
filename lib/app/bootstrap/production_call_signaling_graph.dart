@@ -422,7 +422,8 @@ final class ProductionCallSignalingGraph
     Future<bool> Function()? requestCameraPermission,
     Future<permissions.PermissionStatus> Function()?
     requestCameraPermissionStatus,
-    RequestInitialCallCameraPermission? requestInitialCallCameraPermission,
+    RequestCallCameraPermission? requestManualCallCameraPermission,
+    RequestCallCameraPermission? requestInitialCallCameraPermission,
     Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -434,11 +435,16 @@ final class ProductionCallSignalingGraph
        _isVideoForeground = isForeground ?? (() => true),
        _checkCameraPermission = checkCameraPermission ?? (() async => false),
        _requestCameraPermission =
-           requestCameraPermissionStatus ??
-           (() async =>
-               await (requestCameraPermission?.call() ?? Future.value(false))
-               ? permissions.PermissionStatus.granted
-               : permissions.PermissionStatus.denied),
+           requestManualCallCameraPermission ??
+           ((_) async {
+             if (requestCameraPermissionStatus != null) {
+               return requestCameraPermissionStatus();
+             }
+             return await (requestCameraPermission?.call() ??
+                     Future.value(false))
+                 ? permissions.PermissionStatus.granted
+                 : permissions.PermissionStatus.denied;
+           }),
        _requestInitialCallCameraPermission =
            requestInitialCallCameraPermission ??
            ((_) async => permissions.PermissionStatus.denied) {
@@ -710,9 +716,8 @@ final class ProductionCallSignalingGraph
   CallVideoSession? _qualityAppliedSession;
   CallVideoQualityEnvironment? _qualityAppliedEnvironment;
   final bool Function() _isVideoForeground;
-  final Future<permissions.PermissionStatus> Function()
-  _requestCameraPermission;
-  final RequestInitialCallCameraPermission _requestInitialCallCameraPermission;
+  final RequestCallCameraPermission _requestCameraPermission;
+  final RequestCallCameraPermission _requestInitialCallCameraPermission;
   final Future<bool> Function() _checkCameraPermission;
   CallPictureInPictureController? _pip;
   StreamSubscription<void>? _pipSourceSubscription;
@@ -941,7 +946,7 @@ final class ProductionCallSignalingGraph
                       : permissions.PermissionStatus.denied,
                 CallVideoAction.turnCameraOn when initialCamera =>
                   await _requestInitialCallCameraPermission(cameraCurrent),
-                _ => await _requestCameraPermission(),
+                _ => await _requestCameraPermission(cameraCurrent),
               };
               if (permission.isGranted &&
                   intent.action == CallVideoAction.turnCameraOn &&
@@ -3557,38 +3562,56 @@ CallAudioOutputRoute? _preferredNonSpeakerRoute(CallAudioControlState state) {
   return null;
 }
 
-typedef RequestInitialCallCameraPermission =
+typedef RequestCallCameraPermission =
     Future<permissions.PermissionStatus> Function(bool Function() isCurrent);
 
-const _initialCameraPermissionRequested =
+const _callCameraPermissionRequested =
     'call_initial_video_camera_permission_requested';
 
-Future<permissions.PermissionStatus> _requestInitialCameraPermission(
+Future<permissions.PermissionStatus> _requestCallCameraPermission(
   CallEndpointPlatform? platform,
-  bool Function() isCurrent,
-) async {
+  bool Function() isCurrent, {
+  required bool automatic,
+}) async {
   const denied = permissions.PermissionStatus.denied;
   if (platform == null || !isCurrent()) return denied;
   const camera = permissions.Permission.camera;
-  final status = await camera.status;
-  if (!isCurrent()) return denied;
-  if (!status.isDenied) return status;
-  if (platform == CallEndpointPlatform.android) {
-    final priorDenial = await camera.shouldShowRequestRationale;
-    if (priorDenial || !isCurrent()) return denied;
-    final preferences = await SharedPreferences.getInstance();
-    if (!isCurrent() ||
-        preferences.getBool(_initialCameraPermissionRequested) == true) {
-      return denied;
-    }
-    // Android can still report denied with no rationale after a dismissed
-    // prompt. Claim the one automatic request before opening the OS dialog.
-    final claimed = await preferences.setBool(
-      _initialCameraPermissionRequested,
-      true,
-    );
-    if (!claimed || !isCurrent()) return denied;
+  if (!automatic && platform != CallEndpointPlatform.android) {
+    return camera.request();
   }
+
+  permissions.PermissionStatus? status;
+  try {
+    status = await camera.status;
+  } catch (_) {
+    if (automatic) rethrow;
+  }
+  if (!isCurrent()) return denied;
+  if (automatic && status != null && !status.isDenied) return status;
+  if (platform == CallEndpointPlatform.android && (status?.isDenied ?? true)) {
+    if (automatic) {
+      final priorDenial = await camera.shouldShowRequestRationale;
+      if (priorDenial || !isCurrent()) return denied;
+    }
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      if (!isCurrent()) return denied;
+      if (preferences.getBool(_callCameraPermissionRequested) == true) {
+        if (automatic) return denied;
+      } else {
+        // Android may report denied with no rationale after a dismissed
+        // dialog. Remember either kind of call prompt before opening it.
+        final saved = await preferences.setBool(
+          _callCameraPermissionRequested,
+          true,
+        );
+        if (!isCurrent() || (automatic && !saved)) return denied;
+      }
+    } catch (_) {
+      if (automatic) rethrow;
+    }
+  }
+  if (!isCurrent()) return denied;
   return camera.request();
 }
 
@@ -3635,7 +3658,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallTimerScheduler? timerScheduler,
   CallEngine Function(CallId)? callEngineFactory,
   Future<bool> Function()? requestCameraPermission,
-  RequestInitialCallCameraPermission? requestInitialCallCameraPermission,
+  RequestCallCameraPermission? requestInitialCallCameraPermission,
   CallVideoQualityEnvironmentSource Function()? qualityEnvironmentSourceFactory,
   CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
   Future<bool> Function()? checkCameraPermission,
@@ -4683,12 +4706,20 @@ CallSignalingComposition createProductionCallSignalingComposition({
                 WidgetsBinding.instance.lifecycleState ==
                 AppLifecycleState.resumed,
         requestCameraPermission: requestCameraPermission,
-        requestCameraPermissionStatus: requestCameraPermission == null
-            ? () => permissions.Permission.camera.request()
+        requestManualCallCameraPermission: requestCameraPermission == null
+            ? (isCurrent) => _requestCallCameraPermission(
+                platform,
+                isCurrent,
+                automatic: false,
+              )
             : null,
         requestInitialCallCameraPermission:
             requestInitialCallCameraPermission ??
-            (isCurrent) => _requestInitialCameraPermission(platform, isCurrent),
+            (isCurrent) => _requestCallCameraPermission(
+              platform,
+              isCurrent,
+              automatic: true,
+            ),
         runtime: runtime,
         coordinator: coordinator,
         signalingService: signalingService,
