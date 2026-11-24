@@ -3,7 +3,9 @@ package com.mknoon.app
 import android.content.Context
 import android.os.Looper
 import java.io.File
+import java.util.ArrayDeque
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
@@ -40,16 +42,21 @@ class MainActivityAppVisibilityTest {
             monotonicClock = AppVisibilityMonotonicClock { now[0] },
             bootSessionProvider = AppVisibilityBootSessionProvider { "android:7" },
         )
-        val coordinator = AppVisibilityLifecycleCoordinator(store)
+        val writes = QueuedExecutor()
+        val coordinator = AppVisibilityLifecycleCoordinator(store, writes)
 
-        val launch = coordinator.onLaunch()
-        assertEquals(AppVisibilityLifecycle.INACTIVE, launch.snapshot?.lifecycle)
-        assertNull(launch.snapshot?.visibleConversationDigest)
+        coordinator.onLaunch()
+        writes.runNext()
+        val launch = decodeRecord()
+        assertEquals(AppVisibilityLifecycle.INACTIVE, launch.lifecycle)
+        assertNull(launch.visibleConversationDigest)
 
         now[0] = 11L
-        val active = coordinator.onResume()
-        val activeGeneration = checkNotNull(active.snapshot).lifecycleGeneration
-        assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, active.snapshot?.lifecycle)
+        coordinator.onResume()
+        writes.runNext()
+        val active = decodeRecord()
+        val activeGeneration = active.lifecycleGeneration
+        assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, active.lifecycle)
 
         now[0] = 12L
         val digest = "a".repeat(64)
@@ -58,25 +65,26 @@ class MainActivityAppVisibilityTest {
         )
 
         now[0] = 13L
-        val inactive = coordinator.onPause()
-        assertEquals(AppVisibilityLifecycle.INACTIVE, inactive.snapshot?.lifecycle)
-        assertNull(inactive.snapshot?.visibleConversationDigest)
-        val inactiveRecord = checkNotNull(inactive.snapshot)
+        coordinator.onPause()
+        writes.runNext()
+        val inactive = decodeRecord()
+        assertEquals(AppVisibilityLifecycle.INACTIVE, inactive.lifecycle)
+        assertNull(inactive.visibleConversationDigest)
 
         now[0] = 14L
         assertFalse(
             store.publishVisibleConversation(digest, activeGeneration).committed,
         )
         val durableAfterStaleRoute = decodeRecord()
-        assertEquals(inactiveRecord, durableAfterStaleRoute)
+        assertEquals(inactive, durableAfterStaleRoute)
 
         now[0] = 15L
-        val background = coordinator.onStop()
-        assertEquals(AppVisibilityLifecycle.BACKGROUND, background.snapshot?.lifecycle)
-        assertNull(background.snapshot?.visibleConversationDigest)
-        assertTrue(
-            checkNotNull(background.snapshot).lifecycleGeneration > activeGeneration,
-        )
+        coordinator.onStop()
+        writes.runNext()
+        val background = decodeRecord()
+        assertEquals(AppVisibilityLifecycle.BACKGROUND, background.lifecycle)
+        assertNull(background.visibleConversationDigest)
+        assertTrue(background.lifecycleGeneration > activeGeneration)
     }
 
     @Test
@@ -111,7 +119,107 @@ class MainActivityAppVisibilityTest {
     }
 
     @Test
-    fun `MainActivity persists every native transition before Flutter exposure`() {
+    fun `BL-85 pause fences queued writes and replies while resume waits for durable state`() {
+        val store = AppVisibilitySnapshotStore(
+            context = context,
+            bootSessionProvider = AppVisibilityBootSessionProvider { "android:7" },
+        )
+        val writes = QueuedExecutor()
+        val replies = QueuedExecutor()
+        val coordinator = AppVisibilityLifecycleCoordinator(store, writes, replies)
+        coordinator.onLaunch()
+        writes.runNext()
+        coordinator.onResume()
+        writes.runNext()
+
+        val active = decodeRecord()
+        val digest = "a".repeat(64)
+        assertTrue(store.publishVisibleConversation(digest, active.lifecycleGeneration).committed)
+        val published = decodeRecord()
+
+        val previousReads = mutableListOf<AppVisibilityReadEnvelope?>()
+        coordinator.readSnapshot { previousReads.add(it) }
+        writes.runNext()
+        assertTrue(previousReads.isEmpty())
+
+        val previousWrites = mutableListOf<AppVisibilityCommitEnvelope?>()
+        coordinator.publishVisibleConversation("b".repeat(64), active.lifecycleGeneration) {
+            previousWrites.add(it)
+        }
+        coordinator.onPause()
+
+        val pendingPauseReads = mutableListOf<AppVisibilityReadEnvelope?>()
+        coordinator.readSnapshot { pendingPauseReads.add(it) }
+        replies.runAll()
+        assertEquals(listOf<AppVisibilityReadEnvelope?>(null), previousReads)
+        assertEquals(listOf<AppVisibilityReadEnvelope?>(null), pendingPauseReads)
+        assertEquals(published, decodeRecord())
+
+        writes.runNext()
+        replies.runAll()
+        assertEquals(listOf<AppVisibilityCommitEnvelope?>(null), previousWrites)
+        assertEquals(published, decodeRecord())
+        writes.runNext()
+
+        val settledPauseReads = mutableListOf<AppVisibilityReadEnvelope?>()
+        coordinator.readSnapshot { settledPauseReads.add(it) }
+        writes.runNext()
+        replies.runAll()
+        val paused = checkNotNull(settledPauseReads.single()).snapshot
+        assertEquals(decodeRecord(), paused)
+        assertEquals(AppVisibilityLifecycle.INACTIVE, paused.lifecycle)
+        assertNull(paused.visibleConversationDigest)
+
+        coordinator.onResume()
+        val resumeReads = mutableListOf<AppVisibilityReadEnvelope?>()
+        coordinator.readSnapshot { resumeReads.add(it) }
+        replies.runAll()
+        assertTrue(resumeReads.isEmpty())
+        assertEquals(paused, decodeRecord())
+        writes.runNext()
+        writes.runNext()
+        replies.runAll()
+
+        val resumed = checkNotNull(resumeReads.single()).snapshot
+        assertEquals(decodeRecord(), resumed)
+        assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, resumed.lifecycle)
+        assertNull(resumed.visibleConversationDigest)
+        assertTrue(resumed.lifecycleGeneration > paused.lifecycleGeneration)
+    }
+
+    @Test
+    fun `BL-85 old activity cannot read or supersede a new foreground owner`() {
+        val store = AppVisibilitySnapshotStore(
+            context = context,
+            bootSessionProvider = AppVisibilityBootSessionProvider { "android:7" },
+        )
+        val writes = QueuedExecutor()
+        val replies = QueuedExecutor()
+        val coordinator = AppVisibilityLifecycleCoordinator(store, writes, replies)
+        val oldOwner = Any()
+        val currentOwner = Any()
+        coordinator.onLaunch(oldOwner)
+        coordinator.onResume(oldOwner)
+        writes.runAll()
+        val previous = decodeRecord()
+        assertTrue(store.publishVisibleConversation("a".repeat(64), previous.lifecycleGeneration).committed)
+
+        coordinator.onResume(currentOwner)
+        coordinator.onStop(oldOwner)
+        val oldReads = mutableListOf<AppVisibilityReadEnvelope?>()
+        coordinator.readSnapshot(oldOwner) { oldReads.add(it) }
+        writes.runAll()
+        replies.runAll()
+
+        assertEquals(listOf<AppVisibilityReadEnvelope?>(null), oldReads)
+        val foreground = decodeRecord()
+        assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, foreground.lifecycle)
+        assertNull(foreground.visibleConversationDigest)
+        assertTrue(foreground.lifecycleGeneration > previous.lifecycleGeneration)
+    }
+
+    @Test
+    fun `MainActivity requests every native transition before Flutter exposure`() {
         val source = repoFile(
             "android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt",
         ).readText()
@@ -119,25 +227,25 @@ class MainActivityAppVisibilityTest {
         assertOrderedInFunction(
             source,
             "override fun onCreate",
-            "visibilityLifecycleCoordinator().onLaunch()",
+            "visibilityLifecycleCoordinator().onLaunch(appVisibilityOwner)",
             "super.onCreate(savedInstanceState)",
         )
         assertOrderedInFunction(
             source,
             "override fun onResume",
-            "visibilityLifecycleCoordinator().onResume()",
+            "visibilityLifecycleCoordinator().onResume(appVisibilityOwner)",
             "super.onResume()",
         )
         assertOrderedInFunction(
             source,
             "override fun onPause",
-            "visibilityLifecycleCoordinator().onPause()",
+            "visibilityLifecycleCoordinator().onPause(appVisibilityOwner)",
             "super.onPause()",
         )
         assertOrderedInFunction(
             source,
             "override fun onStop",
-            "visibilityLifecycleCoordinator().onStop()",
+            "visibilityLifecycleCoordinator().onStop(appVisibilityOwner)",
             "super.onStop()",
         )
         assertTrue(source.contains("\"mknoon/app_visibility\""))
@@ -172,6 +280,22 @@ class MainActivityAppVisibilityTest {
                 "enableAppVisibility371Proof && enableGroupExitReleaseDiagnosticsProof",
             ),
         )
+    }
+
+    private class QueuedExecutor : Executor {
+        private val tasks = ArrayDeque<Runnable>()
+
+        override fun execute(command: Runnable) {
+            tasks.addLast(command)
+        }
+
+        fun runNext() {
+            tasks.removeFirst().run()
+        }
+
+        fun runAll() {
+            while (tasks.isNotEmpty()) runNext()
+        }
     }
 
     private fun decodeRecord(): AppVisibilitySnapshotV1 =

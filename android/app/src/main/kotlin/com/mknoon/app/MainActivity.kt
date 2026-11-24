@@ -37,6 +37,36 @@ class MainActivity : FlutterActivity() {
         private var retainedCanonicalRuntimeEngine: FlutterEngine? = null
     }
 
+    private class AppVisibilityChannel(val channel: MethodChannel) {
+        @Volatile
+        var attached = true
+            private set
+
+        private val pending = mutableSetOf<MethodChannel.Result>()
+
+        fun <T> deferReply(
+            result: MethodChannel.Result,
+            encode: (T) -> Map<String, Any?>,
+        ): (T?) -> Unit {
+            if (!attached) {
+                result.success(null)
+                return {}
+            }
+            pending.add(result)
+            return { value ->
+                if (pending.remove(result)) result.success(value?.let(encode))
+            }
+        }
+
+        fun close() {
+            attached = false
+            channel.setMethodCallHandler(null)
+            val abandoned = pending.toList()
+            pending.clear()
+            abandoned.forEach { it.success(null) }
+        }
+    }
+
     private var goBridge: GoBridge? = null
     private var permissionResultNormalizer: PermissionResultNormalizer? = null
     private var receivedMediaEgressHandler: ReceivedMediaEgressHandler? = null
@@ -64,9 +94,8 @@ class MainActivity : FlutterActivity() {
     private var updateCheckBackgroundBridge: UpdateCheckBackgroundBridge? = null
     private var canonicalRuntimeShutdownChannel: MethodChannel? = null
     private var pushNotificationSettingsChannel: MethodChannel? = null
-    private var appVisibilityChannel: MethodChannel? = null
-    private var appVisibilitySnapshotStore: AppVisibilitySnapshotStore? = null
-    private var appVisibilityLifecycleCoordinator: AppVisibilityLifecycleCoordinator? = null
+    private var appVisibilityChannel: AppVisibilityChannel? = null
+    private val appVisibilityOwner = Any()
     private var retainEngineForCanonicalShutdown = false
     private var canonicalRuntimeCleanupFinished = false
     private var canonicalRuntimeShutdownAttempts = 0
@@ -79,10 +108,8 @@ class MainActivity : FlutterActivity() {
         // Flutter creates content or allows the first application draw.
         MknoonIncomingCallPresentation.installSplashExit(this)
         com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this).record("startup", "launch", "started", "bootstrap")
-        // N04: commit launch invalidation before FlutterActivity can expose a
-        // stale foreground route to Dart. Failure remains fail-notify inside the
-        // one process-scoped store; lifecycle startup itself must stay total.
-        visibilityLifecycleCoordinator().onLaunch()
+        // Invalidate any stale foreground route before FlutterActivity starts.
+        visibilityLifecycleCoordinator().onLaunch(appVisibilityOwner)
         CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
         // 414 (F2): the share plugin reads this intent during super.onCreate
         // and crashes on a shared file the app cannot read. Drop those first.
@@ -245,11 +272,11 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
-        appVisibilityChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            APP_VISIBILITY_CHANNEL,
-        ).also { channel ->
-            channel.setMethodCallHandler { call, result ->
+        appVisibilityChannel?.close()
+        appVisibilityChannel = AppVisibilityChannel(
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_VISIBILITY_CHANNEL),
+        ).also { binding ->
+            binding.channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "readSnapshot" -> {
                         if (call.arguments != null) {
@@ -259,11 +286,18 @@ class MainActivity : FlutterActivity() {
                                 null,
                             )
                         } else {
-                            result.success(visibilitySnapshotStore().readSnapshot()?.toChannelMap())
+                            visibilityLifecycleCoordinator().readSnapshot(
+                                owner = appVisibilityOwner,
+                                isAttached = { binding.attached },
+                                reply = binding.deferReply(
+                                    result,
+                                    AppVisibilityReadEnvelope::toChannelMap,
+                                ),
+                            )
                         }
                     }
                     "publishVisibleConversation" ->
-                        handlePublishVisibleConversation(call.arguments, result)
+                        handlePublishVisibleConversation(call.arguments, result, binding)
                     else -> result.notImplemented()
                 }
             }
@@ -371,9 +405,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onResume() {
-        // Persist FOREGROUND_ACTIVE + null before super can deliver resume to
-        // Flutter. Dart republishes the top route only against this generation.
-        visibilityLifecycleCoordinator().onResume()
+        // Queue the new generation before Flutter can ask to republish its route.
+        visibilityLifecycleCoordinator().onResume(appVisibilityOwner)
         super.onResume()
         incomingCallPresentation?.onResume()
         receivedMediaEgressHandler?.onResume()
@@ -408,13 +441,13 @@ class MainActivity : FlutterActivity() {
 
     override fun onPause() {
         // A delayed Dart route write must observe this newer generation and lose.
-        visibilityLifecycleCoordinator().onPause()
+        visibilityLifecycleCoordinator().onPause(appVisibilityOwner)
         super.onPause()
         callPictureInPictureHandler?.onPause()
     }
 
     override fun onStop() {
-        visibilityLifecycleCoordinator().onStop()
+        visibilityLifecycleCoordinator().onStop(appVisibilityOwner)
         super.onStop()
         incomingCallPresentation?.onStop()
         callPictureInPictureHandler?.onStop()
@@ -652,7 +685,7 @@ class MainActivity : FlutterActivity() {
         canonicalRuntimeShutdownChannel = null
         pushNotificationSettingsChannel?.setMethodCallHandler(null)
         pushNotificationSettingsChannel = null
-        appVisibilityChannel?.setMethodCallHandler(null)
+        appVisibilityChannel?.close()
         appVisibilityChannel = null
         goBridge?.dispose()
         goBridge = null
@@ -723,21 +756,13 @@ class MainActivity : FlutterActivity() {
         permissionResultNormalizer = null
     }
 
-    private fun visibilitySnapshotStore(): AppVisibilitySnapshotStore =
-        appVisibilitySnapshotStore ?: AppVisibilitySnapshotStore(applicationContext).also {
-            appVisibilitySnapshotStore = it
-        }
-
     private fun visibilityLifecycleCoordinator(): AppVisibilityLifecycleCoordinator =
-        appVisibilityLifecycleCoordinator ?: AppVisibilityLifecycleCoordinator(
-            visibilitySnapshotStore(),
-        ).also {
-            appVisibilityLifecycleCoordinator = it
-        }
+        AppVisibilityLifecycleCoordinator.get(applicationContext)
 
     private fun handlePublishVisibleConversation(
         rawArguments: Any?,
         result: MethodChannel.Result,
+        binding: AppVisibilityChannel,
     ) {
         val arguments = rawArguments as? Map<*, *>
         if (
@@ -784,11 +809,12 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
-        result.success(
-            visibilitySnapshotStore().publishVisibleConversation(
-                visibleConversationDigest = digest,
-                lifecycleGeneration = generation,
-            ).toChannelMap(),
+        visibilityLifecycleCoordinator().publishVisibleConversation(
+            visibleConversationDigest = digest,
+            lifecycleGeneration = generation,
+            owner = appVisibilityOwner,
+            isAttached = { binding.attached },
+            reply = binding.deferReply(result, AppVisibilityCommitEnvelope::toChannelMap),
         )
     }
 }

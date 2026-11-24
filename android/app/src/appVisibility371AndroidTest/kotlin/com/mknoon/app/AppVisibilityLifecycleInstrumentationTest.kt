@@ -38,6 +38,7 @@ class AppVisibilityLifecycleInstrumentationTest {
 
         val activity = launchMainActivity()
         try {
+            awaitDurableLifecycle(AppVisibilityLifecycle.FOREGROUND_ACTIVE)
             val store = AppVisibilitySnapshotStore(activity.applicationContext)
             val active = checkNotNull(store.readSnapshot())
             assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, active.snapshot.lifecycle)
@@ -82,6 +83,7 @@ class AppVisibilityLifecycleInstrumentationTest {
 
         val activity = launchMainActivity()
         try {
+            awaitDurableLifecycle(AppVisibilityLifecycle.FOREGROUND_ACTIVE)
             val store = AppVisibilitySnapshotStore(activity.applicationContext)
             val active = checkNotNull(store.readSnapshot()).snapshot
             assertEquals(AppVisibilityLifecycle.FOREGROUND_ACTIVE, active.lifecycle)
@@ -124,20 +126,19 @@ class AppVisibilityLifecycleInstrumentationTest {
 
     private fun finishMainActivity(activity: MainActivity) {
         instrumentation.runOnMainSync { activity.finish() }
-        val deadline = SystemClock.elapsedRealtime() + ACTIVITY_STOP_TIMEOUT_MS
-        var durableLifecycle: AppVisibilityLifecycle? = null
+        awaitDurableLifecycle(AppVisibilityLifecycle.BACKGROUND)
+    }
+
+    private fun awaitDurableLifecycle(expected: AppVisibilityLifecycle) {
+        val deadline = SystemClock.elapsedRealtime() + LIFECYCLE_COMMIT_TIMEOUT_MS
+        var durableLifecycle: AppVisibilityLifecycle?
         do {
-            instrumentation.waitForIdleSync()
             durableLifecycle = runCatching { readDurableRecord().lifecycle }
                 .getOrNull()
-            if (durableLifecycle == AppVisibilityLifecycle.BACKGROUND) return
-            SystemClock.sleep(ACTIVITY_STOP_POLL_MS)
+            if (durableLifecycle == expected) return
+            SystemClock.sleep(LIFECYCLE_COMMIT_POLL_MS)
         } while (SystemClock.elapsedRealtime() < deadline)
-        assertEquals(
-            "finish must synchronously persist the real pause/stop callbacks",
-            AppVisibilityLifecycle.BACKGROUND,
-            durableLifecycle,
-        )
+        assertEquals("real Activity callbacks must persist the lifecycle", expected, durableLifecycle)
     }
 
     private fun readDurableRecord(): AppVisibilitySnapshotV1 {
@@ -154,7 +155,7 @@ class AppVisibilityLifecycleInstrumentationTest {
 
     private companion object {
         const val PROOF_APPLICATION_ID = "com.mknoon.app.visibilityproof"
-        const val ACTIVITY_STOP_TIMEOUT_MS = 5_000L
-        const val ACTIVITY_STOP_POLL_MS = 50L
+        const val LIFECYCLE_COMMIT_TIMEOUT_MS = 5_000L
+        const val LIFECYCLE_COMMIT_POLL_MS = 50L
     }
 }
