@@ -20,6 +20,7 @@ import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../domain/repositories/fake_message_repository.dart';
 import '../../../../core/services/fake_p2p_service.dart';
+import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 
 const _peer = 'video-entry-contact';
 
@@ -107,7 +108,13 @@ final class _PermissionTestGraph
   }
 }
 
-enum _MicrophonePrompt { grantVoice, grantVideo, deny, background }
+enum _MicrophonePrompt {
+  grantVoice,
+  grantVideo,
+  deny,
+  background,
+  alreadyGranted,
+}
 
 void main() {
   late Directory avatars;
@@ -129,6 +136,8 @@ void main() {
   Future<void> mount(
     WidgetTester tester, {
     OutgoingCallCapability? capability,
+    MicPermissionGateway micPermissionGateway =
+        const PermissionHandlerMicGateway(),
   }) async {
     final contact = ContactModel(
       peerId: _peer,
@@ -158,6 +167,7 @@ void main() {
           ),
           p2pService: transport,
           outgoingCallCapability: capability ?? calls,
+          micPermissionGateway: micPermissionGateway,
         ),
       ),
     );
@@ -189,6 +199,10 @@ void main() {
       const bound = Duration(seconds: 3);
       final video = scenario == _MicrophonePrompt.grantVideo;
       final permission = Completer<MicPermissionStatus>();
+      final permissionGateway = FakeMicPermissionGateway()
+        ..currentStatus = scenario == _MicrophonePrompt.alreadyGranted
+            ? MicPermissionStatus.granted
+            : MicPermissionStatus.denied;
       var permissionRequests = 0;
       final graph = _PermissionTestGraph();
       final binding = tester.binding;
@@ -212,7 +226,11 @@ void main() {
       );
       try {
         await composition.start().timeout(bound);
-        await mount(tester, capability: composition).timeout(bound);
+        await mount(
+          tester,
+          capability: composition,
+          micPermissionGateway: permissionGateway,
+        ).timeout(bound);
         await chooser(tester).timeout(bound);
         if (video) {
           await tester.tap(find.text('Video call')).timeout(bound);
@@ -243,7 +261,9 @@ void main() {
         expect(graph.starts, switch (scenario) {
           _MicrophonePrompt.grantVoice => [(_peer, CallMediaKind.audio)],
           _MicrophonePrompt.grantVideo => [(_peer, CallMediaKind.video)],
-          _MicrophonePrompt.deny || _MicrophonePrompt.background => isEmpty,
+          _MicrophonePrompt.deny ||
+          _MicrophonePrompt.background ||
+          _MicrophonePrompt.alreadyGranted => isEmpty,
         });
       } finally {
         if (!permission.isCompleted) {
