@@ -280,7 +280,7 @@ const _applicationRootNormalizedSha256 =
     // the app retains composition ownership and all relocation URI rewrites.
     // BL61 allows the temporary call follow-up through the same-chat guard.
     // The same follow-up passes its originating call ID through that route.
-    '418852bd343de8b5c26e5995fbfa34902d6f42ba0a03b86b5de8c0741ce8c794';
+    '8fbb1e82990bf5de6b6c2c329ddfbacaea2c8004fcd3e1a530ab28a420c57deb';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -512,7 +512,7 @@ const _productionBootstrapNormalizedSha256 =
     // BL-58 adds the dbLoadRetainedIncomingPost binding for Thought replies.
     // Removing those two lines restores both previous bootstrap digests.
     // BL61 passes current-locale copy resolvers to the existing call notifier.
-    'f9d6d739ef09ef02dd7152a356920e17a1c94cf5d4c40c9a90fd83a1f57133b8';
+    '5e00ac38111d4142e3fa0cac5cb694968fddcdb357c2f466950ccd32ab21a7be';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -562,8 +562,9 @@ const _productionBootstrapNormalizedSha256 =
 // BL-29 receipt admission only changes the surrounding owner wiring.
 // The BL-58 binding also leaves the historical callback exact.
 // The BL61 copy resolvers leave the historical callback exact.
+// BL-77 adds contact invite wiring at the existing app and bootstrap owners.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '39fc693da10857dfa699aee9b8c4c5dcedcfc1b1ad177d40d7659d48b3b9ca16';
+    '868a2518dd10134d1fc07c6781f00db85a254b47d942d984a48824904d8f7599';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

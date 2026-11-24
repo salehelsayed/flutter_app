@@ -432,7 +432,9 @@ void main() {
       expect(
         RegExp(
           r'\bawait\s+runApplicationBootstrap\s*\(\s*'
-          r'bootstrapFactory:\s*ProductionApplicationBootstrap\.new\s*,',
+          r'bootstrapFactory:\s*\(\)\s*=>\s*'
+          r'ProductionApplicationBootstrap\s*\(\s*contactInvites:\s*'
+          r'contactInvites\s*,?\s*\)\s*,',
         ).allMatches(mainSource),
         hasLength(1),
         reason: 'the public entrypoint must delegate through the stable runner',
