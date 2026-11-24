@@ -61,6 +61,7 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_screen.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
@@ -708,6 +709,86 @@ void main() {
         'requester-peer-id',
       );
     });
+
+    testWidgets(
+      'BL-66 accepting on My QR returns to the same home after Delete chat',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        appShellController.switchTo(AppShellTab.orbit);
+        bridge.responses['payload.sign'] = {'ok': true, 'signature': 'sig'};
+        await messageRepo
+            .saveMessage(
+              ConversationMessage(
+                id: 'kept-message',
+                contactPeerId: testContact.peerId,
+                text: 'Keep this conversation',
+                senderPeerId: testContact.peerId,
+                timestamp: testContact.scannedAt,
+                isIncoming: true,
+                status: 'delivered',
+                createdAt: testContact.scannedAt,
+              ),
+            )
+            .timeout(const Duration(seconds: 2));
+
+        final request = ContactRequestModel(
+          peerId: 'requester-peer-id',
+          publicKey: 'requester-pk',
+          rendezvous: '/dns4/relay',
+          username: 'Charlie',
+          signature: 'req-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        );
+        contactRequestRepo.seed([request]);
+        final requestListener = _FakeContactRequestListener(
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+        await tester.pumpWidget(
+          buildFeedWired(contactRequestListener: requestListener),
+        );
+        await pumpFeedFrames(tester);
+        final home = tester.state(find.byType(FeedWired));
+        await tester.tap(find.byKey(const ValueKey('orbit-settings-button')));
+        await pumpFeedFrames(tester);
+        await tester.tap(find.byKey(const ValueKey('settings-my-qr-tile')));
+        await pumpFeedFrames(tester);
+        expect(find.byType(QRDisplayScreen), findsOneWidget);
+
+        requestListener.emitRequest(request);
+        await pumpFeedFrames(tester);
+        await tester.tap(find.text('Accept').hitTestable());
+        await pumpFeedFrames(tester);
+        final chat = find.byType(ConversationWired);
+        expect(
+          tester.widget<ConversationWired>(chat).contact.peerId,
+          request.peerId,
+        );
+        // Clear the already-started profile fallback timer in fake time.
+        await tester.pump(const Duration(seconds: 5));
+
+        await tester.tap(find.byIcon(Icons.more_vert).hitTestable());
+        await pumpFeedFrames(tester);
+        await tester.tap(find.text('Delete chat').hitTestable());
+        await pumpFeedFrames(tester);
+        await tester.tap(find.text('Delete').hitTestable());
+        await pumpFeedFrames(tester);
+
+        expect(chat, findsNothing);
+        expect(await contactRepo.getContact(request.peerId), isNull);
+        expect(await messageRepo.getMessage('kept-message'), isNotNull);
+        expect(find.byType(QRDisplayScreen), findsNothing);
+        expect(tester.state(find.byType(FeedWired)), same(home));
+        await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+        await pumpFeedFrames(tester);
+        expect(orbitScopedText(testContact.username), findsWidgets);
+      },
+    );
 
     // 215 TC-04: opening the chat must NOT drop the ConnectionFeedItem upsert —
     // popping back from the chat still shows the connection.
