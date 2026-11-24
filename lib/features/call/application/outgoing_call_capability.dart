@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../../core/permissions/mic_permission_gateway.dart';
+
 /// Safe outcome exposed to presentation after one outgoing-call request.
 /// Only an explicit microphone refusal carries actionable permission feedback;
 /// adapter and routing failures deliberately stay behind this seam.
@@ -14,10 +16,19 @@ enum OutgoingCallStartResult {
 /// Ownership of preflight only. Admission transfers control to the canonical
 /// coordinator; cancellation after that point belongs to its exact call ID.
 final class OutgoingCallStartRequest {
-  OutgoingCallStartRequest({this.onAdmitted, this.isCurrent});
+  OutgoingCallStartRequest({
+    this.onAdmitted,
+    this.isCurrent,
+    this.microphonePermissionPreflight,
+  });
 
   final void Function()? onAdmitted;
   final bool Function()? isCurrent;
+  final Future<MicPermissionStatus> Function(
+    Future<MicPermissionStatus> Function() requestPermission,
+  )?
+  microphonePermissionPreflight;
+
   bool _canceled = false;
   bool _admitted = false;
 

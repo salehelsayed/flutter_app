@@ -459,6 +459,7 @@ final class CallSignalingComposition
           generation == _outgoingReadinessLifecycleGeneration &&
           isOutgoingVideoCallAvailable,
       onAdmitted: () => request?.admit(),
+      microphonePermissionPreflight: request?.microphonePermissionPreflight,
     );
     final diagnostics = CallDiagnostics.instance;
     final traceId = diagnostics.currentTraceId ?? diagnostics.beginAttempt();
@@ -521,7 +522,11 @@ final class CallSignalingComposition
     try {
       request.checkPending();
       final permissionElapsed = Stopwatch()..start();
-      final permissionStatus = await _requestOutgoingMicrophonePermission();
+      final permissionStatus =
+          await (request.microphonePermissionPreflight?.call(
+                _requestOutgoingMicrophonePermission,
+              ) ??
+              _requestOutgoingMicrophonePermission());
       request.checkPending();
       diagnostics.record(
         stage: 'preflight',

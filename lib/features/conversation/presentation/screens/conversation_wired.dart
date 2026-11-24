@@ -757,6 +757,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool? _outgoingVideoCallContactAvailable;
   Future<void>? _outgoingCallAvailabilityRefresh;
   OutgoingCallStartRequest? _outgoingCallStartRequest;
+  ValueChanged<AppLifecycleState>? _outgoingMicrophoneLifecycleChanged;
   Timer? _outgoingCallPreflightTimer;
   String? _outgoingDiagnosticTraceId;
   bool _outgoingCallContactAvailable = false;
@@ -8762,6 +8763,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (_appLifecycleState != state) {
       _appLifecycleState = state;
       _appLifecycleGeneration++;
+      _outgoingMicrophoneLifecycleChanged?.call(state);
       if (mounted) setState(() {});
     }
     // 131: on resume, a message that arrived while backgrounded lands via the
@@ -9078,34 +9080,24 @@ class _ConversationWiredState extends State<ConversationWired>
     final failedMessage = video
         ? l10n.call_video_entry_start_failed
         : "Couldn't start voice call. Please try again.";
-    final supersededMessage = AppLocalizations.of(
-      context,
-    )!.call_back_superseded;
-    final lifecycleGeneration = _appLifecycleGeneration;
+    final supersededMessage = l10n.call_back_superseded;
+    final route = ModalRoute.of(context);
+    final identityRepo = widget.identityRepo;
+    final accountPeerId = _identity?.peerId;
+    var lifecycleGeneration = _appLifecycleGeneration;
     final preflightElapsed = Stopwatch()..start();
     late final OutgoingCallStartRequest request;
-    request = OutgoingCallStartRequest(
-      isCurrent: () =>
-          mounted &&
-          !_contact.isBlocked &&
-          _contact.peerId == contactPeerId &&
-          _appLifecycleGeneration == lifecycleGeneration &&
-          identical(capability, widget.outgoingCallCapability),
-      onAdmitted: () {
-        _outgoingCallPreflightTimer?.cancel();
-        if (mounted && identical(_outgoingCallStartRequest, request)) {
-          setState(() {});
-        }
-      },
-    );
-    bool stillOwnsCallAction() =>
+    bool sameConversation() =>
         mounted &&
-        !request.isCanceled &&
-        identical(_outgoingCallStartRequest, request) &&
+        route?.isCurrent != false &&
         !_contact.isBlocked &&
         _contact.peerId == contactPeerId &&
-        identical(capability, widget.outgoingCallCapability) &&
-        _appLifecycleGeneration == lifecycleGeneration;
+        widget.contact.peerId == contactPeerId &&
+        identical(identityRepo, widget.identityRepo) &&
+        (accountPeerId == null || _identity?.peerId == accountPeerId) &&
+        identical(capability, widget.outgoingCallCapability);
+    bool stillOwnsCallAction() =>
+        identical(_outgoingCallStartRequest, request) && !request.isCanceled;
     void finishInterrupted() {
       if (request.isCanceled) return;
       request.cancel();
@@ -9115,6 +9107,89 @@ class _ConversationWiredState extends State<ConversationWired>
         reason: 'graph_not_owner',
       );
     }
+
+    Future<bool> checkCallBackEligibility(Future<bool> Function() check) async {
+      final eligible = await check();
+      if (!stillOwnsCallAction()) {
+        finishInterrupted();
+        return false;
+      }
+      if (eligible) return true;
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: 'superseded',
+      );
+      _showOutgoingCallMessage(supersededMessage);
+      return false;
+    }
+
+    request = OutgoingCallStartRequest(
+      isCurrent: () =>
+          sameConversation() && _appLifecycleGeneration == lifecycleGeneration,
+      microphonePermissionPreflight: (requestPermission) async {
+        if (_appLifecycleState != AppLifecycleState.resumed) {
+          request.cancel();
+          request.checkPending();
+        }
+        final resumed = Completer<void>();
+        var lostFocus = false;
+        void onLifecycleChanged(AppLifecycleState state) {
+          final expected = lostFocus
+              ? AppLifecycleState.resumed
+              : AppLifecycleState.inactive;
+          if (state != expected ||
+              resumed.isCompleted ||
+              !sameConversation() ||
+              !identical(_outgoingCallStartRequest, request)) {
+            request.cancel();
+            if (!resumed.isCompleted) resumed.complete();
+            return;
+          }
+          lifecycleGeneration = _appLifecycleGeneration;
+          lostFocus = true;
+          if (state == AppLifecycleState.resumed) resumed.complete();
+        }
+
+        // A system prompt can resolve before the app regains input focus.
+        _outgoingMicrophoneLifecycleChanged = onLifecycleChanged;
+        late final MicPermissionStatus permission;
+        try {
+          permission = await requestPermission();
+          request.checkPending();
+          if (permission == MicPermissionStatus.granted &&
+              _appLifecycleState != AppLifecycleState.resumed) {
+            await resumed.future.timeout(
+              const Duration(seconds: 2),
+              onTimeout: request.cancel,
+            );
+            request.checkPending();
+          }
+        } finally {
+          if (identical(
+            _outgoingMicrophoneLifecycleChanged,
+            onLifecycleChanged,
+          )) {
+            _outgoingMicrophoneLifecycleChanged = null;
+          }
+        }
+        if (permission == MicPermissionStatus.granted &&
+            lostFocus &&
+            isEligible != null &&
+            !await checkCallBackEligibility(isEligible)
+                .timeout(const Duration(seconds: 2), onTimeout: () => false)) {
+          request.cancel();
+          request.checkPending();
+        }
+        return permission;
+      },
+      onAdmitted: () {
+        _outgoingCallPreflightTimer?.cancel();
+        if (mounted && identical(_outgoingCallStartRequest, request)) {
+          setState(() {});
+        }
+      },
+    );
 
     // This explicit tap owns a fresh probe, replacing any older presentation
     // probe whose negative result may arrive after the remote endpoint recovers.
@@ -9282,21 +9357,8 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       // Local history, rechecked after the contact and endpoint awaits so a
       // call that arrived meanwhile supersedes this row before admission.
-      if (isEligible != null) {
-        final eligible = await isEligible();
-        if (!stillOwnsCallAction()) {
-          finishInterrupted();
-          return;
-        }
-        if (!eligible) {
-          diagnostics.finishAttempt(
-            traceId: traceId,
-            outcome: 'preflight_failed',
-            reason: 'superseded',
-          );
-          _showOutgoingCallMessage(supersededMessage);
-          return;
-        }
+      if (isEligible != null && !await checkCallBackEligibility(isEligible)) {
+        return;
       }
       shouldShowFailure = true;
       result = await (video
