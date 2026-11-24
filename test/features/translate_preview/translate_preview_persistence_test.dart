@@ -73,11 +73,11 @@ void main() {
               .timeout(localPreviewBound);
         });
 
-    Widget view(String text) => _host(
+    Widget view(String text, {String target = 'de'}) => _host(
       MessageTranslation(
         messageId: 'chat-message',
         text: text,
-        targetLanguage: 'de',
+        targetLanguage: target,
         ai: ai,
         persistence: fixture.store,
       ),
@@ -104,6 +104,30 @@ void main() {
       await fixture.flush(tester);
       expect(ai.translations, 1);
       expect(find.text('German result'), findsOneWidget);
+    });
+
+    testWidgets('switching the target away and back shows the saved '
+        'translation again without a model run', (tester) async {
+      const text = 'Super, Mona 👍';
+      await tester.runAsync(fixture.open);
+      addTearDown(fixture.dispose);
+      await seedMessage(tester, text);
+      await tester.pumpWidget(view(text));
+      await fixture.flush(tester);
+      await tester.tap(find.text('See translation'));
+      await fixture.flush(tester);
+      expect(find.text('German result'), findsOneWidget);
+      expect(ai.translations, 1);
+
+      await tester.pumpWidget(view(text, target: 'en'));
+      await fixture.flush(tester);
+      expect(find.text('German result'), findsNothing);
+      expect(ai.translations, 1);
+
+      await tester.pumpWidget(view(text));
+      await fixture.flush(tester);
+      expect(find.text('German result'), findsOneWidget);
+      expect(ai.translations, 1);
     });
 
     testWidgets('a message in a known other language still translates on '
