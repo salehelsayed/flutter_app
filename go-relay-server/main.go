@@ -448,6 +448,9 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 				// The store withholds estimates if this durable write fails.
 				_ = inbox.activeIdentities.advance()
 			}
+			if inbox.featureUse != nil {
+				_ = inbox.featureUse.advance()
+			}
 			biz.CheckAndResetPeriods()
 			dau := biz.dailyHLL.Estimate()
 			wau := biz.weeklyHLL.Estimate()

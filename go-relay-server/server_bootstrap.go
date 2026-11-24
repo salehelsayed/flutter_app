@@ -148,6 +148,7 @@ func newControlPlaneStores(
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(false)
 		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
 		stores.Inbox.activeIdentities = initActiveIdentitiesFromEnvironment()
+		stores.Inbox.featureUse = initFeatureUseFromEnvironment()
 		return stores, nil
 	case backendKindRedis:
 		if cfg.RedisURL == "" {
@@ -248,6 +249,7 @@ func newControlPlaneStores(
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
 		stores.Inbox.activeIdentities = initActiveIdentitiesFromEnvironment()
+		stores.Inbox.featureUse = initFeatureUseFromEnvironment()
 		if strings.EqualFold(strings.TrimSpace(os.Getenv("MKNOON_RELAY_STICKER_METRICS_ENABLED")), "true") {
 			stores.Inbox.stickerMetrics = newStickerMetrics(client, cfg.RedisPrefix, time.Now)
 		}

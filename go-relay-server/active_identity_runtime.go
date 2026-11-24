@@ -30,6 +30,8 @@ var (
 	activeIdentityEstimateDesc   = prometheus.NewDesc("relay_active_identities_estimated", "Estimated consenting app identities in observed Berlin calendar windows; coverage is incomplete.", []string{"window", "day"}, nil)
 	activeEngagementReadyDesc    = prometheus.NewDesc("relay_engagement_storage_ready", "Whether durable consented weekly engagement aggregates are available.", nil, nil)
 	activeEngagementEstimateDesc = prometheus.NewDesc("relay_engagement_weekly_estimated", "Estimated consenting app identities by Berlin ISO week and engagement kind; reciprocal is the chat/call union. Coverage is incomplete.", []string{"week", "kind"}, nil)
+	featureUseReadyDesc          = prometheus.NewDesc("relay_feature_use_storage_ready", "Whether durable consented weekly feature use estimates are available.", nil, nil)
+	featureUseEstimateDesc       = prometheus.NewDesc("relay_feature_use_weekly_estimated", "Estimated consenting app identities by Berlin ISO week and feature. Coverage is incomplete.", []string{"week", "feature"}, nil)
 )
 
 func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
@@ -37,6 +39,8 @@ func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
 	ch <- activeIdentityEstimateDesc
 	ch <- activeEngagementReadyDesc
 	ch <- activeEngagementEstimateDesc
+	ch <- featureUseReadyDesc
+	ch <- featureUseEstimateDesc
 }
 
 func (s *InboxStore) Collect(ch chan<- prometheus.Metric) {
@@ -95,6 +99,21 @@ func (s *InboxStore) Collect(ch chan<- prometheus.Metric) {
 		counts := [5]uint64{value.Counts.Active, value.Counts.Chat, value.Counts.Call, value.Counts.Group, value.Counts.Reciprocal}
 		for i, kind := range []string{"active", "chat", "call", "group", "reciprocal"} {
 			ch <- prometheus.MustNewConstMetric(activeEngagementEstimateDesc, prometheus.GaugeValue, float64(counts[i]), value.Week, kind)
+		}
+	}
+	var featureWeeks []featureUseEstimate
+	var featureReady bool
+	if s != nil && s.featureUse != nil {
+		featureWeeks, featureReady = s.featureUse.estimates()
+	}
+	featureFlag := 0.
+	if featureReady {
+		featureFlag = 1
+	}
+	ch <- prometheus.MustNewConstMetric(featureUseReadyDesc, prometheus.GaugeValue, featureFlag)
+	for _, week := range featureWeeks {
+		for i, name := range featureUseNames {
+			ch <- prometheus.MustNewConstMetric(featureUseEstimateDesc, prometheus.GaugeValue, float64(week.Counts[i]), week.Week, name)
 		}
 	}
 }

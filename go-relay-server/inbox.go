@@ -2695,6 +2695,7 @@ type InboxStore struct {
 	stickerMetrics   *stickerMetrics
 	appDiagnostics   *appDiagnosticStore
 	activeIdentities *activeIdentityStore
+	featureUse       *featureUseStore
 	backend          InboxBackend
 	push             *PushService
 	capacity         int
@@ -4730,6 +4731,13 @@ func HandleInboxStream(
 			identities = inbox.activeIdentities
 		}
 		handleActiveEngagementRequest(s, requestBytes, remotePeer, identities)
+		return
+	case featureUseAction:
+		var featureUse *featureUseStore
+		if inbox != nil {
+			featureUse = inbox.featureUse
+		}
+		handleFeatureUseRequest(s, requestBytes, remotePeer, featureUse)
 		return
 	case activeIdentityAction:
 		var identities *activeIdentityStore
