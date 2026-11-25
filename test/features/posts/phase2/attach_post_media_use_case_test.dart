@@ -194,8 +194,10 @@ void main() {
   for (final allowed in [true, false]) {
     test('BL95 a photo with a voice note is '
         '${allowed ? 'attached as image_voice' : 'refused while the flag is off'}', () async {
-      await posts.savePost(_post('post-mixed'));
-      await posts.saveRecipientDelivery(_delivery('post-mixed', 'peer-bob'));
+      await posts.savePost(_post('post-mixed')).timeout(const Duration(seconds: 5));
+      await posts
+          .saveRecipientDelivery(_delivery('post-mixed', 'peer-bob'))
+          .timeout(const Duration(seconds: 5));
       final uploaded = <String>[];
 
       final (result, attachments) = await attachPostMedia(

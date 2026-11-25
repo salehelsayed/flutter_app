@@ -110,7 +110,11 @@ String localizedThoughtNotificationBody({
   return switch (mediaKind) {
     'image' => localizedNotificationPhoto(1, locale: locale),
     'image_carousel' => localizedNotificationPhoto(mediaCount, locale: locale),
-    'image_voice' => localizedNotificationPhoto(mediaCount - 1, locale: locale),
+    // The push preview counts the claimed media before validation.
+    'image_voice' when mediaCount >= 2 => localizedNotificationPhoto(
+      mediaCount - 1,
+      locale: locale,
+    ),
     'video' => localizedNotificationVideo(1, locale: locale),
     'voice' => localizedNotificationVoiceMessage(locale: locale),
     _ => localizedNotificationMedia(locale: locale),

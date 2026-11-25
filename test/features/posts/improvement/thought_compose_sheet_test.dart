@@ -97,6 +97,16 @@ void main() {
     expect(find.byType(ComposePostSheet), findsOneWidget);
   }
 
+  /// Settles within a few seconds; a held animation fails instead of waiting.
+  Future<void> settle(WidgetTester tester) async {
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    expect(find.byType(ComposePostSheet), findsOneWidget);
+  }
+
   /// What the sheet shows for the picked media: photos inline, otherwise the
   /// attachment strip.
   List<String> shownPaths(WidgetTester tester) {
@@ -686,11 +696,11 @@ void main() {
       ),
     );
     await tester.tap(find.byTooltip('Media'));
-    await finishPick(tester);
+    await settle(tester);
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     recorder.emitAmplitude(0.4);
-    await recorder.triggerAutoStop();
+    await recorder.triggerAutoStop().timeout(const Duration(seconds: 5));
     await tester.pump();
     expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
     expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
@@ -733,7 +743,7 @@ void main() {
       ),
     );
     await tester.tap(find.byTooltip('Media'));
-    await finishPick(tester);
+    await settle(tester);
     expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
     expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
     await tapVisible(

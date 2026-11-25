@@ -1372,24 +1372,27 @@ void main() {
   ) async {
     final photo = _tempFile('photo.png', pngBytes: true);
     final voice = _tempFile('voice.m4a');
+    const step = Duration(seconds: 5);
     final thought = _thought(initialNow).copyWith(mediaKind: 'image_voice');
-    await posts.savePost(thought);
-    await posts.savePostMediaAttachment(_attachment('image'));
-    await posts.savePostMediaAttachment(_attachment('voice'));
+    await posts.savePost(thought).timeout(step);
+    await posts.savePostMediaAttachment(_attachment('image')).timeout(step);
+    await posts.savePostMediaAttachment(_attachment('voice')).timeout(step);
     await openCard(
       tester,
       thought,
       download: (requested) async {
         final path = requested.kind == 'voice' ? voice.path : photo.path;
-        await posts.updatePostMediaLocalPath(
-          requested.mediaId,
-          path,
-          postId: requested.postId,
-        );
+        await posts
+            .updatePostMediaLocalPath(
+              requested.mediaId,
+              path,
+              postId: requested.postId,
+            )
+            .timeout(step);
         return requested.copyWith(localPath: path, downloadStatus: 'done');
       },
     );
-    await tester.pumpAndSettle();
+    await pumpMediaFrames(tester);
 
     final shown = tester.widget<Image>(
       find.byKey(const ValueKey('thought-photo-full')),
@@ -1400,6 +1403,22 @@ void main() {
     );
     expect(player.attachment.mediaType, 'audio');
     expect(player.attachment.localPath, voice.path);
+    await finish(tester);
+  });
+
+  testWidgets('BL95 a photo and voice thought whose media read fails keeps '
+      'the photo place and Retry', (tester) async {
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image_voice');
+    await posts.savePost(thought).timeout(const Duration(seconds: 5));
+    posts.mediaError = StateError('media read failed');
+    await openCard(tester, thought);
+    await pumpMediaFrames(tester);
+
+    expect(
+      find.byKey(const ValueKey('thought-media-placeholder')),
+      findsOneWidget,
+    );
+    expect(find.text('Retry'), findsOneWidget);
     await finish(tester);
   });
 

@@ -815,7 +815,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   bool get _expectsVisualMedia =>
-      const {'image', 'image_carousel', 'video'}.contains(_post.mediaKind);
+      const {
+        'image',
+        'image_carousel',
+        'image_voice',
+        'video',
+      }.contains(_post.mediaKind);
 
   Widget _failure(AppLocalizations l10n) => Center(
     child: Column(
