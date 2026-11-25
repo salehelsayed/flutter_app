@@ -179,6 +179,8 @@ void main() {
     EngagementChatWeekLookup? lookup,
     EngagementChatLocalRetention? retain,
     EngagementChatObserverOwner owner = _ownerA,
+    Duration? deadline,
+    Duration? checkpointRetryDelay,
   }) async {
     final checkpoint = store ?? await open();
     final observer = EngagementChatObserver(
@@ -199,6 +201,9 @@ void main() {
             return Future.value(true);
           }),
       nowMilliseconds: () => now,
+      deadline: deadline ?? const Duration(seconds: 1),
+      checkpointRetryDelay:
+          checkpointRetryDelay ?? const Duration(milliseconds: 10),
     );
     observers.add(observer);
     observer.replaceOwner(owner);
@@ -552,6 +557,36 @@ void main() {
       (await _within(_checkpoint(goodStore)))['phase'],
       'qualified_pending',
     );
+  });
+
+  test('E2O-013 a checkpoint write past its deadline is retried in the same '
+      'worker, so the week survives a restart', () async {
+    var commits = 0;
+    final store = await open(
+      beforeCommit: (_) async {
+        commits++;
+        if (commits == 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+        }
+      },
+    );
+    final observer = await make(
+      store: store,
+      deadline: const Duration(milliseconds: 100),
+      checkpointRetryDelay: const Duration(milliseconds: 400),
+    );
+    _facts(observer, _capture(observer));
+    await _drain(observer);
+
+    expect(retentions, hasLength(1));
+    expect(retentions.single['week'], _week.week);
+    expect((await _within(_checkpoint(store)))['phase'], 'qualified_retained');
+
+    await _within(observer.dispose());
+    final restarted = await make(store: store);
+    await _drain(restarted);
+    expect(restarted.phase, EngagementChatPhase.qualifiedRetained);
+    expect(retentions, hasLength(1));
   });
 
   test('E2O-012 revoke removes private witnesses before a new epoch', () async {
