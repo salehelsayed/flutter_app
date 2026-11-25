@@ -14,6 +14,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/thought_photo_framing.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -417,7 +418,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     // A recording still waiting on its words, or on a choice after a
     // failure, goes back with the draft as voice.
     if (_keptRecording case final kept?) {
-      _mediaDrafts = <PostMediaDraft>[_voiceDraft(kept, _keptWaveform)];
+      _mediaDrafts = _withVoice(_voiceDraft(kept, _keptWaveform));
     }
     final keep =
         !_shared && (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
@@ -474,7 +475,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         return;
       }
       if (!mounted) return;
-      final combined = combinePostMedia(_mediaDrafts, pick.drafts);
+      final combined = combinePostMedia(
+        _mediaDrafts,
+        pick.drafts,
+        photoWithVoice: widget.photoWithVoice,
+      );
       setState(() {
         _mediaDrafts = combined.drafts;
         if (pick.leftOut || combined.leftOut) {
@@ -505,7 +510,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       if (!mounted || draft == null) {
         return;
       }
-      setState(() => _mediaDrafts = <PostMediaDraft>[draft]);
+      setState(() => _mediaDrafts = _withVoice(draft));
     } finally {
       if (mounted) {
         setState(() => _isAttaching = false);
@@ -611,7 +616,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _recordingState = VoiceRecordingState.recording;
       _recordingDuration = Duration.zero;
       _recordingAmplitudes = _amplitudeBuffer.values;
-      _mediaDrafts = const <PostMediaDraft>[];
+      _mediaDrafts = widget.photoWithVoice ? _photoDrafts : const [];
     });
   }
 
@@ -649,7 +654,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() {
       _resetRecordingState();
       if (recording == null) return;
-      _mediaDrafts = <PostMediaDraft>[_voiceDraft(recording, waveform)];
+      _mediaDrafts = _withVoice(_voiceDraft(recording, waveform));
     });
   }
 
@@ -853,6 +858,21 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   void _clearDrafts() {
     _voiceCaption.clear();
     setState(() => _mediaDrafts = const <PostMediaDraft>[]);
+  }
+
+  List<PostMediaDraft> get _photoDrafts =>
+      _mediaDrafts.where((draft) => draft.kind == 'image').toList();
+
+  PostMediaDraft? get _attachedVoice =>
+      _mediaDrafts.lastOrNull?.kind == 'voice' ? _mediaDrafts.last : null;
+
+  /// A new voice note replaces any other media, or joins the photos.
+  List<PostMediaDraft> _withVoice(PostMediaDraft voice) =>
+      widget.photoWithVoice ? [..._photoDrafts, voice] : [voice];
+
+  void _removeVoice() {
+    _voiceCaption.clear();
+    setState(() => _mediaDrafts = _photoDrafts);
   }
 
   void _updateInputDirection() {
@@ -1165,11 +1185,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         ],
         if (widget.thoughtsOnly &&
-            _mediaDrafts.isNotEmpty &&
-            _mediaDrafts.every((draft) => draft.kind == 'image')) ...[
+            _photoDrafts.isNotEmpty &&
+            _mediaDrafts.every(
+              (draft) => draft.kind == 'image' || draft.kind == 'voice',
+            )) ...[
           const SizedBox(height: 12),
           ThoughtPhotoDraftPreview(
-            paths: [for (final draft in _mediaDrafts) draft.localFilePath],
+            paths: [for (final draft in _photoDrafts) draft.localFilePath],
             framings: _photoFramings,
             onFramed: (path, framing) =>
                 setState(() => _framings = {..._framings, path: framing}),
@@ -1226,14 +1248,12 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             onTryAgain: () => unawaited(_transcribeKept()),
           ),
         ],
-        if (thought &&
-            _mediaDrafts.isNotEmpty &&
-            _mediaDrafts.first.kind == 'voice') ...[
+        if (thought && _attachedVoice != null) ...[
           const SizedBox(height: 12),
           ThoughtVoiceCard(
-            draft: _mediaDrafts.first,
+            draft: _attachedVoice!,
             caption: _voiceCaption,
-            onRemove: _clearDrafts,
+            onRemove: _removeVoice,
           ),
         ] else if (_mediaDrafts.isNotEmpty &&
             _mediaDrafts.first.kind == 'voice') ...[

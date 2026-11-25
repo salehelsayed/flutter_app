@@ -191,6 +191,79 @@ void main() {
     expect(attachments.single.durationMs, 12_000);
   });
 
+  for (final allowed in [true, false]) {
+    test('BL95 a photo with a voice note is '
+        '${allowed ? 'attached as image_voice' : 'refused while the flag is off'}', () async {
+      await posts.savePost(_post('post-mixed'));
+      await posts.saveRecipientDelivery(_delivery('post-mixed', 'peer-bob'));
+      final uploaded = <String>[];
+
+      final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
+        postId: 'post-mixed',
+        postRepo: posts,
+        secureKeyStore: secureKeyStore,
+        photoWithVoice: allowed,
+        imageProcessor: ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => XFile('${path}_processed'),
+        ),
+        drafts: const [
+          PostMediaDraft(localFilePath: '/tmp/one.jpg', mime: 'image/jpeg'),
+          PostMediaDraft(
+            localFilePath: '/tmp/note.m4a',
+            mime: 'audio/mp4',
+            durationMs: 3000,
+          ),
+        ],
+        uploadPostMediaFn:
+            ({
+              required postId,
+              required localFilePath,
+              required mime,
+              required allowedPeers,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+            }) async {
+              final voice = mime.startsWith('audio/');
+              uploaded.add(voice ? 'voice' : 'image');
+              return PostMediaAttachmentModel(
+                mediaId: 'media-${uploaded.length}',
+                postId: postId,
+                blobId: 'blob-${uploaded.length}',
+                kind: voice ? 'voice' : 'image',
+                mime: mime,
+                sizeBytes: 100,
+                localPath: 'post_media/$postId/blob-${uploaded.length}',
+                downloadStatus: 'done',
+                createdAt: '2026-03-15T10:20:00.000Z',
+              );
+            },
+      ).timeout(const Duration(seconds: 5));
+
+      if (allowed) {
+        expect(result, AttachPostMediaResult.success);
+        expect(attachments.map((a) => a.kind).toList(), ['image', 'voice']);
+        expect(
+          PostMediaAttachmentModel.deriveMediaKind(attachments),
+          'image_voice',
+        );
+      } else {
+        expect(result, AttachPostMediaResult.invalidSelection);
+        expect(uploaded, isEmpty);
+      }
+    });
+  }
+
   test('preserves the selected order for multi-image posts', () async {
     await posts.savePost(_post('post-ordered'));
     await posts.saveRecipientDelivery(_delivery('post-ordered', 'peer-bob'));

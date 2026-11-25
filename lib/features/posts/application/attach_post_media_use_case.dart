@@ -55,6 +55,7 @@ attachPostMedia({
   required SecureKeyStore secureKeyStore,
   required ImageProcessor imageProcessor,
   required List<PostMediaDraft> drafts,
+  bool photoWithVoice = kThoughtPhotoWithVoice,
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
@@ -84,13 +85,11 @@ attachPostMedia({
     return (AttachPostMediaResult.success, const <PostMediaAttachmentModel>[]);
   }
 
-  final mediaKind = drafts.first.kind;
-  final isValidSelection = switch (mediaKind) {
-    'image' => drafts.every((draft) => draft.kind == 'image'),
-    'video' => drafts.length == 1 && drafts.single.kind == 'video',
-    'voice' => drafts.length == 1 && drafts.single.kind == 'voice',
-    _ => false,
-  };
+  final kinds = [for (final draft in drafts) draft.kind];
+  final mediaKind = PostMediaAttachmentModel.mediaKindOf(kinds);
+  final isValidSelection =
+      PostMediaAttachmentModel.isValidMediaKinds(mediaKind, kinds) &&
+      (photoWithVoice || mediaKind != 'image_voice');
   if (!isValidSelection) {
     return (
       AttachPostMediaResult.invalidSelection,

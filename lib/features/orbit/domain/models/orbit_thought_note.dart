@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
@@ -25,9 +27,12 @@ class OrbitThoughtNote {
     postId: post.id,
     text: post.text,
     media: switch (post.mediaKind) {
-      'image' || 'image_carousel' => MediaPreviewDescriptor(
+      'image' || 'image_carousel' || 'image_voice' => MediaPreviewDescriptor(
         type: 'image',
-        count: post.media.isEmpty ? 1 : post.media.length,
+        count: math.max(
+          1,
+          post.media.where((item) => item.kind != 'voice').length,
+        ),
       ),
       'video' => const MediaPreviewDescriptor(type: 'video', count: 1),
       'voice' => const MediaPreviewDescriptor(type: 'audio', count: 1),

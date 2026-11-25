@@ -23,26 +23,32 @@ Future<List<PostMediaDraft>> pickPostMediaDrafts({MediaPicker? picker}) async =>
       (await pickPostMedia(picker: picker)).drafts,
     ).drafts;
 
-/// Sharing photos with a voice note in one thought stays off until enough
-/// receivers can show it; older builds drop such a thought.
-const bool kThoughtPhotoWithVoice = false;
-
-/// A post carries photos, or one video, or one voice note. Photos picked onto
+/// A post carries photos, or one video, or one voice note; with
+/// [photoWithVoice], photos and one voice note together. Photos picked onto
 /// photos are added; any other pick replaces [current].
 PostMediaPick combinePostMedia(
   List<PostMediaDraft> current,
-  List<PostMediaDraft> picked,
-) {
+  List<PostMediaDraft> picked, {
+  bool photoWithVoice = false,
+}) {
   if (picked.isEmpty) return (drafts: current, leftOut: false);
   final kind = picked.first.kind;
   final sameKind = picked.where((draft) => draft.kind == kind).toList();
   final kept = kind == 'image' ? sameKind : sameKind.take(1).toList();
+  final leftOut = kept.length < picked.length;
+  if (photoWithVoice && kind == 'image') {
+    return (
+      drafts: [
+        ...current.where((draft) => draft.kind == 'image'),
+        ...kept,
+        ...current.where((draft) => draft.kind == 'voice'),
+      ],
+      leftOut: leftOut,
+    );
+  }
   final appendsPhotos =
       kind == 'image' && current.isNotEmpty && current.first.kind == 'image';
-  return (
-    drafts: appendsPhotos ? [...current, ...kept] : kept,
-    leftOut: kept.length < picked.length,
-  );
+  return (drafts: appendsPhotos ? [...current, ...kept] : kept, leftOut: leftOut);
 }
 
 String? _mimeFromPath(String path) {

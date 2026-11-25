@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart' show StringCharacters;
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
+/// Sharing photos with a voice note in one thought stays off until enough
+/// receivers can show it; older builds drop such a thought.
+const bool kThoughtPhotoWithVoice = false;
+
 class PostMediaAttachmentModel {
   final String mediaId;
   final String postId;
@@ -252,12 +256,22 @@ class PostMediaAttachmentModel {
     );
   }
 
-  static String deriveMediaKind(List<PostMediaAttachmentModel> attachments) {
-    if (attachments.isEmpty) {
+  static String deriveMediaKind(List<PostMediaAttachmentModel> attachments) =>
+      mediaKindOf([for (final attachment in attachments) attachment.kind]);
+
+  /// Photos plus one voice note are `image_voice`; otherwise the first item's
+  /// kind decides, and several photos are a carousel.
+  static String mediaKindOf(List<String> kinds) {
+    if (kinds.isEmpty) {
       return 'none';
     }
-    final firstKind = attachments.first.kind;
-    if (firstKind == 'image' && attachments.length > 1) {
+    if (kinds.length > 1 &&
+        kinds.where((kind) => kind == 'voice').length == 1 &&
+        kinds.every((kind) => kind == 'image' || kind == 'voice')) {
+      return 'image_voice';
+    }
+    final firstKind = kinds.first;
+    if (firstKind == 'image' && kinds.length > 1) {
       return 'image_carousel';
     }
     return firstKind;
@@ -266,20 +280,24 @@ class PostMediaAttachmentModel {
   static bool isValidSnapshotMedia({
     required String mediaKind,
     required List<PostMediaAttachmentModel> media,
-  }) {
+  }) => isValidMediaKinds(mediaKind, [
+    for (final attachment in media) attachment.kind,
+  ]);
+
+  static bool isValidMediaKinds(String mediaKind, List<String> kinds) {
     switch (mediaKind) {
       case 'none':
-        return media.isEmpty;
+        return kinds.isEmpty;
       case 'image':
-        return media.length == 1 &&
-            media.every((attachment) => attachment.kind == 'image');
+        return kinds.length == 1 && kinds.single == 'image';
       case 'image_carousel':
-        return media.length > 1 &&
-            media.every((attachment) => attachment.kind == 'image');
+        return kinds.length > 1 && kinds.every((kind) => kind == 'image');
+      case 'image_voice':
+        return mediaKindOf(kinds) == 'image_voice';
       case 'video':
-        return media.length == 1 && media.single.kind == 'video';
+        return kinds.length == 1 && kinds.single == 'video';
       case 'voice':
-        return media.length == 1 && media.single.kind == 'voice';
+        return kinds.length == 1 && kinds.single == 'voice';
       default:
         return false;
     }

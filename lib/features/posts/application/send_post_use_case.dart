@@ -114,16 +114,10 @@ String _normalizePostText(String text) {
   return sanitizeMessageText(text);
 }
 
-String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
-  if (mediaDrafts.isEmpty) {
-    return 'none';
-  }
-  final firstKind = mediaDrafts.first.kind;
-  if (firstKind == 'image' && mediaDrafts.length > 1) {
-    return 'image_carousel';
-  }
-  return firstKind;
-}
+String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) =>
+    PostMediaAttachmentModel.mediaKindOf([
+      for (final draft in mediaDrafts) draft.kind,
+    ]);
 
 Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   required PostRepository postRepo,
