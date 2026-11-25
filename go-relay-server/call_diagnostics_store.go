@@ -595,7 +595,7 @@ func (s *callDiagnosticStore) bindCommitted(actor, recipient, handle string, d *
 		candidate.HandleDigest = meta.handleDigest
 		s.metaMu.Unlock()
 		encoded, _ := json.Marshal(&candidate)
-		reason := s.budgetReasonLocked(d.TraceID, &candidate, len(encoded))
+		reason := s.budgetReasonLocked(d.TraceID, &candidate, len(encoded), false)
 		if reason == "" {
 			var old []byte
 			if prior != nil {
@@ -929,15 +929,7 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	}
 	rec.UpdatedAtMs = s.now().UnixMilli()
 	encoded, _ := json.Marshal(rec)
-	reason := s.budgetReasonLocked(key, rec, len(encoded))
-	if reason == "" && !priority && !discarded {
-		delta := len(encoded) - s.sizes[key]
-		if s.usedBytes+delta > s.quota-callDiagnosticPriorityBytes {
-			reason = "global_bytes"
-		} else if s.ownerSizes[rec.Owner]+delta > s.ownerQuota-callDiagnosticPriorityBytes {
-			reason = "owner_bytes"
-		}
-	}
+	reason := s.budgetReasonLocked(key, rec, len(encoded), priority)
 	if reason == "" {
 		var old []byte
 		if prior != nil {
@@ -1288,23 +1280,36 @@ func (s *callDiagnosticStore) unindexBytesLocked(key string, r *callDiagnosticRe
 		delete(s.ownerSizes, r.Owner)
 	}
 }
-func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRecord, size int) string {
+func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRecord, size int, priority bool) string {
 	if size > callDiagnosticRecordBytes {
 		return "record_bytes"
 	}
 	delta := size - s.sizes[key]
-	if s.usedBytes+delta > s.quota {
+	globalBytes := s.usedBytes + delta
+	ownerBytes := s.ownerSizes[r.Owner] + delta
+	if globalBytes > s.quota {
 		return "global_bytes"
 	}
-	if s.ownerSizes[r.Owner]+delta > s.ownerQuota {
+	if ownerBytes > s.ownerQuota {
 		return "owner_bytes"
 	}
 	reserveDelta := callDiagnosticBindingReserve(key, r) - s.bindingReserves[key]
-	if s.usedBytes+delta+s.bindingReserved+reserveDelta > s.quota {
+	globalBytes += s.bindingReserved + reserveDelta
+	ownerBytes += s.ownerBindingReserves[r.Owner] + reserveDelta
+	if globalBytes > s.quota {
 		return "global_bytes"
 	}
-	if s.ownerSizes[r.Owner]+delta+s.ownerBindingReserves[r.Owner]+reserveDelta > s.ownerQuota {
+	if ownerBytes > s.ownerQuota {
 		return "owner_bytes"
+	}
+	// Materializing a binding can leave accounted usage unchanged.
+	if !priority && delta+reserveDelta > 0 {
+		if globalBytes > s.quota-callDiagnosticPriorityBytes {
+			return "global_bytes"
+		}
+		if ownerBytes > s.ownerQuota-callDiagnosticPriorityBytes {
+			return "owner_bytes"
+		}
 	}
 	return ""
 }
