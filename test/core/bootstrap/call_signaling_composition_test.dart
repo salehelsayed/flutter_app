@@ -721,8 +721,10 @@ void main() {
     },
   );
 
+  for (final resumeFirst in [false, true]) {
   test(
-    'BL92 PiP-paused user camera resumes after a background transport recovery',
+    'BL92 PiP-paused user camera resumes after a background transport '
+    'recovery (resume ${resumeFirst ? 'before' : 'after'} recovery)',
     () async {
       final pip = FakeCallPictureInPictureBridge();
       final (fixture, engine) = await _connectedGraphVideo(
@@ -795,6 +797,11 @@ void main() {
       await _untilGraphVideo(
         () => engine.video!.commits == commits + 1,
       ).timeout(const Duration(seconds: 10));
+      if (resumeFirst) {
+        await fixture.composition.onResume();
+        await flushPip();
+        expect(engine.video!.cameraOn, isFalse);
+      }
       await graph.coordinator.dispatch(
         CallEvent(
           type: CallEventType.mediaRecovered,
@@ -806,9 +813,10 @@ void main() {
         ),
       );
       expect(graph.coordinator.activeSession!.state, CallState.connected);
-      expect(engine.video!.cameraOn, isFalse);
-
-      await fixture.composition.onResume();
+      if (!resumeFirst) {
+        expect(engine.video!.cameraOn, isFalse);
+        await fixture.composition.onResume();
+      }
       await flushPip();
       expect(
         engine.video!.cameraOn,
@@ -818,6 +826,7 @@ void main() {
       expect(engine.video!.cameraStarts, 2);
     },
   );
+  }
 
   test(
     'PiP graph supported continuation keeps existing camera authority',
