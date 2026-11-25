@@ -1367,6 +1367,42 @@ void main() {
     );
   }
 
+  testWidgets('BL95 a thought with a photo and a voice note shows both', (
+    tester,
+  ) async {
+    final photo = _tempFile('photo.png', pngBytes: true);
+    final voice = _tempFile('voice.m4a');
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image_voice');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(_attachment('image'));
+    await posts.savePostMediaAttachment(_attachment('voice'));
+    await openCard(
+      tester,
+      thought,
+      download: (requested) async {
+        final path = requested.kind == 'voice' ? voice.path : photo.path;
+        await posts.updatePostMediaLocalPath(
+          requested.mediaId,
+          path,
+          postId: requested.postId,
+        );
+        return requested.copyWith(localPath: path, downloadStatus: 'done');
+      },
+    );
+    await tester.pumpAndSettle();
+
+    final shown = tester.widget<Image>(
+      find.byKey(const ValueKey('thought-photo-full')),
+    );
+    expect((shown.image as FileImage).file.path, photo.path);
+    final player = tester.widget<AudioPlayerWidget>(
+      find.byType(AudioPlayerWidget),
+    );
+    expect(player.attachment.mediaType, 'audio');
+    expect(player.attachment.localPath, voice.path);
+    await finish(tester);
+  });
+
   testWidgets('a voice caption shows above its player', (tester) async {
     final file = _tempFile('voice.m4a');
     final thought = _thought(initialNow).copyWith(mediaKind: 'voice');
