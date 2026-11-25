@@ -722,6 +722,104 @@ void main() {
   );
 
   test(
+    'BL92 PiP-paused user camera resumes after a background transport recovery',
+    () async {
+      final pip = FakeCallPictureInPictureBridge();
+      final (fixture, engine) = await _connectedGraphVideo(
+        pictureInPictureBridgeFactory: () => pip,
+        checkCameraPermission: () async => true,
+      );
+      engine.video!.recoveryReconciliation =
+          CallVideoSdpReconciliationOutcome.alreadyStable;
+      engine.video!.replaceRemoteTrack();
+      await turnCameraOn(fixture);
+      await flushPip();
+      await fixture.composition.onBackgrounded();
+      await flushPip();
+      expect(pip.enters, hasLength(1));
+      expect(engine.video!.cameraOn, isFalse);
+
+      final graph = fixture.graphs.single;
+      final id = graph.coordinator.activeSession!.callId!;
+      final commits = engine.video!.commits;
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.mediaLost,
+          eventId: 'bl92-background-transport-loss',
+          occurredAt: graph.coordinator.clock(),
+          callId: id,
+        ),
+      );
+      expect(graph.coordinator.activeSession!.state, CallState.reconnecting);
+      await _untilGraphVideo(
+        () => _upgradeSignals(fixture, 'ice_restart').isNotEmpty,
+      ).timeout(const Duration(seconds: 10));
+      const negotiation = '92929292-9292-4929-8929-929292929292';
+      Map<String, dynamic> remote(
+        String event,
+        int sequence,
+        Map<String, Object?> payload,
+      ) => {
+        'schema': CallSignalV2.schema,
+        'call_id': id.value,
+        'message_id': '00000000-0000-4000-8000-00000000009$sequence',
+        'event': event,
+        'sender_sequence': 90 + sequence,
+        'ice_generation': 1,
+        'created_at_ms': 2000000,
+        'expires_at_ms': 2015000,
+        'payload': payload,
+      };
+      await _deliverUpgradeSignal(
+        fixture,
+        remote('ice_restart', 2, {
+          'negotiation_id': negotiation,
+          'media_revision': 0,
+        }),
+      );
+      await _untilGraphVideo(
+        () => engine.restarts == 1,
+      ).timeout(const Duration(seconds: 10));
+      await _deliverUpgradeSignal(
+        fixture,
+        remote('offer', 3, {
+          'negotiation_id': negotiation,
+          'purpose': 'ice_restart',
+          'switch_id': null,
+          'media_revision': 0,
+          'media': 'video',
+          'description': 'fixture-sdp',
+          'fingerprint': 'fixture-fingerprint',
+        }),
+      );
+      await _untilGraphVideo(
+        () => engine.video!.commits == commits + 1,
+      ).timeout(const Duration(seconds: 10));
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.mediaRecovered,
+          eventId: 'bl92-background-transport-recovered',
+          occurredAt: graph.coordinator.clock(),
+          callId: id,
+          reconnectGeneration:
+              graph.coordinator.activeSession!.reconnectGeneration,
+        ),
+      );
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      expect(engine.video!.cameraOn, isFalse);
+
+      await fixture.composition.onResume();
+      await flushPip();
+      expect(
+        engine.video!.cameraOn,
+        isTrue,
+        reason: 'the camera the user left on comes back after foreground',
+      );
+      expect(engine.video!.cameraStarts, 2);
+    },
+  );
+
+  test(
     'PiP graph supported continuation keeps existing camera authority',
     () async {
       final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
