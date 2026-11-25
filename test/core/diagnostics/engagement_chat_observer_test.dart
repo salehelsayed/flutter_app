@@ -589,6 +589,25 @@ void main() {
     expect(retentions, hasLength(1));
   });
 
+  test('E2O-014 facts that meet a failed week lookup wait for the next '
+      'worker start instead of being dropped', () async {
+    var calendarUp = false;
+    final observer = await make(
+      lookup: (_) => Future<EngagementChatWeekInterval?>.value(
+        calendarUp ? _week : null,
+      ),
+    );
+    _facts(observer, _capture(observer));
+    await _drain(observer);
+    expect(retentions, isEmpty);
+
+    calendarUp = true;
+    await _drain(observer);
+
+    expect(retentions, hasLength(1));
+    expect(retentions.single['week'], _week.week);
+  });
+
   test('E2O-012 revoke removes private witnesses before a new epoch', () async {
     final store = await open();
     final seeded = EngagementChatWitness(
