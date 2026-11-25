@@ -39,6 +39,7 @@ void main() {
     ComposePostResult? initialDraft,
     ValueChanged<ComposePostResult?>? onClosed,
     bool replacesCurrentThought = false,
+    bool photoWithVoice = false,
     ThemeData? theme,
   }) => MaterialApp(
     theme: theme,
@@ -50,6 +51,7 @@ void main() {
         key: key,
         thoughtsOnly: true,
         replacesCurrentThought: replacesCurrentThought,
+        photoWithVoice: photoWithVoice,
         eligibleContacts: const [],
         onSubmitWithOutcome: submit,
         onAttachMedia: media,
@@ -661,6 +663,90 @@ void main() {
     await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/clip.mp4']);
+  });
+
+  testWidgets('BL95 a voice note recorded onto a photo keeps both', (
+    tester,
+  ) async {
+    final recorder = FakeAudioRecorderService()
+      ..fakeOutputPath = '/tmp/bl95.m4a'
+      ..fakeDurationMs = 3000;
+    addTearDown(recorder.dispose);
+    final photo = PostMediaDraft(localFilePath: realPhoto(), mime: 'image/jpeg');
+    ComposePostResult? submitted;
+    await tester.pumpWidget(
+      scene(
+        photoWithVoice: true,
+        recorder: recorder,
+        pick: () async => (drafts: [photo], leftOut: false),
+        submit: (draft) async {
+          submitted = draft;
+          return ComposePostSubmitOutcome.keepSheetOpen;
+        },
+      ),
+    );
+    await tester.tap(find.byTooltip('Media'));
+    await finishPick(tester);
+    await tester.tap(find.byTooltip('Voice'));
+    await tester.pump();
+    recorder.emitAmplitude(0.4);
+    await recorder.triggerAutoStop();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
+    expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
+    await until(tester, () => submitted != null);
+    expect(submitted!.mediaDrafts.map((d) => d.kind).toList(), [
+      'image',
+      'voice',
+    ]);
+    expect(submitted!.mediaDrafts.last.localFilePath, '/tmp/bl95.m4a');
+    await settlePlayer(tester);
+  });
+
+  testWidgets('BL95 a photo picked onto a voice note keeps both', (
+    tester,
+  ) async {
+    const voice = PostMediaDraft(
+      localFilePath: '/tmp/kept.m4a',
+      mime: 'audio/mp4',
+      durationMs: 3000,
+    );
+    final photo = PostMediaDraft(localFilePath: realPhoto(), mime: 'image/jpeg');
+    ComposePostResult? submitted;
+    await tester.pumpWidget(
+      scene(
+        photoWithVoice: true,
+        initialDraft: ComposePostResult(
+          text: '',
+          audience: PostAudience.allFriends(),
+          mediaDrafts: const [voice],
+        ),
+        pick: () async => (drafts: [photo], leftOut: false),
+        submit: (draft) async {
+          submitted = draft;
+          return ComposePostSubmitOutcome.keepSheetOpen;
+        },
+      ),
+    );
+    await tester.tap(find.byTooltip('Media'));
+    await finishPick(tester);
+    expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
+    expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
+    await until(tester, () => submitted != null);
+    expect(submitted!.mediaDrafts.map((d) => d.kind).toList(), [
+      'image',
+      'voice',
+    ]);
+    expect(submitted!.mediaDrafts.last, same(voice));
+    await settlePlayer(tester);
   });
 
   testWidgets('a media picker failure is explained inside the sheet', (

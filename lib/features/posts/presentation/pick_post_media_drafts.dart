@@ -23,6 +23,10 @@ Future<List<PostMediaDraft>> pickPostMediaDrafts({MediaPicker? picker}) async =>
       (await pickPostMedia(picker: picker)).drafts,
     ).drafts;
 
+/// Sharing photos with a voice note in one thought stays off until enough
+/// receivers can show it; older builds drop such a thought.
+const bool kThoughtPhotoWithVoice = false;
+
 /// A post carries photos, or one video, or one voice note. Photos picked onto
 /// photos are added; any other pick replaces [current].
 PostMediaPick combinePostMedia(

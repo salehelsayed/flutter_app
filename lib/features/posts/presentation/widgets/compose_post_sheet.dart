@@ -88,6 +88,9 @@ class ComposePostSheet extends StatefulWidget {
   /// The user has a thought up now, which sharing this one replaces.
   final bool replacesCurrentThought;
 
+  /// A thought may carry photos together with one voice note.
+  final bool photoWithVoice;
+
   /// Where a Thought's "select people…" remembers its last picks.
   final ThoughtRecentPicks? recentPicks;
 
@@ -105,6 +108,7 @@ class ComposePostSheet extends StatefulWidget {
     super.key,
     this.thoughtsOnly = false,
     this.replacesCurrentThought = false,
+    this.photoWithVoice = kThoughtPhotoWithVoice,
     this.recentPicks,
     this.transcribeVoice,
     this.captureVoiceToTextUse,
