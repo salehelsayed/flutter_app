@@ -554,12 +554,13 @@ void main() {
       expect([...tapped, ?initial], <String>['peer-123']);
     });
 
-    test('BL94 a cold tap during a failed native initialize is not opened '
-        'again by the retry', () async {
+    for (final listening in [true, false]) {
+    test('BL94 a cold tap during a failed native initialize opens once after '
+        'the retry (${listening ? 'listener set' : 'no listener yet'})', () async {
       const deadline = Duration(seconds: 5);
       final service = buildService();
       final tapped = <String>[];
-      service.onNotificationTap = tapped.add;
+      if (listening) service.onNotificationTap = tapped.add;
       failMethodOnce = 'initialize';
       beforeFail = () => _sendNotificationResponse(
         payload: launchPayload,
@@ -572,11 +573,13 @@ void main() {
       await pumpEventQueue();
 
       await service.initialize().timeout(deadline);
+      if (!listening) service.onNotificationTap = tapped.add;
       final initial = await service.consumeInitialPayload().timeout(deadline);
       await pumpEventQueue();
 
       expect([...tapped, ?initial], <String>['peer-123']);
     });
+    }
 
     test('BL94 a different card tapped before the launch details are read '
         'still opens', () async {

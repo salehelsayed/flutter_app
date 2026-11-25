@@ -71,10 +71,15 @@ class FlutterNotificationService
   /// first source to deliver it wins; the other drops it, once.
   ({int? id, String? payload})? _launchTap;
 
-  /// BL-94: taps that arrive while initialize is still reading the launch
-  /// details wait until [_launchTap] is known, so the launching one is
-  /// recognised as the duplicate.
-  List<NotificationResponse>? _earlyResponses = [];
+  /// BL-94: taps that arrive during an initialize attempt wait until
+  /// [_launchTap] is known, so the launching one is recognised as the
+  /// duplicate.
+  List<NotificationResponse>? _earlyResponses;
+
+  /// Taps delivered before any attempt learned the launch tap. A retry whose
+  /// launch details name one of them must not deliver it again.
+  final List<NotificationResponse> _deliveredBeforeLaunch = [];
+  bool _launchKnown = false;
 
   FlutterNotificationService({
     Future<bool> Function()? loadThoughtNotificationsEnabled,
@@ -147,11 +152,12 @@ class FlutterNotificationService
       iOS: iosSettings,
     );
 
-    await _plugin.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onNotificationResponse,
-    );
+    _earlyResponses ??= [];
     try {
+      await _plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _onNotificationResponse,
+      );
       await ensureMknoonNotificationChannel(_plugin);
       final launchDetails = await _plugin.getNotificationAppLaunchDetails();
       _initialPayload = launchDetails?.notificationResponse?.payload;
@@ -161,10 +167,22 @@ class FlutterNotificationService
       _launchTap = launchResponse == null
           ? null
           : (id: launchResponse.id, payload: launchResponse.payload);
+      if (launchResponse != null &&
+          _deliveredBeforeLaunch.any(
+            (tap) =>
+                tap.id == launchResponse.id &&
+                tap.payload == launchResponse.payload &&
+                tap.actionId == launchResponse.actionId,
+          )) {
+        _launchTap = null;
+        _initialPayloadConsumed = true;
+      }
+      _launchKnown = true;
+      _deliveredBeforeLaunch.clear();
     } finally {
       final early = _earlyResponses ?? const <NotificationResponse>[];
       _earlyResponses = null;
-      early.forEach(_deliverNotificationResponse);
+      early.forEach(_admitNotificationResponse);
     }
 
     emitFlowEvent(
@@ -185,6 +203,13 @@ class FlutterNotificationService
     if (early != null) {
       early.add(response);
       return;
+    }
+    _admitNotificationResponse(response);
+  }
+
+  void _admitNotificationResponse(NotificationResponse response) {
+    if (!_launchKnown && onNotificationTap != null) {
+      _deliveredBeforeLaunch.add(response);
     }
     _deliverNotificationResponse(response);
   }
