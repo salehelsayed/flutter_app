@@ -1479,24 +1479,28 @@ class GoBridgeClient extends Bridge {
       } catch (_) {
         // Diagnostics never replace an ordinary bridge result.
       }
-      final hasErrorCode = decoded.containsKey('errorCode');
-      // Only this exact uncoded lifecycle reply establishes not-ready. Coded
-      // rejections retain their code-derived kind, even with the same text.
-      final nodeStopped =
-          decoded['ok'] == false &&
-          !hasErrorCode &&
-          decoded['error'] == 'node stopped';
-      // These two best-effort calls return ordinary negative results when a
-      // peer/relay is unavailable. Preserve the result without a failure event.
+      final errorCode = decoded['errorCode'];
+      final diagnosticCode = decoded['diagnosticCode'];
+      final uncoded =
+          !decoded.containsKey('errorCode') &&
+          !decoded.containsKey('diagnosticCode');
+      final failed = decoded['ok'] == false;
+      final nodeNotStarted =
+          failed && uncoded && decoded['error'] == 'node not started';
       final expectedMiss =
-          decoded['ok'] == false &&
-          !hasErrorCode &&
-          !nodeStopped &&
-          (cmd == 'peer:ping' || cmd == 'relay:presence_set');
+          failed &&
+          ((cmd == 'profile:download' &&
+                  errorCode == 'PROFILE_ERROR' &&
+                  diagnosticCode == 'PROFILE_NOT_FOUND') ||
+              (uncoded &&
+                  !nodeNotStarted &&
+                  (cmd == 'peer:ping' ||
+                      cmd == 'relay:presence_set' ||
+                      cmd == 'inbox:register_wake_tokens')));
       if (!expectedMiss) {
         final dialFailure =
             cmd == 'peer:dial' &&
-                decoded['errorCode'] == 'DIAL_ERROR' &&
+                errorCode == 'DIAL_ERROR' &&
                 _dialFailureDiagnostics.containsKey(decoded['dialFailure'])
             ? decoded['dialFailure'] as String
             : null;
@@ -1505,17 +1509,18 @@ class GoBridgeClient extends Bridge {
           decoded['ok'] == true,
           decoded['ok'] == true
               ? 'none'
-              : switch ((cmd, decoded['errorCode'])) {
+              : switch ((cmd, errorCode)) {
                   ('peer:dial', 'NOT_INITIALIZED') => 'bridge_unavailable',
                   ('peer:dial', 'INVALID_INPUT') => 'invalid_request',
                   ('peer:dial', 'DIAL_ERROR') =>
                     dialLabels?.$1 ?? 'route_failed',
                   _ => 'bridge_rejected',
                 },
-          nodeStopped
+          nodeNotStarted
               ? _BridgeRejectionKind.notReady
               : dialLabels?.$2 ??
-                    _bridgeRejectionKinds[decoded['errorCode']] ??
+                    _bridgeRejectionKinds[errorCode] ??
+                    _bridgeDiagnosticCodeKinds[diagnosticCode] ??
                     _BridgeRejectionKind.unknown,
           dialFailure,
         );
@@ -1716,6 +1721,12 @@ const _dialFailureDiagnostics = <String, (String, _BridgeRejectionKind)>{
   'other': ('route_failed', _BridgeRejectionKind.unknown),
 };
 
+const _bridgeDiagnosticCodeKinds = <String, _BridgeRejectionKind>{
+  'PROFILE_NOT_FOUND': _BridgeRejectionKind.notFound,
+  'NODE_NOT_STARTED': _BridgeRejectionKind.notReady,
+  'RELAY_UNAVAILABLE': _BridgeRejectionKind.notReady,
+};
+
 // This table uses explicit codes; broad unclassified failures stay unknown.
 // Dispatch separately recognizes the exact uncoded lifecycle reply above.
 // Raw commands, payloads, peer identifiers and error text are never recorded.
@@ -1723,6 +1734,8 @@ const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'BRIDGE_TIMEOUT': _BridgeRejectionKind.timeout,
   'NOT_INITIALIZED': _BridgeRejectionKind.notReady,
   'NO_RESERVATION': _BridgeRejectionKind.notReady,
+  'TURN_CREDENTIALS_TRANSIENT': _BridgeRejectionKind.notReady,
+  'GROUP_KEY_GRACE_ACTIVE': _BridgeRejectionKind.notReady,
   'CUSTODY_ADMISSION_DISABLED': _BridgeRejectionKind.notReady,
   'MEDIA_CUSTODY_ADMISSION_DISABLED': _BridgeRejectionKind.notReady,
   'MEDIA_CUSTODY_CLEANUP_PENDING': _BridgeRejectionKind.notReady,
@@ -1731,6 +1744,7 @@ const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'INVALID_GROUP_KEY': _BridgeRejectionKind.invalidArgument,
   'INVALID_JOIN_MATERIAL': _BridgeRejectionKind.invalidArgument,
   'INVALID_KEY_EPOCH': _BridgeRejectionKind.invalidArgument,
+  'DECRYPT_METADATA_ERROR': _BridgeRejectionKind.invalidArgument,
   'CALL_INVALID_REQUEST': _BridgeRejectionKind.invalidArgument,
   'CALL_EXPIRY_INVALID': _BridgeRejectionKind.invalidArgument,
   'CALL_ENVELOPE_TOO_LARGE': _BridgeRejectionKind.invalidArgument,
@@ -1738,7 +1752,10 @@ const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'MEDIA_CUSTODY_NOT_FOUND': _BridgeRejectionKind.notFound,
   'CALL_UNAUTHORIZED': _BridgeRejectionKind.permission,
   'MEDIA_CUSTODY_NOT_AUTHORIZED': _BridgeRejectionKind.permission,
+  'DECRYPT_AUTH_ERROR': _BridgeRejectionKind.permission,
+  'DECRYPT_FAILED': _BridgeRejectionKind.permission,
   'INTERNAL_ERROR': _BridgeRejectionKind.internal,
+  'DECRYPT_IO_ERROR': _BridgeRejectionKind.internal,
   'NULL_RESPONSE': _BridgeRejectionKind.malformedResponse,
   'MALFORMED_RESPONSE': _BridgeRejectionKind.malformedResponse,
   'CALL_CONTROL_INVALID_RESPONSE': _BridgeRejectionKind.malformedResponse,

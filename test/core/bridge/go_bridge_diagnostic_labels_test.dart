@@ -435,7 +435,7 @@ void main() {
     final native = {
       'ok': false,
       'errorCode': 'INTERNAL_ERROR',
-      'error': 'node stopped',
+      'error': 'node not started',
       'errorMessage': _privateMarker,
     };
     expect(jsonDecode(await send('peer:ping', jsonEncode(native))), native);
@@ -500,11 +500,14 @@ void main() {
     await expectLabels('profile:download', 'profile', 'unknown');
   });
 
-  test('BL24A causal exact node-stopped stays a not-ready failure', () async {
-    const native = {'ok': false, 'error': 'node stopped'};
-    expect(jsonDecode(await send('peer:ping', jsonEncode(native))), native);
-    await expectLabels('peer:ping', 'network', 'not_ready');
-  });
+  test(
+    'BL24A causal exact node-not-started stays a not-ready failure',
+    () async {
+      const native = {'ok': false, 'error': 'node not started'};
+      expect(jsonDecode(await send('peer:ping', jsonEncode(native))), native);
+      await expectLabels('peer:ping', 'network', 'not_ready');
+    },
+  );
 
   for (final command in ['peer:ping', 'relay:presence_set']) {
     for (final error in [null, '', 'offline $_privateMarker']) {
@@ -521,7 +524,7 @@ void main() {
         final native = {
           'ok': false,
           'errorCode': sample.code,
-          'error': 'node stopped',
+          'error': 'node not started',
           'errorMessage': _privateMarker,
         };
         expect(jsonDecode(await send(command, jsonEncode(native))), native);
@@ -534,16 +537,19 @@ void main() {
         final native = {
           'ok': false,
           'errorCode': code,
-          'error': 'node stopped',
+          'error': 'node not started',
         };
         expect(jsonDecode(await send(command, jsonEncode(native))), native);
         await expectLabels(command, 'network', 'unknown');
       });
     }
     test(
-      'BL24A $command success cannot become a node-stopped failure',
+      'BL24A $command success cannot become a node-not-started failure',
       () async {
-        await expectNoFailure(command, {'ok': true, 'error': 'node stopped'});
+        await expectNoFailure(command, {
+          'ok': true,
+          'error': 'node not started',
+        });
       },
     );
   }
@@ -581,7 +587,7 @@ void main() {
     test(
       'BL24A ${sample.command} exact lifecycle rejection remains visible',
       () async {
-        const native = {'ok': false, 'error': 'node stopped'};
+        const native = {'ok': false, 'error': 'node not started'};
         expect(
           jsonDecode(await send(sample.command, jsonEncode(native))),
           native,
@@ -592,10 +598,11 @@ void main() {
   }
 
   for (final error in [
-    'node stopped $_privateMarker',
-    '$_privateMarker node stopped',
-    'Node stopped',
-    'node stopped\n',
+    'node stopped',
+    'node not started $_privateMarker',
+    '$_privateMarker node not started',
+    'Node not started',
+    'node not started\n',
     'node has stopped',
   ]) {
     test(
