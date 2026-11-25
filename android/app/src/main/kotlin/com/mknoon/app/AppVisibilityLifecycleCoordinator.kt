@@ -47,6 +47,9 @@ internal class AppVisibilityLifecycleCoordinator private constructor(
     ) {
         @Volatile
         var completion: LifecycleCompletion? = null
+
+        // Lifecycle callbacks, channel handlers and replies access this on the main looper.
+        val pendingReplyCancellations = mutableSetOf<() -> Unit>()
     }
 
     private class LifecycleCompletion(val generation: Long?)
@@ -94,6 +97,11 @@ internal class AppVisibilityLifecycleCoordinator private constructor(
             request.completion = LifecycleCompletion(
                 commit?.takeIf { it.committed }?.snapshot?.lifecycleGeneration,
             )
+        }
+        if (previous != null) {
+            val cancellations = previous.pendingReplyCancellations.toList()
+            previous.pendingReplyCancellations.clear()
+            cancellations.forEach { it() }
         }
     }
 
@@ -159,6 +167,8 @@ internal class AppVisibilityLifecycleCoordinator private constructor(
         reply: (T?) -> Unit,
         operation: (Long) -> T?,
     ) {
+        val cancel = { reply(null) }
+        request.pendingReplyCancellations.add(cancel)
         executor.execute {
             val generation = request.completion?.generation
             val value = if (isAttached() && currentRequest === request && generation != null) {
@@ -171,7 +181,9 @@ internal class AppVisibilityLifecycleCoordinator private constructor(
                 null
             }
             replyExecutor.execute {
-                reply(if (isAttached() && currentRequest === request) value else null)
+                if (request.pendingReplyCancellations.remove(cancel)) {
+                    reply(if (isAttached() && currentRequest === request) value else null)
+                }
             }
         }
     }
