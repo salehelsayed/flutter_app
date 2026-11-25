@@ -1322,26 +1322,43 @@ final class ProductionCallSignalingGraph
       final token = _localCameraToken;
       if (intent != null && !intent.lease.entryAccepted) {
         _pipCameraIntent = null;
+        _logPipResume('pip_entry_not_accepted');
         return;
       }
-      if (intent == null && token == null) return;
+      if (intent == null && token == null) {
+        _logPipResume('no_paused_camera');
+        return;
+      }
       final epoch = _cameraEpoch;
       final permitted = await _cameraPermissionWithoutPrompt();
-      if (epoch != _cameraEpoch || !_videoForeground) return;
+      if (epoch != _cameraEpoch || !_videoForeground) {
+        _logPipResume(epoch != _cameraEpoch ? 'camera_changed' : 'background');
+        return;
+      }
       if (!permitted) {
+        _logPipResume('permission_lost');
         _pip?.invalidate('permissionLost');
         await _revokeLocalCamera();
         _refreshVideo();
         return;
       }
-      if (intent == null ||
-          _pipCameraIntent != intent ||
-          !_pipIntentCurrent() ||
-          _pipThermalBlocked) {
+      if (intent == null || _pipCameraIntent != intent) {
+        if (token == null) _logPipResume('paused_camera_cleared');
+        return;
+      }
+      if (!_pipIntentCurrent()) {
+        _logPipResume(_pipIntentHeld() ? 'call_not_ready' : 'paused_camera_stale');
+        return;
+      }
+      if (_pipThermalBlocked) {
+        _logPipResume('thermal');
         return;
       }
       final negotiation = intent.owner.negotiation;
-      if (negotiation == null) return;
+      if (negotiation == null) {
+        _logPipResume('no_negotiation');
+        return;
+      }
       await _startPipCamera(
         intent.owner,
         intent.session,
@@ -1353,9 +1370,33 @@ final class ProductionCallSignalingGraph
             _pipCameraIntent == intent &&
             _pipIntentCurrent(),
       );
+      _logPipResume(_localCameraToken != null ? 'resumed' : 'start_refused');
     } finally {
       _pipResumePending = false;
     }
+  }
+
+  /// Local log only: why an OS-paused camera did or did not come back.
+  void _logPipResume(String outcome) {
+    final snapshot = coordinator.activeSession;
+    final intent = _pipCameraIntent;
+    final machine = intent?.owner.mediaSwitch?.machine;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_PIP_CAMERA_RESUME',
+      details: {
+        'outcome': outcome,
+        'state': snapshot?.state.name,
+        'foreground': _videoForeground,
+        'intentHeld': _pipIntentHeld(),
+        'ownerCurrent': intent?.owner.current,
+        'gatesOpen': machine?.videoGatesOpen,
+        'pendingSwitch': machine?.hasPendingSwitch,
+        'revisionMatch':
+            intent?.owner.negotiation?.mediaRevision ==
+            intent?.token.mediaRevision,
+      },
+    );
   }
 
   Future<void> _startPipCamera(
@@ -1445,13 +1486,23 @@ final class ProductionCallSignalingGraph
             event.detail != 'closed' &&
             event.detail != 'restored')) {
       // A later lease (re-armed after a reconnect, still in the background)
-      // that cannot enter does not undo the pause an earlier lease saved.
+      // whose entry is rejected does not undo the pause an earlier lease
+      // saved. A lock or any other block still ends it.
       final otherLeasePause =
+          event.type == CallPipEventType.failed &&
+          event.detail == 'enterRejected' &&
           _pipCameraIntent != null &&
           !identical(_pipCameraIntent!.lease, lease) &&
           _localCameraToken == null &&
           !_cameraActionPending;
       if (otherLeasePause) return;
+      if (_pipCameraIntent != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CALL_PIP_CAMERA_PAUSE_CLEARED',
+          details: {'pipEvent': event.type.name, 'detail': event.detail},
+        );
+      }
       _pipCameraIntent = null;
       if (!_videoForegroundAllowed || event.type == CallPipEventType.blocked) {
         unawaited(_revokeLocalCamera(state: CallCameraState.paused));
