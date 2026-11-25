@@ -1292,12 +1292,7 @@ final class ProductionCallSignalingGraph
         identical(owner.negotiation, token) &&
         owner.current;
     // A second background/exit notification cannot erase a prior OS pause.
-    if (token == null &&
-        lease != null &&
-        identical(_pipCameraIntent?.lease, lease) &&
-        _pipIntentHeld()) {
-      return;
-    }
+    if (token == null && !_cameraActionPending && _pipIntentHeld()) return;
     unawaited(_revokeLocalCamera(state: CallCameraState.paused));
     if (retain) {
       _pipCameraIntent = (
