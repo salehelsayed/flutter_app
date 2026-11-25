@@ -64,7 +64,7 @@ final class ActiveIdentityReporter {
     required String statePath,
     EngagementChatCheckpointStore? groupWitnessStore,
     int Function()? groupNowMilliseconds,
-    Duration groupStoreDeadline = const Duration(seconds: 1),
+    Duration groupStoreDeadline = const Duration(seconds: 5),
     Duration groupCheckpointRetryDelay = const Duration(seconds: 2),
     EngagementChatCheckpointStore? chatWitnessStore,
     int Function()? chatNowMilliseconds,

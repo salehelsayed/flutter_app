@@ -79,6 +79,7 @@ ActiveIdentityReporter _make(
       #statePath: state,
       #groupWitnessStore: store,
       #groupNowMilliseconds: now,
+      #groupCheckpointRetryDelay: const Duration(milliseconds: 10),
     }) as ActiveIdentityReporter;
   } on NoSuchMethodError {
     return ActiveIdentityReporter(statePath: state);

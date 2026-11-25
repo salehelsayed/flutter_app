@@ -22,9 +22,11 @@ final class GroupEngagementObserver {
   GroupEngagementObserver({
     required this.store,
     required this.nowMilliseconds,
-    this.deadline = const Duration(seconds: 1),
+    this.deadline = const Duration(seconds: 5),
     this.checkpointRetryDelay = const Duration(seconds: 2),
   });
+
+  static const _checkpointRetries = 2;
 
   /// Bounds each optional store, calendar and retention call.
   final Duration deadline;
@@ -292,10 +294,18 @@ final class GroupEngagementObserver {
     }
     final pending = _phase == _Phase.pending;
     if (pending) _attempted = true;
-    final saved = await _storeCall(
+    Future<bool> write() => _storeCall(
       (guard) => store.replace(_encode(owner, week), isCurrent: guard),
       () => _context(owner, week),
     );
+    // A restart restores only what reached the store, so a late write is
+    // retried here rather than waiting for a later wake that may never come.
+    var saved = await write();
+    for (var retry = 0; !saved && retry < _checkpointRetries; retry++) {
+      await Future<void>.delayed(checkpointRetryDelay);
+      if (_disposed || !_context(owner, week)) return;
+      saved = await write();
+    }
     if (!saved) {
       _storageFailed = true;
       return;
