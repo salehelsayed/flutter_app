@@ -836,6 +836,100 @@ void main() {
   }
 
   test(
+    'BL92 caller: a PiP-paused camera resumes after its own ICE restart '
+    'while backgrounded',
+    () async {
+      const step = Duration(seconds: 5);
+      final pip = FakeCallPictureInPictureBridge();
+      final (fixture, engine) = await _connectedOutgoingGraph(
+        acceptedMedia: CallMediaKind.video,
+        pictureInPictureBridgeFactory: () => pip,
+        checkCameraPermission: () async => true,
+        permission: _grantCameraForFixture,
+      ).timeout(step);
+      engine.video!.recoveryReconciliation =
+          CallVideoSdpReconciliationOutcome.alreadyStable;
+      engine.video!.replaceRemoteTrack();
+      final graph = fixture.graphs.single;
+      final id = graph.coordinator.activeSession!.callId!;
+      expect(
+        await graph
+            .applyVideoIntent(
+              id,
+              generation: graph.current!.video!.generation,
+              intent: const CallVideoIntent(CallVideoAction.turnCameraOn),
+            )
+            .timeout(step),
+        ForegroundCallActionResult.applied,
+      );
+      await flushPip().timeout(step);
+      expect(engine.video!.cameraOn, isTrue);
+      await fixture.composition.onBackgrounded().timeout(step);
+      await flushPip().timeout(step);
+      expect(pip.enters, hasLength(1));
+      expect(engine.video!.cameraOn, isFalse);
+      pip.enterResult = false;
+
+      final commits = engine.video!.commits;
+      await graph.coordinator
+          .dispatch(
+            CallEvent(
+              type: CallEventType.mediaLost,
+              eventId: 'bl92-caller-transport-loss',
+              occurredAt: graph.coordinator.clock(),
+              callId: id,
+            ),
+          )
+          .timeout(step);
+      await _untilGraphVideo(
+        () => _upgradeSignals(
+          fixture,
+          'offer',
+        ).any((signal) => signal['ice_generation'] == 1),
+      );
+      final offer = _upgradeSignals(
+        fixture,
+        'offer',
+      ).singleWhere((signal) => signal['ice_generation'] == 1);
+      await _deliverUpgradeSignal(fixture, {
+        'schema': CallSignalV2.schema,
+        'call_id': id.value,
+        'message_id': '00000000-0000-4000-8000-000000000921',
+        'event': 'answer',
+        'sender_sequence': 80,
+        'ice_generation': 1,
+        'created_at_ms': 2000000,
+        'expires_at_ms': 2015000,
+        'payload': Map<String, Object?>.from(offer['payload'] as Map),
+      }).timeout(step);
+      await _untilGraphVideo(() => engine.video!.commits == commits + 1);
+      engine.video!.replaceRemoteTrack();
+      await graph.coordinator
+          .dispatch(
+            CallEvent(
+              type: CallEventType.mediaRecovered,
+              eventId: 'bl92-caller-recovered',
+              occurredAt: graph.coordinator.clock(),
+              callId: id,
+              reconnectGeneration:
+                  graph.coordinator.activeSession!.reconnectGeneration,
+            ),
+          )
+          .timeout(step);
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      await flushPip().timeout(step);
+
+      await fixture.composition.onResume().timeout(step);
+      await flushPip().timeout(step);
+      expect(
+        engine.video!.cameraOn,
+        isTrue,
+        reason: 'the camera the user left on comes back after foreground',
+      );
+    },
+  );
+
+  test(
     'PiP graph supported continuation keeps existing camera authority',
     () async {
       final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
@@ -11853,6 +11947,9 @@ _connectedOutgoingGraph({
   OutgoingCallStartRequest? request,
   RequestCallCameraPermission? requestInitialCallCameraPermission =
       _denyInitialCameraForFixture,
+  CallPictureInPictureBridge Function()? pictureInPictureBridgeFactory,
+  Future<bool> Function()? checkCameraPermission,
+  Future<bool> Function()? permission,
   Future<void> Function(_ProductionIosFixture)? beforeCall,
   Future<void> Function(_ProductionIosFixture)? whileRinging,
   Future<void> Function(_ProductionIosFixture)? beforeConnected,
@@ -11872,6 +11969,9 @@ _connectedOutgoingGraph({
     privacyStore: privacyStore,
     microphonePermission: const _GrantedCallMicrophonePermission(),
     requestInitialCallCameraPermission: requestInitialCallCameraPermission,
+    pictureInPictureBridgeFactory: pictureInPictureBridgeFactory,
+    checkCameraPermission: checkCameraPermission,
+    requestCameraPermission: permission,
     outgoingContactAccountPeerId: 'video-contact',
     privacyFlags: const {'video_call_v2_enabled': true},
     callEngineFactory: (_) => engine,
