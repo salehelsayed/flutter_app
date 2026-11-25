@@ -35,6 +35,8 @@ void main() {
   late String? launchPayload;
   late int launchNotificationId;
   late Future<void> Function()? beforeLaunchDetails;
+  late String? failMethodOnce;
+  late Future<void> Function()? beforeFail;
   String? launchActionId;
   // Platform reply for `getNotificationChannels`. Null (the default) is the
   // plugin's "no channel information" answer, which the publication path
@@ -108,6 +110,8 @@ void main() {
     launchPayload = 'peer-123';
     launchNotificationId = 7;
     beforeLaunchDetails = null;
+    failMethodOnce = null;
+    beforeFail = null;
     launchActionId = null;
     notificationChannelsReply = null;
     activeNotificationsReply = null;
@@ -118,6 +122,11 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
           log.add(call);
+          if (call.method == failMethodOnce) {
+            failMethodOnce = null;
+            await beforeFail?.call();
+            throw PlatformException(code: 'controlled-startup-failure');
+          }
           switch (call.method) {
             case 'initialize':
               return true;
@@ -521,6 +530,53 @@ void main() {
         );
       });
     }
+
+    test('BL94 a retry after a failed channel setup still opens the cold tap '
+        'once', () async {
+      const deadline = Duration(seconds: 5);
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+      failMethodOnce = 'createNotificationChannel';
+      await expectLater(
+        service.initialize().timeout(deadline),
+        throwsA(isA<PlatformException>()),
+      );
+
+      beforeLaunchDetails = () => _sendNotificationResponse(
+        payload: launchPayload,
+        notificationId: launchNotificationId,
+      );
+      await service.initialize().timeout(deadline);
+      final initial = await service.consumeInitialPayload().timeout(deadline);
+      await pumpEventQueue();
+
+      expect([...tapped, ?initial], <String>['peer-123']);
+    });
+
+    test('BL94 a cold tap during a failed native initialize is not opened '
+        'again by the retry', () async {
+      const deadline = Duration(seconds: 5);
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+      failMethodOnce = 'initialize';
+      beforeFail = () => _sendNotificationResponse(
+        payload: launchPayload,
+        notificationId: launchNotificationId,
+      );
+      await expectLater(
+        service.initialize().timeout(deadline),
+        throwsA(isA<PlatformException>()),
+      );
+      await pumpEventQueue();
+
+      await service.initialize().timeout(deadline);
+      final initial = await service.consumeInitialPayload().timeout(deadline);
+      await pumpEventQueue();
+
+      expect([...tapped, ?initial], <String>['peer-123']);
+    });
 
     test('BL94 a different card tapped before the launch details are read '
         'still opens', () async {
