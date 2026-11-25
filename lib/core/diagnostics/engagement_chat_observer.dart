@@ -166,7 +166,15 @@ final class EngagementChatObserver {
           (_inFlight ? 1 : 0) < 64;
 
   int? _observe(EngagementChatObserverCapture capture) {
-    if (!_current(capture) || !_room) {
+    if (!_current(capture)) {
+      return null;
+    }
+    if (!_room) {
+      // A full queue parked on a failed lookup is retried by this wake; the
+      // observation itself is still refused.
+      if (_calendarDeferred) {
+        _start();
+      }
       return null;
     }
     try {
