@@ -1488,12 +1488,12 @@ func (n *Node) DialPeerWithDiagnostics(peerIdStr string, addresses []string, tim
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrDialNodeNotStarted
 	}
 
 	pid, err := peer.Decode(peerIdStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid peer ID: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrDialInvalidPeer, err)
 	}
 	d.setTarget(pid)
 	if n.isRelayPeer(pid) {

@@ -967,8 +967,19 @@ func DialPeer(paramsJSON string) (result string) {
 	}
 
 	observations, err := n.DialPeerWithDiagnostics(params.PeerId, params.Addresses, params.TimeoutMs)
-	if err != nil {
-		return withConnectionDiagnostics(errJSON("DIAL_ERROR", err.Error()), observations)
+	switch {
+	case errors.Is(err, node.ErrDialNodeNotStarted):
+		return errJSON("NOT_INITIALIZED", err.Error())
+	case errors.Is(err, node.ErrDialInvalidPeer):
+		return errJSON("INVALID_INPUT", err.Error())
+	case err != nil:
+		reply, _ := json.Marshal(map[string]interface{}{
+			"ok":           false,
+			"errorCode":    "DIAL_ERROR",
+			"errorMessage": err.Error(),
+			"dialFailure":  node.ClassifyDialError(err),
+		})
+		return withConnectionDiagnostics(string(reply), observations)
 	}
 
 	return okJSON(map[string]interface{}{
