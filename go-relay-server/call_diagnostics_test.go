@@ -703,6 +703,13 @@ func TestCallDiagnosticsDropTimestampsAreDurableAndDoNotInventLegacyTime(t *test
 				t.Fatal("transient quota refusal persisted a loss timestamp")
 			}
 			s.quota = callDiagnosticGlobalBytes
+			ownerQuota := s.ownerQuota
+			owner := record.Owner
+			s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner] + callDiagnosticPriorityBytes
+			if s.appendEventResult("owner", later, false, 1) != callDiagnosticAppendRetry || record.Dropped != before.Dropped || record.DroppedUpdatedAtMs != before.DroppedUpdatedAtMs {
+				t.Fatal("discard bookkeeping spent reserved owner headroom")
+			}
+			s.ownerQuota = ownerQuota
 			if s.appendEventResult("owner", later, false, 1) != callDiagnosticAppendDiscarded || record.DroppedUpdatedAtMs != now.UnixMilli() || record.DroppedFirstAtMs != before.DroppedFirstAtMs {
 				t.Fatal("new loss did not update last time independently")
 			}
