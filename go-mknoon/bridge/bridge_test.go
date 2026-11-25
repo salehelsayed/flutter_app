@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -4766,23 +4767,51 @@ func TestDialPeer_HonorsTimeoutMs(t *testing.T) {
 	startResult := StartNode(input)
 	assertOk(t, parseJSON(t, startResult))
 
-	// Call DialPeer with a timeoutMs field. The peer doesn't exist but
-	// the important thing is the JSON parsing succeeds (not INVALID_INPUT).
 	dialInput, _ := json.Marshal(map[string]interface{}{
-		"peerId":    "12D3KooWFakeDialTestPeer",
-		"addresses": []string{"/ip4/127.0.0.1/tcp/9999"},
-		"timeoutMs": 200,
+		"peerId":    generateBridgePeerIDStr(t),
+		"addresses": []string{closedLoopbackTCPAddr(t)},
+		"timeoutMs": 2000,
 	})
-	result := DialPeer(string(dialInput))
-	m := parseJSON(t, result)
+	m := parseJSON(t, DialPeer(string(dialInput)))
 
-	// Should fail at dial layer (unreachable peer), not input parsing.
-	code, _ := m["errorCode"].(string)
-	if code == "INVALID_INPUT" {
-		t.Fatal("timeoutMs should be parsed without INVALID_INPUT error")
-	}
-	// Expect DIAL_ERROR since the peer is unreachable.
 	assertNotOk(t, m, "DIAL_ERROR")
+	if got := m["dialFailure"]; got != "socket_refused" {
+		t.Fatalf("dialFailure = %v, want socket_refused", got)
+	}
+}
+
+func closedLoopbackTCPAddr(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	return fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", port)
+}
+
+func TestDialPeer_NodeNotStartedIsNotInitialized(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	dialInput, _ := json.Marshal(map[string]interface{}{"peerId": generateBridgePeerIDStr(t)})
+	m := parseJSON(t, DialPeer(string(dialInput)))
+
+	assertNotOk(t, m, "NOT_INITIALIZED")
+	if _, present := m["dialFailure"]; present {
+		t.Fatalf("a node that is not started is not a dial failure: %v", m)
+	}
+}
+
+func TestDialPeer_InvalidPeerIDIsInvalidInput(t *testing.T) {
+	withFreshSingletonNode(t)
+	assertOk(t, parseJSON(t, StartNode(startNodeJSON(t, generateTestKeyHex(t)))))
+
+	m := parseJSON(t, DialPeer(`{"peerId":"12D3KooWFakeDialTestPeer"}`))
+
+	assertNotOk(t, m, "INVALID_INPUT")
 }
 
 // TestRendezvousRegister_ForwardsExistingServerAddresses verifies that
