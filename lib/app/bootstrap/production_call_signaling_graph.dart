@@ -1239,22 +1239,34 @@ final class ProductionCallSignalingGraph
         _pipSourceCurrent(lease.source);
   }
 
-  bool _pipIntentCurrent() {
+  /// The OS-paused camera still belongs to this call. Transport recovery
+  /// replaces the negotiation but keeps the user's camera choice.
+  bool _pipIntentHeld() {
     final intent = _pipCameraIntent;
     if (intent == null) return false;
     final owner = intent.owner;
-    final machine = owner.mediaSwitch?.machine;
+    final session = coordinator.activeSession;
     return !_shuttingDown &&
         !_callabilityInvalidated &&
-        coordinator.activeSession?.state == CallState.connected &&
-        coordinator.activeSession?.callId == intent.token.callId &&
+        session != null &&
+        !session.isTerminal &&
+        session.callId == intent.token.callId &&
         identical(videoOwners?[intent.token.callId], owner) &&
-        owner.current &&
         identical(owner.videoSession, intent.session) &&
-        identical(owner.negotiation, intent.token) &&
-        _pipSourceCurrent(intent.lease.source) &&
         _videoGeneration == intent.generation &&
-        _cameraEpoch == intent.epoch &&
+        _cameraEpoch == intent.epoch;
+  }
+
+  bool _pipIntentCurrent() {
+    if (!_pipIntentHeld()) return false;
+    final intent = _pipCameraIntent!;
+    final owner = intent.owner;
+    final token = owner.negotiation;
+    final machine = owner.mediaSwitch?.machine;
+    return coordinator.activeSession?.state == CallState.connected &&
+        owner.current &&
+        token?.media == CallMediaKind.video &&
+        token?.mediaRevision == intent.token.mediaRevision &&
         machine?.videoGatesOpen == true &&
         machine?.hasPendingSwitch == false &&
         machine?.settledMedia == CallMediaKind.video &&
@@ -1283,7 +1295,7 @@ final class ProductionCallSignalingGraph
     if (token == null &&
         lease != null &&
         identical(_pipCameraIntent?.lease, lease) &&
-        _pipIntentCurrent()) {
+        _pipIntentHeld()) {
       return;
     }
     unawaited(_revokeLocalCamera(state: CallCameraState.paused));
@@ -1333,10 +1345,12 @@ final class ProductionCallSignalingGraph
           _pipThermalBlocked) {
         return;
       }
+      final negotiation = intent.owner.negotiation;
+      if (negotiation == null) return;
       await _startPipCamera(
         intent.owner,
         intent.session,
-        intent.token,
+        negotiation,
         intent.generation,
         intent.epoch,
         () =>
@@ -1738,8 +1752,8 @@ final class ProductionCallSignalingGraph
           false,
       cameraOn: _localCameraToken != null,
     );
-    final retained = _pipCameraIntent;
-    if (retained != null && !_pipIntentCurrent()) _pipCameraIntent = null;
+    if (_pipCameraIntent != null && !_pipIntentHeld()) _pipCameraIntent = null;
+    if (_videoForeground && _pipIntentCurrent()) unawaited(_resumePipCamera());
     _applyQualityEnvironment();
     final token = owner?.presentationNegotiation ?? owner?.negotiation;
     if (!identical(_rendererToken, token)) {
@@ -2537,7 +2551,7 @@ final class ProductionCallSignalingGraph
       } else if (session.state == CallState.reconnecting) {
         final token = _localCameraToken;
         if (token == null
-            ? _cameraActionPending || _pipCameraIntent != null
+            ? _cameraActionPending
             : videoOwners?[session.callId]?.cameraIntentBinding(token) == null) {
           unawaited(_revokeLocalCamera());
         }
