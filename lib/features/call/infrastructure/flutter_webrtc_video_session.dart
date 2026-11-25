@@ -8,6 +8,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 // ignore: implementation_imports
 import 'package:flutter_webrtc/src/native/media_stream_track_impl.dart';
 
+import '../../../core/utils/flow_event_emitter.dart';
 import '../application/call_picture_in_picture.dart';
 import '../application/call_video_media_owner.dart';
 import '../domain/call_engine.dart';
@@ -1140,23 +1141,44 @@ final class FlutterWebRtcVideoSession
     CallVideoNegotiation raw,
     CallLocalCameraGrant grant,
   ) async {
-    if (_iceRetention != null &&
-        _currentGrant(_iceRetention!.canApply)) {
-      return false;
+    final retention = _iceRetention;
+    // Once the recovered negotiation is committed and current, the retention
+    // only guards resources already carried over; a new camera may start.
+    final recovered =
+        retention?.successor?.committed == true &&
+        identical(_current, retention!.successor);
+    if (retention != null &&
+        !recovered &&
+        _currentGrant(retention.canApply)) {
+      return _refuseCamera('ice_recovery');
     }
     if (raw is! _Negotiation || !_cameraAllowed(raw, grant)) {
       if (identical(_current, raw)) await stopLocalCamera();
-      return false;
+      return _refuseCamera('not_allowed');
     }
     await stopLocalCamera();
-    if (!_cameraAllowed(raw, grant) || hasPendingCleanup) return false;
+    if (!_cameraAllowed(raw, grant)) return _refuseCamera('not_allowed');
+    if (hasPendingCleanup) return _refuseCamera('pending_cleanup');
     _qualityPolicy.resetForNewCameraIntent(now: _qualityNow);
-    if (_qualityPolicy.decision.paused) return false;
+    if (_qualityPolicy.decision.paused) return _refuseCamera('quality_paused');
     final quality = _QualityIntent(raw, grant);
     _qualityIntent = quality;
     await _reconcileQuality();
-    return _qualityCurrent(quality) &&
+    final started =
+        _qualityCurrent(quality) &&
         _senderCapture?.tracks.singleOrNull?.enabled == true;
+    if (!started) _refuseCamera('capture_not_started');
+    return started;
+  }
+
+  /// Local log only: why a camera start returned false.
+  bool _refuseCamera(String reason) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_VIDEO_CAMERA_START_REFUSED',
+      details: {'reason': reason},
+    );
+    return false;
   }
 
   /// CAM-DIAG: debug-only line for a capture this session gives up on. Fixed
