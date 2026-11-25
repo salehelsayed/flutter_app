@@ -7,6 +7,7 @@ import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _channel = MethodChannel('com.mknoon/go_bridge');
+const _bl93Await = Duration(seconds: 5);
 const _privateMarker = 'PRIVATE_BRIDGE_FIXTURE_CONTENT';
 
 void main() {
@@ -17,14 +18,16 @@ void main() {
   final uploads = <Map<String, Object?>>[];
 
   setUp(() async {
-    directory = await Directory.systemTemp.createTemp('bridge-labels-');
+    directory = await Directory.systemTemp
+        .createTemp('bridge-labels-')
+        .timeout(_bl93Await);
     diagnostics = await AppDiagnostics.installForTesting(
       directory: directory,
       upload: (batch) async {
         uploads.addAll(batch);
         return batch.map((event) => event['eventId']! as String).toSet();
       },
-    );
+    ).timeout(_bl93Await);
     uploads.clear();
     client = GoBridgeClient();
   });
@@ -33,8 +36,8 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, null);
     client.dispose();
-    await diagnostics.dispose();
-    await directory.delete(recursive: true);
+    await diagnostics.dispose().timeout(_bl93Await);
+    await directory.delete(recursive: true).timeout(_bl93Await);
   });
 
   Future<String> send(String command, String? native) async {
@@ -180,7 +183,6 @@ void main() {
     (code: 'DIAL_ERROR', kind: 'unknown'),
     (code: 'INBOX_ERROR', kind: 'unknown'),
     (code: 'MEDIA_ERROR', kind: 'unknown'),
-    (code: 'DECRYPT_AUTH_ERROR', kind: 'unknown'),
     (code: 'PRIVATE_BRIDGE_FIXTURE_CONTENT', kind: 'unknown'),
   ]) {
     test(
@@ -217,16 +219,14 @@ void main() {
           return jsonEncode({'ok': true});
         });
     const command = 'private.command.$_privateMarker';
-    final returned =
-        jsonDecode(
-              await client.send(
-                jsonEncode({
-                  'cmd': command,
-                  'payload': {'peerId': _privateMarker},
-                }),
-              ),
-            )
-            as Map;
+    final returned = jsonDecode(
+      await client.send(
+        jsonEncode({
+          'cmd': command,
+          'payload': {'peerId': _privateMarker},
+        }),
+      ),
+    ) as Map;
     expect(returned['errorCode'], 'UNKNOWN_COMMAND');
     expect(returned['errorMessage'], 'Unknown command: $command');
     expect(invoked, false);
@@ -280,6 +280,153 @@ void main() {
     expect(await diagnostics.exportPreview(), isNot(contains(_privateMarker)));
     await diagnostics.flush();
     expect(uploads, isEmpty);
+  }
+
+  test('BL93 typed missing profile preserves result without failure', () async {
+    await expectNoFailure('profile:download', {
+      'ok': false,
+      'errorCode': 'PROFILE_ERROR',
+      'diagnosticCode': 'PROFILE_NOT_FOUND',
+      'errorMessage': 'profile download failed: not found $_privateMarker',
+    }).timeout(_bl93Await);
+  });
+
+  test('BL93 ordinary uncoded wake registration miss is expected', () async {
+    await expectNoFailure('inbox:register_wake_tokens', {
+      'ok': false,
+      'error': 'no accepting relay $_privateMarker',
+    }).timeout(_bl93Await);
+  });
+
+  test('BL93 exact uncoded node-not-started wake remains visible', () async {
+    final native = jsonEncode({'ok': false, 'error': 'node not started'});
+    expect(
+      await send('inbox:register_wake_tokens', native).timeout(_bl93Await),
+      native,
+    );
+    await expectLabels(
+      'inbox:register_wake_tokens',
+      'inbox',
+      'not_ready',
+    ).timeout(_bl93Await);
+  });
+
+  for (final sample in const [
+    (
+      command: 'profile:upload',
+      family: 'profile',
+      code: 'PROFILE_ERROR',
+      diagnosticCode: 'PROFILE_NOT_FOUND',
+      kind: 'not_found',
+    ),
+    (
+      command: 'inbox:store',
+      family: 'inbox',
+      code: 'INBOX_ERROR',
+      diagnosticCode: 'NODE_NOT_STARTED',
+      kind: 'not_ready',
+    ),
+    (
+      command: 'group:inboxRetrieveCursor',
+      family: 'group',
+      code: 'GROUP_INBOX_ERROR',
+      diagnosticCode: 'RELAY_UNAVAILABLE',
+      kind: 'not_ready',
+    ),
+    (
+      command: 'inbox:register_wake_tokens',
+      family: 'inbox',
+      code: 'NOT_INITIALIZED',
+      diagnosticCode: 'UNKNOWN_DIAGNOSTIC',
+      kind: 'not_ready',
+    ),
+  ]) {
+    test(
+      'BL93 ${sample.command} ${sample.diagnosticCode} uses a closed kind',
+      () async {
+        final native = {
+          'ok': false,
+          'errorCode': sample.code,
+          'diagnosticCode': sample.diagnosticCode,
+          'errorMessage': _privateMarker,
+        };
+        expect(
+          jsonDecode(
+            await send(sample.command, jsonEncode(native)).timeout(_bl93Await),
+          ),
+          native,
+        );
+        await expectLabels(
+          sample.command,
+          sample.family,
+          sample.kind,
+        ).timeout(_bl93Await);
+      },
+    );
+  }
+
+  for (final sample in const [
+    (
+      command: 'relay:turn_credentials_v1',
+      family: 'call_control',
+      code: 'TURN_CREDENTIALS_TRANSIENT',
+      kind: 'not_ready',
+    ),
+    (
+      command: 'relay:turn_credentials_v1',
+      family: 'call_control',
+      code: 'TURN_CREDENTIALS_REJECTED',
+      kind: 'unknown',
+    ),
+    (
+      command: 'group:join',
+      family: 'group',
+      code: 'GROUP_KEY_GRACE_ACTIVE',
+      kind: 'not_ready',
+    ),
+    (
+      command: 'blob:decrypt',
+      family: 'crypto',
+      code: 'DECRYPT_AUTH_ERROR',
+      kind: 'permission',
+    ),
+    (
+      command: 'blob:decrypt',
+      family: 'crypto',
+      code: 'DECRYPT_METADATA_ERROR',
+      kind: 'invalid_argument',
+    ),
+    (
+      command: 'blob:decrypt',
+      family: 'crypto',
+      code: 'DECRYPT_IO_ERROR',
+      kind: 'internal',
+    ),
+    (
+      command: 'message.decrypt',
+      family: 'crypto',
+      code: 'DECRYPT_FAILED',
+      kind: 'permission',
+    ),
+  ]) {
+    test('BL93 exact native code ${sample.code}', () async {
+      final native = {
+        'ok': false,
+        'errorCode': sample.code,
+        'errorMessage': _privateMarker,
+      };
+      expect(
+        jsonDecode(
+          await send(sample.command, jsonEncode(native)).timeout(_bl93Await),
+        ),
+        native,
+      );
+      await expectLabels(
+        sample.command,
+        sample.family,
+        sample.kind,
+      ).timeout(_bl93Await);
+    });
   }
 
   test('BL24A causal coded ping rejection remains reported', () async {
