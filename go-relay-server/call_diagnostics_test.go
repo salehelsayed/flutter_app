@@ -115,6 +115,56 @@ func TestCallDiagnosticsSchemaRejectsSecretsServerSpoofAndUnknownFields(t *testi
 		t.Fatal(err)
 	}
 }
+func TestCallDiagnosticsOwnerHeadroomIncludesBindingReservations(t *testing.T) {
+	s := diagnosticTestStore(t)
+	const actor = "caller"
+	if err := s.configure(actor, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	trace := uuid.NewString()
+	for _, key := range []string{trace, uuid.NewString(), uuid.NewString(), uuid.NewString()} {
+		if !s.appendEvent(actor, diagnosticTestEvent(key, "flutter", "attempt", "start"), false, 1) {
+			t.Fatal("could not seed a retained call")
+		}
+	}
+
+	owner := s.records[trace].Owner
+	s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner] + callDiagnosticPriorityBytes
+	ordinary := diagnosticTestEvent(trace, "flutter", "signaling", "snapshot")
+	if got := s.appendEventResult(actor, ordinary, false, 1); got != callDiagnosticAppendRetry {
+		t.Fatalf("ordinary observation crossed reserved owner headroom: append result %v", got)
+	}
+
+	media := map[string]any{}
+	if err := json.Unmarshal(diagnosticTestEvent(trace, "flutter", "media", "snapshot"), &media); err != nil {
+		t.Fatal(err)
+	}
+	media["outcome"] = "media_flow_verified"
+	finish := diagnosticTestEvent(trace, "flutter", "terminal", "finish")
+	cause := map[string]any{}
+	if err := json.Unmarshal(diagnosticTestEvent(trace, "flutter", "terminal", "snapshot"), &cause); err != nil {
+		t.Fatal(err)
+	}
+	cause["values"] = map[string]any{"endCause": "local_hangup", "endCauseStage": "runtime"}
+	for _, priority := range []json.RawMessage{mustDiagnosticJSON(media), finish, mustDiagnosticJSON(cause)} {
+		if got := s.appendEventResult(actor, priority, false, 1); got != callDiagnosticAppendAccepted {
+			t.Fatalf("reserved evidence was refused: append result %v", got)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(s.dir, trace+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved callDiagnosticRecord
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Events) != 4 || len(saved.Summaries) != 3 {
+		t.Fatalf("durable record has %d events and %d summaries, want 4 and 3", len(saved.Events), len(saved.Summaries))
+	}
+}
+
 func TestCallDiagnosticsQuotaPreservesTerminalSummaryAndExpiry(t *testing.T) {
 	s := diagnosticTestStore(t)
 	_ = s.configure("caller", true, false, 1)
