@@ -1763,6 +1763,23 @@
       "limitations": "Robolectric/JVM tests do not establish actual keyguard visibility, OS full-screen access, push delivery or audible media. Run with the repository Flutter/JDK toolchain.",
       "inspected": true
     },
+    "android-hardware-availability": {
+      "kind": "flutter",
+      "paths": [
+        "test/unit/android_optional_hardware_manifest_test.dart"
+      ],
+      "boundary": "Android manifest explicitly allows installation without the four permission-implied hardware features.",
+      "limitations": "The source manifest is the default input. Inspect the QA APK's merged manifest separately to verify dependency merging.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "android/app/src/main/AndroidManifest.xml"
+      ],
+      "inspected": true
+    },
     "runtime-roots": {
       "kind": "flutter",
       "paths": [
@@ -6034,6 +6051,17 @@
         "affected-media"
       ],
       "why": "This script classifies and expands proof inventory paths; it does not build or execute native/device scenarios. The exact PiP discovery contract in affected-media executes it and verifies complete classifications. Preserve mandatory release checks and mappings for the actual native sources/runners; metadata-only support registrations do not alter their runtime behavior."
+    },
+    {
+      "id": "android-hardware-availability",
+      "patterns": [
+        "android/app/src/main/AndroidManifest.xml",
+        "test/unit/android_optional_hardware_manifest_test.dart"
+      ],
+      "checks": [
+        "android-hardware-availability"
+      ],
+      "why": "Manifest changes can make permission-implied hardware required and restrict Play availability."
     },
     {
       "id": "platform-build",
