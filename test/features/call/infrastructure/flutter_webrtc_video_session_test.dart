@@ -832,6 +832,63 @@ void main() {
       expect(f.peer.closes, 0);
     });
 
+    test('BL92 a camera can start after a committed ICE recovery while the '
+        'retention custody is still current', () async {
+      const bound = Duration(seconds: 2);
+      final f = Fixture();
+      await f.start().timeout(bound);
+      final token = f.session.beginNegotiation(
+        negotiationId: 'initial',
+        mediaRevision: 1,
+        media: CallMediaKind.video,
+        canApply: () => true,
+      );
+      await f.session.applyLocal(
+        token,
+        await f.session.createOffer(token).timeout(bound),
+      ).timeout(bound);
+      await f.session.applyRemote(
+        token,
+        description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+      ).timeout(bound);
+      await f.session.commit(token).timeout(bound);
+      final recovery = f.session as CallVideoIceRecovery;
+      // The executor's custody check stays true after a completed recovery
+      // while the call is connected on the same reconnect generation.
+      final held = await recovery.retainForIceRecovery(
+        token,
+        canApply: () => true,
+      ).timeout(bound);
+      expect(held, isNotNull);
+      await f.engine.restartIce().timeout(bound);
+      final next = await recovery.continueIceRecovery(
+        held!,
+        negotiationId: 'recovery-1',
+        canApply: () => true,
+      ).timeout(bound);
+      expect(
+        await f.session.setLocalCamera(next, f.grant()).timeout(bound),
+        isFalse,
+        reason: 'no camera start while the recovery is still negotiating',
+      );
+      await f.session.applyLocal(
+        next,
+        await f.session.createOffer(next).timeout(bound),
+      ).timeout(bound);
+      await f.session.applyRemote(
+        next,
+        description(CallSessionDescriptionType.answer, video: 'sendrecv'),
+      ).timeout(bound);
+      await f.session.commit(next).timeout(bound);
+
+      expect(
+        await f.session.setLocalCamera(next, f.grant()).timeout(bound),
+        isTrue,
+        reason: 'the camera starts once the recovered negotiation is committed',
+      );
+      expect(f.track.enabled, isTrue);
+    });
+
     for (final boundary in ['retain', 'off', 'permission']) {
       test(boundary == 'retain'
           ? 'BL26 pending quality stats preserve capture before second ICE retention adoption'
