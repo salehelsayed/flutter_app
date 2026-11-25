@@ -611,9 +611,21 @@ void main() {
       (failure: 'canceled', reason: 'canceled', kind: 'unknown'),
       (failure: 'handshake_failed', reason: 'auth_failed', kind: 'unknown'),
       (failure: 'no_transport', reason: 'unsupported', kind: 'unsupported'),
-      (failure: 'gater_denied', reason: 'permission_denied', kind: 'permission'),
-      (failure: 'relay_denied', reason: 'permission_denied', kind: 'permission'),
-      (failure: 'relay_no_reservation', reason: 'route_failed', kind: 'not_ready'),
+      (
+        failure: 'gater_denied',
+        reason: 'permission_denied',
+        kind: 'permission',
+      ),
+      (
+        failure: 'relay_denied',
+        reason: 'permission_denied',
+        kind: 'permission',
+      ),
+      (
+        failure: 'relay_no_reservation',
+        reason: 'route_failed',
+        kind: 'not_ready',
+      ),
       (failure: 'no_addresses', reason: 'route_failed', kind: 'not_found'),
       (failure: 'no_good_addresses', reason: 'route_failed', kind: 'not_found'),
       (failure: 'relay_limit', reason: 'route_failed', kind: 'capacity'),
@@ -665,7 +677,9 @@ void main() {
         );
 
         await diagnostics.flush();
-        final sent = uploaded.singleWhere((event) => event['stage'] == 'finish');
+        final sent = uploaded.singleWhere(
+          (event) => event['stage'] == 'finish',
+        );
         expect(sent['reason'], entry.reason);
         expect((sent['values'] as Map)['bridgeRejectionKind'], entry.kind);
         expect((sent['values'] as Map).containsKey('dialFailure'), isFalse);

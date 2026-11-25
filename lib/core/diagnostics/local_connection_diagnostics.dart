@@ -28,6 +28,28 @@ const localAppConnectionEnums = <String, Set<String>>{
   'familyFallback': {'ipv6_to_ipv4', 'ipv4_to_ipv6', 'unknown'},
 };
 
+/// The closed peer:dial failure classes from the Go bridge. Local exports only.
+const localDialFailureEnums = <String, Set<String>>{
+  'dialFailure': {
+    'timeout',
+    'canceled',
+    'handshake_failed',
+    'no_transport',
+    'gater_denied',
+    'relay_denied',
+    'relay_no_reservation',
+    'no_addresses',
+    'no_good_addresses',
+    'relay_limit',
+    'relay_failed',
+    'backoff',
+    'black_hole',
+    'socket_refused',
+    'socket_unreachable',
+    'other',
+  },
+};
+
 /// Native results are untrusted at this boundary. Only complete closed rows
 /// reach a collector; unknown keys, free text and nested material are rejected.
 /// The sink is synchronous and best-effort, and no observer result is returned.

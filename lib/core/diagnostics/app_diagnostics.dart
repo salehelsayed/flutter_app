@@ -98,6 +98,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
   // v1. The story-specific bucket and surface stay in local exports.
   static const _localValueEnums = <String, Set<String>>{
     ...localAppConnectionEnums,
+    ...localDialFailureEnums,
     'postAgeBucket': {'under_hour', 'hour_to_day', 'day_or_more', 'unknown'},
     'postMediaSurface': {'background', 'orbit3d', 'story2d'},
   };

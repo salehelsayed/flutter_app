@@ -1347,6 +1347,7 @@ class GoBridgeClient extends Bridge {
       bool success,
       String reason, [
       _BridgeRejectionKind kind = _BridgeRejectionKind.unknown,
+      String? dialFailure,
     ]) {
       // A broken diagnostic transport must not report itself recursively.
       if (cmd == 'app_diagnostics_v1' ||
@@ -1361,6 +1362,7 @@ class GoBridgeClient extends Bridge {
           'bridgeCommandFamily': spec.family.wireValue,
           'bridgeRejectionKind': kind.wireValue,
         },
+        'dialFailure': ?dialFailure,
       };
       if (diagnosticOperation != null) {
         AppDiagnostics.instance.finishAttempt(
@@ -1492,6 +1494,13 @@ class GoBridgeClient extends Bridge {
           !nodeStopped &&
           (cmd == 'peer:ping' || cmd == 'relay:presence_set');
       if (!expectedMiss) {
+        final dialFailure =
+            cmd == 'peer:dial' &&
+                decoded['errorCode'] == 'DIAL_ERROR' &&
+                _dialFailureDiagnostics.containsKey(decoded['dialFailure'])
+            ? decoded['dialFailure'] as String
+            : null;
+        final dialLabels = _dialFailureDiagnostics[dialFailure];
         reportDiagnostic(
           decoded['ok'] == true,
           decoded['ok'] == true
@@ -1499,15 +1508,16 @@ class GoBridgeClient extends Bridge {
               : switch ((cmd, decoded['errorCode'])) {
                   ('peer:dial', 'NOT_INITIALIZED') => 'bridge_unavailable',
                   ('peer:dial', 'INVALID_INPUT') => 'invalid_request',
-                  // DIAL_ERROR includes several native causes; it does not
-                  // establish that the peer is offline or the dial timed out.
-                  ('peer:dial', 'DIAL_ERROR') => 'route_failed',
+                  ('peer:dial', 'DIAL_ERROR') =>
+                    dialLabels?.$1 ?? 'route_failed',
                   _ => 'bridge_rejected',
                 },
           nodeStopped
               ? _BridgeRejectionKind.notReady
-              : _bridgeRejectionKinds[decoded['errorCode']] ??
+              : dialLabels?.$2 ??
+                    _bridgeRejectionKinds[decoded['errorCode']] ??
                     _BridgeRejectionKind.unknown,
+          dialFailure,
         );
       }
       final deliveryObserver = debugGroupDeliveryObserver;
@@ -1684,6 +1694,27 @@ enum _BridgeRejectionKind {
   const _BridgeRejectionKind(this.wireValue);
   final String wireValue;
 }
+
+// The deployed v1 relay accepts these reasons and kinds. The full dialFailure
+// class stays local until the relay schema names it.
+const _dialFailureDiagnostics = <String, (String, _BridgeRejectionKind)>{
+  'timeout': ('timeout', _BridgeRejectionKind.timeout),
+  'canceled': ('canceled', _BridgeRejectionKind.unknown),
+  'handshake_failed': ('auth_failed', _BridgeRejectionKind.unknown),
+  'no_transport': ('unsupported', _BridgeRejectionKind.unsupported),
+  'gater_denied': ('permission_denied', _BridgeRejectionKind.permission),
+  'relay_denied': ('permission_denied', _BridgeRejectionKind.permission),
+  'relay_no_reservation': ('route_failed', _BridgeRejectionKind.notReady),
+  'no_addresses': ('route_failed', _BridgeRejectionKind.notFound),
+  'no_good_addresses': ('route_failed', _BridgeRejectionKind.notFound),
+  'relay_limit': ('route_failed', _BridgeRejectionKind.capacity),
+  'relay_failed': ('route_failed', _BridgeRejectionKind.unknown),
+  'backoff': ('route_failed', _BridgeRejectionKind.unknown),
+  'black_hole': ('route_failed', _BridgeRejectionKind.unknown),
+  'socket_refused': ('route_failed', _BridgeRejectionKind.unknown),
+  'socket_unreachable': ('route_failed', _BridgeRejectionKind.unknown),
+  'other': ('route_failed', _BridgeRejectionKind.unknown),
+};
 
 // This table uses explicit codes; broad unclassified failures stay unknown.
 // Dispatch separately recognizes the exact uncoded lifecycle reply above.
