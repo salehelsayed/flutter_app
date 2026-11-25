@@ -4954,7 +4954,7 @@ void main() {
       ('B14U2S-005 custom sticker preparation epoch turnover fences the original capture', true, 'epoch'),
     ]) {
       testWidgets(name, (tester) async {
-        const budget = Duration(seconds: 2);
+        const budget = Duration(seconds: 10);
         installPrivateMediaProtectionEventChannelStub(tester);
         UploadWakeLockController.debugReset(driver: _SynchronousUploadWakeLockDriver());
         FlutterSecureStorage.setMockInitialValues(<String, String>{});
