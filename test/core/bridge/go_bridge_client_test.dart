@@ -639,15 +639,16 @@ void main() {
     ]) {
       test('peer:dial dialFailure ${entry.failure} uploads only accepted '
           'labels and keeps the class locally', () async {
+        const bound = Duration(seconds: 5);
         final uploaded = <Map<String, Object?>>[];
-        await diagnostics.dispose();
+        await diagnostics.dispose().timeout(bound);
         diagnostics = await AppDiagnostics.installForTesting(
           directory: directory,
           upload: (events) async {
             uploaded.addAll(events);
             return {for (final e in events) e['eventId']! as String};
           },
-        );
+        ).timeout(bound);
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(
               const MethodChannel('com.mknoon/go_bridge'),
@@ -659,16 +660,18 @@ void main() {
               }),
             );
 
-        await client.send(
-          jsonEncode({
-            'cmd': 'peer:dial',
-            'payload': {'peerId': 'PRIVATE_PEER_ID'},
-          }),
-        );
+        await client
+            .send(
+              jsonEncode({
+                'cmd': 'peer:dial',
+                'payload': {'peerId': 'PRIVATE_PEER_ID'},
+              }),
+            )
+            .timeout(bound);
 
-        final local = (await diagnostics.eventsForTesting()).singleWhere(
-          (event) => event['stage'] == 'finish',
-        );
+        final local = (await diagnostics.eventsForTesting().timeout(
+          bound,
+        )).singleWhere((event) => event['stage'] == 'finish');
         expect(local['reason'], entry.reason);
         expect((local['values'] as Map)['bridgeRejectionKind'], entry.kind);
         expect(
@@ -676,7 +679,7 @@ void main() {
           entry.failure.startsWith('PRIVATE') ? isNull : entry.failure,
         );
 
-        await diagnostics.flush();
+        await diagnostics.flush().timeout(bound);
         final sent = uploaded.singleWhere(
           (event) => event['stage'] == 'finish',
         );
@@ -684,7 +687,10 @@ void main() {
         expect((sent['values'] as Map)['bridgeRejectionKind'], entry.kind);
         expect((sent['values'] as Map).containsKey('dialFailure'), isFalse);
         expect(jsonEncode(uploaded), isNot(contains('PRIVATE')));
-        expect(await diagnostics.exportPreview(), isNot(contains('PRIVATE')));
+        expect(
+          await diagnostics.exportPreview().timeout(bound),
+          isNot(contains('PRIVATE')),
+        );
       });
     }
 
