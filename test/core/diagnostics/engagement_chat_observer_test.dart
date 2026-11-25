@@ -566,13 +566,15 @@ void main() {
       beforeCommit: (_) async {
         commits++;
         if (commits == 1) {
-          await Future<void>.delayed(const Duration(milliseconds: 250));
+          await Future<void>.delayed(const Duration(milliseconds: 700));
         }
       },
     );
+    // A 500 ms write deadline leaves room for a loaded runner; only the first
+    // write is held past it, and the retry starts after that write lands.
     final observer = await make(
       store: store,
-      deadline: const Duration(milliseconds: 100),
+      deadline: const Duration(milliseconds: 500),
       checkpointRetryDelay: const Duration(milliseconds: 400),
     );
     _facts(observer, _capture(observer));
