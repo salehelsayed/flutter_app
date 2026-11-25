@@ -606,6 +606,74 @@ void main() {
       );
     }
 
+    for (final entry in [
+      (failure: 'timeout', reason: 'timeout', kind: 'timeout'),
+      (failure: 'canceled', reason: 'canceled', kind: 'unknown'),
+      (failure: 'handshake_failed', reason: 'auth_failed', kind: 'unknown'),
+      (failure: 'no_transport', reason: 'unsupported', kind: 'unsupported'),
+      (failure: 'gater_denied', reason: 'permission_denied', kind: 'permission'),
+      (failure: 'relay_denied', reason: 'permission_denied', kind: 'permission'),
+      (failure: 'relay_no_reservation', reason: 'route_failed', kind: 'not_ready'),
+      (failure: 'no_addresses', reason: 'route_failed', kind: 'not_found'),
+      (failure: 'no_good_addresses', reason: 'route_failed', kind: 'not_found'),
+      (failure: 'relay_limit', reason: 'route_failed', kind: 'capacity'),
+      (failure: 'relay_failed', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'backoff', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'black_hole', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'socket_refused', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'socket_unreachable', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'other', reason: 'route_failed', kind: 'unknown'),
+      (failure: 'PRIVATE_free_text', reason: 'route_failed', kind: 'unknown'),
+    ]) {
+      test('peer:dial dialFailure ${entry.failure} uploads only accepted '
+          'labels and keeps the class locally', () async {
+        final uploaded = <Map<String, Object?>>[];
+        await diagnostics.dispose();
+        diagnostics = await AppDiagnostics.installForTesting(
+          directory: directory,
+          upload: (events) async {
+            uploaded.addAll(events);
+            return {for (final e in events) e['eventId']! as String};
+          },
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (call) async => jsonEncode({
+                'ok': false,
+                'errorCode': 'DIAL_ERROR',
+                'errorMessage': 'synthetic native failure',
+                'dialFailure': entry.failure,
+              }),
+            );
+
+        await client.send(
+          jsonEncode({
+            'cmd': 'peer:dial',
+            'payload': {'peerId': 'PRIVATE_PEER_ID'},
+          }),
+        );
+
+        final local = (await diagnostics.eventsForTesting()).singleWhere(
+          (event) => event['stage'] == 'finish',
+        );
+        expect(local['reason'], entry.reason);
+        expect((local['values'] as Map)['bridgeRejectionKind'], entry.kind);
+        expect(
+          (local['values'] as Map)['dialFailure'],
+          entry.failure.startsWith('PRIVATE') ? isNull : entry.failure,
+        );
+
+        await diagnostics.flush();
+        final sent = uploaded.singleWhere((event) => event['stage'] == 'finish');
+        expect(sent['reason'], entry.reason);
+        expect((sent['values'] as Map)['bridgeRejectionKind'], entry.kind);
+        expect((sent['values'] as Map).containsKey('dialFailure'), isFalse);
+        expect(jsonEncode(uploaded), isNot(contains('PRIVATE')));
+        expect(await diagnostics.exportPreview(), isNot(contains('PRIVATE')));
+      });
+    }
+
     test('bg:end void success produces no failure diagnostic', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
