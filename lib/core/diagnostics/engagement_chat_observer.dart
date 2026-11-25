@@ -66,9 +66,11 @@ final class EngagementChatObserver {
     required this.lookupWeek,
     required this.retainChat,
     required this.nowMilliseconds,
-    this.deadline = const Duration(seconds: 1),
+    this.deadline = const Duration(seconds: 5),
     this.checkpointRetryDelay = const Duration(seconds: 2),
   });
+
+  static const _checkpointRetries = 2;
 
   /// Bounds each optional store, calendar and retention call.
   final Duration deadline;
@@ -613,10 +615,20 @@ final class EngagementChatObserver {
     if (pending) {
       _attemptedRetention = true;
     }
-    final committed = await _storeCall(
+    Future<bool> write() => _storeCall(
       (guard) => store.replace(bytes, isCurrent: guard),
       () => _contextCurrent(capture, witness),
     );
+    // A restart restores only what reached the store, so a late write is
+    // retried here rather than waiting for a later fact that may never come.
+    var committed = await write();
+    for (var retry = 0; !committed && retry < _checkpointRetries; retry++) {
+      await Future<void>.delayed(checkpointRetryDelay);
+      if (_disposed || !_contextCurrent(capture, witness)) {
+        return;
+      }
+      committed = await write();
+    }
     if (!committed) {
       _storageFailed = true;
       return;

@@ -67,7 +67,7 @@ final class ActiveIdentityReporter {
     Duration groupStoreDeadline = const Duration(seconds: 1),
     EngagementChatCheckpointStore? chatWitnessStore,
     int Function()? chatNowMilliseconds,
-    Duration chatStoreDeadline = const Duration(seconds: 1),
+    Duration chatStoreDeadline = const Duration(seconds: 5),
   }) : _statePath = statePath {
     if (groupWitnessStore != null) {
       _groups = GroupEngagementObserver(
