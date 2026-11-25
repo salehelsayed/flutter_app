@@ -34,6 +34,7 @@ void main() {
   late Directory notificationIdDirectory;
   late String? launchPayload;
   late int launchNotificationId;
+  late Future<void> Function()? beforeLaunchDetails;
   String? launchActionId;
   // Platform reply for `getNotificationChannels`. Null (the default) is the
   // plugin's "no channel information" answer, which the publication path
@@ -106,6 +107,7 @@ void main() {
         });
     launchPayload = 'peer-123';
     launchNotificationId = 7;
+    beforeLaunchDetails = null;
     launchActionId = null;
     notificationChannelsReply = null;
     activeNotificationsReply = null;
@@ -124,6 +126,7 @@ void main() {
             case 'getActiveNotifications':
               return activeNotificationsReply;
             case 'getNotificationAppLaunchDetails':
+              await beforeLaunchDetails?.call();
               return <String, Object?>{
                 'notificationLaunchedApp': true,
                 'notificationResponse': <String, Object?>{
@@ -493,6 +496,31 @@ void main() {
             'the launching tap was already delivered as the initial payload',
       );
     });
+
+    for (final listening in [true, false]) {
+      test('BL94 the tap callback fires before the launch details are read '
+          '(${listening ? 'listener set' : 'no listener yet'})', () async {
+        const deadline = Duration(seconds: 5);
+        beforeLaunchDetails = () => _sendNotificationResponse(
+          payload: launchPayload,
+          notificationId: launchNotificationId,
+        );
+        final service = buildService();
+        final tapped = <String>[];
+        if (listening) service.onNotificationTap = tapped.add;
+
+        await service.initialize().timeout(deadline);
+        if (!listening) service.onNotificationTap = tapped.add;
+        final initial = await service.consumeInitialPayload().timeout(deadline);
+        await pumpEventQueue();
+
+        expect(
+          [...tapped, ?initial],
+          <String>['peer-123'],
+          reason: 'one launching tap opens the chat once',
+        );
+      });
+    }
 
     test(
       'a fresh card under the launch id is tapped and still opens',
