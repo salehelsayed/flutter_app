@@ -147,6 +147,12 @@ class MainActivityAppVisibilityTest {
             previousWrites.add(it)
         }
         coordinator.onPause()
+        assertEquals(
+            "pause must release the pending publication while the disk worker is held",
+            listOf<AppVisibilityCommitEnvelope?>(null),
+            previousWrites,
+        )
+        assertEquals(listOf<AppVisibilityReadEnvelope?>(null), previousReads)
 
         val pendingPauseReads = mutableListOf<AppVisibilityReadEnvelope?>()
         coordinator.readSnapshot { pendingPauseReads.add(it) }
