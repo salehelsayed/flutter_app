@@ -522,6 +522,25 @@ void main() {
       });
     }
 
+    test('BL94 a different card tapped before the launch details are read '
+        'still opens', () async {
+      const deadline = Duration(seconds: 5);
+      beforeLaunchDetails = () => _sendNotificationResponse(
+        payload: 'peer-other',
+        notificationId: 41,
+      );
+      final service = buildService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+
+      await service.initialize().timeout(deadline);
+      final initial = await service.consumeInitialPayload().timeout(deadline);
+      await pumpEventQueue();
+
+      expect(tapped, <String>['peer-other']);
+      expect(initial, 'peer-123');
+    });
+
     test(
       'a fresh card under the launch id is tapped and still opens',
       () async {

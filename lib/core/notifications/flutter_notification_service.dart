@@ -71,6 +71,11 @@ class FlutterNotificationService
   /// first source to deliver it wins; the other drops it, once.
   ({int? id, String? payload})? _launchTap;
 
+  /// BL-94: taps that arrive while initialize is still reading the launch
+  /// details wait until [_launchTap] is known, so the launching one is
+  /// recognised as the duplicate.
+  List<NotificationResponse>? _earlyResponses = [];
+
   FlutterNotificationService({
     Future<bool> Function()? loadThoughtNotificationsEnabled,
     bool requestApplePermissions = true,
@@ -146,15 +151,21 @@ class FlutterNotificationService
       settings,
       onDidReceiveNotificationResponse: _onNotificationResponse,
     );
-    await ensureMknoonNotificationChannel(_plugin);
-    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
-    _initialPayload = launchDetails?.notificationResponse?.payload;
-    _initialNotificationId = launchDetails?.notificationResponse?.id;
-    _initialActionId = launchDetails?.notificationResponse?.actionId;
-    final launchResponse = launchDetails?.notificationResponse;
-    _launchTap = launchResponse == null
-        ? null
-        : (id: launchResponse.id, payload: launchResponse.payload);
+    try {
+      await ensureMknoonNotificationChannel(_plugin);
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      _initialPayload = launchDetails?.notificationResponse?.payload;
+      _initialNotificationId = launchDetails?.notificationResponse?.id;
+      _initialActionId = launchDetails?.notificationResponse?.actionId;
+      final launchResponse = launchDetails?.notificationResponse;
+      _launchTap = launchResponse == null
+          ? null
+          : (id: launchResponse.id, payload: launchResponse.payload);
+    } finally {
+      final early = _earlyResponses ?? const <NotificationResponse>[];
+      _earlyResponses = null;
+      early.forEach(_deliverNotificationResponse);
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -170,6 +181,15 @@ class FlutterNotificationService
   }
 
   void _onNotificationResponse(NotificationResponse response) {
+    final early = _earlyResponses;
+    if (early != null) {
+      early.add(response);
+      return;
+    }
+    _deliverNotificationResponse(response);
+  }
+
+  void _deliverNotificationResponse(NotificationResponse response) {
     final launch = _launchTap;
     if (launch != null &&
         launch.id == response.id &&
