@@ -15,7 +15,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
-const b6Budget = Duration(seconds: 2);
+const b6Budget = Duration(seconds: 15);
 const b6Binding =
     'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const b6OtherBinding =

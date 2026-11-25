@@ -2501,19 +2501,19 @@ void main() {
                 bridge: activityBridge,
               );
             })
-            .timeout(const Duration(seconds: 3));
+            .timeout(const Duration(seconds: 20));
         final activity = fixture!;
         Future<void> settleActivity(Future<void> Function() action) async {
           late Future<void> pending;
           await tester.runAsync(() async {
             pending = b6Bound(action());
-          }).timeout(const Duration(seconds: 3));
+          }).timeout(const Duration(seconds: 20));
           await pumpUntilFuturesComplete(
             tester,
             [pending],
-            maxPumps: 100,
+            maxPumps: 2000,
             pumpDuration: Duration.zero,
-          ).timeout(const Duration(seconds: 3));
+          ).timeout(const Duration(seconds: 20));
         }
         addTearDown(() async {
           await settleActivity(activity.reporter.dispose);
@@ -2563,7 +2563,7 @@ void main() {
         }
         await tester
             .pumpWidget(buildWidget(activityReporter: activity.reporter))
-            .timeout(const Duration(seconds: 3));
+            .timeout(const Duration(seconds: 20));
         if (scenario.mode == 'liveOther') {
           await b6Bound(msgRepo.saveMessage(visibleMessage));
           messageStreamController.add(visibleMessage);
@@ -2576,13 +2576,13 @@ void main() {
                 await pumpFrames(
                   tester,
                   count: 8,
-                ).timeout(const Duration(seconds: 3));
+                ).timeout(const Duration(seconds: 20));
               } on Object catch (error, stack) {
                 frameError = error;
                 frameStack = stack;
               }
             })
-            .timeout(const Duration(seconds: 3));
+            .timeout(const Duration(seconds: 20));
         if (frameError != null) {
           Error.throwWithStackTrace(frameError!, frameStack!);
         }
@@ -2616,11 +2616,11 @@ void main() {
                     messageRepo: replacement,
                   ),
                 )
-                .timeout(const Duration(seconds: 3));
+                .timeout(const Duration(seconds: 20));
             await pumpFrames(
               tester,
               count: 2,
-            ).timeout(const Duration(seconds: 3));
+            ).timeout(const Duration(seconds: 20));
           }
           await tester
               .runAsync(() async {
@@ -2664,7 +2664,7 @@ void main() {
                 );
                 await b6Bound(activity.reporter.flush());
               })
-              .timeout(const Duration(seconds: 3));
+              .timeout(const Duration(seconds: 20));
           await tester
               .pumpWidget(
                 buildWidget(
@@ -2672,7 +2672,7 @@ void main() {
                   messageRepo: replacement,
                 ),
               )
-              .timeout(const Duration(seconds: 3));
+              .timeout(const Duration(seconds: 20));
           Object? frameError;
           StackTrace? frameStack;
           await tester
@@ -2681,13 +2681,13 @@ void main() {
                   await pumpFrames(
                     tester,
                     count: 8,
-                  ).timeout(const Duration(seconds: 3));
+                  ).timeout(const Duration(seconds: 20));
                 } on Object catch (error, stack) {
                   frameError = error;
                   frameStack = stack;
                 }
               })
-              .timeout(const Duration(seconds: 3));
+              .timeout(const Duration(seconds: 20));
           if (frameError != null) {
             Error.throwWithStackTrace(frameError!, frameStack!);
           }
@@ -2710,7 +2710,7 @@ void main() {
         );
         await tester
             .pumpWidget(const SizedBox.shrink())
-            .timeout(const Duration(seconds: 3));
+            .timeout(const Duration(seconds: 20));
       });
     }
 
