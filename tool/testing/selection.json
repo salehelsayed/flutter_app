@@ -1764,6 +1764,30 @@
       "limitations": "Robolectric/JVM tests do not establish actual keyguard visibility, OS full-screen access, push delivery or audible media. Run with the repository Flutter/JDK toolchain.",
       "inspected": true
     },
+    "android-secure-storage-native": {
+      "kind": "command",
+      "command": [
+        "./android/gradlew",
+        "-p",
+        "android",
+        "--console=plain",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--tests",
+        "com.it_nomads.fluttersecurestorage.SecureStorageMutationCommitTest"
+      ],
+      "success_marker": "BUILD SUCCESSFUL",
+      "timeout_seconds": 1800,
+      "requirements": ["java"],
+      "resources": ["shared-native-build"],
+      "references": [
+        "android/app/src/test/kotlin/com/it_nomads/fluttersecurestorage/SecureStorageMutationCommitTest.kt",
+        "android/patches/flutter_secure_storage/9.2.4/README.md"
+      ],
+      "boundary": "A failed secure-storage delete commit reports a method-channel error with reset enabled and leaves unrelated storage intact.",
+      "limitations": "Android JVM test with a controlled editor failure. Android encrypted persistence and stop behavior under disk pressure require the device fixture.",
+      "inspected": true
+    },
     "android-hardware-availability": {
       "kind": "flutter",
       "paths": [
@@ -6701,6 +6725,18 @@
         "go-core"
       ],
       "why": "Stalled recovery and diagnostic backpressure require host ownership/deadline, archive persistence and communication isolation checks. The referenced standalone Android emulator/iOS simulator comparisons run separately on explicit live target IDs; existing broader fixture and native mappings remain."
+    },
+    {
+      "id": "android-secure-storage-override",
+      "patterns": [
+        "android/build.gradle.kts",
+        "android/patches/flutter_secure_storage/*",
+        "android/app/src/test/kotlin/com/it_nomads/fluttersecurestorage/SecureStorageMutationCommitTest.kt"
+      ],
+      "checks": [
+        "android-secure-storage-native"
+      ],
+      "why": "The Android plugin overlay must compile and propagate commit failure without resetting unrelated secure storage."
     },
     {
       "id": "android-app-visibility",

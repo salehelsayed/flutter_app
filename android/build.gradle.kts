@@ -2,6 +2,13 @@ import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import com.android.build.gradle.LibraryExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import java.security.MessageDigest
+import java.util.HexFormat
+
+abstract class StageSecureStorageJava : Sync() {
+    @get:Internal
+    abstract val javaDirectory: DirectoryProperty
+}
 
 allprojects {
     repositories {
@@ -86,6 +93,55 @@ subprojects {
             extensions.configure<LibraryAndroidComponentsExtension> {
                 finalizeDsl { library ->
                     library.compileSdk = maxOf(library.compileSdk ?: 0, 34)
+                }
+            }
+        }
+        if (name == "flutter_secure_storage") {
+            val version = "9.2.4"
+            val packagePath = "com/it_nomads/fluttersecurestorage"
+            val upstreamSources = layout.projectDirectory.dir("src/main/java")
+            val upstreamPubspec = layout.projectDirectory.file("../pubspec.yaml").asFile
+            val overrides = rootProject.layout.projectDirectory.dir(
+                "patches/flutter_secure_storage/$version/java",
+            )
+            val replacedFiles = mapOf(
+                "$packagePath/FlutterSecureStorage.java" to
+                    "30dada1b55399f1ad5f296b2213318b4727126359a5dad4f10392bae9cbec799",
+                "$packagePath/FlutterSecureStoragePlugin.java" to
+                    "03c1dc99255ffe2e65f3cf53d6d8b866d8756f2730ebcf93185ad1655f23252e",
+            )
+
+            extensions.configure<LibraryAndroidComponentsExtension> {
+                finalizeDsl { library ->
+                    library.sourceSets.getByName("main").java.directories.clear()
+                }
+                onVariants { variant ->
+                    val variantName = variant.name.replaceFirstChar { it.uppercaseChar() }
+                    val stageJava = tasks.register<StageSecureStorageJava>(
+                        "stage${variantName}SecureStorageJava",
+                    ) {
+                        inputs.file(upstreamPubspec)
+                        inputs.files(replacedFiles.keys.map { upstreamSources.file(it) })
+                        from(upstreamSources) { exclude(replacedFiles.keys) }
+                        from(overrides) { include(replacedFiles.keys) }
+                        into(javaDirectory)
+                        doFirst {
+                            check(upstreamPubspec.readLines().any { it == "version: $version" }) {
+                                "Update the Android secure-storage override for the resolved plugin version"
+                            }
+                            for ((path, expected) in replacedFiles) {
+                                val bytes = upstreamSources.file(path).asFile.readBytes()
+                                val hash = HexFormat.of().formatHex(
+                                    MessageDigest.getInstance("SHA-256").digest(bytes),
+                                )
+                                check(hash == expected && overrides.file(path).asFile.isFile) {
+                                    "Review the Android secure-storage override for $path (upstream $version)"
+                                }
+                            }
+                        }
+                    }
+                    requireNotNull(variant.sources.java)
+                        .addGeneratedSourceDirectory(stageJava, StageSecureStorageJava::javaDirectory)
                 }
             }
         }
