@@ -835,9 +835,11 @@ void main() {
     );
   }
 
+  for (final replacement in ['entry rejected', 'locked']) {
   test(
-    'BL92 caller: a PiP-paused camera resumes after its own ICE restart '
-    'while backgrounded',
+    'BL92 caller: after its own ICE restart while backgrounded, a replacement '
+    'PiP lease that is $replacement '
+    '${replacement == 'locked' ? 'keeps the camera off' : 'still resumes the camera'}',
     () async {
       const step = Duration(seconds: 5);
       final pip = FakeCallPictureInPictureBridge();
@@ -868,7 +870,7 @@ void main() {
       await flushPip().timeout(step);
       expect(pip.enters, hasLength(1));
       expect(engine.video!.cameraOn, isFalse);
-      pip.enterResult = false;
+      if (replacement == 'entry rejected') pip.enterResult = false;
 
       final commits = engine.video!.commits;
       await graph.coordinator
@@ -918,16 +920,24 @@ void main() {
           .timeout(step);
       expect(graph.coordinator.activeSession!.state, CallState.connected);
       await flushPip().timeout(step);
+      expect(pip.arms.length, greaterThan(1), reason: 'a replacement lease');
+      if (replacement == 'locked') {
+        pip.emit(pip.arms.last, 1, CallPipEventType.blocked, 'locked');
+        await flushPip().timeout(step);
+      }
 
       await fixture.composition.onResume().timeout(step);
       await flushPip().timeout(step);
       expect(
         engine.video!.cameraOn,
-        isTrue,
-        reason: 'the camera the user left on comes back after foreground',
+        replacement == 'locked' ? isFalse : isTrue,
+        reason: replacement == 'locked'
+            ? 'a lock while backgrounded keeps the camera off'
+            : 'the camera the user left on comes back after foreground',
       );
     },
   );
+  }
 
   test(
     'PiP graph supported continuation keeps existing camera authority',
