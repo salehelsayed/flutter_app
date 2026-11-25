@@ -99,6 +99,7 @@ final class EngagementChatObserver {
   bool _attemptedRetention = false;
   bool _storageFailed = false;
   EngagementChatObserverCapture? _calendarFailed;
+  bool _calendarDeferred = false;
 
   EngagementChatPhase get phase =>
       _witness?.phase ?? EngagementChatPhase.collecting;
@@ -404,6 +405,7 @@ final class EngagementChatObserver {
       _attemptedRetention = false;
       _storageFailed = false;
       _calendarFailed = null;
+      _calendarDeferred = false;
       _clearBlockedAtGeneration = null;
       try {
         await _drain();
@@ -412,7 +414,9 @@ final class EngagementChatObserver {
       } finally {
         _worker = null;
         if (_clearBlockedAtGeneration != _generation &&
-            (_clear || _initialize || (_facts.isNotEmpty && !_blockedBySql))) {
+            (_clear ||
+                _initialize ||
+                (_facts.isNotEmpty && !_blockedBySql && !_calendarDeferred))) {
           _start();
         }
       }
@@ -468,7 +472,17 @@ final class EngagementChatObserver {
       }
       _inFlight = true;
       try {
-        if (await _prepare(fact.owner) &&
+        final prepared = await _prepare(fact.owner);
+        if (!prepared &&
+            identical(_calendarFailed, fact.owner) &&
+            _current(fact.owner)) {
+          // The calendar failed, not the fact: keep it for the next worker
+          // start instead of retrying the lookup in a loop.
+          _facts.addFirst(fact);
+          _calendarDeferred = true;
+          return;
+        }
+        if (prepared &&
             _contextCurrent(fact.owner) &&
             _contains(_week!, fact.observedMilliseconds)) {
           _apply(fact);

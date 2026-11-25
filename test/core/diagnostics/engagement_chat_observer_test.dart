@@ -592,14 +592,19 @@ void main() {
   test('E2O-014 facts that meet a failed week lookup wait for the next '
       'worker start instead of being dropped', () async {
     var calendarUp = false;
+    var lookups = 0;
     final observer = await make(
-      lookup: (_) => Future<EngagementChatWeekInterval?>.value(
-        calendarUp ? _week : null,
-      ),
+      lookup: (_) {
+        lookups++;
+        return Future<EngagementChatWeekInterval?>.value(
+          calendarUp ? _week : null,
+        );
+      },
     );
     _facts(observer, _capture(observer));
     await _drain(observer);
     expect(retentions, isEmpty);
+    expect(lookups, lessThan(10), reason: 'a failed lookup is not retried in a loop');
 
     calendarUp = true;
     await _drain(observer);
