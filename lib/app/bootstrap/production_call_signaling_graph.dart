@@ -1444,6 +1444,14 @@ final class ProductionCallSignalingGraph
         (event.type == CallPipEventType.exited &&
             event.detail != 'closed' &&
             event.detail != 'restored')) {
+      // A later lease (re-armed after a reconnect, still in the background)
+      // that cannot enter does not undo the pause an earlier lease saved.
+      final otherLeasePause =
+          _pipCameraIntent != null &&
+          !identical(_pipCameraIntent!.lease, lease) &&
+          _localCameraToken == null &&
+          !_cameraActionPending;
+      if (otherLeasePause) return;
       _pipCameraIntent = null;
       if (!_videoForegroundAllowed || event.type == CallPipEventType.blocked) {
         unawaited(_revokeLocalCamera(state: CallCameraState.paused));
