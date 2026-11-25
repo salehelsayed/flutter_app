@@ -135,6 +135,7 @@ Future<ActiveIdentityReporter> b6Reporter(
     groupNowMilliseconds: groupWitnessStore == null
         ? null
         : () => b15GroupWeekStart + 10000,
+    groupStoreDeadline: const Duration(seconds: 10),
   );
   reporter.attachBridge(bridge);
   reporter.observeIdentity(

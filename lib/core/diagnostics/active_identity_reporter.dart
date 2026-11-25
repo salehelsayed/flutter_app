@@ -64,6 +64,7 @@ final class ActiveIdentityReporter {
     required String statePath,
     EngagementChatCheckpointStore? groupWitnessStore,
     int Function()? groupNowMilliseconds,
+    Duration groupStoreDeadline = const Duration(seconds: 1),
     EngagementChatCheckpointStore? chatWitnessStore,
     int Function()? chatNowMilliseconds,
     Duration chatStoreDeadline = const Duration(seconds: 1),
@@ -71,6 +72,7 @@ final class ActiveIdentityReporter {
     if (groupWitnessStore != null) {
       _groups = GroupEngagementObserver(
         store: groupWitnessStore,
+        deadline: groupStoreDeadline,
         nowMilliseconds:
             groupNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
       );

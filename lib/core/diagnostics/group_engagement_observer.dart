@@ -19,9 +19,14 @@ enum _Phase { collecting, pending, retained }
 
 /// Optional private group evidence. Native receives only a qualified weekly bit.
 final class GroupEngagementObserver {
-  GroupEngagementObserver({required this.store, required this.nowMilliseconds});
+  GroupEngagementObserver({
+    required this.store,
+    required this.nowMilliseconds,
+    this.deadline = const Duration(seconds: 1),
+  });
 
-  static const _deadline = Duration(seconds: 1);
+  /// Bounds each optional store, calendar and retention call.
+  final Duration deadline;
   static const _bound = 64;
   final EngagementChatCheckpointStore store;
   final int Function() nowMilliseconds;
@@ -191,7 +196,7 @@ final class GroupEngagementObserver {
     final generation = _generation;
     _Week? resolved;
     try {
-      resolved = await owner.lookupWeek().timeout(_deadline);
+      resolved = await owner.lookupWeek().timeout(deadline);
     } catch (_) {
       _calendarFailed = true;
       return false;
@@ -209,7 +214,7 @@ final class GroupEngagementObserver {
     try {
       final bytes = await store
           .read(isCurrent: () => waiting && _context(owner, resolved!))
-          .timeout(_deadline, onTimeout: () => null);
+          .timeout(deadline, onTimeout: () => null);
       if (bytes != null && _context(owner, resolved)) {
         _dirty = true;
         _restore(bytes, owner, resolved);
@@ -296,7 +301,7 @@ final class GroupEngagementObserver {
     if (!pending) return;
     var retained = false;
     try {
-      retained = await owner.retain(week.week).timeout(_deadline);
+      retained = await owner.retain(week.week).timeout(deadline);
     } catch (_) {
       // The durable pending checkpoint can retry on a later external wake.
     }
@@ -317,7 +322,7 @@ final class GroupEngagementObserver {
     var waiting = true;
     try {
       return await operation(() => waiting && current())
-          .timeout(_deadline, onTimeout: () => false);
+          .timeout(deadline, onTimeout: () => false);
     } catch (_) {
       return false;
     } finally {
