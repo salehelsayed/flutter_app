@@ -246,7 +246,7 @@ void main() {
     final created = DateTime.now().toUtc().subtract(const Duration(hours: 1));
 
     controller.add(_message('peer-bob', 'Bob', created: created));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await _until(() => notifications.shownThoughts.isNotEmpty);
 
     expect(
       notifications.shownThoughts.single.expiresAt,
