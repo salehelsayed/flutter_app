@@ -1753,7 +1753,6 @@ const _bridgeRejectionKinds = <String, _BridgeRejectionKind>{
   'CALL_UNAUTHORIZED': _BridgeRejectionKind.permission,
   'MEDIA_CUSTODY_NOT_AUTHORIZED': _BridgeRejectionKind.permission,
   'DECRYPT_AUTH_ERROR': _BridgeRejectionKind.permission,
-  'DECRYPT_FAILED': _BridgeRejectionKind.permission,
   'INTERNAL_ERROR': _BridgeRejectionKind.internal,
   'DECRYPT_IO_ERROR': _BridgeRejectionKind.internal,
   'NULL_RESPONSE': _BridgeRejectionKind.malformedResponse,

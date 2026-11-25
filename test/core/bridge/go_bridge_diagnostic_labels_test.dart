@@ -408,7 +408,7 @@ void main() {
       command: 'message.decrypt',
       family: 'crypto',
       code: 'DECRYPT_FAILED',
-      kind: 'permission',
+      kind: 'unknown',
     ),
   ]) {
     test('BL93 exact native code ${sample.code}', () async {
