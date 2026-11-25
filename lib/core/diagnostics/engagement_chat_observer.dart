@@ -66,9 +66,11 @@ final class EngagementChatObserver {
     required this.lookupWeek,
     required this.retainChat,
     required this.nowMilliseconds,
+    this.deadline = const Duration(seconds: 1),
   });
 
-  static const _deadline = Duration(seconds: 1);
+  /// Bounds each optional store, calendar and retention call.
+  final Duration deadline;
   final EngagementChatCheckpointStore store;
   final EngagementChatWeekLookup lookupWeek;
   final EngagementChatLocalRetention retainChat;
@@ -486,7 +488,7 @@ final class EngagementChatObserver {
     }
     EngagementChatWeekInterval? resolved;
     try {
-      resolved = await lookupWeek(capture).timeout(_deadline);
+      resolved = await lookupWeek(capture).timeout(deadline);
       if (!_current(capture)) {
         return false;
       }
@@ -521,7 +523,7 @@ final class EngagementChatObserver {
     try {
       final bytes = await store.read(
         isCurrent: () => waiting && _contextCurrent(capture, witness),
-      ).timeout(_deadline, onTimeout: () => null);
+      ).timeout(deadline, onTimeout: () => null);
       if (bytes != null && _contextCurrent(capture, witness)) {
         witness.restoreSnapshot(_witnessCapture!, bytes);
         _discardConsumedIntents(witness.encodeSnapshot());
@@ -621,7 +623,7 @@ final class EngagementChatObserver {
     bool retained;
     try {
       retained = await retainChat(capture, _week!.week)
-          .timeout(_deadline);
+          .timeout(deadline);
     } catch (_) {
       retained = false;
     }
@@ -644,7 +646,7 @@ final class EngagementChatObserver {
     var waiting = true;
     try {
       return await operation(() => waiting && current())
-          .timeout(_deadline, onTimeout: () => false);
+          .timeout(deadline, onTimeout: () => false);
     } catch (_) {
       return false;
     } finally {

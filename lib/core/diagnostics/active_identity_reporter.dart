@@ -66,6 +66,7 @@ final class ActiveIdentityReporter {
     int Function()? groupNowMilliseconds,
     EngagementChatCheckpointStore? chatWitnessStore,
     int Function()? chatNowMilliseconds,
+    Duration chatStoreDeadline = const Duration(seconds: 1),
   }) : _statePath = statePath {
     if (groupWitnessStore != null) {
       _groups = GroupEngagementObserver(
@@ -77,6 +78,7 @@ final class ActiveIdentityReporter {
     if (chatWitnessStore != null) {
       _chat = EngagementChatObserver(
         store: chatWitnessStore,
+        deadline: chatStoreDeadline,
         nowMilliseconds:
             chatNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
         lookupWeek: (owner) async {

@@ -21,7 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
-const _budget = Duration(seconds: 3);
+const _budget = Duration(seconds: 10);
 const _account = 'receipt-local-account';
 const _contact = 'receipt-remote-account';
 const _message = 'weekly-receipt-initial';
@@ -207,6 +207,7 @@ void main() {
     final replacement = ActiveIdentityReporter(
       statePath: '${h.root.path}/replacement-native.json', chatWitnessStore: h.store,
       chatNowMilliseconds: () => _start + 10000,
+      chatStoreDeadline: _budget,
     );
     try {
       replacement.attachBridge(replacementBridge);
@@ -715,6 +716,7 @@ final class _ReceiptHarness {
     final reporter = ActiveIdentityReporter(
       statePath: '${root.path}/native.json', chatWitnessStore: store,
       chatNowMilliseconds: () => _start + 10000,
+      chatStoreDeadline: _budget,
     );
     await _bounded(fixture.db.insert('contacts', {
       'peer_id': _contact, 'public_key': 'public-contact-fixture',

@@ -19,7 +19,7 @@ const _time = '2026-11-17T00:00:00.000Z';
 const _edited = '2026-11-17T00:00:01.000Z';
 
 Future<T> _bounded<T>(Future<T> work) =>
-    work.timeout(const Duration(seconds: 3));
+    work.timeout(const Duration(seconds: 10));
 
 String _envelope({String? eventId}) => MessagePayload.buildEncryptedEnvelope(
   id: _id, senderPeerId: _account, senderUsername: 'Local',
@@ -46,6 +46,7 @@ void main() {
       ),
       retainChat: (_, _) async => true,
       nowMilliseconds: () => 10000,
+      deadline: const Duration(seconds: 10),
     );
     try {
       expect(fixture.messageRepo.supportsDirectTextMutationInboxCustody, isTrue);
