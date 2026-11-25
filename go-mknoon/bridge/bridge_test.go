@@ -22,6 +22,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/internal"
 	"github.com/mknoon/go-mknoon/node"
@@ -97,6 +98,173 @@ func readBridgeTestFrame(t *testing.T, r io.Reader) []byte {
 		t.Fatalf("read frame payload: %v", err)
 	}
 	return data
+}
+
+func TestBL93ProfileDownloadDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, relayError, diagnosticCode string
+	}{
+		{"missing profile", "ERROR", "not found", "PROFILE_NOT_FOUND"},
+		{"other relay failure", "ERROR", "profile storage not found", ""},
+		{"unexpected status", "UNAVAILABLE", "not found", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response, err := json.Marshal(map[string]string{"status": tc.status, "error": tc.relayError})
+			if err != nil {
+				t.Fatal(err)
+			}
+			withBL93LoopbackRelay(t, node.MediaProtocol, func(stream network.Stream) {
+				defer stream.Close()
+				if err := stream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+					t.Errorf("bound profile stream: %v", err)
+					return
+				}
+				request := parseJSON(t, string(readBridgeTestFrame(t, stream)))
+				if request["action"] != "profile_download" {
+					t.Errorf("profile action = %v, want profile_download", request["action"])
+				}
+				writeBridgeTestFrame(t, stream, response)
+			})
+
+			output := filepath.Join(t.TempDir(), "profile.jpg")
+			input, err := json.Marshal(map[string]string{"ownerPeerId": "peer-owner", "outputPath": output})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := awaitBL93BridgeResult(t, func() string { return ProfileDownload(string(input)) })
+			assertNotOk(t, result, "PROFILE_ERROR")
+			if want := "profile download failed: " + tc.relayError; result["errorMessage"] != want {
+				t.Errorf("errorMessage = %q, want %q", result["errorMessage"], want)
+			}
+			assertBL93DiagnosticCode(t, result, tc.diagnosticCode)
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Errorf("failed download created an output file: %v", err)
+			}
+		})
+	}
+}
+
+func TestBL93UnstartedNodeDiagnostics(t *testing.T) {
+	withFreshSingletonNode(t)
+	key := parseJSON(t, GenerateGroupKey())
+	assertOk(t, key)
+	joinInput, err := json.Marshal(map[string]interface{}{
+		"groupId":  "test-group",
+		"groupKey": key["groupKey"],
+		"keyEpoch": 1,
+		"groupConfig": map[string]interface{}{
+			"name": "Test group", "groupType": "chat", "createdBy": "peer-admin",
+			"createdAt": "2026-01-01T00:00:00Z",
+			"members": []map[string]string{{
+				"peerId": "peer-admin", "role": "admin", "publicKey": "adminPubKey", "mlKemPublicKey": "mlkem-peer-admin",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, errorCode, errorMessage string
+		call                          func() string
+	}{
+		{"inbox", "INBOX_ERROR", "node not started", InboxRetrieve},
+		{"group inbox cursor", "GROUP_INBOX_ERROR", "node not started", func() string {
+			return GroupInboxRetrieveCursor(`{"groupId":"test-group","cursor":"opaque-cursor"}`)
+		}},
+		{"rendezvous", "RENDEZVOUS_ERROR", "node not started", func() string {
+			return RendezvousDiscover(`{"namespace":"test","timeoutMs":1000}`)
+		}},
+		{"pubsub join", "GROUP_ERROR", "pubsub not initialized", func() string {
+			return GroupJoinTopic(string(joinInput))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := parseJSON(t, tc.call())
+			assertNotOk(t, result, tc.errorCode)
+			if result["errorMessage"] != tc.errorMessage {
+				t.Errorf("errorMessage = %q, want %q", result["errorMessage"], tc.errorMessage)
+			}
+			assertBL93DiagnosticCode(t, result, "NODE_NOT_STARTED")
+		})
+	}
+}
+
+func TestBL93InboxStreamDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, errorStage, diagnosticCode string
+		openStream                       bool
+	}{
+		{"unsupported protocol", "open inbox stream:", "RELAY_UNAVAILABLE", false},
+		{"EOF reading response", "read response:", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var handler network.StreamHandler
+			if tc.openStream {
+				handler = func(stream network.Stream) {
+					defer stream.Close()
+					if err := stream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+						t.Errorf("bound inbox stream: %v", err)
+						return
+					}
+					readBridgeTestFrame(t, stream)
+				}
+			}
+			withBL93LoopbackRelay(t, node.InboxProtocol, handler)
+			result := parseJSON(t, InboxRetrieveWithParams(`{"timeoutMs":1000}`))
+			assertNotOk(t, result, "INBOX_ERROR")
+			if message, _ := result["errorMessage"].(string); !strings.Contains(message, tc.errorStage) {
+				t.Errorf("errorMessage = %q, want stage %q", message, tc.errorStage)
+			}
+			assertBL93DiagnosticCode(t, result, tc.diagnosticCode)
+		})
+	}
+}
+
+func withBL93LoopbackRelay(t *testing.T, id protocol.ID, handler network.StreamHandler) {
+	t.Helper()
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start loopback relay host: %v", err)
+	}
+	t.Cleanup(func() { _ = relayHost.Close() })
+	if handler != nil {
+		relayHost.SetStreamHandler(id, handler)
+	}
+	withFreshSingletonNode(t)
+	address := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	input, err := json.Marshal(map[string]interface{}{
+		"privateKeyHex": generateTestKeyHex(t), "relayAddresses": []string{address}, "autoRegister": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOk(t, parseJSON(t, StartNode(string(input))))
+}
+
+func awaitBL93BridgeResult(t *testing.T, call func() string) map[string]interface{} {
+	t.Helper()
+	result := make(chan string, 1)
+	go func() { result <- call() }()
+	select {
+	case response := <-result:
+		return parseJSON(t, response)
+	case <-time.After(3 * time.Second):
+		t.Fatal("bridge call exceeded the loopback fixture deadline")
+		return nil
+	}
+}
+
+func assertBL93DiagnosticCode(t *testing.T, result map[string]interface{}, want string) {
+	t.Helper()
+	code, present := result["diagnosticCode"]
+	if want == "" {
+		if present {
+			t.Errorf("diagnosticCode = %v, want it absent", code)
+		}
+	} else if code != want {
+		t.Errorf("diagnosticCode = %v, want %q", code, want)
+	}
 }
 
 // --- GenerateIdentity ---

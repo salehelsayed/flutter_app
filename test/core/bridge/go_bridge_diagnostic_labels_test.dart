@@ -79,6 +79,8 @@ void main() {
     final uploaded = uploads.singleWhere(
       (row) => row['eventId'] == event['eventId'],
     );
+    expect(AppDiagnostics.validateEvent(uploaded), isNotNull);
+    expect(jsonEncode(uploaded), isNot(contains('diagnosticCode')));
     expect(uploaded['values'], containsPair('bridgeCommandFamily', family));
     expect(uploaded['values'], containsPair('bridgeRejectionKind', kind));
     expect(jsonEncode(uploaded), isNot(contains(_privateMarker)));
