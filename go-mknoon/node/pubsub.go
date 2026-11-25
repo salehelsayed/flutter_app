@@ -108,7 +108,7 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	n.mu.Lock()
 	if n.pubsub == nil {
 		n.mu.Unlock()
-		return fmt.Errorf("pubsub not initialized")
+		return nodeErrorWithKind{error: errors.New("pubsub not initialized"), kind: ErrNodeNotStarted}
 	}
 
 	if _, exists := n.groupTopics[groupId]; exists {
@@ -163,7 +163,7 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 		_ = topic.Close()
 		_ = ps.UnregisterTopicValidator(topicName)
 		cleanupReservedJoin()
-		return fmt.Errorf("node context not initialized")
+		return nodeErrorWithKind{error: errors.New("node context not initialized"), kind: ErrNodeNotStarted}
 	}
 
 	ctx, cancel := context.WithCancel(nodeCtx)

@@ -28,7 +28,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(serverAddresses)
@@ -41,7 +41,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 
 		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
 		if err != nil {
-			return fmt.Errorf("open rendezvous stream: %w", err)
+			return relayAcquisitionError(ctx, "open rendezvous stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -134,7 +134,7 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	timeout := DiscoverTimeout
@@ -155,7 +155,7 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 
 		s, err := n.openRendezvousStreamForDiscover(commandCtx, h, relay.ID)
 		if err != nil {
-			return nil, fmt.Errorf("open rendezvous stream: %w", err)
+			return nil, relayAcquisitionError(commandCtx, "open rendezvous stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -222,7 +222,7 @@ func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) 
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(serverAddresses)
@@ -234,7 +234,7 @@ func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) 
 
 		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
 		if err != nil {
-			return fmt.Errorf("open rendezvous stream: %w", err)
+			return relayAcquisitionError(ctx, "open rendezvous stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)

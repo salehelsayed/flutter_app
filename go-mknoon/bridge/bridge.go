@@ -676,7 +676,7 @@ func RendezvousRegister(paramsJSON string) (result string) {
 	}
 
 	if err := n.RendezvousRegister(ns, params.ServerAddresses); err != nil {
-		return errJSON("RENDEZVOUS_ERROR", err.Error())
+		return nodeErrorJSON("RENDEZVOUS_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -718,7 +718,7 @@ func RendezvousUnregister(paramsJSON string) (result string) {
 	}
 
 	if err := n.RendezvousUnregister(ns, params.ServerAddresses); err != nil {
-		return errJSON("RENDEZVOUS_ERROR", err.Error())
+		return nodeErrorJSON("RENDEZVOUS_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -763,7 +763,7 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 
 	peers, err := n.RendezvousDiscoverWithTimeout(ns, params.ServerAddresses, params.TimeoutMs)
 	if err != nil {
-		return errJSON("RENDEZVOUS_ERROR", err.Error())
+		return nodeErrorJSON("RENDEZVOUS_ERROR", err)
 	}
 
 	peerList := make([]map[string]interface{}, len(peers))
@@ -1321,7 +1321,7 @@ func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) (result
 				"capacity":     outcome.Capacity,
 			})
 		}
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -1365,6 +1365,9 @@ func inboxStoreAckCustodyBridgeResponse(outcome node.InboxStoreOutcome, err erro
 		if outcome.CustodyContract != "" {
 			response["custodyContract"] = outcome.CustodyContract
 		}
+		if code == "INBOX_ERROR" {
+			return nodeErrorEnvelopeJSON(response, err)
+		}
 		return okJSON(response)
 	}
 
@@ -1397,7 +1400,7 @@ func InboxRetrieve() (result string) {
 
 	msgs, err := n.InboxRetrieve()
 	if err != nil {
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	msgList := make([]map[string]interface{}, len(msgs))
@@ -1449,7 +1452,7 @@ func InboxRetrieveWithParams(paramsJSON string) (result string) {
 
 	res, err := n.InboxRetrieveWithTimeout(params.TimeoutMs)
 	if err != nil {
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	msgList := make([]map[string]interface{}, len(res.Messages))
@@ -1514,7 +1517,7 @@ func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", err.Error())
 	}
 	if err != nil {
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 	if err := validateInboxRetrieveAckCustodyContract(params.CustodyContract, res); err != nil {
 		return errJSON("INBOX_ERROR", err.Error())
@@ -1585,15 +1588,15 @@ func InboxAck(paramsJSON string) (result string) {
 	}
 	if err != nil {
 		if params.CustodyContract == node.AckOrExpiryCustodyContract {
-			return okJSON(map[string]interface{}{
+			return nodeErrorEnvelopeJSON(map[string]interface{}{
 				"ok":              false,
 				"errorCode":       "INBOX_ERROR",
 				"errorMessage":    err.Error(),
 				"acked":           acked,
 				"custodyContract": node.AckOrExpiryCustodyContract,
-			})
+			}, err)
 		}
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	response := map[string]interface{}{
@@ -1707,6 +1710,7 @@ func inboxWakeOutcomeBridgeResponse(outcome node.InboxWakeOutcomeResult, err err
 	if err != nil {
 		response["errorCode"] = "INBOX_WAKE_OUTCOME_RETRYABLE"
 		response["errorMessage"] = err.Error()
+		return nodeErrorEnvelopeJSON(response, err)
 	}
 	return okJSON(response)
 }
@@ -1756,7 +1760,7 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 		thoughtNotificationsEnabled,
 		params.Capabilities...,
 	); err != nil {
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -1792,7 +1796,7 @@ func InboxUnregisterToken(paramsJSON string) (result string) {
 	}
 
 	if err := n.InboxUnregisterToken(params.ServerAddresses); err != nil {
-		return errJSON("INBOX_ERROR", err.Error())
+		return nodeErrorJSON("INBOX_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -2311,7 +2315,7 @@ func ProfileDownload(paramsJSON string) (result string) {
 
 	mime, size, err := n.ProfileDownload(params.OwnerPeerId, params.OutputPath)
 	if err != nil {
-		return errJSON("PROFILE_ERROR", err.Error())
+		return nodeErrorJSON("PROFILE_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -2424,7 +2428,7 @@ func GroupCreate(paramsJSON string) (result string) {
 
 	// 5. Join group topic.
 	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
-		return errJSON("GROUP_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_ERROR", err)
 	}
 
 	// 6. Serialize config for return.
@@ -2591,7 +2595,7 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 				"note": "ALREADY_JOINED",
 			})
 		}
-		return errJSON("GROUP_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -3247,7 +3251,7 @@ func GroupInboxStore(paramsJSON string) (result string) {
 			PreserveRecipientPeerIds: params.PreserveRecipientPeerIds,
 		},
 	); err != nil {
-		return errJSON("GROUP_INBOX_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_INBOX_ERROR", err)
 	}
 
 	return okJSON(map[string]interface{}{
@@ -3287,7 +3291,7 @@ func GroupInboxRetrieve(paramsJSON string) (result string) {
 
 	msgs, err := n.GroupInboxRetrieve(params.GroupId, params.SinceTimestamp)
 	if err != nil {
-		return errJSON("GROUP_INBOX_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_INBOX_ERROR", err)
 	}
 
 	msgList := make([]map[string]interface{}, len(msgs))
@@ -3343,7 +3347,7 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 		params.Limit,
 	)
 	if err != nil {
-		return errJSON("GROUP_INBOX_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_INBOX_ERROR", err)
 	}
 
 	// NOTE: this {from,message,timestamp} projection is NOT load-bearing for the
@@ -3399,7 +3403,7 @@ func GroupHistoryRepairRange(paramsJSON string) (result string) {
 
 	resp, err := n.GroupHistoryRepairRange(normalized)
 	if err != nil {
-		return errJSON("GROUP_HISTORY_REPAIR_ERROR", err.Error())
+		return nodeErrorJSON("GROUP_HISTORY_REPAIR_ERROR", err)
 	}
 
 	// NOTE: this {from,message,timestamp} projection is NOT load-bearing for the
@@ -3565,6 +3569,26 @@ func okJSON(m map[string]interface{}) string {
 		return errJSON("INTERNAL_ERROR", fmt.Sprintf("json marshal: %v", err))
 	}
 	return string(b)
+}
+
+func nodeErrorJSON(code string, err error) string {
+	return nodeErrorEnvelopeJSON(map[string]interface{}{
+		"ok":           false,
+		"errorCode":    code,
+		"errorMessage": err.Error(),
+	}, err)
+}
+
+func nodeErrorEnvelopeJSON(response map[string]interface{}, err error) string {
+	switch {
+	case errors.Is(err, node.ErrProfileNotFound):
+		response["diagnosticCode"] = "PROFILE_NOT_FOUND"
+	case errors.Is(err, node.ErrNodeNotStarted):
+		response["diagnosticCode"] = "NODE_NOT_STARTED"
+	case errors.Is(err, node.ErrRelayUnavailable):
+		response["diagnosticCode"] = "RELAY_UNAVAILABLE"
+	}
+	return okJSON(response)
 }
 
 // errJSON builds a JSON error envelope string.

@@ -336,7 +336,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 	n.mu.RUnlock()
 
 	if h == nil {
-		return InboxStoreOutcome{}, fmt.Errorf("node not started")
+		return InboxStoreOutcome{}, ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(nil)
@@ -364,7 +364,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 				"totalMs":   time.Since(totalStart).Milliseconds(),
 				"outcome":   "connect_failed",
 			})
-			return fmt.Errorf("connect to relay: %w", err)
+			return relayAcquisitionError(ctx, "connect to relay", err)
 		}
 		connectMs := time.Since(connectStart).Milliseconds()
 
@@ -384,7 +384,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 				"totalMs":      time.Since(totalStart).Milliseconds(),
 				"outcome":      "stream_failed",
 			})
-			return fmt.Errorf("open inbox stream: %w", err)
+			return relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -560,7 +560,7 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 	h := n.host
 	n.mu.RUnlock()
 	if h == nil {
-		return InboxStoreOutcome{}, fmt.Errorf("node not started")
+		return InboxStoreOutcome{}, ErrNodeNotStarted
 	}
 
 	timeout := InboxTimeout
@@ -693,7 +693,7 @@ func (n *Node) exchangeInboxRequest(
 
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 		d.failedDial(err)
-		return nil, fmt.Errorf("connect to relay: %w", err)
+		return nil, relayAcquisitionError(ctx, "connect to relay", err)
 	}
 	if err := n.checkSendConnections(ctx, h, relay.ID); err != nil {
 		return nil, err
@@ -703,7 +703,7 @@ func (n *Node) exchangeInboxRequest(
 	d.stream(s, err)
 	if err != nil {
 		n.noteSendOpenTimeout(ctx, h, relay.ID, connections, s, err)
-		return nil, fmt.Errorf("open inbox stream: %w", err)
+		return nil, relayAcquisitionError(ctx, "open inbox stream", err)
 	}
 	streamOK := false
 	defer finishStream(s, &streamOK)
@@ -944,7 +944,7 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(nil)
@@ -956,12 +956,12 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return nil, fmt.Errorf("connect to relay: %w", err)
+			return nil, relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return nil, fmt.Errorf("open inbox stream: %w", err)
+			return nil, relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -1037,7 +1037,7 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	timeout := InboxTimeout
@@ -1052,12 +1052,12 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return nil, fmt.Errorf("connect to relay: %w", err)
+			return nil, relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return nil, fmt.Errorf("open inbox stream: %w", err)
+			return nil, relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -1120,7 +1120,7 @@ func (n *Node) InboxRetrievePendingWithTimeout(timeoutMs int) (*InboxRetrievePen
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	timeout := InboxTimeout
@@ -1135,12 +1135,12 @@ func (n *Node) InboxRetrievePendingWithTimeout(timeoutMs int) (*InboxRetrievePen
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return nil, fmt.Errorf("connect to relay: %w", err)
+			return nil, relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return nil, fmt.Errorf("open inbox stream: %w", err)
+			return nil, relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -1195,7 +1195,7 @@ func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
 	n.mu.RUnlock()
 
 	if h == nil {
-		return 0, fmt.Errorf("node not started")
+		return 0, ErrNodeNotStarted
 	}
 
 	timeout := InboxTimeout
@@ -1210,12 +1210,12 @@ func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return 0, fmt.Errorf("connect to relay: %w", err)
+			return 0, relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return 0, fmt.Errorf("open inbox stream: %w", err)
+			return 0, relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -1266,7 +1266,7 @@ func (n *Node) InboxRetrieveAckCustodyPendingWithTimeout(
 	h := n.host
 	n.mu.RUnlock()
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	timeout := InboxTimeout
@@ -1491,7 +1491,7 @@ func (n *Node) InboxAckCustody(entryIDs []string, timeoutMs int) (int, error) {
 	h := n.host
 	n.mu.RUnlock()
 	if h == nil {
-		return 0, fmt.Errorf("node not started")
+		return 0, ErrNodeNotStarted
 	}
 
 	uniqueIDs := uniqueNonblankInboxEntryIDs(entryIDs)
@@ -1676,7 +1676,7 @@ func (n *Node) InboxWakeOutcome(correlation string) (InboxWakeOutcomeResult, err
 	h := n.host
 	n.mu.RUnlock()
 	if h == nil {
-		return InboxWakeOutcomeResult{}, fmt.Errorf("node not started")
+		return InboxWakeOutcomeResult{}, ErrNodeNotStarted
 	}
 
 	relays := n.buildRelaySelector(nil).Relays()
@@ -1856,7 +1856,7 @@ func (n *Node) inboxRegisterToken(
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(nil)
@@ -1869,12 +1869,12 @@ func (n *Node) inboxRegisterToken(
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return fmt.Errorf("connect to relay: %w", err)
+			return relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return fmt.Errorf("open inbox stream: %w", err)
+			return relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -2006,7 +2006,7 @@ func (n *Node) InboxUnregisterToken(serverAddresses []string) error {
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(serverAddresses)
@@ -2017,12 +2017,12 @@ func (n *Node) InboxUnregisterToken(serverAddresses []string) error {
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return fmt.Errorf("connect to relay: %w", err)
+			return relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return fmt.Errorf("open inbox stream: %w", err)
+			return relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)

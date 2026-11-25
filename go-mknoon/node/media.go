@@ -1568,6 +1568,8 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 	return nil
 }
 
+var ErrProfileNotFound = errors.New("profile download failed: not found")
+
 // ProfileDownload downloads a peer's profile picture from the relay.
 func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, size int64, err error) {
 	ms, sErr := n.openMediaStream("profile_download")
@@ -1587,6 +1589,9 @@ func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, siz
 		return "", 0, fmt.Errorf("profile download request: %w", sErr)
 	}
 
+	if resp.Status == "ERROR" && resp.Error == "not found" {
+		return "", 0, ErrProfileNotFound
+	}
 	if resp.Status != "OK" {
 		return "", 0, fmt.Errorf("profile download failed: %s", resp.Error)
 	}

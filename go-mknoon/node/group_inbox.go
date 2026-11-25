@@ -178,7 +178,7 @@ func (n *Node) GroupInboxStoreWithOptions(
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	if config != nil {
@@ -238,7 +238,7 @@ func (n *Node) groupInboxStoreOnce(
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(nil)
@@ -249,12 +249,12 @@ func (n *Node) groupInboxStoreOnce(
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return fmt.Errorf("connect to relay: %w", err)
+			return relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return fmt.Errorf("open inbox stream: %w", err)
+			return relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
@@ -512,7 +512,7 @@ func (n *Node) GroupHistoryRepairRange(req GroupHistoryRepairRangeRequest) (*Gro
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	result, err := n.groupInboxRetrieve(groupInboxRequest{
@@ -607,7 +607,7 @@ func (n *Node) groupInboxRetrieveOnce(req groupInboxRequest) (*groupInboxRespons
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, fmt.Errorf("node not started")
+		return nil, ErrNodeNotStarted
 	}
 
 	rs := n.buildRelaySelector(nil)
@@ -618,12 +618,12 @@ func (n *Node) groupInboxRetrieveOnce(req groupInboxRequest) (*groupInboxRespons
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			return nil, fmt.Errorf("connect to relay: %w", err)
+			return nil, relayAcquisitionError(ctx, "connect to relay", err)
 		}
 
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		if err != nil {
-			return nil, fmt.Errorf("open inbox stream: %w", err)
+			return nil, relayAcquisitionError(ctx, "open inbox stream", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)

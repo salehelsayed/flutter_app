@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrDialNodeNotStarted = errors.New("node not started")
+	ErrDialNodeNotStarted = ErrNodeNotStarted
 	ErrDialInvalidPeer    = errors.New("invalid peer ID")
 )
 
