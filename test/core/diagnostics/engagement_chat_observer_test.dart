@@ -613,6 +613,43 @@ void main() {
     expect(retentions.single['week'], _week.week);
   });
 
+  test('E2O-015 an observation at capacity wakes a parked calendar retry '
+      'without flush', () async {
+    final firstLookup = Completer<EngagementChatWeekInterval?>();
+    var lookups = 0;
+    var calendarUp = false;
+    final observer = await make(
+      lookup: (_) {
+        lookups++;
+        if (lookups == 1) return firstLookup.future;
+        return Future<EngagementChatWeekInterval?>.value(
+          calendarUp ? _week : null,
+        );
+      },
+    );
+    final capture = _capture(observer);
+    for (var i = 0; i < 64; i++) {
+      observer.incoming(capture, contactAccount: 'peer-$i');
+    }
+    expect(observer.pendingFactCountForTesting, 64);
+    firstLookup.complete(null);
+    for (var i = 0; i < 100 && lookups < 2; i++) {
+      await _within(Future<void>.delayed(const Duration(milliseconds: 10)));
+    }
+    expect(observer.pendingFactCountForTesting, 64,
+        reason: 'facts wait while the calendar is down');
+
+    calendarUp = true;
+    observer.incoming(capture, contactAccount: 'peer-wake');
+    for (var i = 0;
+        i < 200 && observer.pendingFactCountForTesting > 0;
+        i++) {
+      await _within(Future<void>.delayed(const Duration(milliseconds: 10)));
+    }
+    expect(observer.pendingFactCountForTesting, 0,
+        reason: 'an ordinary observation must wake the parked retry');
+  });
+
   test('E2O-012 revoke removes private witnesses before a new epoch', () async {
     final store = await open();
     final seeded = EngagementChatWitness(
