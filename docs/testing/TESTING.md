@@ -14539,26 +14539,23 @@ change does not fix or establish a delivery failure on an exported trace.
 Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
 Bridge failure records use closed `bridgeCommandFamily` and
-`bridgeRejectionKind` values. The command family is required in the existing
-dispatch registry; explicit native error codes determine rejection kinds,
-with `unknown` for broad or unclassified failures. The one bounded lifecycle
-exception is an uncoded negative reply whose `error` is exactly `node stopped`;
-it remains a reported failure with the existing `not_ready` kind.
-Raw command strings, payloads,
-peer identifiers and error text are not diagnostic values. Preserve ordinary
-return envelopes, the six network operation reasons, raw background responses,
-and diagnostic-upload recursion suppression. The bridge-label tests exercise
+`bridgeRejectionKind` values. The dispatch registry sets the family. Specific
+native error codes determine the kind. BL-93 adds an advisory `diagnosticCode`
+to the native bridge response for typed profile absence, unstarted node, and
+relay acquisition failures. This code stays on the bridge. Uploads use the
+existing rejection kinds and reasons, with `unknown` for broad or unclassified
+failures. The exact uncoded lifecycle reply `node not started` reports
+`not_ready`. Preserve ordinary return envelopes, the six network operation
+reasons, raw background responses, and diagnostic-upload recursion suppression. The bridge-label tests exercise
 native-boundary results through collection, export and upload; relay/Python
 fixtures preserve old records and reject free-form enum values. Evidence is
 retained in `.codex-test-logs/bridge-labels-20261101/`.
 
-**BL-24(A) expected bridge misses:** ordinary `ok:false` replies without an
-`errorCode` key from `peer:ping` and `relay:presence_set` are best-effort misses,
-not failed bridge observations. Their return envelopes remain unchanged. A
-present code, including null, empty or unknown, retains the failure path and
-existing mapping. The earlier `PROFILE_ERROR/internal` expectation is superseded
-by BL-39 below. The exact
-uncoded lifecycle exception above takes precedence over miss suppression.
+**BL-24(A) expected bridge misses:** ordinary uncoded `ok:false` replies from
+`peer:ping`, `relay:presence_set`, and, after BL-93, `inbox:register_wake_tokens`
+are expected misses. A present code, including null, empty or unknown,
+retains the failure path and existing mapping. The exact uncoded lifecycle
+exception above takes precedence over miss suppression.
 Presence lookup already returns a successful `unknown` hint; other uncoded
 command failures remain visible. No rejection vocabulary or schema copy changed.
 Frozen RED `f79367b56db1909484ee15076d1483f52a73fd33` produced one positive-control
@@ -14573,15 +14570,16 @@ and `official-claude-dev/`. This proves the mock bridge and local diagnostics
 privacy/export/upload contract. It does not measure the inferred production
 volume reduction or establish native/device or aggregate candidate behavior.
 
-**BL-39 profile error attribution:** `PROFILE_ERROR` is a broad native wrapper
-for absent profiles, transport failures and local file errors; it does not
-establish an internal fault. Keep its rejection kind `unknown`, while explicit
-`INTERNAL_ERROR` remains `internal`. Three synthetic cases in
-`go_bridge_diagnostic_labels_test.dart` reproduced the overly specific label
-before the fix, with each new await bounded to three seconds. The cases preserve
-the unsuccessful native response and require the existing private-safe
-collection/export/upload contract. Uploaded profile failures do not reveal
-their underlying cause or establish avatar loss.
+**BL-39 profile error attribution:** `PROFILE_ERROR` remains the operational
+wrapper for profile absence, transport failures, and local file errors. Generic
+failures retain the rejection kind `unknown`. Explicit `INTERNAL_ERROR` retains
+`internal`. BL-93 recognizes only the relay's exact profile absence response and
+reports it through the native bridge as `PROFILE_NOT_FOUND`. An absent profile
+on `profile:download` is an expected miss. The bridge tests preserve the
+unsuccessful native response, validate each uploaded rejection against the
+existing app schema, and check that diagnostic codes and raw error text stay
+out of upload values. Go loopback fixtures preserve the operational envelope
+and distinguish stream acquisition from response-read failures.
 
 Native `bgEnd` intentionally completes with a void result. The Dart bridge
 accepts that result only for `bg:end` and returns its normal success envelope;
