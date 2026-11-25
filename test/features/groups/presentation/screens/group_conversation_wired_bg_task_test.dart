@@ -265,6 +265,25 @@ Future<void> pumpUntilAsyncWorkSettles(
   }
 }
 
+Future<List<MediaAttachment>> _uploadPendingGroupAttachments(
+  WidgetTester tester,
+  InMemoryMediaAttachmentRepository mediaRepo,
+) async {
+  var pending = <MediaAttachment>[];
+  for (var pumps = 0; pending.isEmpty && pumps < 200; pumps++) {
+    pending = await mediaRepo.getUploadPendingAttachments(
+      owner: MediaOwnerLane.group,
+    );
+    if (pending.isEmpty) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+  return pending;
+}
+
 int _logIndex(List<String> operationLog, String entry) {
   final index = operationLog.indexOf(entry);
   expect(index, isNot(-1), reason: 'Expected "$entry" in $operationLog');
@@ -796,10 +815,10 @@ void main() {
 
         final sendFuture = await _startTextSend(tester, 'unmount media fail');
         await pumpUntil(tester, () => uploadStarted.isCompleted);
-        await pumpFrames(tester, count: 5);
 
-        final messageId = (await mediaRepo.getUploadPendingAttachments(
-          owner: MediaOwnerLane.group,
+        final messageId = (await _uploadPendingGroupAttachments(
+          tester,
+          mediaRepo,
         )).single.messageId;
         final persistedBeforeUnmount = await msgRepo.getMessage(messageId);
         expect(persistedBeforeUnmount, isNotNull);
@@ -885,10 +904,10 @@ void main() {
 
         final sendFuture = await _startTextSend(tester, 'unmount media sent');
         await pumpUntil(tester, () => uploadStarted.isCompleted);
-        await pumpFrames(tester, count: 5);
 
-        final messageId = (await mediaRepo.getUploadPendingAttachments(
-          owner: MediaOwnerLane.group,
+        final messageId = (await _uploadPendingGroupAttachments(
+          tester,
+          mediaRepo,
         )).single.messageId;
         expect((await msgRepo.getMessage(messageId))!.status, 'sending');
 
@@ -1000,9 +1019,22 @@ void main() {
       );
       final stopRecording =
           recordingScreen.onRecordStop! as Future<void> Function();
-      await tester.runAsync(() async {
-        await stopRecording();
-      });
+      // Stopping may need both real file work and a frame, so neither clock
+      // is blocked while it runs.
+      var stopped = false;
+      Object? stopError;
+      unawaited(
+        stopRecording()
+            .then<void>((_) {}, onError: (Object error) => stopError = error)
+            .whenComplete(() => stopped = true),
+      );
+      await pumpUntilAsyncWorkSettles(tester, () => stopped);
+      expect(
+        stopped,
+        isTrue,
+        reason: 'voice stop must finish within the bound',
+      );
+      if (stopError != null) throw stopError!;
       await pumpFrames(tester, count: 20);
 
       _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
