@@ -205,6 +205,54 @@ void main() {
     },
   );
 
+  test(
+    'B15G-019 a group checkpoint write past its deadline is retried in the '
+    'same worker before the week is marked',
+    () async {
+      var commits = 0;
+      final slowStore = await _bounded(
+        EngagementChatCheckpointStore.open(
+          '${directory.path}/slow-group',
+          beforeCommit: (_) async {
+            commits++;
+            if (commits == 1) {
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+            }
+          },
+        ),
+      );
+      final slowBridge = _Bridge();
+      final slow = ActiveIdentityReporter(
+        statePath: '${directory.path}/slow-native.json',
+        groupWitnessStore: slowStore,
+        groupNowMilliseconds: () => now,
+        groupStoreDeadline: const Duration(milliseconds: 100),
+        groupCheckpointRetryDelay: const Duration(milliseconds: 400),
+      );
+      addTearDown(() async {
+        await _bounded(slow.dispose());
+        await _bounded(slowStore.close());
+      });
+      slow.attachBridge(slowBridge);
+      slow.observeIdentity(
+        accountPeerId: _account,
+        rootPrivateKeyBase64: 'public-test-fixture-not-a-real-private-key',
+        profileBinding: _binding,
+      );
+      await _bounded(slow.observeConsent((enabled: true, consentEpoch: 91)));
+      final owner = slow.captureOwner(expectedAccountPeerId: _account)!;
+      _post(slow, owner);
+      _visible(slow, owner);
+      await _bounded(slow.flush());
+
+      expect(slowBridge.operations('markWeekly'), hasLength(1));
+      final saved = jsonDecode(
+        await _bounded(File(slowStore.checkpointPath).readAsString()),
+      ) as Map<String, dynamic>;
+      expect(saved['phase'], 'retained');
+    },
+  );
+
   test('B15G-002 a visible post may precede the own committed post', () async {
     final owner = capture();
     _visible(reporter, owner);

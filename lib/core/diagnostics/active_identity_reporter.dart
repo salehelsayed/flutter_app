@@ -65,6 +65,7 @@ final class ActiveIdentityReporter {
     EngagementChatCheckpointStore? groupWitnessStore,
     int Function()? groupNowMilliseconds,
     Duration groupStoreDeadline = const Duration(seconds: 1),
+    Duration groupCheckpointRetryDelay = const Duration(seconds: 2),
     EngagementChatCheckpointStore? chatWitnessStore,
     int Function()? chatNowMilliseconds,
     Duration chatStoreDeadline = const Duration(seconds: 5),
@@ -73,6 +74,7 @@ final class ActiveIdentityReporter {
       _groups = GroupEngagementObserver(
         store: groupWitnessStore,
         deadline: groupStoreDeadline,
+        checkpointRetryDelay: groupCheckpointRetryDelay,
         nowMilliseconds:
             groupNowMilliseconds ?? () => DateTime.now().millisecondsSinceEpoch,
       );

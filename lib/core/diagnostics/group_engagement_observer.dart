@@ -23,10 +23,14 @@ final class GroupEngagementObserver {
     required this.store,
     required this.nowMilliseconds,
     this.deadline = const Duration(seconds: 1),
+    this.checkpointRetryDelay = const Duration(seconds: 2),
   });
 
   /// Bounds each optional store, calendar and retention call.
   final Duration deadline;
+
+  /// The pause before retrying a checkpoint write that missed [deadline].
+  final Duration checkpointRetryDelay;
   static const _bound = 64;
   final EngagementChatCheckpointStore store;
   final int Function() nowMilliseconds;
