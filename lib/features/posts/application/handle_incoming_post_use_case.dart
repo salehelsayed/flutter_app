@@ -164,6 +164,10 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
           }
           return (HandleIncomingPostResult.duplicate, existingPost, origin);
         }
+        if (incomingPost.hasUnsupportedMedia &&
+            existingPost.authorPeerId != incomingPost.authorPeerId) {
+          return (HandleIncomingPostResult.duplicate, null, null);
+        }
         final mergedPost = _mergeExistingRepostedCopy(
           existingPost: existingPost,
           incomingPost: incomingPost,

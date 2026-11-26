@@ -4939,7 +4939,11 @@ direction, sender, dismissal, and absence of content actions. The Orbit Depth
 case checks the same notice with no reply dock or media fetch.
 The original five assertion failures and three passing controls are pinned to
 test-only commit `8d399db49`. The existing photo-with-voice tests preserve
-supported attachment and rendering behavior.
+supported attachment and rendering behavior. An unsupported direct copy can
+update a cached repost only when its authenticated author matches the stored
+original author. The focused assertions cover preserved attribution, media,
+and pass origin on collision and normal direct metadata for the same author.
+The collision reproduced on test-only commit `d27c4177d`.
 
 Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
 `sent: true, acked: false` must attempt the existing inbox fallback and remain
