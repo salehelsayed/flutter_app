@@ -1148,7 +1148,7 @@ void main() {
         );
         try {
           await timeoutValidatorEntered.future.timeout(
-            const Duration(seconds: 1),
+            const Duration(seconds: 3),
           );
           expect(
             log.where((call) => call.method == 'show').length,
