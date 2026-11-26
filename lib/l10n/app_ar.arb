@@ -251,6 +251,7 @@
   "thought_reaction_sent_label": "تم إرسال تفاعل {reaction}",
   "thought_sticker_sent_label": "تم إرسال الملصق",
   "thought_close": "إغلاق",
+  "thought_update_to_view": "حدّث Mknoon لرؤية هذه الخاطرة",
   "thought_gone_in_hours": "تختفي بعد {hours} س",
   "thought_gone_in_minutes": "تختفي بعد {minutes} د",
   "thought_picker_emoji_tab": "الرموز التعبيرية",

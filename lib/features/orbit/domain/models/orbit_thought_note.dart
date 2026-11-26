@@ -12,6 +12,7 @@ class OrbitThoughtNote {
   final String postId;
   final String text;
   final MediaPreviewDescriptor? media;
+  final bool hasUnsupportedMedia;
   final bool isRead;
   final DateTime expiresAt;
 
@@ -19,13 +20,15 @@ class OrbitThoughtNote {
     required this.postId,
     required this.text,
     this.media,
+    this.hasUnsupportedMedia = false,
     required this.isRead,
     required this.expiresAt,
   });
 
   factory OrbitThoughtNote.fromPost(PostModel post) => OrbitThoughtNote(
     postId: post.id,
-    text: post.text,
+    text: post.hasUnsupportedMedia ? '' : post.text,
+    hasUnsupportedMedia: post.hasUnsupportedMedia,
     media: switch (post.mediaKind) {
       'image' || 'image_carousel' || 'image_voice' => MediaPreviewDescriptor(
         type: 'image',

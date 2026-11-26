@@ -304,6 +304,7 @@
   "@thought_sticker_sent_label": {"description": "Accessible label of the sent Thought reply sticker"},
   "thought_close": "Close",
   "@thought_close": {"description": "Thought card: close button label for screen readers"},
+  "thought_update_to_view": "Update Mknoon to see this thought",
   "thought_gone_in_hours": "gone in {hours} h",
   "@thought_gone_in_hours": {"placeholders": {"hours": {"type": "int"}}, "description": "Thought card: time left before the thought disappears, in hours"},
   "thought_gone_in_minutes": "gone in {minutes} min",

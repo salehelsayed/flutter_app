@@ -4929,6 +4929,18 @@ The full database/repository/activity/grouping and two DTR files passed 72 tests
 the preserved DTR run before the reviewed pin updates had four expected hash
 failures and four controls.
 
+Direct encrypted Thoughts with an unsupported media kind keep a local
+sender and lifetime row for the update placeholder. The receive regression
+uses a future attachment shape and checks stored content, media rows, and
+hydration. Its controls preserve rejection of an unknown legacy kind and a
+malformed known kind, and retain ordinary encrypted text. The fullscreen
+widget cases check the approved English, German, and Arabic text, inherited
+direction, sender, dismissal, and absence of content actions. The Orbit Depth
+case checks the same notice with no reply dock or media fetch.
+The original five assertion failures and three passing controls are pinned to
+test-only commit `8d399db49`. The existing photo-with-voice tests preserve
+supported attachment and rendering behavior.
+
 Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
 `sent: true, acked: false` must attempt the existing inbox fallback and remain
 retryable if that storage fails. `post_follow_on_delivery_test.dart` covers both

@@ -251,6 +251,7 @@
   "thought_reaction_sent_label": "Reaktion {reaction} gesendet",
   "thought_sticker_sent_label": "Sticker gesendet",
   "thought_close": "Schließen",
+  "thought_update_to_view": "Aktualisiere Mknoon, um diesen Gedanken zu sehen",
   "thought_gone_in_hours": "weg in {hours} Std.",
   "thought_gone_in_minutes": "weg in {minutes} Min.",
   "thought_picker_emoji_tab": "Emojis",

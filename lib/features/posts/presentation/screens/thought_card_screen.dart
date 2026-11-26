@@ -177,7 +177,10 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   bool get _canReply =>
-      _post.isIncoming && widget.answers != null && widget.onReply != null;
+      _post.isIncoming &&
+      !_post.hasUnsupportedMedia &&
+      widget.answers != null &&
+      widget.onReply != null;
 
   bool get _isTyping => _canReply && (_replyFocus.hasFocus || _inReplyGrace);
 
@@ -356,8 +359,10 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _close();
           return;
         }
-        final changedPost = _post.id != current.id;
-        if (changedPost) {
+        final changedContent =
+            _post.id != current.id ||
+            _post.hasUnsupportedMedia != current.hasUnsupportedMedia;
+        if (changedContent) {
           _closeMediaViewer();
           _pendingTypedReply = null;
           _discardReply();
@@ -366,7 +371,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _post = current;
           _validated = true;
           _loadFailed = false;
-          if (changedPost) {
+          if (changedContent) {
             _media = const [];
             _activity = null;
             _activityExpanded = false;
@@ -374,9 +379,11 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           }
         });
         _armExpiry();
-        _markWhenShown();
-        unawaited(_loadMedia(current.id));
-        if (!current.isIncoming) unawaited(_loadActivity());
+        if (!current.hasUnsupportedMedia) {
+          _markWhenShown();
+          unawaited(_loadMedia(current.id));
+          if (!current.isIncoming) unawaited(_loadActivity());
+        }
       }
     } catch (_) {
       if (mounted && !_closing) {
@@ -435,15 +442,16 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   bool get _hasVisibleContent =>
-      _post.text.trim().isNotEmpty ||
-      _media.any(
-        (attachment) =>
-            attachment.downloadStatus == 'done' &&
-            attachment.localPath != null &&
-            File(
-              MediaFileManager.resolveStoredPathSync(attachment.localPath!),
-            ).existsSync(),
-      );
+      !_post.hasUnsupportedMedia &&
+      (_post.text.trim().isNotEmpty ||
+          _media.any(
+            (attachment) =>
+                attachment.downloadStatus == 'done' &&
+                attachment.localPath != null &&
+                File(
+                  MediaFileManager.resolveStoredPathSync(attachment.localPath!),
+                ).existsSync(),
+          ));
 
   Future<void> _loadActivity() async {
     final load = widget.loadActivity;
@@ -506,6 +514,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   Future<void> _loadMedia(String postId) async {
+    if (_post.hasUnsupportedMedia) return;
     final generation = ++_mediaReadGeneration;
     if (mounted && !_closing) {
       setState(() {
@@ -520,6 +529,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       if (!mounted ||
           _closing ||
           _post.id != postId ||
+          _post.hasUnsupportedMedia ||
           generation != _mediaReadGeneration) {
         return;
       }
@@ -548,6 +558,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       if (mounted &&
           !_closing &&
           _post.id == postId &&
+          !_post.hasUnsupportedMedia &&
           generation == _mediaReadGeneration) {
         setState(() {
           _mediaLoading = false;
@@ -633,14 +644,15 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _videoStarted = true;
     // After the frame's seen marking, which needs this card on top.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _closing) return;
+      if (!mounted || _closing || _post.hasUnsupportedMedia) return;
       await _openMedia(0);
-      _close();
+      if (mounted && !_post.hasUnsupportedMedia) _close();
     });
   }
 
   Future<void> _openMedia(int index) async {
     if (_closing ||
+        _post.hasUnsupportedMedia ||
         !_isLive ||
         _mediaRoute != null ||
         _cardRoute?.isCurrent != true) {
@@ -743,7 +755,26 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       key: const ValueKey('thought-card-screen'),
       backgroundColor: Colors.black,
       resizeToAvoidBottomInset: true,
-      body: _closing || (widget.playVideoAtOnce && !_cardFallback)
+      body: _closing
+          ? const SizedBox.shrink()
+          : visible && _post.hasUnsupportedMedia
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: Text(
+                      l10n.thought_update_to_view,
+                      textAlign: TextAlign.center,
+                      style: _chromeStyle,
+                    ),
+                  ),
+                ),
+                SafeArea(child: _topChrome(l10n)),
+              ],
+            )
+          : widget.playVideoAtOnce && !_cardFallback
           ? const SizedBox.shrink()
           : _loadFailed
           ? _failure(l10n)

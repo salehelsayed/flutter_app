@@ -702,6 +702,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_close => 'Close';
 
   @override
+  String get thought_update_to_view => 'Update Mknoon to see this thought';
+
+  @override
   String thought_gone_in_hours(int hours) {
     return 'gone in $hours h';
   }

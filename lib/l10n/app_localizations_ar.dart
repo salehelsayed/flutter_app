@@ -717,6 +717,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_close => 'إغلاق';
 
   @override
+  String get thought_update_to_view => 'حدّث Mknoon لرؤية هذه الخاطرة';
+
+  @override
   String thought_gone_in_hours(int hours) {
     return 'تختفي بعد $hours س';
   }

@@ -5,6 +5,8 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 
 class PostModel {
+  static const unsupportedMediaKind = 'unsupported';
+
   final String id;
   final String eventId;
   final String senderPeerId;
@@ -91,6 +93,8 @@ class PostModel {
     this.viewerHasPassed = false,
     this.originalAuthorAvatarBytes,
   });
+
+  bool get hasUnsupportedMedia => mediaKind == unsupportedMediaKind;
 
   factory PostModel.fromMap(Map<String, Object?> map) {
     return PostModel(

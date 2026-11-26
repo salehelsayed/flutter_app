@@ -717,6 +717,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_close => 'Schließen';
 
   @override
+  String get thought_update_to_view =>
+      'Aktualisiere Mknoon, um diesen Gedanken zu sehen';
+
+  @override
   String thought_gone_in_hours(int hours) {
     return 'weg in $hours Std.';
   }

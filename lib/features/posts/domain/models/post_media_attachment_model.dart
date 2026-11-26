@@ -284,24 +284,23 @@ class PostMediaAttachmentModel {
     for (final attachment in media) attachment.kind,
   ]);
 
-  static bool isValidMediaKinds(String mediaKind, List<String> kinds) {
-    switch (mediaKind) {
-      case 'none':
-        return kinds.isEmpty;
-      case 'image':
-        return kinds.length == 1 && kinds.single == 'image';
-      case 'image_carousel':
-        return kinds.length > 1 && kinds.every((kind) => kind == 'image');
-      case 'image_voice':
-        return mediaKindOf(kinds) == 'image_voice';
-      case 'video':
-        return kinds.length == 1 && kinds.single == 'video';
-      case 'voice':
-        return kinds.length == 1 && kinds.single == 'voice';
-      default:
-        return false;
-    }
-  }
+  static bool isKnownMediaKind(String mediaKind) =>
+      _mediaKindValidator(mediaKind) != null;
+
+  static bool isValidMediaKinds(String mediaKind, List<String> kinds) =>
+      _mediaKindValidator(mediaKind)?.call(kinds) ?? false;
+
+  static bool Function(List<String>)? _mediaKindValidator(String mediaKind) =>
+      switch (mediaKind) {
+        'none' => (kinds) => kinds.isEmpty,
+        'image' => (kinds) => kinds.length == 1 && kinds.single == 'image',
+        'image_carousel' =>
+          (kinds) => kinds.length > 1 && kinds.every((kind) => kind == 'image'),
+        'image_voice' => (kinds) => mediaKindOf(kinds) == 'image_voice',
+        'video' => (kinds) => kinds.length == 1 && kinds.single == 'video',
+        'voice' => (kinds) => kinds.length == 1 && kinds.single == 'voice',
+        _ => null,
+      };
 
   static List<double>? _decodeWaveform(Object? raw) {
     if (raw is String) {

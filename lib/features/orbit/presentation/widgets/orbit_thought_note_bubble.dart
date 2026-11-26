@@ -40,26 +40,36 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
     OrbitThoughtNote note,
   ) => DefaultTextStyle.of(context).style.merge(textStyle(isRead: note.isRead));
 
-  static String _preview(BuildContext context, OrbitThoughtNote note) =>
-      orbitMediaPreviewLabel(
-        l10n: AppLocalizations.of(context)!,
-        caption: note.text,
-        media: note.media,
-      );
+  static String _preview(BuildContext context, OrbitThoughtNote note) {
+    final l10n = AppLocalizations.of(context)!;
+    return note.hasUnsupportedMedia
+        ? l10n.thought_update_to_view
+        : orbitMediaPreviewLabel(
+            l10n: l10n,
+            caption: note.text,
+            media: note.media,
+          );
+  }
+
+  static TextDirection _previewDirection(
+    BuildContext context,
+    OrbitThoughtNote note,
+    String preview,
+  ) => note.hasUnsupportedMedia
+      ? Directionality.of(context)
+      : detectTextDirection(preview);
 
   /// Includes the tail. Uses the same direction, text scaler and weight as the
   /// rendered text, so collision geometry remains valid for accessibility.
   static Size measure(BuildContext context, OrbitThoughtNote note) {
+    final preview = _preview(context, note);
     final painter = TextPainter(
-      text: TextSpan(
-        text: _preview(context, note),
-        style: _resolvedStyle(context, note),
-      ),
+      text: TextSpan(text: preview, style: _resolvedStyle(context, note)),
       textAlign: TextAlign.center,
-      textDirection: detectTextDirection(_preview(context, note)),
+      textDirection: _previewDirection(context, note, preview),
       textScaler: MediaQuery.textScalerOf(context),
-      maxLines: 2,
-      ellipsis: '…',
+      maxLines: note.hasUnsupportedMedia ? null : 2,
+      ellipsis: note.hasUnsupportedMedia ? null : '…',
     )..layout(maxWidth: 132);
     final result = Size(
       (painter.width + 18).clamp(40.0, 150.0).toDouble(),
@@ -75,20 +85,21 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
     final preview = _preview(context, note);
     final l10n = AppLocalizations.of(context)!;
     final authorName = _authorName;
+    final tap = note.hasUnsupportedMedia ? null : onTap;
     return Semantics(
-      button: onTap != null,
+      button: tap != null,
       label: authorName == null
           ? l10n.orbit_thought_note_self_semantics(preview)
           : note.isRead
           ? l10n.orbit_thought_note_semantics(authorName, preview)
           : l10n.orbit_thought_note_new_semantics(authorName, preview),
-      onTap: onTap,
+      onTap: tap,
       excludeSemantics: true,
       child: GestureDetector(
         // Retire an in-flight press when a newer thought replaces this one.
         key: ValueKey('orbit-thought-tap-${note.postId}'),
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
+        onTap: tap,
         child: SizedBox(
           width: size.width,
           height: size.height,
@@ -120,9 +131,11 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
                       ),
                 child: Text(
                   preview,
-                  textDirection: detectTextDirection(preview),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  textDirection: _previewDirection(context, note, preview),
+                  maxLines: note.hasUnsupportedMedia ? null : 2,
+                  overflow: note.hasUnsupportedMedia
+                      ? TextOverflow.clip
+                      : TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: _resolvedStyle(context, note),
                 ),

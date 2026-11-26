@@ -1186,6 +1186,12 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get thought_close;
 
+  /// No description provided for @thought_update_to_view.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Mknoon to see this thought'**
+  String get thought_update_to_view;
+
   /// Thought card: time left before the thought disappears, in hours
   ///
   /// In en, this message translates to:

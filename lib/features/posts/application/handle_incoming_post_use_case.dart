@@ -218,10 +218,12 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   final storedMedia = await _storeIncomingMedia(
     postRepo: postRepo,
     postId: post.id,
-    incomingMedia: envelope.media,
-    mediaKeys: envelope.mediaKeys,
+    incomingMedia: post.hasUnsupportedMedia ? const [] : envelope.media,
+    mediaKeys: post.hasUnsupportedMedia ? null : envelope.mediaKeys,
     hydratePostMediaFn: hydratePostMediaFn,
-    existingMedia: result == HandleIncomingPostResult.duplicate
+    existingMedia:
+        !post.hasUnsupportedMedia &&
+            result == HandleIncomingPostResult.duplicate
         ? await postRepo.loadPostMediaAttachments(post.id)
         : const [],
     hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
@@ -306,13 +308,17 @@ PostModel _mergeExistingRepostedCopy({
     senderPeerId: incomingPost.senderPeerId,
     authorPeerId: incomingPost.authorPeerId,
     authorUsername: incomingPost.authorUsername,
-    text: incomingPost.text,
+    text: incomingPost.hasUnsupportedMedia
+        ? existingPost.text
+        : incomingPost.text,
     audience: incomingPost.audience,
     createdAt: incomingPost.createdAt,
     visibleAt: _laterTimestamp(existingPost.visibleAt, incomingPost.visibleAt),
     expiresAt: incomingPost.expiresAt,
     keepAvailable: incomingPost.keepAvailable,
-    mediaKind: incomingPost.mediaKind,
+    mediaKind: incomingPost.hasUnsupportedMedia
+        ? existingPost.mediaKind
+        : incomingPost.mediaKind,
     nearbyDistanceM: incomingPost.nearbyDistanceM,
     nearbySenderLatE3: incomingPost.nearbySenderLatE3,
     nearbySenderLngE3: incomingPost.nearbySenderLngE3,

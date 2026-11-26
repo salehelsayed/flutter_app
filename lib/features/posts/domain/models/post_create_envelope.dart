@@ -108,16 +108,24 @@ class PostCreateEnvelope {
   static PostCreateEnvelope? fromJson(String jsonString) {
     try {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
-      if (json['type'] != 'post_create') {
+      if (json['type'] != 'post_create' || json['version'] == '2') {
         return null;
       }
-      if (json['version'] == '2') {
-        return null;
-      }
-      final eventId = json['event_id'] as String?;
-      final createdAt = json['created_at'] as String?;
-      final senderPeerId = json['sender_peer_id'] as String?;
-      final payload = json['payload'] as Map<String, dynamic>?;
+      return _fromPayload(json, json['payload'] as Map<String, dynamic>?);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static PostCreateEnvelope? _fromPayload(
+    Map<String, dynamic> envelope,
+    Map<String, dynamic>? payload, {
+    bool allowUnsupportedMedia = false,
+  }) {
+    try {
+      final eventId = envelope['event_id'] as String?;
+      final createdAt = envelope['created_at'] as String?;
+      final senderPeerId = envelope['sender_peer_id'] as String?;
       final snapshot = payload?['snapshot'] as Map<String, dynamic>?;
       if (eventId == null ||
           createdAt == null ||
@@ -131,9 +139,6 @@ class PostCreateEnvelope {
       final authorPeerId = snapshot['author_peer_id'] as String?;
       final authorUsername = snapshot['author_username'] as String?;
       final text = snapshot['text'] as String?;
-      final mediaKind = snapshot['media_kind'] as String? ?? 'none';
-      final mediaJson = (snapshot['media'] as List<dynamic>? ?? const [])
-          .cast<Map<String, dynamic>>();
       final expiresAt = snapshot['expires_at'] as String?;
       if (postId == null ||
           snapshotPostId == null ||
@@ -169,20 +174,39 @@ class PostCreateEnvelope {
         _ => throw const FormatException('invalid_audience'),
       };
       final nearbyContext = payload['nearby_context'] as Map<String, dynamic>?;
+      final keepAvailable = snapshot['keep_available'] as bool? ?? false;
+      final nearbyDistanceM = (nearbyContext?['distance_m'] as num?)?.toInt();
+      final nearbySenderLatE3 = nearbyContext?['sender_lat_e3'] as int?;
+      final nearbySenderLngE3 = nearbyContext?['sender_lng_e3'] as int?;
+      final nearbySenderCapturedAt =
+          nearbyContext?['sender_captured_at'] as String?;
+      final nearbySenderAccuracyM =
+          (nearbyContext?['sender_accuracy_m'] as num?)?.toDouble();
+      final mediaKind = snapshot['media_kind'] as String? ?? 'none';
+      final unsupported = !PostMediaAttachmentModel.isKnownMediaKind(mediaKind);
       final media = <PostMediaAttachmentModel>[];
-      for (var index = 0; index < mediaJson.length; index++) {
-        final attachment = PostMediaAttachmentModel.fromRenderableJson(
-          mediaJson[index],
-          postId: postId,
-          position: index,
-        );
-        media.add(attachment);
-      }
-      if (!PostMediaAttachmentModel.isValidSnapshotMedia(
-        mediaKind: mediaKind,
-        media: media,
-      )) {
-        return null;
+      if (unsupported) {
+        if (!allowUnsupportedMedia || mediaKind.trim().isEmpty) {
+          return null;
+        }
+      } else {
+        final mediaJson = (snapshot['media'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>();
+        for (var index = 0; index < mediaJson.length; index++) {
+          media.add(
+            PostMediaAttachmentModel.fromRenderableJson(
+              mediaJson[index],
+              postId: postId,
+              position: index,
+            ),
+          );
+        }
+        if (!PostMediaAttachmentModel.isValidSnapshotMedia(
+          mediaKind: mediaKind,
+          media: media,
+        )) {
+          return null;
+        }
       }
       return PostCreateEnvelope(
         eventId: eventId,
@@ -191,18 +215,17 @@ class PostCreateEnvelope {
         postId: postId,
         authorPeerId: authorPeerId,
         authorUsername: authorUsername,
-        text: text,
-        mediaKind: mediaKind,
+        text: unsupported ? '' : text,
+        mediaKind: unsupported ? PostModel.unsupportedMediaKind : mediaKind,
         media: media,
         audience: audience,
         expiresAt: expiresAt,
-        keepAvailable: (snapshot['keep_available'] as bool?) ?? false,
-        nearbyDistanceM: (nearbyContext?['distance_m'] as num?)?.toInt(),
-        nearbySenderLatE3: nearbyContext?['sender_lat_e3'] as int?,
-        nearbySenderLngE3: nearbyContext?['sender_lng_e3'] as int?,
-        nearbySenderCapturedAt: nearbyContext?['sender_captured_at'] as String?,
-        nearbySenderAccuracyM: (nearbyContext?['sender_accuracy_m'] as num?)
-            ?.toDouble(),
+        keepAvailable: keepAvailable,
+        nearbyDistanceM: unsupported ? null : nearbyDistanceM,
+        nearbySenderLatE3: unsupported ? null : nearbySenderLatE3,
+        nearbySenderLngE3: unsupported ? null : nearbySenderLngE3,
+        nearbySenderCapturedAt: unsupported ? null : nearbySenderCapturedAt,
+        nearbySenderAccuracyM: unsupported ? null : nearbySenderAccuracyM,
       );
     } catch (_) {
       return null;
@@ -253,23 +276,14 @@ class PostCreateEnvelope {
     final payloadJson =
         jsonDecode(decryptResult['plaintext'] as String)
             as Map<String, dynamic>;
-    final parsed = fromJson(
-      jsonEncode({
-        'type': 'post_create',
-        'version': '1',
-        'event_id': envelope['event_id'],
-        'created_at': envelope['created_at'],
-        'sender_peer_id': envelope['sender_peer_id'],
-        'payload': payloadJson,
-      }),
+    final parsed = _fromPayload(
+      envelope,
+      payloadJson,
+      allowUnsupportedMedia: true,
     );
-    if (parsed == null) {
-      return null;
+    if (parsed == null || parsed.mediaKind == PostModel.unsupportedMediaKind) {
+      return parsed;
     }
-    // KC-P3 receive side: media_keys is extracted from the DECRYPTED inner
-    // payload only — never via the shared fromJson re-wrap, which also
-    // parses v1 plaintext wire envelopes (a v1 sender shipping keys has
-    // already leaked them; the receiver must not legitimize that path).
     final mediaKeys = _parseMediaKeys(payloadJson['media_keys']);
     if (mediaKeys == null) {
       return parsed;

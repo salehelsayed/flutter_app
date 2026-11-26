@@ -370,7 +370,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _turn.value = seat + drift;
     if (newIndex < 0) {
       // The friend in the center left: whoever takes the seat just arrived.
-      _landedPostId = _center?.thought.id;
+      final post = _center?.thought;
+      _landedPostId = post != null && !post.hasUnsupportedMedia
+          ? post.id
+          : null;
     }
     if (turning && pending != null) _completeLanding(pending);
   }
@@ -610,11 +613,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         }
       }
     });
-    final next = center?.thought.id;
-    _landedPostId = next;
+    final next = center?.thought;
+    _landedPostId = next != null && !next.hasUnsupportedMedia ? next.id : null;
     if (landing.markDeparture &&
         landing.departedPostId != null &&
-        landing.departedPostId != next &&
+        landing.departedPostId != next?.id &&
         landing.departedPostId != widget.ownSeat?.thought.id) {
       widget.onThoughtDeparted?.call(landing.departedPostId!);
     }
@@ -958,8 +961,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (_composing) setState(_discardComposer);
   }
 
-  bool _canAnswer(String postId) =>
-      widget.onReply != null && _answerable && _center?.thought.id == postId;
+  bool _canAnswer(String postId) {
+    final thought = _center?.thought;
+    return widget.onReply != null &&
+        _answerable &&
+        thought != null &&
+        thought.id == postId &&
+        !thought.hasUnsupportedMedia;
+  }
 
   void _react(
     PostModel post,
@@ -1293,7 +1302,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final presence = _reduceMotion
         ? 1.0
         : math.pow(lifted?.lift ?? 0, 2).toDouble();
-    final hasDock = widget.onReply != null && shown != null && !_isOwn(shown);
+    final hasContent = shown != null && !shown.thought.hasUnsupportedMedia;
+    final showOwnActivity = hasContent && _isOwn(shown);
+    final hasDock = hasContent && !showOwnActivity && widget.onReply != null;
     final statusRow = places.statusHeight;
     final composing = _composing;
     // The next send can add its history line without moving the card.
@@ -1490,7 +1501,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 ],
               ),
             ),
-            if (hasDock || _isOwn(shown))
+            if (hasDock || showOwnActivity)
               Positioned(
                 key: const ValueKey('orbit-depth-answers-slot'),
                 left: 14 * k,
@@ -1509,7 +1520,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                         'orbit-depth-answers',
                         shown == null
                             ? null
-                            : _isOwn(shown)
+                            : showOwnActivity
                             ? _ownActivity(
                                 shown,
                                 k,
@@ -1769,6 +1780,23 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         : age.inMinutes < 60
         ? l10n.time_min_ago(age.inMinutes)
         : l10n.time_hour_ago(age.inHours);
+    if (post.hasUnsupportedMedia) {
+      return Semantics(
+        key: ValueKey('orbit-depth-card-${post.id}'),
+        container: true,
+        label: '${seat.friend.username} · $ageText',
+        child: Center(
+          child: Text(
+            l10n.thought_update_to_view,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16 * k,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ),
+      );
+    }
     bool openable() =>
         _enabled && !_suppressTap && liveOrbitDepthThought(post, _now) != null;
     void open() {
