@@ -8,7 +8,10 @@ import 'package:flutter_app/features/posts/application/handle_incoming_passed_po
     hide HydratePostMediaFn;
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -137,6 +140,107 @@ void main() {
       final stored = (await posts.loadFeed().timeout(bound)).single;
       expect(stored.mediaKind, 'none');
       expect(stored.text, 'An ordinary Thought');
+    });
+
+    group('BL99 repost author', () {
+      late PostModel cachedPost;
+      late PostOriginModel cachedOrigin;
+      late PostMediaAttachmentModel cachedAttachment;
+
+      ChatMessage unknownMediaFrom(
+        String senderPeerId,
+        String authorUsername,
+      ) => _encryptedMediaPostMessage(
+        senderPeerId: senderPeerId,
+        mediaKeys: const {},
+        snapshotOverrides: {
+          'author_username': authorUsername,
+          'media_kind': futureKind,
+          'media': const [
+            {'kind': futureKind, 'opaque_asset': 'Future-only payload'},
+          ],
+        },
+      );
+
+      setUp(() async {
+        final pass = PostPassEnvelope.fromJson(_passMessageWithKeys().content)!;
+        cachedPost = pass.toPostModel();
+        cachedOrigin = PostOriginModel(
+          postId: pass.postId,
+          originKind: PostOriginKind.pass,
+          passId: pass.passId,
+          passerPeerId: pass.passerPeerId,
+          passerUsername: pass.passerUsername,
+          passCreatedAt: pass.passedAt,
+        );
+        cachedAttachment = cachedPost.media.single.copyWith(
+          createdAt: pass.passedAt,
+          localPath: 'post_media/post-1/blob-pass-1.jpg',
+          downloadStatus: 'done',
+        );
+        await posts.savePost(cachedPost).timeout(bound);
+        await posts.savePostOrigin(cachedOrigin).timeout(bound);
+        await posts.savePostMediaAttachment(cachedAttachment).timeout(bound);
+      });
+
+      test(
+        'preserves a cached repost when a different author reuses its ID',
+        () async {
+          contacts.addTestContact(_contact('peer-dave', 'Dave'));
+          final (result, received) = await receive(
+            unknownMediaFrom('peer-dave', 'Dave'),
+          );
+
+          final stored = (await posts.loadFeed().timeout(bound)).single;
+          expect(
+            stored.authorPeerId,
+            'peer-bob',
+            reason: 'The cached repost keeps its original author',
+          );
+          expect(stored.toMap(), cachedPost.toMap());
+          final origin = await posts.getPostOrigin(stored.id).timeout(bound);
+          expect(origin?.toMap(), cachedOrigin.toMap());
+          final attachments = await posts
+              .loadPostMediaAttachments(stored.id)
+              .timeout(bound);
+          expect(attachments.map((row) => row.toMap()), [
+            cachedAttachment.toMap(),
+          ]);
+          expect(result, HandleIncomingPostResult.duplicate);
+          expect(received, isNull);
+        },
+      );
+
+      test(
+        'upgrades a cached repost with a direct arrival from its author',
+        () async {
+          final (result, _) = await receive(
+            unknownMediaFrom('peer-bob', 'Bob Updated'),
+          );
+
+          expect(result, HandleIncomingPostResult.duplicate);
+          final stored = (await posts.loadFeed().timeout(bound)).single;
+          expect(stored.id, cachedPost.id);
+          expect(stored.eventId, 'evt-post-1');
+          expect(stored.senderPeerId, 'peer-bob');
+          expect(stored.authorPeerId, 'peer-bob');
+          expect(stored.authorUsername, 'Bob Updated');
+          expect(stored.expiresAt, '2026-03-16T10:15:30.000Z');
+          expect(stored.text, cachedPost.text);
+          expect(stored.mediaKind, cachedPost.mediaKind);
+          final origin = await posts.getPostOrigin(stored.id).timeout(bound);
+          expect(origin?.toMap(), {
+            ...cachedOrigin.toMap(),
+            'origin_kind': 'direct',
+          });
+          final attachments = await posts
+              .loadPostMediaAttachments(stored.id)
+              .timeout(bound);
+          expect(attachments.map((row) => row.toMap()), [
+            cachedAttachment.toMap(),
+          ]);
+        },
+      );
     });
   });
 
@@ -394,19 +498,21 @@ ChatMessage _mediaPostMessage({
 /// decrypted plaintext, so the inner payload is embedded directly.
 ChatMessage _encryptedMediaPostMessage({
   required Map<String, Object?> mediaKeys,
+  String senderPeerId = 'peer-bob',
   Map<String, Object?> snapshotOverrides = const {},
 }) {
-  final innerPayload = _mediaPostPayload(snapshotOverrides: snapshotOverrides)
-    ..['media_keys'] = mediaKeys;
+  final innerPayload = _mediaPostPayload(
+    snapshotOverrides: {'author_peer_id': senderPeerId, ...snapshotOverrides},
+  )..['media_keys'] = mediaKeys;
   return ChatMessage(
-    from: 'peer-bob',
+    from: senderPeerId,
     to: 'peer-self',
     content: jsonEncode(<String, Object?>{
       'type': 'post_create',
       'version': '2',
       'event_id': 'evt-post-1',
       'created_at': _createdAt,
-      'sender_peer_id': 'peer-bob',
+      'sender_peer_id': senderPeerId,
       'encrypted': <String, Object?>{
         'kem': 'fake-kem',
         'ciphertext': jsonEncode(innerPayload),
