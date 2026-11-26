@@ -96,6 +96,7 @@ class _CosmicBackgroundState extends State<CosmicBackground>
       _clock.stop();
       _controller.stop();
       _controller.value = 0;
+      _settled = false;
       return;
     }
 
