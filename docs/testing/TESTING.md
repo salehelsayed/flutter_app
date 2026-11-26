@@ -1706,6 +1706,31 @@ execution retain their standard result. Provisioned inputs, configured device
 runs, signed-artifact runs, and other platforms use their standard prerequisites.
 The Build 134 ledger records the original missing-input outcomes.
 
+For BL-102 part (5), acceptance of the `workflow` row stays on macOS. The
+Linux diagnostic at `2c934d23730d751641810cdb57544cf3dff98742` and the
+comparison at `e61a0e51c99c85e7a92110b17f3f30f1095f7151` each ran 388 tests
+and reported the same 15 failures. The slot tests exercise the default capacity
+with the runner override cleared inside their fixtures. The following workflow
+cases are N/A for Linux acceptance and retain their assertions on macOS:
+
+- `full_suite_adapters_test.SelectorFlowContracts.test_both_build_paths_enable_existing_debug_fixture_seam`
+  requires Xcode for both build paths.
+- `mknoon_full_review_regression_test.PrivateReceiptTest.test_real_failing_report_keeps_private_raw_and_first_failure`
+  fails during SIMS runner setup on this Linux fixture.
+- `mknoon_full_legacy_binding_test.ForegroundGroupPreparationTest.test_failed_second_build_starts_neither_peer`,
+  `ForegroundGroupPreparationTest.test_ios_prepares_both_exact_role_binaries_before_any_peer_starts`,
+  and `GroupMultiDevicePreparationTest.test_ios_prepares_exact_roles_before_launch_and_cli_fixture_deadline`
+  exercise the legacy iOS build and launch harness.
+- `legacy_device_helpers_test.LegacyDeviceHelpersTest.test_owned_process_exact_command_guard`
+  and the `explicit_target_beats_local_file`, `fallback_keeps_exact_explicit_target`,
+  `explicit_valid_target_works`, and `local_file_explicit_target_works` subcases of
+  `LegacyDeviceHelpersTest.test_stubbed_target_path_signing_and_process_boundaries`
+  exercise the legacy macOS device helper contracts.
+
+The first Linux workflow verdicts remain FAIL in the runner evidence
+(`m-da38bd19` and `m-5e03640d`). Check the lease regression and slot fixtures
+separately on Linux.
+
 Go `./...` does not traverse a nested module. A root-module mapping previously
 claimed `activitycalendar/week_test.go` because `fnmatch` allowed its `*` to cross
 directory separators. The optional mapping `module` qualifier now checks the

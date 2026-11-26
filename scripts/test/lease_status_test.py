@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import lease_status  # noqa: E402
@@ -23,6 +24,8 @@ def write_exe(path, body):
 
 class LeaseStatusTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop('MKNOON_HOST_TEST_SLOTS', None)
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = os.path.join(self.tmp.name, 'leases')
         os.mkdir(self.dir, 0o700)

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import device_campaign_preflight as preflight
@@ -48,6 +49,8 @@ def dead_pid():
 
 class HostTestSlotTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop('MKNOON_HOST_TEST_SLOTS', None)
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name) / 'leases'
 
