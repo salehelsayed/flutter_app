@@ -3,12 +3,13 @@
 # Runs on the Mac through host-run.
 #   create_agent_worktree.sh <name> <branch>
 # Creates ${AGENT_WT_BASE:-/Volumes/CrucialX9}/flutter_app-<name> from origin/main on a new
-# branch. AGENT_WT_OVERLAY=<checkout> copies that checkout's launcher and flutter_sdk.sh over
+# branch. AGENT_WT_MAIN overrides the source checkout for fixture runs.
+# AGENT_WT_OVERLAY=<checkout> copies that checkout's launcher and flutter_sdk.sh over
 # the new ones (for use before a launcher change reaches main). AGENT_WT_SKIP_PUBGET=1 skips pub get.
 set -euo pipefail
 NAME="${1:?usage: create_agent_worktree.sh <name> <branch>}"
 BRANCH="${2:?usage: create_agent_worktree.sh <name> <branch>}"
-MAIN=/Volumes/CrucialX9/flutter_app
+MAIN="${AGENT_WT_MAIN:-/Volumes/CrucialX9/flutter_app}"
 WT="${AGENT_WT_BASE:-/Volumes/CrucialX9}/flutter_app-${NAME}"
 SDK="${MKNOON_FLUTTER_SDK:-$HOME/development/flutter-3.47.2}"
 case "$NAME" in *[!a-z0-9-]*|'') echo "refusing: name must be lowercase letters, digits or dashes"; exit 2;; esac

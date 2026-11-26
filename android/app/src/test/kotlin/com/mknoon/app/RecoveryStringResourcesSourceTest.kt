@@ -34,6 +34,8 @@ class RecoveryStringResourcesSourceTest {
             "call_screen_unmute",
             "call_screen_speaker",
             "call_screen_duration",
+            "call_pip_camera_on",
+            "call_pip_camera_off",
         )
 
         listOf("values", "values-de", "values-ar").forEach { directory ->

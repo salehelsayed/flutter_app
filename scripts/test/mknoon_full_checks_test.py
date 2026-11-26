@@ -85,6 +85,58 @@ class FullSchedulingTest(FullExecutionFixture):
             checks.validate(self.root, self.rules)
 
 
+class LinuxHostInputTest(FullExecutionFixture):
+    def set_up_input_check(self):
+        self.task('fixture')
+        self.rules['full_inventory'] = {
+            'automatic': [{'family': 'python_unittest', 'patterns': ['*_test.py']}],
+            'linux_host_inputs': [{
+                'paths': ['fixture_test.py'],
+                'file': 'fixture-data.json',
+                'reason': 'External test fixture is unavailable on this Linux host.',
+            }],
+        }
+
+    def test_missing_fixture_is_na_without_launching_the_check(self):
+        self.set_up_input_check()
+        with mock.patch.object(checks.sys, 'platform', 'linux'):
+            _, report = self.run_full([])
+        row, = report['results']
+        self.assertEqual(row['status'], 'N/A')
+        self.assertEqual(row['checkpoint'], 'linux_host_input_unavailable')
+        self.assertEqual(row['reason'], self.rules['full_inventory']['linux_host_inputs'][0]['reason'])
+        self.assertEqual(row['attempts'], [])
+        self.assertFalse((self.root / '.codex-test-logs/fixture.json').exists())
+        obligation = next(o for o in report['obligations'] if o['path'] == 'fixture_test.py')
+        self.assertEqual(obligation['status'], 'N/A')
+
+    def test_present_fixture_keeps_normal_execution(self):
+        self.set_up_input_check()
+        self.write('fixture-data.json', '{}')
+        with mock.patch.object(checks.sys, 'platform', 'linux'):
+            _, report = self.run_full([])
+        row, = report['results']
+        self.assertEqual(row['status'], 'PASS')
+        self.assertTrue((self.root / '.codex-test-logs/fixture.json').is_file())
+
+    def test_device_or_signed_full_plan_preserves_the_required_check(self):
+        self.set_up_input_check()
+        for options in ({'device_config': Path('devices.json')},
+                        {'candidate_artifact': [Path('signed.ipa')]}):
+            with self.subTest(options=options), mock.patch.object(checks.sys, 'platform', 'linux'):
+                args = self.args(**options)
+                plan, _ = checks.make_full_plan(args, self.root, self.rules, capture_toolchains=False)
+                check, = plan['selected']
+                self.assertNotIn('linux_host_input_unavailable', check)
+
+    def test_non_linux_full_plan_preserves_the_required_check(self):
+        self.set_up_input_check()
+        with mock.patch.object(checks.sys, 'platform', 'darwin'):
+            plan, _ = checks.make_full_plan(self.args(), self.root, self.rules, capture_toolchains=False)
+        check, = plan['selected']
+        self.assertNotIn('linux_host_input_unavailable', check)
+
+
 class FullInventoryTest(RepositoryFixture):
     def policy(self):
         self.rules['full_commands'] = []

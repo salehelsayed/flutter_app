@@ -1279,6 +1279,9 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     row.update(manual_result(c, evidence, plan['identity'], root, artifact_hashes))
             elif c.get('target_availability') == 'N/A':
                 row.update(status='N/A', checkpoint='target_unavailable_by_project_policy')
+            elif c.get('linux_host_input_unavailable'):
+                row.update(status='N/A', checkpoint='linux_host_input_unavailable',
+                           reason=c['linux_host_input_unavailable'])
             elif capture_budget.remaining <= 0 or screenshot_capacity_exceeded.is_set():
                 row.update(status='NOT RUN', checkpoint='evidence_capacity_run_budget_exhausted')
             elif c['kind'] == 'legacy' and c['command'][:2] != ['bash', 'scripts/run_flutter_full_regression.sh']:
@@ -1864,6 +1867,43 @@ def inspect_legacy(directory, code, timeout, expected_routes=None):
             'limitation':'Legacy per-route summaries are retained; case-level counts are not available for every nested runner.'}
 
 
+def linux_host_input_missing(root, spec):
+    if 'environment' in spec:
+        return any(not os.environ.get(name) for name in spec['environment'])
+    if 'file' in spec:
+        return not (root / spec['file']).is_file()
+    if 'directory' in spec:
+        directory = spec['directory']
+        if 'directory_environment' in spec:
+            directory = os.environ.get(spec['directory_environment'], directory)
+        return not (root / directory).is_dir()
+    return subprocess.run(
+        ['git', 'cat-file', '-e', spec['git_object']], cwd=root,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+    ).returncode != 0
+
+
+def bind_linux_host_inputs(args, root, policy, selected):
+    specs = policy.get('linux_host_inputs', [])
+    if not specs:
+        return
+    host_source_run = (
+        sys.platform == 'linux'
+        and not getattr(args, 'device_config', None)
+        and not getattr(args, 'candidate_artifact', [])
+    )
+    automatic = {
+        tuple(sorted(check['selected_paths'])): check
+        for check in selected if check['id'].startswith('full.auto.')
+    }
+    for spec in specs:
+        check = automatic.get(tuple(sorted(spec['paths'])))
+        if check is None:
+            raise InvalidPlan('Linux host input must bind one exact automatic selection: ' + ', '.join(spec['paths']))
+        if host_source_run and linux_host_input_missing(root, spec):
+            check['linux_host_input_unavailable'] = spec['reason']
+
+
 def make_full_plan(args, root, rules, *, capture_toolchains=True):
     baseline = resolve_ref(root, args.base)
     if not args.local and git(root,'status','--porcelain','--untracked-files=normal').strip():
@@ -1884,6 +1924,7 @@ def make_full_plan(args, root, rules, *, capture_toolchains=True):
     if rules.get('full_inventory'):
         from testing_inventory import reconcile
         plan.update(reconcile(root, rules, plan['selected'], files, getattr(args, 'flutter_workers', 1)))
+        bind_linux_host_inputs(args, root, rules['full_inventory'], plan['selected'])
     validate_schedule(plan['selected'])
     return plan, files
 

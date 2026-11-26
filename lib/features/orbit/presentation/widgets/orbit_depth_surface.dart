@@ -1518,9 +1518,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       ignoring: !composing && trailingLift <= .5,
                       child: fade(
                         'orbit-depth-answers',
-                        shown == null
-                            ? null
-                            : showOwnActivity
+                        showOwnActivity
                             ? _ownActivity(
                                 shown,
                                 k,

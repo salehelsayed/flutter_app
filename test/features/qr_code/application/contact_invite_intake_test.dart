@@ -129,7 +129,7 @@ void main() {
       'wrong URL type': {'kind': 'link', 'url': 7},
       'extra link key': {'kind': 'link', 'url': _coldUrl, 'other': true},
       'paste with URL': {'kind': 'paste', 'url': _coldUrl},
-      'oversized URL': _link('${_prefix}${List.filled(5000, 'A').join()}'),
+      'oversized URL': _link('$_prefix${List.filled(5000, 'A').join()}'),
     };
     for (final response in invalidResponses.entries) {
       var reads = 0;

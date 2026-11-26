@@ -659,10 +659,50 @@ def validate_sims_partitions(root, commands):
     return errors
 
 
+def validate_linux_host_inputs(specs, files):
+    if not isinstance(specs, list):
+        return ['Invalid Linux host input declarations']
+    errors = []
+    seen = set()
+    probes = {'environment', 'file', 'directory', 'git_object'}
+    allowed = probes | {'paths', 'reason', 'directory_environment'}
+    for spec in specs:
+        if not isinstance(spec, dict) or set(spec) - allowed or len(set(spec) & probes) != 1:
+            errors.append('Invalid Linux host input probe')
+            continue
+        paths = spec.get('paths')
+        reason = spec.get('reason')
+        if (not isinstance(paths, list) or not paths or
+                any(not isinstance(p, str) or p not in files for p in paths) or
+                len(set(paths)) != len(paths) or not isinstance(reason, str) or not reason.strip()):
+            errors.append('Stale or unexplained Linux host input selection')
+            continue
+        selection = tuple(sorted(paths))
+        if selection in seen:
+            errors.append('Duplicate Linux host input selection: ' + ', '.join(selection))
+        seen.add(selection)
+        probe, = set(spec) & probes
+        value = spec[probe]
+        if probe == 'environment':
+            valid = isinstance(value, list) and bool(value) and all(
+                isinstance(name, str) and re.fullmatch(r'[A-Z_][A-Z0-9_]*', name) for name in value
+            )
+        else:
+            valid = isinstance(value, str) and bool(value.strip())
+            if valid and probe == 'git_object':
+                valid = re.fullmatch(r'[0-9a-f]{40}:[^\s:]+', value) is not None
+        if 'directory_environment' in spec:
+            name = spec['directory_environment']
+            valid = valid and probe == 'directory' and isinstance(name, str) and re.fullmatch(r'[A-Z_][A-Z0-9_]*', name)
+        if not valid:
+            errors.append('Invalid Linux host input for ' + ', '.join(selection))
+    return errors
+
+
 def validate_policy(root, rules, files):
     policy = rules.get('full_inventory')
     if policy is None: return []
-    errors = []
+    errors = validate_linux_host_inputs(policy.get('linux_host_inputs', []), files)
     owners = {c['id'] for c in rules.get('full_commands', [])}
     commands = {c['id']: c for c in rules.get('full_commands', [])}
     errors.extend(validate_sims_partitions(root, commands))

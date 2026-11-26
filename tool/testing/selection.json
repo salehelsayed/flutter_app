@@ -6220,6 +6220,7 @@
     {
       "id": "other-test-infrastructure",
       "patterns": [
+        "docker-ws/create_agent_worktree.sh",
         "test/integration/android_bridge_runtime_lease_census_test.dart",
         "test/integration/direct_media_fixture_fault_client_test.dart",
         "test/integration/direct_media_fixture_go_timeout_test.dart",
@@ -10732,6 +10733,52 @@
     }
   ],
   "full_inventory": {
+    "linux_host_inputs": [
+      {
+        "paths": [
+          "tool/call_audio_oracle/oracle_test.go"
+        ],
+        "environment": [
+          "CALL_AUDIO_ORACLE_CREDENTIALS_FILE",
+          "CALL_AUDIO_ORACLE_RESULT_FILE"
+        ],
+        "reason": "The disposable Coturn oracle requires its authorized private input and result destination."
+      },
+      {
+        "paths": [
+          "go-relay-server/direct_media_blob_custody_device_fixture_test.go",
+          "go-relay-server/direct_media_blob_custody_process_integration_test.go",
+          "go-relay-server/production_audio_call_device_fixture_test.go",
+          "go-relay-server/push_token_vault_process_integration_test.go",
+          "go-relay-server/redis_failover_integration_test.go",
+          "go-relay-server/wake_outcome_process_integration_test.go"
+        ],
+        "git_object": "6bab4c485dd4d13887392915abaaaabf85ea4b21:go-relay-server/backend_redis.go",
+        "reason": "The tagged relay integration selection requires the pinned pre-custody Redis backend object."
+      },
+      {
+        "paths": [
+          "graphify-arch/tests/test_graphify_arch_tooling.py"
+        ],
+        "file": "graphify-arch/graphify-out/graph.json",
+        "reason": "Graphify architecture tooling tests require the generated architecture graph."
+      },
+      {
+        "paths": [
+          "project-memory/tests/test_project_memory.py"
+        ],
+        "directory": "/claude-home/.claude/projects/-workspace/memory",
+        "directory_environment": "PROJECT_MEMORY_TEST_MEMORY_DIR",
+        "reason": "The full project-memory selection requires the live session-memory fixture."
+      },
+      {
+        "paths": [
+          "project/tests/test_build_project_index.py"
+        ],
+        "file": "graphify-arch/graphify-out/graph.json",
+        "reason": "The full project-index selection requires the architecture graph for its live notification contract."
+      }
+    ],
     "automatic": [
       {
         "family": "flutter_host",

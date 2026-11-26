@@ -141,7 +141,7 @@ void main() {
       'empty fragment': _invitePrefix,
       'second fragment marker': '$_invitePrefix$fragment#extra',
       'padding': '$_invitePrefix$fragment=',
-      'percent escape': '${_invitePrefix}%41$fragment',
+      'percent escape': '$_invitePrefix%41$fragment',
       'invalid alphabet': '$_invitePrefix$fragment+',
       'invalid base64 length': '${_invitePrefix}A',
       'invalid UTF-8': '${_invitePrefix}_w',

@@ -1694,6 +1694,17 @@ scenario mappings remain visible gaps, not successful wrapper registrations.
 The static reliability classification listing does not start Dart or execute
 scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
 
+`full_inventory.linux_host_inputs` declares the inputs for exact automatically
+selected rows. A Linux source-only full run records a row as `N/A` with
+`linux_host_input_unavailable` when its input is absent. The plan and result
+retain the exact selection and its reason. The disposition applies to the full
+row listed in the manifest, including the bundled tagged relay selection.
+A provisioned input keeps normal execution. Full runs with device
+configuration or signed artifacts use the standard prerequisites, as do
+other platforms. The Build 134 ledger records the original missing Coturn
+fixture, historical Redis source object, Graphify graph, and live
+session-memory outcomes.
+
 Go `./...` does not traverse a nested module. A root-module mapping previously
 claimed `activitycalendar/week_test.go` because `fnmatch` allowed its `*` to cross
 directory separators. The optional mapping `module` qualifier now checks the

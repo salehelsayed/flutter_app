@@ -171,7 +171,13 @@ void _validateCheckpointWorkflowOptions(SimsCliOptions options) {
   }
 }
 
-Future<void> main(List<String> arguments) async {
+Future<void> main(List<String> arguments) =>
+    runSims(arguments, deviceDiscovery: SimsLiveDeviceDiscovery());
+
+Future<void> runSims(
+  List<String> arguments, {
+  required SimsLiveDeviceDiscovery deviceDiscovery,
+}) async {
   Directory? ownedCaptureDirectory;
   var managedCapture = false;
   var capturePassed = false;
@@ -267,7 +273,7 @@ Future<void> main(List<String> arguments) async {
     SimsDevicePlanBinding? checkpointValidationBinding;
     SimsLiveDeviceInventory? discoveredInventory;
     if (_hasSymbolicDeviceResources(plan) || checkpointNeedsFullInventory) {
-      discoveredInventory = await SimsLiveDeviceDiscovery().discover();
+      discoveredInventory = await deviceDiscovery.discover();
     }
     // Resume continuity is measured from the read-only inventory observed on
     // entry. Device preparation below is an intentional Sims-owned mutation;
@@ -306,7 +312,7 @@ Future<void> main(List<String> arguments) async {
           deviceBinding.preparationTargets,
         );
         if (preparation.succeeded) {
-          inventory = await SimsLiveDeviceDiscovery().discover();
+          inventory = await deviceDiscovery.discover();
           discoveredInventory = inventory;
           deviceBinding = SimsDevicePlanBinding.bind(
             unresolvedPlan,

@@ -224,7 +224,7 @@ run_sims() {
     SIMS_FIXTURE_DISCOVERY_LOG="$discovery_log" \
     SIMS_FIXTURE_BOOTED_DIR="$booted_dir" \
     SIMS_FIXTURE_IOS_IDS="$sim_ids" \
-    ./scripts/run_test_gates.sh sims major "$@" --format json
+    dart scripts/test/fixtures/sims_checkpoint_preparation_cli.dart major "$@" --format json
 }
 
 # The first run deliberately lacks disposable-simulator authorization. The

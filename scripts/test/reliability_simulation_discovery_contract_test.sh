@@ -398,19 +398,17 @@ jq -e '
 ' tool/sims/critical_features.json >/dev/null ||
   fail 'Plan 379 muted-group capability is incomplete or duplicated'
 
-# The Plan 379 row stays at its ratcheted index because runtime-roots keyPaths
-# select capabilities by ARRAY INDEX. The call-proof and Plan 399 rows are
-# append-only after the Plan 393 suffix. The full-suite iOS group-media owner
-# appends after them without displacing any existing runtime-root index. Later
-# production capabilities also append, so pin the original block's indices
-# rather than requiring it to remain the final six rows forever.
+# Runtime-roots keyPaths address capabilities by array index. Later capabilities
+# can append without changing the positions in this block.
 jq -e '
-  .capabilities[41].id == "groups.muted_notification_campaign" and
-  [.capabilities[42:48][].id] == [
+  [.capabilities[41:50][].id] == [
+    "architecture.boundaries",
+    "groups.muted_notification_campaign",
     "notifications.android_typed_reaction_smoke",
     "groups.strict_notification_closure",
     "android.foreground_webrtc_audio",
     "build.android.e2e.production_call_local",
+    "build.android.e2e.production_call_preference",
     "android.production_1to1_audio_call",
     "groups.media_send_reliability_ios"
   ]
