@@ -5495,14 +5495,19 @@ serial diagnostic pass and held-lease reproduction are
 any native/device lease request while still executing its real Python child;
 production build/device ownership rules remain in force.
 
-The real `workflow` check can still require the shared native-build lease even
-with an isolated resource declaration: `check_resources` also scans command
-arguments for `flutter`, including `flutter_native_asset_lock_test.py`.
-Python checks do not qualify for `host_only_check`, so this path uses the native
-lease rather than a host-test slot. In the delegated Mac workflow at
-`90673302d087d4788a05855a0b6ecc6ae4ebd790`, a verified concurrent Swift lease
-blocked execution before any test started. Wait for that owner to finish; do not
-remove another owner's lease or treat wrapper wall time as measured lease wait.
+Before BL-102 part (1), the `workflow` resource heuristic treated the Python
+module name `flutter_native_asset_lock_test.py` as a Flutter invocation. The
+shared native-build lease could then block the row before its Python child
+started. This happened on macOS at `90673302d087d4788a05855a0b6ecc6ae4ebd790`
+while a Swift build owned that lease. Preserve that first failure as evidence
+of incorrect resource inference.
+
+An isolated Python `unittest` row now uses its declared resources. Its module
+paths are test inputs. The wrapper regression executes a real Python child
+with the Flutter-named module and rejects any attempt to acquire a native or
+device lease. Explicit resource claims and the conservative unknown-resource
+fallback still apply, and native builds and device campaigns retain their
+existing leases.
 
 A fresh worktree also needs its locked Dart package configuration before the
 workflow's Dart contract and CLI fixtures run. Run `flutter pub get --offline

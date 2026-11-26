@@ -1082,8 +1082,15 @@ def check_resources(check):
         resources.add('unknown')
     resources = {r.replace('device-control:', 'device:', 1) for r in resources}
     if 'unknown' in resources: resources.add('shared-native-build')
-    if check['kind'] in ('flutter', 'sims', 'legacy') or any(
-            word in ' '.join(check.get('command', [])) for word in ('gradlew', 'xcodebuild', 'flutter')):
+    command = check.get('command', [])
+    isolated_python_tests = (
+        check['kind'] == 'python' and command[1:3] == ['-m', 'unittest']
+        and all(r.startswith('isolated:') for r in resources)
+    )
+    native_tool_mentioned = not isolated_python_tests and any(
+        word in ' '.join(command) for word in ('gradlew', 'xcodebuild', 'flutter')
+    )
+    if check['kind'] in ('flutter', 'sims', 'legacy') or native_tool_mentioned:
         resources.add('shared-native-build')
     if is_campaign(check):
         resources.add('device-campaign-barrier')
