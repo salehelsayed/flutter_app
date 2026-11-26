@@ -1009,6 +1009,7 @@ void main() {
 
         final history = <Map<String, Object?>>[];
         String? beforeTimestamp;
+        String? beforeMessageId;
         var reachedBeginning = false;
         final maximumPages = (ids.length + pageSize - 1) ~/ pageSize + 1;
         for (var pageIndex = 0; pageIndex < maximumPages; pageIndex++) {
@@ -1017,6 +1018,7 @@ void main() {
             'peer-a',
             limit: pageSize,
             beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
           ).timeout(deadline);
           if (page.isEmpty) {
             reachedBeginning = true;
@@ -1024,6 +1026,7 @@ void main() {
           }
           history.insertAll(0, page);
           beforeTimestamp = page.first['timestamp'] as String;
+          beforeMessageId = page.first['id'] as String;
         }
 
         expect(reachedBeginning, isTrue);

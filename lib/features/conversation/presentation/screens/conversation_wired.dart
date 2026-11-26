@@ -816,6 +816,8 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   bool _hasMoreOlderMessages = true;
+  ConversationMessage? _olderPageAnchor;
+  int _olderPageRevision = 0;
   List<ConversationCallTimelineEntry> _callEntries =
       const <ConversationCallTimelineEntry>[];
   StreamSubscription<void>? _callTimelineChangesSubscription;
@@ -1660,6 +1662,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _loadIdentity();
     if (widget.initialMessages != null) {
       _messages = widget.initialMessages!;
+      _olderPageAnchor = _messages.firstOrNull;
       _hasMoreOlderMessages = _messages.length >= _pageSize;
       _initialLoadDone = true;
       _scrollToBottom();
@@ -2336,10 +2339,11 @@ class _ConversationWiredState extends State<ConversationWired>
       );
       if (mounted) {
         setState(() {
+          _olderPageAnchor = messages.firstOrNull;
+          _hasMoreOlderMessages = messages.length >= _pageSize;
           for (final message in messages) {
             _upsertMessageById(_mergeLoadedMessageWithCurrentState(message));
           }
-          _hasMoreOlderMessages = messages.length >= _pageSize;
           // Publish the completed page and its display gate together. Waiting
           // until after this frame would leave a ready page hidden for a frame.
           _initialLoadDone = true;
@@ -2552,9 +2556,9 @@ class _ConversationWiredState extends State<ConversationWired>
   void _onScroll() {
     if (!_hasMoreOlderMessages || _isLoadingMore) return;
     if (!_scrollController.hasClients) return;
-    // In a reversed ListView, minScrollExtent is the "top" (oldest messages)
+    // A reversed list grows toward maxScrollExtent as older history loads.
     final position = _scrollController.position;
-    if (position.pixels <= position.minScrollExtent + 200) {
+    if (position.extentAfter <= 200) {
       _loadOlderMessages();
     }
   }
@@ -2564,30 +2568,50 @@ class _ConversationWiredState extends State<ConversationWired>
     setState(() => _isLoadingMore = true);
 
     try {
-      final cursor = _messages.first.timestamp;
-      final olderMessages = await loadConversationPage(
-        messageRepo: widget.messageRepo,
-        contactPeerId: _contact.peerId,
-        pageSize: _pageSize,
-        beforeTimestamp: cursor,
-        mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        mediaFileManager: widget.mediaFileManager,
-      );
-      if (mounted) {
+      final revision = _olderPageRevision;
+      while (_hasMoreOlderMessages) {
+        final anchor = _olderPageAnchor;
+        final olderMessages = await loadConversationPage(
+          messageRepo: widget.messageRepo,
+          contactPeerId: _contact.peerId,
+          pageSize: _pageSize,
+          beforeTimestamp: anchor?.timestamp,
+          beforeMessageId: anchor?.id,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
+        );
+        if (!mounted || revision != _olderPageRevision) return;
+
+        final nextAnchor = olderMessages.firstOrNull;
+        final advances =
+            nextAnchor != null &&
+            (anchor == null || nextAnchor.comparePageOrderTo(anchor) < 0);
+        final loadedIds = _messages.map((message) => message.id).toSet();
+        final additions = olderMessages
+            .where((message) => loadedIds.add(message.id))
+            .toList(growable: false);
         setState(() {
-          _messages = [...olderMessages, ..._messages];
-          _hasMoreOlderMessages = olderMessages.length >= _pageSize;
-          _isLoadingMore = false;
+          if (additions.isNotEmpty) {
+            _messages = _sortMessagesForDisplay([...additions, ..._messages]);
+          }
+          if (advances) _olderPageAnchor = nextAnchor;
+          _hasMoreOlderMessages = advances && olderMessages.length >= _pageSize;
         });
-        unawaited(_recoverVisibleMedia(olderMessages));
+        // A window reset or a live update can leave a page already visible.
+        // Continue until the oldest edge grows or the stored history ends.
+        if (additions.isNotEmpty) {
+          unawaited(_recoverVisibleMedia(additions));
+          return;
+        }
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoadingMore = false);
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_LOAD_MORE_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -7624,8 +7648,32 @@ class _ConversationWiredState extends State<ConversationWired>
   /// exempt (a newest-first trim there would evict the just-loaded page).
   void _applyInMemoryCap() {
     final capped = trimToNewestInMemoryCap(_messages);
-    if (capped.length < _messages.length) {
+    final evictedCount = _messages.length - capped.length;
+    if (evictedCount > 0) {
       _hasMoreOlderMessages = true;
+      final newestEvicted = _messages
+          .take(evictedCount)
+          .reduce(
+            (latest, message) =>
+                message.comparePageOrderTo(latest) > 0 ? message : latest,
+          );
+      final anchor = _olderPageAnchor;
+      if (anchor == null || anchor.comparePageOrderTo(newestEvicted) <= 0) {
+        _olderPageRevision++;
+        if (anchor != null) {
+          // Display order can differ from stored page order. Start above all
+          // evicted keys so an evicted row can be fetched again.
+          ConversationMessage? nextAnchor;
+          for (final message in capped) {
+            if (message.comparePageOrderTo(newestEvicted) > 0 &&
+                (nextAnchor == null ||
+                    message.comparePageOrderTo(nextAnchor) < 0)) {
+              nextAnchor = message;
+            }
+          }
+          _olderPageAnchor = nextAnchor;
+        }
+      }
     }
     _messages = capped;
   }
@@ -8154,12 +8202,14 @@ class _ConversationWiredState extends State<ConversationWired>
         continue;
       }
       if (!_hasMoreOlderMessages) break;
-      final beforeCount = _messages.length;
+      final before = (_olderPageAnchor?.timestamp, _olderPageAnchor?.id);
       await _loadOlderMessages();
       if (!mounted) return;
-      // Stop on a page that made no progress — a repository stuck below the
-      // cursor must not spin forever.
-      if (_messages.length == beforeCount) break;
+      // A page can advance the cursor even if a live update already added
+      // all of its rows.
+      if (before == (_olderPageAnchor?.timestamp, _olderPageAnchor?.id)) {
+        break;
+      }
     }
     if (!mounted || !stillWanted()) return;
 

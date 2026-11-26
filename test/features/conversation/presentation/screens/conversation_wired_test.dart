@@ -833,9 +833,8 @@ class FakeMessageRepository
   Completer<void>? getMessagesPageGate;
   List<ConversationMessage>? getMessagesPageSnapshot;
 
-  /// 233 sentinel: the exact (limit, beforeTimestamp) of every page request,
-  /// so pagination tests can prove the 50-row window and cursor use.
-  final List<(int, String?)> getMessagesPageRequests = <(int, String?)>[];
+  /// Records the page size and both cursor fields for pagination assertions.
+  final List<(int, String?, String?)> getMessagesPageRequests = [];
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -930,9 +929,10 @@ class FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     getMessagesPageCalls++;
-    getMessagesPageRequests.add((limit, beforeTimestamp));
+    getMessagesPageRequests.add((limit, beforeTimestamp, beforeMessageId));
     final gate = getMessagesPageGate;
     if (gate != null && !gate.isCompleted) {
       await gate.future;
@@ -941,11 +941,15 @@ class FakeMessageRepository
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      messages = messages
-          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
-          .toList();
+      messages = messages.where((message) {
+        final order = message.timestamp.compareTo(beforeTimestamp);
+        return order < 0 ||
+            (order == 0 &&
+                beforeMessageId != null &&
+                message.id.compareTo(beforeMessageId) < 0);
+      }).toList();
     }
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort((a, b) => b.comparePageOrderTo(a));
     final page = messages.take(limit).toList();
     return page.reversed.toList();
   }
@@ -1354,12 +1358,14 @@ class SlowInitialPageMessageRepository extends FakeMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     await firstPageGate.future;
     return super.getMessagesPage(
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
   }
 }
@@ -20602,8 +20608,11 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
-      // Older-page load: any scroll near the load edge of the reversed list.
-      await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+      // Older-page load: reach the oldest edge of the reversed list.
+      final scroll = tester
+          .widget<ListView>(find.byKey(const ValueKey('messages')))
+          .controller!;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
     }
@@ -20974,7 +20983,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         // Exactly one initial page at the literal 50-row window, no cursor.
-        expect(messageRepo.getMessagesPageRequests, [(50, null)]);
+        expect(messageRepo.getMessagesPageRequests, [(50, null, null)]);
         expect(find.textContaining('letter 59 of 233'), findsOneWidget);
 
         final scroll = tester
@@ -20986,7 +20995,15 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
 
         expect(messageRepo.getMessagesPageRequests, hasLength(2));
-        expect(messageRepo.getMessagesPageRequests.last, (50, tsOf(10)));
+        expect(messageRepo.getMessagesPageRequests.last, (
+          50,
+          tsOf(10),
+          'msg-233-10',
+        ));
+
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.textContaining('letter 0 of 233'), findsOneWidget);
 
         // The loaded window was appended, not replaced: the live edge is
         // still present without any third page request (no window reset).

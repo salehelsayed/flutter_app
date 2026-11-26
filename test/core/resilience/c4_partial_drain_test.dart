@@ -128,10 +128,12 @@ class ThrowAfterNMessageRepo
     String cid, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) => _inner.getMessagesPage(
     cid,
     limit: limit,
     beforeTimestamp: beforeTimestamp,
+    beforeMessageId: beforeMessageId,
   );
 
   @override
@@ -272,10 +274,12 @@ class ThrowOnNthMessageRepo
     String cid, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) => _inner.getMessagesPage(
     cid,
     limit: limit,
     beforeTimestamp: beforeTimestamp,
+    beforeMessageId: beforeMessageId,
   );
 
   @override

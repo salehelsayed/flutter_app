@@ -14008,6 +14008,7 @@ class _DelayedSpyMessageRepository extends _SpyMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final gate = getMessagesPageGate;
     if (gate != null) {
@@ -14017,6 +14018,7 @@ class _DelayedSpyMessageRepository extends _SpyMessageRepository {
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
   }
 }
@@ -14360,6 +14362,7 @@ class _InitialPageGateMessageRepository extends InMemoryMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     if (beforeTimestamp == null && nextPageGate != null) {
       final gate = nextPageGate!;
@@ -14370,6 +14373,7 @@ class _InitialPageGateMessageRepository extends InMemoryMessageRepository {
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
   }
 }
@@ -14418,18 +14422,25 @@ class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
     List<ConversationMessage> rows,
     String peerId, {
     String? beforeTimestamp,
+    String? beforeMessageId,
     int? limit,
   }) {
     final byId = {for (final row in rows) row.id: row};
     for (final intent in _intents.values) {
-      if (intent.contactPeerId == peerId &&
-          (beforeTimestamp == null ||
-              intent.timestamp.compareTo(beforeTimestamp) < 0)) {
-        byId.putIfAbsent(intent.id, () => intent.toMessage(senderPeerId));
+      if (intent.contactPeerId != peerId) continue;
+      if (beforeTimestamp != null) {
+        final order = intent.timestamp.compareTo(beforeTimestamp);
+        if (order > 0 ||
+            (order == 0 &&
+                (beforeMessageId == null ||
+                    intent.id.compareTo(beforeMessageId) >= 0))) {
+          continue;
+        }
       }
+      byId.putIfAbsent(intent.id, () => intent.toMessage(senderPeerId));
     }
     final sorted = byId.values.toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      ..sort((a, b) => a.comparePageOrderTo(b));
     return limit != null && sorted.length > limit
         ? sorted.sublist(sorted.length - limit)
         : sorted;
@@ -14445,14 +14456,17 @@ class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
     String peerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async => _withIntents(
     await super.getMessagesPage(
       peerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     ),
     peerId,
     beforeTimestamp: beforeTimestamp,
+    beforeMessageId: beforeMessageId,
     limit: limit,
   );
 

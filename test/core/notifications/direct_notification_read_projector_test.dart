@@ -242,8 +242,12 @@ MessageRepositoryImpl _messageRepository({
   dbDeleteMessagesForContact: (_) async => 0,
   dbDeleteMessage: (_) async => 0,
   dbExistsMessageByContent: (_, _, _, _) async => false,
-  dbLoadMessagesPage: (_, {int limit = 50, String? beforeTimestamp}) async =>
-      const [],
+  dbLoadMessagesPage: (
+    _, {
+    int limit = 50,
+    String? beforeTimestamp,
+    String? beforeMessageId,
+  }) async => const [],
   dbLoadFailedOutgoingMessages: () async => const [],
   dbLoadUnackedOutgoingMessages:
       ({required DateTime olderThan, int limit = 50}) async => const [],

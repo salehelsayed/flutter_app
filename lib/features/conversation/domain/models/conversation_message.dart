@@ -363,6 +363,12 @@ class ConversationMessage {
   /// so a plain non-cached getter is sufficient (no `Expando` needed yet).
   DateTime? get parsedTimestamp => DateTime.tryParse(timestamp);
 
+  /// Compares the stored timestamp and ID in ascending page order.
+  int comparePageOrderTo(ConversationMessage other) {
+    final order = timestamp.compareTo(other.timestamp);
+    return order == 0 ? id.compareTo(other.id) : order;
+  }
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;

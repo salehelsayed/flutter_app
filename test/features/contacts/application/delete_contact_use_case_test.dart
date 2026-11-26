@@ -166,6 +166,7 @@ class FakeMessageRepository implements MessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async => [];
 
   @override

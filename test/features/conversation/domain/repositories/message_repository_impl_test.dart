@@ -195,29 +195,42 @@ void main() {
         return store.remove(id) == null ? 0 : 1;
       },
       dbExistsMessageByContent: (_, _, _, _) async => false,
-      dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
-        var rows = store.values
-            .where(
-              (row) =>
-                  row['contact_peer_id'] == contactPeerId &&
-                  row['hidden_at'] == null,
-            )
-            .toList();
-        if (beforeTimestamp != null) {
-          rows = rows
-              .where(
-                (row) =>
-                    (row['timestamp'] as String).compareTo(beforeTimestamp) < 0,
-              )
-              .toList();
-        }
-        rows.sort(
-          (a, b) =>
-              (b['timestamp'] as String).compareTo(a['timestamp'] as String),
-        );
-        final page = rows.take(limit).toList();
-        return page.reversed.toList();
-      },
+      dbLoadMessagesPage:
+          (
+            contactPeerId, {
+            limit = 50,
+            beforeTimestamp,
+            beforeMessageId,
+          }) async {
+            var rows = store.values
+                .where(
+                  (row) =>
+                      row['contact_peer_id'] == contactPeerId &&
+                      row['hidden_at'] == null,
+                )
+                .toList();
+            if (beforeTimestamp != null) {
+              rows = rows.where((row) {
+                final order = (row['timestamp'] as String).compareTo(
+                  beforeTimestamp,
+                );
+                return order < 0 ||
+                    (order == 0 &&
+                        beforeMessageId != null &&
+                        (row['id'] as String).compareTo(beforeMessageId) < 0);
+              }).toList();
+            }
+            rows.sort((a, b) {
+              final order = (b['timestamp'] as String).compareTo(
+                a['timestamp'] as String,
+              );
+              return order == 0
+                  ? (b['id'] as String).compareTo(a['id'] as String)
+                  : order;
+            });
+            final page = rows.take(limit).toList();
+            return page.reversed.toList();
+          },
       dbLoadFailedOutgoingMessages: () async {
         return store.values
             .where(
@@ -1845,7 +1858,12 @@ void main() {
       dbDeleteMessagesForContact: (_) async => 0,
       dbDeleteMessage: (_) async => 0,
       dbExistsMessageByContent: (_, _, _, _) async => false,
-      dbLoadMessagesPage: (_, {limit = 50, beforeTimestamp}) async => const [],
+      dbLoadMessagesPage: (
+        _, {
+        limit = 50,
+        beforeTimestamp,
+        beforeMessageId,
+      }) async => const [],
       dbLoadFailedOutgoingMessages: () async => const [],
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) async =>
           const [],

@@ -44,6 +44,7 @@ class GatedPageMessageRepository extends InMemoryMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     pageRequests.add((limit, beforeTimestamp));
     if (gatePageRequests) {
@@ -55,6 +56,7 @@ class GatedPageMessageRepository extends InMemoryMessageRepository {
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
   }
 }

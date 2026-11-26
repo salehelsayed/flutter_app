@@ -82,13 +82,15 @@ MessageRepositoryImpl buildWidgetMessageRepository(Database db) =>
           dbExistsMessageByContent(db, peerId, senderPeerId, text, timestamp),
       dbExistsMessageByDedupKey: (peerId, senderPeerId, dedupKey) =>
           dbExistsMessageByDedupKey(db, peerId, senderPeerId, dedupKey),
-      dbLoadMessagesPage: (peerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(
-            db,
-            peerId,
-            limit: limit,
-            beforeTimestamp: beforeTimestamp,
-          ),
+      dbLoadMessagesPage:
+          (peerId, {limit = 50, beforeTimestamp, beforeMessageId}) =>
+              dbLoadMessagesPage(
+                db,
+                peerId,
+                limit: limit,
+                beforeTimestamp: beforeTimestamp,
+                beforeMessageId: beforeMessageId,
+              ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),

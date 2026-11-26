@@ -59,11 +59,13 @@ class DelayedPageMessageRepository extends InMemoryMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final page = await super.getMessagesPage(
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
     if (holdNextPage) {
       holdNextPage = false;

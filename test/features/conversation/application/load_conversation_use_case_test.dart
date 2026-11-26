@@ -81,15 +81,20 @@ class FakeMessageRepository implements MessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final all = messagesByContact[contactPeerId] ?? [];
     var filtered = all;
     if (beforeTimestamp != null) {
-      filtered = all
-          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
-          .toList();
+      filtered = all.where((message) {
+        final order = message.timestamp.compareTo(beforeTimestamp);
+        return order < 0 ||
+            (order == 0 &&
+                beforeMessageId != null &&
+                message.id.compareTo(beforeMessageId) < 0);
+      }).toList();
     }
-    filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    filtered.sort((a, b) => b.comparePageOrderTo(a));
     final page = filtered.take(limit).toList();
     return page.reversed.toList();
   }
