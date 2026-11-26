@@ -882,7 +882,11 @@ class MessageRepositoryImpl
           if (order > 0 ||
               (order == 0 &&
                   (beforeMessageId == null ||
-                      intent.id.compareTo(beforeMessageId) >= 0))) {
+                      ConversationMessage.comparePageIds(
+                            intent.id,
+                            beforeMessageId,
+                          ) >=
+                          0))) {
             continue;
           }
         }

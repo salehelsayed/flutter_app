@@ -392,7 +392,11 @@ class InMemoryMessageRepository
         return order < 0 ||
             (order == 0 &&
                 beforeMessageId != null &&
-                message.id.compareTo(beforeMessageId) < 0);
+                ConversationMessage.comparePageIds(
+                      message.id,
+                      beforeMessageId,
+                    ) <
+                    0);
       }).toList();
     }
     messages.sort((a, b) => b.comparePageOrderTo(a));
