@@ -4252,7 +4252,12 @@ CallSignalingComposition createProductionCallSignalingComposition({
             active.callId != signal.callId &&
             signalingContextStore.read(signal.callId)?.direction ==
                 CallDirection.incoming &&
-            clock() < signal.expiresAtMs;
+            clock() < signal.expiresAtMs &&
+            clock() <
+                (signalingContextStore.originalV2InviteExpiresAtMs(
+                      signal.callId,
+                    ) ??
+                    0);
       }
 
       controlExecutor = CallControlEffectExecutor(
