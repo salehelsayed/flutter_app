@@ -1444,6 +1444,7 @@ void main() {
       String? confirmNonce,
       String? from,
       String intent = 'new_request',
+      String? mlkem,
       bool reciprocalReply = false,
       String to = _testOwnPeerId,
       _MockBridge? receiverBridge,
@@ -1452,6 +1453,7 @@ void main() {
     }) {
       peerId ??= identity?.peerId ?? _testPeerId;
       final payload = SplayTreeMap<String, dynamic>.from({
+        'mlkem': ?mlkem,
         'ns': peerId,
         'pk': identity?.publicKey ?? _testPublicKey,
         'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
@@ -1586,6 +1588,47 @@ void main() {
         ]);
         expect(bridge.confirmRequests, isEmpty);
       });
+
+      test(
+        'publishes a committed key before a failed reply is retried',
+        () async {
+          const key = 'replayed-contact-mlkem-key';
+          final sendFailure = StateError('reply transport unavailable');
+          var attempts = 0;
+          final listener = makeListener(
+            requestReciprocalReplayedKeyRecovery: (_, _) async {
+              attempts++;
+              if (attempts == 1) throw sendFailure;
+            },
+          );
+          addTearDown(listener.dispose);
+          final updates = <ContactModel>[];
+          final subscription = listener.contactKeyUpdatedStream.listen(
+            updates.add,
+          );
+          addTearDown(subscription.cancel);
+          final message = makeV2(
+            msgId: 'bl82-replayed-key-committed',
+            intent: 'key_exchange_retry',
+            mlkem: key,
+          );
+          Future<HandleMessageResult> replay() => listener
+              .processIncomingMessage(message, fromDurableReplay: true)
+              .timeout(deadline);
+
+          await expectLater(replay(), throwsA(same(sendFailure)));
+          final saved = await contactRepo
+              .getContact(_testPeerId)
+              .timeout(deadline);
+          expect(saved?.mlKemPublicKey, key);
+          expect(updates.map((contact) => contact.mlKemPublicKey), [key]);
+
+          expect(await replay(), HandleMessageResult.alreadyContact);
+          await replay();
+          expect(attempts, 2);
+          expect(updates.map((contact) => contact.mlKemPublicKey), [key]);
+        },
+      );
 
       test(
         'defers a replay when no foreground reply sender is available',

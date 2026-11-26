@@ -497,44 +497,14 @@ class ContactRequestListener {
               _hasKeyExchangeRetryIntent(message)
           ? verifiedPeerId
           : null;
-      if (fromDurableReplay &&
-          !hasDirectNonce &&
-          legacyRetryPeerId != null &&
-          !receiveFacts!.hasCallWakeHandle) {
-        final contact = await contactRepo.getContact(legacyRetryPeerId);
-        if (contact != null &&
-            !contact.isBlocked &&
-            contact.publicKey == receiveFacts.authenticatedPublicKey) {
-          final sendKeyReply = requestReciprocalReplayedKeyRecovery;
-          if (sendKeyReply == null) {
-            // Headless recovery keeps custody for the foreground sender.
-            throw const ContactRepairDeferredException();
-          }
-          // A failed outbound send leaves the original staged request
-          // retryable, so this ID must not enter the replay cache yet.
-          await sendKeyReply(legacyRetryPeerId, contact.publicKey);
-        }
-      }
-
-      // For successful v2 handling, add msgId to replay cache. INCLUDES the
-      // 171 contactAutoAdded result — INV-6: without it a redelivered msgId
-      // (e.g. relay re-push) re-runs the auto-add + reciprocal (double add).
-      if (result == HandleMessageResult.contactRequest ||
-          result == HandleMessageResult.contactAutoAdded ||
-          result == HandleMessageResult.contactKeyUpdated ||
-          result == HandleMessageResult.silentIntroRecovered ||
-          result == HandleMessageResult.duplicateRequest ||
-          result == HandleMessageResult.alreadyContact) {
-        // Extract msgId from v2 messages
-        try {
-          final json = jsonDecode(message.content) as Map<String, dynamic>;
-          if (json['version'] == '2') {
-            final msgId = json['msgId'] as String?;
-            if (msgId != null) {
-              _replayCache.add(msgId);
-            }
-          }
-        } catch (_) {}
+      final replayKeyReplyPeerId =
+          fromDurableReplay &&
+              !hasDirectNonce &&
+              receiveFacts?.hasCallWakeHandle == false
+          ? legacyRetryPeerId
+          : null;
+      if (replayKeyReplyPeerId == null) {
+        _rememberHandledMessage(message, result);
       }
 
       if (result == HandleMessageResult.contactRequest && request != null) {
@@ -570,6 +540,24 @@ class ContactRequestListener {
             recoveryResult?.contact != null) {
           _contactKeyUpdatedController.add(recoveryResult!.contact!);
         }
+      }
+
+      if (replayKeyReplyPeerId != null) {
+        // A later retry already sees the key published above in storage and
+        // will not produce another update.
+        final contact = await contactRepo.getContact(replayKeyReplyPeerId);
+        if (contact != null &&
+            !contact.isBlocked &&
+            contact.publicKey == receiveFacts!.authenticatedPublicKey) {
+          final sendKeyReply = requestReciprocalReplayedKeyRecovery;
+          if (sendKeyReply == null) {
+            // Headless recovery keeps custody for the foreground sender.
+            throw const ContactRepairDeferredException();
+          }
+          await sendKeyReply(replayKeyReplyPeerId, contact.publicKey);
+        }
+        // A failed reply leaves the original staged request retryable.
+        _rememberHandledMessage(message, result);
       }
 
       // Deferred-ack confirm (171 + doc 118). ok=true for EVERY returned
@@ -647,6 +635,27 @@ class ContactRequestListener {
     } catch (e) {
       await _maybeConfirmDirectNonce(message, ok: false);
       rethrow;
+    }
+  }
+
+  void _rememberHandledMessage(
+    ChatMessage message,
+    HandleMessageResult result,
+  ) {
+    // Include auto-add so redelivery cannot run acceptance twice.
+    if (result == HandleMessageResult.contactRequest ||
+        result == HandleMessageResult.contactAutoAdded ||
+        result == HandleMessageResult.contactKeyUpdated ||
+        result == HandleMessageResult.silentIntroRecovered ||
+        result == HandleMessageResult.duplicateRequest ||
+        result == HandleMessageResult.alreadyContact) {
+      try {
+        final envelope = jsonDecode(message.content) as Map<String, dynamic>;
+        if (envelope['version'] == '2') {
+          final msgId = envelope['msgId'] as String?;
+          if (msgId != null) _replayCache.add(msgId);
+        }
+      } catch (_) {}
     }
   }
 
