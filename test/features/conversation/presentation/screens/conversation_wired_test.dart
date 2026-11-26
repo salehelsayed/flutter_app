@@ -21027,13 +21027,17 @@ void main() {
       expect(screen().messages.last.id, incoming.id);
       expect(messageRepo.getMessagesPageRequests, [firstRequest]);
 
+      final settledOffset = scroll.position.pixels;
       gate.complete();
-      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
-      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      // Drain the repository continuation before layout can move the scroll
+      // position or independently trigger another oldest-page request.
+      await tester.idle().timeout(deadline);
+      expect(scroll.position.pixels, settledOffset);
       expect(messageRepo.getMessagesPageRequests, [
         firstRequest,
         (50, nextVisible.timestamp, nextVisible.id),
       ]);
+      await tester.pump().timeout(deadline);
       expect(screen().messages, hasLength(cap + 2));
       expect(screen().messages.first.id, seeded.first.id);
       expect(screen().messages.last.id, incoming.id);
