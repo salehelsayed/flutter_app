@@ -158,7 +158,14 @@ def lease_directory(directory=None):
 
 
 def host_slot_names():
-    return [f'{HOST_TESTS_LEASE}.slot-{n}' for n in range(1, HOST_TEST_SLOTS + 1)]
+    value = os.environ.get('MKNOON_HOST_TEST_SLOTS', str(HOST_TEST_SLOTS))
+    try:
+        count = int(value)
+    except ValueError:
+        raise ValueError('MKNOON_HOST_TEST_SLOTS must be a positive integer') from None
+    if count < 1:
+        raise ValueError('MKNOON_HOST_TEST_SLOTS must be a positive integer')
+    return [f'{HOST_TESTS_LEASE}.slot-{n}' for n in range(1, count + 1)]
 
 
 def _open_lock(directory, name):
@@ -273,12 +280,13 @@ def default_host_guard():
 
 @contextmanager
 def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=15, sleep=time.sleep, clock=time.monotonic):
-    """Hold one of the host-test slots for a Mac-only Flutter/Dart check.
+    """Hold a host-test slot for a Flutter/Dart check.
 
     New slots wait while a native build is waiting for the native lease, while the
-    memory guard fails, or while both slots are busy. A native lease that is merely
-    held does not pause host slots. Running holders are never interrupted.
+    memory guard fails, or while all slots are busy. A held native lease does not
+    pause host slots. Running holders are never interrupted.
     """
+    slot_names = host_slot_names()
     directory = lease_directory(directory)
     guard = guard or default_host_guard
     if wait_seconds is None:
@@ -292,7 +300,7 @@ def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=1
             reason = 'host memory or swap guard'
         else:
             reason = 'all host-test slots busy'
-            for name in host_slot_names():
+            for name in slot_names:
                 candidate = _open_lock(directory, name)
                 if _try_flock(candidate):
                     handle = candidate

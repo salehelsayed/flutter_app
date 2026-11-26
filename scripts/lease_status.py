@@ -10,8 +10,8 @@ not take or disturb a lease.
     python3 scripts/lease_status.py <lease-name> ...      # only the named leases
     python3 scripts/lease_status.py --json
 
-Host-test slots (mknoon.host-tests.slot-1..4) are reported as N/4 used, plus any live
-native-wanted marker, which pauses new host slots.
+Host-test slots default to four. Set MKNOON_HOST_TEST_SLOTS to change the count for
+both lease admission and status. Live native-wanted markers are also reported.
 """
 import argparse
 import hashlib
@@ -21,9 +21,9 @@ import subprocess
 import sys
 import time
 
+from device_campaign_preflight import HOST_TESTS_LEASE, host_slot_names
+
 DEFAULT_LEASE = 'mknoon.shared-native-build'
-HOST_TESTS_LEASE = 'mknoon.host-tests'
-HOST_TEST_SLOTS = 4
 NATIVE_WANTED_TTL = 120
 
 
@@ -101,12 +101,12 @@ def native_wanted(directory, now=None):
 
 def host_status(directory, lsof='lsof', ps='ps'):
     slots = []
-    for n in range(1, HOST_TEST_SLOTS + 1):
-        slot = status('%s.slot-%d' % (HOST_TESTS_LEASE, n), directory, lsof, ps)
+    for n, name in enumerate(host_slot_names(), start=1):
+        slot = status(name, directory, lsof, ps)
         slot['slot'] = n
         slots.append(slot)
     used = sum(1 for s in slots if s['state'] == 'HELD')
-    return {'lease': HOST_TESTS_LEASE, 'state': '%d/%d' % (used, HOST_TEST_SLOTS), 'used': used,
+    return {'lease': HOST_TESTS_LEASE, 'state': '%d/%d' % (used, len(slots)), 'used': used,
             'slots': slots, 'nativeWanted': native_wanted(directory)}
 
 
