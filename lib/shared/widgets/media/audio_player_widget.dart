@@ -264,6 +264,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   int _loadVersion = 0;
   bool _playStartPending = false;
   bool _isDisposing = false;
+  bool _isReloadingSource = false;
   final Set<Future<void>> _sourceLoads = {};
   bool _retainsInterruptedPlayback = false;
 
@@ -385,7 +386,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   Future<void> _loadAudio() {
-    if (_isDisposing) return Future<void>.value();
+    if (_isDisposing || _isReloadingSource) return Future<void>.value();
     final task = _loadAudioSource();
     _sourceLoads.add(task);
     return task.whenComplete(() => _sourceLoads.remove(task));
@@ -470,28 +471,36 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   Future<void> _reloadAudioForNewAttachment() async {
+    if (_isReloadingSource) return;
+    _isReloadingSource = true;
     _loadVersion++;
+    _isLoaded = false;
     _loadingPath = null;
     _stopPositionTimer();
     _interruptionHandler.cancelPendingResume();
 
     try {
-      await _player.stop();
-    } catch (_) {}
-
-    if (mounted) {
-      setState(() {
-        _isPlaying = false;
-        _position = Duration.zero;
-        _duration = Duration.zero;
-        _isLoaded = false;
-        _loadFailed = false;
-        _loadedPath = null;
-      });
-      updateKeepAlive();
+      // just_audio cannot dispose the native player until its init returns.
+      if (_sourceLoads.isNotEmpty) await Future.wait(_sourceLoads.toList());
+      if (!mounted || _isDisposing) return;
+      try {
+        await _player.stop();
+      } catch (_) {}
+    } finally {
+      _isReloadingSource = false;
     }
 
-    if (!_isDisposing && _isAvailable) {
+    if (!mounted || _isDisposing) return;
+    setState(() {
+      _isPlaying = false;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _loadFailed = false;
+      _loadedPath = null;
+    });
+    updateKeepAlive();
+
+    if (_isAvailable) {
       await _loadAudio();
     }
   }

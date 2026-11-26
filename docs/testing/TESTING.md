@@ -7145,7 +7145,12 @@ visible and cannot become an ordinary first-attempt PASS.
   before handing it to the platform player. The audio widget regression keeps
   the same state mounted across durable commit, preserves exact source bytes,
   and covers recovery from an earlier load failure. Its fake player checks
-  file existence and playback dispatch, not native codec decoding. Group
+  file existence and playback dispatch, not native codec decoding. BL-101 holds
+  the first native init reply after the platform registers its player ID, then
+  replaces the source on the mounted row. The previous ordering interrupted
+  initialization and attempted to register the same ID again. The regression
+  checks that the replacement source reaches playback without reopening the
+  chat. Android send-to-play remains a device check. Group
   optimistic media must keep `upload_pending` until upload completes: marking
   retained plaintext `done` makes the receive verification gate correctly
   reject its not-yet-created encryption metadata. The held-upload wired test
