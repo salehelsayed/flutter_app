@@ -124,6 +124,7 @@ Look up the product term first, then follow the paths in **Where**. Update the r
 | Composition | Candidate HEAD and tree | `docs/testing/TESTING.md`, `scripts/mknoon_checks.py` | A release composition combines reviewed source and verifies the resulting Git tree. | App dependency wiring |
 | Baseline | `--base` | `scripts/mknoon_checks.py` | The baseline is the exact comparison revision used to select affected checks. | Candidate |
 | Receipt | `results.json` and raw evidence | `scripts/mknoon_checks.py`, `docs/testing/TESTING.md` | A test receipt ties an outcome to the source, scope, and supporting evidence. | Execution packet |
+| Ready (build or fix) | Readiness statement | `docs/testing/TESTING.md` | Ready means every planned check for that build or fix has finished and passed or has an owner-approved disposition. If any planned check is still pending, say "ready except <check>", with what it protects and how long it takes, and let the owner decide. Never move a planned check past a handover without the owner's OK. | Uploaded, published, or "not blocking" |
 
 ## Rename candidates
 
