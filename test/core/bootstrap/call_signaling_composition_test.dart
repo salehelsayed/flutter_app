@@ -1005,20 +1005,33 @@ void main() {
       await entered.future.timeout(step);
       final sentBefore = fixture.p2p.sentMessages.length;
       final commandsBefore = fixture.bridge.commands.length;
+      final outcomes = <String>[];
+      debugSetFlowEventSink((payload) {
+        final details = payload['details'];
+        if (details is Map && details['type'] == 'reject') {
+          final event = payload['event'] as String;
+          if (event == 'CALL_CONTROL_SIGNAL_SEND_FAILED' ||
+              event == 'CALL_CONTROL_SIGNAL_SEND_RESULT') {
+            outcomes.add(event);
+          }
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
       nowMs = 2_036_000;
       held.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await _untilGraphVideo(() => outcomes.isNotEmpty);
 
       final later = fixture.bridge.commands.sublist(commandsBefore);
+      expect(outcomes, ['CALL_CONTROL_SIGNAL_SEND_FAILED']);
       expect(
         fixture.p2p.sentMessages.length,
         sentBefore,
         reason: 'no busy reject after the invite deadline: $later',
       );
       expect(
-        later.where((command) => command.contains('mailbox')),
-        isEmpty,
-        reason: 'no busy reject stored after the invite deadline: $later',
+        later,
+        isNot(contains('call_store_v1')),
+        reason: 'no busy reject stored after the invite deadline',
       );
       expect(fixture.graphs.single.coordinator.activeSession!.callId, _callA);
     },
