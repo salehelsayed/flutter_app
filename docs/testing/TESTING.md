@@ -6274,6 +6274,13 @@ Runner listings took about
   Ten Appium playback/navigation cycles on the USB iPhone 13 profile build
   also completed without a visible error or crash; the causal pending-load
   assertion remains the host test rather than an inference from those cycles.
+- Voice speed notation uses left-to-right glyph order inside the right-to-left
+  Arabic player row. The widget regression compares rendered selection boxes
+  for the factor and multiplier and checks the Play button stays on the
+  right. Test-only commit `8f4461d11` reproduced the reversed multiplier.
+  Existing speed tests cover cycling, native requests, reopened preferences,
+  and the Arabic touch target. Actual output rate and pitch require device
+  playback evidence.
 - The production new-member-media voice watch latches actual player-state
   publications for the exact seeded message/attachment IDs within its original
   20-second window. A play request alone is not playback evidence; a 40 ms

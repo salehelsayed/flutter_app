@@ -787,6 +787,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
               onPressed: _cycleSpeed,
               child: Text(
                 '${voicePlaybackSpeedLabel(_speedStore.value.value)}×',
+                textDirection: TextDirection.ltr,
               ),
             ),
           ),
