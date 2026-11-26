@@ -242,10 +242,11 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   try {
     if (hasMedia) {
       if (mediaFileManager != null) {
-        storedMediaDrafts = await _stagePostPhotoDrafts(
+        storedMediaDrafts = await _stagePostMediaDrafts(
           postId: post.id,
           drafts: sourceMediaDrafts,
           mediaFileManager: mediaFileManager,
+          stageVoice: post.mediaKind == 'image_voice',
         );
       }
       await postRepo.replacePostMediaUploadRecoveryItems(
@@ -397,8 +398,12 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       r'thought_framed_[0-9]+\.jpg$',
     );
     for (final draft in sourceMediaDrafts) {
-      if (draft.kind != 'image' ||
-          !framingSourcePattern.hasMatch(draft.localFilePath)) {
+      final generatedPhoto =
+          draft.kind == 'image' &&
+          framingSourcePattern.hasMatch(draft.localFilePath);
+      final stagedRecording =
+          draft.kind == 'voice' && post.mediaKind == 'image_voice';
+      if (!generatedPhoto && !stagedRecording) {
         continue;
       }
       try {
@@ -438,15 +443,16 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   );
 }
 
-Future<List<PostMediaDraft>> _stagePostPhotoDrafts({
+Future<List<PostMediaDraft>> _stagePostMediaDrafts({
   required String postId,
   required List<PostMediaDraft> drafts,
   required MediaFileManager mediaFileManager,
+  required bool stageVoice,
 }) async {
   final staged = <PostMediaDraft>[];
   for (var index = 0; index < drafts.length; index++) {
     final draft = drafts[index];
-    if (draft.kind != 'image') {
+    if (draft.kind != 'image' && !(stageVoice && draft.kind == 'voice')) {
       staged.add(draft);
       continue;
     }
@@ -474,6 +480,7 @@ Future<List<PostMediaDraft>> _stagePostPhotoDrafts({
         height: draft.height,
         durationMs: draft.durationMs,
         waveform: draft.waveform,
+        caption: draft.caption,
       ),
     );
   }
