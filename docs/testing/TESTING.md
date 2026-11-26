@@ -7126,7 +7126,13 @@ visible and cannot become an ordinary first-attempt PASS.
   decrypt failure remain fail-closed;
   post fetches never delete the shared relay blob. Retained outgoing source
   rows stay pending with the existing localized upload copy while the same
-  owner can retry them. Missing source files remain terminal.
+  owner can retry them. Missing source files remain terminal. Local acceptance
+  of a mixed photo-and-voice Thought stages the recording and the photo in the
+  Thought's media directory before background delivery. The host
+  [outgoing source case](../../test/features/posts/improvement/send_post_media_background_test.dart)
+  removes the temporary directory after acceptance and reads both retained
+  sources. It also checks that voice duration, waveform, and caption survive
+  staging. The original case failed on the missing temporary recording.
 
   Sender `upload_failed` is terminal even at retry count zero; only
   `upload_pending` claims automatic upload activity. Existing manual retry
