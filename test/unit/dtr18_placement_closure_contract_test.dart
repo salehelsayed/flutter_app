@@ -127,7 +127,9 @@ const _relocations = <String, List<String>>{
     // data adapter (4d21b6bcb); placement and dependency direction are unchanged.
     // BL-29 4b206563e adds receipt authority observation. 8a88944f closes
     // those wrappers correctly and retires finalized receipt controls.
-    '225217e0c0a0e16e25d98bfad8c3fa80db904aff65da046c61e243c4482e6485',
+    // BL-105 adds the history ID cursor to the existing page delegate and
+    // applies the same ordering to the authored intent projection.
+    '22d8b5ce0c1be783e959ab64fa15399d3d42d7500c626329606b5ceaa0e7d317',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

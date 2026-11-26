@@ -512,7 +512,9 @@ const _productionBootstrapNormalizedSha256 =
     // BL-58 adds the dbLoadRetainedIncomingPost binding for Thought replies.
     // Removing those two lines restores both previous bootstrap digests.
     // BL61 passes current-locale copy resolvers to the existing call notifier.
-    '5e00ac38111d4142e3fa0cac5cb694968fddcdb357c2f466950ccd32ab21a7be';
+    // BL-105 forwards the optional message ID through the existing paged
+    // history callback. Reversing that callback restores the prior digest.
+    '6252ff89a68b44b159fb0c59c3640f7b4b3dfc1123c97cca9f45e49065798362';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -563,8 +565,9 @@ const _productionBootstrapNormalizedSha256 =
 // The BL-58 binding also leaves the historical callback exact.
 // The BL61 copy resolvers leave the historical callback exact.
 // BL-77 adds contact invite wiring at the existing app and bootstrap owners.
+// BL-105 forwards the page cursor ID outside the exact notification callback.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '868a2518dd10134d1fc07c6781f00db85a254b47d942d984a48824904d8f7599';
+    'c08dc4cba12b761f160a00f66f26776cb05e3e6f053cfccabe2ee53b8b9f68bf';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
