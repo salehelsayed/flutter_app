@@ -115,6 +115,13 @@ class ContactRequestListener {
   final Future<void> Function(String contactPeerId)?
   requestReciprocalCallWakeRecovery;
 
+  /// Sends an unmarked key-only reply during foreground durable replay.
+  final Future<void> Function(
+    String contactPeerId,
+    String authenticatedPublicKey,
+  )?
+  requestReciprocalReplayedKeyRecovery;
+
   /// Task 12b: durable relationship memory and the reply-once reservation.
   /// A fresh signed `new_request` from an existing, unblocked contact reserves
   /// exactly one reply here before the inbound ACK; nothing else (unsigned
@@ -183,6 +190,7 @@ class ContactRequestListener {
     this.onCallWakeHandleStored,
     this.prepareCallWakeReply,
     this.requestReciprocalCallWakeRecovery,
+    this.requestReciprocalReplayedKeyRecovery,
     this.repairRepository,
     this.getOwnPublicKey,
     this.getOwnAccountPeerId,
@@ -422,8 +430,9 @@ class ContactRequestListener {
   /// On the live path [_onMessage] swallows a thrown error; on the inbox path
   /// the caller maps a throw to a retryable replay so the request is not lost.
   Future<HandleMessageResult> processIncomingMessage(
-    ChatMessage message,
-  ) async {
+    ChatMessage message, {
+    bool fromDurableReplay = false,
+  }) async {
     try {
       // Resolve own private key for v2 decryption
       final ownPrivateKey = await getOwnPrivateKey?.call();
@@ -476,6 +485,35 @@ class ContactRequestListener {
           details: {'reason': 'capacity'},
         );
         throw const ContactRepairDeferredException();
+      }
+
+      final receiveFacts = facts;
+      final hasDirectNonce = message.confirmNonce?.isNotEmpty == true;
+      final legacyRetryPeerId =
+          receiveFacts != null &&
+              receiveFacts.control == null &&
+              (result == HandleMessageResult.alreadyContact ||
+                  result == HandleMessageResult.contactKeyUpdated) &&
+              _hasKeyExchangeRetryIntent(message)
+          ? verifiedPeerId
+          : null;
+      if (fromDurableReplay &&
+          !hasDirectNonce &&
+          legacyRetryPeerId != null &&
+          !receiveFacts!.hasCallWakeHandle) {
+        final contact = await contactRepo.getContact(legacyRetryPeerId);
+        if (contact != null &&
+            !contact.isBlocked &&
+            contact.publicKey == receiveFacts.authenticatedPublicKey) {
+          final sendKeyReply = requestReciprocalReplayedKeyRecovery;
+          if (sendKeyReply == null) {
+            // Headless recovery keeps custody for the foreground sender.
+            throw const ContactRepairDeferredException();
+          }
+          // A failed outbound send leaves the original staged request
+          // retryable, so this ID must not enter the replay cache yet.
+          await sendKeyReply(legacyRetryPeerId, contact.publicKey);
+        }
       }
 
       // For successful v2 handling, add msgId to replay cache. INCLUDES the
@@ -548,19 +586,14 @@ class ContactRequestListener {
       // never reaches it; a malformed marker was already rejected as invalid.
       String? reciprocalCallWakeRecoveryPeerId;
       if (requestReciprocalCallWakeRecovery != null &&
-          facts != null &&
-          facts!.control == null &&
-          _hasKeyExchangeRetryIntent(message) &&
-          message.confirmNonce?.isNotEmpty == true &&
-          (!facts!.hasCallWakeHandle || callWakeReceipt != null) &&
-          verifiedPeerId != null &&
-          (result == HandleMessageResult.alreadyContact ||
-              result == HandleMessageResult.contactKeyUpdated)) {
-        final existingContact = await contactRepo.getContact(verifiedPeerId);
+          legacyRetryPeerId != null &&
+          hasDirectNonce &&
+          (!receiveFacts!.hasCallWakeHandle || callWakeReceipt != null)) {
+        final existingContact = await contactRepo.getContact(legacyRetryPeerId);
         if (existingContact != null &&
             !existingContact.isBlocked &&
-            existingContact.publicKey == facts!.authenticatedPublicKey) {
-          reciprocalCallWakeRecoveryPeerId = verifiedPeerId;
+            existingContact.publicKey == receiveFacts.authenticatedPublicKey) {
+          reciprocalCallWakeRecoveryPeerId = legacyRetryPeerId;
         }
       }
 

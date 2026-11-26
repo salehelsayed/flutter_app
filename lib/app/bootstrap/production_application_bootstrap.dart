@@ -163,6 +163,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/application/contact_repair_outbox_worker.dart';
 import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/sql_contact_repair_repository.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
@@ -6919,6 +6920,41 @@ final class ProductionApplicationBootstrap
         );
         if (result != SendContactRequestResult.success) {
           throw StateError('reciprocal call wake recovery unavailable');
+        }
+      },
+      requestReciprocalReplayedKeyRecovery: (peerId, authenticatedKey) async {
+        final consent = await contactRepairRepository.readConsent(peerId);
+        if (consent != null &&
+            consent.state != ContactRelationshipState.active) {
+          return;
+        }
+        Future<bool> canReply() async {
+          final contact = await contactRepository.getContact(peerId);
+          final currentConsent = await contactRepairRepository.readConsent(
+            peerId,
+          );
+          return contact != null &&
+              !contact.isBlocked &&
+              contact.publicKey == authenticatedKey &&
+              currentConsent?.revision == consent?.revision;
+        }
+
+        if (!await canReply()) return;
+        final ownKey = (await repository.loadIdentity())?.mlKemPublicKey;
+        if (ownKey == null || ownKey.isEmpty) {
+          throw const ContactRepairDeferredException();
+        }
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: repository,
+          bridge: bridge,
+          targetPeerId: peerId,
+          recipientPublicKey: authenticatedKey,
+          intent: ContactRequestSendIntent.keyExchangeReply,
+          canTransmit: canReply,
+        );
+        if (result != SendContactRequestResult.success && await canReply()) {
+          throw const ContactRepairDeferredException();
         }
       },
       repairRepository: contactRepairRepository,

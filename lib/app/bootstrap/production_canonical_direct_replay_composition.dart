@@ -257,7 +257,10 @@ final class ProductionCanonicalDirectReplayComposition {
     ChatMessage message,
   ) async {
     try {
-      await contactRequestListener().processIncomingMessage(message);
+      await contactRequestListener().processIncomingMessage(
+        message,
+        fromDurableReplay: true,
+      );
       return (
         disposition: RecoveredInboxChatDisposition.committed,
         reasonCode: 'contact_request_processed',

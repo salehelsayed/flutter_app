@@ -513,10 +513,14 @@ void main() {
       expect(
         _occurrences(
           directSource.substring(contactStart, contactEnd),
-          'contactRequestListener().processIncomingMessage(message)',
+          'contactRequestListener().processIncomingMessage(',
         ),
         1,
         reason: 'contact requests must commit/confirm exactly once',
+      );
+      expect(
+        directSource.substring(contactStart, contactEnd),
+        contains('fromDurableReplay: true'),
       );
 
       const converged = ProductionHeadlessCustodyTotals(

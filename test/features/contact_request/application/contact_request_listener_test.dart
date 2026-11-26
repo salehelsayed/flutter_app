@@ -1492,6 +1492,11 @@ void main() {
       ContactAutoAddRateLimiter? limiter,
       ReceivedCallWakeHandleStore? receivedCallWakeHandleStore,
       Future<void> Function(String peerId)? requestReciprocalCallWakeRecovery,
+      Future<void> Function(
+        String contactPeerId,
+        String authenticatedPublicKey,
+      )?
+      requestReciprocalReplayedKeyRecovery,
       Future<void> Function()? prepareCallWakeReply,
       String ownPeerId = _testOwnPeerId,
     }) {
@@ -1506,9 +1511,130 @@ void main() {
         autoAddRateLimiter: limiter,
         receivedCallWakeHandleStore: receivedCallWakeHandleStore,
         requestReciprocalCallWakeRecovery: requestReciprocalCallWakeRecovery,
+        requestReciprocalReplayedKeyRecovery:
+            requestReciprocalReplayedKeyRecovery,
         prepareCallWakeReply: prepareCallWakeReply,
       );
     }
+
+    group('BL-82 durable key recovery', () {
+      const deadline = Duration(seconds: 3);
+
+      setUp(() {
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+          ),
+        );
+      });
+
+      test('replies once to an authenticated unmarked retry', () async {
+        final replies = <(String, String)>[];
+        final listener = makeListener(
+          requestReciprocalReplayedKeyRecovery: (peerId, publicKey) async {
+            replies.add((peerId, publicKey));
+          },
+        );
+        addTearDown(listener.dispose);
+        final message = makeV2(
+          msgId: 'bl82-replayed-retry',
+          intent: 'key_exchange_retry',
+        );
+
+        final result = await listener
+            .processIncomingMessage(message, fromDurableReplay: true)
+            .timeout(deadline);
+        expect(result, HandleMessageResult.alreadyContact);
+        expect(replies, [(_testPeerId, _testPublicKey)]);
+
+        await listener
+            .processIncomingMessage(message, fromDurableReplay: true)
+            .timeout(deadline);
+        expect(replies, [(_testPeerId, _testPublicKey)]);
+        expect(bridge.confirmRequests, isEmpty);
+      });
+
+      test('retries the same envelope after a reply send fails', () async {
+        final sendFailure = StateError('reply transport unavailable');
+        final attempts = <(String, String)>[];
+        final listener = makeListener(
+          requestReciprocalReplayedKeyRecovery: (peerId, publicKey) async {
+            attempts.add((peerId, publicKey));
+            if (attempts.length == 1) throw sendFailure;
+          },
+        );
+        addTearDown(listener.dispose);
+        final message = makeV2(
+          msgId: 'bl82-replayed-send-failure',
+          intent: 'key_exchange_retry',
+        );
+        Future<HandleMessageResult> replay() => listener
+            .processIncomingMessage(message, fromDurableReplay: true)
+            .timeout(deadline);
+
+        await expectLater(replay(), throwsA(same(sendFailure)));
+        expect(await replay(), HandleMessageResult.alreadyContact);
+        await replay();
+        expect(attempts, [
+          (_testPeerId, _testPublicKey),
+          (_testPeerId, _testPublicKey),
+        ]);
+        expect(bridge.confirmRequests, isEmpty);
+      });
+
+      test(
+        'defers a replay when no foreground reply sender is available',
+        () async {
+          final listener = makeListener();
+          addTearDown(listener.dispose);
+          final message = makeV2(
+            msgId: 'bl82-recovery-only',
+            intent: 'key_exchange_retry',
+          );
+
+          await expectLater(
+            listener
+                .processIncomingMessage(message, fromDurableReplay: true)
+                .timeout(deadline),
+            throwsA(isA<ContactRepairDeferredException>()),
+          );
+          expect(bridge.confirmRequests, isEmpty);
+        },
+      );
+
+      for (final control in ['live', 'reciprocal reply', 'wake grant']) {
+        test('does not send a key-only reply for a $control', () async {
+          final replies = <(String, String)>[];
+          final listener = makeListener(
+            receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+            requestReciprocalReplayedKeyRecovery: (peerId, publicKey) async {
+              replies.add((peerId, publicKey));
+            },
+          );
+          addTearDown(listener.dispose);
+          final result = await listener
+              .processIncomingMessage(
+                makeV2(
+                  msgId: 'bl82-replay-control',
+                  intent: 'key_exchange_retry',
+                  reciprocalReply: control == 'reciprocal reply',
+                  callWakeHandle: control == 'wake grant' ? wakeGrant() : null,
+                ),
+                fromDurableReplay: control != 'live',
+              )
+              .timeout(deadline);
+
+          expect(result, HandleMessageResult.alreadyContact);
+          expect(replies, isEmpty);
+          expect(bridge.confirmRequests, isEmpty);
+        });
+      }
+    });
 
     // TC-03: live deferred contact_request confirms ok:true after commit.
     test(
