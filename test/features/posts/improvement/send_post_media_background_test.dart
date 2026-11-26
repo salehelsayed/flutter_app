@@ -262,6 +262,65 @@ void main() {
   );
 
   test(
+    'accepted mixed Thought retains both upload sources after temporary media is cleared',
+    () async {
+      const deadline = Duration(seconds: 3);
+      final root = await Directory.systemTemp
+          .createTemp('mixed-thought-source-')
+          .timeout(deadline);
+      addTearDown(() => root.delete(recursive: true).timeout(deadline));
+      final cache = await Directory('${root.path}/cache')
+          .create()
+          .timeout(deadline);
+      final photo = await File('${cache.path}/photo.jpg')
+          .writeAsString('photo')
+          .timeout(deadline);
+      final voice = await File('${cache.path}/voice.m4a')
+          .writeAsString('voice')
+          .timeout(deadline);
+      final files = TempPostMediaFileManager('${root.path}/documents');
+
+      final (result, created) = await createLocalPost(
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: '',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: [
+          PostMediaDraft(localFilePath: photo.path, mime: 'image/jpeg'),
+          PostMediaDraft(
+            localFilePath: voice.path,
+            mime: 'audio/mp4',
+            durationMs: 1800,
+            waveform: const [.25, .5],
+            caption: 'Voice caption',
+          ),
+        ],
+        mediaFileManager: files,
+      ).timeout(deadline);
+
+      expect(result, SendPostResult.success);
+      expect(created!.post.mediaKind, 'image_voice');
+      await cache.delete(recursive: true).timeout(deadline);
+      final recovery = await posts
+          .loadPostMediaUploadRecoveryItems(created.post.id)
+          .timeout(deadline);
+      expect(recovery.map((item) => item.kind), ['image', 'voice']);
+      expect(recovery.last.durationMs, 1800);
+      expect(recovery.last.waveform, [.25, .5]);
+      expect(recovery.last.caption, 'Voice caption');
+      final sourceContents = [
+        for (final item in recovery)
+          await File(
+            await files.resolveStoredPath(item.localFilePath).timeout(deadline),
+          ).readAsString().timeout(deadline),
+      ];
+      expect(sourceContents, ['photo', 'voice']);
+    },
+  );
+
+  test(
     'live photo retries after one upload failure and publishes the same thought once',
     () async {
       final tempDir = await Directory.systemTemp.createTemp('thought-retry-');

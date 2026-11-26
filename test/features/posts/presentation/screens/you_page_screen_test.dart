@@ -711,6 +711,57 @@ void main() {
     },
   );
 
+  testWidgets('You echoes both attachments while a mixed Thought uploads', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    final original = JustAudioPlatform.instance;
+    JustAudioPlatform.instance = FakeJustAudioPlatform();
+    addTearDown(() => JustAudioPlatform.instance = original);
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+    final draft = _post().copyWith(
+      text: '',
+      mediaKind: 'image_voice',
+      deliveryStatus: 'sending',
+    );
+    const photoPath = 'post_media/post-1/draft_0.png';
+    const voicePath = 'post_media/post-1/draft_1.m4a';
+    const caption = 'Listen while you look';
+    await posts.savePost(draft).timeout(deadline);
+    await posts.replacePostMediaUploadRecoveryItems('post-1', [
+      _localPhoto(photoPath),
+      PostMediaUploadRecoveryItem(
+        postId: 'post-1',
+        position: 1,
+        localFilePath: voicePath,
+        mime: 'audio/mp4',
+        kind: 'voice',
+        durationMs: 3200,
+        waveform: const [.3, .7],
+        caption: caption,
+        createdAt: draft.createdAt,
+      ),
+    ]).timeout(deadline);
+    expect(
+      await posts.loadPostMediaAttachments('post-1').timeout(deadline),
+      isEmpty,
+    );
+
+    await pumpPage(tester, () => _loadStoredThought(posts)).timeout(deadline);
+
+    final thumbnail = find.byType(MediaThumbnailImage);
+    expect(tester.widget<MediaThumbnailImage>(thumbnail).mediaPath, photoPath);
+    expect(find.text(caption), findsOneWidget);
+    final voice = tester.widget<AudioPlayerWidget>(
+      find.byType(AudioPlayerWidget),
+    );
+    expect(voice.attachment.localPath, voicePath);
+    expect(voice.attachment.mediaType, 'audio');
+    expect(voice.attachment.durationMs, 3200);
+    expect(voice.attachment.waveform, [.3, .7]);
+  });
+
   testWidgets('completed photo metadata takes precedence over a local source', (
     tester,
   ) async {

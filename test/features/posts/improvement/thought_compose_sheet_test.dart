@@ -675,6 +675,60 @@ void main() {
     expect(shownPaths(tester), ['/tmp/clip.mp4']);
   });
 
+  for (final photoWithVoice in [false, true]) {
+    testWidgets('recording controls stay reachable after picking a photo '
+        '(photoWithVoice: $photoWithVoice)', (tester) async {
+      const deadline = Duration(seconds: 3);
+      tester.view.physicalSize = const Size(390, 580) * 3;
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final recorder = FakeAudioRecorderService()
+        ..fakeOutputPath = '/tmp/bl95-viewport.m4a'
+        ..fakeDurationMs = 3000;
+      addTearDown(recorder.dispose);
+      final photo = PostMediaDraft(
+        localFilePath: realPhoto(),
+        mime: 'image/jpeg',
+      );
+      await tester
+          .pumpWidget(
+            scene(
+              photoWithVoice: photoWithVoice,
+              recorder: recorder,
+              pick: () async => (drafts: [photo], leftOut: false),
+              submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+            ),
+          )
+          .timeout(deadline);
+      await tester.tap(find.byTooltip('Media')).timeout(deadline);
+      await settle(tester);
+      expect(shownPaths(tester), [photo.localFilePath]);
+
+      await tester.tap(find.byTooltip('Voice')).timeout(deadline);
+      await settle(tester);
+      expect(recorder.isRecording, isTrue);
+      expect(
+        find.byType(ThoughtPhotoDraftPreview),
+        photoWithVoice ? findsOneWidget : findsNothing,
+      );
+      final card = find.byKey(const ValueKey('thought-voice-recording'));
+      expect(card, findsOneWidget);
+      final stop = find.byTooltip('Stop');
+      final pause = find.byTooltip('Pause');
+      final cancel = find.byKey(
+        const ValueKey('thought-voice-recording-cancel'),
+      );
+      expect(stop.hitTestable(), findsOneWidget);
+      expect(pause.hitTestable(), findsOneWidget);
+      expect(cancel.hitTestable(), findsOneWidget);
+      await tester.tap(stop).timeout(deadline);
+      await settle(tester);
+      expect(recorder.isRecording, isFalse);
+      expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
+      await settlePlayer(tester);
+    });
+  }
+
   testWidgets('BL95 a voice note recorded onto a photo keeps both', (
     tester,
   ) async {

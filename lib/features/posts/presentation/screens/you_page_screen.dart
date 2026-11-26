@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -709,8 +710,34 @@ class _ThoughtCard extends StatelessWidget {
           if (source.kind == 'image') source,
     ]..sort((a, b) => a.position.compareTo(b.position));
     final voice = [
-      for (final m in post.media)
-        if (m.kind == 'voice') m,
+      for (final attachment in post.media)
+        if (attachment.kind == 'voice')
+          (
+            id: attachment.mediaId,
+            caption: attachment.caption,
+            audio: attachment.toSharedMediaAttachment(),
+          ),
+      if (!post.isIncoming &&
+          post.media.isEmpty &&
+          post.mediaKind == 'image_voice')
+        for (final source in post.localMediaSources)
+          if (source.kind == 'voice')
+            (
+              id: 'draft-${source.position}',
+              caption: source.caption,
+              audio: MediaAttachment(
+                id: '${post.id}-draft-${source.position}',
+                messageId: post.id,
+                mime: source.mime,
+                size: 0,
+                mediaType: 'audio',
+                durationMs: source.durationMs,
+                waveform: source.waveform,
+                localPath: source.localFilePath,
+                downloadStatus: 'done',
+                createdAt: source.createdAt,
+              ),
+            ),
     ];
     final reacted = {
       for (final group in thought.reactions)
@@ -799,13 +826,13 @@ class _ThoughtCard extends StatelessWidget {
                     ],
                   ),
                 ],
-                for (final attachment in voice) ...[
+                for (final note in voice) ...[
                   const SizedBox(height: 8),
-                  if (attachment.caption case final caption?)
+                  if (note.caption case final caption?)
                     ThoughtVoiceCaption(caption, color: p.muted),
                   AudioPlayerWidget(
-                    key: ValueKey('you-voice-${attachment.mediaId}'),
-                    attachment: attachment.toSharedMediaAttachment(),
+                    key: ValueKey('you-voice-${note.id}'),
+                    attachment: note.audio,
                   ),
                 ],
               ],

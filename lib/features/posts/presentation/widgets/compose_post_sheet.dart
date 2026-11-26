@@ -1184,6 +1184,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ],
           ),
         ],
+        if (thought && _isRecording) ...[
+          const SizedBox(height: 12),
+          ThoughtRecordingCard(
+            elapsed: _recordingDuration,
+            amplitudes: _recordingAmplitudes,
+            paused: _recordingPaused,
+          ),
+          if (widget.transcribeVoice != null) ...[
+            const SizedBox(height: 10),
+            ThoughtSendAsTextButton(onPressed: () => unawaited(_sendAsText())),
+          ],
+        ],
         if (widget.thoughtsOnly &&
             _photoDrafts.isNotEmpty &&
             _mediaDrafts.every(
@@ -1219,23 +1231,6 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               ),
             ),
           ),
-        ],
-        if (thought && _isRecording) ...[
-          const SizedBox(height: 12),
-          ThoughtRecordingCard(
-            elapsed: _recordingDuration,
-            amplitudes: _recordingAmplitudes,
-            paused: _recordingPaused,
-            onPauseToggle: widget.audioRecorderService is PausableAudioRecorder
-                ? () => unawaited(_togglePause())
-                : null,
-            onCancel: () => unawaited(_cancelVoiceRecording()),
-            onStop: () => unawaited(_stopVoiceRecording()),
-          ),
-          if (widget.transcribeVoice != null) ...[
-            const SizedBox(height: 10),
-            ThoughtSendAsTextButton(onPressed: () => unawaited(_sendAsText())),
-          ],
         ],
         if (thought && _transcribing) ...[
           const SizedBox(height: 12),
@@ -1529,6 +1524,21 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                ),
+              if (_isRecording)
+                TextFieldTapRegion(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                    child: ThoughtRecordingControls(
+                      paused: _recordingPaused,
+                      onPauseToggle:
+                          widget.audioRecorderService is PausableAudioRecorder
+                          ? () => unawaited(_togglePause())
+                          : null,
+                      onCancel: () => unawaited(_cancelVoiceRecording()),
+                      onStop: () => unawaited(_stopVoiceRecording()),
                     ),
                   ),
                 ),
