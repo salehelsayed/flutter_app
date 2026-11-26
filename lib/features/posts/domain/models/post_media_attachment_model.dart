@@ -5,7 +5,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 
 /// Sharing photos with a voice note in one thought stays off until enough
 /// receivers can show it; older builds drop such a thought.
-const bool kThoughtPhotoWithVoice = false;
+const bool kThoughtPhotoWithVoice = true;
 
 class PostMediaAttachmentModel {
   final String mediaId;
