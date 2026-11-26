@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -801,6 +802,53 @@ void main() {
       expect(size.height, greaterThanOrEqualTo(44));
       semantics.dispose();
     }, timeout: const Timeout(Duration(seconds: 10)));
+
+    testWidgets('speed label keeps the multiplier after the number in Arabic', (
+      tester,
+    ) async {
+      const bound = Duration(seconds: 3);
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await tester
+          .pumpWidget(
+            buildApp(
+              baseAttachment,
+              locale: const Locale('ar'),
+              speedStore: VoicePlaybackSpeedStore(),
+            ),
+          )
+          .timeout(bound);
+      await tester.pump().timeout(bound);
+      await tester.tap(find.text('1×')).timeout(bound);
+      await tester.pump().timeout(bound);
+
+      const speed = '1.5';
+      const caption = '$speed×';
+      final label = find.text(caption);
+      expect(
+        tester.getCenter(find.byIcon(Icons.play_arrow_rounded)).dx,
+        greaterThan(tester.getCenter(label).dx),
+        reason: 'the voice player controls still lay out right to left',
+      );
+
+      final paragraph = tester.renderObject<RenderParagraph>(label);
+      final number = paragraph
+          .getBoxesForSelection(
+            TextSelection(baseOffset: 0, extentOffset: speed.length),
+          )
+          .single;
+      final multiplier = paragraph
+          .getBoxesForSelection(
+            TextSelection(
+              baseOffset: speed.length,
+              extentOffset: caption.length,
+            ),
+          )
+          .single;
+      expect(
+        number.toRect().center.dx,
+        lessThan(multiplier.toRect().center.dx),
+      );
+    });
 
     testWidgets(
       'publishes playing for subsecond voice on initial and reopened rows',
