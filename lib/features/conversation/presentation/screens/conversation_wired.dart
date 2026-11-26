@@ -2568,8 +2568,8 @@ class _ConversationWiredState extends State<ConversationWired>
     setState(() => _isLoadingMore = true);
 
     try {
-      final revision = _olderPageRevision;
       while (_hasMoreOlderMessages) {
+        final revision = _olderPageRevision;
         final anchor = _olderPageAnchor;
         final olderMessages = await loadConversationPage(
           messageRepo: widget.messageRepo,
@@ -2580,7 +2580,10 @@ class _ConversationWiredState extends State<ConversationWired>
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
           mediaFileManager: widget.mediaFileManager,
         );
-        if (!mounted || revision != _olderPageRevision) return;
+        if (!mounted) return;
+        // A live eviction can rebase the cursor while this page is loading.
+        // Retry from that cursor before releasing the oldest-edge load.
+        if (revision != _olderPageRevision) continue;
 
         final nextAnchor = olderMessages.firstOrNull;
         final advances =
