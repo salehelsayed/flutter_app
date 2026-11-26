@@ -88,6 +88,7 @@ class FullSchedulingTest(FullExecutionFixture):
 class LinuxHostInputTest(FullExecutionFixture):
     def set_up_input_check(self):
         self.task('fixture')
+        self.rules['full_commands'] = []
         self.rules['full_inventory'] = {
             'automatic': [{'family': 'python_unittest', 'patterns': ['*_test.py']}],
             'linux_host_inputs': [{
