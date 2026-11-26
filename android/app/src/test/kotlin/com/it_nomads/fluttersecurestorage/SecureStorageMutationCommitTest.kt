@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import com.it_nomads.fluttersecurestorage.ciphers.StorageCipher
+import com.it_nomads.fluttersecurestorage.ciphers.StorageCipherFactory
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import org.junit.Assert.assertEquals
@@ -18,6 +19,55 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class SecureStorageMutationCommitTest {
+    @Test
+    fun encryptedMigrationSubmitsMetadataCleanupOnlyWhenNeeded() {
+        val application = RuntimeEnvironment.getApplication()
+        val backing = application.getSharedPreferences("bl86b_migration", Context.MODE_PRIVATE)
+        val options = mapOf<String, Any>("encryptedSharedPreferences" to "true")
+        val factory = StorageCipherFactory(backing, options)
+        val seed = backing.edit().putString("sentinel", "preserved")
+        factory.storeCurrentAlgorithms(seed)
+        assertTrue(seed.commit())
+
+        var submissions = 0
+        val source = object : SharedPreferences by backing {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = backing.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun apply() {
+                        submissions++
+                        editor.apply()
+                    }
+
+                    override fun commit(): Boolean {
+                        submissions++
+                        return editor.commit()
+                    }
+                }
+            }
+        }
+        val storage = FlutterSecureStorage(application, options)
+        FlutterSecureStorage::class.java.getDeclaredField("storageCipherFactory").apply {
+            isAccessible = true
+            set(storage, factory)
+        }
+        // Exercise migration after backend selection without AndroidKeystore.
+        val migrate = FlutterSecureStorage::class.java.getDeclaredMethod(
+            "checkAndMigrateToEncrypted",
+            SharedPreferences::class.java,
+            SharedPreferences::class.java,
+        ).apply { isAccessible = true }
+
+        migrate.invoke(storage, source, source)
+        assertEquals("Stored algorithm metadata is removed once", 1, submissions)
+        assertEquals(mapOf("sentinel" to "preserved"), backing.all)
+
+        repeat(2) { migrate.invoke(storage, source, source) }
+
+        assertEquals("Settled storage submits no preference editor", 1, submissions)
+        assertEquals(mapOf("sentinel" to "preserved"), backing.all)
+    }
+
     @Test
     fun failedDeleteCommitReportsErrorWithoutResettingStorage() {
         val application = RuntimeEnvironment.getApplication()
