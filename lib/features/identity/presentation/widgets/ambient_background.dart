@@ -47,6 +47,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   /// Motion policy for the ambient artwork.
   bool _motionDisabled = false;
   bool _appResumed = true;
+  bool _settled = false;
 
   @override
   void initState() {
@@ -57,7 +58,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
-    );
+    )..addListener(_settleWhenIdle);
     // The repeat/stop decision is made in didChangeDependencies once MediaQuery
     // (disableAnimations) is available.
   }
@@ -102,7 +103,8 @@ class _AmbientBackgroundState extends State<AmbientBackground>
         (mediaQuery?.accessibleNavigation ?? false);
 
     final animate = _shouldAnimate && !_temporarilyPaused;
-    if (animate && !_controller.isAnimating) {
+    if (!animate) _settled = false;
+    if (animate && !_settled && !_controller.isAnimating) {
       _controller.repeat();
     } else if (!animate && _controller.isAnimating) {
       _controller.stop();
@@ -111,6 +113,21 @@ class _AmbientBackgroundState extends State<AmbientBackground>
       // Render the static final glow frame instead of a frozen mid-loop frame.
       _controller.value = 0;
     }
+  }
+
+  void _wake() {
+    if (!_shouldAnimate || _temporarilyPaused) return;
+    _settled = false;
+    _controller.repeat();
+  }
+
+  /// The glow holds its frame once [backgroundMotionWindow] passes without a
+  /// touch, so an idle screen draws nothing.
+  void _settleWhenIdle() {
+    final elapsed = _controller.lastElapsedDuration ?? Duration.zero;
+    if (elapsed < backgroundMotionWindow) return;
+    _settled = true;
+    _controller.stop();
   }
 
   @override
@@ -160,7 +177,11 @@ class _AmbientBackgroundState extends State<AmbientBackground>
         ),
         child: MediaQuery(
           data: originalMediaQuery.copyWith(disableAnimations: _motionDisabled),
-          child: themedBackground,
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _wake(),
+            child: themedBackground,
+          ),
         ),
       ),
     );

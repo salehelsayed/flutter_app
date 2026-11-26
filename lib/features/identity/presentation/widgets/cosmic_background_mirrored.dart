@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'cosmic_background.dart' show backgroundMotionWindow;
+
 /// Mirrored cosmic shared app background with a static reduced-motion mode.
 class CosmicBackgroundMirrored extends StatefulWidget {
   final Widget child;
@@ -31,6 +33,7 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
   late List<_MirroredStar> _stars;
   final Stopwatch _clock = Stopwatch();
   bool _motionDisabled = false;
+  bool _settled = false;
 
   @override
   void initState() {
@@ -38,7 +41,7 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
     _controller = AnimationController(
       vsync: this,
       duration: widget.driftPeriod,
-    );
+    )..addListener(_settleWhenIdle);
     _stars = _generateStars();
   }
 
@@ -99,20 +102,36 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
     if (widget.paused) {
       _clock.stop();
       _controller.stop();
+      _settled = false;
       return;
     }
 
-    if (!_clock.isRunning) {
-      _clock.start();
-    }
-    if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
+    if (!_settled && !_controller.isAnimating) _wake();
+  }
+
+  /// Motion runs for [backgroundMotionWindow] after the background appears or
+  /// is touched, then holds its frame so an idle screen draws nothing.
+  void _wake() {
+    if (_motionDisabled || widget.paused) return;
+    _settled = false;
+    if (!_clock.isRunning) _clock.start();
+    _controller.repeat();
+  }
+
+  void _settleWhenIdle() {
+    final elapsed = _controller.lastElapsedDuration ?? Duration.zero;
+    if (elapsed < backgroundMotionWindow) return;
+    _settled = true;
+    _clock.stop();
+    _controller.stop();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _wake(),
+      child: DecoratedBox(
       key: const ValueKey('cosmic-background-mirrored-root'),
       decoration: const BoxDecoration(
         gradient: RadialGradient(
@@ -141,6 +160,7 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
           ),
           RepaintBoundary(child: widget.child),
         ],
+      ),
       ),
     );
   }

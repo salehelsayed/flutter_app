@@ -3,6 +3,9 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+/// How long a background keeps moving after it appears or is touched.
+const backgroundMotionWindow = Duration(seconds: 6);
+
 /// Cosmic shared app background with a static reduced-motion mode.
 class CosmicBackground extends StatefulWidget {
   final Widget child;
@@ -30,6 +33,7 @@ class _CosmicBackgroundState extends State<CosmicBackground>
   late List<_Star> _stars;
   final Stopwatch _clock = Stopwatch();
   bool _motionDisabled = false;
+  bool _settled = false;
 
   @override
   void initState() {
@@ -37,7 +41,7 @@ class _CosmicBackgroundState extends State<CosmicBackground>
     _controller = AnimationController(
       vsync: this,
       duration: widget.driftPeriod,
-    );
+    )..addListener(_settleWhenIdle);
     _stars = _generateStars();
   }
 
@@ -98,20 +102,36 @@ class _CosmicBackgroundState extends State<CosmicBackground>
     if (widget.paused) {
       _clock.stop();
       _controller.stop();
+      _settled = false;
       return;
     }
 
-    if (!_clock.isRunning) {
-      _clock.start();
-    }
-    if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
+    if (!_settled && !_controller.isAnimating) _wake();
+  }
+
+  /// Motion runs for [backgroundMotionWindow] after the background appears or
+  /// is touched, then holds its frame so an idle screen draws nothing.
+  void _wake() {
+    if (_motionDisabled || widget.paused) return;
+    _settled = false;
+    if (!_clock.isRunning) _clock.start();
+    _controller.repeat();
+  }
+
+  void _settleWhenIdle() {
+    final elapsed = _controller.lastElapsedDuration ?? Duration.zero;
+    if (elapsed < backgroundMotionWindow) return;
+    _settled = true;
+    _clock.stop();
+    _controller.stop();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _wake(),
+      child: DecoratedBox(
       key: const ValueKey('cosmic-background-root'),
       decoration: const BoxDecoration(
         gradient: RadialGradient(
@@ -140,6 +160,7 @@ class _CosmicBackgroundState extends State<CosmicBackground>
           ),
           RepaintBoundary(child: widget.child),
         ],
+      ),
       ),
     );
   }
