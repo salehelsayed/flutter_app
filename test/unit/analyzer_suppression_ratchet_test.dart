@@ -894,6 +894,7 @@ void _testOnlySuppression() {}
       expect(result.packageRoots, <String>[
         '',
         'packages/background_push_crypto',
+        'third_party/background_downloader',
         'third_party/bonsoir_darwin',
         'third_party/camera_avfoundation',
         'third_party/sqflite_sqlcipher',
