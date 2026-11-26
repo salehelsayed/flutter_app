@@ -943,6 +943,10 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             checks._LAUNCH_CONTEXT.__dict__.clear()
 
     def test_real_unittest_process_reports_automated_pass_but_missing_manual_blocks_release(self):
+        path = 'flutter_native_asset_lock_test.py'
+        self.git('mv', 'fixture_test.py', path)
+        self.rules['checks']['fast']['paths'] = [path]
+        self.rules['areas'][0]['patterns'].append(path)
         # Only a Python child in a temporary repository runs here. It must not
         # contend with an actual Flutter/native build in another check.
         with mock.patch.object(checks.device_preflight, 'device_leases',
