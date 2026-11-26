@@ -968,6 +968,63 @@ void main() {
   );
 
   test(
+    'BL96 a busy reject held past the invite deadline is not sent',
+    () async {
+      const step = Duration(seconds: 5);
+      var nowMs = 2_030_000;
+      final (fixture, _) = await _connectedGraphVideo(
+        clockMs: () => nowMs,
+      ).timeout(step);
+      final held = Completer<void>();
+      final entered = Completer<void>();
+      fixture.bridge.responseHandlers['message.encrypt'] = (request) async {
+        final plaintext =
+            jsonDecode((request['payload'] as Map)['plaintext'] as String)
+                as Map<String, dynamic>;
+        if (plaintext['event'] == 'reject' &&
+            plaintext['call_id'] == _callB.value) {
+          if (!entered.isCompleted) entered.complete();
+          await held.future;
+        }
+        fixture.bridge.responseHandlers.remove('message.encrypt');
+        return jsonDecode(await fixture.bridge.send(jsonEncode(request)))
+            as Map<String, Object?>;
+      };
+      addTearDown(() {
+        if (!held.isCompleted) held.complete();
+      });
+
+      await _deliverGraphVideoInvite(
+        fixture,
+        callId: _callB,
+        messageId: '00000000-0000-4000-8000-000000000962',
+        callHandle: '96969696-9696-4969-8969-969696969697',
+        awaitRinging: false,
+        expiresAtMs: 2_035_000,
+      ).timeout(step);
+      await entered.future.timeout(step);
+      final sentBefore = fixture.p2p.sentMessages.length;
+      final commandsBefore = fixture.bridge.commands.length;
+      nowMs = 2_036_000;
+      held.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final later = fixture.bridge.commands.sublist(commandsBefore);
+      expect(
+        fixture.p2p.sentMessages.length,
+        sentBefore,
+        reason: 'no busy reject after the invite deadline: $later',
+      );
+      expect(
+        later.where((command) => command.contains('mailbox')),
+        isEmpty,
+        reason: 'no busy reject stored after the invite deadline: $later',
+      );
+      expect(fixture.graphs.single.coordinator.activeSession!.callId, _callA);
+    },
+  );
+
+  test(
     'PiP graph supported continuation keeps existing camera authority',
     () async {
       final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
@@ -11405,6 +11462,7 @@ Future<void> _deliverGraphVideoInvite(
   CallId? callId,
   bool requireForegroundProjection = true,
   bool awaitRinging = true,
+  int expiresAtMs = 2_040_000,
   String messageId = '00000000-0000-4000-8000-000000000023',
   String callHandle = '33333333-3333-4333-8333-333333333333',
 }) async {
@@ -11424,7 +11482,7 @@ Future<void> _deliverGraphVideoInvite(
     'sender_sequence': 1,
     'ice_generation': 0,
     'created_at_ms': 2_000_000,
-    'expires_at_ms': 2_040_000,
+    'expires_at_ms': expiresAtMs,
     'payload': {
       'media': 'video',
       'camera': 'off',
