@@ -604,6 +604,73 @@ void main() {
       });
     }
 
+    testWidgets(
+      'sender voice plays after its path changes during native init',
+      (tester) async {
+        const bound = Duration(seconds: 3);
+        const frame = Duration(milliseconds: 1);
+        const committedPath = '/tmp/bl101-committed.m4a';
+        const committedReadyLabel = 'Committed voice ready';
+        final initial = availableAttachment(
+          id: 'sender-init-reload',
+          localPath: '/tmp/bl101-pending.m4a',
+          durationMs: 5000,
+        ).copyWith(ownerLane: MediaOwnerLane.direct);
+        final initResponse = Completer<void>();
+        fakePlatform.nextInitResponse = initResponse.future;
+
+        try {
+          await tester.pumpWidget(buildApp(initial)).timeout(bound);
+          await tester.pump().timeout(bound);
+          final mountedPlayer = tester.state(find.byType(AudioPlayerWidget));
+          expect(fakePlatform.activePlayerIds, hasLength(1));
+          expect(fakePlatform.loadedUris, isEmpty);
+
+          await tester
+              .pumpWidget(
+                buildApp(
+                  initial.copyWith(localPath: committedPath),
+                  renderedSemanticsLabel: committedReadyLabel,
+                ),
+              )
+              .timeout(bound);
+          await tester.pump().timeout(bound);
+          initResponse.complete();
+          final committedReady = find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                widget.properties.label == committedReadyLabel,
+          );
+          for (var i = 0; i < 8 && committedReady.evaluate().isEmpty; i++) {
+            await tester.pump(frame).timeout(bound);
+            await flushAsyncPlayerTasks(tester).timeout(bound);
+          }
+
+          expect(
+            tester.state(find.byType(AudioPlayerWidget)),
+            same(mountedPlayer),
+          );
+          expect(committedReady, findsOneWidget);
+          expect(
+            fakePlatform.loadedUris
+                .map((uri) => Uri.parse(uri).toFilePath())
+                .lastOrNull,
+            committedPath,
+          );
+          await tester.tap(find.byIcon(Icons.play_arrow_rounded)).timeout(bound);
+          for (var i = 0; i < 5 && fakePlatform.playCallCount == 0; i++) {
+            await flushAsyncPlayerTasks(tester).timeout(bound);
+          }
+          expect(fakePlatform.playCallCount, 1);
+          expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        } finally {
+          if (!initResponse.isCompleted) initResponse.complete();
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(bound);
+          await flushAsyncPlayerTasks(tester).timeout(bound);
+        }
+      },
+    );
+
     // Regression: a sender's own voice message got a relative stored path the
     // platform player could not open, and the load failure was swallowed, so
     // the play button silently did nothing with no trace in the logs.
@@ -1417,14 +1484,25 @@ void main() {
 
 class _TrackingFakeJustAudioPlatform extends FakeJustAudioPlatform {
   final Map<String, AudioPlayerPlatform> _activePlayers = {};
+  Future<void>? nextInitResponse;
   int disposePlayerCallCount = 0;
 
   Iterable<String> get activePlayerIds => _activePlayers.keys;
 
   @override
   Future<AudioPlayerPlatform> init(InitRequest request) async {
+    if (_activePlayers.containsKey(request.id)) {
+      throw PlatformException(
+        code: 'Platform player ${request.id} already exists',
+      );
+    }
+    final initResponse = nextInitResponse;
+    nextInitResponse = null;
     final player = await super.init(request);
     _activePlayers[request.id] = player;
+    if (initResponse != null) {
+      await initResponse.timeout(const Duration(seconds: 3));
+    }
     return player;
   }
 
