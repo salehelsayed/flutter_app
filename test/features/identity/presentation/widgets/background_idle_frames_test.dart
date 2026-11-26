@@ -60,6 +60,31 @@ void main() {
     });
   }
 
+  for (final preference in [
+    BackgroundPreference.defaultBackground,
+    BackgroundPreference.cosmic,
+    BackgroundPreference.aurora,
+  ]) {
+    testWidgets('BL98 ${preference.name} background moves again when motion '
+        'is turned back on after it settled', (tester) async {
+      await tester.pumpWidget(scene(preference));
+      await idle(tester, const Duration(seconds: 12));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      await tester.pumpWidget(scene(preference, reduceMotion: true));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      await tester.pumpWidget(scene(preference));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        tester.binding.hasScheduledFrame,
+        isTrue,
+        reason: 'turning motion back on wakes the background without a touch',
+      );
+    });
+  }
+
   testWidgets('BL98 reduce motion keeps the background still from the start', (
     tester,
   ) async {
