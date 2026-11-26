@@ -58,7 +58,7 @@ void main() {
     expect(find.text('say something, or just talk'), findsOneWidget);
   });
 
-  testWidgets('the mic records in the sheet, not on the toolbar', (
+  testWidgets('the sheet shows progress while the mic records', (
     tester,
   ) async {
     await open(tester);
@@ -113,7 +113,7 @@ void main() {
     await record(tester);
 
     await tester.tap(
-      find.descendant(of: card(), matching: find.text('Cancel')),
+      find.byKey(const ValueKey('thought-voice-recording-cancel')),
     );
     await tester.pumpAndSettle();
     expect(recorder.cancelCallCount, 1);

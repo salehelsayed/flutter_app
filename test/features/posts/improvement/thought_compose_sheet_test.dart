@@ -690,14 +690,16 @@ void main() {
         localFilePath: realPhoto(),
         mime: 'image/jpeg',
       );
-      await tester.pumpWidget(
-        scene(
-          photoWithVoice: photoWithVoice,
-          recorder: recorder,
-          pick: () async => (drafts: [photo], leftOut: false),
-          submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
-        ),
-      ).timeout(deadline);
+      await tester
+          .pumpWidget(
+            scene(
+              photoWithVoice: photoWithVoice,
+              recorder: recorder,
+              pick: () async => (drafts: [photo], leftOut: false),
+              submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+            ),
+          )
+          .timeout(deadline);
       await tester.tap(find.byTooltip('Media')).timeout(deadline);
       await settle(tester);
       expect(shownPaths(tester), [photo.localFilePath]);
@@ -713,7 +715,9 @@ void main() {
       expect(card, findsOneWidget);
       final stop = find.byTooltip('Stop');
       final pause = find.byTooltip('Pause');
-      final cancel = find.descendant(of: card, matching: find.text('Cancel'));
+      final cancel = find.byKey(
+        const ValueKey('thought-voice-recording-cancel'),
+      );
       expect(stop.hitTestable(), findsOneWidget);
       expect(pause.hitTestable(), findsOneWidget);
       expect(cancel.hitTestable(), findsOneWidget);
