@@ -26,6 +26,8 @@ const _flutterWidgetsPath = 'package:flutter/widgets.dart';
 const _updateCheckBackgroundPath =
     'lib/app/bootstrap/update_check_background_entrypoints.dart';
 const _backupExclusionPath = 'lib/core/storage/app_data_backup_exclusion.dart';
+const _contactInviteIntakePath =
+    'lib/features/qr_code/application/contact_invite_intake.dart';
 
 String _libraryPath(UriBasedDirective directive) {
   final uri = directive.uri.stringValue;
@@ -64,33 +66,20 @@ void main() {
     expect(body, isA<BlockFunctionBody>());
     final block = (body as BlockFunctionBody).block;
 
-    // Framework initialization, the background update-check host and the
-    // nonblocking backup exclusion remain outside the observation boundary,
-    // in that order. The one awaited wrapper contains only the original
-    // receipt preflight and production delegation, in that order.
+    expect(block.statements, hasLength(6));
     expect(
-      block.statements,
-      hasLength(4),
-      reason:
-          'main() must contain only framework initialization, the update-check '
-          'background host, nonblocking backup exclusion and the awaited '
-          'production diagnostics wrapper',
+      block.statements.take(5).map((statement) => statement.toSource()),
+      orderedEquals(const [
+        'WidgetsFlutterBinding.ensureInitialized();',
+        'final contactInvites = ContactInviteIntake();',
+        'unawaited(contactInvites.start());',
+        'installUpdateCheckBackgroundHost();',
+        'unawaited(excludeAppDataFromBackup());',
+      ]),
     );
-    expect(
-      block.statements[0].toSource(),
-      'WidgetsFlutterBinding.ensureInitialized();',
-    );
-    expect(
-      block.statements[1].toSource(),
-      'installUpdateCheckBackgroundHost();',
-    );
-    expect(
-      block.statements[2].toSource(),
-      'unawaited(excludeAppDataFromBackup());',
-    );
-    expect(block.statements[3], isA<ExpressionStatement>());
+    expect(block.statements[5], isA<ExpressionStatement>());
     final wrapperExpression =
-        (block.statements[3] as ExpressionStatement).expression;
+        (block.statements[5] as ExpressionStatement).expression;
     expect(wrapperExpression, isA<AwaitExpression>());
     final wrapperCall = (wrapperExpression as AwaitExpression).expression;
     expect(wrapperCall, isA<MethodInvocation>());
@@ -141,7 +130,7 @@ void main() {
     );
     expect(
       (arguments[0] as NamedExpression).expression.toSource(),
-      'ProductionApplicationBootstrap.new',
+      '() => ProductionApplicationBootstrap(contactInvites: contactInvites)',
     );
     expect(
       (arguments[1] as NamedExpression).expression.toSource(),
@@ -205,6 +194,7 @@ void main() {
         _debugE2eCompositionRootPath,
         _flutterWidgetsPath,
         _updateCheckBackgroundPath,
+        _contactInviteIntakePath,
       }),
       reason:
           'main.dart imports only the stable app runner and exact entrypoint owners',
@@ -215,8 +205,8 @@ void main() {
         .toSet();
     expect(exports, equals({_rootPath, _productionPath}));
 
+    expect(_occurrences(source, 'package:flutter_app/features/'), 1);
     for (final forbidden in const <String>[
-      "package:flutter_app/features/",
       'Firebase.initializeApp',
       'openEncryptedDatabase(',
       'P2PServiceImpl(',
