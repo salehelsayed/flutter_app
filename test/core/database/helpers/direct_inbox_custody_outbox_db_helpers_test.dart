@@ -78,6 +78,39 @@ void main() {
 
   group('authored direct text intent', () {
     test(
+      'history page cursors preserve SQLite ID order at a tied timestamp',
+      () async {
+        const deadline = Duration(seconds: 3);
+        const oldestId = 'history-z';
+        const bmpId = 'history-\uE000';
+        const supplementaryId = 'history-\u{10000}';
+        await db
+            .insert('contacts', _fanoutContactRow(peerId: _peer))
+            .timeout(deadline);
+        for (final id in [oldestId, bmpId, supplementaryId]) {
+          await dbInsertMessage(
+            db,
+            _message(id, envelope: _envelope(id, 'cipher')).toMap(),
+          ).timeout(deadline);
+        }
+
+        final newest = await repository
+            .getMessagesPage(_peer, limit: 2)
+            .timeout(deadline);
+        expect(newest.map((message) => message.id), [bmpId, supplementaryId]);
+        final oldest = await repository
+            .getMessagesPage(
+              _peer,
+              limit: 2,
+              beforeTimestamp: newest.first.timestamp,
+              beforeMessageId: newest.first.id,
+            )
+            .timeout(deadline);
+        expect(oldest.map((message) => message.id), [oldestId]);
+      },
+    );
+
+    test(
       'history pages keep pending intents within the stored cursor',
       () async {
         const deadline = Duration(seconds: 3);
