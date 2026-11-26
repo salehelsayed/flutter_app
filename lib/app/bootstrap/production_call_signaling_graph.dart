@@ -4242,6 +4242,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
               videoEnabled: true,
             )
           : null;
+      // BL-96: the busy reject for an incoming invite that arrived during
+      // another call. That invite never becomes the active call.
+      bool busyReplyCurrent(CallSignalV2 signal) {
+        final active = coordinator.activeSession;
+        return signal.event == CallSignalV2Type.reject &&
+            signal.payload['reason'] == 'busy' &&
+            active != null &&
+            active.callId != signal.callId &&
+            signalingContextStore.read(signal.callId)?.direction ==
+                CallDirection.incoming &&
+            clock() < signal.expiresAtMs;
+      }
+
       controlExecutor = CallControlEffectExecutor(
         videoEnabled: videoEnabled,
         contextStore: signalingContextStore,
@@ -4287,12 +4300,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
                     coordinator.activeSession?.callId == callId &&
                     coordinator.activeSession?.state == CallState.preparing,
                 canSend: (signal) =>
-                    coordinator.activeSession?.callId == signal.callId &&
+                    (coordinator.activeSession?.callId == signal.callId ||
+                        busyReplyCurrent(signal)) &&
                     signalingContextStore.read(signal.callId) != null &&
                     (diagnosticGraph?._shuttingDown != true ||
                         signal.event == CallSignalV2Type.terminate ||
                         signal.event == CallSignalV2Type.reject),
                 captureTerminalAuthority: (signal) {
+                  // A busy reply answers an incoming invite that never became
+                  // the active call; it carries its own authority until the
+                  // invite expires.
+                  if (busyReplyCurrent(signal)) {
+                    return () => busyReplyCurrent(signal);
+                  }
                   final terminal = coordinator.activeSession;
                   if (terminal == null ||
                       !terminal.isTerminal ||
