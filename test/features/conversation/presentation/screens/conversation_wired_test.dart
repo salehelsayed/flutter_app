@@ -20938,7 +20938,7 @@ void main() {
     testWidgets(
       'initial fifty and older page append without resetting the window',
       (tester) async {
-        tester.view.physicalSize = const Size(1080, 2160);
+        tester.view.physicalSize = const Size(900, 800);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
@@ -20977,9 +20977,11 @@ void main() {
         expect(messageRepo.getMessagesPageRequests, [(50, null)]);
         expect(find.textContaining('letter 59 of 233'), findsOneWidget);
 
-        // Scrolling toward the load edge of the reversed list appends ONE
-        // older page whose cursor is the current window's oldest timestamp.
-        await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+        final scroll = tester
+            .widget<ListView>(find.byKey(const ValueKey('messages')))
+            .controller!;
+        expect(scroll.position.maxScrollExtent, greaterThan(200));
+        scroll.jumpTo(scroll.position.maxScrollExtent);
         await tester.pump(const Duration(milliseconds: 400));
         await tester.pump(const Duration(milliseconds: 400));
 
@@ -20988,7 +20990,7 @@ void main() {
 
         // The loaded window was appended, not replaced: the live edge is
         // still present without any third page request (no window reset).
-        await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+        scroll.jumpTo(0.0);
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.textContaining('letter 59 of 233'), findsOneWidget);
         expect(messageRepo.getMessagesPageRequests, hasLength(2));

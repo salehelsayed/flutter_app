@@ -28,6 +28,7 @@ import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
@@ -947,6 +948,102 @@ void main() {
       expect(results[0]['id'], 'msg-1');
       expect(results[4]['id'], 'msg-5');
     });
+
+    test(
+      'BL-105 reaches every visible row across history page boundaries',
+      () async {
+        const pageSize = 50;
+        const deadline = Duration(seconds: 3);
+        const earliest = '2026-01-01T10:00:00Z';
+        final timestamps = [
+          for (var index = 0; index < 70; index++) earliest,
+          '2026-01-02T00:00:00+00:00',
+          for (var second = 1; second <= 249; second++)
+            DateTime.utc(2026, 1, 2, 0, 0, second).toIso8601String(),
+        ];
+        final ids = List.generate(
+          timestamps.length,
+          (index) => 'history-${index.toString().padLeft(3, '0')}',
+        );
+
+        await runMediaAttachmentsMigration(db).timeout(deadline);
+        final batch = db.batch();
+        for (var index = 0; index < ids.length; index++) {
+          batch.insert(
+            'messages',
+            makeMessageRow(
+              id: ids[index],
+              text: index == 0 ? '' : 'History row $index',
+              timestamp: timestamps[index],
+              createdAt: timestamps[index],
+              status: 'delivered',
+              isIncoming: 1,
+            ),
+          );
+        }
+        batch.insert(
+          'messages',
+          makeMessageRow(
+            id: 'hidden-at-boundary',
+            timestamp: earliest,
+            hiddenAt: earliest,
+          ),
+        );
+        batch.insert(
+          'messages',
+          makeMessageRow(
+            id: 'other-contact',
+            contactPeerId: 'peer-b',
+            timestamp: earliest,
+          ),
+        );
+        batch.insert('media_attachments', <String, Object?>{
+          'id': 'first-history-image',
+          'message_id': ids.first,
+          'mime': 'image/jpeg',
+          'size': 12,
+          'media_type': 'image',
+          'created_at': earliest,
+        });
+        await batch.commit(noResult: true).timeout(deadline);
+
+        final history = <Map<String, Object?>>[];
+        String? beforeTimestamp;
+        var reachedBeginning = false;
+        final maximumPages = (ids.length + pageSize - 1) ~/ pageSize + 1;
+        for (var pageIndex = 0; pageIndex < maximumPages; pageIndex++) {
+          final page = await dbLoadMessagesPage(
+            db,
+            'peer-a',
+            limit: pageSize,
+            beforeTimestamp: beforeTimestamp,
+          ).timeout(deadline);
+          if (page.isEmpty) {
+            reachedBeginning = true;
+            break;
+          }
+          history.insertAll(0, page);
+          beforeTimestamp = page.first['timestamp'] as String;
+        }
+
+        expect(reachedBeginning, isTrue);
+        expect(
+          history.length,
+          ids.length,
+          reason: 'A page boundary must not drop other rows at its timestamp.',
+        );
+        expect(history.map((row) => row['id']), orderedEquals(ids));
+        expect(history.map((row) => row['timestamp']), orderedEquals(timestamps));
+        final attachments = await db
+            .query(
+              'media_attachments',
+              where: 'message_id = ?',
+              whereArgs: [history.first['id']],
+            )
+            .timeout(deadline);
+        expect(attachments.single['id'], 'first-history-image');
+      },
+    );
 
     test('excludes hidden rows from the visible page', () async {
       await dbInsertMessage(
