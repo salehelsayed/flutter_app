@@ -132,7 +132,7 @@ func (p *httpAPNSVoIPProvider) observeResponse(ctx context.Context, request apns
 		candidate := *rec
 		candidate.APNSResponsesPrivate = append(append([]apnsVoIPResponseReceipt(nil), rec.APNSResponsesPrivate...), r)
 		raw, err := json.Marshal(&candidate)
-		if err != nil || s.budgetReasonLocked(r.TraceID, &candidate, len(raw), false) != "" {
+		if err != nil || s.budgetReasonLocked(r.TraceID, &candidate, len(raw), false, callDiagnosticPriorityBytes) != "" {
 			return
 		}
 		// Roll back to committed memory, not disk bytes from an unsettled write.

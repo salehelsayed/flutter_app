@@ -35,8 +35,8 @@ const callDiagnosticTraceBytes = 3 * (64 << 10)
 const callDiagnosticRecordBytes = 320 << 10
 const callDiagnosticDiscardIDLimit = 256
 
-// Ordinary observations leave this much room under the global ceiling for
-// call-end and first-media evidence.
+// Ordinary observations reserve this much globally, and private APNs receipts
+// reserve it per owner, for call-end and first-media evidence.
 const callDiagnosticPriorityBytes = 32 << 10
 
 type callDiagnosticConsent struct {
@@ -606,7 +606,7 @@ func (s *callDiagnosticStore) bindCommitted(actor, recipient, handle string, d *
 		candidate.HandleDigest = meta.handleDigest
 		s.metaMu.Unlock()
 		encoded, _ := json.Marshal(&candidate)
-		reason := s.budgetReasonLocked(d.TraceID, &candidate, len(encoded), false)
+		reason := s.budgetReasonLocked(d.TraceID, &candidate, len(encoded), false, 0)
 		if reason == "" {
 			var old []byte
 			if prior != nil {
@@ -949,7 +949,7 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	}
 	rec.UpdatedAtMs = s.now().UnixMilli()
 	encoded, _ := json.Marshal(rec)
-	reason := s.budgetReasonLocked(key, rec, len(encoded), priority)
+	reason := s.budgetReasonLocked(key, rec, len(encoded), priority, 0)
 	if reason == "" {
 		var old []byte
 		if prior != nil {
@@ -1308,7 +1308,7 @@ func (s *callDiagnosticStore) ownerBudget(priority bool) int {
 	return s.ownerQuota
 }
 
-func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRecord, size int, priority bool) string {
+func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRecord, size int, priority bool, ownerHeadroom int) string {
 	if size > callDiagnosticRecordBytes {
 		return "record_bytes"
 	}
@@ -1316,7 +1316,11 @@ func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRe
 	ownerBytes := s.ownerSizes[r.Owner] + s.ownerBindingReserves[r.Owner] + growth
 	// An existing binding can materialize previously reserved bytes without
 	// consuming more owner capacity, even after priority records are retained.
-	if ownerBytes > s.ownerBudget(priority || growth <= 0) {
+	ownerLimit := s.ownerBudget(priority || growth <= 0)
+	if growth > 0 {
+		ownerLimit -= ownerHeadroom
+	}
+	if ownerBytes > ownerLimit {
 		return "owner_bytes"
 	}
 	globalBytes := s.usedBytes + s.bindingReserved + growth
