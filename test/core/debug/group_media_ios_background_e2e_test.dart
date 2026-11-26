@@ -1677,7 +1677,9 @@ void main() {
       expect(
         RegExp(
           r'\bawait\s+runApplicationBootstrap\s*\(\s*'
-          r'bootstrapFactory:\s*ProductionApplicationBootstrap\.new\s*,',
+          r'bootstrapFactory\s*:\s*\(\s*\)\s*=>\s*'
+          r'ProductionApplicationBootstrap\s*\(\s*'
+          r'contactInvites\s*:\s*contactInvites\s*\)\s*,',
         ).allMatches(mainSource),
         hasLength(1),
         reason: 'the public entrypoint must delegate before composition starts',
