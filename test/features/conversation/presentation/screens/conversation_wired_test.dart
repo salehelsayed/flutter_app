@@ -20948,6 +20948,98 @@ void main() {
 
   // ── 233 sentinel: direct pagination window preservation ──────────────────
   group('233 direct pagination preservation', () {
+    testWidgets('an oldest-page read survives a live history window eviction', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const cap = 300;
+      tester.view.physicalSize = const Size(900, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final messageRepo = FakeMessageRepository();
+      final peer = makeContact().peerId;
+      ConversationMessage messageAt(int index) {
+        final timestamp = DateTime.utc(
+          2026,
+          2,
+          11,
+          10,
+          0,
+          index,
+        ).toIso8601String();
+        return ConversationMessage(
+          id: 'cap-$index',
+          contactPeerId: peer,
+          senderPeerId: peer,
+          text: 'Same height',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+        );
+      }
+
+      final seeded = [for (var i = 0; i <= cap; i++) messageAt(i)];
+      messageRepo.store.addEntries(
+        seeded.map((message) => MapEntry(message.id, message)),
+      );
+      final firstVisible = seeded[1];
+      final nextVisible = seeded[2];
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        initialMessages: seeded.sublist(1),
+        sendFn: _instantSuccessSendFn,
+      ).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+      final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      messageRepo.getMessagesPageGate = gate;
+      final scroll = tester
+          .widget<ListView>(find.byKey(const ValueKey('messages')))
+          .controller!;
+      ConversationScreen screen() =>
+          tester.widget(find.byType(ConversationScreen));
+
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await tester.pump().timeout(deadline);
+      expect(screen().isLoadingMore, isTrue);
+      final firstRequest = (50, firstVisible.timestamp, firstVisible.id);
+      expect(messageRepo.getMessagesPageRequests, [firstRequest]);
+
+      final incoming = messageAt(cap + 1);
+      await messageRepo.saveMessage(incoming).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      expect(screen().messages, hasLength(cap));
+      expect(screen().messages.first.id, nextVisible.id);
+      expect(screen().messages.last.id, incoming.id);
+      expect(messageRepo.getMessagesPageRequests, [firstRequest]);
+
+      gate.complete();
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      expect(messageRepo.getMessagesPageRequests, [
+        firstRequest,
+        (50, nextVisible.timestamp, nextVisible.id),
+      ]);
+      expect(screen().messages, hasLength(cap + 2));
+      expect(screen().messages.first.id, seeded.first.id);
+      expect(screen().messages.last.id, incoming.id);
+      expect(screen().isLoadingMore, isFalse);
+    });
+
     testWidgets(
       'initial fifty and older page append without resetting the window',
       (tester) async {
