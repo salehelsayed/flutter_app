@@ -7,16 +7,26 @@ var callDiagnosticEvents = prometheus.NewCounterVec(prometheus.CounterOpts{Name:
 
 func init() {
 	prometheus.MustRegister(callDiagnosticEvents, callDiagnosticStorageReady)
-	for _, outcome := range []string{"accepted", "rejected", "sink_unavailable", "queue_full", "quota_exceeded"} {
+	for _, outcome := range []string{"accepted", "rejected", "sink_unavailable", "queue_full", "quota_exceeded", "budget_exceeded"} {
 		callDiagnosticEvents.WithLabelValues(outcome).Add(0)
 	}
 }
+
+func callDiagnosticRefusalOutcome(reason string) string {
+	switch reason {
+	case "owner_bytes", "global_bytes", "record_bytes", "record_count":
+		return "budget_exceeded"
+	default:
+		return "sink_unavailable"
+	}
+}
+
 func (s *callDiagnosticStore) drop(outcome string) {
 	if s != nil {
 		s.dropped.Add(1)
 	}
 	switch outcome {
-	case "queue_full", "quota_exceeded":
+	case "queue_full", "quota_exceeded", "budget_exceeded":
 	default:
 		outcome = "sink_unavailable"
 	}

@@ -576,7 +576,11 @@ func (s *callDiagnosticStore) bindCommitted(actor, recipient, handle string, d *
 		}
 		prior := s.records[d.TraceID]
 		if !s.ensureLocked(actor, d.TraceID) {
-			diagnosticRefusal("call", "binding", s.admissionReasonLocked(actor, d.TraceID))
+			reason := s.admissionReasonLocked(actor, d.TraceID)
+			diagnosticRefusal("call", "binding", reason)
+			if outcome := callDiagnosticRefusalOutcome(reason); outcome == "budget_exceeded" {
+				s.drop(outcome)
+			}
 			return
 		}
 		r := s.records[d.TraceID]
@@ -610,7 +614,7 @@ func (s *callDiagnosticStore) bindCommitted(actor, recipient, handle string, d *
 				delete(s.records, d.TraceID)
 			}
 			diagnosticRefusal("call", "binding", reason)
-			s.drop("sink_unavailable")
+			s.drop(callDiagnosticRefusalOutcome(reason))
 			return
 		}
 		*r = candidate
@@ -754,20 +758,21 @@ func (s *callDiagnosticStore) runtimeRecordLocked(actor, runID, eventID string, 
 }
 
 func (s *callDiagnosticStore) appendEventResult(actor string, raw json.RawMessage, server bool, epochs ...int64) callDiagnosticAppendResult {
-	return s.appendEventContext(actor, raw, server, nil, epochs...)
+	result, _ := s.appendEventContext(actor, raw, server, nil, epochs...)
+	return result
 }
 
 // Queued server contexts carry private provenance separately from public JSON.
 // Validation and persistence share mu with clear/configure/expiry, so a privacy
 // transition cannot slip between checking the origin and publishing its bytes.
-func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessage, server bool, d *callDiagnosticContext, epochs ...int64) callDiagnosticAppendResult {
+func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessage, server bool, d *callDiagnosticContext, epochs ...int64) (callDiagnosticAppendResult, string) {
 	source := "upload"
 	if server {
 		source = "span"
 	}
-	refuse := func(reason string) callDiagnosticAppendResult {
+	refuse := func(reason string) (callDiagnosticAppendResult, string) {
 		diagnosticRefusal("call", source, reason)
-		return callDiagnosticAppendRetry
+		return callDiagnosticAppendRetry, reason
 	}
 	event, err := validateCallDiagnosticEvent(raw, server)
 	if err != nil {
@@ -836,10 +841,10 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 		_ = json.Unmarshal(e.Event, &fields)
 		if fields.EventID == id {
 			if bytesEqualJSON(e.Event, raw) {
-				return callDiagnosticAppendAccepted
+				return callDiagnosticAppendAccepted, ""
 			}
 			diagnosticRefusal("call", source, "conflict")
-			return callDiagnosticAppendConflict
+			return callDiagnosticAppendConflict, "conflict"
 		}
 	}
 	for _, e := range rec.Summaries {
@@ -849,15 +854,15 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 		_ = json.Unmarshal(e.Event, &fields)
 		if fields.EventID == id {
 			if bytesEqualJSON(e.Event, raw) {
-				return callDiagnosticAppendAccepted
+				return callDiagnosticAppendAccepted, ""
 			}
 			diagnosticRefusal("call", source, "conflict")
-			return callDiagnosticAppendConflict
+			return callDiagnosticAppendConflict, "conflict"
 		}
 	}
 	if diagnosticContains(rec.DiscardedEventIDs, id) {
 		diagnosticRefusal("call", source, "record_capacity")
-		return callDiagnosticAppendDiscarded
+		return callDiagnosticAppendDiscarded, "record_capacity"
 	}
 	copyRec := *rec
 	if rec.Events != nil {
@@ -908,7 +913,7 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 				if rec.DiscardLedgerSaturated {
 					*rec = copyRec
 					diagnosticRefusal("call", source, "record_capacity")
-					return callDiagnosticAppendDiscarded
+					return callDiagnosticAppendDiscarded, "record_capacity"
 				}
 				// Keep a lower bound rather than count unknown retry multiplicity.
 				rec.DiscardLedgerSaturated = true
@@ -959,9 +964,9 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	}
 	if discarded {
 		diagnosticRefusal("call", source, "record_capacity")
-		return callDiagnosticAppendDiscarded
+		return callDiagnosticAppendDiscarded, "record_capacity"
 	}
-	return callDiagnosticAppendAccepted
+	return callDiagnosticAppendAccepted, ""
 }
 func bytesEqualJSON(a, b []byte) bool {
 	var x, y any

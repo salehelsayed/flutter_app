@@ -158,7 +158,8 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 					continue
 				}
 			}
-			switch store.appendEventResult(actor, event, false, req.ConsentEpoch) {
+			result, refusal := store.appendEventContext(actor, event, false, nil, req.ConsentEpoch)
+			switch result {
 			case callDiagnosticAppendAccepted:
 				accepted = append(accepted, id.EventID)
 				callDiagnosticEvents.WithLabelValues("accepted").Inc()
@@ -175,7 +176,7 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 				callDiagnosticEvents.WithLabelValues("quota_exceeded").Inc()
 			default:
 				data["reason"] = "sink_unavailable"
-				callDiagnosticEvents.WithLabelValues("sink_unavailable").Inc()
+				callDiagnosticEvents.WithLabelValues(callDiagnosticRefusalOutcome(refusal)).Inc()
 			}
 
 		}
@@ -261,11 +262,12 @@ func (s *callDiagnosticSpan) emit(stage, action, outcome, reason string, values 
 	}
 	store, actor, d := s.store, s.actor, s.diagnostics
 	store.enqueueSource("span", func() {
-		switch store.appendEventContext(actor, raw, true, &d, d.consentEpoch) {
+		result, refusal := store.appendEventContext(actor, raw, true, &d, d.consentEpoch)
+		switch result {
 		case callDiagnosticAppendDiscarded:
 			store.drop("quota_exceeded")
 		case callDiagnosticAppendRetry, callDiagnosticAppendConflict:
-			store.drop("sink_unavailable")
+			store.drop(callDiagnosticRefusalOutcome(refusal))
 		}
 	})
 }
