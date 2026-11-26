@@ -8252,6 +8252,9 @@ class _ConversationWiredState extends State<ConversationWired>
     String messageId, {
     bool Function() stillWanted = _keepGoing,
   }) async {
+    // History pages can arrive before the list lays out their rows.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !stillWanted()) return;
     final indexOf = {
       for (var i = 0; i < _messages.length; i++) _messages[i].id: i,
     };
@@ -8282,7 +8285,7 @@ class _ConversationWiredState extends State<ConversationWired>
           );
       if (next == position.pixels) return;
       _scrollController.jumpTo(next);
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      await WidgetsBinding.instance.endOfFrame;
     }
   }
 
