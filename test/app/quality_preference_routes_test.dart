@@ -4,6 +4,7 @@ import 'package:flutter_app/features/groups/application/group_exit_intent_sink.d
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -761,6 +762,36 @@ class _QualityP2P extends FakeP2PService implements P2PServiceImpl {
   @override
   Future<PresenceSetResult> setPresence(String state, int ttlMs) async =>
       PresenceSetResult.published;
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  }) => super.sendMessageWithReply(peerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  }) => super.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+    Future<bool> Function()? authorizeDispatch,
+  }) => super.sendLocalMessage(
+    peerId,
+    message,
+    fromPeerId,
+    timeoutMs: timeoutMs,
+  );
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
