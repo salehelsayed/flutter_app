@@ -241,9 +241,13 @@ public class FlutterSecureStorage {
                     source.edit().remove(key).apply();
                 }
             }
-            final SharedPreferences.Editor sourceEditor = source.edit();
-            storageCipherFactory.removeCurrentAlgorithms(sourceEditor);
-            sourceEditor.apply();
+            // Even a no-op apply registers work for Android to drain at stop.
+            if (source.contains("FlutterSecureSAlgorithmKey")
+                    || source.contains("FlutterSecureSAlgorithmStorage")) {
+                final SharedPreferences.Editor sourceEditor = source.edit();
+                storageCipherFactory.removeCurrentAlgorithms(sourceEditor);
+                sourceEditor.apply();
+            }
         } catch (Exception e) {
             Log.e(TAG, "Data migration failed", e);
         }

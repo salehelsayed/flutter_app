@@ -1784,8 +1784,8 @@
         "android/app/src/test/kotlin/com/it_nomads/fluttersecurestorage/SecureStorageMutationCommitTest.kt",
         "android/patches/flutter_secure_storage/9.2.4/README.md"
       ],
-      "boundary": "A failed secure-storage delete commit reports a method-channel error with reset enabled and leaves unrelated storage intact.",
-      "limitations": "Android JVM test with a controlled editor failure. Android encrypted persistence and stop behavior under disk pressure require the device fixture.",
+      "boundary": "A failed secure-storage delete commit reports a method-channel error with reset enabled and preserves unrelated storage. Encrypted migration removes persisted algorithm metadata once and submits no further cleanup after the markers are gone.",
+      "limitations": "Android JVM checks use a controlled editor failure and exercise metadata cleanup after backend selection. Encrypted persistence and stop behavior under disk pressure require the device fixture.",
       "inspected": true
     },
     "android-hardware-availability": {
