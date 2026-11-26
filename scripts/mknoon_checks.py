@@ -7,6 +7,7 @@ copied into shareable reports; structured completion facts are allowlisted.
 from __future__ import annotations
 
 import argparse
+import ast
 import codecs
 from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -34,7 +35,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 RULES = Path('tool/testing/selection.json')
 SIMS = Path('tool/sims/critical_features.json')
-EXIT = {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
+EXIT = {'PASS': 0, 'N/A': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
 _LAUNCH_CONTEXT = threading.local()
 # The largest affected Flutter lanes print about 12-14 MiB of --machine output.
 CAPTURE_STREAM_BYTES = 64 * 1024 * 1024
@@ -1409,6 +1410,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                         raw_output_sha256=None, file_results=[])
                                 else:
                                     a = parse_execution(c['kind'], out, code, timeout, selected_paths, c.get('success_marker'))
+                                    record_linux_host_omissions(c, a, out)
                                 if flutter_context is not None:
                                     a.update(context_sha256=flutter_context, executed_paths=flutter_fresh, executed_command=command)
                                     combine_flutter_receipts(a, flutter_reused, flutter_fresh, command, c['selected_paths'])
@@ -1900,8 +1902,59 @@ def bind_linux_host_inputs(args, root, policy, selected):
         check = automatic.get(tuple(sorted(spec['paths'])))
         if check is None:
             raise InvalidPlan('Linux host input must bind one exact automatic selection: ' + ', '.join(spec['paths']))
-        if host_source_run and linux_host_input_missing(root, spec):
-            check['linux_host_input_unavailable'] = spec['reason']
+        if (('go_test' in spec and check['kind'] != 'go')
+                or ('python_skips' in spec and check['kind'] != 'python')):
+            raise InvalidPlan('Linux host input test identities do not match the selected runner')
+        if not host_source_run or not linux_host_input_missing(root, spec):
+            continue
+        reason = spec['reason']
+        if 'go_test' in spec:
+            test = spec['go_test']
+            skip = '^' + re.escape(test) + '$'
+            check['command'] = check['command'][:2] + ['-skip', skip] + check['command'][2:]
+            check['linux_host_omissions'] = {'reason': reason, 'go_test': test}
+        elif 'python_skips' in spec:
+            check['linux_host_omissions'] = {'reason': reason, 'python_skips': spec['python_skips']}
+        else:
+            check['linux_host_input_unavailable'] = reason
+
+
+def record_linux_host_omissions(check, attempt, output):
+    omission = check.get('linux_host_omissions')
+    if not omission:
+        return
+    if 'go_test' in omission:
+        accepted = [omission['go_test']]
+    else:
+        expected = omission['python_skips']
+        observed = set()
+        lines = output.splitlines()
+        identity = re.compile(r'^test_\w+ \(([\w.-]+)\)(.*)$')
+        for i, line in enumerate(lines):
+            match = identity.match(line)
+            if match is None or match[1] not in expected:
+                continue
+            result = match[2]
+            if not result and i + 1 < len(lines) and not identity.match(lines[i + 1]):
+                result = lines[i + 1]
+            _, separator, literal = result.partition(' ... skipped ')
+            if not separator:
+                continue
+            try:
+                reason = ast.literal_eval(literal)
+            except (SyntaxError, ValueError):
+                continue
+            if isinstance(reason, str) and reason.startswith(expected[match[1]]):
+                observed.add(match[1])
+        accepted = [test for test in expected if test in observed]
+        counts = attempt['counts']
+        if (attempt['checkpoint'] == 'incomplete_or_zero_test_execution' and attempt['completion_observed']
+                and counts['passed'] > 0 and counts['skipped'] == len(accepted) == len(expected)):
+            attempt.update(status='PASS', checkpoint='runner_completed')
+    if accepted:
+        attempt['not_applicable_cases'] = [
+            {'test': test, 'status': 'N/A', 'reason': omission['reason']} for test in accepted
+        ]
 
 
 def make_full_plan(args, root, rules, *, capture_toolchains=True):

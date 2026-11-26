@@ -665,7 +665,7 @@ def validate_linux_host_inputs(specs, files):
     errors = []
     seen = set()
     probes = {'environment', 'file', 'directory', 'git_object'}
-    allowed = probes | {'paths', 'reason', 'directory_environment'}
+    allowed = probes | {'paths', 'reason', 'directory_environment', 'go_test', 'python_skips'}
     for spec in specs:
         if not isinstance(spec, dict) or set(spec) - allowed or len(set(spec) & probes) != 1:
             errors.append('Invalid Linux host input probe')
@@ -694,6 +694,16 @@ def validate_linux_host_inputs(specs, files):
         if 'directory_environment' in spec:
             name = spec['directory_environment']
             valid = valid and probe == 'directory' and isinstance(name, str) and re.fullmatch(r'[A-Z_][A-Z0-9_]*', name)
+        if 'go_test' in spec:
+            name = spec['go_test']
+            valid = valid and 'python_skips' not in spec and isinstance(name, str) and re.fullmatch(r'Test[A-Za-z0-9_]+', name)
+        if 'python_skips' in spec:
+            skips = spec['python_skips']
+            valid = valid and isinstance(skips, dict) and bool(skips) and all(
+                isinstance(test, str) and re.fullmatch(r'[\w.-]+\.test_\w+', test)
+                and isinstance(reason, str) and reason.strip()
+                for test, reason in skips.items()
+            )
         if not valid:
             errors.append('Invalid Linux host input for ' + ', '.join(selection))
     return errors

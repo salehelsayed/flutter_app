@@ -120,6 +120,90 @@ class LinuxHostInputTest(FullExecutionFixture):
         self.assertEqual(row['status'], 'PASS')
         self.assertTrue((self.root / '.codex-test-logs/fixture.json').is_file())
 
+    def set_up_mixed_input_check(self):
+        self.set_up_input_check()
+        self.write('fixture_test.py', '''import unittest
+from pathlib import Path
+
+
+class Fixture(unittest.TestCase):
+    def test_portable(self):
+        Path('.codex-test-logs/mixed-fixture-ran').write_text('ran')
+
+    def test_requires_fixture(self):
+        """Checks the externally supplied fixture."""
+        fixture = Path('fixture-data.json')
+        if not fixture.is_file():
+            self.skipTest('fixture data is unavailable on this host')
+        self.assertEqual(fixture.read_text(), '{}')
+''')
+        spec = self.rules['full_inventory']['linux_host_inputs'][0]
+        spec['python_skips'] = {
+            'fixture_test.Fixture.test_requires_fixture': 'fixture data is unavailable',
+        }
+        return spec
+
+    def test_missing_fixture_preserves_runnable_python_cases(self):
+        spec = self.set_up_mixed_input_check()
+        with mock.patch.object(checks.sys, 'platform', 'linux'):
+            _, report = self.run_full([])
+        marker = self.root / '.codex-test-logs/mixed-fixture-ran'
+        self.assertTrue(marker.is_file(), 'The runnable case must execute when the external input is absent.')
+        self.assertEqual(marker.read_text(), 'ran')
+        row, = report['results']
+        self.assertEqual(row['status'], 'PASS')
+        attempt, = row['attempts']
+        self.assertEqual(attempt['counts'], dict(passed=1, failed=0, skipped=1))
+        self.assertEqual(attempt['not_applicable_cases'], [{
+            'test': 'fixture_test.Fixture.test_requires_fixture',
+            'status': 'N/A',
+            'reason': spec['reason'],
+        }])
+
+    def test_unrecognized_python_skip_still_blocks_the_row(self):
+        spec = self.set_up_mixed_input_check()
+        fixture = self.root / 'fixture_test.py'
+        self.write('fixture_test.py', fixture.read_text() + '''
+    def test_unexpected_skip(self):
+        self.skipTest('fixture data is unavailable on this host')
+''')
+        with mock.patch.object(checks.sys, 'platform', 'linux'):
+            for case in ('unknown identity', 'wrong reason'):
+                with self.subTest(case=case):
+                    if case == 'wrong reason':
+                        spec['python_skips']['fixture_test.Fixture.test_unexpected_skip'] = (
+                            'a different fixture is unavailable'
+                        )
+                    _, report = self.run_full([])
+                    row, = report['results']
+                    self.assertEqual(row['status'], 'BLOCKED')
+                    attempt, = row['attempts']
+                    self.assertEqual(attempt['counts'], dict(passed=1, failed=0, skipped=2))
+                    self.assertEqual([case['test'] for case in attempt['not_applicable_cases']], [
+                        'fixture_test.Fixture.test_requires_fixture',
+                    ])
+
+    def test_go_plan_excludes_only_the_named_case(self):
+        self.set_up_input_check()
+        self.write('relay/go.mod', 'module example.invalid/relay\n')
+        self.write('relay/fixture_test.go', 'package relay\n')
+        self.write('relay/portable_test.go', 'package relay\n')
+        self.rules['full_inventory'] = {
+            'automatic': [{'family': 'go', 'patterns': ['relay/*_test.go']}],
+            'linux_host_inputs': [{
+                'paths': ['relay/fixture_test.go', 'relay/portable_test.go'],
+                'git_object': '0' * 40 + ':relay/baseline.go',
+                'go_test': 'TestMissingFixture',
+                'reason': 'Historical object is unavailable.',
+            }],
+        }
+        with mock.patch.object(checks.sys, 'platform', 'linux'):
+            plan, _ = checks.make_full_plan(self.args(), self.root, self.rules, capture_toolchains=False)
+        check, = plan['selected']
+        self.assertNotIn('linux_host_input_unavailable', check)
+        self.assertEqual(check['command'][:4], ['go', 'test', '-skip', '^TestMissingFixture$'])
+        self.assertEqual(check['selected_paths'], ['relay/fixture_test.go', 'relay/portable_test.go'])
+
     def test_device_or_signed_full_plan_preserves_the_required_check(self):
         self.set_up_input_check()
         for options in ({'device_config': Path('devices.json')},

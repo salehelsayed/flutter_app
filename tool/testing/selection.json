@@ -10765,7 +10765,8 @@
           "go-relay-server/wake_outcome_process_integration_test.go"
         ],
         "git_object": "6bab4c485dd4d13887392915abaaaabf85ea4b21:go-relay-server/backend_redis.go",
-        "reason": "The tagged relay integration selection requires the pinned pre-custody Redis backend object."
+        "reason": "Redis ACK custody handoff requires the pinned pre-custody Redis backend object.",
+        "go_test": "TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace"
       },
       {
         "paths": [
@@ -10780,14 +10781,24 @@
         ],
         "directory": "/claude-home/.claude/projects/-workspace/memory",
         "directory_environment": "PROJECT_MEMORY_TEST_MEMORY_DIR",
-        "reason": "The full project-memory selection requires the live session-memory fixture."
+        "reason": "The live session-memory cases require the session-memory fixture.",
+        "python_skips": {
+          "project-memory.tests.test_project_memory.TestMemoryEvalAndRecall.test_eval_gate_covers_v2_scope": "session-memory directory absent on this machine (",
+          "project-memory.tests.test_project_memory.TestMemoryEvalAndRecall.test_recall_surfaces_memory_facts": "session-memory directory absent on this machine (",
+          "project-memory.tests.test_project_memory.TestMemoryPass.test_memory_pass_parses_real_dir": "session-memory directory absent on this machine (",
+          "project-memory.tests.test_project_memory.TestMemoryPass.test_memory_staleness_markers": "real-memory pins need the session-memory directory",
+          "project-memory.tests.test_project_memory.TestMemoryPass.test_memory_wiki_links_become_edges": "real-memory pins need the session-memory directory"
+        }
       },
       {
         "paths": [
           "project/tests/test_build_project_index.py"
         ],
         "file": "graphify-arch/graphify-out/graph.json",
-        "reason": "The full project-index selection requires the architecture graph for its live notification contract."
+        "reason": "The live notification contract requires the generated architecture graph.",
+        "python_skips": {
+          "project.tests.test_build_project_index.LiveNotificationContractTest.test_notification_prd_vertical_slice_reconciles_without_missing_artifacts": "repository Graphify data is unavailable"
+        }
       }
     ],
     "automatic": [

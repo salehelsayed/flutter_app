@@ -1695,15 +1695,16 @@ The static reliability classification listing does not start Dart or execute
 scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
 
 `full_inventory.linux_host_inputs` declares the inputs for exact automatically
-selected rows. A Linux source-only full run records a row as `N/A` with
-`linux_host_input_unavailable` when its input is absent. The plan and result
-retain the exact selection and its reason. The disposition applies to the full
-row listed in the manifest, including the bundled tagged relay selection.
-A provisioned input keeps normal execution. Full runs with device
-configuration or signed artifacts use the standard prerequisites, as do
-other platforms. The Build 134 ledger records the original missing Coturn
-fixture, historical Redis source object, Graphify graph, and live
-session-memory outcomes.
+selected rows. A Linux source-only full run records the input-dependent Coturn
+and architecture-tooling rows as `N/A` when their inputs are absent. The tagged
+relay row still runs its other tests if the historical Redis object is absent.
+The project-memory and project-index rows still run their portable tests.
+Their recorded unittest skips must match the declared case identities and
+reasons. The report gives each unavailable case its own `N/A` receipt and
+preserves the observed counts. Unexpected skips, failures, and incomplete
+execution retain their standard result. Provisioned inputs, configured device
+runs, signed-artifact runs, and other platforms use their standard prerequisites.
+The Build 134 ledger records the original missing-input outcomes.
 
 Go `./...` does not traverse a nested module. A root-module mapping previously
 claimed `activitycalendar/week_test.go` because `fnmatch` allowed its `*` to cross
