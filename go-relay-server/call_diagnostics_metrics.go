@@ -16,6 +16,8 @@ func callDiagnosticRefusalOutcome(reason string) string {
 	switch reason {
 	case "owner_bytes", "global_bytes", "record_bytes", "record_count":
 		return "budget_exceeded"
+	case "record_capacity":
+		return "quota_exceeded"
 	default:
 		return "sink_unavailable"
 	}

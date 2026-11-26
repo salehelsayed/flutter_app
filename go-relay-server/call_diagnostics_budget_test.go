@@ -96,7 +96,14 @@ func TestCallDiagnosticsBindingBudgetRefusalMetrics(t *testing.T) {
 				trace = uuid.NewString()
 			}
 			d := publicationPrepare(t, store, "owner", trace)
-			store.ownerQuota = store.ownerSizes[diagnosticPrivateKey("owner")]
+			owner := diagnosticPrivateKey("owner")
+			store.ownerQuota = store.ownerSizes[owner]
+			if name == "existing_trace" {
+				// Simulate retained usage above the combined cap. An existing
+				// binding can otherwise spend its already charged reservation.
+				store.ownerSizes[owner] += 1 << 20
+				store.usedBytes += 1 << 20
+			}
 			checkCallDiagnosticRefusalMetric(t, "binding", "owner_bytes", "budget_exceeded", func() {
 				store.bindCommitted("owner", "recipient", "handle", &d)
 				awaitCallDiagnosticBudgetJob(t, store)

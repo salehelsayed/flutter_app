@@ -129,9 +129,9 @@ func TestCallDiagnosticsOwnerHeadroomIncludesBindingReservations(t *testing.T) {
 	}
 
 	owner := s.records[trace].Owner
-	s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner] + callDiagnosticPriorityBytes
+	s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner]
 	ordinary := diagnosticTestEvent(trace, "flutter", "signaling", "snapshot")
-	if got := s.appendEventResult(actor, ordinary, false, 1); got != callDiagnosticAppendRetry {
+	if got := s.appendEventResult(actor, ordinary, false, 1); got != callDiagnosticAppendDiscarded {
 		t.Fatalf("ordinary observation crossed reserved owner headroom: append result %v", got)
 	}
 
@@ -488,7 +488,7 @@ func TestCallDiagnosticsLegacyRuntimeSaturationDoesNotTrapNewEvidence(t *testing
 		t.Fatal(err)
 	}
 	key := "runtime-" + diagnosticPrivateKey(actor, run)
-	if !s.ensureLocked(actor, key) {
+	if s.ensureLocked(actor, key, false) != "" {
 		t.Fatal("legacy setup")
 	}
 	record := s.records[key]
@@ -572,7 +572,7 @@ func TestCallDiagnosticsRuntimeRotationKeepsOwnerAndRecordLimits(t *testing.T) {
 	for partition := 0; ownerBytes < callDiagnosticOwnerBytes; partition++ {
 		group := callDiagnosticRuntimeGroup(diagnosticPrivateKey("full-owner"), run)
 		key := callDiagnosticRuntimePartitionKey(group, partition)
-		if !s.ensureLocked("full-owner", key) {
+		if s.ensureLocked("full-owner", key, false) != "" {
 			t.Fatal("owner fixture reached ceiling early")
 		}
 		record := s.records[key]
@@ -588,7 +588,7 @@ func TestCallDiagnosticsRuntimeRotationKeepsOwnerAndRecordLimits(t *testing.T) {
 	}
 	s.rebuildByteIndexesLocked() // Fixture above bypasses production persistence.
 	count := len(s.records)
-	if s.appendEventResult("full-owner", runtimeDiagnosticTestEvent(run, "ios", "publish", "failed"), false, 1) != callDiagnosticAppendRetry || len(s.records) != count {
+	if s.appendEventResult("full-owner", runtimeDiagnosticTestEvent(run, "ios", "publish", "failed"), false, 1) != callDiagnosticAppendDiscarded || len(s.records) != count {
 		t.Fatal("rotation bypassed hard owner quota or evicted retained evidence")
 	}
 	if !s.appendEvent("other-owner", raw, false, 1) {
@@ -611,7 +611,7 @@ func TestCallDiagnosticsRuntimeOldRetryDoesNotRewindWriteHead(t *testing.T) {
 	first := runtimeDiagnosticTestEvent(run, "ios", "publish", "ok")
 	for partition := 0; partition < 2; partition++ {
 		key := callDiagnosticRuntimePartitionKey(group, partition)
-		if !s.ensureLocked("owner", key) {
+		if s.ensureLocked("owner", key, false) != "" {
 			t.Fatal("setup")
 		}
 		record := s.records[key]
@@ -646,7 +646,7 @@ func TestCallDiagnosticsLegacyRuntimeUUIDv5RetainsRetryEvidence(t *testing.T) {
 	}
 	_ = s.configure("legacy", true, false, 1)
 	key := "runtime-" + uuid.NewSHA1(uuid.Nil, []byte("legacy runtime")).String()
-	if !s.ensureLocked("legacy", key) {
+	if s.ensureLocked("legacy", key, false) != "" {
 		t.Fatal("legacy setup")
 	}
 	raw := runtimeDiagnosticTestEvent(uuid.NewString(), "ios", "publish", "ok")
@@ -673,7 +673,7 @@ func TestCallDiagnosticsDropTimestampsAreDurableAndDoNotInventLegacyTime(t *test
 			s.now = func() time.Time { return now }
 			_ = s.configure("owner", true, false, 1)
 			trace := uuid.NewString()
-			if !s.ensureLocked("owner", trace) {
+			if s.ensureLocked("owner", trace, false) != "" {
 				t.Fatal("setup")
 			}
 			record := s.records[trace]
@@ -705,9 +705,9 @@ func TestCallDiagnosticsDropTimestampsAreDurableAndDoNotInventLegacyTime(t *test
 			s.quota = callDiagnosticGlobalBytes
 			ownerQuota := s.ownerQuota
 			owner := record.Owner
-			s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner] + callDiagnosticPriorityBytes
-			if s.appendEventResult("owner", later, false, 1) != callDiagnosticAppendRetry || record.Dropped != before.Dropped || record.DroppedUpdatedAtMs != before.DroppedUpdatedAtMs {
-				t.Fatal("discard bookkeeping spent reserved owner headroom")
+			s.ownerQuota = s.ownerSizes[owner] + s.ownerBindingReserves[owner]
+			if s.appendEventResult("owner", later, false, 1) != callDiagnosticAppendDiscarded || record.Dropped != before.Dropped || record.DroppedUpdatedAtMs != before.DroppedUpdatedAtMs {
+				t.Fatal("discard bookkeeping grew a full owner's record")
 			}
 			s.ownerQuota = ownerQuota
 			if s.appendEventResult("owner", later, false, 1) != callDiagnosticAppendDiscarded || record.DroppedUpdatedAtMs != now.UnixMilli() || record.DroppedFirstAtMs != before.DroppedFirstAtMs {

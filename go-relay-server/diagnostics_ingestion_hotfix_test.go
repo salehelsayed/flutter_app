@@ -188,7 +188,7 @@ func TestHotfixRetainedOverGlobalRestart(t *testing.T) {
 				_ = s.configure("owner", true, false, 1)
 				for i := 0; i < 2; i++ {
 					trace := uuid.NewString()
-					if !s.ensureLocked("owner", trace) {
+					if s.ensureLocked("owner", trace, false) != "" {
 						t.Fatal("seed")
 					}
 					r := s.records[trace]

@@ -27,6 +27,7 @@ const callDiagnosticGlobalBytes = 64 << 20
 // only terminal and first-media records.
 const callDiagnosticMaxGlobalBytes = 512 << 20
 const callDiagnosticOwnerBytes = 5 << 20
+const callDiagnosticOwnerPriorityBytes = 1 << 20
 
 // A joined trace includes two independently bounded endpoint spools plus relay stages.
 const callDiagnosticTraceEvents = 3 * 256
@@ -34,8 +35,8 @@ const callDiagnosticTraceBytes = 3 * (64 << 10)
 const callDiagnosticRecordBytes = 320 << 10
 const callDiagnosticDiscardIDLimit = 256
 
-// Ordinary observations leave room for call-end and first-media evidence. These
-// reservations do not raise either hard byte ceiling or evict retained records.
+// Ordinary observations leave this much room under the global ceiling for
+// call-end and first-media evidence.
 const callDiagnosticPriorityBytes = 32 << 10
 
 type callDiagnosticConsent struct {
@@ -442,40 +443,42 @@ func (s *callDiagnosticStore) authorizedMetadataLocked(actor, key string) bool {
 	return meta.owner == a || diagnosticContains(meta.participants, a)
 }
 
-func (s *callDiagnosticStore) ensureLocked(actor, key string) bool {
+func (s *callDiagnosticStore) ensureLocked(actor, key string, priority bool) string {
 	if s.records[key] != nil {
-		return s.authorizedLocked(actor, key)
+		if !s.authorizedLocked(actor, key) {
+			return "authority"
+		}
+		return ""
 	}
-	if len(s.records) >= 10000 {
-		return false
-	}
-	a := diagnosticPrivateKey(actor)
-	now := s.now().UnixMilli()
 	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
 	meta := s.metadata[key]
-	owner := a
+	if meta != nil && !s.authorizedMetadataLocked(actor, key) {
+		return "authority"
+	}
+	if len(s.records) >= 10000 || (meta == nil && len(s.metadata) >= 10000) {
+		return "record_count"
+	}
+	owner := diagnosticPrivateKey(actor)
 	if meta != nil {
 		owner = meta.owner
 	}
-	if s.usedBytes >= s.quota || s.ownerSizes[owner] >= s.ownerQuota {
-		s.metaMu.Unlock()
-		return false
+	if s.ownerSizes[owner]+s.ownerBindingReserves[owner] >= s.ownerBudget(priority) {
+		return "owner_bytes"
+	}
+	if s.usedBytes+s.bindingReserved >= s.quota {
+		return "global_bytes"
 	}
 	if meta == nil {
-		if len(s.metadata) >= 10000 {
-			s.metaMu.Unlock()
-			return false
+		if s.consentMetadata[owner].ErasePending {
+			return "authority"
 		}
-		meta = &callDiagnosticMetadata{owner: a}
+		meta = &callDiagnosticMetadata{owner: owner}
 		s.metadata[key] = meta
 	}
-	if !s.authorizedMetadataLocked(actor, key) {
-		s.metaMu.Unlock()
-		return false
-	}
+	now := s.now().UnixMilli()
 	s.records[key] = &callDiagnosticRecord{Owner: meta.owner, Participants: append([]string(nil), meta.participants...), Bindings: append([]string(nil), meta.bindings...), HandleDigest: meta.handleDigest, CreatedAtMs: now, UpdatedAtMs: now, Events: []callDiagnosticStoredEvent{}, Summaries: map[string]callDiagnosticStoredEvent{}, DropAccountingVersion: 1}
-	s.metaMu.Unlock()
-	return true
+	return ""
 }
 func (s *callDiagnosticStore) prepare(actor string, d *callDiagnosticContext, epochs ...int64) bool {
 	if s == nil || !d.valid() {
@@ -575,8 +578,7 @@ func (s *callDiagnosticStore) bindCommitted(actor, recipient, handle string, d *
 			return
 		}
 		prior := s.records[d.TraceID]
-		if !s.ensureLocked(actor, d.TraceID) {
-			reason := s.admissionReasonLocked(actor, d.TraceID)
+		if reason := s.ensureLocked(actor, d.TraceID, false); reason != "" {
 			diagnosticRefusal("call", "binding", reason)
 			if outcome := callDiagnosticRefusalOutcome(reason); outcome == "budget_exceeded" {
 				s.drop(outcome)
@@ -770,8 +772,12 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	if server {
 		source = "span"
 	}
+	priority := false
 	refuse := func(reason string) (callDiagnosticAppendResult, string) {
 		diagnosticRefusal("call", source, reason)
+		if reason == "owner_bytes" && !priority {
+			return callDiagnosticAppendDiscarded, reason
+		}
 		return callDiagnosticAppendRetry, reason
 	}
 	event, err := validateCallDiagnosticEvent(raw, server)
@@ -813,11 +819,24 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 		key, runtimeGroup, runtimePartition = s.runtimeRecordLocked(actor, event["runId"].(string), id, len(raw))
 	}
 	prior := s.records[key]
+	terminal := event["stage"] == "terminal" && event["action"] == "finish"
+	values, _ := event["values"].(map[string]any)
+	endDetail := !server && event["stage"] == "terminal" && event["action"] == "snapshot" &&
+		values["endCause"] != nil && values["endCauseStage"] != nil
+	role, _ := event["role"].(string)
+	mediaKey := diagnosticPrivateKey(actor, "first-verified-media")
+	firstMedia := !server && (role == "caller" || role == "callee") && event["stage"] == "media" &&
+		(event["outcome"] == "media_flow_verified" || values["mediaFlowVerified"] == true)
+	if firstMedia && prior != nil {
+		_, hasMedia := prior.Summaries[mediaKey]
+		firstMedia = !hasMedia
+	}
+	priority = terminal || firstMedia || endDetail
 	s.metaMu.Lock()
 	hadMetadata := s.metadata[key] != nil
 	s.metaMu.Unlock()
-	if !s.ensureLocked(actor, key) {
-		return refuse(s.admissionReasonLocked(actor, key))
+	if reason := s.ensureLocked(actor, key, priority); reason != "" {
+		return refuse(reason)
 	}
 	committed := false
 	defer func() {
@@ -889,15 +908,6 @@ func (s *callDiagnosticStore) appendEventContext(actor string, raw json.RawMessa
 	for _, e := range rec.Events {
 		eventBytes += len(e.Event)
 	}
-	terminal := event["stage"] == "terminal" && event["action"] == "finish"
-	values, _ := event["values"].(map[string]any)
-	endDetail := !server && event["stage"] == "terminal" && event["action"] == "snapshot" &&
-		values["endCause"] != nil && values["endCauseStage"] != nil
-	role, _ := event["role"].(string)
-	mediaKey := diagnosticPrivateKey(actor, "first-verified-media")
-	_, hasMedia := rec.Summaries[mediaKey]
-	firstMedia := !server && !hasMedia && (role == "caller" || role == "callee") && event["stage"] == "media" && (event["outcome"] == "media_flow_verified" || values["mediaFlowVerified"] == true)
-	priority := terminal || firstMedia || endDetail
 	discarded := false
 	if len(rec.Events) >= callDiagnosticTraceEvents || eventBytes+len(raw) > callDiagnosticTraceBytes {
 		if !priority {
@@ -1285,58 +1295,29 @@ func (s *callDiagnosticStore) unindexBytesLocked(key string, r *callDiagnosticRe
 		delete(s.ownerSizes, r.Owner)
 	}
 }
+func (s *callDiagnosticStore) ownerBudget(priority bool) int {
+	if priority {
+		return s.ownerQuota + callDiagnosticOwnerPriorityBytes
+	}
+	return s.ownerQuota
+}
+
 func (s *callDiagnosticStore) budgetReasonLocked(key string, r *callDiagnosticRecord, size int, priority bool) string {
 	if size > callDiagnosticRecordBytes {
 		return "record_bytes"
 	}
-	delta := size - s.sizes[key]
-	globalBytes := s.usedBytes + delta
-	ownerBytes := s.ownerSizes[r.Owner] + delta
-	if globalBytes > s.quota {
-		return "global_bytes"
-	}
-	if ownerBytes > s.ownerQuota {
+	growth := size - s.sizes[key] + callDiagnosticBindingReserve(key, r) - s.bindingReserves[key]
+	ownerBytes := s.ownerSizes[r.Owner] + s.ownerBindingReserves[r.Owner] + growth
+	// An existing binding can materialize previously reserved bytes without
+	// consuming more owner capacity, even after priority records are retained.
+	if ownerBytes > s.ownerBudget(priority || growth <= 0) {
 		return "owner_bytes"
 	}
-	reserveDelta := callDiagnosticBindingReserve(key, r) - s.bindingReserves[key]
-	globalBytes += s.bindingReserved + reserveDelta
-	ownerBytes += s.ownerBindingReserves[r.Owner] + reserveDelta
-	if globalBytes > s.quota {
+	globalBytes := s.usedBytes + s.bindingReserved + growth
+	if globalBytes > s.quota || (!priority && growth > 0 && globalBytes > s.quota-callDiagnosticPriorityBytes) {
 		return "global_bytes"
-	}
-	if ownerBytes > s.ownerQuota {
-		return "owner_bytes"
-	}
-	// Materializing a binding can leave accounted usage unchanged.
-	if !priority && delta+reserveDelta > 0 {
-		if globalBytes > s.quota-callDiagnosticPriorityBytes {
-			return "global_bytes"
-		}
-		if ownerBytes > s.ownerQuota-callDiagnosticPriorityBytes {
-			return "owner_bytes"
-		}
 	}
 	return ""
-}
-func (s *callDiagnosticStore) admissionReasonLocked(actor, key string) string {
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
-	owner := diagnosticPrivateKey(actor)
-	if m := s.metadata[key]; m != nil {
-		owner = m.owner
-	} else if len(s.metadata) >= 10000 {
-		return "record_count"
-	}
-	if len(s.records) >= 10000 {
-		return "record_count"
-	}
-	if s.usedBytes >= s.quota {
-		return "global_bytes"
-	}
-	if s.ownerSizes[owner] >= s.ownerQuota {
-		return "owner_bytes"
-	}
-	return "authority"
 }
 
 // Reserve the exact missing encoded binding shape, including field names and

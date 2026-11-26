@@ -167,13 +167,12 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 				rejected = append(rejected, id.EventID)
 				callDiagnosticEvents.WithLabelValues("rejected").Inc()
 			case callDiagnosticAppendDiscarded:
-				// A full retained trace cannot recover ordinary event capacity;
-				// let the client advance to its reserved media/terminal records.
+				// Advance the client past ordinary events at the trace or owner limit.
 				rejected = append(rejected, id.EventID)
 				if data["reason"] == nil {
 					data["reason"] = "quota_exceeded"
 				}
-				callDiagnosticEvents.WithLabelValues("quota_exceeded").Inc()
+				callDiagnosticEvents.WithLabelValues(callDiagnosticRefusalOutcome(refusal)).Inc()
 			default:
 				data["reason"] = "sink_unavailable"
 				callDiagnosticEvents.WithLabelValues(callDiagnosticRefusalOutcome(refusal)).Inc()
@@ -264,9 +263,7 @@ func (s *callDiagnosticSpan) emit(stage, action, outcome, reason string, values 
 	store.enqueueSource("span", func() {
 		result, refusal := store.appendEventContext(actor, raw, true, &d, d.consentEpoch)
 		switch result {
-		case callDiagnosticAppendDiscarded:
-			store.drop("quota_exceeded")
-		case callDiagnosticAppendRetry, callDiagnosticAppendConflict:
+		case callDiagnosticAppendDiscarded, callDiagnosticAppendRetry, callDiagnosticAppendConflict:
 			store.drop(callDiagnosticRefusalOutcome(refusal))
 		}
 	})
