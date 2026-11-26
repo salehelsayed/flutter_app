@@ -291,7 +291,12 @@ func (s *callDiagnosticStore) work() {
 		}
 	}
 }
-func (s *callDiagnosticStore) close()             { close(s.queue); <-s.done }
+func (s *callDiagnosticStore) close() {
+	close(s.queue)
+	<-s.done
+	callDiagnosticMetricsStore.CompareAndSwap(s, nil)
+}
+
 func (s *callDiagnosticStore) enqueue(job func()) { s.enqueueSource("unknown", job) }
 func (s *callDiagnosticStore) enqueueSource(source string, job func()) {
 	if s == nil {
@@ -1208,6 +1213,7 @@ func initCallDiagnosticsFromEnvironment() *callDiagnosticStore {
 	s.ownerQuota = diagnosticOwnerQuota("CALL_DIAGNOSTICS_OWNER_MAX_BYTES", callDiagnosticOwnerBytes, s.quota)
 	diagnosticOwnerLimit.WithLabelValues("call").Set(float64(s.ownerQuota))
 	diagnosticGlobalLimit.WithLabelValues("call").Set(float64(s.quota))
+	callDiagnosticMetricsStore.Store(s)
 	callDiagnosticStorageReady.Set(1)
 	log.Print("call_diagnostics storage=ready")
 	return s
