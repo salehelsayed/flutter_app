@@ -940,6 +940,34 @@ void main() {
   }
 
   test(
+    'BL96 a second invite during a connected v2 call gets a busy reject on '
+    'the wire',
+    () async {
+      const step = Duration(seconds: 5);
+      final (fixture, _) = await _connectedGraphVideo().timeout(step);
+      final graph = fixture.graphs.single;
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+
+      await _deliverGraphVideoInvite(
+        fixture,
+        callId: _callB,
+        messageId: '00000000-0000-4000-8000-000000000961',
+        callHandle: '96969696-9696-4969-8969-969696969696',
+        awaitRinging: false,
+      ).timeout(step);
+      List<Map<String, dynamic>> busy() => _upgradeSignals(fixture, 'reject')
+          .where((signal) => signal['call_id'] == _callB.value)
+          .toList();
+      await _untilGraphVideo(() => busy().isNotEmpty);
+
+      expect(busy(), hasLength(1));
+      expect(busy().single['payload'], {'reason': 'busy'});
+      expect(graph.coordinator.activeSession!.callId, _callA);
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+    },
+  );
+
+  test(
     'PiP graph supported continuation keeps existing camera authority',
     () async {
       final pip = FakeCallPictureInPictureBridge()..cameraInPip = true;
@@ -11376,6 +11404,7 @@ Future<void> _deliverGraphVideoInvite(
   _ProductionIosFixture fixture, {
   CallId? callId,
   bool requireForegroundProjection = true,
+  bool awaitRinging = true,
   String messageId = '00000000-0000-4000-8000-000000000023',
   String callHandle = '33333333-3333-4333-8333-333333333333',
 }) async {
@@ -11426,6 +11455,7 @@ Future<void> _deliverGraphVideoInvite(
       transport: 'direct',
     ),
   );
+  if (!awaitRinging) return;
   await _b7Until(
     () {
       final session = requireForegroundProjection
