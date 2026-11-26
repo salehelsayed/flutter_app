@@ -929,6 +929,75 @@ void main() {
     },
   );
 
+  for (final (language, notice, direction) in [
+    ('en', 'Update Mknoon to see this thought', TextDirection.ltr),
+    (
+      'de',
+      'Aktualisiere Mknoon, um diesen Gedanken zu sehen',
+      TextDirection.ltr,
+    ),
+    ('ar', 'حدّث Mknoon لرؤية هذه الخاطرة', TextDirection.rtl),
+  ]) {
+    testWidgets(
+      'BL99 an unsupported Thought shows a non-interactive notice in $language',
+      (tester) async {
+        const bound = Duration(seconds: 3);
+        final thought = _thought(
+          initialNow,
+        ).copyWith(text: 'Unrecognized content', mediaKind: 'unsupported');
+        await posts.savePost(thought).timeout(bound);
+        final views = <String>[];
+        final downloads = <String>[];
+
+        try {
+          await openCard(
+            tester,
+            thought,
+            locale: Locale(language),
+            onShown: (id) async => views.add(id),
+            download: (attachment) async {
+              downloads.add(attachment.mediaId);
+              return attachment;
+            },
+          ).timeout(bound);
+
+          expect(find.text('Alice'), findsOneWidget);
+          final prompt = find.text(notice);
+          expect(prompt, findsOneWidget);
+          expect(Directionality.of(tester.element(prompt)), direction);
+          expect(find.text('Unrecognized content'), findsNothing);
+          expect(find.byType(MediaGrid), findsNothing);
+          expect(find.byType(AudioPlayerWidget), findsNothing);
+          expect(find.text('Retry'), findsNothing);
+          expect(find.byType(TextField), findsNothing);
+          expect(
+            find.byKey(const ValueKey('thought-react-love')),
+            findsNothing,
+          );
+          expect(more, findsNothing);
+
+          await tester
+              .tap(find.byKey(const ValueKey('thought-close')))
+              .timeout(bound);
+          await tester.pumpAndSettle(
+            const Duration(milliseconds: 50),
+            EnginePhase.sendSemanticsUpdate,
+            bound,
+          );
+
+          expect(find.text('orbit-home'), findsOneWidget);
+          expect(views, isEmpty);
+          expect(posts.focusedIds, isEmpty);
+          expect(downloads, isEmpty);
+          expect(reactions, isEmpty);
+          expect(stickers, isEmpty);
+        } finally {
+          await finish(tester).timeout(bound);
+        }
+      },
+    );
+  }
+
   testWidgets('a photo-only placeholder is not a view before content arrives', (
     tester,
   ) async {

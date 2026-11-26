@@ -204,6 +204,40 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('BL99 an unsupported Thought has no reply dock in Orbit Depth', (
+    tester,
+  ) async {
+    const bound = Duration(seconds: 3);
+    thoughts['peer-0'] = depthThought(0, mediaKind: 'unsupported', text: '');
+    final mediaLoads = <String>[];
+
+    try {
+      await mount(
+        tester,
+        load: (id) async {
+          mediaLoads.add(id);
+          return [];
+        },
+      ).timeout(bound);
+      await enter(tester).timeout(bound);
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('orbit-depth-card-post-0')),
+          matching: find.text('Update Mknoon to see this thought'),
+        ),
+        findsOneWidget,
+      );
+      expect(bar(0), findsNothing);
+      expect(reply, findsNothing);
+      expect(more, findsNothing);
+      expect(mediaLoads, isEmpty);
+      expect(sent, isEmpty);
+    } finally {
+      await finish(tester).timeout(bound);
+    }
+  });
+
   testWidgets('REV4 a moved emoji gesture and independent taps within 300 ms '
       'send nothing', (tester) async {
     await mount(tester);
