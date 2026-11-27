@@ -300,6 +300,7 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
           // Flutter also ends accepted drags on pointer cancellation.
           onPointerCancel: (_) => _cancelDrag(),
           child: GestureDetector(
+            excludeFromSemantics: rowOwnsSemantics,
             dragStartBehavior: DragStartBehavior.down,
             onHorizontalDragStart: (_) => _dragCancelled = false,
             onHorizontalDragUpdate: (details) =>
