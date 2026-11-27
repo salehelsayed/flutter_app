@@ -2719,7 +2719,6 @@ void main() {
     const draft = 'First line\nSecond line';
     tester.view.devicePixelRatio = 2.625;
     tester.view.physicalSize = const Size(2048, 924);
-    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
     tester.view.padding = const FakeViewPadding(top: 63);
     addTearDown(tester.view.reset);
     final sent = <String>[];
@@ -2738,7 +2737,12 @@ void main() {
     final field = find.byType(TextField);
     await tester.enterText(field, draft).timeout(deadline);
     await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+    expect(tester.takeException(), isNull);
 
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    await tester.pump().timeout(deadline);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
     expect(tester.takeException(), isNull);
     final editable = tester
         .state<EditableTextState>(find.byType(EditableText))
