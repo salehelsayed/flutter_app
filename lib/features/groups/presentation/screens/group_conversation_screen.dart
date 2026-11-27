@@ -295,6 +295,9 @@ class GroupConversationScreen extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final compactForKeyboard = constraints.maxHeight < 260;
+            final compactViewportHeight = compactForKeyboard
+                ? constraints.maxHeight - MediaQuery.paddingOf(context).top
+                : null;
             final content = Column(
               children: [
                 if (search case final search? when search.isOpen)
@@ -327,6 +330,7 @@ class GroupConversationScreen extends StatelessWidget {
                   _buildComposerSection(
                     _legacyComposerState,
                     compact: compactForKeyboard,
+                    compactViewportHeight: compactViewportHeight,
                   )
                 else
                   ValueListenableBuilder<ConversationComposerViewState>(
@@ -335,6 +339,7 @@ class GroupConversationScreen extends StatelessWidget {
                         _buildComposerSection(
                           composerState,
                           compact: compactForKeyboard,
+                          compactViewportHeight: compactViewportHeight,
                         ),
                   ),
               ],
@@ -355,6 +360,7 @@ class GroupConversationScreen extends StatelessWidget {
   Widget _buildComposerSection(
     ConversationComposerViewState composerState, {
     bool compact = false,
+    double? compactViewportHeight,
   }) {
     return Column(
       children: [
@@ -380,6 +386,7 @@ class GroupConversationScreen extends StatelessWidget {
             children: [
               ComposeArea(
                 compact: compact,
+                compactViewportHeight: compactViewportHeight,
                 onSend: onSend,
                 onAttach: onAttach,
                 hasAttachments: composerState.pendingAttachments.isNotEmpty,

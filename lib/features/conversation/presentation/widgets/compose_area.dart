@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
@@ -83,6 +84,7 @@ class ComposeArea extends StatefulWidget {
   final TargetPlatform? privateMediaTargetPlatform;
   final bool privateMediaSenderReopenEnabled;
   final bool compact;
+  final double? compactViewportHeight;
 
   /// Text and focus owned by the caller, so it can keep or clear the draft
   /// itself. Null means the composer owns its own.
@@ -140,6 +142,7 @@ class ComposeArea extends StatefulWidget {
     this.privateMediaTargetPlatform,
     this.privateMediaSenderReopenEnabled = false,
     this.compact = false,
+    this.compactViewportHeight,
     this.controller,
     this.focusNode,
     this.onTextFieldTap,
@@ -559,8 +562,32 @@ class _ComposeAreaState extends State<ComposeArea>
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final verticalPadding = widget.compact ? 4.0 : 12.0;
+    final barPadding = EdgeInsets.fromLTRB(
+      16,
+      verticalPadding,
+      16,
+      verticalPadding + bottomPadding,
+    );
     final largeText = MediaQuery.textScalerOf(context).scale(15) >= 30;
+    final compactHeight = widget.compactViewportHeight;
+    final maxInputHeight = switch ((largeText, widget.compact)) {
+      (true, true) => compactHeight == null
+          ? 160.0
+          : math.max(48.0, compactHeight - barPadding.vertical),
+      (true, false) => double.infinity,
+      (false, true) => 48.0,
+      (false, false) => 160.0,
+    };
+    final inputConstraints = BoxConstraints(
+      minHeight: 44,
+      maxHeight: maxInputHeight,
+    );
+    // The keyboard can reduce the viewport in one frame at large text sizes.
+    final viewportConstraints = largeText
+        ? inputConstraints
+        : const BoxConstraints();
     final showQuotePreview =
         widget.quotedText != null || widget.isQuoteUnavailable;
     final quotePreviewText = widget.isQuoteUnavailable
@@ -576,12 +603,7 @@ class _ComposeAreaState extends State<ComposeArea>
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
-            padding: EdgeInsets.fromLTRB(
-              16,
-              widget.compact ? 4 : 12,
-              16,
-              (widget.compact ? 4 : 12) + bottomPadding,
-            ),
+            padding: barPadding,
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -722,148 +744,144 @@ class _ComposeAreaState extends State<ComposeArea>
                               onCancel: widget.onRecordCancel ?? () {},
                               amplitudeValues: widget.amplitudeValues,
                             )
-                          : AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              constraints: BoxConstraints(
-                                minHeight: 44,
-                                maxHeight: largeText
-                                    ? double.infinity
-                                    : widget.compact
-                                    ? 48
-                                    : 160,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isLightSurface
-                                    ? readableColors.composerInputFill
-                                    : const Color.fromRGBO(255, 255, 255, 0.06),
-                                borderRadius: BorderRadius.circular(22),
-                                border: Border.all(
-                                  color: _hasFocus
-                                      ? (isLightSurface
-                                            ? readableColors.accent
-                                            : const Color.fromRGBO(
-                                                255,
-                                                255,
-                                                255,
-                                                0.20,
-                                              ))
-                                      : (isLightSurface
-                                            ? readableColors.inputBorder
-                                            : const Color.fromRGBO(
-                                                255,
-                                                255,
-                                                255,
-                                                0.10,
-                                              )),
-                                ),
-                                boxShadow: _hasFocus
-                                    ? [
-                                        BoxShadow(
-                                          color: isLightSurface
+                          : ConstrainedBox(
+                              constraints: viewportConstraints,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                constraints: largeText ? null : inputConstraints,
+                                decoration: BoxDecoration(
+                                  color: isLightSurface
+                                      ? readableColors.composerInputFill
+                                      : const Color.fromRGBO(255, 255, 255, 0.06),
+                                  borderRadius: BorderRadius.circular(22),
+                                  border: Border.all(
+                                    color: _hasFocus
+                                        ? (isLightSurface
                                               ? readableColors.accent
-                                                    .withValues(alpha: 0.10)
                                               : const Color.fromRGBO(
                                                   255,
                                                   255,
                                                   255,
-                                                  0.08,
-                                                ),
-                                          blurRadius: 0,
-                                          spreadRadius: 1,
-                                        ),
-                                        const BoxShadow(
-                                          color: Color.fromRGBO(0, 0, 0, 0.3),
-                                          blurRadius: 20,
-                                          offset: Offset(0, 4),
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              // The container makes this the text field's own
-                              // node, so the automation id lands on it.
-                              child: Semantics(
-                                container: true,
-                                identifier: 'chat_composer',
-                                child: TextField(
-                                  controller: _controller,
-                                  focusNode: _focusNode,
-                                  onTap: widget.onTextFieldTap,
-                                  textDirection: _inputDirection,
-                                  minLines: largeText ? 1 : null,
-                                  maxLines: largeText ? 2 : null,
-                                  maxLength: maxMessageLength,
-                                  enabled: !_isRecording,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    color: isLightSurface
-                                        ? readableColors.textPrimary
-                                        : const Color.fromRGBO(
-                                            255,
-                                            255,
-                                            255,
-                                            0.95,
-                                          ),
-                                    height: 1.5,
+                                                  0.20,
+                                                ))
+                                        : (isLightSurface
+                                              ? readableColors.inputBorder
+                                              : const Color.fromRGBO(
+                                                  255,
+                                                  255,
+                                                  255,
+                                                  0.10,
+                                                )),
                                   ),
-                                  decoration: InputDecoration(
-                                    suffixIcon: widget.onStickerToggle == null
-                                        ? null
-                                        : IconButton(
-                                            tooltip: AppLocalizations.of(
-                                              context,
-                                            )!.stickers_title,
-                                            onPressed:
-                                                widget.isProcessing ||
-                                                    _isRecording
-                                                ? null
-                                                : _onStickerToggle,
-                                            icon: Icon(
-                                              widget.isStickerPanelOpen
-                                                  ? Icons.keyboard_rounded
-                                                  : Icons
-                                                        .emoji_emotions_outlined,
-                                            ),
-                                            color: readableColors.iconMuted,
+                                  boxShadow: _hasFocus
+                                      ? [
+                                          BoxShadow(
+                                            color: isLightSurface
+                                                ? readableColors.accent
+                                                      .withValues(alpha: 0.10)
+                                                : const Color.fromRGBO(
+                                                    255,
+                                                    255,
+                                                    255,
+                                                    0.08,
+                                                  ),
+                                            blurRadius: 0,
+                                            spreadRadius: 1,
                                           ),
-                                    prefixIcon: widget.compact
-                                        ? showQuotePreview
-                                              ? const Icon(
-                                                  Icons.format_quote,
-                                                  size: 18,
-                                                )
-                                              : widget.hasAttachments
-                                              ? const Icon(
-                                                  Icons.attach_file,
-                                                  size: 18,
-                                                )
-                                              : null
-                                        : null,
-                                    hintText:
-                                        widget.hintText ??
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.conversation_hint,
-                                    hintStyle: TextStyle(
+                                          const BoxShadow(
+                                            color: Color.fromRGBO(0, 0, 0, 0.3),
+                                            blurRadius: 20,
+                                            offset: Offset(0, 4),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                // The container makes this the text field's own
+                                // node, so the automation id lands on it.
+                                child: Semantics(
+                                  container: true,
+                                  identifier: 'chat_composer',
+                                  child: TextField(
+                                    controller: _controller,
+                                    focusNode: _focusNode,
+                                    onTap: widget.onTextFieldTap,
+                                    textDirection: _inputDirection,
+                                    minLines: largeText ? 1 : null,
+                                    maxLines: largeText ? 2 : null,
+                                    maxLength: maxMessageLength,
+                                    enabled: !_isRecording,
+                                    style: TextStyle(
                                       fontSize: 15,
                                       color: isLightSurface
-                                          ? readableColors.composerHint
+                                          ? readableColors.textPrimary
                                           : const Color.fromRGBO(
                                               255,
                                               255,
                                               255,
-                                              0.55,
+                                              0.95,
                                             ),
+                                      height: 1.5,
                                     ),
-                                    border: InputBorder.none,
-                                    // The rounded AnimatedContainer above paints the
-                                    // fill; the light theme's filled
-                                    // InputDecorationTheme would otherwise paint a
-                                    // square fill rect on top of it.
-                                    filled: false,
-                                    counterText: '',
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: widget.compact ? 8 : 12,
+                                    decoration: InputDecoration(
+                                      suffixIcon: widget.onStickerToggle == null
+                                          ? null
+                                          : IconButton(
+                                              tooltip: AppLocalizations.of(
+                                                context,
+                                              )!.stickers_title,
+                                              onPressed:
+                                                  widget.isProcessing ||
+                                                      _isRecording
+                                                  ? null
+                                                  : _onStickerToggle,
+                                              icon: Icon(
+                                                widget.isStickerPanelOpen
+                                                    ? Icons.keyboard_rounded
+                                                    : Icons
+                                                          .emoji_emotions_outlined,
+                                              ),
+                                              color: readableColors.iconMuted,
+                                            ),
+                                      prefixIcon: widget.compact
+                                          ? showQuotePreview
+                                                ? const Icon(
+                                                    Icons.format_quote,
+                                                    size: 18,
+                                                  )
+                                                : widget.hasAttachments
+                                                ? const Icon(
+                                                    Icons.attach_file,
+                                                    size: 18,
+                                                  )
+                                                : null
+                                          : null,
+                                      hintText:
+                                          widget.hintText ??
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.conversation_hint,
+                                      hintStyle: TextStyle(
+                                        fontSize: 15,
+                                        color: isLightSurface
+                                            ? readableColors.composerHint
+                                            : const Color.fromRGBO(
+                                                255,
+                                                255,
+                                                255,
+                                                0.55,
+                                              ),
+                                      ),
+                                      border: InputBorder.none,
+                                      // The rounded AnimatedContainer above paints the
+                                      // fill; the light theme's filled
+                                      // InputDecorationTheme would otherwise paint a
+                                      // square fill rect on top of it.
+                                      filled: false,
+                                      counterText: '',
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: widget.compact ? 8 : 12,
+                                      ),
                                     ),
                                   ),
                                 ),

@@ -962,6 +962,8 @@ class _ConversationScreenState extends State<ConversationScreen>
           // Scaffold has already consumed the keyboard inset before this
           // LayoutBuilder, so the remaining height is the reliable signal.
           _lastLayoutHeight = constraints.maxHeight;
+          final compactViewportHeight =
+              constraints.maxHeight - MediaQuery.paddingOf(context).top;
           final compactForKeyboard = _isCompactFor(
             constraints.maxHeight,
             _composerExtraHeight,
@@ -1048,6 +1050,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                 _buildComposerSection(
                   _legacyComposerState,
                   compact: compactForKeyboard,
+                  compactViewportHeight: compactViewportHeight,
                 )
               else
                 ValueListenableBuilder<ConversationComposerViewState>(
@@ -1056,6 +1059,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                       _buildComposerSection(
                         composerState,
                         compact: compactForKeyboard,
+                        compactViewportHeight: compactViewportHeight,
                       ),
                 ),
             ],
@@ -1078,6 +1082,7 @@ class _ConversationScreenState extends State<ConversationScreen>
   Widget _buildComposerSection(
     ConversationComposerViewState composerState, {
     bool compact = false,
+    double? compactViewportHeight,
   }) {
     if (widget.isBlocked) {
       return BlockedBanner(onUnblock: widget.onUnblock);
@@ -1121,6 +1126,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           ),
         ComposeArea(
           compact: compact,
+          compactViewportHeight: compactViewportHeight,
           onSend: widget.onSend,
           clearOnSend: widget.onDraftChanged == null,
           onAttach: widget.onAttach,
