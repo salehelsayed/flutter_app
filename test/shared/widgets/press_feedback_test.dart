@@ -52,4 +52,44 @@ void main() {
     await tester.pump().timeout(deadline);
     await tester.pump(const Duration(milliseconds: 120)).timeout(deadline);
   });
+
+  testWidgets('disposing a pressed row ignores the old pointer release', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    const hitBox = ValueKey('picker-row-hit-box');
+    const first = ValueKey('first-contact');
+    const replacement = ValueKey('replacement-contact');
+    final taps = <Key>[];
+
+    Widget scene(Key contact) => MaterialApp(
+      home: Center(
+        child: GestureDetector(
+          key: contact,
+          behavior: HitTestBehavior.opaque,
+          onTap: () => taps.add(contact),
+          child: const SizedBox(key: hitBox, width: 48, height: 48),
+        ).withPressFeedback(),
+      ),
+    );
+
+    await tester.pumpWidget(scene(first)).timeout(deadline);
+    final target = find.byKey(hitBox);
+    final gesture = await tester
+        .startGesture(tester.getCenter(target))
+        .timeout(deadline);
+    await tester.pump().timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 120)).timeout(deadline);
+    expect(tester.getRect(target).width, closeTo(48 * 0.97, 0.001));
+
+    await tester.pumpWidget(scene(replacement)).timeout(deadline);
+    await gesture.up().timeout(deadline);
+    expect(tester.takeException(), isNull);
+    expect(taps, isEmpty);
+    expect(tester.getRect(target).width, 48);
+
+    await tester.tap(target).timeout(deadline);
+    expect(taps, [replacement]);
+    await tester.pump().timeout(deadline);
+  });
 }
