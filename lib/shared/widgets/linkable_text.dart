@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
-import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_search.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/core/utils/url_parser.dart';
@@ -11,8 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 /// Renders text with tappable, styled URL links.
 ///
 /// URLs are detected automatically using [parseUrls] and rendered with
-/// underline decoration and teal color. Tapping a link opens it in the
-/// device browser (or invokes [onLinkTap] if provided).
+/// underline decoration and the surface's link color. Tapping a link opens it
+/// in the device browser (or invokes [onLinkTap] if provided).
 class LinkableText extends StatefulWidget {
   final String text;
   final TextStyle? style;
@@ -68,14 +68,20 @@ class _LinkableTextState extends State<LinkableText> {
   List<InlineSpan> _spans = [];
   List<TextSegment> _links = const [];
   final List<TapGestureRecognizer> _recognizers = [];
+  Color? _defaultLinkColor;
 
   /// Where [LinkableText.markQuery] occurs in the whole text, so a phrase
   /// crossing a link boundary is marked on both sides.
   List<({int start, int end})> _marks = const [];
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final linkColor = context.backgroundReadableColors.link;
+    if (linkColor == _defaultLinkColor) return;
+    final isFirstBuild = _defaultLinkColor == null;
+    _defaultLinkColor = linkColor;
+    if (!isFirstBuild && widget.linkStyle != null) return;
     _parse();
   }
 
@@ -91,7 +97,6 @@ class _LinkableTextState extends State<LinkableText> {
         oldWidget.onLinkTap != widget.onLinkTap ||
         oldWidget.markQuery != widget.markQuery ||
         oldWidget.markStyle != widget.markStyle) {
-      _disposeRecognizers();
       _parse();
     }
   }
@@ -110,6 +115,7 @@ class _LinkableTextState extends State<LinkableText> {
   }
 
   void _parse() {
+    _disposeRecognizers();
     final onlyLinks = widget.onlyLinks;
     final segments = [
       for (final segment in parseUrls(widget.text))
@@ -122,12 +128,13 @@ class _LinkableTextState extends State<LinkableText> {
         ? const []
         : textSearchRanges(widget.text, widget.markQuery ?? '');
 
+    final linkColor = _defaultLinkColor!;
     final linkStyle =
         widget.linkStyle ??
         TextStyle(
-          color: FeedColors.accentTeal,
+          color: linkColor,
           decoration: TextDecoration.underline,
-          decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
+          decorationColor: linkColor.withValues(alpha: 0.5),
         );
 
     var offset = 0;

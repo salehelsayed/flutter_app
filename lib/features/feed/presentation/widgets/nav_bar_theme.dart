@@ -56,9 +56,6 @@ abstract final class NavBarTheme {
 
   // ── Badge ────────────────────────────────────────────────────────────
 
-  static const List<Color> badgeGradientColors = [
-    Color(0xFFFF3B30),
-    Color(0xFFE0342A),
-  ];
-  static const Color badgeShadowColor = Color(0x66FF3B30);
+  static const Color badgeColor = Color(0xFFD70015);
+  static const Color badgeShadowColor = Color(0x66D70015);
 }

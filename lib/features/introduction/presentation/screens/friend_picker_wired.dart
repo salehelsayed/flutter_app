@@ -170,6 +170,7 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
   Widget build(BuildContext context) {
     final readableColors = BackgroundReadableColors.resolve(
       widget.backgroundPreference,
+      theme: Theme.of(context),
     );
     final theme = Theme.of(context);
     final themedChild = _isLoading

@@ -16,14 +16,12 @@ class DateSeparator extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final isLightSurface = readableColors.isLightSurface;
-    // Translucent white is invisible on the light Signal canvas; dark keeps the
-    // original literals byte-identical.
     final lineColor = isLightSurface
         ? readableColors.emptyDivider
         : const Color.fromRGBO(255, 255, 255, 0.12);
     final labelColor = isLightSurface
         ? readableColors.emptyDate
-        : const Color.fromRGBO(255, 255, 255, 0.3);
+        : const Color.fromRGBO(255, 255, 255, 0.60);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),

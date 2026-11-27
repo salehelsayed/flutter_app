@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -145,9 +146,19 @@ class _CommentsSheetState extends State<CommentsSheet> {
   Widget build(BuildContext context) {
     final comments = _comments;
     final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    final ink = light ? colors.textPrimary : Colors.white;
+    final panel = light ? colors.surfaceSubtle : const Color(0xFF1A1F27);
+    final actionFill = light
+        ? colors.surfaceRaised
+        : const Color.fromRGBO(255, 255, 255, 0.08);
+    final detail = light
+        ? colors.textSecondary
+        : const Color.fromRGBO(255, 255, 255, 0.54);
 
     return Material(
-      color: const Color(0xFF12161D),
+      color: light ? colors.surfaceRaised : const Color(0xFF12161D),
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       child: SafeArea(
         top: false,
@@ -163,7 +174,9 @@ class _CommentsSheetState extends State<CommentsSheet> {
                     width: 44,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: const Color.fromRGBO(255, 255, 255, 0.18),
+                      color: light
+                          ? colors.divider
+                          : const Color.fromRGBO(255, 255, 255, 0.18),
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -172,7 +185,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                 Container(
                   padding: const EdgeInsets.fromLTRB(4, 0, 0, 0),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1A1F27),
+                    color: panel,
                     borderRadius: BorderRadius.circular(24),
                   ),
                   child: Padding(
@@ -193,8 +206,8 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                       widget.post.authorUsername,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: ink,
                                         fontSize: 15,
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -206,13 +219,15 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                       widget.post.createdAt,
                                       context,
                                     ),
-                                    style: const TextStyle(
-                                      color: Color.fromRGBO(
-                                        255,
-                                        255,
-                                        255,
-                                        0.36,
-                                      ),
+                                    style: TextStyle(
+                                      color: light
+                                          ? colors.textMuted
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.36,
+                                            ),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w400,
                                     ),
@@ -227,8 +242,15 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                 textDirection: detectTextDirection(
                                   widget.post.text,
                                 ),
-                                style: const TextStyle(
-                                  color: Color.fromRGBO(255, 255, 255, 0.48),
+                                style: TextStyle(
+                                  color: light
+                                      ? colors.textSecondary
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.48,
+                                        ),
                                   fontSize: 14,
                                   height: 1.35,
                                 ),
@@ -243,14 +265,16 @@ class _CommentsSheetState extends State<CommentsSheet> {
                           child: Container(
                             width: 36,
                             height: 36,
-                            decoration: const BoxDecoration(
-                              color: Color.fromRGBO(255, 255, 255, 0.08),
+                            decoration: BoxDecoration(
+                              color: actionFill,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.close,
                               size: 20,
-                              color: Color.fromRGBO(255, 255, 255, 0.52),
+                              color: light
+                                  ? colors.iconSecondary
+                                  : const Color.fromRGBO(255, 255, 255, 0.52),
                             ),
                           ),
                         ).withPressFeedback(),
@@ -261,8 +285,8 @@ class _CommentsSheetState extends State<CommentsSheet> {
                 const SizedBox(height: 14),
                 Text(
                   l10n.comments_count(comments.length),
-                  style: const TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.54),
+                  style: TextStyle(
+                    color: detail,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),
@@ -273,9 +297,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                       ? Center(
                           child: Text(
                             l10n.comments_empty,
-                            style: const TextStyle(
-                              color: Color.fromRGBO(255, 255, 255, 0.54),
-                            ),
+                            style: TextStyle(color: detail),
                           ),
                         )
                       : ListView.separated(
@@ -283,10 +305,12 @@ class _CommentsSheetState extends State<CommentsSheet> {
                           controller: _commentsScrollController,
                           padding: const EdgeInsets.only(bottom: 16),
                           itemCount: comments.length,
-                          separatorBuilder: (_, _) => const Divider(
+                          separatorBuilder: (_, _) => Divider(
                             height: 1,
                             thickness: 1,
-                            color: Color.fromRGBO(255, 255, 255, 0.08),
+                            color: light
+                                ? colors.divider
+                                : const Color.fromRGBO(255, 255, 255, 0.08),
                           ),
                           itemBuilder: (context, index) {
                             final comment = comments[index];
@@ -314,10 +338,12 @@ class _CommentsSheetState extends State<CommentsSheet> {
                         key: const ValueKey<String>('comments-composer-pill'),
                         padding: const EdgeInsets.fromLTRB(18, 6, 6, 6),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1A1F27),
+                          color: panel,
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: const Color.fromRGBO(255, 255, 255, 0.06),
+                            color: light
+                                ? colors.inputBorder
+                                : const Color.fromRGBO(255, 255, 255, 0.06),
                           ),
                         ),
                         child: Row(
@@ -332,13 +358,19 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                   _textController.text,
                                 ),
                                 onChanged: (_) => setState(() {}),
-                                style: const TextStyle(color: Colors.white),
+                                style: TextStyle(color: ink),
                                 decoration: InputDecoration(
-                                  hintText: AppLocalizations.of(
-                                    context,
-                                  )!.comment_hint,
-                                  hintStyle: const TextStyle(
-                                    color: Color.fromRGBO(255, 255, 255, 0.42),
+                                  hintText: AppLocalizations.of(context)!
+                                      .comment_hint,
+                                  hintStyle: TextStyle(
+                                    color: light
+                                        ? colors.placeholderText
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.42,
+                                          ),
                                   ),
                                   border: InputBorder.none,
                                   // The surrounding container paints the fill;
@@ -352,7 +384,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                             ),
                             const SizedBox(width: 8),
                             Material(
-                              color: const Color.fromRGBO(255, 255, 255, 0.08),
+                              color: actionFill,
                               shape: const CircleBorder(),
                               child: IconButton(
                                 onPressed: _isSubmitting ? null : _submit,
@@ -360,12 +392,14 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                   _isSubmitting
                                       ? Icons.hourglass_top
                                       : Icons.send_rounded,
-                                  color: const Color.fromRGBO(
-                                    255,
-                                    255,
-                                    255,
-                                    0.72,
-                                  ),
+                                  color: light
+                                      ? colors.sendIcon
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.72,
+                                        ),
                                 ),
                               ),
                             ),
@@ -399,20 +433,28 @@ class _CommentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    final detail = light
+        ? colors.textMuted
+        : const Color.fromRGBO(255, 255, 255, 0.36);
     final displayName = comment.authorUsername.isEmpty
         ? comment.senderPeerId
         : comment.authorUsername;
 
+    final focusFill = light
+        ? colors.navActiveFill
+        : const Color.fromRGBO(143, 214, 181, 0.08);
+    final focusBorder = light
+        ? colors.accent
+        : const Color.fromRGBO(143, 214, 181, 0.28);
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
       decoration: BoxDecoration(
-        color: isFocused
-            ? const Color.fromRGBO(143, 214, 181, 0.08)
-            : Colors.transparent,
+        color: isFocused ? focusFill : Colors.transparent,
         borderRadius: BorderRadius.circular(20),
-        border: isFocused
-            ? Border.all(color: const Color.fromRGBO(143, 214, 181, 0.28))
-            : null,
+        border: isFocused ? Border.all(color: focusBorder) : null,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -430,8 +472,8 @@ class _CommentTile extends StatelessWidget {
                         displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: light ? colors.textPrimary : Colors.white,
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
@@ -440,8 +482,10 @@ class _CommentTile extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       _formatRelativeTimestamp(comment.commentedAt, context),
-                      style: const TextStyle(
-                        color: Color.fromRGBO(255, 255, 255, 0.32),
+                      style: TextStyle(
+                        color: light
+                            ? colors.textMuted
+                            : const Color.fromRGBO(255, 255, 255, 0.32),
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
                       ),
@@ -452,8 +496,10 @@ class _CommentTile extends StatelessWidget {
                 Text(
                   comment.body,
                   textDirection: detectTextDirection(comment.body),
-                  style: const TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.82),
+                  style: TextStyle(
+                    color: light
+                        ? colors.textPrimary
+                        : const Color.fromRGBO(255, 255, 255, 0.82),
                     fontSize: 15,
                     height: 1.35,
                   ),
@@ -475,16 +521,18 @@ class _CommentTile extends StatelessWidget {
                         ? Icons.favorite
                         : Icons.favorite_border,
                     color: comment.viewerHasHearted
-                        ? const Color(0xFFEF7C8E)
-                        : const Color.fromRGBO(255, 255, 255, 0.36),
+                        ? (light
+                              ? Theme.of(context).colorScheme.error
+                              : const Color(0xFFEF7C8E))
+                        : detail,
                     size: 20,
                   ),
                   if (comment.heartCount > 0) ...[
                     const SizedBox(width: 6),
                     Text(
                       comment.heartCount.toString(),
-                      style: const TextStyle(
-                        color: Color.fromRGBO(255, 255, 255, 0.36),
+                      style: TextStyle(
+                        color: detail,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),

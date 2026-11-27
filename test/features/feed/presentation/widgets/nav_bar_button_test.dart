@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
 
@@ -19,7 +20,8 @@ void main() {
     addTearDown(() => FlutterError.onError = oldHandler);
   }
 
-  Widget wrap(Widget child) => MaterialApp(
+  Widget wrap(Widget child, {ThemeData? theme}) => MaterialApp(
+        theme: theme,
         home: Scaffold(
           body: Center(child: child),
         ),
@@ -225,27 +227,22 @@ void main() {
       expect(find.text('99+'), findsOneWidget);
     });
 
-    testWidgets('badge uses RED gradient', (tester) async {
+    testWidgets('BL-107 badge uses solid red and a white count', (tester) async {
       suppressAssetErrors(tester);
-      await tester.pumpWidget(wrap(makeButton(badgeCount: 3)));
-      await tester.pump();
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(wrap(makeButton(badgeCount: 3), theme: AppTheme.lightTheme))
+          .timeout(deadline);
+      await tester.pump().timeout(deadline);
 
-      // The badge is a Positioned > Container
-      final positioned = tester.widget<Positioned>(find.byType(Positioned));
-      expect(positioned, isNotNull);
-
-      // Find the decorated container inside the badge
-      final containers = tester
-          .widgetList<Container>(find.byType(Container))
-          .where((c) {
-        final dec = c.decoration;
-        if (dec is BoxDecoration && dec.gradient is LinearGradient) {
-          return (dec.gradient as LinearGradient).colors.first ==
-              NavBarTheme.badgeGradientColors.first;
-        }
-        return false;
-      }).toList();
-      expect(containers, isNotEmpty);
+      final count = find.text('3');
+      final paintedBadge = tester
+          .element(count)
+          .findAncestorWidgetOfExactType<DecoratedBox>()!;
+      final decoration = paintedBadge.decoration as BoxDecoration;
+      expect(decoration.color, const Color(0xFFD70015));
+      expect(decoration.gradient, isNull);
+      expect(tester.widget<Text>(count).style?.color, Colors.white);
     });
 
     testWidgets('badge shadow is red-tinted', (tester) async {

@@ -197,12 +197,12 @@ class BackgroundReadableColors
     surfaceRaised: Color(0xFFFAF8F3),
     surfaceSubtle: Color(0xFFE1DCE5),
     glassSurface: Color(0xEEFAF8F3),
-    glassBorder: Color(0xFF8D83A8),
-    border: Color(0xFF8D83A8),
+    glassBorder: lightOutline,
+    border: lightOutline,
     // Decorative-only: softer than border/inputBorder; grouping, never the sole
     // control boundary.
     surfaceBorder: Color(0xFFB3ACBD),
-    divider: Color(0xFFB3ACBD),
+    divider: lightOutline,
     overlayScrim: Color(0x66000000),
     inputFill: Color(0xFFE1DCE5),
     inputBorder: Color(0xFF7C7297),
@@ -217,7 +217,7 @@ class BackgroundReadableColors
     ctaBg: Color(0xFF6045B6),
     ctaIcon: Color(0xFF6045B6),
     ctaMenuFill: Color(0xFFFAF8F3),
-    ctaMenuBorder: Color(0xFF8D83A8),
+    ctaMenuBorder: lightOutline,
     ctaMenuText: Color(0xFF25222B),
     navActive: Color(0xFF6045B6),
     navInactive: Color(0xFF65606C),
@@ -244,10 +244,17 @@ class BackgroundReadableColors
     navigationBarIconBrightness: Brightness.dark,
   );
 
+  static const lightOutline = Color(0xFF77708F);
+
   static BackgroundReadableColors resolve(
     BackgroundPreference preference, {
+    ThemeData? theme,
     BackgroundReadableTone? representativeToneOverride,
   }) {
+    if (representativeToneOverride == null) {
+      final colors = theme?.extension<BackgroundReadableColors>();
+      if (colors != null) return colors;
+    }
     final tone = representativeToneOverride ?? toneForPreference(preference);
     return switch (tone) {
       BackgroundReadableTone.dark => dark,
@@ -282,6 +289,9 @@ class BackgroundReadableColors
   }
 
   bool get isLightSurface => statusBarIconBrightness == Brightness.dark;
+
+  Color get link =>
+      isLightSurface ? const Color(0xFF0D6E66) : const Color(0xFF81E6D9);
 
   /// Outlined chrome controls (the Orbit circles and status pill): a 1 px
   /// hairline at 14%, a faint fill and a soft ink, on white or on ink.

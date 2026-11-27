@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -46,9 +47,11 @@ void main() {
     WidgetTester tester,
     List<OwnThoughtTag> tags, {
     bool tagsNoteSeen = true,
+    ThemeData? theme,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        theme: theme,
         // Orbit's background moves; held still here so frames settle.
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(disableAnimations: true),
@@ -98,6 +101,26 @@ void main() {
     );
     await tester.pump();
   }
+
+  testWidgets('BL-107 tags sheet uses the light raised surface', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    await pump(tester, [
+      _tag('walks', 2),
+    ], theme: AppTheme.lightTheme).timeout(deadline);
+    await open(tester).timeout(deadline);
+
+    final surface = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(YouTagsSheet),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(surface.color, const Color(0xFFFAF8F3));
+  });
 
   testWidgets('no tags yet, no # in the header', (tester) async {
     await pump(tester, const []);

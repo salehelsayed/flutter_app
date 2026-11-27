@@ -55,6 +55,7 @@ class AccountMigrationJourneyScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = BackgroundReadableColors.resolve(
       backgroundPreference,
+      theme: Theme.of(context),
     );
     final isNewPhone = role == AccountMigrationRole.newPhone;
 

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
-  Widget wrap(BackgroundReadableColors colors) {
+  Widget wrap(BackgroundReadableColors colors, {String initialText = 'hello'}) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -17,7 +17,7 @@ void main() {
         body: Align(
           alignment: Alignment.bottomCenter,
           child: ComposeArea(
-            initialText: 'hello',
+            initialText: initialText,
             onSend: (_) {},
             onRecordStart: () {},
             onRecordStop: () {},
@@ -97,4 +97,28 @@ void main() {
     ]);
     expect(gradient.stops, [0.0, 0.2]);
   });
+
+  for (final focused in [false, true]) {
+    testWidgets('dark chat hint meets contrast with focus=$focused', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(wrap(BackgroundReadableColors.dark, initialText: ''))
+          .timeout(deadline);
+      final field = find.byType(TextField);
+      if (focused) {
+        await tester.tap(field).timeout(deadline);
+        await tester.pump().timeout(deadline);
+      }
+
+      final input = tester.widget<TextField>(field);
+      expect(input.focusNode!.hasFocus, focused);
+      final hint = tester.widget<Text>(find.text(input.decoration!.hintText!));
+      final hintColor = hint.style!.color!;
+      expect(hintColor.withValues(alpha: 1), Colors.white);
+      expect(hintColor.a, closeTo(0.55, 0.002));
+      expectTextContrast(hintColor, const Color(0xFF17171C));
+    });
+  }
 }

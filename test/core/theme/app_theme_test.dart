@@ -32,7 +32,7 @@ void main() {
         expect(scheme.onSurface, const Color(0xFF25222B));
         expect(scheme.error, const Color(0xFFB4232F));
         expect(scheme.onError, const Color(0xFFFFFFFF));
-        expect(scheme.outline, const Color(0xFF8D83A8));
+        expect(scheme.outline, const Color(0xFF77708F));
         expect(scheme.outlineVariant, const Color(0xFFB3ACBD));
         expect(scheme.surfaceContainerHighest, const Color(0xFFE1DCE5));
 
@@ -47,6 +47,7 @@ void main() {
         expect(readable, isNotNull);
         expect(readable!.statusBarIconBrightness, Brightness.dark);
         expect(readable.isLightSurface, isTrue);
+        expect(readable.border, const Color(0xFF77708F));
 
         final feed = theme.extension<FeedTokens>();
         expect(feed, same(FeedTokens.light));

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -11,6 +13,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
@@ -107,6 +110,10 @@ void main() {
     int pendingGroupInviteCount = 0,
     int? reviewCount,
     OrbitViewMode viewMode = OrbitViewMode.allChats,
+    ThemeData? theme,
+    String? userPeerId,
+    Map<String, OrbitThoughtNote> thoughtsByPeerId = const {},
+    DateTime Function()? thoughtNowProvider,
   }) {
     final mergedItems = <OrbitItem>[
       ...friends.map(OrbitFriendItem.new),
@@ -117,7 +124,11 @@ void main() {
     final headerNotifier = ValueNotifier(
       // 197: the Inner-Circle surface renders the merged friends+groups
       // `innerItems`; `allFriends` still feeds the friend-only search badge.
-      OrbitHeaderProjection(allFriends: friends, innerItems: mergedItems),
+      OrbitHeaderProjection(
+        userPeerId: userPeerId,
+        allFriends: friends,
+        innerItems: mergedItems,
+      ),
     );
     final listNotifier = ValueNotifier(
       OrbitViewProjection(
@@ -144,6 +155,7 @@ void main() {
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: theme,
       home: OrbitScreen(
         headerProjectionListenable: headerNotifier,
         listProjectionListenable: listNotifier,
@@ -178,6 +190,8 @@ void main() {
         feedUnreadCountListenable: feedUnreadCountListenable,
         backgroundPreference: backgroundPreference,
         readableToneOverride: readableToneOverride,
+        thoughtsByPeerId: thoughtsByPeerId,
+        thoughtNowProvider: thoughtNowProvider,
       ),
     );
   }
@@ -215,6 +229,141 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
   }
+
+  group('Orbit wallpaper and readable foreground', () {
+    const deadline = Duration(seconds: 3);
+    const darkMirrorEdge = Color(0xFF02030A);
+    const warmGround = Color(0xFFECE8E1);
+    const mirror = ValueKey('cosmic-background-mirrored-root');
+    const cosmic = ValueKey('cosmic-background-root');
+    const signal = ValueKey('daylight-lagoon-background-root');
+
+    const wallpapers = {
+      'unsaved default in Light': (null, true, mirror, darkMirrorEdge),
+      'explicit default in Light': ('default', true, mirror, darkMirrorEdge),
+      'default in Dark': ('default', false, mirror, darkMirrorEdge),
+      'Cosmic in Light': ('cosmic', true, cosmic, warmGround),
+      'Aurora in Light': ('aurora', true, null, warmGround),
+      'Signal in Light': ('daylight_lagoon', true, signal, Color(0xFFE5DED5)),
+    };
+
+    for (final MapEntry(key: label, value: (saved, light, groundKey, edge))
+        in wallpapers.entries) {
+      testWidgets('$label keeps its ground and readable chrome', (
+        tester,
+      ) async {
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        setPhoneSurface(tester);
+
+        await tester
+            .pumpWidget(
+              buildOrbitScreen(
+                theme: light ? AppTheme.lightTheme : AppTheme.darkTheme,
+                backgroundPreference: BackgroundPreference.fromStorageString(
+                  saved,
+                ),
+                searchActive: true,
+                activeTab: 'orbit',
+                onSwitchView: (_) {},
+                friends: [makeFriend(id: 'friend-1', username: 'Riley')],
+              ),
+            )
+            .timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+        final root = tester.element(find.byType(OrbitScreen));
+        expect(
+          Theme.of(root).brightness,
+          light ? Brightness.light : Brightness.dark,
+        );
+
+        expect(
+          root.backgroundReadableColors,
+          same(
+            light
+                ? BackgroundReadableColors.representativeLight
+                : BackgroundReadableColors.dark,
+          ),
+        );
+
+        final nav = find.descendant(
+          of: find.byType(AmbientBackground),
+          matching: find.byType(FeedNavigationBar),
+        );
+        if (groundKey == null) {
+          final grounds = tester.widgetList<ColoredBox>(
+            find.ancestor(of: nav, matching: find.byType(ColoredBox)),
+          );
+          expect(grounds.map((ground) => ground.color), contains(edge));
+        } else {
+          final ground = tester.widget<DecoratedBox>(
+            find.ancestor(of: nav, matching: find.byKey(groundKey)),
+          );
+          final gradient = (ground.decoration as BoxDecoration).gradient!;
+          expect(gradient.colors.last, edge);
+        }
+
+        final mirrorIsDark = groundKey == mirror;
+        final readableColors = mirrorIsDark
+            ? BackgroundReadableColors.dark
+            : BackgroundReadableColors.representativeLight;
+        final chrome = tester.element(nav);
+        expect(chrome.backgroundReadableColors, same(readableColors));
+        expectTextContrast(
+          Theme.of(chrome).colorScheme.onSurface,
+          edge,
+          reason: 'Orbit Material foreground is readable over the wallpaper',
+        );
+        expect(textColorFor(tester, 'Riley'), readableColors.textPrimary);
+        expect(
+          textColorFor(tester, 'Inner Circle'),
+          mirrorIsDark ? const Color(0xCC1DB954) : const Color(0xFF166534),
+        );
+        expect(textColorFor(tester, 'Orbit'), readableColors.navActive);
+      });
+    }
+
+    testWidgets('a Thought stays readable in the default Light Orbit', (
+      tester,
+    ) async {
+      suppressOverflowErrors();
+      setPhoneSurface(tester);
+
+      final now = DateTime.utc(2026, 11, 27);
+      const preview = 'See you in Orbit';
+      await tester
+          .pumpWidget(
+            buildOrbitScreen(
+              theme: AppTheme.lightTheme,
+              viewMode: OrbitViewMode.innerCircle,
+              userPeerId: 'me',
+              thoughtsByPeerId: {
+                'me': OrbitThoughtNote(
+                  postId: 'my-thought',
+                  text: preview,
+                  isRead: false,
+                  expiresAt: now.add(const Duration(hours: 1)),
+                ),
+              },
+              thoughtNowProvider: () => now,
+            ),
+          )
+          .timeout(deadline);
+      try {
+        await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+        final thought = tester.element(find.text(preview));
+        expect(textColorFor(tester, preview), const Color(0xFFF5F5F5));
+        expect(
+          thought.backgroundReadableColors,
+          same(BackgroundReadableColors.dark),
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      }
+    });
+  });
 
   group('OrbitScreen loading placeholders', () {
     testWidgets(

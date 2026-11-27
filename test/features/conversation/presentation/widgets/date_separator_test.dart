@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 
+import '../../../../shared/helpers/readability_test_helpers.dart';
+
 void main() {
   Widget buildTestWidget({
     String label = 'Today',
@@ -57,19 +59,21 @@ void main() {
       expect(textWidget.style?.letterSpacing, 1);
     });
 
-    testWidgets('dark tone keeps the translucent white literals', (
+    testWidgets('dark date label meets text contrast with its existing lines', (
       tester,
     ) async {
-      await tester.pumpWidget(
-        buildTestWidget(colors: BackgroundReadableColors.dark),
-      );
+      await tester
+          .pumpWidget(buildTestWidget(colors: BackgroundReadableColors.dark))
+          .timeout(const Duration(seconds: 3));
 
       expect(
         gradientPeakColor(tester),
         const Color.fromRGBO(255, 255, 255, 0.12),
       );
       final textWidget = tester.widget<Text>(find.text('TODAY'));
-      expect(textWidget.style?.color, const Color.fromRGBO(255, 255, 255, 0.3));
+      final labelColor = textWidget.style!.color!;
+      expect(labelColor, const Color.fromRGBO(255, 255, 255, 0.60));
+      expectTextContrast(labelColor, Colors.black);
     });
 
     testWidgets('light tone uses opaque mineral roles, not white', (

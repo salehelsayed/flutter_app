@@ -7,6 +7,8 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
@@ -753,7 +755,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     final hasVisual = visual.isNotEmpty || _expectsVisualMedia;
     return Scaffold(
       key: const ValueKey('thought-card-screen'),
-      backgroundColor: Colors.black,
+      backgroundColor: _viewerCanvas,
       resizeToAvoidBottomInset: true,
       body: _closing
           ? const SizedBox.shrink()
@@ -779,13 +781,13 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           : _loadFailed
           ? _failure(l10n)
           : !visible
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          ? const Center(child: CircularProgressIndicator(color: _viewerInk))
           : Stack(
               fit: StackFit.expand,
               children: [
                 DecoratedBox(
                   decoration: hasVisual
-                      ? const BoxDecoration(color: Colors.black)
+                      ? const BoxDecoration(color: _viewerCanvas)
                       : const BoxDecoration(
                           gradient: LinearGradient(
                             begin: Alignment.topLeft,
@@ -857,8 +859,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(l10n.load_retry_hint, style: const TextStyle(color: Colors.white)),
-        TextButton(onPressed: _requestRefresh, child: Text(l10n.btn_retry)),
+        Text(l10n.load_retry_hint, style: const TextStyle(color: _viewerInk)),
+        TextButton(
+          onPressed: _requestRefresh,
+          style: TextButton.styleFrom(
+            foregroundColor: BackgroundReadableColors.dark.accent,
+          ),
+          child: Text(l10n.btn_retry),
+        ),
       ],
     ),
   );
@@ -874,28 +882,45 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           : CrossAxisAlignment.center,
       children: [
         text,
-        TranslatePreview(
-          text: _post.text,
-          owner: PreviewOwner.thought(_post.id),
-          ai: translatePreviewAi,
-          delivery: translatePreviewDelivery,
-          onFreeUpSpace: translatePreviewOpenStorage,
-          color: Colors.white,
-          captureFeatureUse: widget.captureFeatureUse,
+        _withViewerReadableColors(
+          TranslatePreview(
+            text: _post.text,
+            owner: PreviewOwner.thought(_post.id),
+            ai: translatePreviewAi,
+            delivery: translatePreviewDelivery,
+            onFreeUpSpace: translatePreviewOpenStorage,
+            color: _viewerInk,
+            captureFeatureUse: widget.captureFeatureUse,
+          ),
         ),
       ],
     );
   }
 
+  Widget _withViewerReadableColors(Widget child) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        extensions: [
+          ...theme.extensions.values.where(
+            (extension) => extension is! BackgroundReadableColors,
+          ),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: child,
+    );
+  }
+
   static const _centeredStyle = TextStyle(
-    color: Colors.white,
+    color: _viewerInk,
     fontSize: 28,
     height: 1.25,
     fontWeight: FontWeight.w600,
   );
 
   static const _chromeStyle = TextStyle(
-    color: Colors.white,
+    color: _viewerInk,
     fontSize: 21,
     height: 1.3,
     fontWeight: FontWeight.w600,
@@ -913,6 +938,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               text: _post.text,
               textDirection: detectTextDirection(_post.text),
               style: _centeredStyle,
+              linkStyle: _viewerLinkStyle,
               // A friend's tags are plain words; only your own read as tags.
               tagStyle: _post.isIncoming
                   ? null
@@ -1018,7 +1044,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: _viewerInk,
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1027,7 +1053,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       '${_relativeAge(l10n)} · $goneIn',
                       key: const ValueKey('thought-age'),
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
+                        color: _viewerInk.withValues(alpha: 0.85),
                         fontSize: 12,
                       ),
                     ),
@@ -1038,7 +1064,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 key: const ValueKey('thought-close'),
                 tooltip: l10n.thought_close,
                 onPressed: _close,
-                icon: const Icon(Icons.close, color: Colors.white),
+                icon: const Icon(Icons.close, color: _viewerInk),
               ),
             ],
           ),
@@ -1065,6 +1091,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                     text: _post.text,
                     textDirection: detectTextDirection(_post.text),
                     style: _chromeStyle,
+                    linkStyle: _viewerLinkStyle,
                     tagStyle: _post.isIncoming
                         ? null
                         : thoughtTagStyle(_chromeStyle),
@@ -1076,13 +1103,15 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           ),
         for (final attachment in voice) ...[
           if (attachment.caption case final caption?)
-            ThoughtVoiceCaption(caption, color: Colors.white70),
+            ThoughtVoiceCaption(caption, color: _viewerMutedInk),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: AudioPlayerWidget(
-              key: ValueKey('thought-voice-${attachment.mediaId}'),
-              attachment: attachment.toSharedMediaAttachment(),
-              onRetryUnavailableMedia: () => unawaited(_download(attachment)),
+            child: _withViewerReadableColors(
+              AudioPlayerWidget(
+                key: ValueKey('thought-voice-${attachment.mediaId}'),
+                attachment: attachment.toSharedMediaAttachment(),
+                onRetryUnavailableMedia: () => unawaited(_download(attachment)),
+              ),
             ),
           ),
         ],
@@ -1093,7 +1122,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             Text(
               l10n.thought_reply_contacts_only,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: _viewerInk),
             ),
         if (!_post.isIncoming) ...[
           _postingStatus(l10n),
@@ -1106,8 +1135,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         : OutlinedButton.icon(
             key: const ValueKey('thought-delete'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.6)),
+              foregroundColor: _viewerInk,
+              side: BorderSide(color: _viewerInk.withValues(alpha: 0.6)),
               minimumSize: const Size.fromHeight(_deleteHeight),
             ),
             onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
@@ -1270,7 +1299,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                   Flexible(
                     child: Text(
                       l10n.error_send_message,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: _viewerInk),
                     ),
                   ),
                   TextButton(
@@ -1278,7 +1307,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       visit.retry(latest.messageId),
                       draft: _replyDraft,
                     ),
-                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    style: TextButton.styleFrom(foregroundColor: _viewerInk),
                     child: Text(l10n.btn_retry),
                   ),
                 ],
@@ -1308,13 +1337,13 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         Expanded(
           child: Semantics(
             liveRegion: true,
-            child: Text(label, style: const TextStyle(color: Colors.white)),
+            child: Text(label, style: const TextStyle(color: _viewerInk)),
           ),
         ),
         if (status != 'sent' && widget.retryPosting != null)
           TextButton(
             key: const ValueKey('thought-posting-retry'),
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            style: TextButton.styleFrom(foregroundColor: _viewerInk),
             onPressed: _retryingPost ? null : () => unawaited(_retryPosting()),
             child: Text(l10n.btn_retry),
           ),
@@ -1329,7 +1358,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       children: [
         TextButton.icon(
           key: const ValueKey('thought-activity-open'),
-          style: TextButton.styleFrom(foregroundColor: Colors.white),
+          style: TextButton.styleFrom(foregroundColor: _viewerInk),
           onPressed: _activityLoading
               ? null
               : () {
@@ -1358,7 +1387,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               primary: false,
               child: DefaultTextStyle(
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: _viewerInk,
                   fontSize: 14,
                   height: 1.5,
                 ),
@@ -1434,7 +1463,7 @@ class _Scrim extends StatelessWidget {
               begin: top ? Alignment.topCenter : Alignment.bottomCenter,
               end: top ? Alignment.bottomCenter : Alignment.topCenter,
               colors: [
-                Colors.black.withValues(alpha: top ? 0.45 : 0.6),
+                _viewerCanvas.withValues(alpha: top ? 0.45 : 0.6),
                 Colors.transparent,
               ],
             ),
@@ -1493,7 +1522,7 @@ class _MediaPlaceholder extends StatelessWidget {
             Center(
               child: TextButton(
                 onPressed: onRetry,
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                style: TextButton.styleFrom(foregroundColor: _viewerInk),
                 child: Text(retryLabel),
               ),
             )
@@ -1502,7 +1531,7 @@ class _MediaPlaceholder extends StatelessWidget {
               alignment: Alignment.bottomCenter,
               child: LinearProgressIndicator(
                 minHeight: 2,
-                color: Colors.white70,
+                color: _viewerMutedInk,
                 backgroundColor: Colors.transparent,
               ),
             ),
@@ -1511,5 +1540,14 @@ class _MediaPlaceholder extends StatelessWidget {
     ),
   );
 }
+
+const _viewerCanvas = Colors.black;
+const _viewerInk = Colors.white;
+const _viewerMutedInk = Colors.white70;
+final _viewerLinkStyle = TextStyle(
+  color: FeedColors.accentTeal,
+  decoration: TextDecoration.underline,
+  decorationColor: FeedColors.accentTeal.withValues(alpha: 0.5),
+);
 
 const double _deleteHeight = 48;

@@ -6,6 +6,28 @@ import 'package:flutter/material.dart';
 /// How long a background keeps moving after it appears or is touched.
 const backgroundMotionWindow = Duration(seconds: 6);
 
+typedef CosmicPalette = ({RadialGradient ground, Color starColor});
+
+const cosmicDarkPalette = (
+  ground: RadialGradient(
+    center: Alignment(-0.7, 0.7),
+    radius: 1.0,
+    colors: [Color(0xFF0A1124), Color(0xFF050714), Color(0xFF02030A)],
+    stops: [0.0, 0.45, 1.0],
+  ),
+  starColor: Colors.white,
+);
+
+const cosmicLightPalette = (
+  ground: RadialGradient(
+    center: Alignment(-0.7, 0.7),
+    radius: 1.0,
+    colors: [Color(0xFFE2E9F5), Color(0xFFF0EBF4), Color(0xFFECE8E1)],
+    stops: [0.0, 0.45, 1.0],
+  ),
+  starColor: Color(0xFF646488),
+);
+
 /// Cosmic shared app background with a static reduced-motion mode.
 class CosmicBackground extends StatefulWidget {
   final Widget child;
@@ -13,6 +35,7 @@ class CosmicBackground extends StatefulWidget {
   final int starSeed;
   final Duration driftPeriod;
   final bool paused;
+  final CosmicPalette palette;
 
   const CosmicBackground({
     super.key,
@@ -21,6 +44,7 @@ class CosmicBackground extends StatefulWidget {
     this.starSeed = 811,
     this.driftPeriod = const Duration(seconds: 18),
     this.paused = false,
+    this.palette = cosmicDarkPalette,
   });
 
   @override
@@ -38,10 +62,8 @@ class _CosmicBackgroundState extends State<CosmicBackground>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.driftPeriod,
-    )..addListener(_settleWhenIdle);
+    _controller = AnimationController(vsync: this, duration: widget.driftPeriod)
+      ..addListener(_settleWhenIdle);
     _stars = _generateStars();
   }
 
@@ -133,35 +155,29 @@ class _CosmicBackgroundState extends State<CosmicBackground>
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _wake(),
       child: DecoratedBox(
-      key: const ValueKey('cosmic-background-root'),
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(-0.7, 0.7),
-          radius: 1.0,
-          colors: [Color(0xFF0A1124), Color(0xFF050714), Color(0xFF02030A)],
-          stops: [0.0, 0.45, 1.0],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                key: const ValueKey('cosmic-background-painter'),
-                painter: _CosmicPainter(
-                  animation: _motionDisabled ? null : _controller,
-                  elapsedClock: _clock,
-                  motionDisabled: _motionDisabled,
-                  stars: _stars,
+        key: const ValueKey('cosmic-background-root'),
+        decoration: BoxDecoration(gradient: widget.palette.ground),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  key: const ValueKey('cosmic-background-painter'),
+                  painter: _CosmicPainter(
+                    animation: _motionDisabled ? null : _controller,
+                    elapsedClock: _clock,
+                    motionDisabled: _motionDisabled,
+                    stars: _stars,
+                    starColor: widget.palette.starColor,
+                  ),
+                  isComplex: true,
+                  willChange: !_motionDisabled,
                 ),
-                isComplex: true,
-                willChange: !_motionDisabled,
               ),
             ),
-          ),
-          RepaintBoundary(child: widget.child),
-        ],
-      ),
+            RepaintBoundary(child: widget.child),
+          ],
+        ),
       ),
     );
   }
@@ -188,12 +204,14 @@ class _CosmicPainter extends CustomPainter {
   final Stopwatch elapsedClock;
   final bool motionDisabled;
   final List<_Star> stars;
+  final Color starColor;
 
   _CosmicPainter({
     required this.animation,
     required this.elapsedClock,
     required this.motionDisabled,
     required this.stars,
+    required this.starColor,
   }) : super(repaint: motionDisabled ? null : animation);
 
   double get _driftT => motionDisabled ? 0 : animation?.value ?? 0;
@@ -296,7 +314,7 @@ class _CosmicPainter extends CustomPainter {
       final center = Offset(star.x * size.width, star.y * size.height);
       final radius = star.size * scale / 2;
 
-      final dot = Paint()..color = Colors.white.withValues(alpha: opacity);
+      final dot = Paint()..color = starColor.withValues(alpha: opacity);
       canvas.drawCircle(center, radius, dot);
     }
   }
@@ -305,6 +323,7 @@ class _CosmicPainter extends CustomPainter {
   bool shouldRepaint(covariant _CosmicPainter oldDelegate) {
     return oldDelegate.motionDisabled != motionDisabled ||
         oldDelegate.animation != animation ||
+        oldDelegate.starColor != starColor ||
         oldDelegate.stars != stars;
   }
 }

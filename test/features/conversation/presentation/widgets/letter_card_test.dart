@@ -536,25 +536,26 @@ void main() {
       testWidgets(
         'inboxed/delivered use the neutral status color; pending stays amber',
         (tester) async {
-          const neutral = Color.fromRGBO(255, 255, 255, 0.25);
           const amber = Color.fromRGBO(255, 200, 100, 0.50);
 
           for (final status in const ['inboxed', 'delivered']) {
-            await tester.pumpWidget(
-              buildTestWidget(isIncoming: false, status: status),
-            );
+            await tester
+                .pumpWidget(buildTestWidget(isIncoming: false, status: status))
+                .timeout(const Duration(seconds: 3));
             final icon = tester.widget<Icon>(find.byIcon(Icons.inbox_rounded));
             expect(
-              icon.color,
-              neutral,
+              icon.color!.withValues(alpha: 1),
+              Colors.white,
               reason: "status '$status' must use the neutral muted color",
             );
-            expect(icon.color, isNot(amber));
+            if (status == 'delivered') {
+              expect(icon.color, const Color.fromRGBO(255, 255, 255, 0.60));
+            }
           }
 
-          await tester.pumpWidget(
-            buildTestWidget(isIncoming: false, status: 'pending'),
-          );
+          await tester
+              .pumpWidget(buildTestWidget(isIncoming: false, status: 'pending'))
+              .timeout(const Duration(seconds: 3));
           // 184 (clock→tick): 'pending' renders a single tick, not the clock,
           // but KEEPS the amber "still waiting" hue (only the glyph changed).
           final pendingIcon = tester.widget<Icon>(
@@ -2666,6 +2667,21 @@ void main() {
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       },
     );
+
+    for (final status in ['sent', 'delivered']) {
+      testWidgets('dark $status fallback tick meets component contrast', (
+        tester,
+      ) async {
+        await tester
+            .pumpWidget(buildTransportGlyph(status: status, transport: null))
+            .timeout(const Duration(seconds: 3));
+
+        final tick = tester.widget<Icon>(find.byIcon(Icons.done_rounded));
+        final tickColor = tick.color!;
+        expect(tickColor, const Color.fromRGBO(255, 255, 255, 0.60));
+        expectComponentContrast(tickColor, const Color(0xFF0C0D12));
+      });
+    }
 
     // TC-06 / 184 TC-184-01 — in-flight (pending/sending) renders a SINGLE tick
     // (the clock→tick change), never the transport glyph and never the two-tick.

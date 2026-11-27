@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audio_session/audio_session.dart';
@@ -432,6 +433,7 @@ void main() {
     MediaAttachment attachment, {
     bool requireVerifiedContentHash = false,
     Locale locale = const Locale('en'),
+    ThemeData? theme,
     VoidCallback? onRetryUnavailableMedia,
     String? renderedSemanticsLabel,
     Stream<AudioInterruptionEvent>? interruptionEvents,
@@ -439,6 +441,7 @@ void main() {
   }) {
     return MaterialApp(
       locale: locale,
+      theme: theme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -837,6 +840,41 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
       await flushAsyncPlayerTasks(tester).timeout(deadline);
     });
+
+    for (final (brightness, available, expectedColour) in [
+      (Brightness.light, true, const Color(0xFF25222B)),
+      (Brightness.light, false, const Color(0xFF25222B)),
+      (Brightness.dark, true, const Color(0xFF4ECDC4)),
+      (Brightness.dark, false, const Color.fromRGBO(255, 255, 255, 0.70)),
+    ]) {
+      testWidgets('${brightness.name} play glyph when '
+          '${available ? 'available' : 'unavailable'} has readable colour', (
+        tester,
+      ) async {
+        const deadline = Duration(seconds: 3);
+        await tester
+            .pumpWidget(
+              buildApp(
+                available
+                    ? baseAttachment.copyWith(localPath: '/tmp/voice.m4a')
+                    : baseAttachment,
+                theme: brightness == Brightness.light
+                    ? AppTheme.lightTheme
+                    : AppTheme.darkTheme,
+              ),
+            )
+            .timeout(deadline);
+
+        final play = find.byIcon(Icons.play_arrow_rounded);
+        expect(play, findsOneWidget);
+        final actualColour =
+            tester.widget<Icon>(play).color ??
+            IconTheme.of(tester.element(play)).color;
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
+        expect(actualColour, expectedColour);
+      });
+    }
 
     testWidgets('speed control cycles, reaches the player, and persists', (
       tester,

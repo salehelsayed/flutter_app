@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -98,6 +99,14 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    final ink = light ? colors.textPrimary : _ink;
+    final muted = light ? colors.textSecondary : _muted;
+    final faint = light ? colors.textMuted : _faint;
+    final inputBorder = BorderSide(
+      color: light ? colors.inputBorder : const Color(0x24E8ECE9),
+    );
     final searching = _search.text.trim().isNotEmpty;
     final matches = _matches;
     final rail = !searching && widget.tags.length >= _railFrom;
@@ -105,14 +114,14 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
       for (final tag in _alphabetical)
         if (foldTag(tag.key).isNotEmpty) foldTag(tag.key).characters.first,
     }.toList();
-    final small = _mono.copyWith(color: _faint, fontSize: 11.5);
+    final small = _mono.copyWith(color: faint, fontSize: 11.5);
     return Padding(
       padding: EdgeInsets.only(
         top: 80,
         bottom: MediaQuery.viewInsetsOf(context).bottom,
       ),
       child: Material(
-        color: _sheet,
+        color: light ? colors.surfaceRaised : _sheet,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         child: SafeArea(
           top: false,
@@ -123,7 +132,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                 height: 5,
                 margin: const EdgeInsets.only(top: 8, bottom: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0x2EE8ECE9),
+                  color: light ? colors.divider : const Color(0x2EE8ECE9),
                   borderRadius: BorderRadius.circular(3),
                 ),
               ),
@@ -136,8 +145,8 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                       child: Text(
                         l10n.you_tags_title,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: _ink,
+                        style: TextStyle(
+                          color: ink,
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
@@ -146,7 +155,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
                       style: TextButton.styleFrom(
-                        foregroundColor: _muted,
+                        foregroundColor: muted,
                         minimumSize: const Size(56, 44),
                       ),
                       child: Text(l10n.you_tags_done),
@@ -160,25 +169,29 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                   key: const ValueKey('you-tags-search'),
                   controller: _search,
                   onChanged: (_) => setState(() {}),
-                  style: _mono.copyWith(color: _ink, fontSize: 14),
+                  style: _mono.copyWith(color: ink, fontSize: 14),
                   decoration: InputDecoration(
                     isDense: true,
                     filled: true,
-                    fillColor: const Color(0x0FFFFFFF),
+                    fillColor: light
+                        ? colors.inputFill
+                        : const Color(0x0FFFFFFF),
                     prefixText: '# ',
-                    prefixStyle: _mono.copyWith(color: _faint, fontSize: 14),
+                    prefixStyle: _mono.copyWith(color: faint, fontSize: 14),
                     hintText: l10n.you_tags_find,
-                    hintStyle: const TextStyle(
-                      color: Color(0x66F8FAFC),
+                    hintStyle: TextStyle(
+                      color: light
+                          ? colors.placeholderText
+                          : const Color(0x66F8FAFC),
                       fontSize: 14,
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0x24E8ECE9)),
+                      borderSide: inputBorder,
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0x24E8ECE9)),
+                      borderSide: inputBorder,
                     ),
                   ),
                 ),
@@ -227,7 +240,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                                     '#${_search.text.trim().replaceFirst(RegExp('^#+'), '')}',
                                   ),
                                   style: _mono.copyWith(
-                                    color: _muted,
+                                    color: muted,
                                     fontSize: 13,
                                   ),
                                 ),
@@ -275,7 +288,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                                     child: Text(
                                       letter.toUpperCase(),
                                       style: _mono.copyWith(
-                                        color: _faint,
+                                        color: faint,
                                         fontSize: 11,
                                       ),
                                     ),
@@ -303,23 +316,33 @@ class _Pill extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: _chip,
-          borderRadius: BorderRadius.circular(18),
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    return Semantics(
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: light ? colors.surfaceSubtle : _chip,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Text(
+            label,
+            style: _mono.copyWith(
+              color: light ? colors.textPrimary : _ink,
+              fontSize: 13,
+            ),
+          ),
         ),
-        child: Text(label, style: _mono.copyWith(color: _ink, fontSize: 13)),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _Row extends StatelessWidget {
@@ -335,32 +358,47 @@ class _Row extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    child: InkWell(
-      key: ValueKey('you-tags-row-${tag.key}'),
-      onTap: onTap,
-      child: Container(
-        height: _rowHeight,
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: _hairline)),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                tag.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: _mono.copyWith(color: _ink, fontSize: 14),
-              ),
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    return Semantics(
+      button: true,
+      child: InkWell(
+        key: ValueKey('you-tags-row-${tag.key}'),
+        onTap: onTap,
+        child: Container(
+          height: _rowHeight,
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: light ? colors.divider : _hairline),
             ),
-            Text(used, style: _mono.copyWith(color: _faint, fontSize: 11)),
-          ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  tag.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: _mono.copyWith(
+                    color: light ? colors.textPrimary : _ink,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Text(
+                used,
+                style: _mono.copyWith(
+                  color: light ? colors.textMuted : _faint,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// A small one-time note under the header's #, pointing at it.
@@ -370,22 +408,34 @@ class YouTagsNote extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsetsDirectional.only(end: 10, top: 2, bottom: 6),
-    child: Align(
-      alignment: AlignmentDirectional.centerEnd,
-      child: Container(
-        key: const ValueKey('you-tags-note'),
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1D2A23),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _accent.withValues(alpha: .4)),
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 10, top: 2, bottom: 6),
+      child: Align(
+        alignment: AlignmentDirectional.centerEnd,
+        child: Container(
+          key: const ValueKey('you-tags-note'),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+          decoration: BoxDecoration(
+            color: light ? colors.navActiveFill : const Color(0xFF1D2A23),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: light ? colors.accent : _accent.withValues(alpha: .4),
+            ),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              color: light ? colors.textPrimary : _ink,
+              fontSize: 12,
+            ),
+          ),
         ),
-        child: Text(text, style: const TextStyle(color: _ink, fontSize: 12)),
       ),
-    ),
-  );
+    );
+  }
 }
 
 const _latin = {

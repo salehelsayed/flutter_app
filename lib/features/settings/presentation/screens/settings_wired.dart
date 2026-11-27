@@ -906,6 +906,7 @@ class _SettingsWiredState extends State<SettingsWired>
           final theme = Theme.of(context);
           final readableColors = BackgroundReadableColors.resolve(
             _currentBackgroundPreference,
+            theme: theme,
           );
           return Theme(
             data: theme.copyWith(

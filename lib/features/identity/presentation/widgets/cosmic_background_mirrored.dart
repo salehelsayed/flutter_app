@@ -3,7 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import 'cosmic_background.dart' show backgroundMotionWindow;
+import 'cosmic_background.dart'
+    show CosmicPalette, backgroundMotionWindow, cosmicDarkPalette;
 
 /// Mirrored cosmic shared app background with a static reduced-motion mode.
 class CosmicBackgroundMirrored extends StatefulWidget {
@@ -12,6 +13,7 @@ class CosmicBackgroundMirrored extends StatefulWidget {
   final int starSeed;
   final Duration driftPeriod;
   final bool paused;
+  final CosmicPalette palette;
 
   const CosmicBackgroundMirrored({
     super.key,
@@ -20,6 +22,7 @@ class CosmicBackgroundMirrored extends StatefulWidget {
     this.starSeed = 1906,
     this.driftPeriod = const Duration(seconds: 18),
     this.paused = false,
+    this.palette = cosmicDarkPalette,
   });
 
   @override
@@ -38,10 +41,8 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.driftPeriod,
-    )..addListener(_settleWhenIdle);
+    _controller = AnimationController(vsync: this, duration: widget.driftPeriod)
+      ..addListener(_settleWhenIdle);
     _stars = _generateStars();
   }
 
@@ -133,35 +134,29 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _wake(),
       child: DecoratedBox(
-      key: const ValueKey('cosmic-background-mirrored-root'),
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(-0.7, 0.7),
-          radius: 1.0,
-          colors: [Color(0xFF0A1124), Color(0xFF050714), Color(0xFF02030A)],
-          stops: [0.0, 0.45, 1.0],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                key: const ValueKey('cosmic-background-mirrored-painter'),
-                painter: _CosmicMirroredPainter(
-                  animation: _motionDisabled ? null : _controller,
-                  elapsedClock: _clock,
-                  motionDisabled: _motionDisabled,
-                  stars: _stars,
+        key: const ValueKey('cosmic-background-mirrored-root'),
+        decoration: BoxDecoration(gradient: widget.palette.ground),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  key: const ValueKey('cosmic-background-mirrored-painter'),
+                  painter: _CosmicMirroredPainter(
+                    animation: _motionDisabled ? null : _controller,
+                    elapsedClock: _clock,
+                    motionDisabled: _motionDisabled,
+                    stars: _stars,
+                    starColor: widget.palette.starColor,
+                  ),
+                  isComplex: true,
+                  willChange: !_motionDisabled,
                 ),
-                isComplex: true,
-                willChange: !_motionDisabled,
               ),
             ),
-          ),
-          RepaintBoundary(child: widget.child),
-        ],
-      ),
+            RepaintBoundary(child: widget.child),
+          ],
+        ),
       ),
     );
   }
@@ -188,12 +183,14 @@ class _CosmicMirroredPainter extends CustomPainter {
   final Stopwatch elapsedClock;
   final bool motionDisabled;
   final List<_MirroredStar> stars;
+  final Color starColor;
 
   _CosmicMirroredPainter({
     required this.animation,
     required this.elapsedClock,
     required this.motionDisabled,
     required this.stars,
+    required this.starColor,
   }) : super(repaint: motionDisabled ? null : animation);
 
   double get _driftT => motionDisabled ? 0 : animation?.value ?? 0;
@@ -296,7 +293,7 @@ class _CosmicMirroredPainter extends CustomPainter {
       final center = Offset(star.x * size.width, star.y * size.height);
       final radius = star.size * scale / 2;
 
-      final dot = Paint()..color = Colors.white.withValues(alpha: opacity);
+      final dot = Paint()..color = starColor.withValues(alpha: opacity);
       canvas.drawCircle(center, radius, dot);
     }
   }
@@ -305,6 +302,7 @@ class _CosmicMirroredPainter extends CustomPainter {
   bool shouldRepaint(covariant _CosmicMirroredPainter oldDelegate) {
     return oldDelegate.motionDisabled != motionDisabled ||
         oldDelegate.animation != animation ||
+        oldDelegate.starColor != starColor ||
         oldDelegate.stars != stars;
   }
 }

@@ -60,7 +60,7 @@ class AppTheme {
         onSurface: Color(0xFF25222B),
         error: Color(0xFFB4232F),
         onError: Color(0xFFFFFFFF),
-        outline: Color(0xFF8D83A8),
+        outline: BackgroundReadableColors.lightOutline,
         outlineVariant: Color(0xFFB3ACBD),
         surfaceContainerHighest: Color(0xFFE1DCE5),
       ),

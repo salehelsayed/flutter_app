@@ -841,14 +841,12 @@ class _ComposeAreaState extends State<ComposeArea>
                                       fontSize: 15,
                                       color: isLightSurface
                                           ? readableColors.composerHint
-                                          : (_hasFocus
-                                                ? const Color.fromRGBO(
-                                                    255,
-                                                    255,
-                                                    255,
-                                                    0.2,
-                                                  )
-                                                : readableColors.composerHint),
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.55,
+                                            ),
                                     ),
                                     border: InputBorder.none,
                                     // The rounded AnimatedContainer above paints the

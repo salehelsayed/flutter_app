@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
@@ -103,6 +104,7 @@ void main() {
     PostModel initialPost, {
     String authorName = 'Alice',
     Locale locale = const Locale('en'),
+    ThemeData? theme,
     Stream<ConversationMessage>? replyChanges,
     Future<void> Function(String)? onShown,
     Future<ThoughtActivity> Function(String)? loadActivity,
@@ -127,6 +129,7 @@ void main() {
     }
     await tester.pumpWidget(
       MaterialApp(
+        theme: theme,
         builder: textScale == null
             ? null
             : (context, child) => MediaQuery(
@@ -2090,6 +2093,53 @@ void main() {
       expect(find.text('Ausblenden'), findsNothing);
       await finish(tester);
     });
+    testWidgets('translated Thought links stay bright in light appearance', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const url = 'https://example.com/river';
+      const body = 'Schau dir den Fluss an: ';
+      const translation = '$body$url';
+      tester.platformDispatcher.localeTestValue = const Locale('de');
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+      debugTranslatePreviewEnabledOverride = true;
+      debugOnDeviceAiOverride = _FakeTranslator(result: translation);
+      final thought = _thought(initialNow)
+          .copyWith(text: 'Please take a look at the river: $url');
+      await posts.savePost(thought).timeout(deadline);
+
+      await openCard(
+        tester,
+        thought,
+        locale: const Locale('de'),
+        theme: AppTheme.lightTheme,
+      ).timeout(deadline);
+      await pumpMediaFrames(tester).timeout(deadline);
+      await tester.tap(find.text('Übersetzung anzeigen')).timeout(deadline);
+      await pumpMediaFrames(tester).timeout(deadline);
+
+      final preview = find.byWidgetPredicate(
+        (widget) => widget is LinkableText && widget.text == translation,
+      );
+      final rich = tester.widget<RichText>(
+        find.descendant(of: preview, matching: find.byType(RichText)),
+      );
+      expect(rich.text.toPlainText(), translation);
+      final spans = <TextSpan>[];
+      rich.text.visitChildren((span) {
+        if (span is TextSpan) spans.add(span);
+        return true;
+      });
+      expect(
+        spans.singleWhere((span) => span.text == body).style?.color,
+        Colors.white,
+      );
+      final link = spans.singleWhere((span) => span.text == url);
+      expect(link.recognizer, isNotNull);
+      expect(link.style?.color, const Color(0xFF81E6D9));
+      await finish(tester).timeout(deadline);
+    });
+
     testWidgets('a photo thought offers Translate for its caption, and the '
         'translation shows under the caption', (tester) async {
       tester.platformDispatcher.localeTestValue = const Locale('de');
@@ -2218,12 +2268,15 @@ void main() {
 }
 
 class _FakeTranslator implements OnDeviceAi {
+  _FakeTranslator({this.result = 'Wie geht es dir heute?'});
+
+  final String result;
   final requests = <String>[];
 
   @override
   Future<String> translate(String text, {required String languageName}) async {
     requests.add('$languageName: $text');
-    return 'Wie geht es dir heute?';
+    return result;
   }
 
   @override

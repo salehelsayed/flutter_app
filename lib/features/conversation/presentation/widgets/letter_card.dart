@@ -1349,26 +1349,17 @@ class LetterCard extends StatelessWidget {
           ? const Color(0xFFB42318)
           : const Color.fromRGBO(255, 100, 100, 0.60);
     }
-    // 155: 'pending' alone keeps the amber "still waiting" hue; once a message
-    // reaches the inbox ('inboxed'/'delivered'/'queued') it reads as a good
-    // state in the neutral muted color (the default branch below, same as
-    // 'sent'), not amber.
     if (status == 'pending') {
       return readableColors.isLightSurface
           ? const Color(0xFF8A4A00)
           : const Color.fromRGBO(255, 200, 100, 0.50);
     }
-    // 210: 'queued_offline' is a benign waiting-to-send state (not an error and
-    // not the amber in-doubt hue) — the neutral muted tone, same as 'sent'.
-    if (status == 'queued_offline') {
-      return readableColors.isLightSurface
-          ? readableColors.iconMuted
-          : const Color.fromRGBO(255, 255, 255, 0.25);
-    }
-    // 'sent', 'sending', 'inboxed', 'delivered', 'queued' → neutral muted.
-    return readableColors.isLightSurface
-        ? readableColors.iconMuted
-        : const Color.fromRGBO(255, 255, 255, 0.25);
+    if (readableColors.isLightSurface) return readableColors.iconMuted;
+    return switch (status) {
+      'sent' || 'delivered' || 'inboxed' || 'queued' =>
+        const Color.fromRGBO(255, 255, 255, 0.60),
+      _ => const Color.fromRGBO(255, 255, 255, 0.25),
+    };
   }
 
   static String _statusSemantic(BuildContext context, String status) {
