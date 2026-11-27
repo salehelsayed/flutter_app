@@ -632,13 +632,15 @@
     "affected-surfaces": {
       "kind": "flutter",
       "paths": [
+        "test/core/theme/",
+        "test/features/theme/",
         "test/features/home/",
         "test/features/orbit/",
         "test/features/posts/",
         "test/features/introduction/",
         "test/features/settings/"
       ],
-      "boundary": "Existing home/orbit/posts/introduction/settings surfaces remain affected/full obligations",
+      "boundary": "Theme contracts and existing home/orbit/posts/introduction/settings surfaces",
       "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
       "timeout_seconds": 7200,
       "estimated_seconds": null,
@@ -646,6 +648,7 @@
         "flutter"
       ],
       "investigate": [
+        "lib/core/theme/*",
         "lib/features/home/*",
         "lib/features/orbit/*",
         "lib/features/posts/*",
@@ -5846,6 +5849,22 @@
         "affected-surfaces"
       ],
       "why": "Existing home/orbit/posts/introduction/settings surfaces remain affected/full obligations"
+    },
+    {
+      "id": "theme-surfaces",
+      "patterns": [
+        "lib/core/theme/*",
+        "test/core/theme/*",
+        "test/features/theme/*"
+      ],
+      "checks": [
+        "affected-surfaces",
+        "affected-conversation",
+        "affected-feed",
+        "affected-identity",
+        "affected-calls"
+      ],
+      "why": "Shared appearance and palette tokens affect chat, feed, wallpaper and call presentation"
     },
     {
       "id": "bootstrap",
