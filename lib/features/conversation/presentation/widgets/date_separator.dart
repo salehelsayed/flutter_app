@@ -22,52 +22,40 @@ class DateSeparator extends StatelessWidget {
     final labelColor = isLightSurface
         ? readableColors.emptyDate
         : const Color.fromRGBO(255, 255, 255, 0.60);
+    final rule = Container(
+      height: 1,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.transparent, lineColor, Colors.transparent],
+        ),
+      ),
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              height: 1,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    lineColor,
-                    Colors.transparent,
-                  ],
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            Expanded(child: rule),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  label.toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: labelColor,
+                    letterSpacing: 1,
+                  ),
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              label.toUpperCase(),
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: labelColor,
-                letterSpacing: 1,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Container(
-              height: 1,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    lineColor,
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+            Expanded(child: rule),
+          ],
+        ),
       ),
     );
   }

@@ -25,6 +25,7 @@ class ConversationHeader extends StatelessWidget {
 
   /// Sits between search and the overflow menu.
   final Widget? translateAction;
+  final Widget? introPromoAction;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionOffersMediaChoice;
@@ -47,6 +48,7 @@ class ConversationHeader extends StatelessWidget {
     this.onCallRetry,
     this.onSearch,
     this.translateAction,
+    this.introPromoAction,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionOffersMediaChoice = false,
@@ -219,7 +221,11 @@ class ConversationHeader extends StatelessWidget {
                 if (largeText)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
-                    children: actions,
+                    children: [
+                      if (introPromoAction case final promo?)
+                        Expanded(child: promo),
+                      ...actions,
+                    ],
                   ),
                 if (isWaitingForSecureConnection &&
                     PendingContactRetryScope.isStopped(

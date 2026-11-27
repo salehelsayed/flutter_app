@@ -28,6 +28,32 @@ class IntroBanner extends StatelessWidget {
     final onAccentColor = readableColors.isLightSurface
         ? Colors.white
         : Colors.black;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) >= 32;
+    final makeIntroductions = ElevatedButton(
+      onPressed: onMakeIntroductions,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: accentColor,
+        foregroundColor: onAccentColor,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        minimumSize: largeText ? const Size(44, 44) : null,
+      ),
+      child: Text(
+        l10n.intro_make_introductions,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+    );
+    final maybeLater = TextButton(
+      onPressed: onMaybeLater,
+      style: largeText
+          ? TextButton.styleFrom(minimumSize: const Size(44, 44))
+          : null,
+      child: Text(
+        l10n.intro_maybe_later,
+        style: TextStyle(fontSize: 13, color: readableColors.textMuted),
+      ),
+    );
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -60,47 +86,20 @@ class IntroBanner extends StatelessWidget {
             style: TextStyle(fontSize: 13, color: readableColors.textMuted),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              // "Make introductions" button (primary green)
-              Expanded(
-                child: SizedBox(
-                  height: 36,
-                  child: ElevatedButton(
-                    onPressed: onMakeIntroductions,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accentColor,
-                      foregroundColor: onAccentColor,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                    ),
-                    child: Text(
-                      l10n.intro_make_introductions,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              // "Maybe later" text button
-              TextButton(
-                onPressed: onMaybeLater,
-                child: Text(
-                  l10n.intro_maybe_later,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: readableColors.textMuted,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          if (largeText)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [makeIntroductions, maybeLater],
+            )
+          else
+            Row(
+              children: [
+                Expanded(child: SizedBox(height: 36, child: makeIntroductions)),
+                const SizedBox(width: 8),
+                maybeLater,
+              ],
+            ),
         ],
       ),
     );

@@ -978,6 +978,16 @@ class _ConversationScreenState extends State<ConversationScreen>
               !compactForKeyboard &&
               !isSearching &&
               View.of(context).viewInsets.bottom == 0;
+          final largeText = MediaQuery.textScalerOf(context).scale(16) >= 32;
+          final showIntroBanner =
+              allowIntroBanner &&
+              widget.showIntroBanner &&
+              widget.onMakeIntroductions != null;
+          final showCompactIntro =
+              largeText &&
+              showIntroBanner &&
+              (widget.messages.isNotEmpty ||
+                  (widget.initialLoadDone && _visibleCallEntries.isEmpty));
           final content = Column(
             children: [
               // Header; the search bar stays up with the keyboard.
@@ -1001,6 +1011,9 @@ class _ConversationScreenState extends State<ConversationScreen>
                   onCall: widget.onCall,
                   onCallRetry: widget.onCallRetry,
                   onSearch: widget.search?.open,
+                  introPromoAction: showCompactIntro
+                      ? _buildCompactIntroPromo(context)
+                      : null,
                   showCallAction: widget.showCallAction,
                   callActionEnabled: widget.callActionEnabled,
                   callActionInFlight:
@@ -1014,27 +1027,12 @@ class _ConversationScreenState extends State<ConversationScreen>
                   callStartingMessage: widget.callStartingMessage,
                 ),
               // Intro banner above messages (when messages exist)
-              if (allowIntroBanner)
+              if (allowIntroBanner && !largeText)
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   child:
-                      widget.showIntroBanner &&
-                          widget.messages.isNotEmpty &&
-                          widget.onMakeIntroductions != null
-                      ? Padding(
-                          key: const ValueKey('intro-banner'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          child: IntroBanner(
-                            contactUsername:
-                                widget.bannerContactUsername ??
-                                widget.contactUsername,
-                            onMakeIntroductions: widget.onMakeIntroductions!,
-                            onMaybeLater: widget.onMaybeLater ?? () {},
-                          ),
-                        )
+                      showIntroBanner && widget.messages.isNotEmpty
+                      ? _buildIntroBanner()
                       : const SizedBox.shrink(key: ValueKey('no-banner')),
                 ),
               if (!compactForKeyboard && widget.p2pService != null)
@@ -1060,7 +1058,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                       maintainState: true,
                       child:
                           widget.messages.isEmpty && _visibleCallEntries.isEmpty
-                          ? _buildEmptyOrLoadingState(allowIntroBanner)
+                          ? _buildEmptyOrLoadingState(allowIntroBanner && !largeText)
                           : _buildMessageList(),
                     ),
                     if (noMatchQuery != null)
@@ -1205,6 +1203,64 @@ class _ConversationScreenState extends State<ConversationScreen>
     );
   }
 
+  Widget _buildCompactIntroPromo(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final name = widget.bannerContactUsername ?? widget.contactUsername;
+    return SizedBox(
+      height: 44,
+      child: TextButton(
+        onPressed: () => unawaited(_showIntroPromo(name)),
+        style: TextButton.styleFrom(
+          alignment: AlignmentDirectional.centerStart,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(44, 44),
+        ),
+        child: Text(
+          l10n.intro_banner_title(name),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 2),
+          style: const TextStyle(fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showIntroPromo(String name) async {
+    final makeIntroductions = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          primary: false,
+          child: IntroBanner(
+            contactUsername: name,
+            onMakeIntroductions: () => Navigator.of(sheetContext).pop(true),
+            onMaybeLater: () => Navigator.of(sheetContext).pop(false),
+          ),
+        ),
+      ),
+    );
+    if (!mounted || makeIntroductions == null) return;
+    if (makeIntroductions) {
+      widget.onMakeIntroductions?.call();
+    } else {
+      widget.onMaybeLater?.call();
+    }
+  }
+
+  Widget _buildIntroBanner() => Padding(
+    key: const ValueKey('intro-banner'),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    child: IntroBanner(
+      contactUsername: widget.bannerContactUsername ?? widget.contactUsername,
+      onMakeIntroductions: widget.onMakeIntroductions!,
+      onMaybeLater: widget.onMaybeLater ?? () {},
+    ),
+  );
+
   Widget _buildEmptyOrLoadingState(bool allowIntroBanner) {
     if (!widget.initialLoadDone) {
       return const _ConversationLoadingShell();
@@ -1215,15 +1271,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       return Column(
         key: const ValueKey('empty-with-banner'),
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: IntroBanner(
-              contactUsername:
-                  widget.bannerContactUsername ?? widget.contactUsername,
-              onMakeIntroductions: widget.onMakeIntroductions!,
-              onMaybeLater: widget.onMaybeLater ?? () {},
-            ),
-          ),
+          _buildIntroBanner(),
           Expanded(
             child: EmptyConversationState(
               contactPeerId: widget.contactPeerId,
