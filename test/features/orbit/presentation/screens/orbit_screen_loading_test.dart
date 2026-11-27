@@ -374,6 +374,22 @@ void main() {
   });
 
   group('production Orbit row actions', () {
+    void expectNoAnonymousHold(SemanticsNode row) {
+      for (
+        var ancestor = row.parent;
+        ancestor != null;
+        ancestor = ancestor.parent
+      ) {
+        final data = ancestor.getSemanticsData();
+        expect(
+          data.label.isEmpty && data.hasAction(SemanticsAction.longPress),
+          isFalse,
+          reason:
+              'The named row must not have an anonymous hold action above it.',
+        );
+      }
+    }
+
     testWidgets('the named contact owns Open and Archive actions', (
       tester,
     ) async {
@@ -417,6 +433,7 @@ void main() {
       node.owner!.performAction(node.id, SemanticsAction.customAction, archive);
       await tester.pump(const Duration(milliseconds: 350));
       expect(archived, [friend.peerId]);
+      expectNoAnonymousHold(node);
     });
 
     testWidgets('the named group owns Open and Archive actions', (tester) async {
@@ -450,6 +467,7 @@ void main() {
       node.owner!.performAction(node.id, SemanticsAction.customAction, archive);
       await tester.pump(const Duration(milliseconds: 350));
       expect(archived, [group.groupId]);
+      expectNoAnonymousHold(node);
     });
   });
 
