@@ -86,8 +86,6 @@ void main() {
       'AX5 layout keeps two draft lines and chat controls in $language',
       (tester) async {
         const deadline = Duration(seconds: 3);
-        final semantics = tester.ensureSemantics();
-        addTearDown(semantics.dispose);
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = Size(width, 568);
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -142,7 +140,7 @@ void main() {
         )!;
         final attach = find.byKey(const ValueKey('composer-attach-button'));
         final sticker = find.byTooltip(l10n.stickers_title);
-        final send = find.bySemanticsIdentifier('chat_send');
+        final send = find.byTooltip(l10n.action_send_message);
         for (final button in [attach, sticker, send]) {
           final size = tester.getSize(button);
           expect(size.width, greaterThanOrEqualTo(44));
