@@ -1388,24 +1388,31 @@ class _TaggedText extends StatelessWidget {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => onTag(tag, label),
-            child: tag.key == activeTag
-                ? Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    decoration: BoxDecoration(
-                      color: const Color(0x1AE8ECE9),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      label,
-                      key: ValueKey('you-tag-${tag.key}'),
-                      style: tagStyle.copyWith(color: p.ink),
-                    ),
-                  )
-                : Text(
-                    label,
-                    key: ValueKey('you-tag-${tag.key}'),
-                    style: tagStyle,
-                  ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: tag.key == activeTag
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0x1AE8ECE9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          label,
+                          key: ValueKey('you-tag-${tag.key}'),
+                          style: tagStyle.copyWith(color: p.ink),
+                        ),
+                      )
+                    : Text(
+                        label,
+                        key: ValueKey('you-tag-${tag.key}'),
+                        style: tagStyle,
+                      ),
+              ),
+            ),
           ),
         ),
       ),

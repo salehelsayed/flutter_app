@@ -275,7 +275,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                                       letter.toUpperCase(),
                                       style: _mono.copyWith(
                                         color: _faint,
-                                        fontSize: 10,
+                                        fontSize: 11,
                                       ),
                                     ),
                                   ),

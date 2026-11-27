@@ -46,14 +46,29 @@ class BlockedBanner extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                onTap: onUnblock,
-                child: Text(
-                  l10n.conversation_unblock,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF10B981),
+              Semantics(
+                button: true,
+                enabled: onUnblock != null,
+                child: GestureDetector(
+                  onTap: onUnblock,
+                  behavior: HitTestBehavior.opaque,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    child: Center(
+                      widthFactor: 1,
+                      heightFactor: 1,
+                      child: Text(
+                        l10n.conversation_unblock,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF10B981),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

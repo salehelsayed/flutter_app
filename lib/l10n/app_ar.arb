@@ -15,6 +15,8 @@
   "a11y_close_qr_scanner": "إغلاق ماسح رمز QR",
   "a11y_flashlight_on": "تشغيل ضوء الفلاش",
   "a11y_flashlight_off": "إطفاء ضوء الفلاش",
+  "a11y_play_voice_message": "تشغيل الرسالة الصوتية",
+  "a11y_pause_voice_message": "إيقاف الرسالة الصوتية مؤقتًا",
   "onboarding_new_here": "أنا جديد هنا",
   "onboarding_new_desc": "أنشئ هوية جديدة",
   "onboarding_load_key": "استرجاع مفتاحي",

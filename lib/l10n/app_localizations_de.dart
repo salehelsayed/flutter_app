@@ -54,6 +54,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get a11y_flashlight_off => 'Taschenlampe ausschalten';
 
   @override
+  String get a11y_play_voice_message => 'Sprachnachricht abspielen';
+
+  @override
+  String get a11y_pause_voice_message => 'Sprachnachricht pausieren';
+
+  @override
   String get onboarding_new_here => 'Ich bin neu hier';
 
   @override

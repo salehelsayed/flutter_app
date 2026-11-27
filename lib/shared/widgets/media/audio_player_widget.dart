@@ -11,6 +11,8 @@ import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
+
 import 'media_display_helpers.dart';
 import 'voice_playback_speed.dart';
 import 'waveform_seek_bar.dart';
@@ -707,31 +709,46 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
         : '--:--';
 
     final hasWaveform = widget.attachment.waveform != null;
+    final l10n = AppLocalizations.of(context)!;
 
     // Screen readers otherwise hear only the duration and the time, with no
     // hint that the bubble is a voice message.
     final player = Semantics(
-      label: AppLocalizations.of(context)!.media_voice_message_label,
+      label: l10n.media_voice_message_label,
       child: Row(
         children: [
           // Play/pause button
-          GestureDetector(
-            onTap: _isAvailable ? _togglePlayPause : null,
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _isAvailable
-                    ? const Color.fromRGBO(78, 205, 196, 0.20)
-                    : const Color.fromRGBO(255, 255, 255, 0.06),
-              ),
-              child: Icon(
-                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                size: 14,
-                color: _isAvailable
-                    ? const Color(0xFF4ecdc4)
-                    : const Color.fromRGBO(255, 255, 255, 0.25),
+          ActionSemantics(
+            label: _isPlaying
+                ? l10n.a11y_pause_voice_message
+                : l10n.a11y_play_voice_message,
+            enabled: _isAvailable,
+            child: GestureDetector(
+              onTap: _isAvailable ? _togglePlayPause : null,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox.square(
+                dimension: 44,
+                child: Center(
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _isAvailable
+                          ? const Color.fromRGBO(78, 205, 196, 0.20)
+                          : const Color.fromRGBO(255, 255, 255, 0.06),
+                    ),
+                    child: Icon(
+                      _isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      size: 14,
+                      color: _isAvailable
+                          ? const Color(0xFF4ecdc4)
+                          : const Color.fromRGBO(255, 255, 255, 0.25),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),

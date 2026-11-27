@@ -356,21 +356,26 @@ class _ComposeAreaState extends State<ComposeArea>
             key: const ValueKey('voice-review-discard'),
             onTap: widget.onReviewDiscard,
             behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color.fromRGBO(255, 255, 255, 0.08),
-                borderRadius: BorderRadius.circular(100),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 80, 80, 0.4),
-                ),
-              ),
-              child: const Center(
-                child: Icon(
-                  Icons.delete_outline_rounded,
-                  size: 20,
-                  color: Color.fromRGBO(255, 120, 120, 0.9),
+            child: SizedBox.square(
+              dimension: 44,
+              child: Center(
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color.fromRGBO(255, 255, 255, 0.08),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(
+                      color: const Color.fromRGBO(255, 80, 80, 0.4),
+                    ),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.delete_outline_rounded,
+                      size: 20,
+                      color: Color.fromRGBO(255, 120, 120, 0.9),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -388,19 +393,24 @@ class _ComposeAreaState extends State<ComposeArea>
                 ? null
                 : widget.onReviewSend,
             behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: readableColors.sendBg,
-                borderRadius: BorderRadius.circular(100),
-                border: Border.all(color: readableColors.micBorder),
-              ),
+            child: SizedBox.square(
+              dimension: 44,
               child: Center(
-                child: Icon(
-                  Icons.arrow_upward_rounded,
-                  size: 20,
-                  color: readableColors.sendIcon,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: readableColors.sendBg,
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(color: readableColors.micBorder),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.arrow_upward_rounded,
+                      size: 20,
+                      color: readableColors.sendIcon,
+                    ),
+                  ),
                 ),
               ),
             ),

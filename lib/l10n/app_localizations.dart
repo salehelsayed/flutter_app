@@ -190,6 +190,18 @@ abstract class AppLocalizations {
   /// **'Turn flashlight off'**
   String get a11y_flashlight_off;
 
+  /// No description provided for @a11y_play_voice_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Play voice message'**
+  String get a11y_play_voice_message;
+
+  /// No description provided for @a11y_pause_voice_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause voice message'**
+  String get a11y_pause_voice_message;
+
   /// No description provided for @onboarding_new_here.
   ///
   /// In en, this message translates to:

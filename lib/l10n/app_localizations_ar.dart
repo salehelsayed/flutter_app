@@ -54,6 +54,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get a11y_flashlight_off => 'إطفاء ضوء الفلاش';
 
   @override
+  String get a11y_play_voice_message => 'تشغيل الرسالة الصوتية';
+
+  @override
+  String get a11y_pause_voice_message => 'إيقاف الرسالة الصوتية مؤقتًا';
+
+  @override
   String get onboarding_new_here => 'أنا جديد هنا';
 
   @override

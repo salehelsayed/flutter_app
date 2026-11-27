@@ -54,6 +54,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get a11y_flashlight_off => 'Turn flashlight off';
 
   @override
+  String get a11y_play_voice_message => 'Play voice message';
+
+  @override
+  String get a11y_pause_voice_message => 'Pause voice message';
+
+  @override
   String get onboarding_new_here => 'I\'m new here';
 
   @override
