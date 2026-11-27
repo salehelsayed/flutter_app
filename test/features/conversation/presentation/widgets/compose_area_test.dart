@@ -125,9 +125,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
 
         expect(tester.takeException(), isNull);
-        final editable = tester.renderObject<RenderEditable>(
-          find.byType(EditableText),
-        );
+        final editable = tester
+            .state<EditableTextState>(find.byType(EditableText))
+            .renderEditable;
         expect(
           editable.size.height,
           greaterThanOrEqualTo(2 * editable.preferredLineHeight - 1),
