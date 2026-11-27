@@ -207,12 +207,15 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         /** Observation only: never constructs or reconciles a native runtime. */
         internal fun existingInstance(): MknoonCallRuntime? = instance
 
-        fun get(context: Context): MknoonCallRuntime =
-            instance ?: synchronized(this) {
+        fun get(context: Context, restorePresented: Boolean = true): MknoonCallRuntime {
+            val runtime = instance ?: synchronized(this) {
                 instance ?: MknoonCallRuntime(context.applicationContext).also {
                     instance = it
                 }
             }
+            if (restorePresented) runtime.restoreStartupPresentation()
+            return runtime
+        }
     }
 
     private val applicationContext = context.applicationContext
@@ -280,6 +283,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     private val expiryJobs = ConcurrentHashMap<UUID, Job>()
     private val cleanupJobs = ConcurrentHashMap<UUID, Job>()
     private val authenticatedIngressLock = Any()
+    private val startupPresentation = AtomicReference<UUID?>(null)
     private val terminalTombstones = MknoonCallTerminalTombstones(preferences)
     internal val eventRelay = MknoonCallEventRelay()
     private lateinit var androidPlatform: AndroidMknoonCallPlatform
@@ -322,6 +326,12 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                 diagnostics.record(handle, "answer", "accept", outcome, reason)
             },
             isMainThread = { Looper.myLooper() == Looper.getMainLooper() },
+            busyDiagnostic = { owner ->
+                android.util.Log.i(
+                    MKNOON_CALL_PRESENTATION_DIAGNOSTIC_TAG,
+                    "MKNOON_CALL_PRESENTATION_DIAG busy_owner=$owner",
+                )
+            },
         )
         reconcilePersistedDescriptor()
     }
@@ -427,6 +437,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                     it.expiresAtMs == payload.expiresAtMs &&
                     it.terminalEvent == null
             }?.let {
+                restoreStartupPresentation(payload.nativeCallId)
                 return@synchronized MknoonCallPresentationResult.DUPLICATE
             }
             controller.present(payload, display).also { result ->
@@ -446,6 +457,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
     fun isRingingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
         val callId = runCatching { UUID.fromString(callHandle) }.getOrNull() ?: return false
+        if (controller.isRegistrationInFlight(callId) || !androidPlatform.hasCall(callId)) return false
         return controller.snapshot()?.let { descriptor ->
             descriptor.nativeCallId == callId &&
                 descriptor.callHandle == callHandle &&
@@ -458,9 +470,16 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         } == true
     }
 
-    fun presentAuthenticated(callHandle: String, expiresAtMs: Long, display: MknoonIncomingCallDisplay?): Boolean {
+    fun presentAuthenticated(callHandle: String, expiresAtMs: Long, display: MknoonIncomingCallDisplay?): Boolean =
+        presentAuthenticatedResult(callHandle, expiresAtMs, display).accepted()
+
+    fun presentAuthenticatedResult(
+        callHandle: String,
+        expiresAtMs: Long,
+        display: MknoonIncomingCallDisplay?,
+    ): MknoonCallPresentationResult {
         val observedNow = System.currentTimeMillis()
-        return presentAuthenticatedCall(
+        return authenticatedCallPresentationResult(
             callHandle = callHandle,
             expiresAtMs = expiresAtMs,
             observedNowMs = observedNow,
@@ -469,6 +488,16 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             wakeHandle = { UUID.randomUUID().toString() },
             present = { payload -> present(payload, display) },
         )
+    }
+
+    fun isPresentationFailureAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
+        val now = System.currentTimeMillis()
+        if (expiresAtMs <= now || !AUTHENTICATED_HANDLE.matches(callHandle)) return false
+        val callId = UUID.fromString(callHandle)
+        if (!hasTerminalTombstone(callId, now) || androidPlatform.hasCall(callId)) return false
+        // The worker already observed PLATFORM_FAILED for this invocation.
+        // A retained cleanup fence or live owner still makes it unsafe to reply.
+        return !controller.isCleanupPending(callId) && controller.activeNativeCallId() != callId
     }
 
     fun terminalizeAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
@@ -628,12 +657,20 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             return
         }
         if (descriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED }) {
-            // B8: this constructor usually runs on main, and below Android 14 Telecom
-            // needs main to finish the re-registration, so it runs on a background thread.
-            controller.reconcilePresented { work -> runtimeScope.launch(Dispatchers.IO) { work.run() } }
+            // Keep recovery available to the UI or an exact retry, but do not
+            // revive a dead process's call when a different wake starts admission.
+            startupPresentation.set(descriptor.nativeCallId)
             return
         }
         controller.terminate(descriptor.nativeCallId, PendingNativeCallEventType.NATIVE_FAILURE)
+    }
+
+    private fun restoreStartupPresentation(expectedCallId: UUID? = null) {
+        val callId = startupPresentation.get() ?: return
+        if (expectedCallId != null && expectedCallId != callId) return
+        if (!startupPresentation.compareAndSet(callId, null)) return
+        // Below Android 14 Telecom needs main to complete registration.
+        controller.reconcilePresented(callId) { work -> runtimeScope.launch(Dispatchers.IO) { work.run() } }
     }
 
     /**
@@ -1159,6 +1196,8 @@ internal class AndroidMknoonCallPlatform(
         )
     }
 
+    fun hasCall(nativeCallId: UUID): Boolean = sessions.containsKey(nativeCallId)
+
     override fun showIncoming(nativeCallId: UUID) {
         notificationManager.notify(
             MknoonCallNotificationFactory.NOTIFICATION_ID,
@@ -1560,41 +1599,49 @@ internal fun presentAuthenticatedCall(
     handleGrammar: Regex,
     wakeHandle: () -> String,
     present: (CallWakePayload) -> MknoonCallPresentationResult,
-): Boolean {
+): Boolean = authenticatedCallPresentationResult(
+    callHandle, expiresAtMs, observedNowMs, capabilityEnabled, handleGrammar, wakeHandle, present,
+).accepted()
+
+private fun MknoonCallPresentationResult.accepted(): Boolean =
+    this == MknoonCallPresentationResult.PRESENTED || this == MknoonCallPresentationResult.DUPLICATE
+
+private fun authenticatedCallPresentationResult(
+    callHandle: String,
+    expiresAtMs: Long,
+    observedNowMs: Long,
+    capabilityEnabled: Boolean,
+    handleGrammar: Regex,
+    wakeHandle: () -> String,
+    present: (CallWakePayload) -> MknoonCallPresentationResult,
+): MknoonCallPresentationResult {
+    if (!capabilityEnabled) return MknoonCallPresentationResult.DISABLED
     if (
-        !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
         expiresAtMs - observedNowMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
-        return false
+        return MknoonCallPresentationResult.STALE
     }
     val nativeCallId = runCatching { UUID.fromString(callHandle) }.getOrNull()
-        ?: return false
+        ?: return MknoonCallPresentationResult.STALE
     // A caller clock ahead of this device (beta 2026-09-25: 13.4 s) must not
     // refuse the call. Ringing still ends within the local 45 s bound.
     val nativeExpiresAtMs =
         minOf(expiresAtMs, observedNowMs + CallPayloadParser.MAX_FUTURE_SKEW_MS)
     val generatedWakeHandle = runCatching(wakeHandle).getOrNull()
         ?.takeIf(CALL_RANDOM_ID::matches)
-        ?: return false
-    return when (
-        present(
-            CallWakePayload(
-                nativeCallId = nativeCallId,
-                callHandle = callHandle,
-                wakeHandle = generatedWakeHandle,
-                receivedAtMs = observedNowMs,
-                expiresAtMs = nativeExpiresAtMs,
-            ),
-        )
-    ) {
-        MknoonCallPresentationResult.PRESENTED,
-        MknoonCallPresentationResult.DUPLICATE,
-        -> true
-        else -> false
-    }
+        ?: return MknoonCallPresentationResult.PERSISTENCE_FAILED
+    return present(
+        CallWakePayload(
+            nativeCallId = nativeCallId,
+            callHandle = callHandle,
+            wakeHandle = generatedWakeHandle,
+            receivedAtMs = observedNowMs,
+            expiresAtMs = nativeExpiresAtMs,
+        ),
+    )
 }
 
 internal fun terminalizeAuthenticatedCall(

@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
@@ -203,7 +204,7 @@ class HeadlessCallAdmissionWorkerTest {
             work = HeadlessCallAdmissionExecution(
                 runnerFactory = { runner }, isStopped = { stopped }, nowMs = { clock },
                 timeoutMillis = 1_000L, nonceFactory = { "current-run" },
-                presentAuthenticated = { _, _, _ -> presentations += 1; true },
+                presentAuthenticated = { _, _, _ -> presentations += 1; MknoonCallPresentationResult.PRESENTED },
                 terminalizeAuthenticated = { _, _ -> true },
             )
             assertEquals(gate, HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
@@ -671,7 +672,7 @@ class HeadlessCallAdmissionWorkerTest {
                 nowMs = { NOW_MS },
                 timeoutMillis = 1_000L,
                 nonceFactory = { "nonce-a" },
-                presentAuthenticated = { _, _, _ -> presented += 1; true },
+                presentAuthenticated = { _, _, _ -> presented += 1; MknoonCallPresentationResult.PRESENTED },
                 terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
                 foregroundOwnsRuntime = ownership,
             ).execute(validInput())
@@ -956,11 +957,51 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
+    fun `only a settled platform failure after safe release asks for a failure reply`() = runBlocking {
+        withTimeout(2_000L) {
+            val results = MknoonCallPresentationResult.entries + listOf(null)
+            for (nativeResult in results) {
+                for (settled in listOf(false, true)) {
+                    var settlementChecks = 0
+                    val diagnostics = mutableListOf<MknoonCallPresentationResult?>()
+                    val execution = HeadlessCallAdmissionExecution(
+                        runnerFactory = { FakeHeadlessCallAdmissionRunner(::validCompletionObject) },
+                        isStopped = { false },
+                        nowMs = { NOW_MS },
+                        timeoutMillis = 1_000L,
+                        presentAuthenticated = { _, _, _ -> nativeResult ?: error("presentation threw") },
+                        isPresentationFailureSettled = { callId, expiry ->
+                            assertEquals(CALL_ID, callId)
+                            assertEquals(EXPIRES_AT_MS, expiry)
+                            settlementChecks++
+                            settled
+                        },
+                        presentationDiagnostic = { diagnostics += it },
+                        terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
+                    )
+                    val replyMode = when (nativeResult) {
+                        MknoonCallPresentationResult.PRESENTED,
+                        MknoonCallPresentationResult.DUPLICATE -> HeadlessCallAdmissionMode.RINGING_REPLY
+                        MknoonCallPresentationResult.PLATFORM_FAILED ->
+                            HeadlessCallAdmissionMode.PRESENTATION_FAILURE_REPLY.takeIf { settled }
+                        else -> null
+                    }
+                    assertEquals(nativeResult?.name, replyMode, execution.execute(validInput()).replyMode)
+                    assertEquals(if (nativeResult == MknoonCallPresentationResult.PLATFORM_FAILED) 1 else 0,
+                        settlementChecks)
+                    assertEquals(listOf(nativeResult), diagnostics)
+                }
+            }
+        }
+    }
+
+    @Test
     fun `reply modes run the engine without presenting again`() =
         runBlocking {
             for (mode in listOf(
                 HeadlessCallAdmissionMode.DECLINE_REPLY,
                 HeadlessCallAdmissionMode.RINGING_REPLY,
+                HeadlessCallAdmissionMode.PRESENTATION_FAILURE_REPLY,
             )) {
             for (
                 disposition in listOf(
@@ -1036,7 +1077,7 @@ class HeadlessCallAdmissionWorkerTest {
                 nowMs = { NOW_MS },
                 timeoutMillis = 1_000L,
                 nonceFactory = { "nonce-a" },
-                presentAuthenticated = { _, _, _ -> true },
+                presentAuthenticated = { _, _, _ -> MknoonCallPresentationResult.PRESENTED },
                 terminalizeAuthenticated = { _, _ -> true },
             )
 
@@ -1223,7 +1264,7 @@ class HeadlessCallAdmissionWorkerTest {
         assertTrue(source.contains("SqfliteSqlCipherPlugin()"))
         assertTrue(source.contains("PathProviderPlugin()"))
         assertTrue(source.contains("engine?.destroy()"))
-        assertTrue(source.contains("presentAuthenticated("))
+        assertTrue(source.contains("presentAuthenticatedResult("))
         assertFalse(source.contains("GeneratedPluginRegistrant"))
         assertFalse(source.contains("android.util.Log"))
         assertFalse(service.contains(".present(payload)"))
@@ -1253,8 +1294,9 @@ class HeadlessCallAdmissionWorkerTest {
         timeoutMillis = timeoutMillis,
         nonceFactory = { "nonce-a" },
         presentAuthenticated = { callId, expiresAtMs, display ->
-            presentAuthenticatedWithDisplay?.invoke(callId, expiresAtMs, display)
+            val presented = presentAuthenticatedWithDisplay?.invoke(callId, expiresAtMs, display)
                 ?: presentAuthenticated(callId, expiresAtMs)
+            if (presented) MknoonCallPresentationResult.PRESENTED else MknoonCallPresentationResult.BUSY
         },
         terminalizeAuthenticated = terminalizeAuthenticated,
         releaseAdmission = releaseAdmission,

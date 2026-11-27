@@ -101,7 +101,7 @@ internal class MknoonCallForegroundService(
     }
 
     private val ownedRuntime = lazy(LazyThreadSafetyMode.NONE) {
-        runtime ?: MknoonCallRuntime.get(this).foregroundRuntime(this)
+        runtime ?: MknoonCallRuntime.get(this, restorePresented = false).foregroundRuntime(this)
     }
 
     private var activeCallId: UUID? = null

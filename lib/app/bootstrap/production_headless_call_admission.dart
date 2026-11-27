@@ -114,7 +114,7 @@ typedef AuthenticateHeadlessMailboxEvent =
 /// handle the invite row was retrieved with (the caller keys its context by
 /// it, not by the call id). Resolves true once the reject reached custody
 /// (direct acceptance or mailbox store); never throws.
-typedef HeadlessDeclineReplySender =
+typedef HeadlessTerminalReplySender =
     Future<bool> Function(CallSignal invite, String callHandle);
 
 typedef HeadlessRingingReplySender =
@@ -190,8 +190,9 @@ final class MailboxProductionHeadlessCallAdmissionSession
     required CallMailboxClient mailboxClient,
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
-    HeadlessDeclineReplySender? declineReplySender,
+    HeadlessTerminalReplySender? declineReplySender,
     HeadlessRingingReplySender? ringingReplySender,
+    HeadlessTerminalReplySender? presentationFailureReplySender,
     HeadlessCallHistoryRecorder? historyRecorder,
     Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
     resolveDisplay,
@@ -201,14 +202,16 @@ final class MailboxProductionHeadlessCallAdmissionSession
        _closeResources = closeResources,
        _declineReplySender = declineReplySender,
        _ringingReplySender = ringingReplySender,
+       _presentationFailureReplySender = presentationFailureReplySender,
        _historyRecorder = historyRecorder,
        _resolveDisplay = resolveDisplay,
        _displayTimeout = displayTimeout;
 
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
-  final HeadlessDeclineReplySender? _declineReplySender;
+  final HeadlessTerminalReplySender? _declineReplySender;
   final HeadlessRingingReplySender? _ringingReplySender;
+  final HeadlessTerminalReplySender? _presentationFailureReplySender;
   final HeadlessCallHistoryRecorder? _historyRecorder;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
   final Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
@@ -230,16 +233,18 @@ final class MailboxProductionHeadlessCallAdmissionSession
   ) => _evaluation ??= switch (invocation.mode) {
     HeadlessCallAdmissionMode.admission => _evaluateOnce(invocation),
     HeadlessCallAdmissionMode.declineReply => _declineReplyOnce(invocation),
-    HeadlessCallAdmissionMode.ringingReply => _ringingReplyOnce(invocation),
+    HeadlessCallAdmissionMode.ringingReply ||
+    HeadlessCallAdmissionMode.presentationFailureReply =>
+      _presentationReplyOnce(invocation),
   };
 
-  /// A second, short headless run begins only after native presentation was
-  /// committed. It reauthenticates the still-unacked invite and checks that
-  /// the exact native call is still ringing before sending the caller's reply.
-  /// Foreground adoption retains custody of the invite and its own sequence.
-  Future<HeadlessCallAdmissionDisposition> _ringingReplyOnce(
+  /// Reauthenticates the invite after native presentation has settled.
+  /// A ringing reply leaves custody for the foreground owner.
+  Future<HeadlessCallAdmissionDisposition> _presentationReplyOnce(
     HeadlessCallAdmissionInvocation invocation,
   ) async {
+    final failed =
+        invocation.mode == HeadlessCallAdmissionMode.presentationFailureReply;
     CallMailboxRetrieveResult page;
     try {
       page = await _mailboxClient.retrieve(
@@ -254,6 +259,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
     }
     final reservations = <HeadlessAuthenticatedMailboxEvent>[];
     CallSignal? invite;
+    var inviteCount = 0;
     var terminal = false;
     try {
       for (final event in page.events) {
@@ -272,19 +278,34 @@ final class MailboxProductionHeadlessCallAdmissionSession
             authenticated.event == CallSignalType.terminate) {
           terminal = true;
         } else if (authenticated.event == CallSignalType.invite) {
-          if (invite != null) return HeadlessCallAdmissionDisposition.deferred;
-          invite = authenticated.signal;
+          inviteCount++;
+          if (!failed || event.expiresAtMs == invocation.expiresAtMs) {
+            invite = authenticated.signal;
+          }
         } else {
           return HeadlessCallAdmissionDisposition.deferred;
         }
       }
-      final sender = _ringingReplySender;
-      if (terminal || invite == null || sender == null) {
+      if (!terminal) {
+        final sender = failed
+            ? _presentationFailureReplySender
+            : _ringingReplySender;
+        if (inviteCount != 1 ||
+            invite == null ||
+            sender == null ||
+            !await sender(invite, invocation.callId)) {
+          return HeadlessCallAdmissionDisposition.deferred;
+        }
+      } else if (!failed) {
         return HeadlessCallAdmissionDisposition.deferred;
       }
-      return await sender(invite, invocation.callId)
-          ? HeadlessCallAdmissionDisposition.terminal
-          : HeadlessCallAdmissionDisposition.deferred;
+      if (failed) {
+        await _acknowledgeEndedCall(
+          invocation.callId,
+          page.events.map((event) => event.messageId).toList(),
+        );
+      }
+      return HeadlessCallAdmissionDisposition.terminal;
     } catch (_) {
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
@@ -1043,6 +1064,25 @@ final class AndroidProductionHeadlessCallAdmissionBackend
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
       ringingReplySender: (invite, callHandle) =>
           ringingReply.sendRingingFor(invite, callHandle: callHandle),
+      presentationFailureReplySender: (invite, callHandle) =>
+          declineReply.sendPresentationFailureFor(
+            invite,
+            callHandle: callHandle,
+            isAuthorized: () async {
+              if (invocation.mode !=
+                      HeadlessCallAdmissionMode.presentationFailureReply ||
+                  invocation.callId != callHandle ||
+                  invocation.expiresAtMs != invite.expiresAtMs) {
+                return false;
+              }
+              return await const MethodChannel('mknoon/headless_call_admission')
+                      .invokeMethod<bool>(
+                        'isPresentationFailure',
+                        invocation.identityPayload(),
+                      ) ??
+                  false;
+            },
+          ),
       historyRecorder: recordTerminalCallHistory,
       resolveDisplay: (invite) async {
         // These are local reads under the same authenticated DB owner. Start

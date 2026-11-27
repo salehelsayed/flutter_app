@@ -24,6 +24,36 @@ class PendingNativeCallStoreTest {
         assertEquals(1, nextPlatform.registerCalls)
         assertEquals(1, nextPlatform.showIncomingCalls)
         assertEquals(MknoonCallPresentationResult.DUPLICATE, restarted.present(payloadA()))
+        assertFalse(restarted.reconcilePresented(NATIVE_CALL_ID_A))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
+        assertEquals(1, nextPlatform.registerCalls)
+    }
+
+    @Test
+    fun `cold adopted terminal is replayable without occupying the native call slot`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        val first = lifecycle(store(backend), LifecycleFakePlatform(mutableListOf()))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, first.present(payloadA()))
+        assertNotNull(first.attach())
+        assertTrue(first.answer(NATIVE_CALL_ID_A))
+        assertTrue(first.markAdopted(NATIVE_CALL_ID_A))
+        assertTrue(first.acknowledge(
+            NATIVE_CALL_ID_A,
+            requireNotNull(first.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED,
+        ))
+
+        val restarted = lifecycle(store(backend), LifecycleFakePlatform(mutableListOf()))
+        assertTrue(restarted.reconcileAdoptedJournal())
+        val terminal = requireNotNull(restarted.snapshot())
+        assertEquals(PendingNativeCallEventType.PROVIDER_REMOVED, terminal.terminalEvent?.type)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, restarted.present(payloadB()))
+        assertTrue(restarted.acknowledge(
+            NATIVE_CALL_ID_A,
+            terminal.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL,
+        ))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
     }
 
     @Test

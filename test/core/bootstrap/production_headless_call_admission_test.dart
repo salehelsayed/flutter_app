@@ -956,6 +956,130 @@ void main() {
     );
   });
 
+  group('presentation failure reply mode', () {
+    final failureInvocation = HeadlessCallAdmissionInvocation(
+      nonce: invocation.nonce,
+      callId: invocation.callId,
+      wakeHandle: invocation.wakeHandle,
+      expiresAtMs: invocation.expiresAtMs,
+      mode: HeadlessCallAdmissionMode.presentationFailureReply,
+    );
+    const terminalMessageId = '55555555-5555-4555-8555-555555555555';
+    const bound = Duration(seconds: 2);
+
+    test('acknowledges only custody or an authenticated terminal', () async {
+      for (final scenario in ['delivered', 'unsent', 'terminal']) {
+        final events = <String>[];
+        final invite = _event();
+        final terminal = _event(messageId: terminalMessageId);
+        final mailbox = _Mailbox([
+          invite,
+          if (scenario == 'terminal') terminal,
+        ], onAck: () => events.add('acked'));
+        final authenticate = _signalAuthenticator();
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: ({required invocation, required event}) async {
+            final authenticated = await authenticate(
+              invocation: invocation,
+              event: event,
+            );
+            return HeadlessAuthenticatedMailboxEvent(
+              event: authenticated.event,
+              signal: authenticated.signal,
+              rollbackReplay: () => events.add('released ${event.messageId}'),
+            );
+          },
+          presentationFailureReplySender: (signal, handle) async {
+            expect(signal.messageId, invite.messageId);
+            expect(handle, failureInvocation.callId);
+            events.add('reply');
+            return scenario == 'delivered';
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+
+        expect(
+          await session.evaluate(failureInvocation).timeout(bound),
+          scenario == 'unsent'
+              ? HeadlessCallAdmissionDisposition.deferred
+              : HeadlessCallAdmissionDisposition.terminal,
+          reason: scenario,
+        );
+        expect(events, [
+          if (scenario != 'terminal') 'reply',
+          if (scenario != 'unsent') 'acked',
+          if (scenario == 'terminal') 'released ${terminal.messageId}',
+          'released ${invite.messageId}',
+        ]);
+        expect(mailbox.ackedMessageIds, [
+          if (scenario != 'unsent')
+            [invite.messageId, if (scenario == 'terminal') terminal.messageId],
+        ]);
+      }
+    });
+
+    test(
+      'leaves incomplete, deferred and ambiguous invites in custody',
+      () async {
+        for (final scenario in [
+          'partial',
+          'deferred',
+          'wrong expiry',
+          'multiple',
+        ]) {
+          var replies = 0;
+          final pending = scenario == 'wrong expiry'
+              ? _event(expiresAtMs: failureInvocation.expiresAtMs + 1)
+              : _event();
+          final mailbox = _Mailbox([
+            pending,
+            if (scenario == 'deferred' || scenario == 'multiple') pending,
+          ], hasMore: scenario == 'partial');
+          final authenticate = _signalAuthenticator();
+          var calls = 0;
+          var released = 0;
+          final session = MailboxProductionHeadlessCallAdmissionSession(
+            mailboxClient: mailbox,
+            authenticateEvent: ({required invocation, required event}) async {
+              if (++calls == 2 && scenario == 'deferred') {
+                throw const IncomingCallPrePresentationAdmissionException(
+                  IncomingCallPrePresentationAdmissionFailureCode.deferred,
+                );
+              }
+              final result = await authenticate(
+                invocation: invocation,
+                event: event,
+              );
+              return HeadlessAuthenticatedMailboxEvent(
+                event: result.event,
+                signal: result.signal,
+                rollbackReplay: () => released++,
+              );
+            },
+            presentationFailureReplySender: (_, _) async {
+              replies++;
+              return true;
+            },
+            closeResources: () async => _Session.safeCleanup,
+          );
+          expect(
+            await session.evaluate(failureInvocation).timeout(bound),
+            HeadlessCallAdmissionDisposition.deferred,
+            reason: scenario,
+          );
+          expect(replies, 0, reason: scenario);
+          expect(mailbox.ackedHandles, isEmpty, reason: scenario);
+          expect(released, switch (scenario) {
+            'partial' => 0,
+            'multiple' => 2,
+            _ => 1,
+          }, reason: scenario);
+        }
+      },
+    );
+  });
+
   group('decline reply mode', () {
     final declineInvocation = HeadlessCallAdmissionInvocation(
       nonce: invocation.nonce,
@@ -1045,7 +1169,7 @@ void main() {
     test(
       'a reply that reaches no custody leaves the rows and defers',
       () async {
-        for (final sender in <HeadlessDeclineReplySender>[
+        for (final sender in <HeadlessTerminalReplySender>[
           (_, _) async => false,
           (_, _) async => throw StateError('relay unreachable'),
         ]) {

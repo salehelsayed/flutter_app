@@ -63,6 +63,7 @@ internal enum class HeadlessCallAdmissionMode(val wireName: String) {
     ADMISSION("admission"),
     DECLINE_REPLY("decline_reply"),
     RINGING_REPLY("ringing_reply"),
+    PRESENTATION_FAILURE_REPLY("presentation_failure_reply"),
     ;
 
     companion object {
@@ -360,8 +361,9 @@ internal interface HeadlessCallAdmissionEngineRunner {
     suspend fun finish(): Boolean
 }
 
-internal enum class HeadlessCallAdmissionWorkOutcome {
-    PRESENTED,
+internal enum class HeadlessCallAdmissionWorkOutcome(val replyMode: HeadlessCallAdmissionMode? = null) {
+    PRESENTED(HeadlessCallAdmissionMode.RINGING_REPLY),
+    PRESENTATION_FAILED(HeadlessCallAdmissionMode.PRESENTATION_FAILURE_REPLY),
     COMPLETED_WITHOUT_PRESENTATION,
 }
 
@@ -384,7 +386,9 @@ internal class HeadlessCallAdmissionExecution(
     private val nowMs: () -> Long,
     private val timeoutMillis: Long,
     private val nonceFactory: () -> String = { UUID.randomUUID().toString() },
-    private val presentAuthenticated: suspend (String, Long, MknoonIncomingCallDisplay?) -> Boolean,
+    private val presentAuthenticated: suspend (String, Long, MknoonIncomingCallDisplay?) -> MknoonCallPresentationResult,
+    private val isPresentationFailureSettled: suspend (String, Long) -> Boolean = { _, _ -> false },
+    private val presentationDiagnostic: (MknoonCallPresentationResult?) -> Unit = {},
     private val terminalizeAuthenticated: suspend (String, Long) -> Boolean,
     /** Attempts owned release; unresolved work also requires a native terminal tombstone. */
     private val releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
@@ -454,10 +458,10 @@ internal class HeadlessCallAdmissionExecution(
             outcome: String,
             reason: String,
             values: Map<String, Any> = emptyMap(),
-            presented: Boolean = false,
+            workOutcome: HeadlessCallAdmissionWorkOutcome = HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
         ): HeadlessCallAdmissionWorkOutcome {
             observe("finish", outcome, reason, values)
-            return if (presented) HeadlessCallAdmissionWorkOutcome.PRESENTED else noPresentation()
+            return workOutcome
         }
         if (runAttemptCount != 0) return finish("skipped", "duplicate")
         if (stopRequested.get() || isStopped()) return finish("canceled", "canceled")
@@ -565,15 +569,29 @@ internal class HeadlessCallAdmissionExecution(
 
         return when (authenticated.disposition) {
             HeadlessCallAdmissionDisposition.ADMITTED -> {
-                val presented = try {
+                val presentation = runCatching {
                     presentAuthenticated(authenticated.callId, authenticated.expiresAtMs, authenticated.display)
-                } catch (_: Throwable) {
-                    false
-                }
-                if (presented) {
-                    finish("ok", "none", completionValues, presented = true)
-                } else {
-                    finish("failed", "native_lifecycle_failed", completionValues)
+                }.getOrNull()
+                runCatching { presentationDiagnostic(presentation) }
+                when (presentation) {
+                    MknoonCallPresentationResult.PRESENTED,
+                    MknoonCallPresentationResult.DUPLICATE,
+                    -> finish("ok", "none", completionValues, HeadlessCallAdmissionWorkOutcome.PRESENTED)
+                    MknoonCallPresentationResult.PLATFORM_FAILED -> {
+                        val settled = !stopRequested.get() && !isStopped() && runCatching {
+                            isPresentationFailureSettled(authenticated.callId, authenticated.expiresAtMs)
+                        }.getOrDefault(false)
+                        if (settled) {
+                            onSettled()
+                            finish(
+                                "failed", "native_lifecycle_failed", completionValues,
+                                HeadlessCallAdmissionWorkOutcome.PRESENTATION_FAILED,
+                            )
+                        } else {
+                            finish("failed", "native_lifecycle_failed", completionValues)
+                        }
+                    }
+                    else -> finish("failed", "native_lifecycle_failed", completionValues)
                 }
             }
 
@@ -646,9 +664,6 @@ internal class HeadlessCallAdmissionExecution(
         }
         return Invocation(callId, wakeHandle, expiresAtMs, mode)
     }
-
-    private fun noPresentation() =
-        HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION
 }
 
 /**
@@ -729,15 +744,22 @@ internal class HeadlessCallAdmissionWorker(
             // which below API 34 arrives on the main looper, so it runs off it.
             presentAuthenticated = { callId, expiresAtMs, display ->
                 val runtime = withContext(Dispatchers.Main.immediate) {
-                    MknoonCallRuntime.get(applicationContext)
+                    MknoonCallRuntime.get(applicationContext, restorePresented = false)
                 }
                 withContext(Dispatchers.Default) {
-                    runtime.presentAuthenticated(callId, expiresAtMs, display)
+                    runtime.presentAuthenticatedResult(callId, expiresAtMs, display)
                 }
             },
+            isPresentationFailureSettled = { callId, expiresAtMs ->
+                withContext(Dispatchers.Default) {
+                    MknoonCallRuntime.existingInstance()
+                        ?.isPresentationFailureAuthenticated(callId, expiresAtMs) == true
+                }
+            },
+            presentationDiagnostic = ::logHeadlessCallPresentation,
             terminalizeAuthenticated = { callId, expiresAtMs ->
                 val runtime = withContext(Dispatchers.Main.immediate) {
-                    MknoonCallRuntime.get(applicationContext)
+                    MknoonCallRuntime.get(applicationContext, restorePresented = false)
                 }
                 withContext(Dispatchers.Default) {
                     runtime.terminalizeAuthenticated(callId, expiresAtMs)
@@ -766,11 +788,10 @@ internal class HeadlessCallAdmissionWorker(
         Futures.immediateFuture(createForegroundInfo(applicationContext))
 
     override fun doWork(): Result = runBlocking {
-        val outcome = execution.execute(inputData, runAttemptCount)
-        if (outcome == HeadlessCallAdmissionWorkOutcome.PRESENTED && !isStopped) {
-            // The admission engine has released its database and Go runtime.
-            // Now that the native call really rings, a separate short engine
-            // can send an authenticated reply before the full app boots.
+        val replyMode = execution.execute(inputData, runAttemptCount).replyMode
+        if (replyMode != null && !isStopped) {
+            // Admission released its database and Go runtime before native presentation.
+            // A separate short run can now authenticate and send the reply.
             val reply = Data.Builder()
                 .putString(
                     HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID,
@@ -786,7 +807,7 @@ internal class HeadlessCallAdmissionWorker(
                 )
                 .putString(
                     HeadlessCallAdmissionWorkScheduler.INPUT_MODE,
-                    HeadlessCallAdmissionMode.RINGING_REPLY.wireName,
+                    replyMode.wireName,
                 )
                 .build()
             execution.execute(reply, 0)
@@ -922,19 +943,29 @@ internal class FlutterHeadlessCallAdmissionEngineRunner(
         ).also { channel ->
             val completionGate = HeadlessCallAdmissionCompletionGate(identity)
             channel.setMethodCallHandler { call, result ->
-                if (call.method == "isRinging") {
+                val replyMode = when (call.method) {
+                    "isRinging" -> HeadlessCallAdmissionMode.RINGING_REPLY
+                    "isPresentationFailure" -> HeadlessCallAdmissionMode.PRESENTATION_FAILURE_REPLY
+                    else -> null
+                }
+                if (replyMode != null) {
                     val values = call.arguments as? Map<*, *>
-                    val exact = identity.mode == HeadlessCallAdmissionMode.RINGING_REPLY &&
+                    val exact = identity.mode == replyMode &&
                         values?.keys == setOf("nonce", "callId", "wakeHandle", "expiresAtMs") &&
                         values["nonce"] == identity.nonce &&
                         values["callId"] == identity.callId &&
                         values["wakeHandle"] == identity.wakeHandle &&
                         (values["expiresAtMs"] as? Number)?.toLong() == identity.expiresAtMs &&
                         !stopRequested.get()
-                    result.success(
-                        exact && MknoonCallRuntime.get(applicationContext)
-                            .isRingingAuthenticated(identity.callId, identity.expiresAtMs),
-                    )
+                    result.success(exact && when (replyMode) {
+                        HeadlessCallAdmissionMode.RINGING_REPLY ->
+                            MknoonCallRuntime.get(applicationContext, restorePresented = false)
+                                .isRingingAuthenticated(identity.callId, identity.expiresAtMs)
+                        HeadlessCallAdmissionMode.PRESENTATION_FAILURE_REPLY ->
+                            MknoonCallRuntime.existingInstance()
+                                ?.isPresentationFailureAuthenticated(identity.callId, identity.expiresAtMs) == true
+                        else -> false
+                    })
                     return@setMethodCallHandler
                 }
                 val parsed = completionGate.accept(call.method, call.arguments)

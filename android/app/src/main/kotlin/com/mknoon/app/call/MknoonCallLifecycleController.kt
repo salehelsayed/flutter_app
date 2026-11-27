@@ -179,6 +179,7 @@ internal class MknoonCallLifecycleController(
     private val answerDiagnostic: (String, String, String) -> Unit = { _, _, _ -> },
     /** True on Android's main thread; nothing in here may wait for Telecom there (B8). */
     private val isMainThread: () -> Boolean = { false },
+    private val busyDiagnostic: (String) -> Unit = {},
 ) : MknoonCallActionHandler {
     private val lock = Any()
     private var attached = false
@@ -348,9 +349,9 @@ internal class MknoonCallLifecycleController(
         inFlight: RegistrationInFlight,
     ): MknoonCallPresentationResult? {
         if (!safeBoolean(capabilityEnabled)) return MknoonCallPresentationResult.DISABLED
-        if (adoptedState != null || cleanupState != null || registrationInFlight != null) {
-            return MknoonCallPresentationResult.BUSY
-        }
+        if (adoptedState != null) return busy("adopted")
+        if (cleanupState != null) return busy("cleanup")
+        if (registrationInFlight != null) return busy("registration")
         val observedNow = safeNow() ?: return MknoonCallPresentationResult.STALE
         pruneTerminalTombstones(observedNow)
         if (terminalTombstones[payload.nativeCallId]?.let { it > observedNow } == true) {
@@ -358,17 +359,33 @@ internal class MknoonCallLifecycleController(
         }
         if (payload.expiresAtMs <= observedNow) return MknoonCallPresentationResult.STALE
 
-        val created = try {
-            when (direction) {
-                PendingNativeCallDirection.INCOMING -> store.create(payload)
-                PendingNativeCallDirection.OUTGOING -> store.createOutgoing(payload)
+        var created = createPending(payload, direction)
+        if (created is PendingNativeCallCreateResult.Busy &&
+            ownedCallId == null &&
+            direction == PendingNativeCallDirection.INCOMING &&
+            created.activeDescriptor.direction == PendingNativeCallDirection.INCOMING &&
+            created.activeDescriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED }
+        ) {
+            // A fresh process has no Telecom scope for this journal. Retire it
+            // through normal terminal custody before giving the slot to the new call.
+            val orphan = created.activeDescriptor
+            val cause = if (orphan.expiresAtMs <= observedNow) {
+                PendingNativeCallEventType.EXPIRED
+            } else {
+                PendingNativeCallEventType.PROVIDER_REMOVED
             }
-        } catch (_: Exception) {
-            PendingNativeCallCreateResult.PersistenceFailure
+            val settled = terminateInternal(
+                orphan.nativeCallId,
+                cause,
+                endPlatform = false,
+                audioFocusAlreadyReleased = true,
+            )
+            if (!settled) return busy("orphan_cleanup")
+            created = createPending(payload, direction)
         }
         when (created) {
             is PendingNativeCallCreateResult.Duplicate -> return MknoonCallPresentationResult.DUPLICATE
-            is PendingNativeCallCreateResult.Busy -> return MknoonCallPresentationResult.BUSY
+            is PendingNativeCallCreateResult.Busy -> return busy("pending")
             PendingNativeCallCreateResult.PersistenceFailure ->
                 return MknoonCallPresentationResult.PERSISTENCE_FAILED
             is PendingNativeCallCreateResult.Created -> Unit
@@ -380,6 +397,23 @@ internal class MknoonCallLifecycleController(
         // Dart may already update this call (display, answer) while Telecom registers it.
         resetVolatileState()
         return null
+    }
+
+    private fun createPending(
+        payload: CallWakePayload,
+        direction: PendingNativeCallDirection,
+    ): PendingNativeCallCreateResult = try {
+        when (direction) {
+            PendingNativeCallDirection.INCOMING -> store.create(payload)
+            PendingNativeCallDirection.OUTGOING -> store.createOutgoing(payload)
+        }
+    } catch (_: Exception) {
+        PendingNativeCallCreateResult.PersistenceFailure
+    }
+
+    private fun busy(owner: String): MknoonCallPresentationResult {
+        runCatching { busyDiagnostic(owner) }
+        return MknoonCallPresentationResult.BUSY
     }
 
     /**
@@ -517,8 +551,11 @@ internal class MknoonCallLifecycleController(
      * [lock], like [present]. Returns false when there is nothing to restore,
      * otherwise true (with the default inline [dispatch]: whether it was restored).
      */
-    fun reconcilePresented(dispatch: (Runnable) -> Unit = { it.run() }): Boolean {
-        val (descriptor, inFlight) = synchronized(lock) { admitRestoreLocked() } ?: return false
+    fun reconcilePresented(
+        expectedCallId: UUID? = null,
+        dispatch: (Runnable) -> Unit = { it.run() },
+    ): Boolean {
+        val (descriptor, inFlight) = synchronized(lock) { admitRestoreLocked(expectedCallId) } ?: return false
         var restored = true
         val handedOff = runCatching {
             dispatch(Runnable { restored = completeRestore(descriptor, inFlight) })
@@ -540,11 +577,16 @@ internal class MknoonCallLifecycleController(
         return restored
     }
 
-    private fun admitRestoreLocked(): Pair<PendingNativeCallDescriptor, RegistrationInFlight>? {
+    private fun admitRestoreLocked(
+        expectedCallId: UUID?,
+    ): Pair<PendingNativeCallDescriptor, RegistrationInFlight>? {
         if (!safeBoolean(capabilityEnabled)) return null
-        if (adoptedState != null || cleanupState != null || registrationInFlight != null) return null
+        if (ownedCallId != null || adoptedState != null || cleanupState != null || registrationInFlight != null) {
+            return null
+        }
         val descriptor = snapshotInternal() ?: return null
         if (
+            (expectedCallId != null && descriptor.nativeCallId != expectedCallId) ||
             descriptor.terminalEvent != null ||
             descriptor.events.none { it.type == PendingNativeCallEventType.PRESENTED }
         ) {
@@ -604,15 +646,13 @@ internal class MknoonCallLifecycleController(
 
     /** Restores durable adopted custody only long enough to record provider loss. */
     fun reconcileAdoptedJournal(): Boolean = synchronized(lock) {
-        if (cleanupState != null || adoptedState != null) return@synchronized false
+        if (ownedCallId != null || cleanupState != null || adoptedState != null || registrationInFlight != null) {
+            return@synchronized false
+        }
         val descriptor = snapshotInternal()?.takeIf {
             it.handoffAcknowledgement == PendingNativeCallAcknowledgement.ADOPTED &&
                 it.terminalEvent == null
         } ?: return@synchronized false
-        adoptedCallId = descriptor.nativeCallId
-        adoptedState = AdoptedLifecycle.from(descriptor)
-        ownedCallId = descriptor.nativeCallId
-        ownedExpiresAtMs = descriptor.expiresAtMs
         terminateInternal(
             descriptor.nativeCallId,
             PendingNativeCallEventType.PROVIDER_REMOVED,

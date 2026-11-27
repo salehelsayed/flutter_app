@@ -34,7 +34,8 @@ enum HeadlessCallAdmissionDisposition {
 enum HeadlessCallAdmissionMode {
   admission('admission'),
   declineReply('decline_reply'),
-  ringingReply('ringing_reply');
+  ringingReply('ringing_reply'),
+  presentationFailureReply('presentation_failure_reply');
 
   const HeadlessCallAdmissionMode(this.wireName);
 
@@ -87,15 +88,17 @@ final class HeadlessCallAdmissionInvocation {
     if (expiresAtMs == null || expiresAtMs <= 0) {
       throw const FormatException('invalid headless call admission expiry');
     }
-    var mode = HeadlessCallAdmissionMode.admission;
-    if (arguments.length == 5) {
-      if (arguments[4] != HeadlessCallAdmissionMode.declineReply.wireName &&
-          arguments[4] != HeadlessCallAdmissionMode.ringingReply.wireName) {
-        throw const FormatException('invalid headless call admission mode');
-      }
-      mode = arguments[4] == HeadlessCallAdmissionMode.declineReply.wireName
-          ? HeadlessCallAdmissionMode.declineReply
-          : HeadlessCallAdmissionMode.ringingReply;
+    final mode = arguments.length == 4
+        ? HeadlessCallAdmissionMode.admission
+        : HeadlessCallAdmissionMode.values
+              .where(
+                (mode) =>
+                    mode != HeadlessCallAdmissionMode.admission &&
+                    mode.wireName == arguments[4],
+              )
+              .firstOrNull;
+    if (mode == null) {
+      throw const FormatException('invalid headless call admission mode');
     }
     return HeadlessCallAdmissionInvocation(
       nonce: nonce,

@@ -21,8 +21,8 @@ typedef ResolveHeadlessCallEndpoint =
 /// (Android app killed, call presented and declined headlessly). Device
 /// 2026-09-05 17:44Z: nothing reached the caller, whose ringback played until
 /// its own cancel. From the authenticated invite this builds the callee's one
-/// `reject` (reason `declined`, second sender sequence, the invite's ICE
-/// generation, the standard 40 s lifetime) and writes it through the same
+/// `reject` (second sender sequence, the invite's ICE generation, the
+/// standard 40 s lifetime) and writes it through the same
 /// direct-plus-mailbox transport the foreground uses, under the invite's
 /// mailbox handle.
 final class HeadlessCallDeclineReplyTransmitter {
@@ -70,6 +70,28 @@ final class HeadlessCallDeclineReplyTransmitter {
   Future<bool> sendDeclineFor(
     CallSignal invite, {
     required String callHandle,
+  }) => _sendReject(
+    invite,
+    callHandle: callHandle,
+    reason: CallEndReason.declined,
+  );
+
+  Future<bool> sendPresentationFailureFor(
+    CallSignal invite, {
+    required String callHandle,
+    required Future<bool> Function() isAuthorized,
+  }) => _sendReject(
+    invite,
+    callHandle: callHandle,
+    reason: CallEndReason.signalingFailed,
+    isAuthorized: isAuthorized,
+  );
+
+  Future<bool> _sendReject(
+    CallSignal invite, {
+    required String callHandle,
+    required CallEndReason reason,
+    Future<bool> Function()? isAuthorized,
   }) async {
     if (invite.event != CallSignalType.invite ||
         invite.recipientAccountPeerId != _localAccountPeerId ||
@@ -99,13 +121,15 @@ final class HeadlessCallDeclineReplyTransmitter {
         iceGeneration: invite.iceGeneration,
         createdAtMs: now,
         expiresAtMs: now + signalLifetime.inMilliseconds,
-        payload: <String, Object?>{'reason': CallEndReason.declined.wireName},
+        payload: <String, Object?>{'reason': reason.wireName},
       );
+      final signingKey = await _loadSigningPrivateKey();
+      if (isAuthorized != null && !await isAuthorized()) return false;
       final result = await _transmit(
         signal: reject,
         callHandle: callHandle,
         endpoint: endpoint,
-        senderSigningPrivateKey: await _loadSigningPrivateKey(),
+        senderSigningPrivateKey: signingKey,
       );
       return result.delivered;
     } catch (_) {

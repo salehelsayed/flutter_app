@@ -117,7 +117,7 @@ void main() {
   // declined on the Pixel never told the caller; the iPhone rang back until
   // its own cancel. The native decline now schedules a second headless run in
   // decline-reply mode, carried as one extra fixed argument.
-  test('invocation parser accepts the decline reply mode as a fifth field', () {
+  test('invocation parser accepts fixed reply modes as a fifth field', () {
     final admission = HeadlessCallAdmissionInvocation.parse(const <String>[
       nonce,
       callId,
@@ -147,6 +147,16 @@ void main() {
     ]);
     expect(ringing.mode, HeadlessCallAdmissionMode.ringingReply);
     expect(ringing.identityPayload(), admission.identityPayload());
+
+    final failure = HeadlessCallAdmissionInvocation.parse(const <String>[
+      nonce,
+      callId,
+      wakeHandle,
+      '$expiresAtMs',
+      'presentation_failure_reply',
+    ]);
+    expect(failure.mode, HeadlessCallAdmissionMode.presentationFailureReply);
+    expect(failure.identityPayload(), admission.identityPayload());
 
     for (final invalid in <List<String>>[
       const <String>[nonce, callId, wakeHandle, '$expiresAtMs', 'admission'],
