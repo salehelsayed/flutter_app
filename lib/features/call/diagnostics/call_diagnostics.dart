@@ -1014,6 +1014,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       return;
     }
     final group = trace is String ? _groups[trace] : null;
+    if (_repeatsMediaReadiness(group, event)) return;
     final priority = _attemptEvidencePriority(event);
     final exceedsQuota =
         (group?.events.length ?? 0) >= _maxEvents ||
@@ -1068,6 +1069,39 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _indexEvent(event);
     _enforceArchiveQuota();
     _schedulePersist();
+  }
+
+  static bool _repeatsMediaReadiness(
+    _CallDiagnosticGroup? group,
+    Map<String, Object?> incoming,
+  ) {
+    if (group == null ||
+        incoming['source'] != 'flutter' ||
+        incoming['stage'] != 'media' ||
+        incoming['action'] != 'snapshot' ||
+        (incoming['outcome'] != 'ok' &&
+            incoming['outcome'] != 'media_flow_verified')) {
+      return false;
+    }
+    final values = incoming['values'] as Map;
+    if (values['structuralReady'] is! bool) return false;
+
+    // A transition or failure leaves the next readiness observation intact.
+    final previous = group.events[group.events.lastKey()];
+    return previous != null &&
+        const [
+          'source',
+          'role',
+          'runId',
+          'stage',
+          'action',
+          'outcome',
+          'reason',
+          'operationId',
+          'parentOperationId',
+          'requestId',
+        ].every((key) => previous[key] == incoming[key]) &&
+        mapEquals(previous['values'] as Map, values);
   }
 
   // Higher priorities survive lower-priority quota pressure. Attempt identity
