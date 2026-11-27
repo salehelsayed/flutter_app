@@ -138,6 +138,8 @@ void main() {
     OutgoingCallCapability? capability,
     MicPermissionGateway micPermissionGateway =
         const PermissionHandlerMicGateway(),
+    Locale? locale,
+    TextScaler? textScaler,
   }) async {
     final contact = ContactModel(
       peerId: _peer,
@@ -153,8 +155,15 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.darkTheme,
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        builder: textScaler == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+                child: child!,
+              ),
         home: ConversationWired(
           contact: contact,
           contactRepo: contacts,
@@ -191,6 +200,17 @@ void main() {
 
   Future<void> cleanup(WidgetTester tester) =>
       tester.pumpWidget(const SizedBox.shrink());
+
+  Finder choiceRow(Finder label) => find
+      .ancestor(
+        of: label,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              (widget is InkResponse && widget.onTap != null) ||
+              (widget is GestureDetector && widget.onTap != null),
+        ),
+      )
+      .first;
 
   for (final scenario in _MicrophonePrompt.values) {
     testWidgets('first chat call microphone prompt ${scenario.name}', (
@@ -277,14 +297,12 @@ void main() {
   }
 
   testWidgets(
-    'eligible conversation call button offers audio and video without starting either',
+    'BL-114 phone chooser waits for a call type selection',
     (tester) async {
       const bound = Duration(seconds: 3);
       try {
         await mount(tester).timeout(bound);
-        await tester.tap(find.byIcon(Icons.call_outlined)).timeout(bound);
-        await tester.pump().timeout(bound);
-        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        await chooser(tester).timeout(bound);
 
         expect(
           calls.audioStarts,
@@ -299,6 +317,70 @@ void main() {
       }
     },
   );
+
+  for (final (locale, direction) in [
+    (const Locale('en'), TextDirection.ltr),
+    (const Locale('ar'), TextDirection.rtl),
+  ]) {
+    for (final scale in [1.0, 2.0]) {
+      testWidgets(
+        'BL-114 phone chooser sits under the phone at ${scale}x ${direction.name}',
+        (tester) async {
+          const bound = Duration(seconds: 3);
+          const viewport = Size(390, 844);
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = viewport;
+          final semantics = tester.ensureSemantics();
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(semantics.dispose);
+          try {
+            await mount(
+              tester,
+              locale: locale,
+              textScaler: TextScaler.linear(scale),
+            ).timeout(bound);
+
+            final phone = find.bySemanticsIdentifier('chat_call_button');
+            expect(phone.hitTestable(), findsOneWidget);
+            final context = tester.element(phone);
+            expect(Directionality.of(context), direction);
+            expect(MediaQuery.textScalerOf(context).scale(16), 16 * scale);
+            final phoneBounds = tester.getRect(phone);
+            final l10n = AppLocalizations.of(context)!;
+            await chooser(tester).timeout(bound);
+
+            final voice = find.text(l10n.call_row_voice_call);
+            final video = find.text(l10n.call_video_status_video);
+            expect(voice.hitTestable(), findsOneWidget);
+            expect(video.hitTestable(), findsOneWidget);
+            final voiceBounds = tester.getRect(choiceRow(voice));
+            final videoBounds = tester.getRect(choiceRow(video));
+            final choiceBounds = voiceBounds.expandToInclude(videoBounds);
+            expect(
+              choiceBounds.top - phoneBounds.bottom,
+              inInclusiveRange(0, 24),
+              reason:
+                  'The choice rows must sit just below the phone hit '
+                  'area. Phone $phoneBounds, rows $choiceBounds.',
+            );
+            expect(
+              phoneBounds.center.dx,
+              inInclusiveRange(choiceBounds.left, choiceBounds.right),
+            );
+            expect(voiceBounds.height, greaterThanOrEqualTo(44));
+            expect(videoBounds.height, greaterThanOrEqualTo(44));
+            expect(videoBounds.top, greaterThanOrEqualTo(voiceBounds.bottom));
+            expect(choiceBounds.left, greaterThanOrEqualTo(0));
+            expect(choiceBounds.right, lessThanOrEqualTo(viewport.width));
+            expect(choiceBounds.bottom, lessThanOrEqualTo(viewport.height));
+          } finally {
+            await cleanup(tester).timeout(bound);
+          }
+        },
+      );
+    }
+  }
 
   testWidgets(
     'conversation tap waits for pending video eligibility before offering the chooser',
@@ -369,11 +451,11 @@ void main() {
   );
 
   testWidgets(
-    'U6-entry passive availability lets the header start video once',
+    'BL-114 phone chooser starts video exactly once',
     (tester) async {
       const bound = Duration(seconds: 3);
       try {
-        await mount(tester);
+        await mount(tester).timeout(bound);
         expect(calls.videoChecks, [_peer]);
         expect(calls.videoStarts, isEmpty);
         expect(calls.audioStarts, isEmpty);
@@ -388,34 +470,38 @@ void main() {
         await menu(tester).timeout(bound);
         expect(find.text('Video call'), findsNothing);
       } finally {
-        await cleanup(tester);
+        await cleanup(tester).timeout(bound);
       }
     },
   );
 
-  testWidgets('dismissed choice does nothing and Voice call starts audio', (
-    tester,
-  ) async {
-    const bound = Duration(seconds: 3);
-    try {
-      await mount(tester).timeout(bound);
-      await chooser(tester).timeout(bound);
-      await tester.binding.handlePopRoute().timeout(bound);
-      await tester.pump().timeout(bound);
-      await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
-      expect(find.text('Video call'), findsNothing);
-      expect(calls.audioStarts, isEmpty);
-      expect(calls.videoStarts, isEmpty);
+  testWidgets(
+    'BL-114 phone chooser dismisses without a call and can start voice',
+    (tester) async {
+      const bound = Duration(seconds: 3);
+      try {
+        await mount(tester).timeout(bound);
+        await chooser(tester).timeout(bound);
+        expect(find.text('Voice call'), findsOneWidget);
+        expect(find.text('Video call'), findsOneWidget);
+        await tester.tapAt(const Offset(4, 4)).timeout(bound);
+        await tester.pump().timeout(bound);
+        await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
+        expect(find.text('Voice call'), findsNothing);
+        expect(find.text('Video call'), findsNothing);
+        expect(calls.audioStarts, isEmpty);
+        expect(calls.videoStarts, isEmpty);
 
-      await chooser(tester).timeout(bound);
-      await tester.tap(find.text('Voice call')).timeout(bound);
-      await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
-      expect(calls.audioStarts, [_peer]);
-      expect(calls.videoStarts, isEmpty);
-    } finally {
-      await cleanup(tester).timeout(bound);
-    }
-  });
+        await chooser(tester).timeout(bound);
+        await tester.tap(find.text('Voice call')).timeout(bound);
+        await tester.pump(const Duration(milliseconds: 500)).timeout(bound);
+        expect(calls.audioStarts, [_peer]);
+        expect(calls.videoStarts, isEmpty);
+      } finally {
+        await cleanup(tester).timeout(bound);
+      }
+    },
+  );
 
   for (final reason in ['gate', 'endpoint']) {
     testWidgets(
