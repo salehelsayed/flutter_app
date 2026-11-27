@@ -739,6 +739,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       if ((route?.isCurrent ?? true) &&
           routeSettled &&
           !MediaQuery.disableAnimationsOf(context) &&
+          !MediaQuery.accessibleNavigationOf(context) &&
           !oldWidget.messages.any((message) => message.id == newestId)) {
         _messageEntranceIds.add(newestId);
         _pendingMessageEntranceIds.add(newestId);
@@ -3210,13 +3211,13 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
 
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 200),
       value: widget.animate ? 0 : 1,
     );
 
     final curve = CurvedAnimation(
       parent: _controller,
-      curve: const Cubic(0.16, 1, 0.3, 1),
+      curve: Curves.easeOut,
     );
 
     _opacity = Tween<double>(begin: 0, end: 1).animate(curve);
