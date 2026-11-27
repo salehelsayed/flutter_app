@@ -931,12 +931,13 @@ final class NotificationPreviewResolver {
         reason: "duplicate_message"
       )
     }
+    let localeIdentifier = localeIdentifierProvider()
     return NotificationPreviewResult(
       title: thoughtNotificationTitle(
         name: contact.username,
-        localeIdentifier: localeIdentifierProvider()
+        localeIdentifier: localeIdentifier
       ),
-      body: thought.previewBody,
+      body: thought.previewBody(localeIdentifier: localeIdentifier),
       threadIdentifier: senderPeerId,
       didDecrypt: true,
       reason: "thought"
@@ -1795,6 +1796,7 @@ private struct ThoughtPreviewPlaintext {
   let expiresAt: Date?
   let text: String
   let media: [[String: Any]]
+  let mixedPhotoCount: Int?
 
   init?(json: String) {
     guard let payload = decodeJSONObject(json),
@@ -1809,16 +1811,22 @@ private struct ThoughtPreviewPlaintext {
     expiresAt = exactISO8601Date(snapshot["expires_at"])
     text = trimmedString(snapshot["text"]) ?? ""
     let attachments = snapshot["media"] as? [[String: Any]] ?? []
-    media = attachments.compactMap { attachment -> [String: Any]? in
-      guard let kind = trimmedString(attachment["kind"]) else {
-        return nil
-      }
-      return ["mediaType": kind == "voice" ? "audio" : kind]
-    }
+    let kinds = attachments.compactMap { trimmedString($0["kind"]) }
+    media = kinds.map { ["mediaType": $0 == "voice" ? "audio" : $0] }
+    let photoCount = kinds.filter { $0 == "image" }.count
+    let isPhotoWithVoice = trimmedString(snapshot["media_kind"]) == "image_voice"
+      && kinds.count == attachments.count
+      && photoCount > 0
+      && kinds.count == photoCount + 1
+      && kinds.contains("voice")
+    mixedPhotoCount = isPhotoWithVoice ? photoCount : nil
   }
 
-  var previewBody: String {
-    pushPreviewBody(text: text, media: media)
+  func previewBody(localeIdentifier: String) -> String {
+    if text.isEmpty, let mixedPhotoCount {
+      return thoughtNotificationPhotoBody(count: mixedPhotoCount, localeIdentifier: localeIdentifier)
+    }
+    return pushPreviewBody(text: text, media: media)
   }
 }
 
@@ -3574,6 +3582,22 @@ private func thoughtNotificationTitle(
     return "\(name) hat einen Gedanken geteilt"
   default:
     return "\(name) shared a thought"
+  }
+}
+
+/// Mirrors `orbit_preview_photo`, also used by Flutter for mixed Thoughts.
+private func thoughtNotificationPhotoBody(count: Int, localeIdentifier: String) -> String {
+  switch Locale(identifier: localeIdentifier).languageCode?.lowercased() {
+  case "ar":
+    switch count {
+    case 1: return "صورة"
+    case 2: return "صورتان"
+    default: return (3...10).contains(count % 100) ? "\(count) صور" : "\(count) صورة"
+    }
+  case "de":
+    return count == 1 ? "Foto" : "\(count) Fotos"
+  default:
+    return count == 1 ? "Photo" : "\(count) photos"
   }
 }
 

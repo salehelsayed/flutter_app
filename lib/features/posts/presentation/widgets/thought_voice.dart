@@ -8,27 +8,18 @@ import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 
 const _recordRed = Color(0xFFF87171);
 
-/// A Thought recording in the sheet: "recording" and the time, live bars,
-/// then Cancel, a red stop and a pause.
+/// The elapsed time, live bars and time limit of a Thought recording.
 class ThoughtRecordingCard extends StatelessWidget {
   const ThoughtRecordingCard({
     super.key = const ValueKey('thought-voice-recording'),
     required this.elapsed,
     required this.amplitudes,
     required this.paused,
-    required this.onCancel,
-    required this.onStop,
-    this.onPauseToggle,
   });
 
   final Duration elapsed;
   final List<double> amplitudes;
   final bool paused;
-  final VoidCallback onCancel;
-  final VoidCallback onStop;
-
-  /// Null when the recorder cannot pause.
-  final VoidCallback? onPauseToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -103,57 +94,6 @@ class ThoughtRecordingCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: onCancel,
-                    style: TextButton.styleFrom(
-                      foregroundColor: rc.textSecondary,
-                      minimumSize: const Size(64, 44),
-                    ),
-                    child: Text(l10n.btn_cancel),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: l10n.compose_voice_stop,
-                    onPressed: onStop,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 56,
-                      height: 56,
-                    ),
-                    style: IconButton.styleFrom(
-                      backgroundColor: _recordRed,
-                      foregroundColor: const Color(0xFF2A0B0B),
-                    ),
-                    icon: const Icon(Icons.stop_rounded, size: 28),
-                  ),
-                  const Spacer(),
-                  SizedBox(
-                    width: 64,
-                    child: onPauseToggle == null
-                        ? null
-                        : IconButton(
-                            tooltip: paused
-                                ? l10n.thought_voice_resume
-                                : l10n.thought_voice_pause,
-                            onPressed: onPauseToggle,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 44,
-                              height: 44,
-                            ),
-                            style: IconButton.styleFrom(
-                              backgroundColor: rc.surfaceSubtle,
-                              foregroundColor: rc.textPrimary,
-                            ),
-                            icon: Icon(
-                              paused ? Icons.mic_rounded : Icons.pause_rounded,
-                              size: 22,
-                            ),
-                          ),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
@@ -180,6 +120,75 @@ class ThoughtRecordingCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+class ThoughtRecordingControls extends StatelessWidget {
+  const ThoughtRecordingControls({
+    super.key,
+    required this.paused,
+    required this.onCancel,
+    required this.onStop,
+    this.onPauseToggle,
+  });
+
+  final bool paused;
+  final VoidCallback onCancel;
+  final VoidCallback onStop;
+  final VoidCallback? onPauseToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final rc = context.backgroundReadableColors;
+    return Row(
+      children: [
+        TextButton(
+          key: const ValueKey('thought-voice-recording-cancel'),
+          onPressed: onCancel,
+          style: TextButton.styleFrom(
+            foregroundColor: rc.textSecondary,
+            minimumSize: const Size(64, 44),
+          ),
+          child: Text(l10n.btn_cancel),
+        ),
+        const Spacer(),
+        IconButton(
+          tooltip: l10n.compose_voice_stop,
+          onPressed: onStop,
+          constraints: const BoxConstraints.tightFor(width: 56, height: 56),
+          style: IconButton.styleFrom(
+            backgroundColor: _recordRed,
+            foregroundColor: const Color(0xFF2A0B0B),
+          ),
+          icon: const Icon(Icons.stop_rounded, size: 28),
+        ),
+        const Spacer(),
+        SizedBox(
+          width: 64,
+          child: onPauseToggle == null
+              ? null
+              : IconButton(
+                  tooltip: paused
+                      ? l10n.thought_voice_resume
+                      : l10n.thought_voice_pause,
+                  onPressed: onPauseToggle,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 44,
+                    height: 44,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: rc.surfaceSubtle,
+                    foregroundColor: rc.textPrimary,
+                  ),
+                  icon: Icon(
+                    paused ? Icons.mic_rounded : Icons.pause_rounded,
+                    size: 22,
+                  ),
+                ),
         ),
       ],
     );

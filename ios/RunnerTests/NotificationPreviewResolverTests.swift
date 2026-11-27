@@ -3621,27 +3621,44 @@ final class NotificationPreviewResolverTests: XCTestCase {
       locale: String,
       text: String,
       media: [[String: Any]],
+      mediaKind: String?,
       title: String,
       body: String
     )] = [
       (
-        "en-US", "", [["kind": "image", "mime": "image/jpeg"]],
+        "en-US", "", [["kind": "image", "mime": "image/jpeg"]], nil,
         "Trusted Alice shared a thought", "Photo"
       ),
       (
-        "de-DE", "", [["kind": "video", "mime": "video/mp4"]],
+        "de-DE", "", [["kind": "video", "mime": "video/mp4"]], nil,
         "Trusted Alice hat einen Gedanken geteilt", "Video"
       ),
       (
-        "ar", "", [["kind": "voice", "mime": "audio/mp4"]],
+        "ar", "", [["kind": "voice", "mime": "audio/mp4"]], nil,
         "شارك Trusted Alice خاطرة", "Voice message"
       ),
       (
-        "en-GB", "", [["kind": "image"], ["kind": "video"]],
+        "en-GB", "", [["kind": "image"], ["kind": "video"]], nil,
         "Trusted Alice shared a thought", "Media"
       ),
       (
-        "en-US", longText, [],
+        "en-US", "", [["kind": "image"], ["kind": "voice"]], "image_voice",
+        "Trusted Alice shared a thought", "Photo"
+      ),
+      (
+        "de-DE", "", [["kind": "image"], ["kind": "image"], ["kind": "voice"]],
+        "image_voice", "Trusted Alice hat einen Gedanken geteilt", "2 Fotos"
+      ),
+      (
+        "ar", "", [["kind": "image"], ["kind": "image"], ["kind": "voice"]],
+        "image_voice", "شارك Trusted Alice خاطرة", "صورتان"
+      ),
+      (
+        "en-GB", "", [["kind": "image"], ["kind": "video"]], "image_voice",
+        "Trusted Alice shared a thought", "Media"
+      ),
+      (
+        "en-US", longText, [["kind": "image"], ["kind": "voice"]], "image_voice",
         "Trusted Alice shared a thought", String(longText.prefix(140))
       ),
     ]
@@ -3652,7 +3669,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
           postId: "post-media",
           authorUsername: "Forged Alice",
           text: item.text,
-          media: item.media
+          media: item.media,
+          mediaKind: item.mediaKind
         )
       )
       let resolver = NotificationPreviewResolver(
@@ -4549,7 +4567,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
     authorPeerId: String = "peer-alice",
     authorUsername: String = "Alice",
     text: String = "Sunny day on the pier",
-    media: [[String: Any]] = []
+    media: [[String: Any]] = [],
+    mediaKind: String? = nil
   ) throws -> String {
     try jsonString([
       "post_id": postId,
@@ -4558,7 +4577,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
         "author_peer_id": authorPeerId,
         "author_username": authorUsername,
         "text": text,
-        "media_kind": media.isEmpty ? "none" : "mixed",
+        "media_kind": mediaKind ?? (media.isEmpty ? "none" : "mixed"),
         "media": media,
       ],
     ])
