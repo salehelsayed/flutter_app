@@ -1,12 +1,14 @@
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'dart:convert';
 
+import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
+import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -227,6 +229,23 @@ final class _Roster implements CallTrustedRosterProvider {
   }
 }
 
+final class _ColdMailbox extends Fake implements CallMailboxClient {
+  _ColdMailbox(this.event);
+
+  final CallMailboxEvent event;
+
+  @override
+  Future<CallMailboxRetrieveResult> retrieve({
+    String? callHandle,
+    int limit = 64,
+  }) async => CallMailboxRetrieveResult(
+    events: [if (callHandle == event.callHandle) event],
+    receiptAtMs: event.receiptAtMs,
+    expiresAtMs: event.expiresAtMs,
+    hasMore: false,
+  );
+}
+
 final class _Crypto implements CallEnvelopeCrypto {
   bool throwOnVerify = false;
   bool throwOnDecrypt = false;
@@ -300,6 +319,60 @@ ResolvedCallEndpoint _endpoint({
 );
 
 void main() {
+  for (final legacy in [true, false]) {
+    test(
+      'BL-112 cold mailbox admits ${legacy ? 'V1' : 'V2'} audio invite',
+      () async {
+        const deadline = Duration(seconds: 3);
+        final f = await _fixture(
+          legacy: legacy,
+          inner: legacy
+              ? null
+              : {
+                  ..._inner(),
+                  'payload': {
+                    'media': 'audio',
+                    'camera': 'off',
+                    'capabilities': ['audio', 'video'],
+                  },
+                },
+        ).timeout(deadline);
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _ColdMailbox(f.event),
+          authenticateEvent: createProductionHeadlessMailboxAuthenticator(
+            codec: SecureCallEnvelopeCodec(
+              crypto: f.crypto,
+              nowMs: () => _now,
+              videoEnabled: !legacy,
+            ),
+            roster: f.roster,
+            localAuthorityProvider: () async => f.localAuthority,
+            videoEnabled: !legacy,
+          ),
+          closeResources: () async => const HeadlessCallAdmissionCleanup(
+            databaseClosed: true,
+            leaseReleased: true,
+          ),
+        );
+        final disposition = await session
+            .evaluate(
+              const HeadlessCallAdmissionInvocation(
+                nonce: '55555555-5555-4555-8555-555555555555',
+                callId: _handle,
+                wakeHandle: '66666666666646668666666666666666',
+                expiresAtMs: _now + 45000,
+              ),
+            )
+            .timeout(deadline);
+        expect(
+          disposition,
+          HeadlessCallAdmissionDisposition.admitted,
+          reason: session.diagnosticCause,
+        );
+      },
+    );
+  }
+
   for (final mailbox in [false, true]) {
     test(
       'U3h freezes signed endpoint at authenticated invite admission mailbox=$mailbox',
