@@ -3138,6 +3138,15 @@ full `affected-conversation` row (3,185 passed, zero failed or skipped across
 `/srv/evidence/claude-ui-bl105-4556/conv/affected-conversation-1.raw.log`
 SHA-256 `538e5d2f697f94811514f14e908c9b8041bc689ef817306e45b5a3c1b5256724`.
 
+The direct chat search fixture checks settled no-match results in English,
+German and Arabic at 320–390 points. It checks centering at ordinary text
+size and scrolls through the full message when large text exceeds the
+keyboard-reduced viewport. The introduction promo stays hidden during search
+and while the keyboard is open. Dismissing the keyboard restores the promo
+without losing the draft. The host test uses simulated keyboard insets.
+Matched evidence is in m-15ee803b. Earlier outcomes are retained in
+m-b376b8db, m-f479d4ef and m-82931ceb.
+
 Phone validation of `4556601d` missed row 001 on both devices with 330 text
 rows and older calls in the same chat. The Pixel settled at row 031. The
 iPhone briefly showed rows below 031 and then returned to the 300-message
