@@ -105,6 +105,7 @@ class MessageRepositoryImpl
     String contactPeerId, {
     int limit,
     String? beforeTimestamp,
+    String? beforeMessageId,
   })
   dbLoadMessagesPage;
   final Future<List<Map<String, Object?>>> Function()
@@ -867,6 +868,7 @@ class MessageRepositoryImpl
     Iterable<ConversationMessage> messages,
     String contactPeerId, {
     String? beforeTimestamp,
+    String? beforeMessageId,
     int? limit,
   }) async {
     final byId = {for (final message in messages) message.id: message};
@@ -874,18 +876,25 @@ class MessageRepositoryImpl
     if (intents.isNotEmpty) {
       final sender = await loadAuthoredTextSenderPeerId!();
       for (final intent in intents) {
-        if (intent.contactPeerId == contactPeerId &&
-            (beforeTimestamp == null ||
-                intent.timestamp.compareTo(beforeTimestamp) < 0)) {
-          byId.putIfAbsent(intent.id, () => intent.toMessage(sender));
+        if (intent.contactPeerId != contactPeerId) continue;
+        if (beforeTimestamp != null) {
+          final order = intent.timestamp.compareTo(beforeTimestamp);
+          if (order > 0 ||
+              (order == 0 &&
+                  (beforeMessageId == null ||
+                      ConversationMessage.comparePageIds(
+                            intent.id,
+                            beforeMessageId,
+                          ) >=
+                          0))) {
+            continue;
+          }
         }
+        byId.putIfAbsent(intent.id, () => intent.toMessage(sender));
       }
     }
     final sorted = byId.values.toList()
-      ..sort((a, b) {
-        final order = a.timestamp.compareTo(b.timestamp);
-        return order == 0 ? a.id.compareTo(b.id) : order;
-      });
+      ..sort((a, b) => a.comparePageOrderTo(b));
     return _rememberMessages(
       limit != null && sorted.length > limit
           ? sorted.sublist(sorted.length - limit)
@@ -2149,16 +2158,19 @@ class MessageRepositoryImpl
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final rows = await dbLoadMessagesPage(
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
     return _withAuthoredTextIntents(
       rows.map((row) => ConversationMessage.fromMap(row)),
       contactPeerId,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
       limit: limit,
     );
   }

@@ -541,12 +541,13 @@ void _runAlice() {
       dbDeleteMessagesForContact: (p) =>
           dbDeleteMessagesForContact(stack.db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
-      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp, beforeMessageId}) =>
           dbLoadMessagesPage(
             stack.db,
             p,
             limit: limit,
             beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
           ),
       dbLoadFailedOutgoingMessages: () =>
           dbLoadFailedOutgoingMessages(stack.db),
@@ -1170,12 +1171,13 @@ void _runBob() {
       dbDeleteMessagesForContact: (p) =>
           dbDeleteMessagesForContact(stack.db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
-      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp, beforeMessageId}) =>
           dbLoadMessagesPage(
             stack.db,
             p,
             limit: limit,
             beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
           ),
       dbLoadFailedOutgoingMessages: () =>
           dbLoadFailedOutgoingMessages(stack.db),

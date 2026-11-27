@@ -513,7 +513,10 @@ const _productionBootstrapNormalizedSha256 =
     // Removing those two lines restores both previous bootstrap digests.
     // BL61 passes current-locale copy resolvers to the existing call notifier.
     // BL-82 wires the legacy replay key reply at the existing foreground owner.
-    '84a2364a0e0dd46715e5986146f6e7ffcda4f228f4a77edf9eb240541a688a9d';
+    // BL-105 forwards the optional message ID through the existing paged
+    // history callback. Reversing that callback restores the prior digest.
+    // Batch 3 composes BL-82 and BL-105; both bootstrap edits are present.
+    'a7f30402e40d80dd18fe1e0f4fc67df688fe5259ee9ba836017936d541397d92';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -565,8 +568,10 @@ const _productionBootstrapNormalizedSha256 =
 // The BL61 copy resolvers leave the historical callback exact.
 // BL-77 adds contact invite wiring at the existing app and bootstrap owners.
 // BL-82 wires the replay key reply outside the historical notification callback.
+// BL-105 forwards the page cursor ID outside the exact notification callback.
+// Batch 3 composes BL-82 and BL-105; both bootstrap edits are present.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '1454a52634f534f528a30d637219820f8223b36d8b4c9a013e58abea9c8b2d14';
+    '2a3551192885c28da7174de974ee4e67b6059e821379c1609f70f588e7a61c94';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

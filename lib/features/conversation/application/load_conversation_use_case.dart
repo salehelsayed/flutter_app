@@ -125,14 +125,17 @@ int _compareTimelineEntries(
 
 /// Loads a single page of messages for a conversation.
 ///
-/// Returns at most [pageSize] messages in chronological order.
-/// When [beforeTimestamp] is null, returns the most recent page.
-/// When provided, returns messages older than that cursor.
+/// Returns at most [pageSize] messages in ascending stored timestamp and ID
+/// order. Without [beforeTimestamp], returns the newest page.
+///
+/// With [beforeTimestamp], returns strictly earlier timestamps and, if
+/// [beforeMessageId] is set, lower IDs at the same timestamp.
 Future<List<ConversationMessage>> loadConversationPage({
   required MessageRepository messageRepo,
   required String contactPeerId,
   int pageSize = 50,
   String? beforeTimestamp,
+  String? beforeMessageId,
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
 }) async {
@@ -152,6 +155,7 @@ Future<List<ConversationMessage>> loadConversationPage({
     contactPeerId,
     limit: pageSize,
     beforeTimestamp: beforeTimestamp,
+    beforeMessageId: beforeMessageId,
   );
 
   emitFlowEvent(

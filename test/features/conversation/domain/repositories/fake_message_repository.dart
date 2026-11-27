@@ -250,14 +250,23 @@ class FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     var msgs = _visibleMessagesForContact(contactPeerId).toList();
     if (beforeTimestamp != null) {
-      msgs = msgs
-          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
-          .toList();
+      msgs = msgs.where((message) {
+        final order = message.timestamp.compareTo(beforeTimestamp);
+        return order < 0 ||
+            (order == 0 &&
+                beforeMessageId != null &&
+                ConversationMessage.comparePageIds(
+                      message.id,
+                      beforeMessageId,
+                    ) <
+                    0);
+      }).toList();
     }
-    msgs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    msgs.sort((a, b) => b.comparePageOrderTo(a));
     if (msgs.length > limit) msgs = msgs.sublist(0, limit);
     return msgs.reversed.toList();
   }

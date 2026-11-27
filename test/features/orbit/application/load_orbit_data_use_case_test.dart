@@ -138,6 +138,7 @@ class FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async => [];
 
   @override
@@ -237,15 +238,23 @@ class _NavMessageHistoryRepository implements MessageRepository {
     String peerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final history = await getMessagesForContact(peerId);
-    history.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    history.sort((a, b) => b.comparePageOrderTo(a));
     return history
-        .where(
-          (message) =>
-              beforeTimestamp == null ||
-              message.timestamp.compareTo(beforeTimestamp) < 0,
-        )
+        .where((message) {
+          if (beforeTimestamp == null) return true;
+          final order = message.timestamp.compareTo(beforeTimestamp);
+          return order < 0 ||
+              (order == 0 &&
+                  beforeMessageId != null &&
+                  ConversationMessage.comparePageIds(
+                        message.id,
+                        beforeMessageId,
+                      ) <
+                      0);
+        })
         .take(limit)
         .toList();
   }

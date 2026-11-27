@@ -290,12 +290,13 @@ void _runAlice() {
           dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
-      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp, beforeMessageId}) =>
           dbLoadMessagesPage(
             db,
             p,
             limit: limit,
             beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
           ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
@@ -1288,12 +1289,13 @@ void _runBob() {
           dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
-      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp, beforeMessageId}) =>
           dbLoadMessagesPage(
             db,
             p,
             limit: limit,
             beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
           ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>

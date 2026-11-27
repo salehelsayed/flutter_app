@@ -373,13 +373,15 @@ void main() {
                 text,
                 timestamp,
               ),
-      dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(
-            db,
-            contactPeerId,
-            limit: limit,
-            beforeTimestamp: beforeTimestamp,
-          ),
+      dbLoadMessagesPage:
+          (contactPeerId, {limit = 50, beforeTimestamp, beforeMessageId}) =>
+              dbLoadMessagesPage(
+                db,
+                contactPeerId,
+                limit: limit,
+                beforeTimestamp: beforeTimestamp,
+                beforeMessageId: beforeMessageId,
+              ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 100}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),

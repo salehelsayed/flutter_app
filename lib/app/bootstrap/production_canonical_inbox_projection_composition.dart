@@ -1033,13 +1033,15 @@ MessageRepositoryImpl _buildMessageRepository(
       dbExistsMessageByContent(database, peerId, senderPeerId, text, timestamp),
   dbExistsMessageByDedupKey: (peerId, senderPeerId, dedupKey) =>
       dbExistsMessageByDedupKey(database, peerId, senderPeerId, dedupKey),
-  dbLoadMessagesPage: (peerId, {limit = 50, beforeTimestamp}) =>
-      dbLoadMessagesPage(
-        database,
-        peerId,
-        limit: limit,
-        beforeTimestamp: beforeTimestamp,
-      ),
+  dbLoadMessagesPage:
+      (peerId, {limit = 50, beforeTimestamp, beforeMessageId}) =>
+          dbLoadMessagesPage(
+            database,
+            peerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+            beforeMessageId: beforeMessageId,
+          ),
   dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(database),
   dbIsMessageAutoRetryTerminal: (id) =>
       dbIsMessageAutoRetryTerminal(database, id),

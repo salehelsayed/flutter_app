@@ -363,6 +363,24 @@ class ConversationMessage {
   /// so a plain non-cached getter is sufficient (no `Expando` needed yet).
   DateTime? get parsedTimestamp => DateTime.tryParse(timestamp);
 
+  /// Compares the stored timestamp and ID in ascending page order.
+  int comparePageOrderTo(ConversationMessage other) {
+    final order = timestamp.compareTo(other.timestamp);
+    return order == 0 ? comparePageIds(id, other.id) : order;
+  }
+
+  /// Matches the UTF-8 binary order SQLite uses for stored message IDs.
+  static int comparePageIds(String left, String right) {
+    final leftRunes = left.runes.iterator;
+    final rightRunes = right.runes.iterator;
+    while (leftRunes.moveNext()) {
+      if (!rightRunes.moveNext()) return 1;
+      final order = leftRunes.current.compareTo(rightRunes.current);
+      if (order != 0) return order;
+    }
+    return rightRunes.moveNext() ? -1 : 0;
+  }
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;

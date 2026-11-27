@@ -299,6 +299,7 @@ class FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async => [];
 
   @override

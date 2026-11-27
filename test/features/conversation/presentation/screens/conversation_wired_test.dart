@@ -833,9 +833,8 @@ class FakeMessageRepository
   Completer<void>? getMessagesPageGate;
   List<ConversationMessage>? getMessagesPageSnapshot;
 
-  /// 233 sentinel: the exact (limit, beforeTimestamp) of every page request,
-  /// so pagination tests can prove the 50-row window and cursor use.
-  final List<(int, String?)> getMessagesPageRequests = <(int, String?)>[];
+  /// Records the page size and both cursor fields for pagination assertions.
+  final List<(int, String?, String?)> getMessagesPageRequests = [];
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -930,9 +929,10 @@ class FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     getMessagesPageCalls++;
-    getMessagesPageRequests.add((limit, beforeTimestamp));
+    getMessagesPageRequests.add((limit, beforeTimestamp, beforeMessageId));
     final gate = getMessagesPageGate;
     if (gate != null && !gate.isCompleted) {
       await gate.future;
@@ -941,11 +941,19 @@ class FakeMessageRepository
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      messages = messages
-          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
-          .toList();
+      messages = messages.where((message) {
+        final order = message.timestamp.compareTo(beforeTimestamp);
+        return order < 0 ||
+            (order == 0 &&
+                beforeMessageId != null &&
+                ConversationMessage.comparePageIds(
+                      message.id,
+                      beforeMessageId,
+                    ) <
+                    0);
+      }).toList();
     }
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort((a, b) => b.comparePageOrderTo(a));
     final page = messages.take(limit).toList();
     return page.reversed.toList();
   }
@@ -1354,12 +1362,14 @@ class SlowInitialPageMessageRepository extends FakeMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     await firstPageGate.future;
     return super.getMessagesPage(
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
   }
 }
@@ -20602,8 +20612,11 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
-      // Older-page load: any scroll near the load edge of the reversed list.
-      await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+      // Older-page load: reach the oldest edge of the reversed list.
+      final scroll = tester
+          .widget<ListView>(find.byKey(const ValueKey('messages')))
+          .controller!;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
     }
@@ -20933,12 +20946,301 @@ void main() {
     });
   });
 
+  group('BL-105 phone history window', () {
+    const deadline = Duration(seconds: 3);
+    const newestWindow = 300;
+    const messageCount = 330;
+    const voiceNoteCount = 2;
+    final messagesList = find.byKey(const ValueKey('messages'));
+
+    Future<({FakeMessageRepository repo, List<ConversationMessage> seeded})>
+    openAtLatest(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repo = FakeMessageRepository();
+      final peer = makeContact().peerId;
+      final firstSent = DateTime.utc(2026, 11, 26, 12);
+      final voiceNotes = List.generate(voiceNoteCount, (index) {
+        final id = 'phone-history-voice-$index';
+        final timestamp = firstSent
+            .subtract(Duration(hours: 6 - index))
+            .toIso8601String();
+        return ConversationMessage(
+          id: id,
+          contactPeerId: peer,
+          senderPeerId: peer,
+          text: '',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+          media: [
+            MediaAttachment(
+              id: '$id-audio',
+              messageId: id,
+              mime: 'audio/mp4',
+              size: 1234,
+              mediaType: 'audio',
+              durationMs: 1200,
+              localPath: 'media/$id.m4a',
+              downloadStatus: 'done',
+              createdAt: timestamp,
+            ),
+          ],
+        );
+      });
+      final numbered = List.generate(messageCount, (index) {
+        final timestamp = firstSent
+            .add(Duration(seconds: index))
+            .toIso8601String();
+        final number = (index + 1).toString().padLeft(3, '0');
+        return ConversationMessage(
+          id: 'phone-history-$number',
+          contactPeerId: peer,
+          senderPeerId: peer,
+          text: 'History row $number',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+        );
+      });
+      final seeded = [...voiceNotes, ...numbered];
+      repo.store.addEntries(
+        seeded.map((message) => MapEntry(message.id, message)),
+      );
+      final calls = _FakeCallTimelineSource(
+        calls: List.generate(
+          13,
+          (index) => _callEntry(
+            callId: 'phone-history-call-$index',
+            contactPeerId: peer,
+            startedAt: firstSent.subtract(
+              Duration(hours: 24, minutes: 13 - index),
+            ),
+          ),
+        ),
+      );
+      addTearDown(() => calls.dispose().timeout(deadline));
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: repo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: repo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        initialMessages: seeded.sublist(seeded.length - newestWindow),
+        callTimelineSource: calls,
+      ).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      expect(screen.messages, hasLength(newestWindow));
+      expect(screen.callEntries, hasLength(13));
+      expect(
+        find.byKey(const ValueKey('msg-phone-history-330')),
+        findsOneWidget,
+      );
+      return (repo: repo, seeded: seeded);
+    }
+
+    Future<void> scrollToMessage(WidgetTester tester, String messageId) {
+      return tester
+          .scrollUntilVisible(
+            find.byKey(ValueKey('msg-$messageId')),
+            360,
+            scrollable: find.descendant(
+              of: messagesList,
+              matching: find.byType(Scrollable),
+            ),
+            maxScrolls: 140,
+            duration: const Duration(milliseconds: 12),
+          )
+          .timeout(deadline);
+    }
+
+    testWidgets('requests older messages at the gap before older call rows', (
+      tester,
+    ) async {
+      final (repo: repo, seeded: seeded) = await openAtLatest(tester)
+          .timeout(deadline);
+      final firstRetained = seeded[seeded.length - newestWindow];
+      await scrollToMessage(tester, firstRetained.id).timeout(deadline);
+      await tester.pump().timeout(deadline);
+
+      final scroll = tester.widget<ListView>(messagesList).controller!;
+      final remaining = scroll.position.extentAfter.toStringAsFixed(0);
+      expect(
+        repo.getMessagesPageRequests,
+        contains((50, firstRetained.timestamp, firstRetained.id)),
+        reason: 'the oldest loaded message is visible with $remaining px of timeline remaining',
+      );
+    });
+
+    testWidgets('holds the paged window through a stored message update', (
+      tester,
+    ) async {
+      final (repo: repo, seeded: seeded) = await openAtLatest(tester)
+          .timeout(deadline);
+      final scroll = tester.widget<ListView>(messagesList).controller!;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await tester.pump().timeout(deadline);
+      await tester.pump().timeout(deadline);
+      ConversationScreen screen() =>
+          tester.widget(find.byType(ConversationScreen));
+      expect(screen().messages, hasLength(seeded.length));
+      final olderVoiceIds = seeded.take(voiceNoteCount).map((voice) => voice.id);
+      expect(
+        screen().messages
+            .where((message) => message.media.isNotEmpty)
+            .map((message) => message.id),
+        orderedEquals(olderVoiceIds),
+      );
+
+      scroll.jumpTo(scroll.position.minScrollExtent);
+      await tester.pump().timeout(deadline);
+      final oldest = seeded[voiceNoteCount];
+      await scrollToMessage(tester, oldest.id).timeout(deadline);
+      final oldestRow = find.byKey(ValueKey('msg-${oldest.id}'));
+      expect(oldestRow, findsOneWidget);
+
+      final refetch = Completer<void>();
+      repo.getMessagesPageGate = refetch;
+      addTearDown(() {
+        if (!refetch.isCompleted) refetch.complete();
+      });
+      await repo.updateMessageStatus(seeded.last.id, 'read').timeout(deadline);
+      await tester.pump().timeout(deadline);
+      await tester.pump().timeout(deadline);
+
+      final messagesAfterUpdate = screen().messages;
+      final oldestRowCount = oldestRow.evaluate().length;
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
+
+      expect(messagesAfterUpdate.last.status, 'read');
+      expect(
+        messagesAfterUpdate.firstWhere((message) => message.media.isEmpty).id,
+        oldest.id,
+      );
+      expect(
+        messagesAfterUpdate.take(voiceNoteCount).map((message) => message.id),
+        orderedEquals(olderVoiceIds),
+      );
+      expect(oldestRowCount, 1);
+    });
+  });
+
   // ── 233 sentinel: direct pagination window preservation ──────────────────
   group('233 direct pagination preservation', () {
+    testWidgets('an oldest-page read survives a live history window eviction', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const cap = 300;
+      tester.view.physicalSize = const Size(900, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final messageRepo = FakeMessageRepository();
+      final peer = makeContact().peerId;
+      ConversationMessage messageAt(int index) {
+        final timestamp = DateTime.utc(
+          2026,
+          2,
+          11,
+          10,
+          0,
+          index,
+        ).toIso8601String();
+        return ConversationMessage(
+          id: 'cap-$index',
+          contactPeerId: peer,
+          senderPeerId: peer,
+          text: 'Same height',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+        );
+      }
+
+      final seeded = [for (var i = 0; i <= cap; i++) messageAt(i)];
+      messageRepo.store.addEntries(
+        seeded.map((message) => MapEntry(message.id, message)),
+      );
+      final firstVisible = seeded[1];
+      final nextVisible = seeded[2];
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        initialMessages: seeded.sublist(1),
+        sendFn: _instantSuccessSendFn,
+      ).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+      final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      messageRepo.getMessagesPageGate = gate;
+      final scroll = tester
+          .widget<ListView>(find.byKey(const ValueKey('messages')))
+          .controller!;
+      ConversationScreen screen() =>
+          tester.widget(find.byType(ConversationScreen));
+
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await tester.pump().timeout(deadline);
+      expect(screen().isLoadingMore, isTrue);
+      final firstRequest = (50, firstVisible.timestamp, firstVisible.id);
+      expect(messageRepo.getMessagesPageRequests, [firstRequest]);
+
+      final incoming = messageAt(cap + 1);
+      await messageRepo.saveMessage(incoming).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      expect(screen().messages, hasLength(cap));
+      expect(screen().messages.first.id, nextVisible.id);
+      expect(screen().messages.last.id, incoming.id);
+      expect(messageRepo.getMessagesPageRequests, [firstRequest]);
+
+      final settledOffset = scroll.position.pixels;
+      gate.complete();
+      // Drain the repository continuation before layout can move the scroll
+      // position or independently trigger another oldest-page request.
+      await tester.idle().timeout(deadline);
+      expect(scroll.position.pixels, settledOffset);
+      expect(messageRepo.getMessagesPageRequests, [
+        firstRequest,
+        (50, nextVisible.timestamp, nextVisible.id),
+      ]);
+      await tester.pump().timeout(deadline);
+      expect(screen().messages, hasLength(cap + 2));
+      expect(screen().messages.first.id, seeded.first.id);
+      expect(screen().messages.last.id, incoming.id);
+      expect(screen().isLoadingMore, isFalse);
+    });
+
     testWidgets(
       'initial fifty and older page append without resetting the window',
       (tester) async {
-        tester.view.physicalSize = const Size(1080, 2160);
+        tester.view.physicalSize = const Size(900, 800);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
@@ -20974,21 +21276,31 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         // Exactly one initial page at the literal 50-row window, no cursor.
-        expect(messageRepo.getMessagesPageRequests, [(50, null)]);
+        expect(messageRepo.getMessagesPageRequests, [(50, null, null)]);
         expect(find.textContaining('letter 59 of 233'), findsOneWidget);
 
-        // Scrolling toward the load edge of the reversed list appends ONE
-        // older page whose cursor is the current window's oldest timestamp.
-        await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+        final scroll = tester
+            .widget<ListView>(find.byKey(const ValueKey('messages')))
+            .controller!;
+        expect(scroll.position.maxScrollExtent, greaterThan(200));
+        scroll.jumpTo(scroll.position.maxScrollExtent);
         await tester.pump(const Duration(milliseconds: 400));
         await tester.pump(const Duration(milliseconds: 400));
 
         expect(messageRepo.getMessagesPageRequests, hasLength(2));
-        expect(messageRepo.getMessagesPageRequests.last, (50, tsOf(10)));
+        expect(messageRepo.getMessagesPageRequests.last, (
+          50,
+          tsOf(10),
+          'msg-233-10',
+        ));
+
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.textContaining('letter 0 of 233'), findsOneWidget);
 
         // The loaded window was appended, not replaced: the live edge is
         // still present without any third page request (no window reset).
-        await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+        scroll.jumpTo(0.0);
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.textContaining('letter 59 of 233'), findsOneWidget);
         expect(messageRepo.getMessagesPageRequests, hasLength(2));

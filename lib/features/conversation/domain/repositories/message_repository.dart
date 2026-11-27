@@ -162,15 +162,16 @@ abstract class MessageRepository {
     required Duration olderThan,
   });
 
-  /// Retrieves a page of messages for a contact, ordered by timestamp ASC.
+  /// Retrieves at most [limit] messages in ascending stored timestamp and ID
+  /// order. Without [beforeTimestamp], returns the newest page.
   ///
-  /// Returns at most [limit] messages. When [beforeTimestamp] is null,
-  /// returns the most recent page. When provided, returns messages older
-  /// than that cursor.
+  /// With [beforeTimestamp], returns strictly earlier timestamps and, if
+  /// [beforeMessageId] is set, lower IDs at the same timestamp.
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   });
 }
 

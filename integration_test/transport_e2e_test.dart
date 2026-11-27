@@ -241,13 +241,15 @@ Future<_TestStack> _setupStack() async {
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
     dbDeleteMessage: (id) => dbDeleteMessage(db, id),
-    dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-        dbLoadMessagesPage(
-          db,
-          contactPeerId,
-          limit: limit,
-          beforeTimestamp: beforeTimestamp,
-        ),
+    dbLoadMessagesPage:
+        (contactPeerId, {limit = 50, beforeTimestamp, beforeMessageId}) =>
+            dbLoadMessagesPage(
+              db,
+              contactPeerId,
+              limit: limit,
+              beforeTimestamp: beforeTimestamp,
+              beforeMessageId: beforeMessageId,
+            ),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),

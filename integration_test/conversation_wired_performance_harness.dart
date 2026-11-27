@@ -194,11 +194,13 @@ class _TrackingMessageRepository extends FakeMessageRepository
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     final messages = await super.getMessagesPage(
       contactPeerId,
       limit: limit,
       beforeTimestamp: beforeTimestamp,
+      beforeMessageId: beforeMessageId,
     );
     recorder.mark('initial_page_loaded', <String, dynamic>{
       'contactPeerId': contactPeerId,

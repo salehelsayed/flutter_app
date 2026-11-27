@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter_app/features/conversation/application/direct_chat_search.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
@@ -724,6 +725,7 @@ class _ConversationWiredState extends State<ConversationWired>
     with WidgetsBindingObserver {
   static const _uuid = Uuid();
   static const _pageSize = 50;
+  static const _olderPageLoadDistance = 200.0;
   final Set<String> _preparingVoiceMessageIds = {};
   late final MediaPicker _defaultMediaPicker = SystemMediaPicker(
     cameraVideoCapture: () => captureCameraVideo(context),
@@ -749,6 +751,7 @@ class _ConversationWiredState extends State<ConversationWired>
   // intro-dismiss) run once-per-flush against the POST-batch state.
   bool _coalesceFlushScheduled = false;
   bool _coalesceNeedsFlush = false;
+  bool _coalesceInsertedMessage = false;
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
   bool _outgoingCallStartInFlight = false;
@@ -816,6 +819,8 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   bool _hasMoreOlderMessages = true;
+  ConversationMessage? _olderPageAnchor;
+  int _olderPageRevision = 0;
   List<ConversationCallTimelineEntry> _callEntries =
       const <ConversationCallTimelineEntry>[];
   StreamSubscription<void>? _callTimelineChangesSubscription;
@@ -1660,6 +1665,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _loadIdentity();
     if (widget.initialMessages != null) {
       _messages = widget.initialMessages!;
+      _olderPageAnchor = _messages.firstOrNull;
       _hasMoreOlderMessages = _messages.length >= _pageSize;
       _initialLoadDone = true;
       _scrollToBottom();
@@ -2336,10 +2342,11 @@ class _ConversationWiredState extends State<ConversationWired>
       );
       if (mounted) {
         setState(() {
+          _olderPageAnchor = messages.firstOrNull;
+          _hasMoreOlderMessages = messages.length >= _pageSize;
           for (final message in messages) {
             _upsertMessageById(_mergeLoadedMessageWithCurrentState(message));
           }
-          _hasMoreOlderMessages = messages.length >= _pageSize;
           // Publish the completed page and its display gate together. Waiting
           // until after this frame would leave a ready page hidden for a frame.
           _initialLoadDone = true;
@@ -2552,11 +2559,29 @@ class _ConversationWiredState extends State<ConversationWired>
   void _onScroll() {
     if (!_hasMoreOlderMessages || _isLoadingMore) return;
     if (!_scrollController.hasClients) return;
-    // In a reversed ListView, minScrollExtent is the "top" (oldest messages)
     final position = _scrollController.position;
-    if (position.pixels <= position.minScrollExtent + 200) {
-      _loadOlderMessages();
+    if (!position.hasContentDimensions) return;
+    if (position.extentAfter <= _olderPageLoadDistance ||
+        _isNearOldestMessageBeforeCalls(position)) {
+      unawaited(_loadOlderMessages());
     }
+  }
+
+  bool _isNearOldestMessageBeforeCalls(ScrollPosition position) {
+    if (_callEntries.isEmpty) return false;
+    final oldest = _messages.firstOrNull;
+    final timestamp = oldest?.parsedTimestamp;
+    if (oldest == null ||
+        timestamp == null ||
+        !_callEntries.any((entry) => entry.startedAt.isBefore(timestamp))) {
+      return false;
+    }
+    final row = _builtMessageRows()[oldest.id]?.findRenderObject();
+    if (row is! RenderBox || !row.attached || !row.hasSize) return false;
+    final viewport = RenderAbstractViewport.maybeOf(row);
+    if (viewport == null) return false;
+    final revealOffset = viewport.getOffsetToReveal(row, 1).offset;
+    return revealOffset - position.pixels <= _olderPageLoadDistance;
   }
 
   Future<void> _loadOlderMessages() async {
@@ -2564,30 +2589,53 @@ class _ConversationWiredState extends State<ConversationWired>
     setState(() => _isLoadingMore = true);
 
     try {
-      final cursor = _messages.first.timestamp;
-      final olderMessages = await loadConversationPage(
-        messageRepo: widget.messageRepo,
-        contactPeerId: _contact.peerId,
-        pageSize: _pageSize,
-        beforeTimestamp: cursor,
-        mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        mediaFileManager: widget.mediaFileManager,
-      );
-      if (mounted) {
+      while (_hasMoreOlderMessages) {
+        final revision = _olderPageRevision;
+        final anchor = _olderPageAnchor;
+        final olderMessages = await loadConversationPage(
+          messageRepo: widget.messageRepo,
+          contactPeerId: _contact.peerId,
+          pageSize: _pageSize,
+          beforeTimestamp: anchor?.timestamp,
+          beforeMessageId: anchor?.id,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
+        );
+        if (!mounted) return;
+        // A live eviction can rebase the cursor while this page is loading.
+        // Retry from that cursor before releasing the oldest-edge load.
+        if (revision != _olderPageRevision) continue;
+
+        final nextAnchor = olderMessages.firstOrNull;
+        final advances =
+            nextAnchor != null &&
+            (anchor == null || nextAnchor.comparePageOrderTo(anchor) < 0);
+        final loadedIds = _messages.map((message) => message.id).toSet();
+        final additions = olderMessages
+            .where((message) => loadedIds.add(message.id))
+            .toList(growable: false);
         setState(() {
-          _messages = [...olderMessages, ..._messages];
-          _hasMoreOlderMessages = olderMessages.length >= _pageSize;
-          _isLoadingMore = false;
+          if (additions.isNotEmpty) {
+            _messages = _sortMessagesForDisplay([...additions, ..._messages]);
+          }
+          if (advances) _olderPageAnchor = nextAnchor;
+          _hasMoreOlderMessages = advances && olderMessages.length >= _pageSize;
         });
-        unawaited(_recoverVisibleMedia(olderMessages));
+        // A window reset or a live update can leave a page already visible.
+        // Continue until the oldest edge grows or the stored history ends.
+        if (additions.isNotEmpty) {
+          unawaited(_recoverVisibleMedia(additions));
+          return;
+        }
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoadingMore = false);
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_LOAD_MORE_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -2940,7 +2988,9 @@ class _ConversationWiredState extends State<ConversationWired>
     bool introCheck = false,
     bool liveEdgeCandidate = false,
   }) {
-    _upsertIntoMessagesUnsorted(message, mergeMedia: mergeMedia);
+    if (_upsertIntoMessagesUnsorted(message, mergeMedia: mergeMedia)) {
+      _coalesceInsertedMessage = true;
+    }
     _uploadActivityController.refreshOwnerProjection(publish: false);
     _coalesceNeedsFlush = true;
     if (markRead) _coalesceWantsMarkRead = true;
@@ -2968,7 +3018,7 @@ class _ConversationWiredState extends State<ConversationWired>
   /// coalesced to [_flushCoalescedUpserts]. Mirrors the merge semantics of
   /// [_upsertMessageById] (media preservation) so the data state matches the
   /// pre-coalesce per-event path exactly; only the sort is deferred.
-  void _upsertIntoMessagesUnsorted(
+  bool _upsertIntoMessagesUnsorted(
     ConversationMessage message, {
     required bool mergeMedia,
   }) {
@@ -2976,7 +3026,7 @@ class _ConversationWiredState extends State<ConversationWired>
       _messages = _messages
           .where((existing) => existing.id != message.id)
           .toList();
-      return;
+      return false;
     }
     var resolved = message;
     final index = _messages.indexWhere((m) => m.id == message.id);
@@ -2992,23 +3042,25 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     if (index == -1) {
       _messages = [..._messages, resolved];
-    } else {
-      final updated = [..._messages];
-      updated[index] = resolved;
-      _messages = updated;
+      return true;
     }
+    final updated = [..._messages];
+    updated[index] = resolved;
+    _messages = updated;
+    return false;
   }
 
-  /// 159: the per-frame flush — sort the coalesced upserts ONCE + cap, in ONE
-  /// setState, then run the per-event live-stream side effects exactly once
-  /// against the post-batch state.
+  /// 159: the per-frame flush sorts once and caps after an insertion, then
+  /// runs the live-stream side effects against the post-batch state.
   void _flushCoalescedUpserts() {
     _coalesceFlushScheduled = false;
     final needsFlush = _coalesceNeedsFlush;
+    final insertedMessage = _coalesceInsertedMessage;
     final wantMarkRead = _coalesceWantsMarkRead;
     final wantIntroCheck = _coalesceWantsIntroCheck;
     final liveEdgeIds = Set<String>.of(_coalesceLiveEdgeCandidateIds);
     _coalesceNeedsFlush = false;
+    _coalesceInsertedMessage = false;
     _coalesceWantsMarkRead = false;
     _coalesceWantsIntroCheck = false;
     _coalesceLiveEdgeCandidateIds.clear();
@@ -3016,7 +3068,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     setState(() {
       _messages = _sortMessagesForDisplay(_messages);
-      _applyInMemoryCap();
+      if (insertedMessage) _applyInMemoryCap();
     });
 
     final shouldScroll =
@@ -7607,12 +7659,12 @@ class _ConversationWiredState extends State<ConversationWired>
     final index = _messages.indexWhere((m) => m.id == message.id);
     if (index == -1) {
       _messages = _sortMessagesForDisplay([..._messages, resolved]);
+      _applyInMemoryCap();
     } else {
       final updated = [..._messages];
       updated[index] = resolved;
       _messages = _sortMessagesForDisplay(updated);
     }
-    _applyInMemoryCap();
     _uploadActivityController.refreshOwnerProjection(publish: false);
   }
 
@@ -7624,8 +7676,32 @@ class _ConversationWiredState extends State<ConversationWired>
   /// exempt (a newest-first trim there would evict the just-loaded page).
   void _applyInMemoryCap() {
     final capped = trimToNewestInMemoryCap(_messages);
-    if (capped.length < _messages.length) {
+    final evictedCount = _messages.length - capped.length;
+    if (evictedCount > 0) {
       _hasMoreOlderMessages = true;
+      final newestEvicted = _messages
+          .take(evictedCount)
+          .reduce(
+            (latest, message) =>
+                message.comparePageOrderTo(latest) > 0 ? message : latest,
+          );
+      final anchor = _olderPageAnchor;
+      if (anchor == null || anchor.comparePageOrderTo(newestEvicted) <= 0) {
+        _olderPageRevision++;
+        if (anchor != null) {
+          // Display order can differ from stored page order. Start above all
+          // evicted keys so an evicted row can be fetched again.
+          ConversationMessage? nextAnchor;
+          for (final message in capped) {
+            if (message.comparePageOrderTo(newestEvicted) > 0 &&
+                (nextAnchor == null ||
+                    message.comparePageOrderTo(nextAnchor) < 0)) {
+              nextAnchor = message;
+            }
+          }
+          _olderPageAnchor = nextAnchor;
+        }
+      }
     }
     _messages = capped;
   }
@@ -8154,12 +8230,14 @@ class _ConversationWiredState extends State<ConversationWired>
         continue;
       }
       if (!_hasMoreOlderMessages) break;
-      final beforeCount = _messages.length;
+      final before = (_olderPageAnchor?.timestamp, _olderPageAnchor?.id);
       await _loadOlderMessages();
       if (!mounted) return;
-      // Stop on a page that made no progress — a repository stuck below the
-      // cursor must not spin forever.
-      if (_messages.length == beforeCount) break;
+      // A page can advance the cursor even if a live update already added
+      // all of its rows.
+      if (before == (_olderPageAnchor?.timestamp, _olderPageAnchor?.id)) {
+        break;
+      }
     }
     if (!mounted || !stillWanted()) return;
 
@@ -8199,6 +8277,9 @@ class _ConversationWiredState extends State<ConversationWired>
     String messageId, {
     bool Function() stillWanted = _keepGoing,
   }) async {
+    // History pages can arrive before the list lays out their rows.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !stillWanted()) return;
     final indexOf = {
       for (var i = 0; i < _messages.length; i++) _messages[i].id: i,
     };
@@ -8229,7 +8310,7 @@ class _ConversationWiredState extends State<ConversationWired>
           );
       if (next == position.pixels) return;
       _scrollController.jumpTo(next);
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      await WidgetsBinding.instance.endOfFrame;
     }
   }
 
@@ -8240,6 +8321,7 @@ class _ConversationWiredState extends State<ConversationWired>
       final key = element.widget.key;
       if (key is ValueKey<String> && key.value.startsWith('msg-')) {
         rows[key.value.substring(4)] = element;
+        return;
       }
       element.visitChildElements(visit);
     }

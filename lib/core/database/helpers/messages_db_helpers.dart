@@ -998,16 +998,17 @@ Future<bool> dbExistsMessageByDedupKey(
   return rows.isNotEmpty;
 }
 
-/// Loads a page of messages for a contact, ordered by timestamp ASC.
+/// Loads at most [limit] messages in ascending stored timestamp and ID order.
 ///
-/// Returns at most [limit] messages. When [beforeTimestamp] is null,
-/// returns the most recent page. When provided, returns messages older
-/// than that cursor. Results are returned in chronological (ASC) order.
+/// With [beforeTimestamp], the page starts strictly before that timestamp
+/// and includes earlier IDs at the same timestamp if [beforeMessageId] is set.
+/// Without [beforeTimestamp], returns the newest page.
 Future<List<Map<String, Object?>>> dbLoadMessagesPage(
   Database db,
   String contactPeerId, {
   int limit = 50,
   String? beforeTimestamp,
+  String? beforeMessageId,
 }) async {
   emitFlowEvent(
     layer: 'DB',
@@ -1022,25 +1023,24 @@ Future<List<Map<String, Object?>>> dbLoadMessagesPage(
   );
 
   try {
-    final List<Map<String, Object?>> results;
+    final where = ['contact_peer_id = ?', _visibleMessageFilter];
+    final whereArgs = <Object?>[contactPeerId];
     if (beforeTimestamp != null) {
-      results = await db.query(
-        'messages',
-        where:
-            'contact_peer_id = ? AND $_visibleMessageFilter AND timestamp < ?',
-        whereArgs: [contactPeerId, beforeTimestamp],
-        orderBy: 'timestamp DESC',
-        limit: limit,
-      );
-    } else {
-      results = await db.query(
-        'messages',
-        where: 'contact_peer_id = ? AND $_visibleMessageFilter',
-        whereArgs: [contactPeerId],
-        orderBy: 'timestamp DESC',
-        limit: limit,
-      );
+      whereArgs.add(beforeTimestamp);
+      if (beforeMessageId == null) {
+        where.add('timestamp < ?');
+      } else {
+        where.add('(timestamp, id) < (?, ?)');
+        whereArgs.add(beforeMessageId);
+      }
     }
+    final results = await db.query(
+      'messages',
+      where: where.join(' AND '),
+      whereArgs: whereArgs,
+      orderBy: 'timestamp DESC, id DESC',
+      limit: limit,
+    );
 
     emitFlowEvent(
       layer: 'DB',

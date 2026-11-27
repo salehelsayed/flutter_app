@@ -529,16 +529,25 @@ class InMemoryMessageRepository extends shared_fakes.InMemoryMessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async {
     var messages = _messages.values
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      messages = messages
-          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
-          .toList();
+      messages = messages.where((message) {
+        final order = message.timestamp.compareTo(beforeTimestamp);
+        return order < 0 ||
+            (order == 0 &&
+                beforeMessageId != null &&
+                ConversationMessage.comparePageIds(
+                      message.id,
+                      beforeMessageId,
+                    ) <
+                    0);
+      }).toList();
     }
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort((a, b) => b.comparePageOrderTo(a));
     final page = messages.take(limit).toList();
     return page.reversed.toList();
   }

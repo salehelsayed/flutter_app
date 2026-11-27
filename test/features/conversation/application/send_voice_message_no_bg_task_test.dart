@@ -242,6 +242,7 @@ class _FakeMessageRepo
     String pid, {
     int limit = 50,
     String? beforeTimestamp,
+    String? beforeMessageId,
   }) async => [];
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];

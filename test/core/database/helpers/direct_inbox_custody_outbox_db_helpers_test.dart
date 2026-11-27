@@ -78,6 +78,93 @@ void main() {
 
   group('authored direct text intent', () {
     test(
+      'history page cursors preserve SQLite ID order at a tied timestamp',
+      () async {
+        const deadline = Duration(seconds: 3);
+        const oldestId = 'history-z';
+        const bmpId = 'history-\uE000';
+        const supplementaryId = 'history-\u{10000}';
+        await db
+            .insert('contacts', _fanoutContactRow(peerId: _peer))
+            .timeout(deadline);
+        for (final id in [oldestId, bmpId, supplementaryId]) {
+          await dbInsertMessage(
+            db,
+            _message(id, envelope: _envelope(id, 'cipher')).toMap(),
+          ).timeout(deadline);
+        }
+
+        final newest = await repository
+            .getMessagesPage(_peer, limit: 2)
+            .timeout(deadline);
+        expect(newest.map((message) => message.id), [bmpId, supplementaryId]);
+        final oldest = await repository
+            .getMessagesPage(
+              _peer,
+              limit: 2,
+              beforeTimestamp: newest.first.timestamp,
+              beforeMessageId: newest.first.id,
+            )
+            .timeout(deadline);
+        expect(oldest.map((message) => message.id), [oldestId]);
+      },
+    );
+
+    test(
+      'history pages keep pending intents within the stored cursor',
+      () async {
+        const deadline = Duration(seconds: 3);
+        await db
+            .insert('contacts', _fanoutContactRow(peerId: _peer))
+            .timeout(deadline);
+        for (final id in ['history-a', 'history-c']) {
+          await dbInsertMessage(
+            db,
+            _message(id, envelope: _envelope(id, 'cipher')).toMap(),
+          ).timeout(deadline);
+        }
+        repository = _buildRepository(
+          db,
+          capacity: 2,
+          includeAuthoredTextIntents: true,
+        );
+        const intent = AuthoredDirectTextIntent(
+          id: 'history-b',
+          contactPeerId: _peer,
+          text: 'pending in this page',
+          timestamp: _t0,
+          token: 'pending-history-intent',
+        );
+        expect(
+          await repository
+              .saveAuthoredDirectTextIntent(intent)
+              .timeout(deadline),
+          isTrue,
+        );
+
+        ConversationMessage? cursor;
+        for (final id in ['history-c', 'history-b', 'history-a']) {
+          final page = await repository
+              .getMessagesPage(
+                _peer,
+                limit: 1,
+                beforeTimestamp: cursor?.timestamp,
+                beforeMessageId: cursor?.id,
+              )
+              .timeout(deadline);
+          expect(page.single.id, id);
+          cursor = page.single;
+        }
+        expect(
+          await repository
+              .getMessagesPage(_peer, beforeTimestamp: _t0)
+              .timeout(deadline),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
       'NAV-006 a durable pending send preserves received circle order across restart',
       () async {
         const peerA = 'nav-peer-a';
@@ -3719,13 +3806,15 @@ MessageRepositoryImpl _buildRepository(
     dbDeleteMessage: (id) => dbDeleteMessage(db, id),
     dbExistsMessageByContent: (peerId, senderPeerId, text, timestamp) =>
         dbExistsMessageByContent(db, peerId, senderPeerId, text, timestamp),
-    dbLoadMessagesPage: (peerId, {limit = 50, beforeTimestamp}) =>
-        dbLoadMessagesPage(
-          db,
-          peerId,
-          limit: limit,
-          beforeTimestamp: beforeTimestamp,
-        ),
+    dbLoadMessagesPage:
+        (peerId, {limit = 50, beforeTimestamp, beforeMessageId}) =>
+            dbLoadMessagesPage(
+              db,
+              peerId,
+              limit: limit,
+              beforeTimestamp: beforeTimestamp,
+              beforeMessageId: beforeMessageId,
+            ),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),

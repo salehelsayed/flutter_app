@@ -3114,6 +3114,54 @@ Evidence: `.audit/chat-initial-reveal/existing-hydration-red.jsonl`,
 209 passes and obsolete partial-view expectation failure remain in
 `whole-wired-green.jsonl`.
 
+Direct 1:1 history paging uses an exclusive stored timestamp and message ID
+cursor with SQLite binary ID order. The 320-row database regression includes
+a tied page boundary, mixed existing timestamp spellings, an old attachment,
+and hidden and other-contact controls. The baseline reads only 300 visible
+rows. The corrected path reaches every visible row without rewriting stored
+messages. Evidence m-5ca1e20e and m-fdf223c5.
+
+The reversed list uses the oldest extent for message-only paging. A gated live
+append can evict the active window's previous cursor. The cap regression
+releases the first read before running layout and checks the rebased request
+and both list edges. A frame pump can independently trigger another request,
+so the inconclusive first fixture stays recorded separately. Evidence
+m-a15ec4bb and m-6266af8c.
+
+Chat search and shared-media jumps wait for the loaded rows to lay out before
+reading scroll extents, and for layout after each jump. The original unchanged
+search test passed on the base and failed on the intermediate paging changes
+with its old matched key still absent despite two successful page reads.
+Exact 4556601d passes all four search, the three shared-media cases, and the
+full `affected-conversation` row (3,185 passed, zero failed or skipped across
+214 files). Evidence m-e85cdab1, m-bbe98806 and
+`/srv/evidence/claude-ui-bl105-4556/conv/affected-conversation-1.raw.log`
+SHA-256 `538e5d2f697f94811514f14e908c9b8041bc689ef817306e45b5a3c1b5256724`.
+
+Phone validation of `4556601d` missed row 001 on both devices with 330 text
+rows and older calls in the same chat. The Pixel settled at row 031. The
+iPhone briefly showed rows below 031 and then returned to the 300-message
+window. Search and live arrival passed within the observed scope. Evidence
+`m-49b57ffc`, `bl105c-20261126/rows/scroll_B_pixel.jsonl` and
+`scroll_B_ios13.jsonl`.
+
+The `BL-105 phone history window` cases keep 330 stored messages, the newest
+300 in the initial view, and 13 older call rows. On test-only `18707cea`, row
+031 was visible with 407 px of combined timeline remaining, outside the 200 px
+page threshold, and the repository received no request for row 031. A separate
+case pages all 330 rows, then updates row 330's stored status while holding any
+refetch. The update reached the view and the oldest rendered model reset to
+031. Earlier host coverage exercised message-only paging and a true live
+append during a pending read. The added fixtures cover the gap before old calls
+and an update after older rows are already loaded. Evidence `m-51bb8a34`, raw
+SHA-256 `e859ff0cbd20c225c1c9049ce1bbcdafbe7b886339a67488dd52af7e8fe694c2`.
+The first fixture run timed out before its assertions and remains recorded in
+`m-97d508e2`.
+
+The mixed timeline can request from its oldest rendered message when earlier
+calls extend the list. Updating an existing row preserves the paged window;
+new inserts still use the live cap and cursor rebase.
+
 A quoted Thought has a pending first lookup separately from a completed,
 unavailable result. The quote loader records started IDs before awaiting the
 post and media reads; an absent result key means pending, while a present
