@@ -4,6 +4,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -141,13 +142,10 @@ void main() {
         tester,
       ) async {
         setChatViewport(tester, width);
-        final repo = GatedPageMessageRepository();
-        await repo.saveMessage(makeMessage(5)).timeout(deadline);
-        final revealed = <String>[];
         await pumpWired(
           tester,
-          messageRepo: repo,
-          revealed: revealed,
+          messageRepo: GatedPageMessageRepository(),
+          revealed: [],
           locale: Locale(language),
           textScaler: const TextScaler.linear(3.1),
         );
@@ -172,6 +170,18 @@ void main() {
         expect(empty, findsOneWidget);
         final text = tester.widget<Text>(empty);
         expect(text.style?.color, const Color(0xFFB4BCC6));
+        final searchSurface = find.ancestor(
+          of: empty,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is ColoredBox && widget.color == const Color(0xFF0B0D12),
+          ),
+        );
+        expect(searchSurface, findsOneWidget);
+        expect(
+          tester.getCenter(empty).dy,
+          closeTo(tester.getCenter(searchSurface).dy, 0.5),
+        );
         expect(tester.getCenter(empty).dx, closeTo(width / 2, 0.5));
         expect(
           tester.getTopLeft(empty).dy,
@@ -184,17 +194,16 @@ void main() {
         );
         expect(tester.takeException(), isNull);
 
-        await tester.enterText(searchField, 'Dahab').timeout(deadline);
+        await tester.enterText(searchField, ' ').timeout(deadline);
         await settle(tester);
         expect(empty, findsNothing);
-        expect(find.text(l10n.chat_search_count(1, 1)), findsOneWidget);
-        expect(revealed, ['msg-goto-5']);
+        expect(find.byType(EmptyConversationState), findsOneWidget);
         await tester
             .tap(find.byTooltip(l10n.chat_search_close))
             .timeout(deadline);
         await settle(tester);
         expect(bar, findsNothing);
-        expect(find.byKey(const ValueKey('msg-msg-goto-5')), findsOneWidget);
+        expect(find.byType(EmptyConversationState), findsOneWidget);
         await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
       });
     }
@@ -205,10 +214,11 @@ void main() {
       setChatViewport(tester, 390);
       final repo = GatedPageMessageRepository();
       await repo.saveMessage(makeMessage(5)).timeout(deadline);
+      final revealed = <String>[];
       await pumpWired(
         tester,
         messageRepo: repo,
-        revealed: [],
+        revealed: revealed,
         eligibleForIntroBanner: true,
       );
       await settle(tester);
@@ -224,8 +234,15 @@ void main() {
         of: find.byType(ChatSearchBar),
         matching: find.byType(TextField),
       );
+      await tester.enterText(searchField, 'meteor').timeout(deadline);
+      await settle(tester);
+      final empty = find.text('No messages match “meteor”');
+      expect(empty, findsOneWidget);
       await tester.enterText(searchField, 'Dahab').timeout(deadline);
       await settle(tester);
+      expect(empty, findsNothing);
+      expect(find.text(l10n.chat_search_count(1, 1)), findsOneWidget);
+      expect(revealed, ['msg-goto-5']);
       expect(promo, findsNothing);
       await tester
           .tap(find.byTooltip(l10n.chat_search_close))
@@ -243,28 +260,35 @@ void main() {
           final repo = GatedPageMessageRepository();
           if (withMessage) {
             await repo.saveMessage(makeMessage(5)).timeout(deadline);
+          } else {
+            tester.view.viewInsets = const FakeViewPadding(bottom: 320);
           }
           await pumpWired(
             tester,
             messageRepo: repo,
             revealed: [],
-            textScaler: const TextScaler.linear(3.1),
+            textScaler: withMessage ? null : const TextScaler.linear(3.1),
             eligibleForIntroBanner: true,
           );
           await settle(tester);
           final promo = find.byType(IntroBanner);
           final composer = find.byType(TextField);
-          expect(promo, findsOneWidget);
+          if (withMessage) expect(promo, findsOneWidget);
           await tester.enterText(composer, 'Draft').timeout(deadline);
           tester.view.viewInsets = const FakeViewPadding(bottom: 320);
           await settle(tester);
           expect(promo, findsNothing);
           expect(tester.widget<TextField>(composer).controller!.text, 'Draft');
           expect(tester.takeException(), isNull);
-          tester.view.resetViewInsets();
-          await settle(tester);
-          expect(promo, findsOneWidget);
-          expect(tester.widget<TextField>(composer).controller!.text, 'Draft');
+          if (withMessage) {
+            tester.view.resetViewInsets();
+            await settle(tester);
+            expect(promo, findsOneWidget);
+            expect(
+              tester.widget<TextField>(composer).controller!.text,
+              'Draft',
+            );
+          }
           await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
         },
       );
