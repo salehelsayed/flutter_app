@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
@@ -8,6 +9,37 @@ import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.d
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
+  testWidgets('BL-107 comments sheet uses the light raised surface', (
+    tester,
+  ) async {
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            theme: AppTheme.lightTheme,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: CommentsSheet(
+                post: _post(),
+                comments: const [],
+                onSubmitComment: (_) async => const [],
+              ),
+            ),
+          ),
+        )
+        .timeout(const Duration(seconds: 3));
+
+    final surface = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(CommentsSheet),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(surface.color, const Color(0xFFFAF8F3));
+  });
+
   testWidgets(
     'renders the post summary, comment count, chronological comments, and composer',
     (tester) async {

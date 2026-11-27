@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -288,12 +289,43 @@ void main() {
   }
 
   group('FriendRow', () {
-    Widget wrap(Widget child) => MaterialApp(
+    Widget wrap(Widget child, {ThemeData? theme}) => MaterialApp(
+      theme: theme,
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: child),
     );
+
+    testWidgets('BL-107 inner-circle badge uses readable light ink', (
+      tester,
+    ) async {
+      await tester
+          .pumpWidget(
+            wrap(
+              FriendRow(
+                friend: _makeFriend(),
+                showInnerCircleBadge: true,
+                onTap: () {},
+              ),
+              theme: AppTheme.lightTheme,
+            ),
+          )
+          .timeout(const Duration(seconds: 3));
+
+      final context = tester.element(find.byType(FriendRow));
+      final label = find.text(
+        AppLocalizations.of(context)!.orbit_inner_circle_badge,
+      );
+      final badge = tester
+          .element(label)
+          .findAncestorWidgetOfExactType<DecoratedBox>()!;
+      expect(
+        (badge.decoration as BoxDecoration).color,
+        const Color(0xFFE5F4EA),
+      );
+      expect(tester.widget<Text>(label).style?.color, const Color(0xFF166534));
+    });
 
     Text textFor(WidgetTester tester, String text) {
       final finder = find.byWidgetPredicate(

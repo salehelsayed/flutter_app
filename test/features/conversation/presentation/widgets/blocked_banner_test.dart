@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -47,6 +49,36 @@ void main() {
   }
 
   group('BlockedBanner', () {
+    testWidgets('BL-107 blocked banner uses light surface colors', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(
+            MaterialApp(
+              theme: AppTheme.lightTheme,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(body: BlockedBanner(onUnblock: () {})),
+            ),
+          )
+          .timeout(deadline);
+
+      final banner = find.byType(BlockedBanner);
+      final colors = tester.element(banner).backgroundReadableColors;
+      final surface = tester.widget<DecoratedBox>(
+        find.descendant(of: banner, matching: find.byType(DecoratedBox)).first,
+      );
+      final decoration = surface.decoration as BoxDecoration;
+      final label = tester.widget<Text>(find.text('You blocked this contact.'));
+      final link = tester.widget<Text>(find.text('Unblock'));
+
+      expect(decoration.color, colors.surfaceSubtle);
+      expect(decoration.border!.top.color, colors.divider);
+      expect(label.style?.color, colors.textSecondary);
+      expect(link.style?.color, const Color(0xFF0D6E66));
+    });
+
     testWidgets('renders blocked text and unblock button', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(

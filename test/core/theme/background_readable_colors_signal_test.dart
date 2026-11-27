@@ -77,7 +77,7 @@ void main() {
       // Light: decorative surfaceBorder is softer than, and distinct from,
       // the control border / input border.
       expect(light.surfaceBorder, const Color(0xFFB3ACBD));
-      expect(light.border, const Color(0xFF8D83A8));
+      expect(light.border, const Color(0xFF77708F));
       expect(light.inputBorder, const Color(0xFF7C7297));
       expect(light.surfaceBorder, isNot(light.border));
       expect(light.surfaceBorder, isNot(light.inputBorder));

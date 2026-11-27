@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
@@ -178,13 +179,56 @@ void main() {
       expect(urlSpan.style?.decoration, TextDecoration.underline);
     });
 
-    testWidgets('URL spans use teal color', (tester) async {
-      await tester.pumpWidget(
-        wrap(const LinkableText(text: 'https://example.com')),
-      );
-      final spans = findSpans(tester);
-      final urlSpan = spans.first;
-      expect(urlSpan.style?.color, const Color(0xFF81e6d9));
+    testWidgets('default URL colour follows the live app theme', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final mode = ValueNotifier(ThemeMode.dark);
+      addTearDown(mode.dispose);
+      await tester
+          .pumpWidget(
+            ValueListenableBuilder(
+              valueListenable: mode,
+              builder: (context, themeMode, child) => MaterialApp(
+                theme: AppTheme.lightTheme,
+                darkTheme: AppTheme.darkTheme,
+                themeMode: themeMode,
+                themeAnimationDuration: Duration.zero,
+                home: child,
+              ),
+              child: const Scaffold(
+                body: LinkableText(text: 'https://example.com'),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      expect(findSpans(tester).single.style?.color, const Color(0xFF81E6D9));
+      mode.value = ThemeMode.light;
+      await tester.pump().timeout(deadline);
+      expect(findSpans(tester).single.style?.color, const Color(0xFF0D6E66));
+    });
+
+    testWidgets('explicit URL colour takes precedence in light theme', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const customColour = Color(0xFF6045B6);
+      await tester
+          .pumpWidget(
+            MaterialApp(
+              theme: AppTheme.lightTheme,
+              home: const Scaffold(
+                body: LinkableText(
+                  text: 'https://example.com',
+                  linkStyle: TextStyle(color: customColour),
+                ),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      expect(findSpans(tester).single.style?.color, customColour);
     });
 
     testWidgets('empty text renders without error', (tester) async {
