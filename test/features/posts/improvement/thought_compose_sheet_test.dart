@@ -186,8 +186,11 @@ void main() {
   /// The voice card's player finishes loading (or failing to) and lets go of
   /// its timers once the sheet is gone.
   Future<void> settlePlayer(WidgetTester tester) async {
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 5));
+    const deadline = Duration(seconds: 3);
+    const drain = Duration(milliseconds: 2500);
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+    await tester.pump(drain).timeout(deadline);
+    await tester.pump(drain).timeout(deadline);
   }
 
   ElevatedButton share(WidgetTester tester) =>
@@ -830,6 +833,56 @@ void main() {
       'voice',
     ]);
     expect(submitted!.mediaDrafts.last.localFilePath, '/tmp/bl95.m4a');
+    await settlePlayer(tester);
+  });
+
+  testWidgets('the tester composer keeps a picked photo with existing voice', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    const voice = PostMediaDraft(
+      localFilePath: '/tmp/tester-voice.m4a',
+      mime: 'audio/mp4',
+      durationMs: 3000,
+    );
+    final photo = PostMediaDraft(localFilePath: realPhoto(), mime: 'image/jpeg');
+    ComposePostResult? submitted;
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: ComposePostSheet(
+                thoughtsOnly: true,
+                eligibleContacts: const [],
+                initialDraft: ComposePostResult(
+                  text: '',
+                  audience: PostAudience.allFriends(),
+                  mediaDrafts: const [voice],
+                ),
+                onPickMedia: () async => (drafts: [photo], leftOut: false),
+                onSubmitWithOutcome: (draft) async {
+                  submitted = draft;
+                  return ComposePostSubmitOutcome.keepSheetOpen;
+                },
+              ),
+            ),
+          ),
+        )
+        .timeout(deadline);
+    await tester.tap(find.byTooltip('Media')).timeout(deadline);
+    await settle(tester).timeout(deadline);
+
+    expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    ).timeout(deadline);
+    await until(tester, () => submitted != null).timeout(deadline);
+    expect(submitted!.mediaDrafts.map((draft) => draft.kind), ['image', 'voice']);
+    expect(submitted!.mediaDrafts.last, same(voice));
     await settlePlayer(tester);
   });
 
