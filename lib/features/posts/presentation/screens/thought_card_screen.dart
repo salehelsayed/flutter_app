@@ -1016,6 +1016,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     final goneIn = left.inMinutes >= 60
         ? l10n.thought_gone_in_hours(left.inHours)
         : l10n.thought_gone_in_minutes(left.inMinutes.clamp(1, 59));
+    final meta = [
+      _relativeAge(l10n),
+      if (!_post.isIncoming && !_retryingPost && _post.deliveryStatus == 'sent')
+        l10n.message_status_sent,
+      goneIn,
+    ].join(' · ');
     final name = widget.authorName;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
@@ -1050,7 +1056,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       ),
                     ),
                     Text(
-                      '${_relativeAge(l10n)} · $goneIn',
+                      meta,
                       key: const ValueKey('thought-age'),
                       style: TextStyle(
                         color: _viewerInk.withValues(alpha: 0.85),
@@ -1327,7 +1333,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             : l10n.post_sending,
       'partial' => l10n.post_partial,
       'failed' => l10n.post_send_failed,
-      'sent' => l10n.message_status_sent,
       _ => null,
     };
     if (label == null) return const SizedBox.shrink();
@@ -1340,7 +1345,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             child: Text(label, style: const TextStyle(color: _viewerInk)),
           ),
         ),
-        if (status != 'sent' && widget.retryPosting != null)
+        if (widget.retryPosting != null)
           TextButton(
             key: const ValueKey('thought-posting-retry'),
             style: TextButton.styleFrom(foregroundColor: _viewerInk),
