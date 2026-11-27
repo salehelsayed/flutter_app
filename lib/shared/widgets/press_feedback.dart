@@ -56,6 +56,12 @@ class _PressFeedbackState extends State<_PressFeedback> {
   }
 
   @override
+  void dispose() {
+    _down = null;
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) == true;
     final pressed =
