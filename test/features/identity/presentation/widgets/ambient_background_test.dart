@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
@@ -47,6 +48,86 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final preference in BackgroundPreference.values) {
+    testWidgets('$preference keeps its artwork in both app appearances', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final (rootKey, darkGround, lightGround) = switch (preference) {
+        BackgroundPreference.defaultBackground => (
+          'cosmic-background-mirrored-root',
+          const Color(0xFF02030A),
+          const Color(0xFFECE8E1),
+        ),
+        BackgroundPreference.cosmic => (
+          'cosmic-background-root',
+          const Color(0xFF02030A),
+          const Color(0xFFECE8E1),
+        ),
+        BackgroundPreference.aurora => (
+          null,
+          const Color(0xFF000000),
+          const Color(0xFFECE8E1),
+        ),
+        BackgroundPreference.daylightLagoon => (
+          'daylight-lagoon-background-root',
+          const Color(0xFF0B1117),
+          const Color(0xFFE5DED5),
+        ),
+      };
+
+      for (final brightness in Brightness.values) {
+        final isLight = brightness == Brightness.light;
+        final expectedGround = isLight ? lightGround : darkGround;
+        late BackgroundReadableColors colors;
+        await tester
+            .pumpWidget(
+              MaterialApp(
+                theme: AppTheme.lightTheme,
+                darkTheme: AppTheme.darkTheme,
+                themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+                home: AmbientBackground(
+                  preference: preference,
+                  isChatSurface: true,
+                  child: Builder(
+                    builder: (context) {
+                      colors = context.backgroundReadableColors;
+                      return const Text('Content');
+                    },
+                  ),
+                ),
+              ),
+            )
+            .timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+        expect(colors.isLightSurface, isLight);
+        final overlay = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+        );
+        expect(
+          overlay.value.statusBarIconBrightness,
+          isLight ? Brightness.dark : Brightness.light,
+        );
+        if (rootKey == null) {
+          expect(
+            tester
+                .widgetList<Container>(find.byType(Container))
+                .any((container) => container.color == expectedGround),
+            isTrue,
+          );
+        } else {
+          final root = tester.widget<DecoratedBox>(
+            find.byKey(ValueKey(rootKey)),
+          );
+          final gradient = (root.decoration as BoxDecoration).gradient
+              as RadialGradient;
+          expect(gradient.colors.last, expectedGround);
+        }
+      }
+    });
+  }
 
   testWidgets('aurora preference renders the ambient glow', (tester) async {
     await tester.pumpWidget(
