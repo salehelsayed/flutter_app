@@ -130,7 +130,13 @@ void main() {
     }
 
     test('keeps milestones while reducing both endpoints of a joined call', () async {
-      final diagnostics = await install(upload: (_) async => {}).timeout(bound);
+      final wireEvents = <Map<String, Object?>>[];
+      final diagnostics = await install(
+        upload: (events) async {
+          wireEvents.addAll(events);
+          return {for (final event in events) event['eventId']! as String};
+        },
+      ).timeout(bound);
       final traces = <String, String>{};
       final firstTimes = <String, int>{};
       for (final role in ['caller', 'callee']) {
@@ -168,23 +174,31 @@ void main() {
       final all = (await storedEvents(diagnostics))
           .where((event) => traces.containsKey(event['traceId']))
           .toList();
-      final readiness = all
-          .where(
-            (event) =>
-                event['stage'] == 'media' &&
-                event['action'] == 'snapshot' &&
-                event['outcome'] == 'ok',
-          )
-          .toList();
+      bool isReadiness(Map<String, Object?> event) =>
+          event['stage'] == 'media' &&
+          event['action'] == 'snapshot' &&
+          event['outcome'] == 'ok';
+      final readiness = all.where(isReadiness).toList();
+      final wire = wireEvents.where(
+        (event) => traces.containsKey(event['traceId']),
+      );
+      final wireReadiness = wire.where(isReadiness);
       int bytes(Iterable<Map<String, Object?>> rows) => rows.fold(
         0,
         (size, row) => size + utf8.encode(jsonEncode(row)).length,
       );
       debugPrint(
         'BL109_VOLUME rows=${all.length} bytes=${bytes(all)} '
-        'readinessRows=${readiness.length} readinessBytes=${bytes(readiness)}',
+        'readinessRows=${readiness.length} readinessBytes=${bytes(readiness)} '
+        'wireRows=${wire.length} wireBytes=${bytes(wire)} '
+        'wireReadinessRows=${wireReadiness.length} '
+        'wireReadinessBytes=${bytes(wireReadiness)}',
       );
 
+      expect(
+        wire.map((event) => event['eventId']),
+        unorderedEquals(all.map((event) => event['eventId'])),
+      );
       expect(all.map((row) => row['traceId']).toSet(), traces.keys.toSet());
       for (final MapEntry(key: trace, value: role) in traces.entries) {
         final rows = all.where((event) => event['traceId'] == trace).toList();
