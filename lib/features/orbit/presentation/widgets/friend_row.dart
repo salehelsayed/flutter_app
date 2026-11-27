@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -180,7 +181,7 @@ class FriendRow extends StatelessWidget {
                     onTap: onAvatarTap ?? onTap,
                     behavior: HitTestBehavior.opaque,
                     child: UserAvatar(peerId: friend.peerId, size: 48),
-                  ),
+                  ).withPressFeedback(),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -270,7 +271,7 @@ class FriendRow extends StatelessWidget {
             },
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

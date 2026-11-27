@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -750,7 +751,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                   ),
                 ),
               ),
-            ),
+            ).withPressFeedback(),
           ),
           const SizedBox(width: 8),
           // Progress: waveform bars or slider

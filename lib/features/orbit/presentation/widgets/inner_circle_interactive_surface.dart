@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -1103,7 +1104,7 @@ class _InnerCircleInteractiveSurfaceState
                 ),
               ),
             ),
-          ),
+          ).withPressFeedback(),
         ),
       ),
 
@@ -1427,7 +1428,7 @@ class _InnerCircleInteractiveSurfaceState
                               ),
                             ),
                           ),
-                        ),
+                        ).withPressFeedback(),
                       ),
                     ],
                   ),
@@ -1441,7 +1442,7 @@ class _InnerCircleInteractiveSurfaceState
                     behavior: HitTestBehavior.opaque,
                     onTap: _openFind,
                     child: const OrbitControlCircle(icon: Icons.search),
-                  ),
+                  ).withPressFeedback(),
                 ),
         ),
     ];
@@ -1480,7 +1481,7 @@ class _StepperButton extends StatelessWidget {
           ),
           child: Icon(icon, size: 20, color: const Color(0xFFB9F6E8)),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }
@@ -1550,7 +1551,7 @@ class _FindChip extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 

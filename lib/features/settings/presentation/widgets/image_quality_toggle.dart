@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -132,7 +133,7 @@ class ImageQualityToggle extends StatelessWidget {
             ),
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 
 /// Circular FAB with a blue glowing ring border and dark center.
 class GlowFab extends StatelessWidget {
@@ -42,6 +43,6 @@ class GlowFab extends StatelessWidget {
         ),
         child: Center(child: icon),
       ),
-    );
+    ).withPressFeedback();
   }
 }

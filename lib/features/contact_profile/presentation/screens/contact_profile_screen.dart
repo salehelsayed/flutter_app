@@ -5,6 +5,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -708,7 +709,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
           ],
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 
   static String? _formatConnectedSince(BuildContext context, String iso) {
@@ -767,7 +768,7 @@ class _TopBar extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
+            ).withPressFeedback(),
           ),
         ],
       ),
@@ -853,7 +854,7 @@ class _GlassCard extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 }
 

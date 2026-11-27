@@ -7,6 +7,145 @@ void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
   group('OrbitalAvatar', () {
+    testWidgets('classic avatar entrance scales from 0.9 and fades in 200 ms', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester.pumpWidget(
+        wrap(
+          const OrbitalAvatar(
+            peerId: 'peer-entrance',
+            size: 38,
+            globalIndex: 0,
+            child: SizedBox(),
+          ),
+        ),
+      ).timeout(deadline);
+      // Elapse fake time to run the zero-delay timer and start the ticker.
+      await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
+      final avatar = find.byType(OrbitalAvatar);
+      final scale = find.descendant(
+        of: avatar,
+        matching: find.byType(Transform),
+      );
+      final opacity = find.descendant(
+        of: avatar,
+        matching: find.byType(Opacity),
+      );
+      double currentScale() =>
+          tester.widget<Transform>(scale).transform.entry(0, 0);
+      double currentOpacity() => tester.widget<Opacity>(opacity).opacity;
+
+      expect(currentScale(), closeTo(0.9, 0.001));
+      expect(currentOpacity(), 0);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      final halfway = Curves.easeOut.transform(0.5);
+      expect(currentScale(), closeTo(0.9 + 0.1 * halfway, 0.001));
+      expect(currentOpacity(), closeTo(halfway, 0.001));
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      expect(currentScale(), closeTo(1, 0.001));
+      expect(currentOpacity(), 1);
+    });
+
+    testWidgets('classic avatar only accepts taps once visible', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      var taps = 0;
+      await tester
+          .pumpWidget(
+            wrap(
+              OrbitalAvatar(
+                peerId: 'peer-stagger',
+                size: 38,
+                globalIndex: 0,
+                entranceDelayMs: 100,
+                onTap: () => taps++,
+                child: const SizedBox(),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      final target = tester.getCenter(find.byType(GestureDetector));
+      await tester.tapAt(target).timeout(deadline);
+      final tapsWhileInvisible = taps;
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 50)).timeout(deadline);
+      await tester.tapAt(target).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 150)).timeout(deadline);
+
+      expect(tapsWhileInvisible, 0);
+      expect(taps, 1);
+    });
+
+    for (final reduceMotion in [false, true]) {
+      testWidgets('custom avatar tap feedback, reduce motion $reduceMotion', (
+        tester,
+      ) async {
+        const deadline = Duration(seconds: 3);
+        const curve = Cubic(0.23, 1, 0.32, 1);
+        const face = ValueKey('press-feedback-avatar-face');
+        var taps = 0;
+        await tester
+            .pumpWidget(
+              MaterialApp(
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(disableAnimations: reduceMotion),
+                  child: child!,
+                ),
+                home: Scaffold(
+                  body: OrbitalAvatar(
+                    peerId: 'peer-feedback',
+                    size: 30,
+                    globalIndex: 0,
+                    animateEntrance: false,
+                    onTap: () => taps++,
+                    child: const SizedBox(key: face),
+                  ),
+                ),
+              ),
+            )
+            .timeout(deadline);
+
+        final avatar = find.byKey(face);
+        final target = find.byType(GestureDetector);
+        final originalWidth = tester.getRect(avatar).width;
+        final outerEdge = tester.getCenter(target) + const Offset(23.8, 0);
+        final gesture = await tester.startGesture(outerEdge).timeout(deadline);
+        await tester.pump().timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 60)).timeout(deadline);
+        expect(
+          tester.getRect(avatar).width / originalWidth,
+          closeTo(reduceMotion ? 1 : 1 - 0.03 * curve.transform(0.5), 0.001),
+        );
+        await tester.pump(const Duration(milliseconds: 60)).timeout(deadline);
+        expect(
+          tester.getRect(avatar).width / originalWidth,
+          closeTo(reduceMotion ? 1 : 0.97, 0.001),
+        );
+
+        await gesture.up().timeout(deadline);
+        expect(taps, 1);
+        await tester.pump().timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 120)).timeout(deadline);
+        expect(tester.getRect(avatar).width, closeTo(originalWidth, 0.001));
+
+        final cancel = await tester
+            .startGesture(tester.getCenter(target))
+            .timeout(deadline);
+        await tester.pump().timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 120)).timeout(deadline);
+        await cancel.cancel().timeout(deadline);
+        await tester.pump().timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 120)).timeout(deadline);
+        expect(tester.getRect(avatar).width, closeTo(originalWidth, 0.001));
+        expect(taps, 1);
+      });
+    }
+
     testWidgets('renders UserAvatar with given size', (tester) async {
       await tester.pumpWidget(
         wrap(const OrbitalAvatar(peerId: 'peer-123', size: 38, globalIndex: 0)),

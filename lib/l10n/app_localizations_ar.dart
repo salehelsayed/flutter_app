@@ -225,6 +225,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_header => 'خاطرة جديدة';
 
   @override
+  String get thought_compose_discard_title => 'هل تريد حذف مسودة هذه الخاطرة؟';
+
+  @override
+  String get thought_compose_discard => 'حذف المسودة';
+
+  @override
+  String get thought_compose_keep_editing => 'متابعة التحرير';
+
+  @override
   String get thought_compose_share => 'مشاركة';
 
   @override

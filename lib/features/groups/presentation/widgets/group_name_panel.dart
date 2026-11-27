@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -184,6 +185,6 @@ class GroupNamePanel extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/features/stickers/application/custom_sticker_send.dart'
@@ -1114,7 +1115,7 @@ class GroupConversationScreen extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onTap: () => onOpenPrivateMedia!(message.id),
                   child: bubble,
-                ),
+                ).withPressFeedback(),
               );
             }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_camera_tap_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
@@ -331,7 +332,7 @@ class CallVideoControls extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
+                  ).withPressFeedback(),
                 ),
               ),
           ],
@@ -411,7 +412,7 @@ class CallVideoControls extends StatelessWidget {
               ),
             ],
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }

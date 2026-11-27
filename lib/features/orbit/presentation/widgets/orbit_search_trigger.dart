@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -20,7 +21,7 @@ class OrbitSearchTrigger extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onSearchTap,
         child: const OrbitControlCircle(icon: Icons.search),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// "Block" action button — 48px circle with block icon + label.
@@ -50,7 +51,7 @@ class BlockActionButton extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).withPressFeedback();
   }
 }
 
@@ -103,7 +104,7 @@ class UnblockActionButton extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).withPressFeedback();
   }
 }
 
@@ -201,7 +202,7 @@ class _ExitActionButton extends StatelessWidget {
               ),
             ],
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }
@@ -260,7 +261,7 @@ class ArchiveActionButton extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).withPressFeedback();
   }
 }
 
@@ -312,6 +313,6 @@ class UnarchiveActionButton extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 }

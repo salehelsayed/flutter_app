@@ -3,6 +3,7 @@ import 'package:flutter_app/features/translate_preview/model_delivery_contract.d
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -379,7 +380,7 @@ class _ComposeAreaState extends State<ComposeArea>
                 ),
               ),
             ),
-          ),
+          ).withPressFeedback(),
         ),
         const SizedBox(width: 8),
         ActionSemantics(
@@ -414,7 +415,7 @@ class _ComposeAreaState extends State<ComposeArea>
                 ),
               ),
             ),
-          ),
+          ).withPressFeedback(),
         ),
       ],
     );
@@ -702,7 +703,7 @@ class _ComposeAreaState extends State<ComposeArea>
                                 ),
                               ),
                             ),
-                          ),
+                          ).withPressFeedback(),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -933,7 +934,7 @@ class _ComposeAreaState extends State<ComposeArea>
                                       ),
                                     ),
                                   ),
-                                ),
+                                ).withPressFeedback(),
                               ),
                             ),
                     ),

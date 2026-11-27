@@ -360,6 +360,24 @@ class OrbitWired extends StatefulWidget {
   State<OrbitWired> createState() => _OrbitWiredState();
 }
 
+class _ThoughtComposerRoute extends ModalBottomSheetRoute<void> {
+  _ThoughtComposerRoute({
+    required super.builder,
+    required super.capturedThemes,
+    required super.barrierLabel,
+    required super.barrierOnTapHint,
+    required super.modalBarrierColor,
+  }) : super(
+         isScrollControlled: true,
+         useSafeArea: true,
+         backgroundColor: Colors.transparent,
+         enableDrag: false,
+       );
+
+  // The route retains ownership of the controller used by the swipe gesture.
+  AnimationController get swipeAnimation => controller!;
+}
+
 class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   static const _acceptRecoveryRetryCount = 5;
   static const _acceptRecoveryRetryDelay = Duration(milliseconds: 500);
@@ -1181,6 +1199,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _composingThought = true;
     final kept = _thoughtDraft;
     final start = tag == null ? kept : _draftWithTag(kept, tag);
+
+    ComposePostResult? retainedDraft(ComposePostResult? draft) {
+      if (draft == null || start == null || identical(start, kept)) {
+        return draft;
+      }
+      // Opening from a tag adds a suggestion to the previous draft.
+      final unchanged =
+          draft.text == start.text &&
+          listEquals(
+            [for (final media in draft.mediaDrafts) media.localFilePath],
+            [for (final media in start.mediaDrafts) media.localFilePath],
+          ) &&
+          mapEquals(draft.photoFramings, start.photoFramings);
+      return unchanged ? kept : draft;
+    }
+
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
@@ -1190,32 +1224,29 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           if (!contact.isBlocked) contact,
       ];
       if (!mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        // The composer's header can reach the top; keep it below the notch.
-        useSafeArea: true,
-        backgroundColor: Colors.transparent,
+      final navigator = Navigator.of(context);
+      final material = MaterialLocalizations.of(context);
+      late final _ThoughtComposerRoute route;
+      route = _ThoughtComposerRoute(
+        capturedThemes: InheritedTheme.capture(
+          from: context,
+          to: navigator.context,
+        ),
+        barrierLabel: material.scrimLabel,
+        barrierOnTapHint: material.scrimOnTapHint(material.bottomSheetLabel),
+        modalBarrierColor: Theme.of(context).bottomSheetTheme.modalBarrierColor,
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
+          swipeAnimation: route.swipeAnimation,
           replacesCurrentThought: _thoughtsByPeerId.containsKey(
             identity.peerId,
           ),
           eligibleContacts: friends,
           recentPicks: ThoughtRecentPicks(widget.secureKeyStore),
           initialDraft: start,
+          hasDraftToDiscard: (draft) => retainedDraft(draft) != null,
           onClosed: (draft) {
-            // A tag the sheet only started with is no draft to keep.
-            final untouched =
-                draft != null &&
-                !identical(start, kept) &&
-                draft.text == start?.text &&
-                listEquals(
-                  [for (final media in draft.mediaDrafts) media.localFilePath],
-                  [for (final media in start!.mediaDrafts) media.localFilePath],
-                ) &&
-                mapEquals(draft.photoFramings, start.photoFramings);
-            _thoughtDraft = untouched ? kept : draft;
+            _thoughtDraft = retainedDraft(draft);
             handedBack = _thoughtDraft;
             closed.complete();
           },
@@ -1267,6 +1298,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           },
         ),
       );
+      await navigator.push(route);
       // The sheet hands its draft back only once its close animation ends.
       await closed.future;
     } finally {

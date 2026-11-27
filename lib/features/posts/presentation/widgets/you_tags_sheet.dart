@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -279,7 +280,7 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                                       ),
                                     ),
                                   ),
-                                ),
+                                ).withPressFeedback(),
                             ],
                           ),
                         ),

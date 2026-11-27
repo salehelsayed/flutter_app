@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
@@ -1578,7 +1579,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             ),
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 
@@ -1764,7 +1765,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           ),
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 
   /// [restHeight] is the thought area's height when no reply is open.
@@ -1834,7 +1835,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       behavior: HitTestBehavior.opaque,
       excludeFromSemantics: true,
       child: child,
-    );
+    ).withPressFeedback();
     final ageLine = Text(
       ageText,
       style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),

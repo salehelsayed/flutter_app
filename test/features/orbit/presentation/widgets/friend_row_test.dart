@@ -606,15 +606,16 @@ void main() {
       home: Scaffold(body: child),
     );
 
-    double fadeOpacity(WidgetTester tester) => tester
-        .widget<FadeTransition>(
-          find.descendant(
-            of: find.byType(AnimatedFriendRow),
-            matching: find.byType(FadeTransition),
-          ),
-        )
-        .opacity
-        .value;
+    double fadeOpacity(WidgetTester tester) {
+      final rowEntrance = find.ancestor(
+        of: find.byType(FriendRow),
+        matching: find.descendant(
+          of: find.byType(AnimatedFriendRow),
+          matching: find.byType(FadeTransition),
+        ),
+      );
+      return tester.widget<FadeTransition>(rowEntrance).opacity.value;
+    }
 
     testWidgets('TC-202-11 AnimatedFriendRow is instant under reduce-motion', (
       tester,

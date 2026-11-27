@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 
 /// 198 fidelity — one geometry-anchored edit handle (mockup `.handle`,
@@ -262,7 +263,7 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
                   ),
                 ),
               ),
-            ),
+            ).withPressFeedback(),
           ),
           // Tip-pill below the disc: informative only — no hits, and excluded
           // from semantics so the handle announces exactly once (TC-198-56).

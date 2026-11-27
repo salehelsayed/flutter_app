@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart';
@@ -147,7 +148,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

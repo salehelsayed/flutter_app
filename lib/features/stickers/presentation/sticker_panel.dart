@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/semantics.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/config/custom_stickers_flag.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/stickers/application/custom_sticker_library.dart';
@@ -771,7 +772,7 @@ class _CustomStickerCell extends StatelessWidget {
                       color: Theme.of(context).colorScheme.onError,
                     ),
                   ),
-                ),
+                ).withPressFeedback(),
               ),
             ),
           ],

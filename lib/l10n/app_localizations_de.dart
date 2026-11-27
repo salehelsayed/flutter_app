@@ -235,6 +235,16 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_compose_header => 'Neuer Gedanke';
 
   @override
+  String get thought_compose_discard_title =>
+      'Möchtest du diesen Gedanken verwerfen?';
+
+  @override
+  String get thought_compose_discard => 'Verwerfen';
+
+  @override
+  String get thought_compose_keep_editing => 'Weiter bearbeiten';
+
+  @override
   String get thought_compose_share => 'Teilen';
 
   @override

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -252,7 +253,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                               color: Color.fromRGBO(255, 255, 255, 0.52),
                             ),
                           ),
-                        ),
+                        ).withPressFeedback(),
                       ],
                     ),
                   ),

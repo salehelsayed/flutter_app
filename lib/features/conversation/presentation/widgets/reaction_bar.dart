@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Preset emojis for the quick-reaction bar.
@@ -138,7 +139,7 @@ class _ReactionBarState extends State<ReactionBar>
         ),
         child: Text(emoji, style: const TextStyle(fontSize: 24)),
       ),
-    );
+    ).withPressFeedback();
   }
 
   Widget _plusButton(BuildContext context) {
@@ -158,7 +159,7 @@ class _ReactionBarState extends State<ReactionBar>
           ),
           child: Icon(Icons.add, size: 20, color: readableColors.iconSecondary),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -693,7 +694,7 @@ class GroupInfoScreen extends StatelessWidget {
               ],
             ),
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }
@@ -733,7 +734,7 @@ class GroupInfoScreen extends StatelessWidget {
             ),
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 
@@ -772,7 +773,7 @@ class GroupInfoScreen extends StatelessWidget {
             ),
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 
@@ -840,7 +841,7 @@ class GroupInfoScreen extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
+            ).withPressFeedback(),
           ],
         ),
       ),

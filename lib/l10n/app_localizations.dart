@@ -514,6 +514,24 @@ abstract class AppLocalizations {
   /// **'New thought'**
   String get thought_compose_header;
 
+  /// No description provided for @thought_compose_discard_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard this thought?'**
+  String get thought_compose_discard_title;
+
+  /// No description provided for @thought_compose_discard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard'**
+  String get thought_compose_discard;
+
+  /// No description provided for @thought_compose_keep_editing.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep editing'**
+  String get thought_compose_keep_editing;
+
   /// No description provided for @thought_compose_share.
   ///
   /// In en, this message translates to:

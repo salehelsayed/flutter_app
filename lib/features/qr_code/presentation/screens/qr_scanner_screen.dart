@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:flutter_app/core/theme/app_colors.dart';
@@ -453,6 +454,6 @@ class _QRScannerScreenState extends State<QRScannerScreen>
           ),
         ),
       ),
-    ),
+    ).withPressFeedback(),
   );
 }

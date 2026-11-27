@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -350,7 +351,7 @@ class _StickerPlaybackImageState extends State<StickerPlaybackImage> {
       void replay() => _play(explicit: true);
       result = switch (widget.replay) {
         StickerReplay.none => result,
-        StickerReplay.tap => GestureDetector(onTap: replay, child: result),
+        StickerReplay.tap => GestureDetector(onTap: replay, child: result).withPressFeedback(),
         StickerReplay.button => Stack(
           fit: StackFit.passthrough,
           children: [

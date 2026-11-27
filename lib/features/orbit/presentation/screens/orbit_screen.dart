@@ -9,6 +9,7 @@ import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -1581,7 +1582,7 @@ class _OrbitScreenView extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 
   String _buildIntroBannerSubtitle(
@@ -2193,7 +2194,7 @@ class _RingsFindPill extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: const OrbitControlCircle(icon: Icons.search),
-      ),
+      ).withPressFeedback(),
     );
   }
 }
@@ -2216,7 +2217,7 @@ class _OrbitSettingsButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: const OrbitControlCircle(icon: Icons.settings_outlined),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_letter.dart';
@@ -63,7 +64,7 @@ class LetterCardSystem extends StatelessWidget {
         text: l10n.feed_tap_to_say_hi,
         role: LetterBubbleRole.system,
       ),
-    );
+    ).withPressFeedback();
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
