@@ -38,10 +38,11 @@ void main() {
   Widget wrap(
     ContactModel contact, {
     VoidCallback? onMessage,
+    Locale locale = const Locale('en'),
     DirectContactDeviceTrustCapability? directDeviceTrust,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: ContactProfileScreen(
@@ -177,6 +178,20 @@ void main() {
     expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
   });
 
+  testWidgets('BL-107 contact copy exposes Arabic Peer ID wording', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    await tester
+        .pumpWidget(wrap(buildContact(), locale: const Locale('ar')))
+        .timeout(deadline);
+    await tester.pump(const Duration(seconds: 1)).timeout(deadline);
+
+    expect(find.text('معرّف النظير'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('نسخ معرّف النظير')), findsWidgets);
+    expect(find.text(peerId), findsOneWidget);
+  });
+
   testWidgets('shows the message button only when onMessage is provided', (
     tester,
   ) async {
@@ -245,6 +260,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600)); // finish pop
 
     expect(find.text('Aurora Vex'), findsNothing);
+    expect(find.text('open-profile'), findsOneWidget);
+  });
+
+  testWidgets('BL-107 contact Back is named and has a 44 pt hit target', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    await tester.pumpWidget(wrapPushable()).timeout(deadline);
+    await tester.tap(find.text('open-profile')).timeout(deadline);
+    await tester.pump().timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 600)).timeout(deadline);
+
+    final back = find.ancestor(
+      of: find.byIcon(Icons.chevron_left_rounded),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is GestureDetector && widget.onTap != null,
+      ),
+    ).first;
+    expect(tester.getSize(back), const Size(44, 44));
+    expect(find.bySemanticsLabel(RegExp('Back')), findsWidgets);
+    await tester
+        .tapAt(tester.getTopLeft(back) + const Offset(1, 1))
+        .timeout(deadline);
+    await tester.pump().timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 600)).timeout(deadline);
+
+    expect(find.byType(ContactProfileScreen), findsNothing);
     expect(find.text('open-profile'), findsOneWidget);
   });
 

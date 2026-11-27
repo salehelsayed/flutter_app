@@ -10,6 +10,82 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 // scanner route/controller's admission callback, not contact persistence or OS
 // Settings. The complete contact/Orbit route remains UI-Update-owned.
 void main() {
+  testWidgets('BL-107 scanner close and torch have 44 pt named targets', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    final previous = MobileScannerPlatform.instance;
+    final torchStates = StreamController<TorchState>.broadcast(sync: true);
+    final camera = _CameraPlatform(torchStates: torchStates)..granted = true;
+    MobileScannerPlatform.instance = camera;
+    addTearDown(() async {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        await tester.pump().timeout(deadline);
+        await tester.runAsync(() async {
+          await camera.frames.close();
+          await torchStates.close();
+        }).timeout(deadline);
+      } finally {
+        MobileScannerPlatform.instance = previous;
+      }
+    });
+
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) => QRScannerScreen(onScanned: (_) {}),
+                    ),
+                  ),
+                  child: const Text('Open scanner'),
+                ),
+              ),
+            ),
+          ),
+        )
+        .timeout(deadline);
+    await tester.tap(find.text('Open scanner')).timeout(deadline);
+    await tester.pump().timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 500)).timeout(deadline);
+
+    Finder target(IconData glyph) => find.ancestor(
+      of: find.byIcon(glyph),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is GestureDetector && widget.onTap != null,
+      ),
+    ).first;
+    final close = target(Icons.close);
+    final torch = target(Icons.flash_off);
+    expect([tester.getSize(close), tester.getSize(torch)], [
+      const Size(44, 44),
+      const Size(44, 44),
+    ]);
+    expect(find.bySemanticsLabel('Close QR scanner'), findsOneWidget);
+    expect(find.bySemanticsLabel('Turn flashlight on'), findsOneWidget);
+
+    await tester
+        .tapAt(tester.getTopLeft(torch) + const Offset(1, 1))
+        .timeout(deadline);
+    await tester.pump().timeout(deadline);
+    expect(camera.torchToggles, 1);
+    expect(find.bySemanticsLabel('Turn flashlight off'), findsOneWidget);
+
+    await tester
+        .tapAt(tester.getTopLeft(close) + const Offset(1, 1))
+        .timeout(deadline);
+    await tester.pump().timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 500)).timeout(deadline);
+    expect(find.byType(QRScannerScreen), findsNothing);
+  });
+
   for (final reported in [
     MobileScannerErrorCode.permissionDenied,
     MobileScannerErrorCode.genericError,
@@ -190,6 +266,10 @@ void main() {
 }
 
 class _CameraPlatform extends MobileScannerPlatform {
+  _CameraPlatform({this.torchStates});
+
+  final StreamController<TorchState>? torchStates;
+  int torchToggles = 0;
   bool granted = false;
   MobileScannerErrorCode deniedAs = MobileScannerErrorCode.permissionDenied;
   int starts = 0;
@@ -198,7 +278,8 @@ class _CameraPlatform extends MobileScannerPlatform {
   @override
   Stream<BarcodeCapture?> get barcodesStream => frames.stream;
   @override
-  Stream<TorchState> get torchStateStream => const Stream.empty();
+  Stream<TorchState> get torchStateStream =>
+      torchStates?.stream ?? const Stream.empty();
   @override
   Stream<double> get zoomScaleStateStream => const Stream.empty();
   @override
@@ -215,6 +296,12 @@ class _CameraPlatform extends MobileScannerPlatform {
       size: const Size(640, 480),
       numberOfCameras: 1,
     );
+  }
+
+  @override
+  Future<void> toggleTorch() async {
+    torchToggles++;
+    torchStates?.add(torchToggles.isOdd ? TorchState.on : TorchState.off);
   }
 
   @override
