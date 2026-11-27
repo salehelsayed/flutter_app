@@ -330,10 +330,8 @@ void main() {
           const viewport = Size(390, 844);
           tester.view.devicePixelRatio = 1;
           tester.view.physicalSize = viewport;
-          final semantics = tester.ensureSemantics();
           addTearDown(tester.view.resetPhysicalSize);
           addTearDown(tester.view.resetDevicePixelRatio);
-          addTearDown(semantics.dispose);
           try {
             await mount(
               tester,
