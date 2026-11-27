@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
+import 'package:flutter_app/shared/widgets/two_line_label.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -63,6 +64,54 @@ class ConversationHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) >= 32;
+    final nameStyle = TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+      color: readableColors.textPrimary,
+    );
+    final actions = <Widget>[
+      if (showCallAction)
+        _ConversationCallAction(
+          enabled: callActionEnabled && onCall != null,
+          offersMediaChoice: callActionOffersMediaChoice,
+          inFlight: callActionInFlight,
+          startingMessage: callStartingMessage,
+          unavailableMessage: callUnavailableMessage,
+          onCall: onCall,
+          onRetry: onCallRetry,
+        ),
+      if (onSearch != null)
+        IconButton(
+          tooltip: AppLocalizations.of(context)!.chat_search_action,
+          onPressed: onSearch,
+          icon: const Icon(Icons.search_rounded),
+          iconSize: 22,
+          color: readableColors.iconSecondary,
+          style: IconButton.styleFrom(fixedSize: const Size.square(44)),
+        ),
+      ?translateAction,
+      // Overflow button
+      ActionSemantics(
+        label: AppLocalizations.of(context)!.action_conversation_options,
+        enabled: onOverflow != null,
+        child: GestureDetector(
+          onTap: onOverflow,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Center(
+              child: Icon(
+                Icons.more_vert,
+                size: 20,
+                color: readableColors.iconMuted,
+              ),
+            ),
+          ),
+        ).withPressFeedback(),
+      ),
+    ];
 
     return Semantics(
       container: true,
@@ -132,16 +181,18 @@ class ConversationHeader extends StatelessWidget {
                                   mainAxisSize: MainAxisSize.min,
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      contactUsername,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: readableColors.textPrimary,
+                                    if (largeText)
+                                      TwoLineLabel(
+                                        text: TextSpan(text: contactUsername),
+                                        style: nameStyle,
+                                      )
+                                    else
+                                      Text(
+                                        contactUsername,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: nameStyle,
                                       ),
-                                    ),
                                     if (isWaitingForSecureConnection)
                                       Text(
                                         AppLocalizations.of(
@@ -162,54 +213,14 @@ class ConversationHeader extends StatelessWidget {
                         ).withPressFeedback(),
                       ),
                     ),
-                    if (showCallAction)
-                      _ConversationCallAction(
-                        enabled: callActionEnabled && onCall != null,
-                        offersMediaChoice: callActionOffersMediaChoice,
-                        inFlight: callActionInFlight,
-                        startingMessage: callStartingMessage,
-                        unavailableMessage: callUnavailableMessage,
-                        onCall: onCall,
-                        onRetry: onCallRetry,
-                      ),
-                    if (onSearch != null)
-                      IconButton(
-                        tooltip: AppLocalizations.of(
-                          context,
-                        )!.chat_search_action,
-                        onPressed: onSearch,
-                        icon: const Icon(Icons.search_rounded),
-                        iconSize: 22,
-                        color: readableColors.iconSecondary,
-                        style: IconButton.styleFrom(
-                          fixedSize: const Size.square(44),
-                        ),
-                      ),
-                    ?translateAction,
-                    // Overflow button
-                    ActionSemantics(
-                      label: AppLocalizations.of(
-                        context,
-                      )!.action_conversation_options,
-                      enabled: onOverflow != null,
-                      child: GestureDetector(
-                        onTap: onOverflow,
-                        behavior: HitTestBehavior.opaque,
-                        child: SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: Center(
-                            child: Icon(
-                              Icons.more_vert,
-                              size: 20,
-                              color: readableColors.iconMuted,
-                            ),
-                          ),
-                        ),
-                      ).withPressFeedback(),
-                    ),
+                    if (!largeText) ...actions,
                   ],
                 ),
+                if (largeText)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: actions,
+                  ),
                 if (isWaitingForSecureConnection &&
                     PendingContactRetryScope.isStopped(
                       context,

@@ -1476,6 +1476,54 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final over = length > _thoughtMaxLength;
     final error = Theme.of(context).colorScheme.error;
     final onAccent = _onAccent(rc.accent);
+    final largeText = MediaQuery.textScalerOf(context).scale(16) >= 32;
+
+    Widget actionLabel(String value) {
+      final text = Text(
+        value,
+        maxLines: 1,
+        overflow: largeText ? TextOverflow.clip : TextOverflow.ellipsis,
+      );
+      return largeText ? FittedBox(fit: BoxFit.scaleDown, child: text) : text;
+    }
+
+    final cancel = TextButton(
+      key: const ValueKey('thought-composer-cancel'),
+      onPressed: () => Navigator.of(context).maybePop(),
+      style: TextButton.styleFrom(
+        foregroundColor: rc.textSecondary,
+        minimumSize: largeText ? const Size(44, 44) : null,
+        textStyle: const TextStyle(fontSize: 16),
+      ),
+      child: actionLabel(l10n.btn_cancel),
+    );
+    final share = ElevatedButton(
+      key: const ValueKey('thought-composer-share'),
+      onPressed: _canSubmit ? _submit : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: rc.accent,
+        foregroundColor: onAccent,
+        disabledBackgroundColor: rc.disabledSurface,
+        disabledForegroundColor: rc.disabledForeground,
+        elevation: 0,
+        shape: const StadiumBorder(),
+        minimumSize: Size(72, largeText ? 44 : 36),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+      child: actionLabel(l10n.thought_compose_share),
+    );
+    final title = Text(
+      l10n.thought_compose_header,
+      textAlign: TextAlign.center,
+      maxLines: largeText ? null : 1,
+      overflow: largeText ? TextOverflow.clip : TextOverflow.ellipsis,
+      style: TextStyle(
+        color: rc.textPrimary,
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+
     return Padding(
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top + 12,
@@ -1500,65 +1548,33 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 2, 16, 2),
-                child: Row(
-                  children: [
-                    ConstrainedBox(
-                      // At large text sizes the buttons stop growing and the title gives way.
-                      constraints: const BoxConstraints(maxWidth: 140),
-                      child: TextButton(
-                        key: const ValueKey('thought-composer-cancel'),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                        style: TextButton.styleFrom(
-                          foregroundColor: rc.textSecondary,
-                          textStyle: const TextStyle(fontSize: 16),
-                        ),
-                        child: Text(
-                          l10n.btn_cancel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        l10n.thought_compose_header,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: rc.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 140),
-                      child: ElevatedButton(
-                        key: const ValueKey('thought-composer-share'),
-                        onPressed: _canSubmit ? _submit : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: rc.accent,
-                          foregroundColor: onAccent,
-                          disabledBackgroundColor: rc.disabledSurface,
-                          disabledForegroundColor: rc.disabledForeground,
-                          elevation: 0,
-                          shape: const StadiumBorder(),
-                          minimumSize: const Size(72, 36),
-                          textStyle: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                child: largeText
+                    ? Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Flexible(child: cancel),
+                              const SizedBox(width: 8),
+                              Flexible(child: share),
+                            ],
                           ),
-                        ),
-                        child: Text(
-                          l10n.thought_compose_share,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          title,
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 140),
+                            child: cancel,
+                          ),
+                          Expanded(child: title),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 140),
+                            child: share,
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
               ),
               Flexible(
                 child: SingleChildScrollView(

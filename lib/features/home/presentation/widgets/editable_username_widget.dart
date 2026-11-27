@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
+import 'package:flutter_app/shared/widgets/two_line_label.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -9,11 +10,13 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 class EditableUsernameWidget extends StatefulWidget {
   final String username;
   final ValueChanged<String>? onUsernameChanged;
+  final bool wrapAtLargeText;
 
   const EditableUsernameWidget({
     super.key,
     required this.username,
     this.onUsernameChanged,
+    this.wrapAtLargeText = false,
   });
 
   @override
@@ -86,7 +89,52 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
         ? readableColors.textPrimary
         : AppColors.textPrimary;
 
+    final largeText =
+        widget.wrapAtLargeText &&
+        MediaQuery.textScalerOf(context).scale(15) >= 30;
+    final prefixStyle = TextStyle(color: mutedTextColor, fontSize: 15);
+    final nameStyle = TextStyle(
+      color: primaryTextColor,
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+    );
+
     if (_isEditing) {
+      final field = TextField(
+        controller: _controller,
+        focusNode: _focusNode,
+        maxLength: 30,
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(
+            RegExp(r'[a-zA-Z0-9_\-.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]'),
+          ),
+        ],
+        style: TextStyle(
+          color: primaryTextColor,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.zero,
+          border: InputBorder.none,
+          // Inline editing paints no surface of its own; the light
+          // theme's filled InputDecorationTheme would otherwise paint
+          // a square fill rect behind the text.
+          filled: false,
+          counterText: '',
+        ),
+        onSubmitted: (_) => _finishEditing(),
+      );
+      if (largeText) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('mknoon/@', style: prefixStyle),
+            field,
+          ],
+        );
+      }
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -109,38 +157,33 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
           Flexible(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 180),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                maxLength: 30,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(
-                      r'[a-zA-Z0-9_\-.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]',
-                    ),
-                  ),
-                ],
-                style: TextStyle(
-                  color: primaryTextColor,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                  border: InputBorder.none,
-                  // Inline editing paints no surface of its own; the light
-                  // theme's filled InputDecorationTheme would otherwise paint
-                  // a square fill rect behind the text.
-                  filled: false,
-                  counterText: '',
-                ),
-                onSubmitted: (_) => _finishEditing(),
-              ),
+              child: field,
             ),
           ),
         ],
       );
+    }
+
+    if (largeText) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _startEditing,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('mknoon/', style: prefixStyle),
+            TwoLineLabel(
+              text: TextSpan(text: '@${widget.username}'),
+              style: nameStyle,
+              textAlign: TextAlign.center,
+            ),
+            SizedBox.square(
+              dimension: 44,
+              child: Icon(Icons.edit, color: mutedTextColor, size: 14),
+            ),
+          ],
+        ),
+      ).withPressFeedback();
     }
 
     return GestureDetector(

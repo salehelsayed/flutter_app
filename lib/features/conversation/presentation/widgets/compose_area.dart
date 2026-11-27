@@ -560,6 +560,7 @@ class _ComposeAreaState extends State<ComposeArea>
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final largeText = MediaQuery.textScalerOf(context).scale(15) >= 30;
     final showQuotePreview =
         widget.quotedText != null || widget.isQuoteUnavailable;
     final quotePreviewText = widget.isQuoteUnavailable
@@ -725,7 +726,11 @@ class _ComposeAreaState extends State<ComposeArea>
                               duration: const Duration(milliseconds: 200),
                               constraints: BoxConstraints(
                                 minHeight: 44,
-                                maxHeight: widget.compact ? 48 : 160,
+                                maxHeight: largeText
+                                    ? double.infinity
+                                    : widget.compact
+                                    ? 48
+                                    : 160,
                               ),
                               decoration: BoxDecoration(
                                 color: isLightSurface
@@ -784,7 +789,8 @@ class _ComposeAreaState extends State<ComposeArea>
                                   focusNode: _focusNode,
                                   onTap: widget.onTextFieldTap,
                                   textDirection: _inputDirection,
-                                  maxLines: null,
+                                  minLines: largeText ? 1 : null,
+                                  maxLines: largeText ? 2 : null,
                                   maxLength: maxMessageLength,
                                   enabled: !_isRecording,
                                   style: TextStyle(

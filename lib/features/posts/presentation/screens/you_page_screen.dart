@@ -27,6 +27,7 @@ import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/thought_tag_style.dart';
+import 'package:flutter_app/shared/widgets/two_line_label.dart';
 
 class YouPageData {
   const YouPageData({
@@ -587,73 +588,96 @@ class _YouPageScreenState extends State<YouPageScreen>
     YouPageData? data,
   ) {
     final p = _Palette.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 6, 8, 10),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            onPressed: widget.onBack,
-            icon: Icon(Icons.arrow_back_ios_new, size: 18, color: p.ink),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0x991DB954), width: 2),
-            ),
-            child: UserAvatar(
-              avatarBytes: data?.avatarBytes,
-              size: 28,
-              showGlow: false,
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (data != null)
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'you/',
-                          style: TextStyle(color: p.accent),
-                        ),
-                        TextSpan(text: ' @${data.username}'),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: _mono.copyWith(
-                      color: p.ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
+    final largeText = MediaQuery.textScalerOf(context).scale(17) >= 34;
+    final back = IconButton(
+      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+      onPressed: widget.onBack,
+      icon: Icon(Icons.arrow_back_ios_new, size: 18, color: p.ink),
+    );
+    final avatar = Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0x991DB954), width: 2),
+      ),
+      child: UserAvatar(
+        avatarBytes: data?.avatarBytes,
+        size: 28,
+        showGlow: false,
+      ),
+    );
+    final nameStyle = _mono.copyWith(
+      color: p.ink,
+      fontSize: 17,
+      fontWeight: FontWeight.w600,
+    );
+    final identity = data == null
+        ? null
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (largeText) ...[
+                Text('you/', style: nameStyle.copyWith(color: p.accent)),
+                TwoLineLabel(
+                  text: TextSpan(text: '@${data.username}'),
+                  style: nameStyle,
+                ),
+              ] else
+                Text.rich(
+                  TextSpan(
                     children: [
-                      _ColourDot(color: p.friendsBlue, size: 7),
-                      const SizedBox(width: 6),
-                      Text(
-                        l10n.you_page_friends(data.friendCount),
-                        style: _mono.copyWith(color: p.muted, fontSize: 11.5),
+                      TextSpan(
+                        text: 'you/',
+                        style: TextStyle(color: p.accent),
                       ),
+                      TextSpan(text: ' @${data.username}'),
                     ],
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: nameStyle,
+                ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  _ColourDot(color: p.friendsBlue, size: 7),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      l10n.you_page_friends(data.friendCount),
+                      style: _mono.copyWith(color: p.muted, fontSize: 11.5),
+                    ),
                   ),
                 ],
               ),
+            ],
+          );
+    final tags = data != null && data.tags.isNotEmpty
+        ? IconButton(
+            tooltip: l10n.you_tags_open,
+            onPressed: () => unawaited(_openTags(data.tags)),
+            icon: Icon(Icons.tag_rounded, size: 22, color: p.ink),
+          )
+        : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 8, 10),
+      child: largeText && identity != null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [back, avatar, const Spacer(), ?tags]),
+                const SizedBox(height: 6),
+                identity,
+              ],
+            )
+          : Row(
+              children: [
+                back,
+                avatar,
+                const SizedBox(width: 12),
+                if (identity != null) Expanded(child: identity),
+                ?tags,
+              ],
             ),
-          // Appears with the first tag: every tag you have used, to find one.
-          if (data != null && data.tags.isNotEmpty)
-            IconButton(
-              tooltip: l10n.you_tags_open,
-              onPressed: () => unawaited(_openTags(data.tags)),
-              icon: Icon(Icons.tag_rounded, size: 22, color: p.ink),
-            ),
-        ],
-      ),
     );
   }
 }

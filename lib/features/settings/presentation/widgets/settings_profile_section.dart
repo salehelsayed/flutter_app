@@ -90,6 +90,7 @@ class SettingsProfileSection extends StatelessWidget {
           EditableUsernameWidget(
             username: username,
             onUsernameChanged: onUsernameChanged,
+            wrapAtLargeText: true,
           ),
         ],
       ),

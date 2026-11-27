@@ -833,54 +833,62 @@ class LetterCard extends StatelessWidget {
     BackgroundReadableColors readableColors,
     AppLocalizations l10n,
   ) {
-    return _InlineMetaWidgetSpan(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(width: 6),
-          Text(
-            time,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w400,
-              color: readableColors.textMuted,
-            ),
-          ),
-          if (isEdited) ...[
-            const SizedBox(width: 6),
-            Text(
-              l10n.conversation_edited_indicator,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w400,
-                color: readableColors.textMuted,
-              ),
-            ),
-          ],
-          if (!isIncoming && status != null) ...[
-            const SizedBox(width: 4),
-            Semantics(
-              label: _resolvedStatusSemantic(context, status!),
-              child: Icon(
-                _resolvedStatusIcon(status!),
-                size: 14,
-                color: _statusColor(status!, readableColors),
-              ),
-            ),
-          ],
-          if (_showsIncomingTransportGlyph) ...[
-            const SizedBox(width: 4),
-            Semantics(
-              label: _resolvedIncomingSemantic(context, transport!),
-              child: Icon(
-                _transportIcon(transport!),
-                size: 14,
-                color: readableColors.textMuted,
-              ),
-            ),
-          ],
-        ],
+    final children = <Widget>[
+      const SizedBox(width: 6),
+      Text(
+        time,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w400,
+          color: readableColors.textMuted,
+        ),
       ),
+      if (isEdited) ...[
+        const SizedBox(width: 6),
+        Text(
+          l10n.conversation_edited_indicator,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w400,
+            color: readableColors.textMuted,
+          ),
+        ),
+      ],
+      if (!isIncoming && status != null) ...[
+        const SizedBox(width: 4),
+        Semantics(
+          label: _resolvedStatusSemantic(context, status!),
+          child: Icon(
+            _resolvedStatusIcon(status!),
+            size: 14,
+            color: _statusColor(status!, readableColors),
+          ),
+        ),
+      ],
+      if (_showsIncomingTransportGlyph) ...[
+        const SizedBox(width: 4),
+        Semantics(
+          label: _resolvedIncomingSemantic(context, transport!),
+          child: Icon(
+            _transportIcon(transport!),
+            size: 14,
+            color: readableColors.textMuted,
+          ),
+        ),
+      ],
+    ];
+    final largeText = MediaQuery.textScalerOf(context).scale(11) >= 22;
+    return _InlineMetaWidgetSpan(
+      child: largeText
+          // The enclosing WidgetSpan scales its child with the paragraph.
+          ? MediaQuery.withNoTextScaling(
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: 4,
+                children: children,
+              ),
+            )
+          : Row(mainAxisSize: MainAxisSize.min, children: children),
     );
   }
 
