@@ -6988,6 +6988,32 @@ visible and cannot become an ordinary first-attempt PASS.
   See `go-relay-server/docs/thought-metrics-release.md` for the default-off
   release preparation and the separate approval/privacy/staging prerequisites.
 
+- **System appearance and wallpapers (BL-107):** the production Material app
+  follows system light or dark. Its wallpaper preference changes the artwork
+  within that mode. In widget tests, provide both `AppTheme` themes, set the
+  test platform brightness, and reset it after each case. The root binding
+  fixtures cover all four saved presets in both system modes and an in-place
+  OS appearance change. The ambient fixtures inspect each palette and status
+  bar brightness with static artwork. A standalone fixture without an app
+  theme extension still uses the preset's original palette. The forced
+  preview tone is independent of the system setting.
+  The causal RED at `eadcb4ca` reached eleven appearance assertions. The
+  corrected `2e3d7e78` passed 56 appearance and DTR-18 checks. The dark
+  chat contrast fixtures at the same revision passed 147 checks, including
+  composer hint focus, date labels, and reached ticks. Evidence
+  `m-e9cbd271` and `m-41d19173`.
+  The call action cases check the painted button and glyph in dark English and
+  light Arabic. Exact `485ad6cd` passed 54 tests covering call actions, video
+  controls, semantics and the entry layout (evidence `m-9eb9f196`).
+  The link, audio, badge, banner and sheet checks passed 213 tests on
+  `431c5c8c` (evidence `m-a3eabf26`). Capture the audio glyph before
+  disposing the widget, then pump one millisecond to drain the synthetic
+  tear-down timer. The first RED `m-474b6d84` reached every intended colour
+  assertion and caught the timer in the dark-available control.
+  Corrected RED `m-b5df29b2` preserved the three audio colour failures and
+  passed the control. Host tests cover the measured widget values. The
+  separate before/after captures verify the device appearance.
+
 - **Background motion scheduling:** the default-on Moving background preference
   is stored separately from the wallpaper and loaded into AppShellController
   before startup routing. The saved preference and both OS motion flags
@@ -15604,12 +15630,11 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   pointer events so they cannot steal a tap.
   Widget tests must dispose an `ensureSemantics()` handle before returning;
   use `try/finally` so failed assertions also release it. In this binding,
-  end-of-test verification precedes `addTearDown`. For a real light conversation
-  fixture, pass `BackgroundPreference.daylightLagoon` to `ConversationScreen`.
-  Its `AmbientBackground` deliberately replaces the outer readable-color
-  extension from its own background preference; an outer light Theme with the
-  default dark preference is still a dark conversation. Preserve semantic
-  palette assertions instead of changing production colors for that fixture.
+  end-of-test verification precedes `addTearDown`. The BL-25 proof used
+  `BackgroundPreference.daylightLagoon` for its light conversation fixture.
+  As of BL-107, supply `AppTheme.lightTheme` to select the light palette
+  for any wallpaper. Standalone fixtures without an app theme extension
+  retain the preset's original palette.
   The final U2 correction `64ce56865` passes 22 focused and 404 curated case
   executions without failures, errors or skips. Original binding-error outcomes
   (17/399 passes with five errors, then 19/401 passes with three errors), causal
