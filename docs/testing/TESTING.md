@@ -4917,6 +4917,21 @@ sheets put Close at y=12 on `d58f0269`. The simulated 128 px status bar at DPR 3
 ended at y=42.67. The regressions retain the resulting audience selection and
 the return to Group Info after Close.
 
+
+The chat composer, chat header, inline message metadata, Thought header,
+Settings username and You username have EN/DE/AR widget cases at 320–390
+logical points and simulated 3.1× text. They check visible draft lines above
+the keyboard, control hit areas, full labels, action order, and visible
+30-character handles. The inline metadata applies text scaling through its
+WidgetSpan and wraps within the bubble. The composer gesture fixture finds
+Send by its localized tooltip. Flutter checks semantics handles before test
+teardown, so a handle owned by a test must be disposed in the test body.
+The matched composer RED at `dcaf42eb` measured 30 points of height against
+139 required. Exact GREEN `52c50f03` passed 75 composer cases and the migration
+literal guard. Eight byte-identical passing files carry 277 cases from
+`5ea214d4`. Evidence and the original fixture failures are retained in
+m-675881f8, m-6c40d58f and m-4e487cd5.
+
 A normal incoming Thought disappears from live reads at 24 hours. BL-14 keeps
 its stored copy for another 48 hours to tolerate receiver clock skew. Explicit
 author retraction must find the exact stored incoming row throughout that
