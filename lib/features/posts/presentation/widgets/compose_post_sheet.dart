@@ -105,6 +105,9 @@ class ComposePostSheet extends StatefulWidget {
   /// The route's animation when this sheet owns the swipe-to-dismiss gesture.
   final AnimationController? swipeAnimation;
 
+  /// Whether these contents would leave a draft after closing.
+  final bool Function(ComposePostResult draft)? hasDraftToDiscard;
+
   /// Runs once as the sheet goes away: the unshared draft, or null when it
   /// was shared, discarded, or empty.
   final ValueChanged<ComposePostResult?>? onClosed;
@@ -131,6 +134,7 @@ class ComposePostSheet extends StatefulWidget {
     this.onManagePins,
     this.initialDraft,
     this.swipeAnimation,
+    this.hasDraftToDiscard,
     this.onClosed,
   }) : assert(
          onSubmit != null || onSubmitWithOutcome != null,
@@ -427,9 +431,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return;
 
+    final draft = _unsharedDraft();
     final hasDraft =
-        _textController.text.trim().isNotEmpty ||
-        _mediaDrafts.isNotEmpty ||
+        (draft != null && (widget.hasDraftToDiscard?.call(draft) ?? true)) ||
         _keptRecording != null ||
         _recordingState == VoiceRecordingState.recording ||
         _recordingState == VoiceRecordingState.stopping;
@@ -469,30 +473,27 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     }
   }
 
+  ComposePostResult? _unsharedDraft() {
+    final text = _textController.text;
+    if (text.trim().isEmpty && _mediaDrafts.isEmpty) return null;
+    return ComposePostResult(
+      text: text,
+      audience: widget.thoughtsOnly
+          ? _thoughtAudience
+          : PostAudience.allFriends(),
+      mediaDrafts: _captionedDrafts,
+      photoFramings: _framings,
+    );
+  }
+
   @override
   void dispose() {
-    final text = _textController.text;
     // A recording still waiting on its words, or on a choice after a
     // failure, goes back with the draft as voice.
     if (_keptRecording case final kept?) {
       _mediaDrafts = _withVoice(_voiceDraft(kept, _keptWaveform));
     }
-    final keep =
-        !_shared &&
-        !_discarded &&
-        (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
-    widget.onClosed?.call(
-      keep
-          ? ComposePostResult(
-              text: text,
-              audience: widget.thoughtsOnly
-                  ? _thoughtAudience
-                  : PostAudience.allFriends(),
-              mediaDrafts: _captionedDrafts,
-              photoFramings: _framings,
-            )
-          : null,
-    );
+    widget.onClosed?.call(_shared || _discarded ? null : _unsharedDraft());
     _textController.removeListener(_updateInputDirection);
     _cancelRecorderSubscriptions();
     if (_recordingState.isActive) {

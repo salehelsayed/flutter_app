@@ -1199,6 +1199,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _composingThought = true;
     final kept = _thoughtDraft;
     final start = tag == null ? kept : _draftWithTag(kept, tag);
+
+    ComposePostResult? retainedDraft(ComposePostResult? draft) {
+      if (draft == null || start == null || identical(start, kept)) {
+        return draft;
+      }
+      // Opening from a tag adds a suggestion to the previous draft.
+      final unchanged =
+          draft.text == start.text &&
+          listEquals(
+            [for (final media in draft.mediaDrafts) media.localFilePath],
+            [for (final media in start.mediaDrafts) media.localFilePath],
+          ) &&
+          mapEquals(draft.photoFramings, start.photoFramings);
+      return unchanged ? kept : draft;
+    }
+
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
@@ -1228,18 +1244,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           eligibleContacts: friends,
           recentPicks: ThoughtRecentPicks(widget.secureKeyStore),
           initialDraft: start,
+          hasDraftToDiscard: (draft) => retainedDraft(draft) != null,
           onClosed: (draft) {
-            // A tag the sheet only started with is no draft to keep.
-            final untouched =
-                draft != null &&
-                !identical(start, kept) &&
-                draft.text == start?.text &&
-                listEquals(
-                  [for (final media in draft.mediaDrafts) media.localFilePath],
-                  [for (final media in start!.mediaDrafts) media.localFilePath],
-                ) &&
-                mapEquals(draft.photoFramings, start.photoFramings);
-            _thoughtDraft = untouched ? kept : draft;
+            _thoughtDraft = retainedDraft(draft);
             handedBack = _thoughtDraft;
             closed.complete();
           },
