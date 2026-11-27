@@ -21121,16 +21121,21 @@ void main() {
       await tester.pump().timeout(deadline);
       await tester.pump().timeout(deadline);
 
-      expect(screen().messages.last.status, 'read');
+      final messagesAfterUpdate = screen().messages;
+      final oldestRowCount = oldestRow.evaluate().length;
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
+
+      expect(messagesAfterUpdate.last.status, 'read');
       expect(
-        screen().messages.firstWhere((message) => message.media.isEmpty).id,
+        messagesAfterUpdate.firstWhere((message) => message.media.isEmpty).id,
         oldest.id,
       );
       expect(
-        screen().messages.take(voiceNoteCount).map((message) => message.id),
+        messagesAfterUpdate.take(voiceNoteCount).map((message) => message.id),
         orderedEquals(olderVoiceIds),
       );
-      expect(oldestRow, findsOneWidget);
+      expect(oldestRowCount, 1);
     });
   });
 
