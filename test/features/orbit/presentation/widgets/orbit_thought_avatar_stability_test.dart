@@ -4,6 +4,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_note_bubble.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -14,10 +15,8 @@ const _frame = Duration(microseconds: 16667);
 const _settleFrames = 120;
 const _observedFrames = 180;
 
-// The intended swim target moves at most 2.2 logical pixels per second.
-// Half a pixel per 60 Hz frame leaves ample room for smooth spring motion,
-// while rejecting a switch to a different collision/seating solution.
-const _maximumFrameStep = 0.5;
+const _seatTolerance = 0.01;
+const _deadline = Duration(seconds: 3);
 
 void main() {
   const sizes = <Size>[
@@ -35,7 +34,7 @@ void main() {
               '${size.width.toInt()}x${size.height.toInt()} '
               'scale=${scale.toStringAsFixed(1)} '
               'dpr=${dpr.toInt()} friends=$count';
-          testWidgets('Thought avatars move continuously: $label', (
+          testWidgets('Thought avatars stay on their exact seats: $label', (
             tester,
           ) async {
             await _checkMotion(
@@ -74,22 +73,21 @@ void main() {
           '${scenario.size.width.toInt()}x${scenario.size.height.toInt()} '
           'scale=${scenario.scale.toStringAsFixed(1)} '
           'dpr=3 friends=${scenario.friendCount} ${hz}Hz for 40s';
-      testWidgets(
-        'Thought avatars remain continuous over clock cycles: $label',
-        (tester) async {
-          await _checkMotion(
-            tester,
-            size: scenario.size,
-            textScale: scenario.scale,
-            dpr: 3.0,
-            friendCount: scenario.friendCount,
-            label: label,
-            frameDuration: frameDuration,
-            settleFrames: settleFrames,
-            observedFrames: observedFrames,
-          );
-        },
-      );
+      testWidgets('Thought avatars stay fixed across forty seconds: $label', (
+        tester,
+      ) async {
+        await _checkMotion(
+          tester,
+          size: scenario.size,
+          textScale: scenario.scale,
+          dpr: 3.0,
+          friendCount: scenario.friendCount,
+          label: label,
+          frameDuration: frameDuration,
+          settleFrames: settleFrames,
+          observedFrames: observedFrames,
+        );
+      });
     }
   }
 
@@ -226,17 +224,24 @@ Future<void> _checkMotion(
       ),
     );
 
-    // The last ring entrance finishes after 500 + 11 * 40 milliseconds.
-    // Pump actual frames through the live Surface clock, rather than jumping
-    // time once or waiting for repeating animation controllers to settle.
+    // Drain the real entrance animations before sampling the static seats.
     for (var frame = 0; frame < settleFrames; frame++) {
-      await tester.pump(durationForFrame(frame));
+      await tester.pump(durationForFrame(frame)).timeout(_deadline);
     }
-    expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(friendCount));
+    final notes = find.byType(OrbitThoughtNoteBubble).evaluate().length;
+    final badges = find
+        .byWidgetPredicate((widget) {
+          final key = widget.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('orbit-thought-badge-');
+        })
+        .evaluate()
+        .length;
+    expect(notes, lessThanOrEqualTo(4));
+    expect(notes + badges, friendCount);
     final visualization = tester.widget<OrbitalVisualization>(
       find.byType(OrbitalVisualization),
     );
-    expect(visualization.thoughtSwim, isNotNull);
     expect(visualization.thoughtVisibility, 1.0);
     expect(
       MediaQuery.sizeOf(
@@ -244,82 +249,39 @@ Future<void> _checkMotion(
       ),
       size,
     );
-    expect(
-      visualization.thoughtClock,
-      reduceMotion ? 0.0 : greaterThan(1.5),
-      reason: 'The motion-enabled fixture must exercise the production clock.',
+    final layout = computeOrbitLayout(
+      memberCount: friendCount,
+      geometry: visualization.geometry,
     );
-
-    final startingClock = visualization.thoughtClock;
-    var previous = _sample(tester, friendCount);
-    var maximumAbsoluteStep = 0.0;
-    var maximumRelativeStep = 0.0;
-    var observedMicroseconds = 0;
-    // Keep the original 0.5-pixel budget at the default cadence; faster
-    // refresh rates receive proportionately smaller steps for the same speed.
-    for (var frame = 1; frame <= observedFrames; frame++) {
-      final actualFrameDuration = durationForFrame(settleFrames + frame - 1);
-      await tester.pump(actualFrameDuration);
-      observedMicroseconds += actualFrameDuration.inMicroseconds;
-      final limit = reduceMotion
-          ? 0.0
-          : _maximumFrameStep *
-                actualFrameDuration.inMicroseconds /
-                _frame.inMicroseconds;
+    final starting = _sample(tester, friendCount);
+    for (final seat in layout.seats) {
+      expect(
+        (starting.relative(seat.index) - Offset(seat.dx, seat.dy)).distance,
+        lessThan(_seatTolerance),
+        reason: '$label: first sample, seat ${seat.index}',
+      );
+    }
+    for (var frame = 0; frame < observedFrames; frame++) {
+      await tester
+          .pump(durationForFrame(settleFrames + frame))
+          .timeout(_deadline);
       final current = _sample(tester, friendCount);
       for (var index = 0; index < friendCount; index++) {
         final absoluteStep =
-            (current.nodes[index] - previous.nodes[index]).distance;
+            (current.nodes[index] - starting.nodes[index]).distance;
         final relativeStep =
-            (current.relative(index) - previous.relative(index)).distance;
-        if (absoluteStep > maximumAbsoluteStep) {
-          maximumAbsoluteStep = absoluteStep;
-        }
-        if (relativeStep > maximumRelativeStep) {
-          maximumRelativeStep = relativeStep;
-        }
-        if (!absoluteStep.isFinite ||
-            !relativeStep.isFinite ||
-            absoluteStep > limit ||
-            relativeStep > limit) {
-          final clock = tester
-              .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
-              .thoughtClock;
+            (current.relative(index) - starting.relative(index)).distance;
+        if (!(absoluteStep < _seatTolerance && relativeStep < _seatTolerance)) {
           fail(
-            '$label: discontinuous avatar $index at observed frame $frame '
-            '(clock=${clock.toStringAsFixed(6)}s, '
-            'frame=${actualFrameDuration.inMicroseconds}us). '
-            'absolute step=$absoluteStep, relative-to-self step=$relativeStep, '
-            'maximum absolute=$maximumAbsoluteStep, '
-            'maximum relative=$maximumRelativeStep, limit=$limit. '
-            'Node ${previous.nodes[index]} -> ${current.nodes[index]}; '
-            'relative ${previous.relative(index)} -> ${current.relative(index)}; '
-            'self ${previous.self} -> ${current.self}.',
+            '$label: avatar $index moved by $absoluteStep on frame $frame '
+            '($relativeStep relative to the centre).',
           );
         }
       }
-      previous = current;
     }
-    final endingClock = tester
-        .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
-        .thoughtClock;
-    final minimumClockAdvance =
-        frameCadence == null &&
-            observedFrames == _observedFrames &&
-            frameDuration == _frame
-        ? 2.9
-        : observedMicroseconds / Duration.microsecondsPerSecond - 0.1;
-    expect(
-      endingClock,
-      reduceMotion
-          ? startingClock
-          : greaterThan(startingClock + minimumClockAdvance),
-    );
   } finally {
-    // An assertion may stop a case early. Dispose live clock/expiry timers
-    // before draining any delayed entrance callbacks, even in failing cases.
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(_deadline);
+    await tester.pump(const Duration(seconds: 2)).timeout(_deadline);
   }
 }
 

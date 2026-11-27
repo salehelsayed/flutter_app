@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
@@ -5,283 +6,173 @@ import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _canvas = Rect.fromLTWH(-195, -195, 390, 390);
+const _avatar = Rect.fromLTWH(-24, -24, 48, 48);
+const _long = (full: Size(150, 41), compact: Size(85, 26));
+
 void main() {
-  for (final width in [320.0, 390.0, 430.0]) {
-    for (final noteHeight in [51.0, 90.0]) {
-      test(
-        '13 notes clear every face/self/note at width $width height $noteHeight',
-        () {
-          final seats = computeOrbitLayout(
-            memberCount: 13,
-            geometry: OrbitGeometryPrefs.defaults,
-          ).seats;
-          final sizes = {
-            for (final seat in seats) seat.index: Size(150, noteHeight),
-          };
-          final positions = OrbitThoughtSwim().resolve(
-            seats: seats,
-            noteSizes: sizes,
-            availableWidth: width,
-            seconds: 0,
-            motionEnabled: false,
-          );
-          final faces = {
-            for (final seat in seats)
-              seat.index: Rect.fromCenter(
-                center: positions[seat.index]!,
-                width: seat.avatarSize,
-                height: seat.avatarSize,
-              ),
-          };
-          final notes = {
-            for (final seat in seats)
-              seat.index: orbitThoughtNoteRect(
-                positions[seat.index]!,
-                seat.avatarSize,
-                sizes[seat.index]!,
-              ),
-          };
-          final self = Rect.fromCenter(
-            center: Offset.zero,
-            width: 48,
-            height: 48,
-          );
-          for (final seat in seats) {
-            final id = seat.index;
-            expect(notes[id]!.overlaps(self), isFalse, reason: 'note $id/self');
-            expect(faces[id]!.overlaps(self), isFalse, reason: 'face $id/self');
-            expect(notes[id]!.left, greaterThanOrEqualTo(-width / 2 + 5.9));
-            expect(notes[id]!.right, lessThanOrEqualTo(width / 2 - 5.9));
-            for (final other in seats) {
-              if (other.index == id) continue;
-              expect(
-                notes[id]!.overlaps(faces[other.index]!),
-                isFalse,
-                reason: 'note $id/face ${other.index}',
-              );
-              expect(
-                notes[id]!.overlaps(notes[other.index]!),
-                isFalse,
-                reason: 'note $id/note ${other.index}',
-              );
-              expect(
-                faces[id]!.overlaps(faces[other.index]!),
-                isFalse,
-                reason: 'face $id/face ${other.index}',
-              );
-            }
-          }
-        },
-      );
-    }
-  }
+  test('tries above, below, then a side that mirrors in RTL', () {
+    OrbitThoughtPlacement place(List<Rect> obstacles, {bool rtl = false}) =>
+        layoutOrbitThoughts(
+          canvas: _canvas,
+          avatars: {0: _avatar},
+          previews: {0: _long},
+          mirrored: rtl,
+          otherObstacles: obstacles,
+        )[0]!;
 
-  test(
-    'Reduce Motion has no time/history dependence and never moves arc seats',
-    () {
-      final seats = computeOrbitLayout(
-        memberCount: 20,
-        geometry: OrbitGeometryPrefs.defaults,
-      ).seats;
-      final swim = OrbitThoughtSwim();
-      Map<int, Offset> resolve(double seconds) => swim.resolve(
-        seats: seats,
-        noteSizes: const {0: Size(96, 51)},
-        availableWidth: 390,
-        seconds: seconds,
-        motionEnabled: false,
-      );
-      final first = resolve(0);
-      expect(resolve(400), first);
-      expect(first.keys, everyElement(lessThan(13)));
-    },
-  );
-
-  test(
-    'notes-away rendering can use the unchanged original seat coordinates',
-    () {
-      final layout = computeOrbitLayout(
-        memberCount: 13,
-        geometry: OrbitGeometryPrefs.defaults,
-      );
-      final original = [
-        for (final seat in layout.seats) Offset(seat.dx, seat.dy),
-      ];
-      final resolved = OrbitThoughtSwim().resolve(
-        seats: layout.seats,
-        noteSizes: const {0: Size(96, 51)},
-        availableWidth: 390,
-        seconds: 0,
-        motionEnabled: false,
-      );
-      for (final seat in layout.seats) {
-        expect(
-          Offset.lerp(original[seat.index], resolved[seat.index], 0),
-          original[seat.index],
-        );
-      }
-    },
-  );
-
-  test('BL-108 notes-out motion keeps every avatar on its exact seat', () {
-    final seats = computeOrbitLayout(
-      memberCount: 3,
-      geometry: OrbitGeometryPrefs.defaults,
-    ).seats;
-    final swim = OrbitThoughtSwim();
-    for (final seconds in [0.5, 2.0, 10.0]) {
-      final resolved = swim.resolve(
-        seats: seats,
-        noteSizes: const {0: Size(148, 36)},
-        availableWidth: 390,
-        seconds: seconds,
-        motionEnabled: true,
-      );
-      for (final seat in seats) {
-        expect(resolved[seat.index], Offset(seat.dx, seat.dy));
-      }
-    }
+    const above = Rect.fromLTRB(-195, -195, 195, -24);
+    const below = Rect.fromLTRB(-195, 24, 195, 195);
+    expect(place([]).side, OrbitThoughtSide.above);
+    expect(place([above]).side, OrbitThoughtSide.below);
+    // Leave the side corridors wide enough for the full preview.
+    const top = Rect.fromLTRB(-100, -195, 100, -24);
+    const bottom = Rect.fromLTRB(-100, 24, 100, 195);
+    const wide = Rect.fromLTWH(-250, -195, 500, 390);
+    OrbitThoughtPlacement beside(bool rtl) => layoutOrbitThoughts(
+      canvas: wide,
+      avatars: {0: _avatar},
+      previews: {0: _long},
+      mirrored: rtl,
+      otherObstacles: [top, bottom],
+    )[0]!;
+    expect(beside(false).side, OrbitThoughtSide.right);
+    expect(beside(true).side, OrbitThoughtSide.left);
+    expect(beside(false).rect.center.dx, -beside(true).rect.center.dx);
+    expect(place([above, below]).side, OrbitThoughtSide.right);
   });
 
-  for (final width in [320.0, 390.0, 430.0]) {
-    for (final noteHeight in [51.0, 90.0]) {
-      test('normal motion preserves painted collision and bounds rules '
-          'at width $width height $noteHeight', () {
-        final seats = computeOrbitLayout(
-          memberCount: 13,
-          geometry: OrbitGeometryPrefs.defaults,
-        ).seats;
-        final sizes = <int, Size>{
-          for (final seat in seats) seat.index: Size(150, noteHeight),
-        };
-        final selfNoteSize = Size(150, noteHeight);
-        final swim = OrbitThoughtSwim();
-        for (var frame = 0; frame <= 120; frame++) {
-          final positions = swim.resolve(
-            seats: seats,
-            noteSizes: sizes,
-            selfNoteSize: selfNoteSize,
-            availableWidth: width,
-            seconds: frame / 60,
-            motionEnabled: true,
-          );
-          _expectPaintedGeometryClear(
-            seats: seats,
-            positions: positions,
-            noteSizes: sizes,
-            selfNoteSize: selfNoteSize,
-            width: width,
-            context: 'frame $frame width $width height $noteHeight',
-          );
-        }
-      });
-    }
-  }
-  test('equal rebuilt inputs and a clock restart do not reanchor avatars', () {
-    final seats = computeOrbitLayout(
-      memberCount: 11,
-      geometry: OrbitGeometryPrefs.defaults,
-    ).seats;
-    final sizes = {for (final seat in seats) seat.index: const Size(150, 90)};
-    final swim = OrbitThoughtSwim();
-    Map<int, Offset> resolve(double seconds) => swim.resolve(
-      seats: List.of(seats),
-      noteSizes: Map.of(sizes),
-      availableWidth: 320,
-      seconds: seconds,
-      motionEnabled: true,
+  test('mirrors equal sideways shifts around a centered obstacle', () {
+    OrbitThoughtPlacement place(bool mirrored) => layoutOrbitThoughts(
+      canvas: _canvas,
+      avatars: {0: _avatar},
+      previews: {0: _long},
+      mirrored: mirrored,
+      otherObstacles: [const Rect.fromLTRB(-10, -52, 10, -40)],
+    )[0]!;
+    final ltr = place(false);
+    final rtl = place(true);
+    expect(ltr.side, OrbitThoughtSide.above);
+    expect(rtl.side, OrbitThoughtSide.above);
+    expect(ltr.rect.center.dx.abs(), greaterThan(1));
+    expect(ltr.rect.left, -rtl.rect.right);
+    expect(ltr.rect.top, rtl.rect.top);
+  });
+
+  test(
+    'fits a compact preview up to 96 points before using an 18 point badge',
+    () {
+      OrbitThoughtPlacement place(Rect canvas) => layoutOrbitThoughts(
+        canvas: canvas,
+        avatars: {0: _avatar},
+        previews: {0: _long},
+        mirrored: false,
+      )[0]!;
+      final compact = place(const Rect.fromLTRB(-48, -105, 48, 49));
+      expect(compact.side, OrbitThoughtSide.above);
+      expect(compact.compact, isTrue);
+      expect(compact.rect.width, lessThanOrEqualTo(96));
+      final badge = place(const Rect.fromLTRB(-30, -30, 30, 30));
+      expect(badge.side, isNull);
+      expect(badge.rect.size, const Size.square(18));
+      expect(_avatar.contains(badge.rect.center), isTrue);
+    },
+  );
+
+  test('keeps four fitting previews in priority order even with more room', () {
+    const canvas = Rect.fromLTWH(-400, -120, 800, 240);
+    final avatars = {
+      for (var i = 0; i < 6; i++) i: _avatar.shift(Offset(-300 + 120.0 * i, 0)),
+    };
+    final result = layoutOrbitThoughts(
+      canvas: canvas,
+      avatars: avatars,
+      previews: {
+        for (final index in [4, 2, 0, 3, 5, 1])
+          index: (full: const Size(50, 25), compact: const Size(40, 25)),
+      },
+      mirrored: false,
     );
-    var previous = resolve(0);
-    for (var frame = 1; frame <= 300; frame++) {
-      previous = resolve(frame / 60);
-    }
-    expect(resolve(0), previous);
-    for (var frame = 1; frame <= 180; frame++) {
-      final current = resolve(frame / 60);
-      for (final seat in seats) {
-        expect(
-          (current[seat.index]! - previous[seat.index]!).distance,
-          lessThanOrEqualTo(0.5),
-          reason: 'Clock restart must not reselect a gap for ${seat.index}',
+    expect(
+      [
+        for (final entry in result.entries)
+          if (entry.value.side != null) entry.key,
+      ],
+      [4, 2, 0, 3],
+    );
+    expect(result[5]!.rect.size, const Size.square(18));
+    expect(result[1]!.rect.size, const Size.square(18));
+  });
+
+  for (final count in [0, 3, 8, 12, 13, 15]) {
+    for (final width in [320.0, 390.0, 430.0]) {
+      for (final mirrored in [false, true]) {
+        test(
+          'bounded non-overlapping previews for $count seats, $width wide, RTL $mirrored',
+          () {
+            final layout = computeOrbitLayout(
+              memberCount: count,
+              geometry: OrbitGeometryPrefs.defaults,
+              mirrored: mirrored,
+            );
+            final avatars = {
+              -1: _avatar,
+              for (final seat in layout.seats.where(
+                (s) => s.kind != OrbitSeatKind.arc,
+              ))
+                seat.index: Rect.fromCenter(
+                  center: Offset(seat.dx, seat.dy),
+                  width: math.max(48, seat.avatarSize),
+                  height: math.max(48, seat.avatarSize),
+                ),
+            };
+            final canvas = Rect.fromLTWH(-width / 2, -185, width, 370);
+            final obstacles = [
+              if (layout.badge case final badge?)
+                Rect.fromCenter(
+                  center: Offset(badge.dx, badge.dy),
+                  width: 44,
+                  height: 44,
+                ),
+            ];
+            Map<int, OrbitThoughtPlacement> place() => layoutOrbitThoughts(
+              canvas: canvas,
+              avatars: Map.of(avatars),
+              previews: {for (final index in avatars.keys) index: _long},
+              mirrored: mirrored,
+              otherObstacles: obstacles,
+            );
+            final result = place();
+            expect(place(), result);
+            expect(result.keys, avatars.keys);
+            final rendered = <Rect>[];
+            for (final entry in result.entries) {
+              final placement = entry.value;
+              final rect = placement.rect;
+              if (placement.side == null) {
+                expect(avatars[entry.key]!.contains(rect.center), isTrue);
+                continue;
+              }
+              expect(rect.top, greaterThanOrEqualTo(canvas.top));
+              expect(rect.bottom, lessThanOrEqualTo(canvas.bottom + 0.001));
+              expect(rect.left, greaterThanOrEqualTo(canvas.left));
+              expect(rect.right, lessThanOrEqualTo(canvas.right + 0.001));
+              if (placement.compact) {
+                expect(rect.width, lessThanOrEqualTo(96.001));
+              }
+              for (final obstacle in [
+                ...avatars.values,
+                ...obstacles,
+                ...rendered,
+              ]) {
+                expect(rect.deflate(0.001).overlaps(obstacle), isFalse);
+              }
+              rendered.add(rect);
+            }
+            expect(rendered.length, lessThanOrEqualTo(4));
+          },
         );
       }
-      previous = current;
-    }
-  });
-}
-
-void _expectPaintedGeometryClear({
-  required List<OrbitSeat> seats,
-  required Map<int, Offset> positions,
-  required Map<int, Size> noteSizes,
-  required Size selfNoteSize,
-  required double width,
-  required String context,
-}) {
-  final faces = <int, Rect>{
-    for (final seat in seats)
-      seat.index: Rect.fromCenter(
-        center: positions[seat.index]!,
-        width: seat.avatarSize,
-        height: seat.avatarSize,
-      ),
-  };
-  final notes = <int, Rect>{
-    for (final seat in seats)
-      seat.index: orbitThoughtNoteRect(
-        positions[seat.index]!,
-        seat.avatarSize,
-        noteSizes[seat.index]!,
-      ),
-  };
-  final self = Rect.fromCenter(center: Offset.zero, width: 48, height: 48);
-  final centre = <Rect>[
-    self,
-    orbitThoughtNoteRect(Offset.zero, self.width, selfNoteSize),
-  ];
-  for (final seat in seats) {
-    final id = seat.index;
-    for (var index = 0; index < centre.length; index++) {
-      expect(
-        faces[id]!.overlaps(centre[index]),
-        isFalse,
-        reason: '$context: face $id/centre $index',
-      );
-      expect(
-        notes[id]!.overlaps(centre[index]),
-        isFalse,
-        reason: '$context: note $id/centre $index',
-      );
-    }
-    for (final shape in [faces[id]!, notes[id]!]) {
-      expect(
-        shape.left,
-        greaterThanOrEqualTo(-width / 2 + 5.9),
-        reason: '$context: shape $id left canvas bound',
-      );
-      expect(
-        shape.right,
-        lessThanOrEqualTo(width / 2 - 5.9),
-        reason: '$context: shape $id right canvas bound',
-      );
-    }
-    for (final other in seats) {
-      if (other.index == id) continue;
-      expect(
-        notes[id]!.overlaps(faces[other.index]!),
-        isFalse,
-        reason: '$context: note $id/face ${other.index}',
-      );
-      expect(
-        notes[id]!.overlaps(notes[other.index]!),
-        isFalse,
-        reason: '$context: note $id/note ${other.index}',
-      );
-      expect(
-        faces[id]!.overlaps(faces[other.index]!),
-        isFalse,
-        reason: '$context: face $id/face ${other.index}',
-      );
     }
   }
 }

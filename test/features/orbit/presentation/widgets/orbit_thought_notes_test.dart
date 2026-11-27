@@ -102,7 +102,7 @@ void main() {
   });
 
   testWidgets(
-    'BL-108 only eligible ring notes act on their avatars when visible',
+    'only eligible ring friends receive notes, with separate note/chat taps',
     (tester) async {
       final openedThoughts = <String>[];
       final openedChats = <String>[];
@@ -128,8 +128,7 @@ void main() {
       expect(openedChats, isEmpty);
       await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
       await tester.tap(find.byKey(const ValueKey('orbit-node-2')));
-      expect(openedThoughts, ['live', 'live']);
-      expect(openedChats, ['friend-2']);
+      expect(openedChats, ['friend-0', 'friend-2']);
       expect(
         tester
             .widgetList<OrbitalAvatar>(find.byType(OrbitalAvatar))
@@ -432,11 +431,19 @@ void main() {
     expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(4));
     expect(self(), without);
 
-    // Thirteen stacked notes outgrow the spare space; they still start on
-    // the surface (below the app bar), and the centre yields only the rest.
+    // A dense set uses badges without moving the centre or growing the canvas.
     await tester.pumpWidget(scene(thoughts(13)));
     await tester.pump(const Duration(seconds: 2));
-    expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(13));
+    expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(4));
+    expect(
+      find.byWidgetPredicate((widget) {
+        final key = widget.key;
+        return key is ValueKey<String> &&
+            key.value.startsWith('orbit-thought-badge-');
+      }),
+      findsNWidgets(9),
+    );
+    expect(self(), without);
     final top = tester.getRect(find.byType(InnerCircleInteractiveSurface)).top;
     final bubbleTops = [
       for (final element in find.byType(OrbitThoughtNoteBubble).evaluate())
@@ -448,7 +455,7 @@ void main() {
   });
 
   testWidgets(
-    'the own note sits above the self node, clear of friends, and opens its thought',
+    'the own note stays clear of friends and opens its thought under the preview cap',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 2.625;
@@ -488,14 +495,14 @@ void main() {
       );
       await tester.pump(const Duration(seconds: 2));
       expect(find.text('My own thought'), findsOneWidget);
-      expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(5));
+      expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(4));
+      expect(find.byKey(const ValueKey('orbit-thought-badge-3')), findsOneWidget);
       expect(tester.getRect(plus), plusWithout);
       expect(tester.getRect(self), selfWithout);
       final own = tester.getRect(
         find.byKey(const ValueKey('orbit-thought-note-self')),
       );
-      expect(own.bottom, lessThanOrEqualTo(selfWithout.top));
-      expect(own.center.dx, closeTo(selfWithout.center.dx, 0.01));
+      expect(own.overlaps(selfWithout), isFalse);
       for (var i = 0; i < 13; i++) {
         final face = tester.getRect(
           find.descendant(
@@ -504,7 +511,7 @@ void main() {
           ),
         );
         expect(own.overlaps(face), isFalse, reason: 'face $i');
-        if (i < 4) {
+        if (i < 3) {
           final friendNote = tester.getRect(
             find.byKey(ValueKey('orbit-thought-note-$i')),
           );

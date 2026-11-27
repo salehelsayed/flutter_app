@@ -5103,29 +5103,23 @@ and the badge-hidden control. The causal RED and focused GREEN are retained in
 `.codex-test-logs/codex-ui-orbit-sculpt-star-20261111/`; this is host gesture
 evidence, with the installed Pixel recheck remaining separate.
 
-Animated 2D Thought layout must observe the real Surface clock; geometry
-fixtures with Reduce Motion enabled do not exercise normal motion. Re-solving
-discrete collision gaps on every tick can change avatar seats with identical
-geometric inputs. OrbitThoughtSwim therefore resolves the existing anchor
-layout only when ordered seat geometry, note/self-note sizes, available width
-or motion mode changes by value. Face and note translate together inside fixed
-separating-axis bounds; both moving owners share their spare inflated
-clearance. Free drift remains active, while crowded axes stop at their
-clearance limits. Initial placement, canvas bounds, Reduce Motion and the
-existing projection rules stay preserved.
+BL-108 fixes every 2D avatar and ring at the selected geometry with notes
+visible or hidden. Default spacing 1.5 retains radii 93 and 162. Saved spacing
+1.0 uses 62 and 108. Thought previews follow creation time, breaking ties in
+seat order. The layout tries above, below and beside, then a compact one-line
+preview, with at most four previews. A Thought without a fitting preview or
+beyond the cap uses an 18-point badge.
 
-The golden-free orbit_thought_avatar_stability_test.dart uses the actual
-Surface and unconditional orbit-self-node key, normal motion flags, and both
-absolute and relative-to-self positions. It covers300 original combinations,252
-Samsung-like cadence combinations,9 forty-second60/90/120Hz cases and one
-Reduce Motion control. Original source failed6/300 ordinary cases and30/252
-Samsung-like cases; the full562-case fixed widget matrix passes with no skips.
-Domain controls also cover nonzero free motion, animated painted geometry,
-equal rebuilt inputs and clock restart. Receipts and retained first-attempt
-failures are under .codex-test-logs/orbit-thought-avatar-jitter-20261029/ .
-Samsung logical presets and host fonts do not certify actual S26 metrics,
-adaptive rendering or signed-device behavior; flutter_app owns
-availability-bounded device confirmation.
+`orbit_thought_fixed_seats_test.dart` uses the real Surface to check default
+visibility, fixed rendered seats and painted rings at 0.5, 2 and 10 seconds,
+8/5 and 15/6 preview and badge counts, RTL, pinch-hide, and opening a full
+Thought from its visible preview or badge. The avatar still opens chat. `orbit_thought_layout_test.dart`
+covers bounded placement and its fallbacks. The existing 562-case viewport
+and cadence matrix in `orbit_thought_avatar_stability_test.dart` checks both
+absolute and relative seats, including Reduce Motion. The earlier moving-face
+contract and its 2026-10-29 proof are superseded. The historical evidence is
+under `.codex-test-logs/orbit-thought-avatar-jitter-20261029/`. Samsung-like
+viewports and host fonts leave signed-device rendering to the device lane.
 
 The complete affected-surfaces lane passes 3,021 tests with zero skips, and all
 eight selected change checks pass. The wrapper receipt in the same evidence

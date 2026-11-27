@@ -14,6 +14,7 @@ class OrbitThoughtNote {
   final MediaPreviewDescriptor? media;
   final bool hasUnsupportedMedia;
   final bool isRead;
+  final DateTime? createdAt;
   final DateTime expiresAt;
 
   const OrbitThoughtNote({
@@ -22,6 +23,7 @@ class OrbitThoughtNote {
     this.media,
     this.hasUnsupportedMedia = false,
     required this.isRead,
+    this.createdAt,
     required this.expiresAt,
   });
 
@@ -42,6 +44,7 @@ class OrbitThoughtNote {
       _ => null,
     },
     isRead: post.isRead || !post.isIncoming,
+    createdAt: DateTime.tryParse(post.createdAt),
     expiresAt: DateTime.parse(post.expiresAt),
   );
 }

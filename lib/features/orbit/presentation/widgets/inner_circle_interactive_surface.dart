@@ -15,7 +15,6 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.da
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
-import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart';
@@ -186,20 +185,11 @@ class _InnerCircleInteractiveSurfaceState
   _NotesAwayCause? _notesAwayCause;
   _NotesAwayCause? _notesAwayBeforeSculpt;
   bool _thoughtMotionEnabled = true;
-  final OrbitThoughtSwim _thoughtSwim = OrbitThoughtSwim();
   late final AnimationController _thoughtReveal = AnimationController(
     vsync: this,
     value: 1,
     duration: const Duration(milliseconds: 700),
   );
-  late final AnimationController _thoughtClock = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 40),
-  );
-  late final Listenable _thoughtAnimation = Listenable.merge([
-    _thoughtReveal,
-    _thoughtClock,
-  ]);
   Timer? _thoughtExpiryTimer;
   final Map<int, Offset> _thoughtPointers = {};
   double? _thoughtPinchDistance;
@@ -230,15 +220,6 @@ class _InnerCircleInteractiveSurfaceState
     // it settles so a later size-control session seats its handles correctly.
     _canvasMeasurement = null;
     _scheduleCanvasMeasure();
-    if (status == AnimationStatus.dismissed) _thoughtSwim.clear();
-  }
-
-  void _syncThoughtClock() {
-    if (_notesOut && _thoughtMotionEnabled) {
-      if (!_thoughtClock.isAnimating) _thoughtClock.repeat();
-    } else {
-      _thoughtClock.stop();
-    }
   }
 
   void _armThoughtExpiry() {
@@ -257,7 +238,6 @@ class _InnerCircleInteractiveSurfaceState
       // Rebuild/filter at the deadline even if the store's sweep failed. The
       // host reload is additional cleanup, not a prerequisite for removal.
       setState(() {});
-      _syncThoughtClock();
       _armThoughtExpiry();
       widget.onThoughtsExpired?.call();
     });
@@ -279,7 +259,6 @@ class _InnerCircleInteractiveSurfaceState
     } else {
       _thoughtReveal.value = visible ? 1 : 0;
     }
-    _syncThoughtClock();
     _armThoughtExpiry();
   }
 
@@ -354,7 +333,6 @@ class _InnerCircleInteractiveSurfaceState
       _thoughtReveal.value = 0;
     }
     _armThoughtExpiry();
-    _syncThoughtClock();
   }
 
   @override
@@ -365,7 +343,6 @@ class _InnerCircleInteractiveSurfaceState
         !(mq?.disableAnimations ?? false) &&
         !(mq?.accessibleNavigation ?? false);
     if (!_thoughtMotionEnabled) _thoughtReveal.value = _thoughtsVisible ? 1 : 0;
-    _syncThoughtClock();
     // Fonts / locale / text scale can move the canvas without a constraints
     // change — re-measure to stay seated.
     _scheduleCanvasMeasure();
@@ -377,7 +354,6 @@ class _InnerCircleInteractiveSurfaceState
     widget.findOpenSignal?.removeListener(_onFindOpenSignal);
     _dimFlashTimer?.cancel();
     _thoughtExpiryTimer?.cancel();
-    _thoughtClock.dispose();
     _thoughtReveal.dispose();
     _scroll.dispose();
     _findController.dispose();
@@ -933,7 +909,7 @@ class _InnerCircleInteractiveSurfaceState
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               AnimatedBuilder(
-                                animation: _thoughtAnimation,
+                                animation: _thoughtReveal,
                                 builder: (context, _) => OrbitalVisualization(
                                   userPeerId: widget.userPeerId,
                                   userAvatarBytes: widget.userAvatarBytes,
@@ -941,19 +917,12 @@ class _InnerCircleInteractiveSurfaceState
                                   thoughtsByPeerId: widget.thoughtsByPeerId,
                                   onThoughtTap: widget.onThoughtTap,
                                   nowProvider: widget.nowProvider,
-                                  thoughtSwim: _thoughtSwim,
                                   thoughtVisibility: _thoughtReveal.value,
                                   thoughtStarsShown:
                                       !_editing &&
                                       _notesAwayCause == _NotesAwayCause.pinch,
                                   // 205 item 4: centering spacer (see build()).
                                   topInset: centerTopInset,
-                                  thoughtClock:
-                                      (_thoughtClock
-                                              .lastElapsedDuration
-                                              ?.inMicroseconds ??
-                                          0) /
-                                      1000000,
                                   onFriendTap: _onNodeFriendTap,
                                   onGroupTap: _onNodeGroupTap,
                                   // 206 null-preserving: no host callback ⇒ no
