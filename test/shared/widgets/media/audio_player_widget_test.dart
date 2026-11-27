@@ -773,6 +773,7 @@ void main() {
                 localPath: '/tmp/accessible-voice.m4a',
                 durationMs: 5000,
               ),
+              renderedSemanticsLabel: 'Voice fixture ready',
               interruptionEvents: const Stream<AudioInterruptionEvent>.empty(),
             ),
           )
@@ -780,7 +781,8 @@ void main() {
       await tester.pump().timeout(deadline);
       await load.started.timeout(deadline);
       load.complete();
-      await flushAsyncPlayerTasks(tester).timeout(deadline);
+      await settleCompletedLoad(tester).timeout(deadline);
+      expect(find.bySemanticsLabel(RegExp('Voice fixture ready')), findsWidgets);
 
       Finder target(IconData glyph) => find.ancestor(
         of: find.byIcon(glyph),
@@ -791,6 +793,7 @@ void main() {
       final play = target(Icons.play_arrow_rounded);
       expect(tester.getSize(play), const Size(44, 44));
       expect(find.bySemanticsLabel(RegExp('Play voice message')), findsWidgets);
+      expect(play.hitTestable(at: const Alignment(-0.95, -0.95)), findsOneWidget);
       await tester
           .tapAt(tester.getTopLeft(play) + const Offset(1, 1))
           .timeout(deadline);
@@ -801,6 +804,7 @@ void main() {
       final pause = target(Icons.pause_rounded);
       expect(tester.getSize(pause), const Size(44, 44));
       expect(find.bySemanticsLabel(RegExp('Pause voice message')), findsWidgets);
+      expect(pause.hitTestable(at: const Alignment(-0.95, -0.95)), findsOneWidget);
       await tester
           .tapAt(tester.getTopLeft(pause) + const Offset(1, 1))
           .timeout(deadline);
