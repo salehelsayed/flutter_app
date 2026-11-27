@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
@@ -210,15 +211,25 @@ void main() {
     'B15G-019 a group checkpoint write past its deadline is retried in the '
     'same worker before the week is marked',
     () async {
-      var commits = 0;
+      const deadline = Duration(milliseconds: 100);
+      const retryDelay = Duration(milliseconds: 400);
+      final clock = FakeAsync();
+      final firstPrepared = Completer<String>();
+      final releaseFirst = Completer<void>();
+      final retryScheduled = Completer<void>();
+      final renamed = <String>[];
       final slowStore = await _bounded(
         EngagementChatCheckpointStore.open(
           '${directory.path}/slow-group',
-          beforeCommit: (_) async {
-            commits++;
-            if (commits == 1) {
-              await Future<void>.delayed(const Duration(milliseconds: 250));
+          beforeCommit: (path) async {
+            if (!firstPrepared.isCompleted) {
+              firstPrepared.complete(path);
+              await releaseFirst.future;
             }
+          },
+          rename: (temporary, checkpoint) async {
+            await File(temporary).rename(checkpoint);
+            renamed.add(temporary);
           },
         ),
       );
@@ -227,25 +238,59 @@ void main() {
         statePath: '${directory.path}/slow-native.json',
         groupWitnessStore: slowStore,
         groupNowMilliseconds: () => now,
-        groupStoreDeadline: const Duration(milliseconds: 100),
-        groupCheckpointRetryDelay: const Duration(milliseconds: 400),
+        groupStoreDeadline: deadline,
+        groupCheckpointRetryDelay: retryDelay,
       );
       addTearDown(() async {
-        await _bounded(slow.dispose());
-        await _bounded(slowStore.close());
+        if (!releaseFirst.isCompleted) releaseFirst.complete();
+        try {
+          await _bounded(slow.dispose());
+        } finally {
+          await _bounded(slowStore.close());
+        }
       });
-      slow.attachBridge(slowBridge);
-      slow.observeIdentity(
-        accountPeerId: _account,
-        rootPrivateKeyBase64: 'public-test-fixture-not-a-real-private-key',
-        profileBinding: _binding,
-      );
-      await _bounded(slow.observeConsent((enabled: true, consentEpoch: 91)));
-      final owner = slow.captureOwner(expectedAccountPeerId: _account)!;
-      _post(slow, owner);
-      _visible(slow, owner);
-      await _bounded(slow.flush());
 
+      final flushed = runZoned(
+        () async {
+          slow.attachBridge(slowBridge);
+          slow.observeIdentity(
+            accountPeerId: _account,
+            rootPrivateKeyBase64: 'public-test-fixture-not-a-real-private-key',
+            profileBinding: _binding,
+          );
+          await slow.observeConsent((enabled: true, consentEpoch: 91));
+          final owner = slow.captureOwner(expectedAccountPeerId: _account)!;
+          _post(slow, owner);
+          _visible(slow, owner);
+          await slow.flush();
+        },
+        zoneSpecification: ZoneSpecification(
+          createTimer: (_, parent, zone, duration, callback) {
+            // Keep real filesystem completions independent of the fake clock.
+            if (duration != deadline && duration != retryDelay) {
+              return parent.createTimer(zone, duration, callback);
+            }
+            final timer = clock.run(
+              (_) => Timer(duration, () => zone.runGuarded(callback)),
+            );
+            if (duration == retryDelay && !retryScheduled.isCompleted) {
+              retryScheduled.complete();
+            }
+            return timer;
+          },
+        ),
+      );
+
+      final timedOutPath = await _bounded(firstPrepared.future);
+      expect(slowBridge.operations('markWeekly'), isEmpty);
+      clock.elapse(deadline);
+      await _bounded(retryScheduled.future);
+      expect(slowBridge.operations('markWeekly'), isEmpty);
+      releaseFirst.complete();
+      clock.elapse(retryDelay);
+      await _bounded(flushed);
+
+      expect(renamed, isNot(contains(timedOutPath)));
       expect(slowBridge.operations('markWeekly'), hasLength(1));
       final saved = jsonDecode(
         await _bounded(File(slowStore.checkpointPath).readAsString()),
