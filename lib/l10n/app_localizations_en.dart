@@ -45,6 +45,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get a11y_change_profile_photo => 'Change profile photo';
 
   @override
+  String get a11y_close_qr_scanner => 'Close QR scanner';
+
+  @override
+  String get a11y_flashlight_on => 'Turn flashlight on';
+
+  @override
+  String get a11y_flashlight_off => 'Turn flashlight off';
+
+  @override
   String get onboarding_new_here => 'I\'m new here';
 
   @override

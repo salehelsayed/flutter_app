@@ -45,6 +45,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get a11y_change_profile_photo => 'تغيير صورة الملف الشخصي';
 
   @override
+  String get a11y_close_qr_scanner => 'إغلاق ماسح رمز QR';
+
+  @override
+  String get a11y_flashlight_on => 'تشغيل ضوء الفلاش';
+
+  @override
+  String get a11y_flashlight_off => 'إطفاء ضوء الفلاش';
+
+  @override
   String get onboarding_new_here => 'أنا جديد هنا';
 
   @override
@@ -3827,10 +3836,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get contact_profile_archived => 'مؤرشف';
 
   @override
-  String get contact_profile_peer_id_label => 'معرّف الند';
+  String get contact_profile_peer_id_label => 'معرّف النظير';
 
   @override
-  String get contact_profile_peer_id_copied => 'تم نسخ معرّف الند';
+  String get contact_profile_peer_id_copied => 'تم نسخ معرّف النظير';
 
   @override
   String get contact_profile_tap_to_copy => 'اضغط للنسخ';

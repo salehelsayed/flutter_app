@@ -172,6 +172,24 @@ abstract class AppLocalizations {
   /// **'Change profile photo'**
   String get a11y_change_profile_photo;
 
+  /// No description provided for @a11y_close_qr_scanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Close QR scanner'**
+  String get a11y_close_qr_scanner;
+
+  /// No description provided for @a11y_flashlight_on.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn flashlight on'**
+  String get a11y_flashlight_on;
+
+  /// No description provided for @a11y_flashlight_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn flashlight off'**
+  String get a11y_flashlight_off;
+
   /// No description provided for @onboarding_new_here.
   ///
   /// In en, this message translates to:

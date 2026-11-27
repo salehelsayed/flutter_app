@@ -7,6 +7,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
+
 import '../widgets/scan_overlay.dart';
 
 class QRScannerScreenCopy {
@@ -400,28 +402,46 @@ class _QRScannerScreenState extends State<QRScannerScreen>
     );
   }
 
-  Widget _buildCloseButton() {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.5),
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(Icons.close, color: Colors.white, size: 24),
-      ),
-    );
-  }
+  Widget _buildCloseButton() => _buildCameraControl(
+    label: AppLocalizations.of(context)!.a11y_close_qr_scanner,
+    onTap: () => Navigator.of(context).pop(),
+    icon: const Icon(Icons.close, color: Colors.white, size: 24),
+  );
 
   Widget _buildFlashButton() {
     return ValueListenableBuilder(
       valueListenable: _controller,
       builder: (context, state, child) {
-        final torchState = state.torchState;
-        return GestureDetector(
-          onTap: () => _controller.toggleTorch(),
+        final torchOn = state.torchState == TorchState.on;
+        final l10n = AppLocalizations.of(context)!;
+        return _buildCameraControl(
+          label: torchOn ? l10n.a11y_flashlight_off : l10n.a11y_flashlight_on,
+          onTap: state.torchState == TorchState.unavailable
+              ? null
+              : _controller.toggleTorch,
+          icon: Icon(
+            torchOn ? Icons.flash_on : Icons.flash_off,
+            color: torchOn ? AppColors.primaryAccent : Colors.white,
+            size: 24,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCameraControl({
+    required String label,
+    required VoidCallback? onTap,
+    required Widget icon,
+  }) => ActionSemantics(
+    label: label,
+    enabled: onTap != null,
+    child: GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox.square(
+        dimension: 44,
+        child: Center(
           child: Container(
             width: 40,
             height: 40,
@@ -429,16 +449,10 @@ class _QRScannerScreenState extends State<QRScannerScreen>
               color: Colors.black.withValues(alpha: 0.5),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
-              color: torchState == TorchState.on
-                  ? AppColors.primaryAccent
-                  : Colors.white,
-              size: 24,
-            ),
+            child: icon,
           ),
-        );
-      },
-    );
-  }
+        ),
+      ),
+    ),
+  );
 }

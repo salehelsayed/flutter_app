@@ -16,6 +16,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_safety_numbe
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:intl/intl.dart';
 
 /// Immersive "orbital dossier" profile view for a contact (friend).
@@ -431,40 +432,44 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
     AppLocalizations l10n,
     String peerId,
   ) {
-    return _GlassCard(
-      readable: readable,
-      accent: _accent,
-      onTap: () => _copy(peerId, l10n.contact_profile_peer_id_copied),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _CardLabel(
-            icon: Icons.fingerprint_rounded,
-            label: l10n.contact_profile_peer_id_label,
-            accent: _accent,
-            trailing: Icon(
-              Icons.copy_rounded,
-              size: 16,
-              color: readable.iconMuted,
+    return ActionSemantics(
+      label: l10n.a11y_copy_peer_id,
+      enabled: true,
+      child: _GlassCard(
+        readable: readable,
+        accent: _accent,
+        onTap: () => _copy(peerId, l10n.contact_profile_peer_id_copied),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _CardLabel(
+              icon: Icons.fingerprint_rounded,
+              label: l10n.contact_profile_peer_id_label,
+              accent: _accent,
+              trailing: Icon(
+                Icons.copy_rounded,
+                size: 16,
+                color: readable.iconMuted,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            peerId,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 12.5,
-              height: 1.5,
-              letterSpacing: 0.2,
-              color: readable.textSecondary,
+            const SizedBox(height: 10),
+            Text(
+              peerId,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12.5,
+                height: 1.5,
+                letterSpacing: 0.2,
+                color: readable.textSecondary,
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            l10n.contact_profile_tap_to_copy,
-            style: TextStyle(fontSize: 11, color: readable.textMuted),
-          ),
-        ],
+            const SizedBox(height: 6),
+            Text(
+              l10n.contact_profile_tap_to_copy,
+              style: TextStyle(fontSize: 11, color: readable.textMuted),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -732,24 +737,33 @@ class _TopBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: onBack,
-            behavior: HitTestBehavior.opaque,
-            child: ClipOval(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: readable.glassSurface,
-                    border: Border.all(color: readable.glassBorder),
-                  ),
-                  child: Icon(
-                    Icons.chevron_left_rounded,
-                    color: readable.iconSecondary,
-                    size: 26,
+          ActionSemantics(
+            label: MaterialLocalizations.of(context).backButtonTooltip,
+            enabled: true,
+            child: GestureDetector(
+              onTap: onBack,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox.square(
+                dimension: 44,
+                child: Center(
+                  child: ClipOval(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: readable.glassSurface,
+                          border: Border.all(color: readable.glassBorder),
+                        ),
+                        child: Icon(
+                          Icons.chevron_left_rounded,
+                          color: readable.iconSecondary,
+                          size: 26,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
