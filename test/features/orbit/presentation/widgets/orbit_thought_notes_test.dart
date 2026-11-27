@@ -6,6 +6,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
@@ -16,6 +17,8 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualiz
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/bidi_layout_checks.dart';
 
 OrbitFriend _friend(int index) => OrbitFriend(
@@ -1064,6 +1067,68 @@ void main() {
       await tester.pump();
       expect(arcFace, findsNothing);
       expect(find.text('Ring note'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'dense saved arcs keep Thought and neighboring chat taps distinct',
+    (tester) async {
+      const geometry = OrbitGeometryPrefs(
+        avatarScale: 0.6,
+        spacingScale: 0.7,
+        arcWrap: 1.2,
+        maxPerArc: 9,
+        orbitGap: 0.5,
+      );
+      final store = FakeSecureKeyStore();
+      await store
+          .write(OrbitGeometryPrefs.storageKey, geometry.toStorageString())
+          .timeout(const Duration(seconds: 2));
+      final openedThoughts = <String>[];
+      final openedChats = <String>[];
+      await tester.pumpWidget(
+        wrap(
+          InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            items: [for (var i = 0; i < 22; i++) OrbitFriendItem(_friend(i))],
+            secureKeyStore: store,
+            nowProvider: () => start,
+            thoughtsByPeerId: {
+              'friend-17': note('dense-arc', text: 'Arc note'),
+            },
+            onFriendTap: (friend) => openedChats.add(friend.peerId),
+            onGroupTap: (_) {},
+            onThoughtTap: openedThoughts.add,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
+            .geometry,
+        geometry,
+      );
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+
+      final thought = find.bySemanticsLabel(
+        'New thought from Friend 17: Arc note',
+      );
+      final ownFace = find.byKey(const ValueKey('orbit-node-17'));
+      final nextFace = find.byKey(const ValueKey('orbit-node-18'));
+      await tester.tapAt(tester.getCenter(thought));
+      expect(
+        openedChats,
+        isEmpty,
+        reason: 'the visible Thought opens its card',
+      );
+      expect(openedThoughts, ['dense-arc']);
+      await tester.tapAt(tester.getCenter(ownFace));
+      await tester.tapAt(tester.getCenter(nextFace));
+      expect(openedChats, ['friend-17', 'friend-18']);
+      expect(openedThoughts, ['dense-arc']);
       await tester.pumpWidget(const SizedBox());
     },
   );
