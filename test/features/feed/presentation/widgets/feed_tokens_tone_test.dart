@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -21,30 +22,32 @@ void main() {
     expect(tokens.canvas, const Color(0xE60A0A0F));
   });
 
-  testWidgets('AmbientBackground appends FeedTokens.light by tone', (
-    tester,
-  ) async {
-    late FeedTokens observed;
+  testWidgets(
+    'AmbientBackground appends FeedTokens.light for a light tone override',
+    (tester) async {
+      late FeedTokens observed;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.darkTheme,
-        home: AmbientBackground(
-          preference: BackgroundPreference.daylightLagoon,
-          child: Builder(
-            builder: (context) {
-              observed = context.feedTokens;
-              return const SizedBox.shrink();
-            },
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: AmbientBackground(
+            preference: BackgroundPreference.daylightLagoon,
+            readableToneOverride: BackgroundReadableTone.representativeLight,
+            child: Builder(
+              builder: (context) {
+                observed = context.feedTokens;
+                return const SizedBox.shrink();
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(observed, FeedTokens.light);
-    expect(observed.greenFill15, const Color(0xFFDCE9E1));
-    expect(observed.green500, const Color(0xFF236143));
-  });
+      expect(observed, FeedTokens.light);
+      expect(observed.greenFill15, const Color(0xFFDCE9E1));
+      expect(observed.green500, const Color(0xFF236143));
+    },
+  );
 
   test('Signal Feed tokens match the locked warm hierarchy', () {
     const tokens = FeedTokens.light;
