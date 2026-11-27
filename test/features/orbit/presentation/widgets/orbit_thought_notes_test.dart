@@ -102,7 +102,7 @@ void main() {
   });
 
   testWidgets(
-    'only eligible ring friends receive notes, with separate note/chat taps',
+    'BL-108 only eligible ring notes act on their avatars when visible',
     (tester) async {
       final openedThoughts = <String>[];
       final openedChats = <String>[];
@@ -128,7 +128,8 @@ void main() {
       expect(openedChats, isEmpty);
       await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
       await tester.tap(find.byKey(const ValueKey('orbit-node-2')));
-      expect(openedChats, ['friend-0', 'friend-2']);
+      expect(openedThoughts, ['live', 'live']);
+      expect(openedChats, ['friend-2']);
       expect(
         tester
             .widgetList<OrbitalAvatar>(find.byType(OrbitalAvatar))

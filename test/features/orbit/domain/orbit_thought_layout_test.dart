@@ -123,44 +123,24 @@ void main() {
     },
   );
 
-  test('unconstrained normal motion stays nonzero and continuous', () {
+  test('BL-108 notes-out motion keeps every avatar on its exact seat', () {
     final seats = computeOrbitLayout(
       memberCount: 3,
       geometry: OrbitGeometryPrefs.defaults,
     ).seats;
     final swim = OrbitThoughtSwim();
-    Map<int, Offset> resolve(int frame) => swim.resolve(
-      seats: seats,
-      noteSizes: const {},
-      availableWidth: 1000,
-      seconds: frame / 60,
-      motionEnabled: true,
-    );
-    final first = resolve(0);
-    var previous = first;
-    var maximumDisplacement = 0.0;
-    for (var frame = 1; frame <= 600; frame++) {
-      final positions = resolve(frame);
+    for (final seconds in [0.5, 2.0, 10.0]) {
+      final resolved = swim.resolve(
+        seats: seats,
+        noteSizes: const {0: Size(148, 36)},
+        availableWidth: 390,
+        seconds: seconds,
+        motionEnabled: true,
+      );
       for (final seat in seats) {
-        final position = positions[seat.index]!;
-        final step = (position - previous[seat.index]!).distance;
-        expect(
-          step,
-          lessThanOrEqualTo(0.5),
-          reason: 'Unconstrained face ${seat.index} jumps at frame $frame',
-        );
-        final displacement = (position - first[seat.index]!).distance;
-        if (displacement > maximumDisplacement) {
-          maximumDisplacement = displacement;
-        }
+        expect(resolved[seat.index], Offset(seat.dx, seat.dy));
       }
-      previous = positions;
     }
-    expect(
-      maximumDisplacement,
-      greaterThan(0.5),
-      reason: 'Freezing every face must not satisfy the stability regressions.',
-    );
   });
 
   for (final width in [320.0, 390.0, 430.0]) {
