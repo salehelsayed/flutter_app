@@ -6678,6 +6678,13 @@ Runner listings took about
   Orbit's create action uses `Semantics.identifier` separately from its spoken
   open/closed label. Stable keys preserve its semantic node across scrim and
   menu insertion; both FAB anchors retain identity after selection/dismissal.
+  Identified Orbit contact and group rows expose the chat button role. A
+  distinct contact avatar action exposes the localized name, button role and
+  48-point target, while an avatar that opens the same chat shares the row's
+  focus stop. The host suite checks English, German and Arabic with RTL,
+  separate chat/profile activation, and the existing swipe and custom actions.
+  The earlier missing role and empty avatar label reproduce on both Batch 4
+  and Batch 5. Evidence m-374154ec, m-e634ee90 and m-a1953c91.
 - **Call Answer during voice capture (R2-3):** the beta T28 Android callee
   accepted the call while a voice note still held the shared microphone lease;
   call audio returned `mediaConflict` and the call ended `mediaFailed`. The

@@ -1700,6 +1700,8 @@
   "orbit_unblock_action": "Unblock",
   "orbit_delete_action": "Delete",
   "orbit_archive_action": "Archive",
+  "orbit_open_contact_profile": "View profile of {name}",
+  "@orbit_open_contact_profile": {"description": "Accessibility label for the named Orbit contact profile button", "placeholders": {"name": {"type": "String"}}},
   "orbit_unarchive_action": "Unarchive",
   "orbit_archived_empty_title": "No archived friends yet",
   "orbit_archived_empty_desc": "Swipe left on a friend to archive them.",

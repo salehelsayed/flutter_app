@@ -3321,6 +3321,11 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_archive_action => 'أرشفة';
 
   @override
+  String orbit_open_contact_profile(String name) {
+    return 'عرض ملف $name الشخصي';
+  }
+
+  @override
   String get orbit_unarchive_action => 'إلغاء الأرشفة';
 
   @override

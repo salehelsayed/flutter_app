@@ -61,9 +61,18 @@ class FriendRow extends StatelessWidget {
     final previewDirection = previewText.isNotEmpty
         ? detectTextDirection(previewText)
         : TextDirection.ltr;
+    final openProfile = onAvatarTap;
+    final avatar = ExcludeSemantics(
+      child: GestureDetector(
+        onTap: openProfile ?? onTap,
+        behavior: HitTestBehavior.opaque,
+        child: UserAvatar(peerId: friend.peerId, size: 48),
+      ).withPressFeedback(),
+    );
 
     return Semantics(
       identifier: 'orbit.contact.${friend.peerId}',
+      button: true,
       customSemanticsActions: customSemanticsActions,
       child: GestureDetector(
         onTap: onTap,
@@ -183,11 +192,16 @@ class FriendRow extends StatelessWidget {
 
               return Row(
                 children: [
-                  GestureDetector(
-                    onTap: onAvatarTap ?? onTap,
-                    behavior: HitTestBehavior.opaque,
-                    child: UserAvatar(peerId: friend.peerId, size: 48),
-                  ).withPressFeedback(),
+                  if (openProfile != null)
+                    Semantics(
+                      container: true,
+                      button: true,
+                      label: l10n.orbit_open_contact_profile(friend.username),
+                      onTap: openProfile,
+                      child: avatar,
+                    )
+                  else
+                    avatar,
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(

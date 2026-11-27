@@ -1529,6 +1529,7 @@
   "orbit_unblock_action": "Entsperren",
   "orbit_delete_action": "Löschen",
   "orbit_archive_action": "Archivieren",
+  "orbit_open_contact_profile": "Profil von {name} anzeigen",
   "orbit_unarchive_action": "Aus Archiv holen",
   "orbit_archived_empty_title": "Noch keine archivierten Freunde",
   "orbit_archived_empty_desc": "Wische bei einem Freund nach links, um ihn zu archivieren.",

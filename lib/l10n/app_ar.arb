@@ -1529,6 +1529,7 @@
   "orbit_unblock_action": "إلغاء الحظر",
   "orbit_delete_action": "حذف",
   "orbit_archive_action": "أرشفة",
+  "orbit_open_contact_profile": "عرض ملف {name} الشخصي",
   "orbit_unarchive_action": "إلغاء الأرشفة",
   "orbit_archived_empty_title": "لا يوجد أصدقاء مؤرشفون بعد",
   "orbit_archived_empty_desc": "اسحب لليسار على صديق لأرشفته.",

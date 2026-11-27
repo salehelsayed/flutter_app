@@ -285,6 +285,31 @@ void main() {
   }
 
   group('GroupRow', () {
+    testWidgets('Orbit row accessibility names the group chat button', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final group = _group(
+        name: 'Group discussion',
+        senderUsername: 'Riley',
+        latestMessageText: 'Hello',
+      );
+      var opened = 0;
+      await tester
+          .pumpWidget(wrap(GroupRow(group: group, onTap: () => opened++)))
+          .timeout(deadline);
+      final row = tester.getSemantics(
+        find.bySemanticsIdentifier('orbit.group.${group.groupId}'),
+      );
+      final data = row.getSemanticsData();
+      expect(data.label, contains('Group discussion'));
+      expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
+      expect(data.flagsCollection.isButton, isTrue);
+      row.owner!.performAction(row.id, ui.SemanticsAction.tap);
+      await tester.pump().timeout(deadline);
+      expect(opened, 1);
+    });
+
     Text textFor(WidgetTester tester, String text) {
       final finder = find.byWidgetPredicate(
         (widget) => widget is Text && widget.data == text,

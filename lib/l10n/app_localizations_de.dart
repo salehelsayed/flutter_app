@@ -3343,6 +3343,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_archive_action => 'Archivieren';
 
   @override
+  String orbit_open_contact_profile(String name) {
+    return 'Profil von $name anzeigen';
+  }
+
+  @override
   String get orbit_unarchive_action => 'Aus Archiv holen';
 
   @override

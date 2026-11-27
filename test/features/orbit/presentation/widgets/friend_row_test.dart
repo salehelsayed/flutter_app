@@ -265,7 +265,12 @@ void main() {
                     ),
                     findsOneWidget,
                   );
-                  expect(find.bySemanticsLabel(RegExp(name)), findsNWidgets(2));
+                  final rowSemantics = tester.getSemantics(
+                    find.bySemanticsIdentifier(
+                      'orbit.contact.ui25-synthetic-$count',
+                    ),
+                  );
+                  expect(rowSemantics.getSemanticsData().label, contains(name));
                   final avatar = find.descendant(
                     of: row,
                     matching: find.byType(UserAvatar),
@@ -289,13 +294,93 @@ void main() {
   }
 
   group('FriendRow', () {
-    Widget wrap(Widget child, {ThemeData? theme}) => MaterialApp(
+    Widget wrap(
+      Widget child, {
+      ThemeData? theme,
+      Locale locale = const Locale('en'),
+    }) => MaterialApp(
       theme: theme,
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: child),
     );
+
+    testWidgets('Orbit row accessibility names the contact chat button', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final friend = _makeFriend();
+      var opened = 0;
+      await tester
+          .pumpWidget(wrap(FriendRow(friend: friend, onTap: () => opened++)))
+          .timeout(deadline);
+      final row = tester.getSemantics(
+        find.bySemanticsIdentifier('orbit.contact.${friend.peerId}'),
+      );
+      final data = row.getSemanticsData();
+      expect(data.label, contains(friend.username));
+      expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
+      expect(data.flagsCollection.isButton, isTrue);
+      row.owner!.performAction(row.id, ui.SemanticsAction.tap);
+      await tester.pump().timeout(deadline);
+      expect(opened, 1);
+      final avatar = find.byType(UserAvatar);
+      expect(tester.getSemantics(avatar).id, row.id);
+      await tester.tap(avatar).timeout(deadline);
+      expect(opened, 2);
+    });
+
+    for (final (language, label) in [
+      ('en', 'View profile of Riley'),
+      ('de', 'Profil von Riley anzeigen'),
+      ('ar', 'عرض ملف Riley الشخصي'),
+    ]) {
+      testWidgets(
+        'Orbit row accessibility exposes the profile button in $language',
+        (tester) async {
+          const deadline = Duration(seconds: 3);
+          final friend = _makeFriend(username: 'Riley');
+          var chatsOpened = 0;
+          var profilesOpened = 0;
+          await tester
+              .pumpWidget(
+                wrap(
+                  FriendRow(
+                    friend: friend,
+                    onTap: () => chatsOpened++,
+                    onAvatarTap: () => profilesOpened++,
+                  ),
+                  locale: Locale(language),
+                ),
+              )
+              .timeout(deadline);
+          final row = tester.getSemantics(
+            find.bySemanticsIdentifier('orbit.contact.${friend.peerId}'),
+          );
+          final avatar = tester.getSemantics(find.byType(UserAvatar));
+          final data = avatar.getSemanticsData();
+          expect(avatar.id, isNot(row.id));
+          expect(
+            (
+              data.label,
+              data.flagsCollection.isButton,
+              data.hasAction(ui.SemanticsAction.tap),
+            ),
+            (label, true, true),
+          );
+          expect(
+            data.textDirection,
+            language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          expect(avatar.rect.size, const Size(48, 48));
+          avatar.owner!.performAction(avatar.id, ui.SemanticsAction.tap);
+          await tester.pump().timeout(deadline);
+          expect(profilesOpened, 1);
+          expect(chatsOpened, 0);
+        },
+      );
+    }
 
     testWidgets('inner-circle badge uses readable light ink', (
       tester,
