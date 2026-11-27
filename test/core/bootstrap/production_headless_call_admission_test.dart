@@ -9,6 +9,7 @@ import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,7 +75,7 @@ void main() {
           order.add('display');
           expect(invite.senderAccountPeerId, 'caller-account');
           expect(invite.callId.value, invocation.callId);
-          expect(invite.event, CallSignalType.invite);
+          expect(invite.eventWireName, 'invite');
           return display;
         },
         closeResources: () async {
@@ -1412,8 +1413,8 @@ void main() {
       );
       final recorded = recorder.calls.single;
       expect(recorded.reason, CallEndReason.callerCancelled);
-      expect(recorded.terminal.event, CallSignalType.terminate);
-      expect(recorded.invite?.event, CallSignalType.invite);
+      expect(recorded.terminal.eventWireName, 'terminate');
+      expect(recorded.invite?.eventWireName, 'invite');
       expect(recorded.terminal.senderAccountPeerId, 'caller-account');
     });
 
@@ -1482,14 +1483,20 @@ AuthenticateHeadlessMailboxEvent _bindingAuthenticator(
 /// 406: records what the headless session asked to be projected.
 final class _HistoryRecorder {
   final calls =
-      <({CallSignal terminal, CallSignal? invite, CallEndReason reason})>[];
+      <
+        ({
+          CallWireSignal terminal,
+          CallWireSignal? invite,
+          CallEndReason reason,
+        })
+      >[];
   Object? error;
 
   Future<void> record({
-    required CallSignal terminal,
+    required CallWireSignal terminal,
     required String callHandle,
     required CallEndReason reason,
-    CallSignal? invite,
+    CallWireSignal? invite,
   }) async {
     calls.add((terminal: terminal, invite: invite, reason: reason));
     if (error != null) throw error!;

@@ -113,12 +113,12 @@ Future<_Fixture> _fixture({
     videoEnabled: videoEnabled,
     event: CallMailboxEvent(
       callHandle: _handle,
-      messageId: _message,
-      authenticatedSenderDevicePeerId: 'sender-device',
+      messageId: data['message_id']! as String,
+      authenticatedSenderDevicePeerId: data['sender_device_peer_id']! as String,
       recipientDevicePeerId: 'recipient-device',
       envelopeJson: envelope,
       receiptAtMs: _now,
-      expiresAtMs: _now + 45000,
+      expiresAtMs: data['expires_at_ms']! as int,
     ),
   );
 }
@@ -206,6 +206,21 @@ final class _Fixture {
           wakeExpiresAtMs: wakeExpiry,
           event: row ?? event,
         );
+
+  AuthenticateHeadlessMailboxEvent coldAuthenticator({
+    required bool videoEnabled,
+  }) => createProductionHeadlessMailboxAuthenticator(
+    codec: SecureCallEnvelopeCodec(
+      crypto: crypto,
+      nowMs: () => now,
+      videoEnabled: true,
+    ),
+    roster: roster,
+    localAuthorityProvider: () async => localAuthority,
+    videoEnabled: videoEnabled,
+    resolveV2Endpoint: videoEnabled ? resolveEndpoint : null,
+    nowMs: () => now,
+  );
 }
 
 final class _Roster implements CallTrustedRosterProvider {
@@ -213,6 +228,7 @@ final class _Roster implements CallTrustedRosterProvider {
   bool blocked = false;
   bool unavailable = false;
   final List<String> lookups = [];
+  final additionalDevices = <String, TrustedCallDeviceAuthority>{};
 
   @override
   Future<CallTrustedRosterSnapshot> loadForContact(String peerId) async =>
@@ -225,25 +241,35 @@ final class _Roster implements CallTrustedRosterProvider {
     lookups.add(authenticatedTransportPeerId);
     if (blocked) throw const CallSenderBlockedException();
     if (unavailable) throw StateError('private roster unavailable');
-    return authority;
+    return additionalDevices[authenticatedTransportPeerId] ?? authority;
   }
 }
 
 final class _ColdMailbox extends Fake implements CallMailboxClient {
-  _ColdMailbox(this.event);
+  _ColdMailbox(this.events);
 
-  final CallMailboxEvent event;
+  final List<CallMailboxEvent> events;
+  final acknowledgements = <List<String>>[];
 
   @override
   Future<CallMailboxRetrieveResult> retrieve({
     String? callHandle,
     int limit = 64,
   }) async => CallMailboxRetrieveResult(
-    events: [if (callHandle == event.callHandle) event],
-    receiptAtMs: event.receiptAtMs,
-    expiresAtMs: event.expiresAtMs,
+    events: events.where((event) => event.callHandle == callHandle).toList(),
+    receiptAtMs: _now,
+    expiresAtMs: _now + 45000,
     hasMore: false,
   );
+
+  @override
+  Future<int> ack({
+    required String callHandle,
+    required List<String> messageIds,
+  }) async {
+    acknowledgements.add(messageIds);
+    return messageIds.length;
+  }
 }
 
 final class _Crypto implements CallEnvelopeCrypto {
@@ -318,60 +344,206 @@ ResolvedCallEndpoint _endpoint({
   capabilities: capabilities,
 );
 
+Map<String, Object?> _audioInvite() => {
+  ..._inner(),
+  'payload': {
+    'media': 'audio',
+    'camera': 'off',
+    'capabilities': ['audio', 'video'],
+  },
+};
+
+HeadlessCallAdmissionInvocation _coldInvocation(
+  HeadlessCallAdmissionMode mode,
+) => HeadlessCallAdmissionInvocation(
+  nonce: '55555555-5555-4555-8555-555555555555',
+  callId: _handle,
+  wakeHandle: '66666666666646668666666666666666',
+  expiresAtMs: _now + 45000,
+  mode: mode,
+);
+
+Future<HeadlessCallAdmissionCleanup> _coldCleanup() async =>
+    const HeadlessCallAdmissionCleanup(
+      databaseClosed: true,
+      leaseReleased: true,
+    );
+
 void main() {
-  for (final legacy in [true, false]) {
+  for (final (legacy, enabled) in [
+    (true, false),
+    (false, true),
+    (false, false),
+  ]) {
     test(
-      'BL-112 cold mailbox admits ${legacy ? 'V1' : 'V2'} audio invite',
+      legacy || enabled
+          ? 'BL-112 cold mailbox admits ${legacy ? 'V1' : 'V2'} audio invite'
+          : 'BL-112 cold mailbox refuses V2 audio invite with the flag off',
       () async {
         const deadline = Duration(seconds: 3);
         final f = await _fixture(
           legacy: legacy,
-          inner: legacy
-              ? null
-              : {
-                  ..._inner(),
-                  'payload': {
-                    'media': 'audio',
-                    'camera': 'off',
-                    'capabilities': ['audio', 'video'],
-                  },
-                },
+          inner: legacy ? null : _audioInvite(),
         ).timeout(deadline);
         final session = MailboxProductionHeadlessCallAdmissionSession(
-          mailboxClient: _ColdMailbox(f.event),
-          authenticateEvent: createProductionHeadlessMailboxAuthenticator(
-            codec: SecureCallEnvelopeCodec(
-              crypto: f.crypto,
-              nowMs: () => _now,
-              videoEnabled: !legacy,
-            ),
-            roster: f.roster,
-            localAuthorityProvider: () async => f.localAuthority,
-            videoEnabled: !legacy,
-          ),
-          closeResources: () async => const HeadlessCallAdmissionCleanup(
-            databaseClosed: true,
-            leaseReleased: true,
-          ),
+          mailboxClient: _ColdMailbox([f.event]),
+          authenticateEvent: f.coldAuthenticator(videoEnabled: enabled),
+          closeResources: _coldCleanup,
         );
         final disposition = await session
-            .evaluate(
-              const HeadlessCallAdmissionInvocation(
-                nonce: '55555555-5555-4555-8555-555555555555',
-                callId: _handle,
-                wakeHandle: '66666666666646668666666666666666',
-                expiresAtMs: _now + 45000,
-              ),
-            )
+            .evaluate(_coldInvocation(HeadlessCallAdmissionMode.admission))
             .timeout(deadline);
         expect(
           disposition,
-          HeadlessCallAdmissionDisposition.admitted,
+          legacy || enabled
+              ? HeadlessCallAdmissionDisposition.admitted
+              : HeadlessCallAdmissionDisposition.permanentReject,
           reason: session.diagnosticCause,
         );
+        expect(f.endpointLoads, enabled ? 1 : 0);
       },
     );
   }
+
+  for (final terminalBinding in [
+    'same',
+    'schema',
+    'sender device',
+    'V1 terminal with unresolved V2 invite',
+  ]) {
+    test('BL-112 cold mailbox terminal binding $terminalBinding', () async {
+      const deadline = Duration(seconds: 3);
+      final f = await _fixture(inner: _audioInvite()).timeout(deadline);
+      final unresolvedInvite =
+          terminalBinding == 'V1 terminal with unresolved V2 invite';
+      final legacyTerminal = terminalBinding == 'schema' || unresolvedInvite;
+      final otherDevice = terminalBinding == 'sender device';
+      if (unresolvedInvite) {
+        f.endpointError = const CallEndpointResolutionException(
+          CallEndpointResolutionCode.unavailable,
+        );
+      }
+      if (otherDevice) {
+        f.roster.additionalDevices['other-device'] =
+            const TrustedCallDeviceAuthority(
+              accountPeerId: 'sender-account',
+              devicePeerId: 'other-device',
+              linked: true,
+              deviceKeyEpoch: 1,
+              signingPublicKey: 'fixture-signing-key',
+              mlKemPublicKey: 'sender-kem',
+            );
+      }
+      final terminal = await _fixture(
+        legacy: legacyTerminal,
+        inner: {
+          ..._inner(event: 'terminate', legacy: legacyTerminal),
+          'message_id': _other,
+          'sender_sequence': 2,
+          if (otherDevice) 'sender_device_peer_id': 'other-device',
+          'created_at_ms': _now + 10,
+          'expires_at_ms': _now + 45010,
+        },
+      ).timeout(deadline);
+      final authenticate = f.coldAuthenticator(videoEnabled: true);
+      final sameCall = terminalBinding == 'same';
+      for (final mode in const [
+        HeadlessCallAdmissionMode.admission,
+        HeadlessCallAdmissionMode.declineReply,
+        HeadlessCallAdmissionMode.ringingReply,
+      ]) {
+        final mailbox = _ColdMailbox([f.event, terminal.event]);
+        final replies = <AuthenticatedIncomingCallAdmissionV2>[];
+        Future<bool> send(AuthenticatedIncomingCallAdmissionV2 invite) async {
+          replies.add(invite);
+          return true;
+        }
+
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: authenticate,
+          closeResources: _coldCleanup,
+          ringingV2ReplySender: send,
+          declineV2ReplySender: send,
+        );
+        expect(
+          await session.evaluate(_coldInvocation(mode)).timeout(deadline),
+          switch (mode) {
+            _ when unresolvedInvite =>
+              HeadlessCallAdmissionDisposition.deferred,
+            HeadlessCallAdmissionMode.admission when !sameCall =>
+              HeadlessCallAdmissionDisposition.admitted,
+            HeadlessCallAdmissionMode.ringingReply when sameCall =>
+              HeadlessCallAdmissionDisposition.deferred,
+            _ => HeadlessCallAdmissionDisposition.terminal,
+          },
+          reason: mode.wireName,
+        );
+        if (!sameCall &&
+            !unresolvedInvite &&
+            mode != HeadlessCallAdmissionMode.admission) {
+          final invite = replies.single;
+          expect(invite.callHandle, _handle);
+          expect(invite.admissionAuthority, _witness);
+          expect(invite.admittedEndpoint?.devicePeerId, _trusted.devicePeerId);
+        } else {
+          expect(replies, isEmpty);
+        }
+        expect(mailbox.acknowledgements, switch (mode) {
+          _ when unresolvedInvite => const <List<String>>[],
+          HeadlessCallAdmissionMode.ringingReply => const <List<String>>[],
+          _ when sameCall => const [
+            [_message, _other],
+          ],
+          HeadlessCallAdmissionMode.declineReply => const [
+            [_message],
+          ],
+          _ => const <List<String>>[],
+        });
+      }
+    });
+  }
+
+  test(
+    'BL-112 presentation failure defers a V2 invite without a V1 reply or ACK',
+    () async {
+      const bound = Duration(seconds: 3);
+      final invite = await _fixture(inner: _audioInvite()).timeout(bound);
+      final terminal = await _fixture(
+        legacy: true,
+        inner: {
+          ..._inner(event: 'terminate', legacy: true),
+          'message_id': _other,
+          'sender_sequence': 2,
+        },
+      ).timeout(bound);
+      final mailbox = _ColdMailbox([invite.event, terminal.event]);
+      var sent = 0;
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: invite.coldAuthenticator(videoEnabled: true),
+        closeResources: _coldCleanup,
+        presentationFailureReplySender: (_, _) async {
+          sent++;
+          return true;
+        },
+      );
+
+      expect(
+        await session
+            .evaluate(
+              _coldInvocation(
+                HeadlessCallAdmissionMode.presentationFailureReply,
+              ),
+            )
+            .timeout(bound),
+        HeadlessCallAdmissionDisposition.deferred,
+      );
+      expect(invite.endpointLoads, 1);
+      expect(sent, 0);
+      expect(mailbox.acknowledgements, isEmpty);
+    },
+  );
 
   for (final mailbox in [false, true]) {
     test(

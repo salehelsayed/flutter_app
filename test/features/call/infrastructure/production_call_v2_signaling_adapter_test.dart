@@ -11,9 +11,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_signal_v2.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
+import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
+import 'package:flutter_app/features/call/infrastructure/headless_call_v2_reply.dart';
 import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,13 +82,14 @@ CallSignalV2 _signal({
 ResolvedCallEndpoint _endpoint({
   Set<String> capabilities = const {'voice_call_v1', 'video_call_v2'},
   int expires = _start + 45000,
+  String account = 'recipient-account',
   String device = 'recipient-device',
   int epoch = 1,
   int preference = 1,
   String wake = 'fedcba9876543210fedcba9876543210',
   CallAdmissionAuthorityWitness? witness,
 }) => ResolvedCallEndpoint(
-  accountPeerId: 'recipient-account',
+  accountPeerId: account,
   devicePeerId: device,
   signingPublicKey: 'signing-public',
   mlKemPublicKey: 'kem-public',
@@ -125,13 +129,13 @@ final class _Crypto implements CallEnvelopeCrypto {
   Future<String> decrypt({
     required String ownMlKemSecretKey,
     required CallCiphertext ciphertext,
-  }) => throw UnimplementedError();
+  }) async => utf8.decode(base64Decode(ciphertext.ciphertext));
   @override
   Future<bool> verify({
     required String senderSigningPublicKey,
     required String canonicalData,
     required String signature,
-  }) async => true;
+  }) async => signature == base64Encode(utf8.encode(canonicalData));
 }
 
 final class _Direct implements CallDirectTransport {
@@ -181,6 +185,105 @@ final class _Mailbox implements CallMailboxClient {
     int limit = 64,
   }) => throw UnimplementedError();
 }
+
+final class _HeadlessRoster implements CallTrustedRosterProvider {
+  const _HeadlessRoster(this.endpoint);
+
+  final ResolvedCallEndpoint endpoint;
+
+  @override
+  Future<CallTrustedRosterSnapshot> loadForContact(
+    String contactAccountPeerId,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<TrustedCallDeviceAuthority?> resolveAuthenticatedTransport(
+    String authenticatedTransportPeerId,
+  ) async {
+    if (authenticatedTransportPeerId != endpoint.devicePeerId) return null;
+    return TrustedCallDeviceAuthority(
+      accountPeerId: endpoint.accountPeerId,
+      devicePeerId: endpoint.devicePeerId,
+      linked: true,
+      deviceKeyEpoch: endpoint.deviceKeyEpoch,
+      signingPublicKey: endpoint.signingPublicKey,
+      mlKemPublicKey: endpoint.mlKemPublicKey,
+      admissionAuthority: endpoint.admissionAuthority,
+    );
+  }
+}
+
+const _headlessTimeout = Duration(seconds: 3);
+
+Future<AuthenticatedIncomingCallAdmissionV2> _authenticateHeadlessInvite(
+  _Rig rig,
+) async {
+  final origin = _endpoint(
+    account: 'sender-account',
+    device: 'sender-device',
+    witness: (fingerprint: 'test-origin', relationshipRevision: 2),
+  );
+  rig.endpoint = origin;
+  final codec = SecureCallEnvelopeCodec(
+    crypto: _Crypto(),
+    nowMs: () => rig.now,
+    videoEnabled: true,
+  );
+  final invite = CallSignalV2.fromMap({
+    ..._signal(id: 1, invite: true).toMap(),
+    'ice_generation': 3,
+  }, videoEnabled: true);
+  final envelope = await codec
+      .encodeV2(
+        signal: invite,
+        callHandle: _handle,
+        recipientMlKemPublicKey: 'callee-public',
+        senderSigningPrivateKey: 'caller-private',
+      )
+      .timeout(_headlessTimeout);
+  final authenticator = IncomingCallPrePresentationAdmission(
+    codec: codec,
+    trustedRosterProvider: _HeadlessRoster(origin),
+    localAuthorityProvider: () async => const CallLocalDeviceAuthority(
+      accountPeerId: 'recipient-account',
+      devicePeerId: 'recipient-device',
+      mlKemSecretKey: 'callee-secret',
+    ),
+    videoEnabled: true,
+    resolveV2Endpoint: (_) async => origin,
+    nowMs: () => rig.now,
+  );
+  final result = await authenticator
+      .authenticateVersionedMailboxEvent(
+        nativeCallId: _handle,
+        wakeExpiresAtMs: invite.expiresAtMs,
+        event: CallMailboxEvent(
+          callHandle: _handle,
+          messageId: invite.messageId,
+          authenticatedSenderDevicePeerId: 'sender-device',
+          recipientDevicePeerId: 'recipient-device',
+          envelopeJson: envelope,
+          receiptAtMs: _start,
+          expiresAtMs: invite.expiresAtMs,
+        ),
+      )
+      .timeout(_headlessTimeout);
+  addTearDown(result.rollbackReplay);
+  return result as AuthenticatedIncomingCallAdmissionV2;
+}
+
+HeadlessCallV2ReplyTransmitter _headlessTransmitter(
+  _Rig rig,
+  Future<bool> Function(String callHandle, int expiresAtMs) isNativeRinging,
+) => HeadlessCallV2ReplyTransmitter(
+  signalingService: rig.service,
+  resolveEndpoint: rig.resolve,
+  isNativeRinging: isNativeRinging,
+  localAccountPeerId: 'recipient-account',
+  localDevicePeerId: 'recipient-device',
+  loadSigningPrivateKey: rig.loadKey,
+  nowMs: () => rig.now,
+);
 
 final class _Rig {
   _Rig() {
@@ -405,6 +508,92 @@ void main() {
   final rejected = throwsA(isA<CallSignalingException>());
 
   final controlRejected = throwsA(isA<CallControlSignalingPortException>());
+
+  test(
+    'headless V2 ringing and decline keep authenticated mailbox custody',
+    () async {
+      final invite = await _authenticateHeadlessInvite(r);
+      r.now = _start + 42000;
+      r.direct.action = () async => _failed;
+      var nativeRinging = true;
+      final transmitter = _headlessTransmitter(r, (handle, expiry) async {
+        return nativeRinging && handle == _handle && expiry == _start + 45000;
+      });
+
+      expect(
+        await transmitter.sendRingingFor(invite).timeout(_headlessTimeout),
+        isTrue,
+      );
+      nativeRinging = false;
+      expect(
+        await transmitter.sendDeclineFor(invite).timeout(_headlessTimeout),
+        isTrue,
+      );
+
+      final callerCodec = SecureCallEnvelopeCodec(
+        crypto: _Crypto(),
+        nowMs: () => r.now,
+        videoEnabled: true,
+      );
+      final replies = <CallSignalV2>[];
+      expect(r.mailbox.requests, hasLength(2));
+      for (final request in r.mailbox.requests) {
+        expect(request.callHandle, _handle);
+        expect(request.recipientDevicePeerId, 'sender-device');
+        expect(request.expiresAtMs, _start + 45000);
+        expect(request.wakeHandle, r.endpoint.wakeHandle);
+        final decoded =
+            await callerCodec
+                    .decodeVersioned(
+                      envelopeJson: request.envelopeJson,
+                      authority: const CallEnvelopeAuthority(
+                        authenticatedTransportPeerId: 'recipient-device',
+                        expectedSenderAccountPeerId: 'recipient-account',
+                        expectedSenderDevicePeerId: 'recipient-device',
+                        expectedRecipientAccountPeerId: 'sender-account',
+                        expectedRecipientDevicePeerId: 'sender-device',
+                        senderSigningPublicKey: 'callee-public',
+                        ownMlKemSecretKey: 'caller-secret',
+                      ),
+                    )
+                    .timeout(_headlessTimeout)
+                as DecodedSecureCallEnvelopeV2;
+        decoded.commitReplay();
+        expect(decoded.callHandle, _handle);
+        expect(decoded.signal.callId.value, _call);
+        expect(decoded.signal.messageId, request.messageId);
+        expect(decoded.signal.iceGeneration, 3);
+        replies.add(decoded.signal);
+      }
+      expect(replies[0].event, CallSignalV2Type.ringing);
+      expect(replies[0].senderSequence, 1);
+      expect(replies[0].payload, isEmpty);
+      expect(replies[1].event, CallSignalV2Type.reject);
+      expect(replies[1].senderSequence, 2);
+      expect(replies[1].payload, {'reason': 'declined'});
+    },
+  );
+
+  test(
+    'headless V2 ringing stops both transport legs if native ringing ends',
+    () async {
+      final invite = await _authenticateHeadlessInvite(r);
+      var nativeRinging = true;
+      r.crypto.wait = () async {
+        nativeRinging = false;
+      };
+      final transmitter = _headlessTransmitter(
+        r,
+        (_, _) async => nativeRinging,
+      );
+
+      expect(
+        await transmitter.sendRingingFor(invite).timeout(_headlessTimeout),
+        isFalse,
+      );
+      r.expectNoWrites();
+    },
+  );
 
   for (final advanceClock in [true, false]) {
     test(
