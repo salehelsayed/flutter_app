@@ -294,6 +294,42 @@ void main() {
       return tester.widget<Text>(finder);
     }
 
+    testWidgets('BL-107 Orbit group row budgets for the 11 pt badge', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const name = 'Group discussion room';
+      final model = _group(
+        name: name,
+        senderUsername: '',
+        latestMessageText: '',
+      ).group;
+      await tester
+          .pumpWidget(
+            wrap(
+              Center(
+                child: SizedBox(
+                  width: 310,
+                  child: GroupRow(
+                    group: OrbitGroup(group: model),
+                    onTap: () {},
+                  ),
+                ),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      final title = find.text(name);
+      final badge = find.text('Discussion');
+      expect(tester.widget<Text>(badge).style?.fontSize, 11);
+      expect(
+        tester.getTopLeft(badge).dy,
+        greaterThan(tester.getBottomLeft(title).dy),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('UI25 06.1 title and metadata retain readable spacing', (
       tester,
     ) async {

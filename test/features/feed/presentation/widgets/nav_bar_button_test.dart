@@ -196,6 +196,19 @@ void main() {
       expect(find.byType(Positioned), findsNothing);
     });
 
+    testWidgets('BL-107 nav count badge reads at least 11 pt', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      suppressAssetErrors(tester);
+      await tester
+          .pumpWidget(wrap(makeButton(badgeCount: 7)))
+          .timeout(deadline);
+      await tester.pump().timeout(deadline);
+      final badge = tester.widget<Text>(find.text('7'));
+      expect(badge.style?.fontSize, greaterThanOrEqualTo(11));
+    });
+
     testWidgets('badge shows count text', (tester) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(wrap(makeButton(badgeCount: 7)));

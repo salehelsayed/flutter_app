@@ -304,6 +304,26 @@ void main() {
       return tester.widget<Text>(finder);
     }
 
+    testWidgets('BL-107 Orbit Inner Circle badge reads at least 11 pt', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(
+            wrap(
+              FriendRow(
+                friend: _makeFriend(),
+                showInnerCircleBadge: true,
+                onTap: () {},
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      final badge = tester.widget<Text>(find.text('Inner Circle'));
+      expect(badge.style?.fontSize, greaterThanOrEqualTo(11));
+    });
+
     testWidgets('UI25 06.1 title and metadata retain readable spacing', (
       tester,
     ) async {
