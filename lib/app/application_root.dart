@@ -3598,12 +3598,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 248 — bind the root ThemeMode to the live background preference so
-    // selecting Signal switches the whole app (root ThemeData + every pushed
-    // route/modal that falls back to it) to the warm light theme, while every
-    // dark wallpaper keeps the dark root. The MaterialApp rebuilds only its
-    // theme config on a background change; the navigatorKey + stable `home`
-    // preserve Navigator/StartupRouter state across the flip (TC-248-03).
     return AppShellThemeBinding(
       controller: widget.appShellController,
       builder: (context, themeMode) => MaterialApp(

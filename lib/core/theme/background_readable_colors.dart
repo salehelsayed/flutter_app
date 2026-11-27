@@ -246,8 +246,13 @@ class BackgroundReadableColors
 
   static BackgroundReadableColors resolve(
     BackgroundPreference preference, {
+    ThemeData? theme,
     BackgroundReadableTone? representativeToneOverride,
   }) {
+    if (representativeToneOverride == null) {
+      final colors = theme?.extension<BackgroundReadableColors>();
+      if (colors != null) return colors;
+    }
     final tone = representativeToneOverride ?? toneForPreference(preference);
     return switch (tone) {
       BackgroundReadableTone.dark => dark,

@@ -76,6 +76,7 @@ class _GroupExitDiagnosticsSectionState
         final theme = Theme.of(sheetContext);
         final readableColors = BackgroundReadableColors.resolve(
           widget.backgroundPreference,
+          theme: theme,
         );
         return Theme(
           data: theme.copyWith(

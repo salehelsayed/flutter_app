@@ -130,6 +130,7 @@ class SettingsScreen extends StatelessWidget {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final readableColors = BackgroundReadableColors.resolve(
       currentBackgroundPreference,
+      theme: Theme.of(context),
       representativeToneOverride: readableToneOverride,
     );
 

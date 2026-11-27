@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
@@ -132,33 +133,50 @@ class _AmbientBackgroundState extends State<AmbientBackground>
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final readableColors = BackgroundReadableColors.resolve(
       widget.preference,
+      theme: theme,
       representativeToneOverride: widget.readableToneOverride,
     );
-    final feedTokens = readableColors.isLightSurface
-        ? FeedTokens.light
-        : FeedTokens.dark;
-    final theme = Theme.of(context);
+    final isLightSurface = readableColors.isLightSurface;
+    final feedTokens = isLightSurface ? FeedTokens.light : FeedTokens.dark;
+    final cosmicPalette = isLightSurface
+        ? cosmicLightPalette
+        : cosmicDarkPalette;
     final originalMediaQuery =
         MediaQuery.maybeOf(context) ?? const MediaQueryData();
     final content = MediaQuery(data: originalMediaQuery, child: widget.child);
     final themedBackground = switch (widget.preference) {
       BackgroundPreference.defaultBackground => CosmicBackgroundMirrored(
         paused: _temporarilyPaused,
+        palette: cosmicPalette,
         child: content,
       ),
       BackgroundPreference.cosmic => CosmicBackground(
         paused: _temporarilyPaused,
+        palette: cosmicPalette,
         child: content,
       ),
       BackgroundPreference.aurora => _DefaultAmbientBackground(
         animation: _controller,
+        isLightSurface: isLightSurface,
         child: content,
       ),
-      BackgroundPreference.daylightLagoon => DaylightLagoonBackground(
-        child: content,
-      ),
+      BackgroundPreference.daylightLagoon =>
+        isLightSurface
+            ? DaylightLagoonBackground(child: content)
+            : DaylightLagoonBackground(
+                baseColor: const Color(0xFF111520),
+                groundGradientColors: const [
+                  Color(0xFF161523),
+                  Color(0xFF111520),
+                  Color(0xFF0B1117),
+                ],
+                violetWash: const Color(0x307C69C8),
+                sageWash: const Color(0x2858A989),
+                child: content,
+              ),
     };
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -206,17 +224,23 @@ class _AmbientBackgroundState extends State<AmbientBackground>
 
 class _DefaultAmbientBackground extends StatelessWidget {
   final Animation<double> animation;
+  final bool isLightSurface;
   final Widget child;
 
   const _DefaultAmbientBackground({
     required this.animation,
+    required this.isLightSurface,
     required this.child,
   });
 
   @override
   Widget build(BuildContext context) {
+    final green = isLightSurface
+        ? const Color(0xFF2F7755)
+        : AppColors.greenGlow;
+    final red = isLightSurface ? const Color(0xFFB4232F) : AppColors.redGlow;
     return Container(
-      color: AppColors.background,
+      color: isLightSurface ? const Color(0xFFECE8E1) : AppColors.background,
       child: Stack(
         children: [
           // Green glow - top left. 156 QW-2: the constant gradient Container is
@@ -233,8 +257,8 @@ class _DefaultAmbientBackground extends StatelessWidget {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      AppColors.greenGlow.withValues(alpha: 0.3),
-                      AppColors.greenGlow.withValues(alpha: 0.0),
+                      green.withValues(alpha: isLightSurface ? 0.12 : 0.3),
+                      green.withValues(alpha: 0.0),
                     ],
                   ),
                 ),
@@ -262,8 +286,8 @@ class _DefaultAmbientBackground extends StatelessWidget {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      AppColors.redGlow.withValues(alpha: 0.25),
-                      AppColors.redGlow.withValues(alpha: 0.0),
+                      red.withValues(alpha: isLightSurface ? 0.10 : 0.25),
+                      red.withValues(alpha: 0.0),
                     ],
                   ),
                 ),
