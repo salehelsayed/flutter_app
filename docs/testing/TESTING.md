@@ -6402,6 +6402,12 @@ Runner listings took about
   Group-editor actions remain outside the scrolling fields, and the editor
   surface must be opaque while the keyboard is open. Host tests cover those
   layout properties; USB iPhone Appium evidence is recorded separately.
+- Live direct-message rows ease out over 200 ms. Either disabled animations
+  or accessible navigation gives an immediately settled row. The
+  `conversation_screen_test.dart` live entrance group checks the rendered
+  opacity and offset at 360 points, including the first paint and the
+  transition deadline. History loading and repeated updates retain their
+  existing behavior.
 - Dart background health polling must stop on paused/detached lifecycle states
   while explicit offline-inbox drains remain available. The health-drain test
   verifies no poll/reconnect in background and recovery after resume. Configured
