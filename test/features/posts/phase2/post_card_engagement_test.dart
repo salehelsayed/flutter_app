@@ -67,6 +67,46 @@ void main() {
     expect(toggled, 1);
   });
 
+  testWidgets('BL-107 post engagement actions use 44 pt hit targets', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    final actions = <String>[];
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PostCard(
+                post: _post(),
+                onToggleHeart: () => actions.add('heart'),
+                onOpenComments: () => actions.add('comment'),
+                onPassAlong: () => actions.add('pass'),
+                nowProvider: () => DateTime.utc(2026, 3, 16, 10),
+              ),
+            ),
+          ),
+        )
+        .timeout(deadline);
+    for (final glyph in [
+      Icons.favorite_border,
+      Icons.mode_comment_outlined,
+      Icons.repeat,
+    ]) {
+      final icon = find.byIcon(glyph);
+      final target = find.ancestor(of: icon, matching: find.byType(InkWell)).first;
+      final size = tester.getSize(target);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      expect(tester.widget<Icon>(icon).size, 15);
+      final point = tester.getCenter(target) + const Offset(0, 16);
+      await tester.tapAt(point).timeout(deadline);
+    }
+    expect(actions, ['heart', 'comment', 'pass']);
+  });
+
   testWidgets('shows inline delivery state and disables sending actions', (
     tester,
   ) async {

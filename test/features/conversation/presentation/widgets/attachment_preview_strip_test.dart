@@ -129,6 +129,36 @@ void main() {
       expect(find.byIcon(Icons.close), findsNWidgets(3));
     });
 
+    testWidgets('BL-107 attachment removal uses a 44 pt hit target', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final removed = <int>[];
+      await tester
+          .pumpWidget(
+            buildTestWidget(
+              attachments: [testFiles.first],
+              onRemove: removed.add,
+            ),
+          )
+          .timeout(deadline);
+      final icon = find.byIcon(Icons.close);
+      final target = find.ancestor(
+        of: icon,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is GestureDetector && widget.onTap != null,
+        ),
+      ).first;
+      final size = tester.getSize(target);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      expect(tester.widget<Icon>(icon).size, 14);
+
+      final point = tester.getRect(target).bottomLeft + const Offset(4, -4);
+      await tester.tapAt(point).timeout(deadline);
+      expect(removed, [0]);
+    });
+
     testWidgets('hides remove buttons during upload', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(

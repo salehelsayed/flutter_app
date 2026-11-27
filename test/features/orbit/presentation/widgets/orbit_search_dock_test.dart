@@ -77,6 +77,50 @@ void main() {
       expect(find.byIcon(Icons.close), findsNWidgets(2));
     });
 
+    for (final direction in TextDirection.values) {
+      testWidgets('BL-107 Orbit search controls use 44 pt hit targets ($direction)', (
+        tester,
+      ) async {
+        const deadline = Duration(seconds: 3);
+        final actions = <String>[];
+        await tester
+            .pumpWidget(
+              wrap(
+                Directionality(
+                  textDirection: direction,
+                  child: OrbitSearchDock(
+                    controller: controller,
+                    focusNode: focusNode,
+                    onChanged: (_) {},
+                    onClear: () => actions.add('clear'),
+                    onClose: () => actions.add('close'),
+                    query: 'hello',
+                  ),
+                ),
+              ),
+            )
+            .timeout(deadline);
+        final icons = find.byIcon(Icons.close);
+        expect(icons, findsNWidgets(2));
+        for (var index = 0; index < 2; index++) {
+          final icon = icons.at(index);
+          final target = find.ancestor(
+            of: icon,
+            matching: find.byWidgetPredicate(
+              (widget) => widget is GestureDetector && widget.onTap != null,
+            ),
+          ).first;
+          final size = tester.getSize(target);
+          expect(size.width, greaterThanOrEqualTo(44));
+          expect(size.height, greaterThanOrEqualTo(44));
+          expect(tester.widget<Icon>(icon).size, index == 0 ? 16 : 15);
+          final point = tester.getCenter(target) + const Offset(0, 20);
+          await tester.tapAt(point).timeout(deadline);
+        }
+        expect(actions, ['clear', 'close']);
+      });
+    }
+
     testWidgets('calls onClose when close button tapped', (tester) async {
       var closeTapped = false;
       await tester.pumpWidget(wrap(OrbitSearchDock(
