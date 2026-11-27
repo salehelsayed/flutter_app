@@ -21030,8 +21030,8 @@ void main() {
               of: messagesList,
               matching: find.byType(Scrollable),
             ),
-            maxScrolls: 70,
-            duration: const Duration(milliseconds: 60),
+            maxScrolls: 140,
+            duration: const Duration(milliseconds: 12),
           )
           .timeout(deadline);
     }
@@ -21045,10 +21045,12 @@ void main() {
       await scrollToMessage(tester, firstRetained.id).timeout(deadline);
       await tester.pump().timeout(deadline);
 
+      final scroll = tester.widget<ListView>(messagesList).controller!;
+      final remaining = scroll.position.extentAfter.toStringAsFixed(0);
       expect(
         repo.getMessagesPageRequests,
         contains((50, firstRetained.timestamp, firstRetained.id)),
-        reason: 'the loaded message boundary must page while older call rows remain',
+        reason: 'the oldest loaded message is visible with $remaining px of timeline remaining',
       );
     });
 
@@ -21057,13 +21059,20 @@ void main() {
     ) async {
       final (repo: repo, seeded: seeded) = await openAtLatest(tester)
           .timeout(deadline);
-      final oldest = seeded.first;
-      await scrollToMessage(tester, oldest.id).timeout(deadline);
+      final scroll = tester.widget<ListView>(messagesList).controller!;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await tester.pump().timeout(deadline);
+      await tester.pump().timeout(deadline);
       ConversationScreen screen() =>
           tester.widget(find.byType(ConversationScreen));
+      expect(screen().messages, hasLength(messageCount));
+
+      scroll.jumpTo(scroll.position.minScrollExtent);
+      await tester.pump().timeout(deadline);
+      final oldest = seeded.first;
+      await scrollToMessage(tester, oldest.id).timeout(deadline);
       final oldestRow = find.byKey(ValueKey('msg-${oldest.id}'));
       expect(oldestRow, findsOneWidget);
-      expect(screen().messages, hasLength(messageCount));
 
       final refetch = Completer<void>();
       repo.getMessagesPageGate = refetch;
