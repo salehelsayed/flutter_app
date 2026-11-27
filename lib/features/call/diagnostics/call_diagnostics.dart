@@ -1075,16 +1075,19 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _CallDiagnosticGroup? group,
     Map<String, Object?> incoming,
   ) {
+    final outcome = incoming['outcome'];
     if (group == null ||
         incoming['source'] != 'flutter' ||
         incoming['stage'] != 'media' ||
         incoming['action'] != 'snapshot' ||
-        (incoming['outcome'] != 'ok' &&
-            incoming['outcome'] != 'media_flow_verified')) {
+        (outcome != 'ok' && outcome != 'media_flow_verified')) {
       return false;
     }
     final values = incoming['values'] as Map;
-    if (values['structuralReady'] is! bool) return false;
+    if (values['structuralReady'] is! bool ||
+        values['mediaFlowVerified'] != (outcome == 'media_flow_verified')) {
+      return false;
+    }
 
     // A transition or failure leaves the next readiness observation intact.
     final previous = group.events[group.events.lastKey()];
