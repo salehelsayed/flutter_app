@@ -4932,6 +4932,16 @@ literal guard. Eight byte-identical passing files carry 277 cases from
 `5ea214d4`. Evidence and the original fixture failures are retained in
 m-675881f8, m-6c40d58f and m-4e487cd5.
 
+At the existing Pixel landscape size and 3.1× text, the IME and status inset
+leave about 104 logical points. Opening the keyboard after entering two lines
+overflowed by 62 pixels on its first frame. The matching regression checks
+the first frame and settled layout, scrolling the draft and activating Send.
+Direct and group chat cap the large-text input at the actual compact
+viewport. The roomy two-line and existing landscape cases are retained.
+Matched RED `2baef524` and GREEN `5ecbbca8` ran on Claude-UI. The three full
+files passed 272 cases and the migration literal guard passed. See
+m-08840f06 and the original smaller RED in m-2d598d19.
+
 A normal incoming Thought disappears from live reads at 24 hours. BL-14 keeps
 its stored copy for another 48 hours to tolerate receiver clock skew. Explicit
 author retraction must find the exact stored incoming row throughout that
