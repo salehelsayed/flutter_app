@@ -3,12 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/diagnostics/call_end_detail.dart';
+import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/core/diagnostics/local_connection_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -71,6 +74,195 @@ void main() {
     persist: persist,
     bridge: bridge,
   );
+
+  group('BL-109 media readiness', () {
+    const bound = Duration(seconds: 3);
+    const poll = Duration(milliseconds: 100);
+
+    Future<List<Map<String, Object?>>> storedEvents(
+      CallDiagnostics diagnostics,
+    ) async {
+      await diagnostics.flush().timeout(bound);
+      final state = jsonDecode(
+        await File('${directory.path}/state.json')
+            .readAsString()
+            .timeout(bound),
+      ) as Map;
+      return (state['events'] as List)
+          .map((event) => Map<String, Object?>.from(event as Map))
+          .toList();
+    }
+
+    Map<String, Object?> values({
+      bool observed = false,
+      bool verified = false,
+      int generation = 0,
+    }) => {
+      'structuralReady': verified,
+      'inboundRtpObserved': observed || verified,
+      'outboundRtpObserved': verified,
+      'inboundRtpProgress': verified,
+      'outboundRtpProgress': verified,
+      'mediaFlowVerified': verified,
+      ...CallStatsSample.empty.toLocalDiagnosticValues(),
+      'generation': generation,
+    };
+
+    void recordSnapshot(
+      CallDiagnostics diagnostics,
+      String trace, {
+      bool observed = false,
+      bool verified = false,
+      int generation = 0,
+    }) {
+      diagnostics.record(
+        traceId: trace,
+        stage: 'media',
+        action: 'snapshot',
+        outcome: verified ? 'media_flow_verified' : 'ok',
+        values: values(
+          observed: observed,
+          verified: verified,
+          generation: generation,
+        ),
+      );
+      now = now.add(poll);
+    }
+
+    test('keeps milestones while reducing both endpoints of a joined call', () async {
+      final diagnostics = await install(upload: (_) async => {}).timeout(bound);
+      final traces = <String, String>{};
+      final firstTimes = <String, int>{};
+      for (final role in ['caller', 'callee']) {
+        final trace = diagnostics.beginAttempt(role: role)!;
+        traces[trace] = role;
+        firstTimes[trace] = now.millisecondsSinceEpoch;
+
+        for (var sample = 0; sample < 10; sample++) {
+          recordSnapshot(diagnostics, trace);
+        }
+        recordSnapshot(diagnostics, trace, observed: true);
+        diagnostics.record(
+          traceId: trace,
+          stage: 'media',
+          action: 'check',
+          outcome: 'failed',
+          reason: 'negotiation_failed',
+          values: {'failureStage': 'snapshot_stats'},
+        );
+        now = now.add(poll);
+        recordSnapshot(diagnostics, trace, verified: true);
+        diagnostics.finishAttempt(
+          traceId: trace,
+          outcome: 'completed_after_media',
+          reason: 'local_user',
+          values: {'mediaFlowVerified': true},
+          detail: const CallEndDetail(
+            cause: CallEndCause.localHangup,
+            stage: CallEndCauseStage.runtime,
+          ),
+        );
+        now = now.add(poll);
+      }
+
+      final all = (await storedEvents(diagnostics))
+          .where((event) => traces.containsKey(event['traceId']))
+          .toList();
+      final readiness = all
+          .where(
+            (event) =>
+                event['stage'] == 'media' &&
+                event['action'] == 'snapshot' &&
+                event['outcome'] == 'ok',
+          )
+          .toList();
+      int bytes(Iterable<Map<String, Object?>> rows) => rows.fold(
+        0,
+        (size, row) => size + utf8.encode(jsonEncode(row)).length,
+      );
+      debugPrint(
+        'BL109_VOLUME rows=${all.length} bytes=${bytes(all)} '
+        'readinessRows=${readiness.length} readinessBytes=${bytes(readiness)}',
+      );
+
+      expect(all.map((row) => row['traceId']).toSet(), traces.keys.toSet());
+      for (final MapEntry(key: trace, value: role) in traces.entries) {
+        final rows = all.where((event) => event['traceId'] == trace).toList();
+        expect(rows.every((row) => row['role'] == role), isTrue);
+        final times = rows.map((row) => row['occurredAtMs']! as int).toList();
+        expect(times, [...times]..sort());
+        final snapshots = readiness
+            .where((row) => row['traceId'] == trace)
+            .toList();
+        expect(snapshots.first['occurredAtMs'], firstTimes[trace]);
+        expect(
+          snapshots.first['values'],
+          containsPair('inboundRtpObserved', false),
+        );
+        expect(
+          snapshots.last['values'],
+          containsPair('inboundRtpObserved', true),
+        );
+        expect(
+          rows.map(
+            (event) => (event['stage'], event['action'], event['outcome']),
+          ),
+          [
+            ('attempt', 'start', 'started'),
+            ('media', 'snapshot', 'ok'),
+            ('media', 'snapshot', 'ok'),
+            ('media', 'check', 'failed'),
+            ('media', 'snapshot', 'media_flow_verified'),
+            ('terminal', 'finish', 'completed_after_media'),
+            ('terminal', 'snapshot', 'completed_after_media'),
+          ],
+        );
+        expect(rows.last['values'], containsPair('endCause', 'local_hangup'));
+      }
+    });
+
+    test(
+      'keeps the first sample per trace, recovery phase and generation',
+      () async {
+        final diagnostics = await install(upload: (_) async => {})
+            .timeout(bound);
+        final call = diagnostics.beginAttempt()!;
+        final other = diagnostics.beginAttempt(role: 'callee')!;
+        recordSnapshot(diagnostics, call);
+        recordSnapshot(diagnostics, other);
+        recordSnapshot(diagnostics, call);
+        diagnostics.record(
+          traceId: call,
+          stage: 'signaling',
+          action: 'commit',
+          outcome: 'ok',
+          values: {'state': 'reconnecting'},
+        );
+        recordSnapshot(diagnostics, call);
+        recordSnapshot(diagnostics, call);
+        recordSnapshot(diagnostics, call, generation: 1);
+        recordSnapshot(diagnostics, call, generation: 1);
+        recordSnapshot(diagnostics, call, generation: 1, verified: true);
+        recordSnapshot(diagnostics, call, generation: 1, verified: true);
+
+        final rows = await storedEvents(diagnostics);
+        final snapshots = rows.where(
+          (event) => event['stage'] == 'media' && event['action'] == 'snapshot',
+        );
+        expect(
+          snapshots.where((event) => event['traceId'] == other),
+          hasLength(1),
+        );
+        expect(
+          snapshots.where((event) => event['traceId'] == call).map((event) {
+            final values = event['values']! as Map;
+            return (values['generation'], event['outcome']);
+          }),
+          [(0, 'ok'), (0, 'ok'), (1, 'ok'), (1, 'media_flow_verified')],
+        );
+      },
+    );
+  });
 
   for (final reason in [
     null,
