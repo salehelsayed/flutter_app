@@ -129,7 +129,7 @@ void main() {
       expect(find.byIcon(Icons.close), findsNWidgets(3));
     });
 
-    testWidgets('BL-107 attachment removal uses a 44 pt hit target', (
+    testWidgets('attachment removal uses a 44 pt hit target', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
@@ -238,7 +238,7 @@ void main() {
       expect(find.text('GIF'), findsOneWidget);
     });
 
-    testWidgets('BL-107 attachment badges and progress read at least 11 pt', (
+    testWidgets('attachment badges and progress read at least 11 pt', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

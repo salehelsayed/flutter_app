@@ -150,7 +150,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('BL-107 Settings scroll clears the floating Orbit control', (
+  testWidgets('Settings scroll clears the floating Orbit control', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);
@@ -181,7 +181,7 @@ void main() {
     ('de', 'Peer-ID', 'Wiederherstellungsphrase'),
     ('ar', 'معرّف النظير', 'عبارة الاسترداد'),
   ]) {
-    testWidgets('BL-107 Settings identity titles use approved $locale copy', (
+    testWidgets('Settings identity titles use approved $locale copy', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
@@ -194,7 +194,7 @@ void main() {
     });
   }
 
-  testWidgets('BL-107 Settings section titles use 13 pt uppercase', (
+  testWidgets('Settings section titles use 13 pt uppercase', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);

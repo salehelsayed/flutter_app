@@ -56,7 +56,7 @@ void main() {
     onEnd: onEnd ?? () {},
   );
 
-  group('BL-107 call action colours', () {
+  group('call action colours', () {
     const deadline = Duration(seconds: 3);
     const videoPresentation = CallVideoPresentation.project(
       videoEnabled: true,

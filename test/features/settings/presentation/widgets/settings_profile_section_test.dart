@@ -231,7 +231,7 @@ void main() {
     expect(tapped, isTrue);
   });
 
-  testWidgets('BL-107 Settings profile camera has a 44 pt named target', (
+  testWidgets('Settings profile camera has a 44 pt named target', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);

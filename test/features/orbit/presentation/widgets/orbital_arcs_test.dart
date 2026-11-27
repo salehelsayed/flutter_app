@@ -390,7 +390,7 @@ void main() {
       expect(find.text('friend7'), findsOneWidget);
     });
 
-    testWidgets('BL-107 Orbit names read at 13 pt on rings and 12 on arcs', (
+    testWidgets('Orbit names read at 13 pt on rings and 12 on arcs', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

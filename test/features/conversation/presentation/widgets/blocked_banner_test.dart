@@ -49,7 +49,7 @@ void main() {
   }
 
   group('BlockedBanner', () {
-    testWidgets('BL-107 blocked banner uses light surface colors', (
+    testWidgets('blocked banner uses light surface colors', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
@@ -93,7 +93,7 @@ void main() {
       expect(find.byIcon(Icons.block), findsOneWidget);
     });
 
-    testWidgets('BL-107 Unblock has a 44 pt hit target', (tester) async {
+    testWidgets('Unblock has a 44 pt hit target', (tester) async {
       const deadline = Duration(seconds: 3);
       var taps = 0;
       await tester

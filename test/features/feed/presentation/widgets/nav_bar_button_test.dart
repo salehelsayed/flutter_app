@@ -198,7 +198,7 @@ void main() {
       expect(find.byType(Positioned), findsNothing);
     });
 
-    testWidgets('BL-107 nav count badge reads at least 11 pt', (
+    testWidgets('nav count badge reads at least 11 pt', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
@@ -227,7 +227,7 @@ void main() {
       expect(find.text('99+'), findsOneWidget);
     });
 
-    testWidgets('BL-107 badge uses solid red and a white count', (tester) async {
+    testWidgets('badge uses solid red and a white count', (tester) async {
       suppressAssetErrors(tester);
       const deadline = Duration(seconds: 3);
       await tester

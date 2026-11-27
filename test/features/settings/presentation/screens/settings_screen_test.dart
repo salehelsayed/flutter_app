@@ -112,7 +112,7 @@ void main() {
     expect(backed, isTrue);
   });
 
-  testWidgets('BL-107 Settings Back is named and has a 44 pt hit target', (
+  testWidgets('Settings Back is named and has a 44 pt hit target', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);
@@ -134,7 +134,7 @@ void main() {
     expect(backed, isTrue);
   });
 
-  testWidgets('BL-107 Settings copy Peer ID has a 44 pt named target', (
+  testWidgets('Settings copy Peer ID has a 44 pt named target', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);

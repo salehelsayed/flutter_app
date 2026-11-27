@@ -856,7 +856,7 @@ void main() {
   });
 
   testWidgets(
-    'BL-107 Thought sent meta is localized on a completed outgoing Thought',
+    'Thought sent meta is localized on a completed outgoing Thought',
     (tester) async {
       final mine = _thought(initialNow).copyWith(
         senderPeerId: 'local-peer',
@@ -885,7 +885,7 @@ void main() {
   );
 
   testWidgets(
-    'BL-107 Thought sent meta follows repository progress after retry',
+    'Thought sent meta follows repository progress after retry',
     (tester) async {
       final mine = _thought(initialNow).copyWith(
         senderPeerId: 'local-peer',

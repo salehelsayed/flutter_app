@@ -442,7 +442,7 @@ void main() {
       expect(tagIn(tester, 'post-falls', 'walks').data, '#Walks');
     });
 
-    testWidgets('BL-107 inline You tag has a 44 pt hit target', (tester) async {
+    testWidgets('inline You tag has a 44 pt hit target', (tester) async {
       const deadline = Duration(seconds: 3);
       await pumpTagged(tester).timeout(deadline);
       final tag = _inCard(

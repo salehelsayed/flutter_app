@@ -26,7 +26,7 @@ void main() {
     expect(find.text('Q&A'), findsOneWidget);
   });
 
-  testWidgets('BL-107 group badge labels read at least 11 pt', (tester) async {
+  testWidgets('group badge labels read at least 11 pt', (tester) async {
     const deadline = Duration(seconds: 3);
     for (final (type, text) in [
       (GroupType.chat, 'Discussion'),

@@ -178,7 +178,7 @@ void main() {
     expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
   });
 
-  testWidgets('BL-107 contact copy exposes Arabic Peer ID wording', (
+  testWidgets('contact copy exposes Arabic Peer ID wording', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);
@@ -263,7 +263,7 @@ void main() {
     expect(find.text('open-profile'), findsOneWidget);
   });
 
-  testWidgets('BL-107 contact Back is named and has a 44 pt hit target', (
+  testWidgets('contact Back is named and has a 44 pt hit target', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);

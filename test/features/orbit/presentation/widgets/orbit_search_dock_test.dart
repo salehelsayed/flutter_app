@@ -78,7 +78,7 @@ void main() {
     });
 
     for (final direction in TextDirection.values) {
-      testWidgets('BL-107 Orbit search controls use 44 pt hit targets ($direction)', (
+      testWidgets('Orbit search controls use 44 pt hit targets ($direction)', (
         tester,
       ) async {
         const deadline = Duration(seconds: 3);

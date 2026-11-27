@@ -294,7 +294,7 @@ void main() {
       return tester.widget<Text>(finder);
     }
 
-    testWidgets('BL-107 Orbit group row budgets for the 11 pt badge', (
+    testWidgets('Orbit group row budgets for the 11 pt badge', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

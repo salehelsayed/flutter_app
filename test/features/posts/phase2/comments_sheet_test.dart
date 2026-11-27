@@ -9,7 +9,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.d
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  testWidgets('BL-107 comments sheet uses the light raised surface', (
+  testWidgets('comments sheet uses the light raised surface', (
     tester,
   ) async {
     await tester

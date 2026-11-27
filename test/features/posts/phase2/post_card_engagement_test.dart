@@ -67,7 +67,7 @@ void main() {
     expect(toggled, 1);
   });
 
-  testWidgets('BL-107 post engagement actions use 44 pt hit targets', (
+  testWidgets('post engagement actions use 44 pt hit targets', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);
@@ -108,7 +108,7 @@ void main() {
     expect(actions, ['heart', 'comment', 'pass']);
   });
 
-  testWidgets('BL-107 post expiry copy reads at least 11 pt', (tester) async {
+  testWidgets('post expiry copy reads at least 11 pt', (tester) async {
     const deadline = Duration(seconds: 3);
     await tester
         .pumpWidget(

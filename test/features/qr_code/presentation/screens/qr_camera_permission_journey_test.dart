@@ -10,7 +10,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 // scanner route/controller's admission callback, not contact persistence or OS
 // Settings. The complete contact/Orbit route remains UI-Update-owned.
 void main() {
-  testWidgets('BL-107 scanner close and torch have 44 pt named targets', (
+  testWidgets('scanner close and torch have 44 pt named targets', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);

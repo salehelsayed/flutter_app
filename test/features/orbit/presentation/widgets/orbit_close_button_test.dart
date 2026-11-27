@@ -38,7 +38,7 @@ void main() {
       expect(tapped, isTrue);
     });
 
-    testWidgets('BL-107 Orbit close has a localized button label', (
+    testWidgets('Orbit close has a localized button label', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

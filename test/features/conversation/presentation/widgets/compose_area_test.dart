@@ -349,7 +349,7 @@ void main() {
       ),
     );
 
-    testWidgets('BL-107 voice review keeps named 44 pt controls', (
+    testWidgets('voice review keeps named 44 pt controls', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

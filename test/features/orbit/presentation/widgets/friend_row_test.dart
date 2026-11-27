@@ -297,7 +297,7 @@ void main() {
       home: Scaffold(body: child),
     );
 
-    testWidgets('BL-107 inner-circle badge uses readable light ink', (
+    testWidgets('inner-circle badge uses readable light ink', (
       tester,
     ) async {
       await tester
@@ -336,7 +336,7 @@ void main() {
       return tester.widget<Text>(finder);
     }
 
-    testWidgets('BL-107 Orbit Inner Circle badge reads at least 11 pt', (
+    testWidgets('Orbit Inner Circle badge reads at least 11 pt', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

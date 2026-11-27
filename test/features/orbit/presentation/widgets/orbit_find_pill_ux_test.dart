@@ -87,7 +87,7 @@ void main() {
   Finder pillF() => find.byKey(const ValueKey('orbit-find-pill'));
 
   group('205 find-pill UX', () {
-    testWidgets('BL-107 inline Orbit search close uses a 44 pt hit target', (
+    testWidgets('inline Orbit search close uses a 44 pt hit target', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

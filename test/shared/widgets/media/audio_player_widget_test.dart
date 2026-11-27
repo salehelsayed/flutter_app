@@ -762,7 +762,7 @@ void main() {
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
 
-    testWidgets('BL-107 voice player preserves row hold and 44 pt play and pause', (
+    testWidgets('voice player preserves row hold and 44 pt play and pause', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);

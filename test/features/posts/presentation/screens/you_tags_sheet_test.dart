@@ -102,7 +102,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('BL-107 tags sheet uses the light raised surface', (
+  testWidgets('tags sheet uses the light raised surface', (
     tester,
   ) async {
     const deadline = Duration(seconds: 3);
@@ -243,7 +243,7 @@ void main() {
     expect(find.byKey(const ValueKey('you-tags-rail')), findsOneWidget);
   });
 
-  testWidgets('BL-107 You tags rail uses at least 11 pt', (tester) async {
+  testWidgets('You tags rail uses at least 11 pt', (tester) async {
     const deadline = Duration(seconds: 3);
     await pump(tester, [
       for (var i = 0; i < 30; i++)
