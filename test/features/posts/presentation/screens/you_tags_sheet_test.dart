@@ -220,6 +220,27 @@ void main() {
     expect(find.byKey(const ValueKey('you-tags-rail')), findsOneWidget);
   });
 
+  testWidgets('BL-107 You tags rail uses at least 11 pt', (tester) async {
+    const deadline = Duration(seconds: 3);
+    await pump(tester, [
+      for (var i = 0; i < 30; i++)
+        _tag('${String.fromCharCode(97 + i % 26)}tag$i', i),
+    ]).timeout(deadline);
+    await open(tester).timeout(deadline);
+
+    final letters = tester.widgetList<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('you-tags-rail')),
+        matching: find.byType(Text),
+      ),
+    );
+    expect(letters, hasLength(26));
+    expect(
+      letters.map((text) => text.style?.fontSize),
+      everyElement(greaterThanOrEqualTo(11)),
+    );
+  });
+
   testWidgets('a rail letter brings its first tag to the top of the list, '
       'however far down it sits', (tester) async {
     await pump(tester, [

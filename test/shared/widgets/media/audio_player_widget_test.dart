@@ -758,6 +758,58 @@ void main() {
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
 
+    testWidgets('BL-107 voice player exposes named 44 pt play and pause', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final load = fakePlatform.enqueueLoad(
+        reportedDuration: const Duration(seconds: 5),
+      );
+      await tester
+          .pumpWidget(
+            buildApp(
+              availableAttachment(
+                id: 'accessible-voice',
+                localPath: '/tmp/accessible-voice.m4a',
+                durationMs: 5000,
+              ),
+              interruptionEvents: const Stream<AudioInterruptionEvent>.empty(),
+            ),
+          )
+          .timeout(deadline);
+      await tester.pump().timeout(deadline);
+      await load.started.timeout(deadline);
+      load.complete();
+      await flushAsyncPlayerTasks(tester).timeout(deadline);
+
+      Finder target(IconData glyph) => find.ancestor(
+        of: find.byIcon(glyph),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is GestureDetector && widget.onTap != null,
+        ),
+      ).first;
+      final play = target(Icons.play_arrow_rounded);
+      expect(tester.getSize(play), const Size(44, 44));
+      expect(find.bySemanticsLabel(RegExp('Play voice message')), findsWidgets);
+      await tester
+          .tapAt(tester.getTopLeft(play) + const Offset(1, 1))
+          .timeout(deadline);
+      for (var i = 0; i < 5 && fakePlatform.playCallCount == 0; i++) {
+        await flushAsyncPlayerTasks(tester).timeout(deadline);
+      }
+      expect(fakePlatform.playCallCount, 1);
+      final pause = target(Icons.pause_rounded);
+      expect(tester.getSize(pause), const Size(44, 44));
+      expect(find.bySemanticsLabel(RegExp('Pause voice message')), findsWidgets);
+      await tester
+          .tapAt(tester.getTopLeft(pause) + const Offset(1, 1))
+          .timeout(deadline);
+      await flushAsyncPlayerTasks(tester).timeout(deadline);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      await flushAsyncPlayerTasks(tester).timeout(deadline);
+    });
+
     testWidgets('speed control cycles, reaches the player, and persists', (
       tester,
     ) async {

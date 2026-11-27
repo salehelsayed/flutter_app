@@ -61,6 +61,36 @@ void main() {
       expect(find.byIcon(Icons.block), findsOneWidget);
     });
 
+    testWidgets('BL-107 Unblock has a 44 pt hit target', (tester) async {
+      const deadline = Duration(seconds: 3);
+      var taps = 0;
+      await tester
+          .pumpWidget(
+            MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: BlockedBanner(onUnblock: () => taps++),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      final action = find.ancestor(
+        of: find.text('Unblock'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is GestureDetector && widget.onTap != null,
+        ),
+      ).first;
+      final size = tester.getSize(action);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      await tester
+          .tapAt(tester.getTopLeft(action) + const Offset(1, 1))
+          .timeout(deadline);
+      expect(taps, 1);
+    });
+
     testWidgets('Unblock button fires callback', (tester) async {
       var tapped = false;
 

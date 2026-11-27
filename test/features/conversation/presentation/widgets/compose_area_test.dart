@@ -349,6 +349,36 @@ void main() {
       ),
     );
 
+    testWidgets('BL-107 voice review keeps named 44 pt controls', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      final actions = <String>[];
+      await tester
+          .pumpWidget(
+            optionO(
+              colors: BackgroundReadableColors.dark,
+              onDiscard: () => actions.add('discard'),
+              onVoice: () => actions.add('send'),
+            ),
+          )
+          .timeout(deadline);
+
+      final discard = find.byKey(const ValueKey('voice-review-discard'));
+      final send = find.byKey(const ValueKey('voice-review-send'));
+      expect([tester.getSize(discard), tester.getSize(send)], [
+        const Size(44, 44),
+        const Size(44, 44),
+      ]);
+      expect(find.bySemanticsLabel('Discard recording'), findsOneWidget);
+      for (final target in [discard, send]) {
+        await tester
+            .tapAt(tester.getTopLeft(target) + const Offset(1, 1))
+            .timeout(deadline);
+      }
+      expect(actions, ['discard', 'send']);
+    });
+
     double contrast(Color a, Color b) {
       final la = a.computeLuminance();
       final lb = b.computeLuminance();

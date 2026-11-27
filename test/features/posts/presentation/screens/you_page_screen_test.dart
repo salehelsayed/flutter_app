@@ -442,6 +442,29 @@ void main() {
       expect(tagIn(tester, 'post-falls', 'walks').data, '#Walks');
     });
 
+    testWidgets('BL-107 inline You tag has a 44 pt hit target', (tester) async {
+      const deadline = Duration(seconds: 3);
+      await pumpTagged(tester).timeout(deadline);
+      final tag = _inCard(
+        'post-river',
+        find.byKey(const ValueKey('you-tag-walks')),
+      );
+      final target = find.ancestor(
+        of: tag,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is GestureDetector && widget.onTap != null,
+        ),
+      ).first;
+      final size = tester.getSize(target);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      await tester
+          .tapAt(tester.getTopLeft(target) + const Offset(1, 1))
+          .timeout(deadline);
+      await tester.pump().timeout(deadline);
+      expect(loadedTags, [null, 'walks']);
+    });
+
     testWidgets('tapping a tag shows only your thoughts with it, with a bar', (
       tester,
     ) async {
